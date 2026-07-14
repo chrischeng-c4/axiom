@@ -1,7 +1,7 @@
 [project]
 name = "raft-core"
 cap_path = "README.md"
-label = "project:raft-core"
+label = "lib:raft-core"
 
 [[workspaces]]
 name = "raft-core"

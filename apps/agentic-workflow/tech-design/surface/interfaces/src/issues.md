@@ -8,6 +8,12 @@ capability_refs:
     claim: capability-to-epic-planning
     coverage: full
     rationale: "Issue/update CLI surfaces support work-item planning, projection, and platform synchronization."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: full
+    rationale: "The --project producer resolves registered rows through the canonical path-derived app/lib label boundary before creating or filtering work items."
 command_refs:
   - command: aw wi
   - command: aw wi arbitrate
@@ -39,6 +45,16 @@ command_refs:
 <!-- type: overview lang: markdown -->
 
 Public API manifest for `apps/agentic-workflow/src/cli/issues.rs` generated from AST during Score force-regeneration standardization.
+
+`run_create_silent` is the internal create route for callers that must preserve
+a single machine-readable stdout envelope. It shares the same backend
+selection, validation, labels, and persistence as public `aw wi create`, but
+suppresses only the nested WI output; public behavior remains unchanged.
+
+Registered rows carrying a retired `project:` label are canonicalized by their
+source path before `resolve_project_label` and `build_create_label_vec` emit the
+current `app:` or `lib:` identity. The suffix comes from the registered name,
+including when a discovered project-local row supplies the stale override.
 
 ### Symbols
 
@@ -95,7 +111,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/issues.rs` generated from
 //! `aw wi` CLI -- list/show/sync/create/update/close/find across
 //! local + GitHub + GitLab backends.
 //!
-//! Backend selection is resolved from `.aw/config.toml`
+//! Backend selection is resolved from `aw.toml`
 //! (`[agentic_workflow.issue_platform]` / `[agentic_workflow.repo_platform]`); there is no
 //! `--backend` flag. Workflow-facing detail/validation commands default to
 //! machine-parseable JSON; `--human` keeps legacy prose where available.
@@ -372,7 +388,7 @@ pub struct CreateArgs {
     pub body_file: Option<String>,
 
     /// Project name (repeatable). Resolved against `[[projects]]` in
-    /// `.aw/config.toml`; emits each entry's `label` field. Cardinality
+    /// `aw.toml`; emits each entry's `label` field. Cardinality
     /// rules (per `--type`):
     ///   * `epic`  → 0 or 1 value (lead/owner; multi-project spans live in body)
     ///   * other types → exactly 1 value.
@@ -385,14 +401,14 @@ pub struct CreateArgs {
     #[arg(long = "priority")]
     pub priority: Option<PriorityFilter>,
 
-    /// Agent name. Resolved against `[[agents]]` in `.aw/config.toml`;
+    /// Agent name. Resolved against `[[agents]]` in `aw.toml`;
     /// emits the entry's `label` field (e.g. `agent::claude-code`).
     /// Unknown name → error envelope.
     #[arg(long = "agent")]
     pub agent: Option<String>,
 
     /// Deprecated compatibility no-op. Backend selection is configured in
-    /// `.aw/config.toml`; local-only authoring lives under `aw wi draft`.
+    /// `aw.toml`; local-only authoring lives under `aw wi draft`.
     #[arg(long, hide = true)]
     pub remote: bool,
 
@@ -1161,7 +1177,7 @@ async fn run_draft(args: DraftArgs) -> Result<()> {
 // Backend resolution helper (Phase A)
 // ---------------------------------------------------------------------------
 
-// Resolve the backend triple `(kind, repo, host)` from `.aw/config.toml`.
+// Resolve the backend triple `(kind, repo, host)` from `aw.toml`.
 // `--repo` overrides the resolved repo.
 fn resolve_backend(
     repo_override: Option<String>,
@@ -1249,7 +1265,7 @@ fn check_broken_references(issues: &[Issue], project_root: &std::path::Path) {
     }
 }
 
-// Read declared `[[projects]].label` values from `.aw/config.toml`.
+// Read declared `[[projects]].label` values from `aw.toml`.
 ///
 // Returns an empty vec when the config is missing, unparseable, has no
 // `[[projects]]` table, or no entry declares a `label`. Callers treat
@@ -1266,7 +1282,7 @@ fn read_known_project_labels(project_root: &Path) -> Vec<String> {
             return labels;
         }
     }
-    let path = project_root.join(".aw/config.toml");
+    let path = project_root.join("aw.toml");
     let Ok(body) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
@@ -1283,7 +1299,7 @@ fn read_known_project_labels(project_root: &Path) -> Vec<String> {
         .collect()
 }
 
-// Read `[[projects]]` entries as a `(name, label)` list from `.aw/config.toml`.
+// Read `[[projects]]` entries as a `(name, label)` list from `aw.toml`.
 ///
 // Order is preserved from the config file so error messages and the
 // emitted label vector are deterministic. Empty when the config is
@@ -1294,7 +1310,7 @@ pub(crate) fn read_known_project_name_label_pairs(project_root: &Path) -> Vec<(S
     read_name_label_pairs(project_root, "projects")
 }
 
-// Read `[[agents]]` entries as a `(name, label)` list from `.aw/config.toml`.
+// Read `[[agents]]` entries as a `(name, label)` list from `aw.toml`.
 ///
 // Same shape and contract as `read_known_project_name_label_pairs`.
 ///
@@ -1305,7 +1321,7 @@ pub(crate) fn read_known_agent_name_label_pairs(project_root: &Path) -> Vec<(Str
 }
 
 // Shared loader for `[[projects]]` / `[[agents]]` tables. Reads the
-// `.aw/config.toml`, returns the entries as `(name, label)` pairs.
+// `aw.toml`, returns the entries as `(name, label)` pairs.
 fn read_name_label_pairs(project_root: &Path, table: &str) -> Vec<(String, String)> {
     read_name_aliases_label(project_root, table)
         .into_iter()
@@ -1314,7 +1330,7 @@ fn read_name_label_pairs(project_root: &Path, table: &str) -> Vec<(String, Strin
 }
 
 // Shared loader for `[[projects]]` / `[[agents]]` tables. Reads the
-// `.aw/config.toml`, returns the entries as `(name, aliases, label)`
+// `aw.toml`, returns the entries as `(name, aliases, label)`
 // triples. Each entry's optional `aliases` array is a list of shorthand
 // names that resolve to the same `label` as the canonical `name`.
 fn read_name_aliases_label(project_root: &Path, table: &str) -> Vec<(String, Vec<String>, String)> {
@@ -1333,7 +1349,7 @@ fn read_name_aliases_label(project_root: &Path, table: &str) -> Vec<(String, Vec
             }
         }
     }
-    let path = project_root.join(".aw/config.toml");
+    let path = project_root.join("aw.toml");
     let Ok(body) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
@@ -1364,7 +1380,7 @@ fn read_name_aliases_label(project_root: &Path, table: &str) -> Vec<(String, Vec
 
 // Resolve a project name against the `[[projects]]` registry. Returns
 // the matching `label` field, or `Err(CreateValidationError::UnknownProject)`
-// listing all valid names from `.aw/config.toml`. Accepts either the
+// listing all valid names from `aw.toml`. Accepts either the
 // canonical `name` or any value listed under that entry's `aliases`.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
@@ -1498,11 +1514,11 @@ impl CreateValidationError {
     pub(crate) fn to_envelope_message(&self) -> String {
         match self {
             Self::UnknownProject { name, known } => format!(
-                "unknown --project '{}' (valid: {:?}); update .aw/config.toml [[projects]] or pick from the list",
+                "unknown --project '{}' (valid: {:?}); update aw.toml [[projects]] or pick from the list",
                 name, known
             ),
             Self::UnknownAgent { name, known } => format!(
-                "unknown --agent '{}' (valid: {:?}); update .aw/config.toml [[agents]] or pick from the list",
+                "unknown --agent '{}' (valid: {:?}); update aw.toml [[agents]] or pick from the list",
                 name, known
             ),
             Self::ProjectCardinalityNonEpic {
@@ -1582,10 +1598,14 @@ pub(crate) fn build_create_label_vec(
     out
 }
 
+fn is_tracker_routing_label(label: &str) -> bool {
+    label.starts_with("app:") || label.starts_with("lib:")
+}
+
 // Pure: returns warning messages for `labels` that violate either
 ///
 // 1. the one-issue-one-project count rule (epics excepted), or
-// 2. the project-label-must-match-`[[projects]]` value rule.
+// 2. the tracker-label-must-match-`[[projects]]` value rule.
 ///
 // Rule 2 is skipped when `known_labels` is empty — that means config
 // declares no managed projects, so there is nothing authoritative to
@@ -1601,7 +1621,7 @@ fn project_label_warnings(
     slug: &str,
     known_labels: &[String],
 ) -> Vec<String> {
-    let project_labels: Vec<&String> = labels
+    let routing_labels: Vec<&String> = labels
         .iter()
         .filter(|l| is_tracker_routing_label(l))
         .collect();
@@ -1609,7 +1629,7 @@ fn project_label_warnings(
     let mut warnings = Vec::new();
 
     // Rule 1: count.
-    match (issue_type, project_labels.len()) {
+    match (issue_type, routing_labels.len()) {
         (IssueType::Epic, _) => {} // epics may have any count, including 0
         (_, 1) => {}                // canonical case
         (_, 0) => warnings.push(format!(
@@ -1618,7 +1638,7 @@ fn project_label_warnings(
         )),
         (_, n) => warnings.push(format!(
             "issue '{}' has {} app/lib labels {:?} (non-epic issues should have exactly 1; only epics may span multiple)",
-            slug, n, project_labels
+            slug, n, routing_labels
         )),
     }
 
@@ -1626,10 +1646,10 @@ fn project_label_warnings(
     // `[[projects]].label`. Applies to epics too — a typo'd project name
     // is still a typo regardless of issue type.
     if !known_labels.is_empty() {
-        for label in &project_labels {
+        for label in &routing_labels {
             if !known_labels.iter().any(|k| k == *label) {
                 warnings.push(format!(
-                    "issue '{}' has project label '{}' not declared in [[projects]] in .aw/config.toml (known: {:?})",
+                    "issue '{}' has tracker label '{}' not declared in [[projects]] in aw.toml (known: {:?})",
                     slug, label, known_labels
                 ));
             }
@@ -1640,7 +1660,7 @@ fn project_label_warnings(
 }
 
 // Side-effecting wrapper: loads the known-projects vocabulary from
-// `.aw/config.toml` and prints any warnings to stderr.
+// `aw.toml` and prints any warnings to stderr.
 fn check_project_labels(project_root: &Path, labels: &[String], issue_type: IssueType, slug: &str) {
     let known = read_known_project_labels(project_root);
     for msg in project_label_warnings(labels, issue_type, slug, &known) {
@@ -1990,7 +2010,7 @@ async fn run_create_from_draft(args: CreateArgs) -> Result<()> {
     let (kind, repo, host) = resolve_backend(args.repo.clone(), &project_root)?;
     if kind == "local" {
         anyhow::bail!(
-            "aw wi create <draft> requires a tracker issue backend; .aw/config.toml resolved to local"
+            "aw wi create <draft> requires a tracker issue backend; aw.toml resolved to local"
         );
     }
     let remote = make_backend(&kind, &project_root, repo.clone(), host.clone())
@@ -2314,6 +2334,18 @@ async fn run_draft_init(args: DraftInitArgs) -> Result<()> {
 
 // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R1
 async fn run_create(args: CreateArgs) -> Result<()> {
+    run_create_inner(args, true).await
+}
+
+/// Internal create service for callers that own stdout's outer protocol
+/// envelope (for example explicit-file `aw td create --from-source`).
+/// Backend behavior is identical to `aw wi create`; only nested CLI output is
+/// suppressed so the caller can emit exactly one canonical JSON envelope.
+pub(crate) async fn run_create_silent(args: CreateArgs) -> Result<()> {
+    run_create_inner(args, false).await
+}
+
+async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
     if args.draft_path.is_some() {
         return run_create_from_draft(args).await;
     }
@@ -2337,7 +2369,7 @@ async fn run_create(args: CreateArgs) -> Result<()> {
         emit_create_envelope_error(title, &e.to_envelope_message());
     }
 
-    // Resolve --project names against [[projects]] in .aw/config.toml.
+    // Resolve --project names against [[projects]] in aw.toml.
     let mut project_labels: Vec<String> = Vec::new();
     for name in &args.projects {
         match resolve_project_label(&project_root, name) {
@@ -2346,7 +2378,7 @@ async fn run_create(args: CreateArgs) -> Result<()> {
         }
     }
 
-    // Resolve --agent name against [[agents]] in .aw/config.toml.
+    // Resolve --agent name against [[agents]] in aw.toml.
     let agent_label_owned: Option<String> = match args.agent.as_deref() {
         None => None,
         Some(name) => match resolve_agent_label(&project_root, name) {
@@ -2448,17 +2480,19 @@ async fn run_create(args: CreateArgs) -> Result<()> {
         let cache = remote_read_cache_backend(&kind, repo.as_deref(), host.as_deref());
         cache.write(&created).await?;
 
-        if args.json {
-            println!("{}", serde_json::to_string_pretty(&created)?);
-        } else {
-            let id_str = created
-                .github_id
-                .or(created.gitlab_id)
-                .map(|n| format!("#{}", n))
-                .unwrap_or_default();
-            println!("Created {} ({})", created.slug, id_str);
-            if let Some(url) = &created.url {
-                println!("{}", url);
+        if emit_output {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&created)?);
+            } else {
+                let id_str = created
+                    .github_id
+                    .or(created.gitlab_id)
+                    .map(|n| format!("#{}", n))
+                    .unwrap_or_default();
+                println!("Created {} ({})", created.slug, id_str);
+                if let Some(url) = &created.url {
+                    println!("{}", url);
+                }
             }
         }
     } else {
@@ -2523,7 +2557,9 @@ async fn run_create(args: CreateArgs) -> Result<()> {
                 }),
             },
         };
-        print_envelope(&envelope)?;
+        if emit_output {
+            print_envelope(&envelope)?;
+        }
     }
 
     Ok(())
@@ -3387,41 +3423,182 @@ async fn run_update(args: UpdateArgs) -> Result<()> {
 // Close
 // ---------------------------------------------------------------------------
 
+// @spec apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#R3
+fn remote_close_not_found_message(kind: &str, repo: Option<&str>, id: &str) -> String {
+    let repo_context = repo
+        .map(|repo| format!(" for repository '{repo}'"))
+        .unwrap_or_else(|| " for the configured repository".to_string());
+    let repo_arg = repo
+        .map(|repo| format!(" --repo {repo}"))
+        .unwrap_or_default();
+    format!(
+        "issue '{id}' not found on {kind} backend{repo_context}; verify the tracker id and repository with `aw wi show {id}{repo_arg}`"
+    )
+}
+
+// Resolve and close through the configured remote backend. The initial read is
+// both the existence check and the state rehydration needed for idempotence:
+// an already-closed issue is cached/output as closed without posting the
+// reason or issuing a second close mutation.
+// @spec apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#R1 #R2
+async fn close_rehydrated_remote_issue(
+    project_root: &Path,
+    kind: &str,
+    repo: Option<String>,
+    host: Option<String>,
+    id: &str,
+    reason: Option<&str>,
+) -> Result<Option<Issue>> {
+    let remote = make_backend(kind, project_root, repo.clone(), host.clone())
+        .context("Failed to create remote backend")?;
+    let Some(mut issue) = remote
+        .get(id)
+        .await
+        .with_context(|| format!("failed to resolve issue '{id}' on {kind} backend"))?
+    else {
+        return Ok(None);
+    };
+
+    if issue.state != IssueState::Closed {
+        remote
+            .close(id, reason)
+            .await
+            .with_context(|| format!("failed to close issue '{id}' on {kind} backend"))?;
+        issue.state = IssueState::Closed;
+    }
+
+    let cache = remote_read_cache_backend(kind, repo.as_deref(), host.as_deref());
+    cache
+        .write(&issue)
+        .await
+        .with_context(|| format!("failed to cache closed {kind} issue '{id}'"))?;
+    Ok(Some(issue))
+}
+
 // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R3
+// @spec apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#R1 #R2 #R3 #R4
 async fn run_close(args: CloseArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
 
-    // Close locally first
+    // Preserve the existing local lifecycle path whenever a mirror is present.
+    // A missing numeric mirror is not terminal when --push names a configured
+    // tracker: resolve and rehydrate the canonical remote issue instead.
     let local = make_backend("local", &project_root, None, None)?;
-    if let Err(e) = local.close(&args.id, args.reason.as_deref()).await {
-        if args.json {
-            let msg = e.to_string();
-            if msg.contains("not found") {
-                emit_json_error(&msg, IssueErrorCode::NotFound);
-            } else {
-                emit_json_error(&msg, IssueErrorCode::Backend);
+    let local_current = match local.get(&args.id).await {
+        Ok(issue) => issue,
+        Err(e) => {
+            if args.json {
+                emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+            }
+            return Err(e);
+        }
+    };
+
+    let mut remote_handled = false;
+    let closed_issue = if local_current.is_some() {
+        if let Err(e) = local.close(&args.id, args.reason.as_deref()).await {
+            if args.json {
+                let msg = e.to_string();
+                if msg.contains("not found") {
+                    emit_json_error(&msg, IssueErrorCode::NotFound);
+                } else {
+                    emit_json_error(&msg, IssueErrorCode::Backend);
+                }
+            }
+            return Err(e);
+        }
+        local.get(&args.id).await?
+    } else if args.push && args.id.parse::<u64>().is_ok() {
+        let (kind, repo, host) = match resolve_backend(args.repo.clone(), &project_root) {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                if args.json {
+                    emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+                }
+                return Err(e);
+            }
+        };
+        match close_rehydrated_remote_issue(
+            &project_root,
+            &kind,
+            repo.clone(),
+            host,
+            &args.id,
+            args.reason.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(issue)) => {
+                remote_handled = true;
+                Some(issue)
+            }
+            Ok(None) => {
+                let msg = remote_close_not_found_message(&kind, repo.as_deref(), &args.id);
+                if args.json {
+                    emit_json_error(&msg, IssueErrorCode::NotFound);
+                }
+                anyhow::bail!(msg);
+            }
+            Err(e) => {
+                if args.json {
+                    emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+                }
+                return Err(e);
             }
         }
-        return Err(e);
-    }
+    } else {
+        let msg = format!("issue '{}' not found", args.id);
+        if args.json {
+            emit_json_error(&msg, IssueErrorCode::NotFound);
+        }
+        anyhow::bail!(msg);
+    };
 
-    // Fetch the updated issue for output
-    let closed_issue = local.get(&args.id).await?;
-
-    // Optionally push to remote
-    if args.push {
+    // A real local lifecycle mirror still pushes its platform identity after
+    // the local close. Resolve the configured backend (GitHub or GitLab), not a
+    // hard-coded GitHub backend, and reuse the same idempotent remote path.
+    if args.push && !remote_handled {
         if let Some(ref issue) = closed_issue {
-            if let Some(remote_id) = issue.github_id.or(issue.gitlab_id) {
-                let remote = make_backend("github", &project_root, args.repo.clone(), None)
-                    .context("Failed to create remote backend")?;
-                if let Err(e) = remote
-                    .close(&remote_id.to_string(), args.reason.as_deref())
-                    .await
-                {
+            let (kind, repo, host) = match resolve_backend(args.repo.clone(), &project_root) {
+                Ok(resolved) => resolved,
+                Err(e) => {
                     if args.json {
                         emit_json_error(&e.to_string(), IssueErrorCode::Backend);
                     }
                     return Err(e);
+                }
+            };
+            let remote_id = match kind.as_str() {
+                "github" => issue.github_id,
+                "gitlab" => issue.gitlab_id,
+                _ => issue.github_id.or(issue.gitlab_id),
+            };
+            if let Some(remote_id) = remote_id {
+                match close_rehydrated_remote_issue(
+                    &project_root,
+                    &kind,
+                    repo.clone(),
+                    host,
+                    &remote_id.to_string(),
+                    args.reason.as_deref(),
+                )
+                .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        let id = remote_id.to_string();
+                        let msg = remote_close_not_found_message(&kind, repo.as_deref(), &id);
+                        if args.json {
+                            emit_json_error(&msg, IssueErrorCode::NotFound);
+                        }
+                        anyhow::bail!(msg);
+                    }
+                    Err(e) => {
+                        if args.json {
+                            emit_json_error(&e.to_string(), IssueErrorCode::Backend);
+                        }
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -4351,7 +4528,7 @@ fn resolve_capability_path(
         });
     }
 
-    let config_file = project_root.join(".aw").join("config.toml");
+    let config_file = project_root.join("aw.toml");
     let content = std::fs::read_to_string(&config_file)
         .with_context(|| format!("reading {}", config_file.display()))?;
     let parsed: CapabilityConfig =
@@ -7042,7 +7219,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
         std::fs::write(
-            tmp.path().join(".aw/config.toml"),
+            tmp.path().join("aw.toml"),
             r#"
 [[projects]]
 name = "jet"
@@ -7421,20 +7598,14 @@ label = "app:score"
     #[test]
     fn project_label_warnings_known_label_passes() {
         let labels = vec!["type:bug".into(), "app:agentic-workflow".into()];
-        let known = vec![
-            "app:agentic-workflow".into(),
-            "app:agentic-workflow".into(),
-        ];
+        let known = vec!["app:agentic-workflow".into(), "app:agentic-workflow".into()];
         assert!(project_label_warnings(&labels, IssueType::Bug, "demo", &known).is_empty());
     }
 
     #[test]
     fn project_label_warnings_unknown_label_warns_against_known_set() {
         let labels = vec!["type:bug".into(), "app:typo".into()];
-        let known = vec![
-            "app:agentic-workflow".into(),
-            "app:agentic-workflow".into(),
-        ];
+        let known = vec!["app:agentic-workflow".into(), "app:agentic-workflow".into()];
         let warnings = project_label_warnings(&labels, IssueType::Bug, "demo", &known);
         assert_eq!(
             warnings.len(),
@@ -7496,7 +7667,7 @@ label = "app:score"
     #[test]
     fn read_known_project_labels_missing_config_returns_empty() {
         let tmp = tempfile::tempdir().unwrap();
-        // No .aw/config.toml at all.
+        // No aw.toml at all.
         assert!(read_known_project_labels(tmp.path()).is_empty());
     }
 
@@ -7504,7 +7675,7 @@ label = "app:score"
     fn read_known_project_labels_no_projects_table_returns_empty() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
-        std::fs::write(tmp.path().join(".aw/config.toml"), "version = \"0.3.13\"\n").unwrap();
+        std::fs::write(tmp.path().join("aw.toml"), "version = \"0.3.13\"\n").unwrap();
         assert!(read_known_project_labels(tmp.path()).is_empty());
     }
 
@@ -7513,7 +7684,7 @@ label = "app:score"
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
         std::fs::write(
-            tmp.path().join(".aw/config.toml"),
+            tmp.path().join("aw.toml"),
             r#"
 [[projects]]
 name = "agentic-workflow"
@@ -7540,7 +7711,7 @@ path = "crates/no-label"
 
     fn write_config(tmp: &std::path::Path, body: &str) {
         std::fs::create_dir_all(tmp.join(".aw")).unwrap();
-        std::fs::write(tmp.join(".aw/config.toml"), body).unwrap();
+        std::fs::write(tmp.join("aw.toml"), body).unwrap();
     }
 
     const CONFIG_WITH_PROJECTS_AND_AGENTS: &str = r#"
@@ -8172,10 +8343,7 @@ labels:\n\
     fn build_create_label_vec_dedupes_preserving_first_seen_order() {
         let labels = build_create_label_vec(
             "type:epic",
-            &[
-                "app:agentic-workflow".into(),
-                "app:agentic-workflow".into(),
-            ],
+            &["app:agentic-workflow".into(), "app:agentic-workflow".into()],
             None,
             None,
         );
@@ -8295,5 +8463,12 @@ changes:
     description: |
       Whole-file source template generated from the standardized target body.
       Removes unused legacy WI worktree validate lifecycle helpers left after
-      WI routing moved to issue_platform projection.
+      WI routing moved to issue_platform projection. Issue #1506 factors the
+      shared create implementation into emitting and silent variants so
+      explicit-source adoption can link its tracker without adding a second
+      stdout document. Issue #1551 adds configured-backend numeric close
+      rehydration, idempotent remote mutation, and backend/repository-specific
+      recovery diagnostics; #1583 is duplicate reproduction evidence. Issue
+      #1519 hardens the registered-row boundary so the WI `--project` producer
+      never emits a retired `project:` label.
 ```

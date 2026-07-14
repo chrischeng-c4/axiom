@@ -933,38 +933,7 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
     }
 
     if issue.issue_type == IssueType::Epic {
-        let project = project_from_labels(&issue).unwrap_or_else(|| "PROJECT".to_string());
-        let command = format!("aw wi atomize --project {project}");
-        WorkflowEnvelope {
-            action: "dispatch".to_string(),
-            root: WorkflowNode {
-                kind: "epic".to_string(),
-                id: issue_ref(&issue),
-            },
-            current: WorkflowNode {
-                kind: "epic".to_string(),
-                id: issue_ref(&issue),
-            },
-            completed: None,
-            completion: wi_completion(
-                false,
-                false,
-                vec!["epic is open and must be atomized into bounded change WIs".to_string()],
-            ),
-            next: WorkflowNext {
-                kind: "atomize".to_string(),
-                command: command.clone(),
-                reason: "epic roots must be split into bounded change work-items".to_string(),
-                payload_path: None,
-            },
-            invoke: WorkflowInvoke { command },
-            agent_prompt: "Epic root is not atomic. Atomize it, then run each child change."
-                .to_string(),
-            requires_hitl: false,
-            artifact_quality_profile: None,
-            hitl_question: None,
-            persistence: None,
-        }
+        open_epic_envelope(&issue)
     } else {
         let (command, reason) = wi_change_lifecycle_step(&issue);
         WorkflowEnvelope {
@@ -995,6 +964,57 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
             hitl_question: None,
             persistence: None,
         }
+    }
+}
+
+// An open epic can dispatch only after its tracker labels resolve a concrete
+// project identity. A missing identity is a HITL blocker with a runnable
+// inspection command; it must never leak a placeholder into next.command.
+// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R2 #R3
+fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
+    let node = WorkflowNode {
+        kind: "epic".to_string(),
+        id: issue_ref(issue),
+    };
+    let Some(project) = project_from_labels(issue) else {
+        let issue_id = issue_cli_ref(issue);
+        return blocked_envelope(
+            node.clone(),
+            node,
+            format!("aw wi show {issue_id}"),
+            format!(
+                "open epic `{}` has no recognized project identity label; add one of \
+                 `project:<name>`, `app:<name>`, or `lib:<name>`, then re-run `aw wi run {issue_id}`",
+                issue_ref(issue)
+            ),
+            true,
+        );
+    };
+
+    let command = format!("aw wi atomize --project {project}");
+    WorkflowEnvelope {
+        action: "dispatch".to_string(),
+        root: node.clone(),
+        current: node,
+        completed: None,
+        completion: wi_completion(
+            false,
+            false,
+            vec!["epic is open and must be atomized into bounded change WIs".to_string()],
+        ),
+        next: WorkflowNext {
+            kind: "atomize".to_string(),
+            command: command.clone(),
+            reason: "epic roots must be split into bounded change work-items".to_string(),
+            payload_path: None,
+        },
+        invoke: WorkflowInvoke { command },
+        agent_prompt: "Epic root is not atomic. Atomize it, then run each child change."
+            .to_string(),
+        requires_hitl: false,
+        artifact_quality_profile: None,
+        hitl_question: None,
+        persistence: None,
     }
 }
 
@@ -2241,11 +2261,14 @@ fn issue_cli_ref(issue: &Issue) -> String {
         .unwrap_or_else(|| issue.slug.clone())
 }
 
+// @spec apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#R1 #R4
 fn project_from_labels(issue: &Issue) -> Option<String> {
     issue.labels.iter().find_map(|label| {
         label
-            .strip_prefix("app:")
+            .strip_prefix("project:")
+            .or_else(|| label.strip_prefix("app:"))
             .or_else(|| label.strip_prefix("lib:"))
+            .filter(|project| !project.is_empty() && !project.chars().any(char::is_whitespace))
             .map(|project| project.to_string())
     })
 }
@@ -2779,45 +2802,79 @@ cap_path = "apps/jet/README.md"
     }
 
     #[test]
-    fn epic_issue_dispatches_atomize() {
-        let issue = Issue {
-            issue_type: IssueType::Epic,
-            title: "Py312 Compatible".to_string(),
-            state: crate::issues::IssueState::Open,
-            id: None,
-            github_id: Some(4100),
-            gitlab_id: None,
-            url: None,
-            author: None,
-            created_at: None,
-            updated_at: None,
-            slug: "4100".to_string(),
-            body: String::new(),
-            labels: vec!["app:mamba".to_string()],
-            related: Vec::new(),
-            implements: Vec::new(),
-            phase: None,
-            branch: None,
-            target_branch: None,
-            git_workflow: None,
-            change_id: None,
-            iteration: None,
-            current_task_id: None,
-            impl_spec_phase: None,
-            task_revisions: None,
-            revision_counts: None,
-            last_action: None,
-            session_id: None,
-            validation_errors: Vec::new(),
-            review_count: None,
-            flagged_sections: None,
-            fill_retry_count: None,
-            ship_status: None,
-            ship_commit: None,
-            regen_verified_at: None,
-        };
-        assert_eq!(project_from_labels(&issue).as_deref(), Some("mamba"));
-        assert_eq!(issue_ref(&issue), "#4100");
+    fn epic_project_label_dispatch_emits_exact_chain_valid_pgpool_atomize() {
+        let mut issue = open_issue(IssueType::Epic, 1511);
+        issue.labels = vec![
+            "priority:p2".to_string(),
+            "type:epic".to_string(),
+            "phase:td_merged".to_string(),
+            "ship:complete".to_string(),
+            "project:pgpool".to_string(),
+        ];
+
+        assert_eq!(project_from_labels(&issue).as_deref(), Some("pgpool"));
+        assert_eq!(issue_ref(&issue), "#1511");
+
+        let envelope = open_epic_envelope(&issue);
+        assert_eq!(envelope.action, "dispatch");
+        assert_eq!(envelope.next.kind, "atomize");
+        assert_eq!(envelope.next.command, "aw wi atomize --project pgpool");
+        assert_eq!(envelope.invoke.command, envelope.next.command);
+        assert!(!envelope.next.command.contains("PROJECT"));
+        assert!(!envelope.requires_hitl);
+        crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+            .expect("pgpool atomize dispatch must parse against the real CLI");
+    }
+
+    #[test]
+    fn epic_project_label_dispatch_preserves_app_and_lib_commands() {
+        for (label, project) in [("app:mamba", "mamba"), ("lib:pg", "pg")] {
+            let mut issue = open_issue(IssueType::Epic, 1512);
+            issue.labels = vec![label.to_string()];
+
+            assert_eq!(project_from_labels(&issue).as_deref(), Some(project));
+            let envelope = open_epic_envelope(&issue);
+            assert_eq!(
+                envelope.next.command,
+                format!("aw wi atomize --project {project}")
+            );
+            assert_eq!(envelope.invoke.command, envelope.next.command);
+            assert!(!envelope.requires_hitl);
+            crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+                .expect("legacy app/lib atomize dispatch must remain chain-valid");
+        }
+    }
+
+    #[test]
+    fn epic_project_label_dispatch_blocks_unresolved_or_empty_labels() {
+        for labels in [
+            vec!["type:epic".to_string()],
+            vec!["project:".to_string()],
+            vec!["project:   ".to_string()],
+            vec!["app:".to_string()],
+            vec!["app:   ".to_string()],
+            vec!["lib:".to_string()],
+            vec!["lib:   ".to_string()],
+        ] {
+            let mut issue = open_issue(IssueType::Epic, 1513);
+            issue.labels = labels;
+
+            assert_eq!(project_from_labels(&issue), None);
+            let mut envelope = open_epic_envelope(&issue);
+            ensure_hitl_question(&mut envelope, "aw wi run 1513");
+
+            assert_eq!(envelope.action, "blocked");
+            assert_eq!(envelope.next.command, "aw wi show 1513");
+            assert_eq!(envelope.invoke.command, envelope.next.command);
+            assert!(envelope.requires_hitl);
+            assert!(envelope.hitl_question.is_some());
+            assert!(envelope.next.reason.contains("project:<name>"));
+            let serialized = serde_json::to_string(&envelope).unwrap();
+            assert!(!serialized.contains("--project PROJECT"));
+            assert!(!serialized.contains("atomize --project"));
+            crate::cli::chain::validate_aw_command_string(&envelope.next.command)
+                .expect("unresolved epic remediation must remain chain-valid");
+        }
     }
 
     #[test]

@@ -188,6 +188,34 @@ pub fn diff_labels(current: &[String], desired: &[String]) -> (Vec<String>, Vec<
     (to_add, to_remove)
 }
 
+/// Extend the conservative managed-label diff with caller-authorized removals.
+///
+/// Ordinary full writes pass an empty `requested_removals` slice and therefore
+/// continue to preserve remote user labels that are absent from `desired`.
+/// Patch updates may name unmanaged labels explicitly; those labels are added
+/// to the removal set only when they still exist remotely and were not kept or
+/// re-added by the desired state.
+pub(crate) fn diff_labels_with_explicit_removals(
+    current: &[String],
+    desired: &[String],
+    requested_removals: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let (to_add, mut to_remove) = diff_labels(current, desired);
+    let current_set: HashSet<&str> = current.iter().map(String::as_str).collect();
+    let desired_set: HashSet<&str> = desired.iter().map(String::as_str).collect();
+
+    for label in requested_removals {
+        if current_set.contains(label.as_str())
+            && !desired_set.contains(label.as_str())
+            && !to_remove.contains(label)
+        {
+            to_remove.push(label.clone());
+        }
+    }
+
+    (to_add, to_remove)
+}
+
 fn ship_status_str(s: ShipStatus) -> &'static str {
     match s {
         ShipStatus::NotStarted => "not_started",
@@ -339,6 +367,53 @@ mod tests {
                 format!("{}td", WORKFLOW_LOCK_OWNER_PREFIX),
             ]
         );
+    }
+
+    #[test]
+    fn explicit_diff_removes_requested_unmanaged_label() {
+        let current = vec!["lib:service-backup".into(), "project:service-backup".into()];
+        let desired = vec!["lib:service-backup".into()];
+        let requested = vec!["project:service-backup".into()];
+
+        let (add, remove) = diff_labels_with_explicit_removals(&current, &desired, &requested);
+
+        assert!(add.is_empty());
+        assert_eq!(remove, vec!["project:service-backup"]);
+    }
+
+    #[test]
+    fn explicit_diff_preserves_unrelated_user_labels() {
+        let current = vec![
+            "manual:operator-note".into(),
+            "project:service-backup".into(),
+            "type:bug".into(),
+        ];
+        let desired = vec!["type:bug".into()];
+        let requested = vec!["project:service-backup".into(), "missing".into()];
+
+        let (_, remove) = diff_labels_with_explicit_removals(&current, &desired, &requested);
+
+        assert_eq!(remove, vec!["project:service-backup"]);
+        assert!(!remove.contains(&"manual:operator-note".to_string()));
+    }
+
+    #[test]
+    fn explicit_diff_retains_managed_reconciliation_and_desired_labels() {
+        let current = vec!["phase:td_inited".into(), "type:bug".into()];
+        let desired = vec![
+            "phase:td_applicability_in_progress".into(),
+            "type:bug".into(),
+        ];
+        let requested = vec![
+            "phase:td_inited".into(),
+            "phase:td_applicability_in_progress".into(),
+            "type:bug".into(),
+        ];
+
+        let (add, remove) = diff_labels_with_explicit_removals(&current, &desired, &requested);
+
+        assert_eq!(add, vec!["phase:td_applicability_in_progress"]);
+        assert_eq!(remove, vec!["phase:td_inited"]);
     }
 
     #[test]

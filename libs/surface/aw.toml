@@ -2,7 +2,7 @@
 name = "surface"
 aliases = ["cclab-surface"]
 cap_path = "README.md"
-label = "project:surface"
+label = "lib:surface"
 
 [[workspaces]]
 name = "surface"

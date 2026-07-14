@@ -17,6 +17,11 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/generate/marker.rs` generated from AST during Score force-regeneration standardization.
 
+The Rust lexical fixture mask is shared internally with exact source-unit
+ownership validation. Exposing `rust_marker_fixture_line_mask` as `pub(crate)`
+lets the apply path reject marker-looking text inside Rust string fixtures
+without duplicating the marker parser or broadening the public API.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -54,4 +59,6 @@ changes:
     section: source
     description: |
       Whole-file source template generated from the standardized target body.
+      Issue #1506 shares the Rust marker-fixture mask with exact source-unit
+      owner validation so string literals cannot impersonate ownership.
 ```

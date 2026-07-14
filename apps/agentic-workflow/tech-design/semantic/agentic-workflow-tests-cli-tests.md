@@ -9,6 +9,54 @@ capability_refs:
     claim: cb-lifecycle-dispatch
     coverage: full
     rationale: "CLI tests cover TD/CB lifecycle dispatch, including CB claim and lifecycle command behavior."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-apply-section-lookup-parity
+    claim: td-apply-section-lookup-parity
+    coverage: full
+    rationale: "The in-place real-CLI fixture proves body-only Logic normalization, malformed non-mutation, and sequential applicability Logic to structured Unit Test dispatch."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The in-place real-CLI fixture proves an invalid candidate preserves spec, payload, issue projection/body/phase, and HEAD, then a valid signature/loop LogicSpec replaces stale disk content and dispatches Changes."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: default-td-target-plan-queue
+    claim: default-td-target-plan-queue
+    coverage: full
+    rationale: "The in-place real-CLI fixture applies fresh Logic, Changes, and Unit Test payloads in both passes, checks every projection lock, validates and locks the final TD, then proves aw td gen creates its explicit new target."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: rebased-td-lifecycle-recovery
+    claim: rebased-td-lifecycle-recovery
+    coverage: full
+    rationale: "Real CLI fixtures prove stale rewritten TD history is re-provisioned with a fresh projection, reachable exact Td-Init resumes without reset, and ordinary phase created still provisions."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: committed-td-skeleton-lifecycle
+    claim: committed-td-skeleton-lifecycle
+    coverage: full
+    rationale: "Real CLI fixtures prove fresh, reachable-locked, and rebased skeleton ownership plus fail-closed authored/status/post-gen boundaries and repeat idempotence."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: generated-td-lock-commit-handoff
+    claim: generated-td-lock-commit-handoff
+    coverage: full
+    rationale: "The real default-target lifecycle proves aw td lock adds one exact-path commit with stable trailers, leaves the checkout clean, keeps check/show read-only, and hands directly to aw td gen."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "Real CLI fixtures prove an ambiguous Schema plan is rejected on main before TD branch activation or mutation, while one existing inferred Schema target remains fully generatable on a project branch."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-ec-process-liveness
+    claim: terminal-ec-process-liveness
+    coverage: full
+    rationale: "Real CLI regressions prove bounded no-child wrapper cleanup, pre-mutation timeout refusal, and cross-process same-WI single-flight with one EC launch."
 ---
 
 # Semantic TD: agentic-workflow/tests/cli/tests
@@ -97,6 +145,27 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "test_td_merged_constant_value"
+            kind: "function"
+            public: false
+          - name: "wait_for_1579_path"
+            kind: "function"
+            public: false
+          - name: "wait_for_1579_process_exit"
+            kind: "function"
+            public: false
+          - name: "test_code_check_refuses_configured_red_ec_gate"
+            kind: "function"
+            public: false
+          - name: "test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase"
+            kind: "function"
+            public: false
+          - name: "test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch"
+            kind: "function"
+            public: false
+          - name: "test_code_check_fast_green_stale_reader_rechecks_phase_before_ec"
+            kind: "function"
+            public: false
+          - name: "test_code_check_retry_contends_while_terminal_transition_holds_lease"
             kind: "function"
             public: false
         source_evidence_node:
@@ -327,6 +396,15 @@ semantic_domain:
           - name: "git_status"
             kind: "function"
             public: false
+          - name: "commit_all_with_message"
+            kind: "function"
+            public: false
+          - name: "git_stdout_bytes"
+            kind: "function"
+            public: false
+          - name: "git_log_messages"
+            kind: "function"
+            public: false
           - name: "write_td_review_fixture"
             kind: "function"
             public: false
@@ -337,6 +415,27 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "td_create_on_project_branch_stays_on_current_branch"
+            kind: "function"
+            public: false
+          - name: "td_create_rebased_lifecycle_reprovisions_unreachable_exact_td_init"
+            kind: "function"
+            public: false
+          - name: "td_create_rebased_lifecycle_preserves_reachable_exact_td_init"
+            kind: "function"
+            public: false
+          - name: "td_create_commits_fresh_numeric_skeleton_once"
+            kind: "function"
+            public: false
+          - name: "td_create_recovers_reachable_locked_legacy_skeleton_once"
+            kind: "function"
+            public: false
+          - name: "td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton"
+            kind: "function"
+            public: false
+          - name: "td_create_rejects_authored_tracked_staged_and_sibling_skeleton_states"
+            kind: "function"
+            public: false
+          - name: "td_create_post_gen_and_terminal_phases_reject_untracked_skeleton"
             kind: "function"
             public: false
           - name: "td_create_numeric_id_uses_tracker_id_branch_with_legacy_cache_file"
@@ -352,6 +451,42 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "wi_validate_accepts_apply_dirty_issue_file_on_issue_branch"
+            kind: "function"
+            public: false
+          - name: "td_dispatch_envelope"
+            kind: "function"
+            public: false
+          - name: "run_td_section_apply"
+            kind: "function"
+            public: false
+          - name: "dispatched_payload_path"
+            kind: "function"
+            public: false
+          - name: "assert_td_projection"
+            kind: "function"
+            public: false
+          - name: "td_1598_logic_payload"
+            kind: "function"
+            public: false
+          - name: "td_1598_changes_payload"
+            kind: "function"
+            public: false
+          - name: "td_1598_unit_test_payload"
+            kind: "function"
+            public: false
+          - name: "td_1598_changes_skeleton_body"
+            kind: "function"
+            public: false
+          - name: "td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target"
+            kind: "function"
+            public: false
+          - name: "td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test"
+            kind: "function"
+            public: false
+          - name: "td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation"
+            kind: "function"
+            public: false
+          - name: "td_gen_no_changes_single_inferred_schema_target_remains_compatible"
             kind: "function"
             public: false
         source_evidence_node:
@@ -873,7 +1008,48 @@ semantic_domain:
           - name: "test_cb_claim_non_interactive_writes_spec"
             kind: "function"
             public: false
+          - name: "test_gen_source_projects_legacy_snapshot_and_runs_generated_test"
+            kind: "function"
+            public: false
           - name: "count_md_recursive"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "tests"
+          domain: "apps/agentic-workflow/tests/cli/tests"
+      - path: "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "service_method", "test_case"]
+        symbols:
+          - name: "GhFixtureState"
+            kind: "struct"
+            public: false
+          - name: "gh_fixture"
+            kind: "function"
+            public: false
+          - name: "start_gh_fixture"
+            kind: "function"
+            public: false
+          - name: "write_project"
+            kind: "function"
+            public: false
+          - name: "write_gh_adapter"
+            kind: "function"
+            public: false
+          - name: "run_aw"
+            kind: "function"
+            public: false
+          - name: "wi_close_remote_numeric_rehydrates_reason_and_closes_once"
+            kind: "function"
+            public: false
+          - name: "wi_close_missing_remote_reports_backend_repo_and_recovery_command"
+            kind: "function"
+            public: false
+          - name: "wi_close_local_issue_behavior_is_preserved"
             kind: "function"
             public: false
         source_evidence_node:
@@ -916,6 +1092,7 @@ tests:
       - path: "apps/agentic-workflow/tests/cli/tests/phase_migration_test.rs"
       - path: "apps/agentic-workflow/tests/cli/tests/cb_fill_test.rs"
       - path: "apps/agentic-workflow/tests/cli/tests/cb_claim_test.rs"
+      - path: "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs"
 ```
 
 ## Changes
@@ -935,6 +1112,20 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1579 adds real-binary regressions for a wrapper whose external
+      child has already exited, proving timeout remains bounded, the wrapper
+      is gone, the WI stays open in its pre-terminal phase, no terminal commit
+      lands, and the envelope returns `terminal_ec_timeout` with exact
+      `aw td code-check <slug>` retry guidance. A separate two-process test
+      launches the same slug concurrently and proves the filesystem lock
+      rejects the second caller with `terminal_ec_single_flight` while the EC
+      launch marker records exactly one execution. The debug-only barrier test
+      pauses a process after its initial `cb_filled` read, lets another process
+      finish a fast-green terminal transition, then proves the stale reader
+      re-reads `td_merged` after lease acquisition, skips EC, and leaves both
+      the launch count and terminal commit count at one. A post-phase-update
+      barrier separately proves that a caller beginning in retry phase still
+      contends on the owner's lease and cannot race landing or terminal commit.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/recovery_flow_test.rs"
     action: modify
@@ -1030,6 +1221,54 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1562 adds a deterministic real-CLI fixture with a canonical
+      capability reference and an already-valid Logic plus Unit Test TD. It
+      proves read-only `aw td check` reports zero findings, missing and
+      malformed generic payloads leave the spec byte-identical, body-only
+      Logic restores exactly one typed wrapper, and the initialized queue
+      advances through applicability Unit Test before contract Logic.
+      Issue #1598 adds the fresh default Logic -> Changes -> Unit Test real CLI
+      lifecycle in both applicability and contract passes. It parses each
+      initialized Changes JSON body as an editable target-plan skeleton,
+      applies concrete Logic and Unit Test implementation edges, asserts every
+      current section and payload path in the issue projection (including the
+      first contract Logic lock), runs the final read-only checker, and proves
+      `aw td gen` creates a new explicitly named target with source ownership
+      and contract block refs. Issue #1587 removes the fixture's manual lock
+      commit: real `aw td lock` advances HEAD by exactly one lock-path-only
+      commit with project/path trailers, leaves the checkout clean, keeps
+      `--check` and `--show` read-only, then hands directly to generation.
+      Issue #1602 adds a rewritten-history fixture whose old exact Td-Init is
+      unreachable while a later same-slug lifecycle commit and stale lock
+      survive. Real `aw td create` emits one recovery reset and one fresh init,
+      replaces the old projection with the applicability Logic command and
+      payload, and preserves existing spec/source bytes. Its negative fixture
+      proves a reachable exact init emits neither reset nor second init; the
+      project-branch fixture explicitly covers fresh WI phase `created`.
+      Issue #1580 proves a fresh numeric skeleton is owned by the first
+      queue-start commit and repeat brief calls do not change HEAD. A reachable
+      locked legacy skeleton receives exactly one spec-only recovery commit;
+      an unreachable #1602 lifecycle carries the candidate across Reset and
+      fresh Init before queue start owns it. Real CLI negatives preserve bytes,
+      phase, and history for authored, tracked, staged, untracked/tracked
+      sibling-dirty, reachable `td_created`, post-gen, legacy post-gen, filled,
+      and terminal states.
+      Issue #1586 starts with a stale plain-Mermaid Logic section. It proves an
+      invalid Mermaid Plus candidate fails the complete registry while spec,
+      payload, whole issue projection/body/phase, and HEAD remain byte-identical;
+      a valid LogicSpec containing `signature` and a loop replaces the stale
+      section, removes the consumed payload, and advances current_section to
+      applicability Changes.
+      Issue #1633 invokes `aw td gen` from main while an existing TD branch
+      contains one earlier Logic target followed by two Schema CODEGEN targets.
+      It asserts one stable JSON ambiguity envelope and no stderr duplicate,
+      then compares exact HEAD, symbolic branch, index tree, porcelain-z
+      status, issue bytes, TD ref, spec bytes, and target blobs to prove the
+      complete-plan gate precedes every lifecycle and repository mutation.
+      Its AC4 companion locks and generates a no-Changes Schema TD on a
+      persistent project branch, proving the caller and executor share exact
+      read-only spec-ref inference for one managed target and advance the
+      lifecycle to `cb_genned` after replacing the stale symbol.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify
@@ -1102,6 +1341,18 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1548 adds a real-CLI projection fixture that changes source bytes,
+      runs exactly one uniquely named generated test, proves idempotence and
+      sibling isolation, and rejects an unmatched existing target.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/tests/cli/tests/wi_close_remote_test.rs"
+    action: create
+    section: schema
+    description: |
+      Issue #1551 adds isolated real-CLI coverage for configured-backend
+      numeric close rehydration, explicit repository selection, exactly-once
+      close/reason mutation, actionable missing diagnostics, and preserved
+      local close behavior. Issue #1583 is duplicate reproduction evidence.
     impl_mode: hand-written
   - action: annotate
     section: unit-test

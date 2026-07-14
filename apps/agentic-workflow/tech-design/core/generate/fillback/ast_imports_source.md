@@ -17,6 +17,11 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/fillback/ast.rs` generated from AST during Score force-regeneration standardization.
 
+The analyzer also supplies deterministic top-level byte boundaries for
+lossless source partitioning and standalone single-line AST comment rows for
+language-aware CODEGEN ownership checks. `BTreeSet` keeps those comment rows
+stable across runs.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -45,7 +50,7 @@ Public API manifest for `apps/agentic-workflow/src/fillback/ast.rs` generated fr
 ```rust
 use crate::generate::diagrams::content::logic::{FlowEdge, FlowNode, FlowNodeKind, LogicContent};
 use crate::Result;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use tree_sitter::{Language, Parser, Tree};
 ```
@@ -61,5 +66,7 @@ changes:
     impl_mode: codegen
     replaces:
       - "<handwrite-gap:fillback-ast-imports>"
-    description: "Source template owns fillback AST analysis imports."
+    description: >
+      Source template owns fillback AST analysis imports, including the
+      deterministic comment-row set used by explicit-source ownership checks.
 ```

@@ -93,6 +93,99 @@ impl GitLabBackend {
             .ok_or_else(|| anyhow!("slug:{slug} matched but no iid field"))?;
         Ok(Some(iid))
     }
+
+    /// Persist one issue while honoring removals explicitly authorized by an
+    /// `IssuePatch`. Empty removals retain the conservative full-write rule
+    /// that preserves unmanaged remote labels omitted from `issue`.
+    async fn write_with_explicit_label_removals(
+        &self,
+        issue: &Issue,
+        explicit_remove_labels: &[String],
+    ) -> Result<()> {
+        let iid: u64 = match issue.gitlab_id {
+            Some(n) => n,
+            None => match issue.slug.parse::<u64>() {
+                Ok(n) => n,
+                Err(_) => self.resolve_slug(&issue.slug)?.ok_or_else(|| {
+                    anyhow!(
+                        "GitLabBackend::write: cannot locate issue (slug='{}', no gitlab_id)",
+                        issue.slug
+                    )
+                })?,
+            },
+        };
+
+        // Fetch current for diff.
+        let mut view_args = vec![
+            "issue".to_string(),
+            "view".to_string(),
+            iid.to_string(),
+            "--output".to_string(),
+            "json".to_string(),
+        ];
+        view_args.extend(self.glab_repo_args());
+        let view_out = run_glab(&view_args)?;
+        let view: Value = serde_json::from_str(&view_out)
+            .with_context(|| format!("failed to parse glab view JSON: {}", view_out))?;
+
+        let current_title = view["title"].as_str().unwrap_or("").to_string();
+        let current_body = view["description"].as_str().unwrap_or("").to_string();
+        let current_state_raw = view["state"].as_str().unwrap_or("opened").to_string();
+        let current_labels: Vec<String> = view["labels"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|l| l.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let desired_labels = labels::encode_labels(issue);
+        let (to_add, to_remove) = labels::diff_labels_with_explicit_removals(
+            &current_labels,
+            &desired_labels,
+            explicit_remove_labels,
+        );
+
+        let title_changed = issue.title != current_title;
+        let body_changed = issue.body != current_body;
+        if title_changed || body_changed || !to_add.is_empty() || !to_remove.is_empty() {
+            let mut args = vec!["issue".to_string(), "update".to_string(), iid.to_string()];
+            if title_changed {
+                args.push("--title".into());
+                args.push(issue.title.clone());
+            }
+            if body_changed {
+                args.push("--description".into());
+                args.push(issue.body.clone());
+            }
+            for l in &to_add {
+                args.push("--label".into());
+                args.push(l.clone());
+            }
+            for l in &to_remove {
+                args.push("--unlabel".into());
+                args.push(l.clone());
+            }
+            args.extend(self.glab_repo_args());
+            run_glab(&args)?;
+        }
+
+        // State transitions: glab uses `issue close` / `issue reopen`.
+        let desired_open = matches!(issue.state, IssueState::Open | IssueState::Draft);
+        let currently_open = current_state_raw == "opened";
+        if desired_open && !currently_open {
+            let mut args = vec!["issue".to_string(), "reopen".to_string(), iid.to_string()];
+            args.extend(self.glab_repo_args());
+            run_glab(&args)?;
+        } else if !desired_open && currently_open {
+            let mut args = vec!["issue".to_string(), "close".to_string(), iid.to_string()];
+            args.extend(self.glab_repo_args());
+            run_glab(&args)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -174,85 +267,7 @@ impl IssueBackend for GitLabBackend {
     }
 
     async fn write(&self, issue: &Issue) -> Result<()> {
-        let iid: u64 = match issue.gitlab_id {
-            Some(n) => n,
-            None => match issue.slug.parse::<u64>() {
-                Ok(n) => n,
-                Err(_) => self.resolve_slug(&issue.slug)?.ok_or_else(|| {
-                    anyhow!(
-                        "GitLabBackend::write: cannot locate issue (slug='{}', no gitlab_id)",
-                        issue.slug
-                    )
-                })?,
-            },
-        };
-
-        // Fetch current for diff.
-        let mut view_args = vec![
-            "issue".to_string(),
-            "view".to_string(),
-            iid.to_string(),
-            "--output".to_string(),
-            "json".to_string(),
-        ];
-        view_args.extend(self.glab_repo_args());
-        let view_out = run_glab(&view_args)?;
-        let view: Value = serde_json::from_str(&view_out)
-            .with_context(|| format!("failed to parse glab view JSON: {}", view_out))?;
-
-        let current_title = view["title"].as_str().unwrap_or("").to_string();
-        let current_body = view["description"].as_str().unwrap_or("").to_string();
-        let current_state_raw = view["state"].as_str().unwrap_or("opened").to_string();
-        let current_labels: Vec<String> = view["labels"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|l| l.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let desired_labels = labels::encode_labels(issue);
-        let (to_add, to_remove) = labels::diff_labels(&current_labels, &desired_labels);
-
-        let title_changed = issue.title != current_title;
-        let body_changed = issue.body != current_body;
-        if title_changed || body_changed || !to_add.is_empty() || !to_remove.is_empty() {
-            let mut args = vec!["issue".to_string(), "update".to_string(), iid.to_string()];
-            if title_changed {
-                args.push("--title".into());
-                args.push(issue.title.clone());
-            }
-            if body_changed {
-                args.push("--description".into());
-                args.push(issue.body.clone());
-            }
-            for l in &to_add {
-                args.push("--label".into());
-                args.push(l.clone());
-            }
-            for l in &to_remove {
-                args.push("--unlabel".into());
-                args.push(l.clone());
-            }
-            args.extend(self.glab_repo_args());
-            run_glab(&args)?;
-        }
-
-        // State transitions: glab uses `issue close` / `issue reopen`.
-        let desired_open = matches!(issue.state, IssueState::Open | IssueState::Draft);
-        let currently_open = current_state_raw == "opened";
-        if desired_open && !currently_open {
-            let mut args = vec!["issue".to_string(), "reopen".to_string(), iid.to_string()];
-            args.extend(self.glab_repo_args());
-            run_glab(&args)?;
-        } else if !desired_open && currently_open {
-            let mut args = vec!["issue".to_string(), "close".to_string(), iid.to_string()];
-            args.extend(self.glab_repo_args());
-            run_glab(&args)?;
-        }
-
-        Ok(())
+        self.write_with_explicit_label_removals(issue, &[]).await
     }
 
     // @spec apps/agentic-workflow/tech-design/core/logic/issues-backend.md#R1
@@ -305,7 +320,8 @@ impl IssueBackend for GitLabBackend {
             .await?
             .ok_or_else(|| anyhow!("issue !{} not found", iid))?;
         patch.apply(&mut current);
-        self.write(&current).await?;
+        self.write_with_explicit_label_removals(&current, &patch.remove_labels)
+            .await?;
 
         self.get(&iid.to_string())
             .await?

@@ -1,7 +1,7 @@
 [project]
 name = "build-stamp"
 cap_path = "README.md"
-label = "project:build-stamp"
+label = "lib:build-stamp"
 
 [[workspaces]]
 name = "build-stamp"

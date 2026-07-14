@@ -1,7 +1,7 @@
 [project]
 name = "service-auth"
 cap_path = "README.md"
-label = "project:service-auth"
+label = "lib:service-auth"
 
 [[workspaces]]
 name = "service-auth"

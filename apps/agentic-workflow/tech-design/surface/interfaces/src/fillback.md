@@ -17,11 +17,20 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/cli/fillback.rs` generated from AST during Score force-regeneration standardization.
 
+An explicit Rust, Python, JavaScript, TypeScript, or Go file takes the quiet
+single-file route: it bypasses sibling discovery and directory size ceilings,
+returns artifact paths plus partition/item counts, and emits the exact
+`aw td gen-source --spec ... --target ... --dry-run` handoff. Ambiguous owner
+state is returned as a structured HITL outcome without mutation. Directory
+input keeps the existing human progress stream and terminates with its normal
+`aw td check` handoff.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `run` | apps/agentic-workflow/src/cli/fillback.rs | function | pub | 25 | run(path: Option<&str>, module: Option<&str>, force: bool) -> Result<()> |
+| `FillbackOutcome` | apps/agentic-workflow/src/cli/fillback.rs | struct | pub | 16 |  |
+| `run` | apps/agentic-workflow/src/cli/fillback.rs | function | pub | 44 | run(path: Option<&str>, module: Option<&str>, force: bool, project_name: Option<&str>) -> Result<FillbackOutcome> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -37,11 +46,22 @@ Public API manifest for `apps/agentic-workflow/src/cli/fillback.rs` generated fr
 //!
 
 use crate::fillback::code::{CodeStrategy, CodeStrategyConfig};
-use crate::fillback::ImportStrategy;
+use crate::fillback::{ImportStrategy, SupportedLanguage};
 use crate::Result;
 use anyhow::Context;
 use colored::Colorize;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FillbackOutcome {
+    pub(crate) artifact_paths: Vec<PathBuf>,
+    pub(crate) next_command: Option<String>,
+    pub(crate) requires_hitl: bool,
+    pub(crate) message: String,
+    pub(crate) partition_count: usize,
+    pub(crate) item_count: usize,
+    pub(crate) refreshed_existing: bool,
+}
 
 // Run the fillback command to analyze codebase and generate specs
 ///
@@ -65,15 +85,8 @@ pub async fn run(
     module: Option<&str>,
     force: bool,
     project_name: Option<&str>,
-) -> Result<()> {
+) -> Result<FillbackOutcome> {
     let project_root = crate::find_project_root()?;
-
-    println!("{}", "SDD Fillback".cyan().bold());
-    println!(
-        "{}",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black()
-    );
-    println!();
 
     // Determine source path
     let source_path = if let Some(p) = path {
@@ -87,25 +100,6 @@ pub async fn run(
         anyhow::bail!("Source path does not exist: {}", source_path.display());
     }
 
-    if !source_path.is_dir() {
-        anyhow::bail!("Source path must be a directory: {}", source_path.display());
-    }
-
-    println!(
-        "{}",
-        format!("Source: {}", source_path.display()).bright_black()
-    );
-
-    if let Some(m) = module {
-        println!("{}", format!("Module filter: {}", m).bright_black());
-    }
-
-    if force {
-        println!("{}", "Force mode: will overwrite existing specs".yellow());
-    }
-
-    println!();
-
     let output_dir = resolve_from_source_output_dir(&project_root, path, project_name)?;
 
     // Create strategy with configuration
@@ -118,6 +112,76 @@ pub async fn run(
     };
 
     let strategy = CodeStrategy::with_config(config);
+
+    if source_path.is_file() {
+        let extension = source_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        if SupportedLanguage::from_extension(extension).is_none() {
+            anyhow::bail!(
+                "unsupported explicit source extension `{extension}` for {}",
+                source_path.display()
+            );
+        }
+        let outcome =
+            strategy.import_explicit_source_file(&source_path, &project_root, &output_dir)?;
+        if outcome.requires_hitl {
+            return Ok(FillbackOutcome {
+                artifact_paths: Vec::new(),
+                next_command: None,
+                requires_hitl: true,
+                message: outcome.message,
+                partition_count: 0,
+                item_count: 0,
+                refreshed_existing: false,
+            });
+        }
+
+        let spec_path = outcome
+            .spec_path
+            .expect("successful explicit source fillback always has a spec path");
+        let spec_rel = repo_relative_path(&project_root, &spec_path);
+        let target_rel =
+            repo_relative_path(&project_root, &project_root.join(&outcome.target_path));
+        let next_command = format!(
+            "aw td gen-source --spec {} --target {} --dry-run",
+            shell_quote(&spec_rel),
+            shell_quote(&target_rel),
+        );
+
+        return Ok(FillbackOutcome {
+            artifact_paths: vec![spec_path],
+            next_command: Some(next_command),
+            requires_hitl: false,
+            message: outcome.message,
+            partition_count: outcome.partition_count,
+            item_count: outcome.item_count,
+            refreshed_existing: outcome.refreshed_existing,
+        });
+    }
+
+    // Directory fillback retains its existing human-oriented progress output.
+    // Explicit source-file adoption returns a structured outcome without writing
+    // to stdout so `aw td create --from-source <file>` can emit exactly one
+    // chain-followable JSON envelope from its outer command handler.
+    println!("{}", "SDD Fillback".cyan().bold());
+    println!(
+        "{}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".bright_black()
+    );
+    println!();
+    println!(
+        "{}",
+        format!("Source: {}", source_path.display()).bright_black()
+    );
+    if let Some(m) = module {
+        println!("{}", format!("Module filter: {}", m).bright_black());
+    }
+    if force {
+        println!("{}", "Force mode: will overwrite existing specs".yellow());
+    }
+    println!();
 
     // Execute the strategy (it handles all the steps internally)
     // The change_id parameter is no longer used but kept for trait compatibility
@@ -135,7 +199,35 @@ pub async fn run(
     println!("  2. Edit and enhance specifications as needed");
     println!("  3. Use specs as reference for future changes");
 
-    Ok(())
+    let output_rel = repo_relative_path(&project_root, &output_dir);
+    Ok(FillbackOutcome {
+        artifact_paths: vec![output_dir],
+        next_command: Some(format!("aw td check {}", shell_quote(&output_rel))),
+        requires_hitl: false,
+        message: "fillback specifications written".to_string(),
+        partition_count: 0,
+        item_count: 0,
+        refreshed_existing: false,
+    })
+}
+
+fn repo_relative_path(project_root: &Path, path: &Path) -> String {
+    path.strip_prefix(project_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._/".contains(&byte))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
 }
 
 // Resolve the tech-design output root for `aw td create --from-source`
@@ -261,4 +353,7 @@ changes:
     section: source
     description: |
       Whole-file source template generated from the standardized target body.
+      Issue #1506 adds the supported-language explicit-file route, structured
+      artifact/HITL outcome fields, and exact gen-source handoff while
+      preserving the bounded directory workflow.
 ```

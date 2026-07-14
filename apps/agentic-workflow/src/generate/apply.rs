@@ -13,7 +13,11 @@
 
 // @spec .aw/changes/codegen-td-to-code/groups/codegen-td-to-code-main/specs/sdd-codegen-validation-harness.md#changes
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
+use sha2::{Digest, Sha256};
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 thread_local! {
@@ -69,6 +73,11 @@ pub struct FileApplyResult {
     pub blocks_updated: usize,
     /// True in dry_run mode (no files written).
     pub dry_run: bool,
+    /// True when this Changes entry actually ran its generator for this
+    /// target. Scope/routing/no-generator skips are false even though they
+    /// remain visible in the report; unchanged and dry-run generation are
+    /// still true.
+    pub processed: bool,
 }
 
 /// Apply report for a spec file.
@@ -106,7 +115,7 @@ pub fn run_apply(
     project_root: &Path,
     dry_run: bool,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, project_root, dry_run, None, None, false)
+    run_apply_inner(spec_path, project_root, dry_run, None, None, None, false)
 }
 
 /// Run codegen apply for a spec file, skipping change entries whose targets
@@ -126,6 +135,7 @@ pub fn run_apply_scoped(
         project_root,
         dry_run,
         Some(allowed_target_roots),
+        None,
         None,
         false,
     )
@@ -147,6 +157,7 @@ pub fn run_apply_scoped_sections(
         dry_run,
         Some(allowed_target_roots),
         Some(allowed_sections),
+        None,
         false,
     )
 }
@@ -163,6 +174,7 @@ pub fn run_apply_scoped_targets(
         project_root,
         dry_run,
         Some(allowed_target_roots),
+        None,
         None,
         false,
     )
@@ -185,8 +197,115 @@ pub fn run_apply_scoped_targets_quiet(
         dry_run,
         Some(allowed_target_roots),
         None,
+        None,
         true,
     )
+}
+
+/// Apply exactly one authoritative source-unit entry to exactly one target.
+///
+/// Unlike root-scoped replay, equality (not `starts_with`) defines the target
+/// boundary, non-source entries are excluded, ownership/drift checks run
+/// before any write, and broad sibling/README post-passes are disabled. This
+/// is the narrow execution primitive behind `aw td gen-source` (#1506).
+// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
+pub fn run_apply_exact_source_target(
+    spec_path: &Path,
+    project_root: &Path,
+    dry_run: bool,
+    exact_target: &Path,
+) -> crate::generate::Result<ApplyReport> {
+    validate_exact_apply_path(project_root, spec_path, true)
+        .and_then(|_| validate_exact_apply_path(project_root, exact_target, false))
+        .map_err(crate::generate::GenerateError::InvalidValue)?;
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        None,
+        Some(&["source", "rust-source-unit", "text-source-unit"]),
+        Some(exact_target),
+        false,
+    )
+}
+
+fn validate_exact_apply_path(
+    root: &Path,
+    candidate: &Path,
+    must_exist: bool,
+) -> Result<(), String> {
+    let relative = candidate.strip_prefix(root).map_err(|_| {
+        format!(
+            "exact apply path `{}` is outside repository root `{}`",
+            candidate.display(),
+            root.display()
+        )
+    })?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!(
+            "exact apply path `{}` must be a normalized repository-relative file path",
+            relative.display()
+        ));
+    }
+    let mut component_path = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(segment) = component else {
+            unreachable!("relative components were validated above");
+        };
+        component_path.push(segment);
+        match std::fs::symlink_metadata(&component_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "exact apply path `{}` contains symlink component `{}`",
+                    candidate.display(),
+                    component_path.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect exact apply path component `{}`: {error}",
+                    component_path.display()
+                ));
+            }
+        }
+    }
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("failed to canonicalize repository root: {error}"))?;
+    if must_exist && !candidate.is_file() {
+        return Err(format!(
+            "exact apply input `{}` is not an existing file",
+            candidate.display()
+        ));
+    }
+    let mut existing = candidate;
+    while !existing.exists() {
+        existing = existing.parent().ok_or_else(|| {
+            format!(
+                "exact apply path `{}` has no existing parent",
+                candidate.display()
+            )
+        })?;
+    }
+    let canonical_existing = existing.canonicalize().map_err(|error| {
+        format!(
+            "failed to canonicalize exact apply path ancestor `{}`: {error}",
+            existing.display()
+        )
+    })?;
+    if !canonical_existing.starts_with(&canonical_root) {
+        return Err(format!(
+            "exact apply path `{}` escapes the repository through a symlink",
+            candidate.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Run apply scoped to a worktree path.
@@ -197,7 +316,7 @@ pub fn run_apply_worktree(
     spec_path: &Path,
     worktree: &Path,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, worktree, false, None, None, false)
+    run_apply_inner(spec_path, worktree, false, None, None, None, false)
 }
 
 fn run_apply_inner(
@@ -206,6 +325,7 @@ fn run_apply_inner(
     dry_run: bool,
     allowed_target_roots: Option<&[PathBuf]>,
     allowed_sections: Option<&[&str]>,
+    exact_target: Option<&Path>,
     quiet: bool,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
@@ -221,6 +341,19 @@ fn run_apply_inner(
 
     let spec_content =
         std::fs::read_to_string(spec_path).map_err(|e| crate::generate::GenerateError::Io(e))?;
+
+    // Partition integrity is a whole-apply preflight, not an entry-local
+    // generator check: a malformed later source entry must fail before an
+    // earlier Changes entry can write, and source-backed replay must not bypass
+    // the manifest decoder (#1506).
+    let partitioned_source = decode_partitioned_source(&spec_content)
+        .map_err(crate::generate::GenerateError::InvalidValue)?;
+    // Typed source-unit ownership is a structural contract, not a substring
+    // hint.  Validate it before walking Changes so duplicate/conflicting
+    // annotations (or annotation-looking text inside a payload fence) cannot
+    // select whole-file generation and then fail after an earlier write.
+    let typed_source_unit = typed_source_unit_kind(&spec_content)
+        .map_err(crate::generate::GenerateError::InvalidValue)?;
 
     // Use path relative to root for SPEC-REF markers (avoids absolute worktree paths)
     let spec_path_str = spec_path
@@ -262,6 +395,45 @@ fn run_apply_inner(
         );
     }
 
+    if let Some(partitioned) = partitioned_source.as_ref() {
+        validate_partitioned_source_targets(partitioned, &change_entries)
+            .map_err(crate::generate::GenerateError::InvalidValue)?;
+    }
+    let validated_exact_source = if let Some(exact_target) = exact_target {
+        Some(
+            validate_exact_source_request(&spec_content, &spec_path_str, root, exact_target)
+                .map_err(crate::generate::GenerateError::InvalidValue)?,
+        )
+    } else {
+        None
+    };
+    if let Some(validated) = validated_exact_source
+        .as_ref()
+        .filter(|validated| validated.authoritative_embedded_snapshot)
+    {
+        change_entries = change_entries
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                (index == validated.selected_change_index).then_some(entry)
+            })
+            .collect();
+    }
+
+    // Build and validate the complete selected Changes plan before walking
+    // even its first entry. In particular, a valid earlier target must not be
+    // written before a later Schema/CLI group reveals that whole-section
+    // output has more than one CODEGEN destination (#1633).
+    validate_ambiguous_generation_plan(
+        &spec_content,
+        root,
+        &change_entries,
+        allowed_target_roots,
+        allowed_sections,
+        exact_target,
+        None,
+    )?;
+
     // Neither legacy Changes metadata nor codebase refs produced a target.
     // Inference (`infer_change_entries_from_existing_spec_refs`) can only
     // discover files that ALREADY carry a matching `@spec`/CODEGEN
@@ -301,8 +473,10 @@ fn run_apply_inner(
     // this, a virgin file with no markers would be duplicated.
     let source_from_target_replays_whole_file = source_from_target_directive(&spec_content)
         .is_some()
-        || source_is_rust_source_unit(&spec_content)
-        || source_is_text_source_unit(&spec_content);
+        || typed_source_unit.is_some()
+        || validated_exact_source
+            .as_ref()
+            .is_some_and(|validated| validated.authoritative_embedded_snapshot);
     let whole_file_source_targets: std::collections::BTreeSet<String> = all_entries
         .iter()
         .filter(|entry| {
@@ -318,6 +492,21 @@ fn run_apply_inner(
 
     for entry in change_entries {
         let target_path = root.join(&entry.path);
+        if exact_target.is_some_and(|exact| target_path != exact) {
+            apply_diagnostic!(
+                "[gen apply] SKIP: '{}' is not the exact requested source target",
+                entry.path,
+            );
+            files.push(FileApplyResult {
+                path: PathBuf::from(&entry.path),
+                created: false,
+                updated: false,
+                blocks_updated: 0,
+                dry_run,
+                processed: false,
+            });
+            continue;
+        }
         if let Some(allowed_roots) = allowed_target_roots {
             if !allowed_roots
                 .iter()
@@ -333,6 +522,7 @@ fn run_apply_inner(
                     updated: false,
                     blocks_updated: 0,
                     dry_run,
+                    processed: false,
                 });
                 continue;
             }
@@ -351,6 +541,7 @@ fn run_apply_inner(
                     updated: false,
                     blocks_updated: 0,
                     dry_run,
+                    processed: false,
                 });
                 continue;
             }
@@ -381,6 +572,7 @@ fn run_apply_inner(
                 updated: false,
                 blocks_updated: 0,
                 dry_run,
+                processed: false,
             });
             continue;
         }
@@ -486,6 +678,7 @@ fn run_apply_inner(
                 updated,
                 blocks_updated: 0,
                 dry_run,
+                processed: created || updated,
             });
             continue;
         }
@@ -514,6 +707,7 @@ fn run_apply_inner(
                 updated: false,
                 blocks_updated: 0,
                 dry_run,
+                processed: false,
             });
             continue;
         };
@@ -549,6 +743,7 @@ fn run_apply_inner(
                 updated: false,
                 blocks_updated: 0,
                 dry_run,
+                processed: false,
             });
             continue;
         }
@@ -559,7 +754,15 @@ fn run_apply_inner(
             entry.section_id.as_deref().unwrap_or("changes")
         );
         let existing_blocks = if existed {
-            parse_codegen_blocks(&file_content)
+            if matches!(
+                entry.section_id.as_deref(),
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            ) {
+                parse_source_codegen_blocks(&target_path, &file_content)
+                    .map_err(crate::generate::GenerateError::InvalidValue)?
+            } else {
+                parse_codegen_blocks(&file_content)
+            }
         } else {
             Vec::new()
         };
@@ -587,6 +790,7 @@ fn run_apply_inner(
                 updated: false,
                 blocks_updated: 0,
                 dry_run,
+                processed: false,
             });
             continue;
         }
@@ -622,12 +826,21 @@ fn run_apply_inner(
                     crate::generate::gen::rust::tests_gen::generate_e2e_tests(&spec_content).code
                 }
                 Some("source" | "rust-source-unit" | "text-source-unit") => {
-                    generate_source_section_code(
-                        &spec_content,
-                        &spec_path_str,
-                        Some(&entry.path),
-                        root,
-                    )
+                    if validated_exact_source
+                        .as_ref()
+                        .is_some_and(|validated| validated.authoritative_embedded_snapshot)
+                    {
+                        extract_authoritative_source_snapshot(&spec_content)
+                            .map_err(crate::generate::GenerateError::InvalidValue)?
+                    } else {
+                        try_generate_source_section_code(
+                            &spec_content,
+                            &spec_path_str,
+                            Some(&entry.path),
+                            root,
+                        )
+                        .map_err(crate::generate::GenerateError::InvalidValue)?
+                    }
                 }
                 Some("runtime-image" | "deployment") => {
                     let section = entry.section_id.as_deref().unwrap_or("changes");
@@ -659,6 +872,13 @@ fn run_apply_inner(
             let matching_block = blocks.iter().find(|b| b.spec_ref == spec_ref);
             let duplicate_matching_blocks =
                 blocks.iter().filter(|b| b.spec_ref == spec_ref).count() > 1;
+            let generated_fallback = generated_codegen_body(
+                &generated_code,
+                &spec_ref,
+                &target_path,
+                entry.section_id.as_deref(),
+            )
+            .map_err(crate::generate::GenerateError::InvalidValue)?;
             let generated_body = if let Some(existing_block) = matching_block {
                 if supports_source_backed_replay_for_spec(
                     &entry.path,
@@ -666,12 +886,12 @@ fn run_apply_inner(
                     &spec_path_str,
                 ) {
                     source_backed_existing_content(&existing_block.content, target_lang)
-                        .unwrap_or_else(|| generated_codegen_body(&generated_code, &spec_ref))
+                        .unwrap_or_else(|| generated_fallback.clone())
                 } else {
-                    generated_codegen_body(&generated_code, &spec_ref)
+                    generated_fallback
                 }
             } else {
-                generated_codegen_body(&generated_code, &spec_ref)
+                generated_fallback
             };
             let prepared_codegen = prepare_codegen_body_for_target(
                 &target_path,
@@ -682,6 +902,26 @@ fn run_apply_inner(
 
             if let Some(existing_block) = matching_block {
                 if is_whole_file_codegen_section(
+                    entry.section_id.as_deref(),
+                    source_from_target_replays_whole_file,
+                ) && entry.replaces.is_empty()
+                    && entry.action == "modify"
+                    && is_whole_file_codegen_content(&file_content, &blocks)
+                {
+                    // Whole-file source ownership includes the optional
+                    // shebang outside the CODEGEN block. Rebuild the complete
+                    // managed target so adding, changing, or removing a TD
+                    // shebang is reflected at line one instead of updating
+                    // only the inner marker body (#1506).
+                    let with_block = insert_codegen_block_for_target(
+                        "",
+                        &spec_ref,
+                        &prepared_codegen,
+                        target_lang,
+                    );
+                    let blocks_updated = usize::from(with_block != file_content);
+                    (with_block, blocks_updated)
+                } else if is_whole_file_codegen_section(
                     entry.section_id.as_deref(),
                     source_from_target_replays_whole_file,
                 ) && entry.replaces.is_empty()
@@ -733,7 +973,14 @@ fn run_apply_inner(
                 && entry.replaces.is_empty()
                 && entry.action == "modify"
             {
-                (file_content.clone(), 0)
+                return Err(crate::generate::GenerateError::InvalidValue(format!(
+                    "target `{}` already has whole-file CODEGEN ownership by `{}`; refusing to replace it from `{spec_ref}`",
+                    entry.path,
+                    blocks
+                        .first()
+                        .map(|block| block.spec_ref.as_str())
+                        .unwrap_or("unknown owner"),
+                )));
             } else if is_whole_file_codegen_content(&file_content, &blocks)
                 && entry_promotes_whole_file(&entry)
                 && entry.action == "modify"
@@ -819,7 +1066,13 @@ fn run_apply_inner(
                 spec_path_str,
                 entry.section_id.as_deref().unwrap_or("changes")
             );
-            let generated_body = generated_codegen_body(&generated_code, &spec_ref);
+            let generated_body = generated_codegen_body(
+                &generated_code,
+                &spec_ref,
+                &target_path,
+                entry.section_id.as_deref(),
+            )
+            .map_err(crate::generate::GenerateError::InvalidValue)?;
             let prepared_codegen = prepare_codegen_body_for_target(
                 &target_path,
                 entry.section_id.as_deref(),
@@ -839,6 +1092,10 @@ fn run_apply_inner(
         let changed = !existed || updated_content != file_content;
 
         if !dry_run && changed {
+            if let Some(validated) = validated_exact_source.as_ref() {
+                ensure_exact_target_snapshot_unchanged(validated)
+                    .map_err(crate::generate::GenerateError::InvalidValue)?;
+            }
             if let Some(parent) = target_path.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| crate::generate::GenerateError::Io(e))?;
@@ -853,16 +1110,17 @@ fn run_apply_inner(
             updated: changed,
             blocks_updated,
             dry_run,
+            processed: true,
         });
     }
 
     // Post-pass: dedupe `use` statements across CODEGEN blocks in the same file.
     // Each generator emits imports inside its own block; at module scope that
     // produces E0252 (name defined multiple times). Keep the first occurrence.
-    if !dry_run {
+    if !dry_run && exact_target.is_none() {
         let mut unique_paths: std::collections::BTreeSet<PathBuf> =
             std::collections::BTreeSet::new();
-        for f in &files {
+        for f in files.iter().filter(|file| file.processed) {
             unique_paths.insert(root.join(&f.path));
         }
         for path in &unique_paths {
@@ -881,7 +1139,7 @@ fn run_apply_inner(
     // update two CODEGEN blocks — `mamba-mod-decls` at crate root with
     // `pub mod X;` and `mamba-register-body` inside the register() body with
     // `X::register(r);`.
-    if !dry_run {
+    if !dry_run && exact_target.is_none() {
         let generated_paths: Vec<PathBuf> = files
             .iter()
             .filter(|f| f.updated)
@@ -896,14 +1154,13 @@ fn run_apply_inner(
     }
 
     // R5: Write the ephemeral codegen marker inventory with all emitted SPEC-REF markers
-    if !dry_run {
+    if !dry_run && exact_target.is_none() {
         write_markers_yaml(root, &files)?;
     }
 
-    Ok(ApplyReport {
-        files,
-        wrote_files: !dry_run,
-    })
+    let wrote_files = !dry_run && files.iter().any(|file| file.processed && file.updated);
+
+    Ok(ApplyReport { files, wrote_files })
 }
 
 fn is_whole_file_codegen_section(
@@ -935,13 +1192,169 @@ fn is_whole_file_codegen_content(
         .unwrap_or(&[])
         .iter()
         .enumerate()
-        .all(|(idx, line)| line.trim().is_empty() || (idx == 0 && line.starts_with("#!")));
+        .all(|(idx, line)| line.trim().is_empty() || (idx == 0 && is_unix_shebang(line)));
     let after = lines
         .get(block.end_line + 1..)
         .unwrap_or(&[])
         .iter()
         .all(|line| line.trim().is_empty());
     before && after
+}
+
+pub(crate) fn parse_source_codegen_blocks(
+    path: &Path,
+    content: &str,
+) -> Result<Vec<crate::generate::marker::CodegenBlock>, String> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let marker_rows = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(row, line)| is_source_ownership_marker(line.trim()).then_some(row))
+        .collect::<std::collections::BTreeSet<_>>();
+    if marker_rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    // AW's own whole-file wrapper is self-delimiting even when the selected
+    // payload is intentionally parse-incomplete. Recognize only the exact
+    // canonical prefix/suffix shape; this keeps deterministic fallback source
+    // regenerable without weakening partial/foreign marker handling. Owner
+    // and target equality are still checked by the caller's exact preflight.
+    if let Some(block) = canonical_whole_file_source_block(path, content) {
+        return Ok(vec![block]);
+    }
+    let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+        return Err(format!(
+            "cannot classify source ownership markers without a supported extension: {}",
+            path.display()
+        ));
+    };
+    let Some(language) = crate::fillback::SupportedLanguage::from_extension(extension) else {
+        return Err(format!(
+            "cannot classify source ownership markers for unsupported extension: {}",
+            path.display()
+        ));
+    };
+    let mut analyzer = crate::fillback::AstAnalyzer::new()
+        .map_err(|error| format!("failed to initialize source ownership parser: {error}"))?;
+    let mut eligible_rows = analyzer
+        .comment_line_numbers(path, content)
+        .map_err(|error| {
+            format!(
+                "source ownership markers are ambiguous because {} did not parse completely: {}",
+                path.display(),
+                error.reason
+            )
+        })?;
+    if language == crate::fillback::SupportedLanguage::Rust {
+        let raw_mask = crate::generate::marker::rust_raw_string_line_mask(content);
+        let fixture_mask = crate::generate::marker::rust_marker_fixture_line_mask(content);
+        eligible_rows.retain(|row| {
+            !raw_mask.get(*row).copied().unwrap_or(false)
+                && !fixture_mask.get(*row).copied().unwrap_or(false)
+        });
+    }
+    let mut masked = lines
+        .iter()
+        .enumerate()
+        .map(|(row, line)| {
+            if eligible_rows.contains(&row) {
+                *line
+            } else {
+                ""
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if content.ends_with('\n') {
+        masked.push('\n');
+    }
+    let mut blocks = crate::generate::marker::parse_codegen_blocks(&masked);
+    let mut consumed = std::collections::BTreeSet::new();
+    for block in &mut blocks {
+        consumed.insert(block.begin_line);
+        consumed.insert(block.end_line);
+        if block.begin_line > 0 && is_source_spec_managed_marker(lines[block.begin_line - 1].trim())
+        {
+            consumed.insert(block.begin_line - 1);
+        }
+        block.content = lines[block.begin_line + 1..block.end_line].join("\n");
+    }
+    let unconsumed = eligible_rows
+        .intersection(&marker_rows)
+        .filter(|row| !consumed.contains(row))
+        .copied()
+        .collect::<Vec<_>>();
+    if !unconsumed.is_empty() {
+        return Err(format!(
+            "unmatched or ambiguous source ownership marker(s) on line(s) {}",
+            unconsumed
+                .iter()
+                .map(|row| (row + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    Ok(blocks)
+}
+
+fn canonical_whole_file_source_block(
+    path: &Path,
+    content: &str,
+) -> Option<crate::generate::marker::CodegenBlock> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())?
+        .to_ascii_lowercase();
+    let comment = match extension.as_str() {
+        "py" => "# ",
+        "rs" | "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "go" => "// ",
+        _ => return None,
+    };
+    let spec_index = usize::from(lines.first().is_some_and(|line| is_unix_shebang(line)));
+    let spec_line = *lines.get(spec_index)?;
+    let spec_prefix = format!("{comment}SPEC-MANAGED: ");
+    let spec_ref = spec_line.strip_prefix(&spec_prefix)?;
+    if spec_ref.is_empty() || spec_ref.trim() != spec_ref {
+        return None;
+    }
+    let begin_line = spec_index + 1;
+    if lines.get(begin_line).copied()? != format!("{comment}CODEGEN-BEGIN") {
+        return None;
+    }
+    let end_line = lines.len().checked_sub(1)?;
+    if end_line <= begin_line || lines.get(end_line).copied()? != format!("{comment}CODEGEN-END") {
+        return None;
+    }
+    Some(crate::generate::marker::CodegenBlock {
+        spec_ref: spec_ref.to_string(),
+        content: lines[begin_line + 1..end_line].join("\n"),
+        begin_line,
+        end_line,
+    })
+}
+
+fn is_source_ownership_marker(line: &str) -> bool {
+    is_source_spec_managed_marker(line)
+        || matches!(
+            line,
+            "// CODEGEN-BEGIN"
+                | "# CODEGEN-BEGIN"
+                | "<!-- CODEGEN-BEGIN -->"
+                | "// CODEGEN-END"
+                | "# CODEGEN-END"
+                | "<!-- CODEGEN-END -->"
+        )
+}
+
+fn is_source_spec_managed_marker(line: &str) -> bool {
+    line.starts_with("// SPEC-MANAGED: ")
+        || line.starts_with("# SPEC-MANAGED: ")
+        || (line.starts_with("<!-- SPEC-MANAGED: ") && line.ends_with(" -->"))
+}
+
+pub(crate) fn is_unix_shebang(line: &str) -> bool {
+    line.starts_with("#!/") || line.starts_with("#! /")
 }
 
 fn is_whole_file_handwrite_content(content: &str) -> bool {
@@ -1761,6 +2174,137 @@ pub fn is_all_hand_written(spec_content: &str) -> bool {
         && entries
             .iter()
             .all(|e| matches!(e.impl_mode, ImplMode::HandWritten))
+}
+
+/// Read-only generation-plan validation shared by the public TD lifecycle
+/// caller and the apply executor. The caller uses it before issue hydration or
+/// branch activation; the executor repeats it over its final inferred/scoped
+/// entry set immediately before writes. Keeping one predicate prevents the
+/// lifecycle and executor safety boundaries from drifting.
+///
+/// Until canonical per-unit `generates:` ownership lands (#1634), more than
+/// one selected CODEGEN target for a Schema or CLI section is ambiguous. A
+/// HANDWRITE sibling is not a generated destination and therefore remains a
+/// valid mixed plan.
+/// @spec apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#logic
+pub(crate) fn preflight_generation_plan(
+    spec_content: &str,
+    spec_path: &Path,
+    root: &Path,
+    rerun_command: &str,
+) -> crate::generate::Result<()> {
+    let mut change_entries = extract_change_entries(spec_content);
+    if change_entries.is_empty() {
+        // Target inference is read-only: it scans existing managed source for
+        // exact `<spec>#<section>` ownership refs without creating paths or
+        // following symlinks. Use the same inference primitive as the executor
+        // so an established single-target Schema/CLI TD remains admissible.
+        let td_ast = crate::td_ast::parse::parse_td_str(spec_content).ok();
+        change_entries = infer_change_entries_from_existing_spec_refs(
+            root,
+            spec_path,
+            td_ast.as_ref(),
+            spec_content,
+            None,
+        );
+    }
+    let has_shared_section = ["schema", "cli"].iter().any(|section| {
+        section_ids_from_type_annotations(spec_content)
+            .iter()
+            .any(|id| id == section)
+            || extract_section_yaml(
+                spec_content,
+                if *section == "schema" {
+                    "Schema"
+                } else {
+                    "CLI"
+                },
+            )
+            .is_some()
+    });
+    if change_entries.is_empty() && has_shared_section {
+        return Err(crate::generate::GenerateError::GenerationPlanUnavailable {
+            spec_path: spec_path.display().to_string(),
+            remediation: format!(
+                "no existing managed target with an exact spec/section reference was inferred; add a typed `## Changes` section with explicit target paths, then rerun `{rerun_command}`"
+            ),
+            next_command: rerun_command.to_string(),
+        });
+    }
+    validate_ambiguous_generation_plan(
+        spec_content,
+        root,
+        &change_entries,
+        None,
+        None,
+        None,
+        Some(rerun_command),
+    )
+}
+
+fn validate_ambiguous_generation_plan(
+    spec_content: &str,
+    root: &Path,
+    entries: &[ChangeEntry],
+    allowed_target_roots: Option<&[PathBuf]>,
+    allowed_sections: Option<&[&str]>,
+    exact_target: Option<&Path>,
+    rerun_command: Option<&str>,
+) -> crate::generate::Result<()> {
+    for section in ["schema", "cli"] {
+        let section_present = entries
+            .iter()
+            .any(|entry| entry.section_id.as_deref() == Some(section))
+            || section_ids_from_type_annotations(spec_content)
+                .iter()
+                .any(|id| id == section)
+            || extract_section_yaml(
+                spec_content,
+                if section == "schema" { "Schema" } else { "CLI" },
+            )
+            .is_some();
+        if !section_present {
+            continue;
+        }
+
+        let targets: std::collections::BTreeSet<String> = entries
+            .iter()
+            .filter(|entry| {
+                matches!(entry.action.as_str(), "create" | "modify")
+                    && entry.impl_mode == ImplMode::Codegen
+                    // `rust_source` is an entry-local whole-file generator; it
+                    // never consumes the shared Schema/CLI section IR.
+                    && entry.rust_source.is_none()
+                    && entry
+                        .section_id
+                        .as_deref()
+                        .is_none_or(|id| id == section)
+                    && allowed_sections.is_none_or(|allowed| allowed.contains(&section))
+                    && exact_target.is_none_or(|exact| root.join(&entry.path) == exact)
+                    && allowed_target_roots.is_none_or(|roots| {
+                        roots
+                            .iter()
+                            .any(|allowed_root| root.join(&entry.path).starts_with(allowed_root))
+                    })
+            })
+            .map(|entry| entry.path.clone())
+            .collect();
+
+        if targets.len() > 1 {
+            return Err(crate::generate::GenerateError::AmbiguousGenerationPlan {
+                section: section.to_string(),
+                targets: targets.into_iter().collect(),
+                remediation: format!(
+                    "edit `## Changes` so exactly one `{section}` target uses `impl_mode: codegen` and mark every other `{section}` target `impl_mode: hand-written`, then rerun {}; multiple generated targets require canonical `generates:` unit ownership from WI #1634",
+                    rerun_command
+                        .map(|command| format!("`{command}`"))
+                        .unwrap_or_else(|| "the same `aw td gen` command".to_string())
+                ),
+                next_command: rerun_command.unwrap_or("aw td gen").to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -3026,6 +3570,790 @@ fn write_markers_yaml(root: &Path, files: &[FileApplyResult]) -> crate::generate
 mod tests {
     use super::*;
 
+    fn partitioned_test_spec(source: &str, source_lang: &str, target: &str) -> String {
+        let chunks = crate::fillback::code::canonical_source_partition_plan(source, source_lang)
+            .expect("canonical test partition plan");
+        partitioned_test_spec_with_plan(source, source_lang, target, &chunks)
+    }
+
+    fn partitioned_test_spec_with_plan(
+        source: &str,
+        source_lang: &str,
+        target: &str,
+        chunks: &[(String, String)],
+    ) -> String {
+        let count = chunks.len();
+        let section_type = if source_lang == "rust" {
+            "rust-source-unit"
+        } else {
+            "text-source-unit"
+        };
+        let fence_lang = if source_lang == "rust" {
+            "rust"
+        } else {
+            "bash"
+        };
+        let whole_digest = partition_sha256(source.as_bytes());
+        let mut spec = format!(
+            "---\nid: partition-test\nfill_sections: [{section_type}, changes]\n---\n\n# Partition Test\n\n## Source\n<!-- type: {section_type} lang: {fence_lang} -->\n<!-- aw-source-partitions: version=1 count={count} max_bytes={} max_payload_bytes={} encoding=base64 source_lang={source_lang} digest={whole_digest} -->\n\n```{fence_lang}\n// AW source partition manifest v1: {count} ordered {source_lang} chunks, max {} decoded / {} encoded bytes, digest {whole_digest}\n```\n\n",
+            RUST_SOURCE_PARTITION_MAX_BYTES,
+            RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES,
+            RUST_SOURCE_PARTITION_MAX_BYTES,
+            RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES,
+        );
+        for (idx, (chunk, boundary)) in chunks.iter().enumerate() {
+            let index = idx + 1;
+            let payload = encode_source_partition_payload(chunk.as_bytes());
+            spec.push_str(&format!(
+                "### Source Partition {index:04}\n<!-- aw-source-partition: index={index} count={count} bytes={} payload_bytes={} encoding=base64 digest={} boundary={boundary} terminal_newline={} -->\n\n```text\n{payload}\n```\n\n",
+                chunk.len(),
+                payload.len(),
+                partition_sha256(chunk.as_bytes()),
+                chunk.ends_with('\n'),
+            ));
+        }
+        spec.push_str(&format!(
+            "## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {target}\n    action: modify\n    section: {section_type}\n    impl_mode: codegen\n```\n"
+        ));
+        spec
+    }
+
+    fn legacy_source_snapshot_test_spec(
+        snapshot: &str,
+        snapshot_path: &str,
+        changes_yaml: &str,
+    ) -> String {
+        format!(
+            "---\nid: legacy-snapshot-test\nfill_sections: [overview, changes]\n---\n\n# Legacy Snapshot Test\n\n## Overview\n<!-- type: overview lang: markdown -->\n\nExact legacy snapshot projection fixture.\n\n## Source\n<!-- type: source lang: rust -->\n<!-- source-from-target: strip-handwrite -->\n\n<!-- source-snapshot: path={snapshot_path} -->\n```rust\n{snapshot}```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n{changes_yaml}```\n"
+        )
+    }
+
+    #[test]
+    fn partition_decoder_rejects_every_structural_and_integrity_corruption() {
+        let source = (0..2_500)
+            .map(|idx| format!("export function item_{idx}(value) {{ return value + {idx}; }}\n"))
+            .collect::<String>();
+        let valid = partitioned_test_spec(&source, "javascript", "src/demo.js");
+        let decoded = decode_partitioned_source(&valid)
+            .expect("valid manifest")
+            .expect("partition protocol active");
+        assert_eq!(decoded.source, source);
+        assert_eq!(decoded.source_lang, "javascript");
+
+        let canonical =
+            crate::fillback::code::canonical_source_partition_plan(&source, "javascript").unwrap();
+        assert!(canonical.len() > 1);
+        let first_chunk = canonical[0].0.as_str();
+        let count = canonical.len();
+        let first_digest = partition_sha256(first_chunk.as_bytes());
+        let whole_digest = partition_sha256(source.as_bytes());
+        let bogus_digest = format!("sha256:{}", "0".repeat(64));
+        let first_meta = valid
+            .lines()
+            .find(|line| line.starts_with("<!-- aw-source-partition: index=1 "))
+            .unwrap();
+
+        let mut reordered = valid.replace("Source Partition 0001", "Source Partition TEMP");
+        reordered = reordered.replace("Source Partition 0002", "Source Partition 0001");
+        reordered = reordered.replace("Source Partition TEMP", "Source Partition 0002");
+        let corruptions = vec![
+            (
+                "missing-heading",
+                valid.replacen("### Source Partition 0001\n", "", 1),
+            ),
+            (
+                "duplicate-heading-metadata",
+                valid.replacen(first_meta, &format!("{first_meta}\n{first_meta}"), 1),
+            ),
+            ("reordered-heading", reordered),
+            (
+                "reordered-metadata",
+                valid.replacen(
+                    &format!("index=1 count={count}"),
+                    &format!("index=2 count={count}"),
+                    1,
+                ),
+            ),
+            (
+                "oversize-decoded-bound",
+                valid.replacen(
+                    &format!("bytes={}", first_chunk.len()),
+                    &format!("bytes={}", RUST_SOURCE_PARTITION_MAX_BYTES + 1),
+                    1,
+                ),
+            ),
+            (
+                "oversize-payload-bound",
+                valid.replacen(
+                    &format!(
+                        "payload_bytes={}",
+                        encode_source_partition_payload(first_chunk.as_bytes()).len()
+                    ),
+                    &format!(
+                        "payload_bytes={}",
+                        RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES + 1
+                    ),
+                    1,
+                ),
+            ),
+            (
+                "chunk-digest",
+                valid.replacen(&first_digest, &bogus_digest, 1),
+            ),
+            ("whole-digest", valid.replace(&whole_digest, &bogus_digest)),
+            ("orphan-controls", valid.replacen("## Source", "## Sources", 1)),
+            (
+                "missing-source-type",
+                valid.replacen(
+                    "<!-- type: text-source-unit lang: bash -->\n",
+                    "",
+                    1,
+                ),
+            ),
+            (
+                "duplicate-source-type",
+                valid.replacen(
+                    "<!-- type: text-source-unit lang: bash -->",
+                    "<!-- type: text-source-unit lang: bash -->\n<!-- type: text-source-unit lang: bash -->",
+                    1,
+                ),
+            ),
+            (
+                "duplicate-source-section",
+                format!("{valid}\n## Source\n<!-- type: text-source-unit lang: bash -->\n"),
+            ),
+            (
+                "missing-sentinel",
+                valid
+                    .lines()
+                    .filter(|line| {
+                        !line
+                            .trim()
+                            .starts_with("// AW source partition manifest v1:")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        ];
+        for (name, corrupted) in corruptions {
+            assert!(
+                decode_partitioned_source(&corrupted).is_err(),
+                "{name} must fail closed"
+            );
+        }
+
+        let mut noncanonical_plan = canonical.clone();
+        let moved = noncanonical_plan[1].0.remove(0);
+        noncanonical_plan[0].0.push(moved);
+        let digest_consistent_mid_token = partitioned_test_spec_with_plan(
+            &source,
+            "javascript",
+            "src/demo.js",
+            &noncanonical_plan,
+        );
+        let error = decode_partitioned_source(&digest_consistent_mid_token).unwrap_err();
+        assert!(
+            error.contains("canonical deterministic partition plan"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn partition_decoder_rejects_language_target_mismatch() {
+        let source = "export const answer = 42;\n";
+        let spec = partitioned_test_spec(source, "javascript", "src/answer.js");
+        let error = try_generate_source_section_code(
+            &spec,
+            "tech-design/answer.md",
+            Some("src/answer.py"),
+            Path::new("."),
+        )
+        .unwrap_err();
+        assert!(error.contains("language mismatch"), "{error}");
+    }
+
+    #[test]
+    fn partition_preflight_rejects_before_any_changes_entry_can_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/demo.md");
+        let first_target = root.join("Cargo.toml");
+        let source_target = root.join("src/demo.py");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(source_target.parent().unwrap()).unwrap();
+        std::fs::write(&first_target, "[package]\nname = \"unchanged\"\n").unwrap();
+        std::fs::write(&source_target, "print('unchanged')\n").unwrap();
+
+        let source = "print('selected')\n";
+        let mut corrupted = partitioned_test_spec(source, "python", "src/demo.py");
+        corrupted = corrupted.replacen(
+            "changes:\n",
+            "changes:\n  - path: Cargo.toml\n    action: modify\n    section: manifest\n    impl_mode: codegen\n",
+            1,
+        );
+        let first_chunk = crate::fillback::code::canonical_source_partition_plan(source, "python")
+            .unwrap()[0]
+            .0
+            .clone();
+        let chunk_digest = partition_sha256(first_chunk.as_bytes());
+        corrupted = corrupted.replacen(&chunk_digest, &format!("sha256:{}", "f".repeat(64)), 1);
+        std::fs::write(&spec_path, corrupted).unwrap();
+
+        assert!(run_apply_scoped_targets(
+            &spec_path,
+            root,
+            false,
+            &[first_target.clone(), source_target.clone()],
+        )
+        .is_err());
+        assert_eq!(
+            std::fs::read_to_string(&first_target).unwrap(),
+            "[package]\nname = \"unchanged\"\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&source_target).unwrap(),
+            "print('unchanged')\n"
+        );
+    }
+
+    #[test]
+    fn legacy_source_fence_may_contain_partition_sentinel_prefix_as_source_text() {
+        let legacy = r#"## Source
+<!-- type: rust-source-unit lang: rust -->
+
+```rust
+// AW source partition manifest v1: this is an application fixture, not AW metadata
+pub fn still_legacy() {}
+```
+"#;
+        assert_eq!(decode_partitioned_source(legacy).unwrap(), None);
+    }
+
+    #[test]
+    fn exact_source_apply_is_lossless_and_has_no_sibling_postpasses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/direct.md");
+        let target = root.join("src/lib.rs");
+        let sibling = root.join("src/sibling.rs");
+        let readme = root.join("README.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let source = "use std::fmt::Debug;\nuse std::fmt::Debug;\n\npub fn direct() {}\n";
+        std::fs::write(
+            &spec_path,
+            partitioned_test_spec(source, "rust", "src/lib.rs"),
+        )
+        .unwrap();
+        std::fs::write(&target, source).unwrap();
+        std::fs::write(&sibling, "pub fn untouched() {}\n").unwrap();
+        std::fs::write(&readme, "# Untouched\n").unwrap();
+
+        let report = run_apply_exact_source_target(&spec_path, root, false, &target).unwrap();
+        assert!(report.wrote_files);
+        assert_eq!(report.files.iter().filter(|file| file.processed).count(), 1);
+        let managed = std::fs::read_to_string(&target).unwrap();
+        let blocks = parse_source_codegen_blocks(&target, &managed).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].content, source.trim_end());
+        assert_eq!(blocks[0].content.matches("use std::fmt::Debug;").count(), 2);
+        assert_eq!(
+            std::fs::read_to_string(&sibling).unwrap(),
+            "pub fn untouched() {}\n"
+        );
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "# Untouched\n");
+
+        let second = run_apply_exact_source_target(&spec_path, root, false, &target).unwrap();
+        assert!(
+            !second.wrote_files,
+            "idempotent exact apply must report no write"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), managed);
+    }
+
+    #[test]
+    fn exact_legacy_source_snapshot_const_only_edit_wins_over_source_from_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/direct.md");
+        let target = root.join("src/lib.rs");
+        let sibling = root.join("src/sibling.rs");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let old = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"before\";\n// CODEGEN-END\n";
+        let projected = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"after\";\n// CODEGEN-END\n";
+        let sibling_before = "pub fn untouched() {}\n";
+        let spec = legacy_source_snapshot_test_spec(
+            projected,
+            "src/lib.rs",
+            "  - path: src/lib.rs\n    action: create\n    section: source\n    impl_mode: codegen\n  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n",
+        );
+        std::fs::write(&spec_path, spec).unwrap();
+        std::fs::write(&target, old).unwrap();
+        std::fs::write(&sibling, sibling_before).unwrap();
+
+        let report = run_apply_exact_source_target(&spec_path, root, false, &target).unwrap();
+        assert!(report.wrote_files);
+        assert_eq!(report.files.iter().filter(|file| file.processed).count(), 1);
+        assert_eq!(report.total_blocks_updated(), 1);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), projected);
+        assert_eq!(std::fs::read_to_string(&sibling).unwrap(), sibling_before);
+
+        let noop = run_apply_exact_source_target(&spec_path, root, false, &target).unwrap();
+        assert!(!noop.wrote_files);
+        assert_eq!(noop.files.iter().filter(|file| file.processed).count(), 1);
+        assert_eq!(noop.total_blocks_updated(), 0);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), projected);
+    }
+
+    #[test]
+    fn exact_legacy_source_snapshot_rejects_ambiguous_or_unsafe_metadata_without_mutation() {
+        let base_changes = "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n";
+        let cases = [
+            (
+                "snapshot-target-mismatch",
+                "src/other.rs",
+                base_changes,
+                "--target src/other.rs",
+            ),
+            (
+                "different-source-target",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n  - path: src/other.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n",
+                "different source target",
+            ),
+            (
+                "delete-action",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: delete\n    section: source\n    impl_mode: codegen\n",
+                "create`/`modify",
+            ),
+            (
+                "symbol-replaces",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: modify\n    section: source\n    replaces: [SNAPSHOT_VALUE]\n    impl_mode: codegen\n",
+                "forbids `replaces`",
+            ),
+            (
+                "target-local-non-source",
+                "src/lib.rs",
+                "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n  - path: src/lib.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n",
+                "non-source or incompatible",
+            ),
+        ];
+        for (name, snapshot_path, changes, expected) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let spec_path = root.join("tech-design/direct.md");
+            let target = root.join("src/lib.rs");
+            std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            let before = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"before\";\n// CODEGEN-END\n";
+            let projected = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\npub const SNAPSHOT_VALUE: &str = \"after\";\n// CODEGEN-END\n";
+            std::fs::write(
+                &spec_path,
+                legacy_source_snapshot_test_spec(projected, snapshot_path, changes),
+            )
+            .unwrap();
+            std::fs::write(&target, before).unwrap();
+
+            let error = run_apply_exact_source_target(&spec_path, root, false, &target)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{name}: {error}");
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), before, "{name}");
+        }
+    }
+
+    #[test]
+    fn legacy_source_snapshot_metadata_and_fence_are_unique_and_top_level() {
+        let snapshot = "// SPEC-MANAGED: tech-design/direct.md#source\n// CODEGEN-BEGIN\n// <!-- source-snapshot: path=src/inside-fence.rs -->\npub const VALUE: &str = \"after\";\n// CODEGEN-END\n";
+        let valid = legacy_source_snapshot_test_spec(
+            snapshot,
+            "src/lib.rs",
+            "  - path: src/lib.rs\n    action: modify\n    section: source\n    impl_mode: codegen\n",
+        );
+        assert_eq!(
+            authoritative_source_snapshot_path(&valid).unwrap(),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            extract_authoritative_source_snapshot(&valid).unwrap(),
+            snapshot
+        );
+
+        let duplicate_path = valid.replacen(
+            "<!-- source-snapshot: path=src/lib.rs -->",
+            "<!-- source-snapshot: path=src/lib.rs -->\n<!-- source-snapshot: path=src/duplicate.rs -->",
+            1,
+        );
+        assert!(authoritative_source_snapshot_path(&duplicate_path).is_err());
+
+        let outside_duplicate = valid.replacen(
+            "Exact legacy snapshot projection fixture.",
+            "Exact legacy snapshot projection fixture.\n<!-- source-snapshot: path=src/outside.rs -->",
+            1,
+        );
+        assert!(authoritative_source_snapshot_path(&outside_duplicate).is_err());
+
+        let outside_only = valid
+            .replacen("<!-- source-snapshot: path=src/lib.rs -->", "", 1)
+            .replacen(
+                "Exact legacy snapshot projection fixture.",
+                "Exact legacy snapshot projection fixture.\n<!-- source-snapshot: path=src/lib.rs -->",
+                1,
+            );
+        let outside_error = authoritative_source_snapshot_path(&outside_only).unwrap_err();
+        assert!(outside_error.contains("must belong"), "{outside_error}");
+
+        let duplicate_fence = valid.replacen(
+            "## Changes",
+            "```rust\npub const SECOND: bool = true;\n```\n\n## Changes",
+            1,
+        );
+        assert!(extract_authoritative_source_snapshot(&duplicate_fence).is_err());
+
+        let unterminated = valid.replacen("```\n\n## Changes", "\n\n## Changes", 1);
+        assert!(extract_authoritative_source_snapshot(&unterminated).is_err());
+
+        let renamed_changes = valid.replacen("## Changes", "## Traceability Changes", 1);
+        assert!(extract_authoritative_source_snapshot(&renamed_changes).is_err());
+
+        let json_changes = valid.replacen("```yaml", "```json", 1);
+        assert!(extract_authoritative_source_snapshot(&json_changes).is_err());
+
+        let duplicate_changes_payload = format!("{valid}\n```yaml\nchanges: []\n```\n");
+        assert!(extract_authoritative_source_snapshot(&duplicate_changes_payload).is_err());
+    }
+
+    #[test]
+    fn exact_source_apply_rejects_unowned_drift_and_unsafe_owners_without_mutation() {
+        let cases = [
+            ("drift", "pub fn edited_after_fillback() {}\n".to_string()),
+            (
+                "foreign",
+                "// SPEC-MANAGED: other.md#rust-source-unit\n// CODEGEN-BEGIN\npub fn selected() {}\n// CODEGEN-END\n"
+                    .to_string(),
+            ),
+            (
+                "partial",
+                "pub fn outside() {}\n// SPEC-MANAGED: tech-design/direct.md#rust-source-unit\n// CODEGEN-BEGIN\npub fn selected() {}\n// CODEGEN-END\n"
+                    .to_string(),
+            ),
+        ];
+        for (name, current) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let spec_path = root.join("tech-design/direct.md");
+            let target = root.join("src/lib.rs");
+            std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(
+                &spec_path,
+                partitioned_test_spec("pub fn selected() {}\n", "rust", "src/lib.rs"),
+            )
+            .unwrap();
+            std::fs::write(&target, &current).unwrap();
+            let error = run_apply_exact_source_target(&spec_path, root, false, &target)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("changed after fillback")
+                    || error.contains("partial, multiple, or foreign"),
+                "{name}: {error}"
+            );
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), current, "{name}");
+        }
+    }
+
+    #[test]
+    fn exact_source_apply_promotes_td_shebang_to_line_one_for_existing_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/script.md");
+        let target = root.join("script.py");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        let source = "#!/usr/bin/env python3\nprint('selected')\n";
+        std::fs::write(
+            &spec_path,
+            partitioned_test_spec(source, "python", "script.py"),
+        )
+        .unwrap();
+        std::fs::write(
+            &target,
+            "# SPEC-MANAGED: tech-design/script.md#text-source-unit\n# CODEGEN-BEGIN\nprint('selected')\n# CODEGEN-END\n",
+        )
+        .unwrap();
+
+        run_apply_exact_source_target(&spec_path, root, false, &target).unwrap();
+        let managed = std::fs::read_to_string(&target).unwrap();
+        assert!(managed.starts_with("#!/usr/bin/env python3\n# SPEC-MANAGED:"));
+        assert_eq!(managed.matches("#!/usr/bin/env python3").count(), 1);
+    }
+
+    #[test]
+    fn partition_manifest_language_must_match_changes_section_kind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/demo.md");
+        let target = root.join("demo.py");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        let source = "print('selected')\n";
+        let invalid = partitioned_test_spec(source, "python", "demo.py")
+            .replace("section: text-source-unit", "section: rust-source-unit");
+        std::fs::write(&spec_path, invalid).unwrap();
+        std::fs::write(&target, source).unwrap();
+        let error = run_apply_exact_source_target(&spec_path, root, true, &target)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cannot target Changes section"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_source_apply_rejects_broken_symlink_target_without_external_write() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/demo.md");
+        let target = root.join("src/demo.py");
+        let escaped = outside.path().join("escaped.py");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            partitioned_test_spec("print('selected')\n", "python", "src/demo.py"),
+        )
+        .unwrap();
+        symlink(&escaped, &target).unwrap();
+
+        assert!(run_apply_exact_source_target(&spec_path, root, false, &target).is_err());
+        assert!(!escaped.exists());
+    }
+
+    #[test]
+    fn exact_source_apply_rejects_malformed_typed_fences_without_mutation() {
+        let source = "pub fn selected() {}\n";
+        let changes = r#"
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/lib.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+```
+"#;
+        let cases = [
+            (
+                "missing",
+                format!(
+                    "## Source\n<!-- type: rust-source-unit lang: rust -->\n{changes}"
+                ),
+            ),
+            (
+                "unterminated",
+                format!(
+                    "## Source\n<!-- type: rust-source-unit lang: rust -->\n\n```rust\n{source}{changes}"
+                ),
+            ),
+            (
+                "multiple",
+                format!(
+                    "## Source\n<!-- type: rust-source-unit lang: rust -->\n\n```rust\n{source}```\n\n```rust\npub fn extra() {{}}\n```\n{changes}"
+                ),
+            ),
+        ];
+        for (name, spec) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let spec_path = root.join("tech-design/direct.md");
+            let target = root.join("src/lib.rs");
+            std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(&spec_path, spec).unwrap();
+            std::fs::write(&target, source).unwrap();
+            assert!(
+                run_apply_exact_source_target(&spec_path, root, false, &target).is_err(),
+                "{name}"
+            );
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), source, "{name}");
+        }
+    }
+
+    #[test]
+    fn exact_source_apply_requires_one_top_level_complete_typed_annotation() {
+        let source = "pub fn selected() {}\n";
+        let changes = r#"
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/lib.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+```
+"#;
+        let cases = [
+            (
+                "payload-fake",
+                format!(
+                    "## Source\n<!-- type: source lang: rust -->\n\n```rust\n<!-- type: rust-source-unit lang: rust -->\n{source}```\n{changes}"
+                ),
+            ),
+            (
+                "duplicate",
+                format!(
+                    "## Source\n<!-- type: rust-source-unit lang: rust -->\n<!-- type: rust-source-unit lang: rust -->\n\n```rust\n{source}```\n{changes}"
+                ),
+            ),
+            (
+                "conflicting",
+                format!(
+                    "## Source\n<!-- type: rust-source-unit lang: rust -->\n<!-- type: text-source-unit lang: bash -->\n\n```rust\n{source}```\n{changes}"
+                ),
+            ),
+            (
+                "missing-lang",
+                format!(
+                    "## Source\n<!-- type: rust-source-unit -->\n\n```rust\n{source}```\n{changes}"
+                ),
+            ),
+        ];
+        for (name, spec) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let spec_path = root.join("tech-design/direct.md");
+            let target = root.join("src/lib.rs");
+            std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(&spec_path, spec).unwrap();
+            std::fs::write(&target, source).unwrap();
+            assert!(
+                run_apply_exact_source_target(&spec_path, root, false, &target).is_err(),
+                "{name}"
+            );
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), source, "{name}");
+        }
+    }
+
+    #[test]
+    fn exact_source_apply_rejects_target_kind_action_and_replaces_before_write() {
+        let cases = [
+            (
+                "rust-to-python",
+                partitioned_test_spec("pub fn selected() {}\n", "rust", "src/lib.py"),
+                "src/lib.py",
+                "pub fn selected() {}\n",
+            ),
+            (
+                "existing-create",
+                partitioned_test_spec("pub fn selected() {}\n", "rust", "src/lib.rs")
+                    .replace("action: modify", "action: create"),
+                "src/lib.rs",
+                "pub fn selected() {}\n",
+            ),
+            (
+                "symbol-replaces",
+                partitioned_test_spec("pub fn selected() {}\n", "rust", "src/lib.rs")
+                    .replace("    impl_mode: codegen", "    replaces: [selected]\n    impl_mode: codegen"),
+                "src/lib.rs",
+                "pub fn selected() {}\n",
+            ),
+            (
+                "same-target-handwrite",
+                partitioned_test_spec("pub fn selected() {}\n", "rust", "src/lib.rs")
+                    .replace(
+                        "    impl_mode: codegen\n```",
+                        "    impl_mode: codegen\n  - path: src/lib.rs\n    action: modify\n    section: schema\n    impl_mode: hand-written\n```",
+                    ),
+                "src/lib.rs",
+                "pub fn selected() {}\n",
+            ),
+        ];
+        for (name, spec, target_rel, current) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let spec_path = root.join("tech-design/direct.md");
+            let target = root.join(target_rel);
+            std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(&spec_path, spec).unwrap();
+            std::fs::write(&target, current).unwrap();
+            assert!(
+                run_apply_exact_source_target(&spec_path, root, false, &target).is_err(),
+                "{name}"
+            );
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), current, "{name}");
+        }
+    }
+
+    #[test]
+    fn exact_snapshot_guard_detects_concurrent_drift() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target.rs");
+        std::fs::write(&target, "before\n").unwrap();
+        let snapshot = ValidatedExactSourceSnapshot {
+            target: target.clone(),
+            content: Some("before\n".to_string()),
+            selected_change_index: 0,
+            authoritative_embedded_snapshot: false,
+        };
+        std::fs::write(&target, "after\n").unwrap();
+        assert!(ensure_exact_target_snapshot_unchanged(&snapshot).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "after\n");
+    }
+
+    #[test]
+    fn source_owner_markers_require_complete_ast_standalone_comments() {
+        let rust = "// SPEC-MANAGED: tech-design/direct.md#rust-source-unit\n// CODEGEN-BEGIN\npub fn selected() {}\n// CODEGEN-END\n";
+        let rust_blocks = parse_source_codegen_blocks(Path::new("src/lib.rs"), rust).unwrap();
+        assert_eq!(rust_blocks.len(), 1);
+
+        let fake_cases = [
+            (
+                "src/demo.py",
+                "fixture = '''\n# SPEC-MANAGED: fake.md#text-source-unit\n# CODEGEN-BEGIN\n# CODEGEN-END\n'''\n",
+            ),
+            (
+                "src/demo.go",
+                "package demo\nvar fixture = `\n// SPEC-MANAGED: fake.md#text-source-unit\n// CODEGEN-BEGIN\n// CODEGEN-END\n`\n",
+            ),
+            (
+                "src/demo.ts",
+                "const fixture = `\n// SPEC-MANAGED: fake.md#text-source-unit\n// CODEGEN-BEGIN\n// CODEGEN-END\n`;\n",
+            ),
+            (
+                "src/demo.js",
+                "const fixture = `\n// SPEC-MANAGED: fake.md#text-source-unit\n// CODEGEN-BEGIN\n// CODEGEN-END\n`;\n",
+            ),
+        ];
+        for (path, content) in fake_cases {
+            assert!(
+                parse_source_codegen_blocks(Path::new(path), content)
+                    .unwrap()
+                    .is_empty(),
+                "{path}"
+            );
+        }
+
+        let real_with_fake = "// SPEC-MANAGED: tech-design/direct.md#text-source-unit\n// CODEGEN-BEGIN\nconst fixture = `\n// SPEC-MANAGED: fake.md#text-source-unit\n// CODEGEN-BEGIN\n// CODEGEN-END\n`;\nexport const selected = 1;\n// CODEGEN-END\n";
+        let blocks = parse_source_codegen_blocks(Path::new("src/demo.ts"), real_with_fake).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].spec_ref, "tech-design/direct.md#text-source-unit");
+        assert!(blocks[0].content.contains("fake.md#text-source-unit"));
+
+        let incomplete_rust = "pub fn outside() {}\n// SPEC-MANAGED: tech-design/direct.md#rust-source-unit\n// CODEGEN-BEGIN\npub fn selected( {\n// CODEGEN-END\n";
+        assert!(parse_source_codegen_blocks(Path::new("src/lib.rs"), incomplete_rust).is_err());
+        assert!(!is_unix_shebang("#![allow(dead_code)]"));
+    }
+
     fn hw_open(attrs: &str) -> String {
         format!("// {HANDWRITE_XML_OPEN_PREFIX} {attrs}>")
     }
@@ -3161,19 +4489,31 @@ mod tests {
 
     #[test]
     fn test_source_template_supports_typescript_targets() {
+        for path in [
+            "apps/agentic-workflow/packages/@sdd/ui/src/App.tsx",
+            "apps/agentic-workflow/packages/@sdd/core/src/index.ts",
+            "apps/agentic-workflow/packages/@sdd/core/src/worker.mjs",
+            "apps/agentic-workflow/packages/@sdd/core/src/legacy.cjs",
+        ] {
+            assert_eq!(
+                target_language(std::path::Path::new(path), Some("source")),
+                Some(crate::generate::marker::Lang::TypeScript),
+                "source target should accept {path}"
+            );
+        }
         assert_eq!(
             target_language(
-                std::path::Path::new("apps/agentic-workflow/packages/@sdd/ui/src/App.tsx"),
-                Some("source"),
+                std::path::Path::new("src/direct.PY"),
+                Some("text-source-unit")
             ),
-            Some(crate::generate::marker::Lang::TypeScript)
+            Some(crate::generate::marker::Lang::Python)
         );
         assert_eq!(
             target_language(
-                std::path::Path::new("apps/agentic-workflow/packages/@sdd/core/src/index.ts"),
-                Some("source"),
+                std::path::Path::new("src/direct.RS"),
+                Some("rust-source-unit")
             ),
-            Some(crate::generate::marker::Lang::TypeScript)
+            Some(crate::generate::marker::Lang::Rust)
         );
     }
 
@@ -3319,8 +4659,9 @@ pub struct Widget {
         assert!(source.contains("//! kept module doc"));
         assert!(source.contains("pub id: u64, // kept comment"));
         assert!(source.contains("pub struct Widget {"));
-        // Rust target → per-item @spec breadcrumb is added.
-        assert!(source.contains("#source"));
+        // Lossless source-unit regeneration never injects breadcrumbs that
+        // were absent from the TD payload.
+        assert!(!source.contains("#source"));
     }
 
     #[test]
@@ -4069,6 +5410,7 @@ changes:
                     updated: true,
                     blocks_updated: 2,
                     dry_run: false,
+                    processed: true,
                 },
                 FileApplyResult {
                     path: std::path::PathBuf::from("b.rs"),
@@ -4076,6 +5418,7 @@ changes:
                     updated: true,
                     blocks_updated: 1,
                     dry_run: false,
+                    processed: true,
                 },
             ],
             wrote_files: true,
@@ -6414,6 +7757,457 @@ id: mix
         assert!(!is_all_hand_written("---\nid: empty\n---\n\n## Overview\n"));
     }
 
+    fn write_plan_spec(root: &Path, name: &str, content: &str) -> PathBuf {
+        let spec = root.join(format!("tech-design/{name}.md"));
+        std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+        std::fs::write(&spec, content).unwrap();
+        spec
+    }
+
+    fn schema_section() -> &'static str {
+        r#"## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Widget:
+    type: object
+    properties:
+      name: { type: string }
+```
+"#
+    }
+
+    /// #1633: two whole-section Schema destinations are rejected as one
+    /// typed, sorted plan error before either existing target changes.
+    #[test]
+    fn ambiguous_generation_plan_rejects_two_schema_targets_before_any_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/z_schema.rs"), "// z sentinel\n").unwrap();
+        std::fs::write(root.join("src/a_schema.rs"), "// a sentinel\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "ambiguous-schema",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/z_schema.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/a_schema.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n```\n",
+                schema_section()
+            ),
+        );
+
+        let error = run_apply(&spec, root, false).unwrap_err();
+        match error {
+            crate::generate::GenerateError::AmbiguousGenerationPlan {
+                section,
+                targets,
+                remediation,
+                ..
+            } => {
+                assert_eq!(section, "schema");
+                assert_eq!(targets, vec!["src/a_schema.rs", "src/z_schema.rs"]);
+                assert!(remediation.contains("impl_mode: hand-written"));
+                assert!(remediation.contains("WI #1634"));
+            }
+            other => panic!("expected typed ambiguous plan error, got {other}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/a_schema.rs")).unwrap(),
+            "// a sentinel\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/z_schema.rs")).unwrap(),
+            "// z sentinel\n"
+        );
+    }
+
+    /// A sequence-form CLI payload has no mapping anchors, but two CLI
+    /// CODEGEN destinations are still a complete-plan ambiguity.
+    #[test]
+    fn ambiguous_generation_plan_rejects_sequence_cli_targets_before_any_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for path in ["src/alpha.rs", "src/beta.rs"] {
+            std::fs::write(root.join(path), format!("// {path} sentinel\n")).unwrap();
+        }
+        let spec = write_plan_spec(
+            root,
+            "ambiguous-cli",
+            r#"## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+- name: alpha
+  about: first command
+- name: beta
+  about: second command
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/alpha.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+  - path: src/beta.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+```
+"#,
+        );
+
+        let error = run_apply(&spec, root, false).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::generate::GenerateError::AmbiguousGenerationPlan {
+                ref section,
+                ref targets,
+                ..
+            } if section == "cli" && targets == &["src/alpha.rs", "src/beta.rs"]
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/alpha.rs")).unwrap(),
+            "// src/alpha.rs sentinel\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/beta.rs")).unwrap(),
+            "// src/beta.rs sentinel\n"
+        );
+    }
+
+    /// The plan scan covers every Changes row before execution: a valid Logic
+    /// row ordered first cannot be partially applied before a later ambiguous
+    /// Schema group is discovered.
+    #[test]
+    fn ambiguous_generation_plan_rejects_later_schema_before_earlier_logic_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/earlier.rs"), "// earlier sentinel\n").unwrap();
+        std::fs::write(root.join("src/schema_a.rs"), "// schema a\n").unwrap();
+        std::fs::write(root.join("src/schema_b.rs"), "// schema b\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "later-ambiguity",
+            &format!(
+                r#"## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: earlier-valid
+signature: "pub fn earlier_valid() -> bool"
+entry: start
+nodes:
+  start: {{ kind: terminal, value: true }}
+edges: []
+---
+flowchart TD
+  start
+```
+
+{}
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/earlier.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+  - path: src/schema_a.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: src/schema_b.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+```
+"#,
+                schema_section()
+            ),
+        );
+
+        assert!(matches!(
+            run_apply(&spec, root, false),
+            Err(crate::generate::GenerateError::AmbiguousGenerationPlan { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/earlier.rs")).unwrap(),
+            "// earlier sentinel\n"
+        );
+    }
+
+    /// Exactly one Schema CODEGEN destination remains valid when another
+    /// touched target is HANDWRITE; regeneration is byte-idempotent and never
+    /// changes the HANDWRITE sibling.
+    #[test]
+    fn generation_plan_preserves_single_codegen_plus_handwrite_idempotently() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"plan-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/generated.rs"), "// generated seed\n").unwrap();
+        std::fs::write(root.join("src/manual.rs"), "// manual sentinel\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "mixed-plan",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/generated.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/manual.rs\n    action: modify\n    section: schema\n    impl_mode: hand-written\n```\n",
+                schema_section()
+            ),
+        );
+
+        run_apply(&spec, root, false).unwrap();
+        let first = std::fs::read(root.join("src/generated.rs")).unwrap();
+        assert!(String::from_utf8_lossy(&first).contains("pub struct Widget"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/manual.rs")).unwrap(),
+            "// manual sentinel\n"
+        );
+        run_apply(&spec, root, false).unwrap();
+        assert_eq!(std::fs::read(root.join("src/generated.rs")).unwrap(), first);
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/manual.rs")).unwrap(),
+            "// manual sentinel\n"
+        );
+    }
+
+    /// Target paths are plan data only. Ambiguity must be detected without
+    /// following a target symlink or touching bytes outside the repository.
+    #[cfg(unix)]
+    #[test]
+    fn ambiguous_generation_plan_does_not_follow_external_target_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let external_target = external.path().join("external.rs");
+        std::fs::write(&external_target, "// external sentinel\n").unwrap();
+        symlink(&external_target, root.join("src/external_link.rs")).unwrap();
+        std::fs::write(root.join("src/local.rs"), "// local sentinel\n").unwrap();
+        let spec = write_plan_spec(
+            root,
+            "symlink-ambiguity",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/external_link.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/local.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n```\n",
+                schema_section()
+            ),
+        );
+
+        assert!(matches!(
+            run_apply(&spec, root, false),
+            Err(crate::generate::GenerateError::AmbiguousGenerationPlan { .. })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&external_target).unwrap(),
+            "// external sentinel\n"
+        );
+        assert!(std::fs::symlink_metadata(root.join("src/external_link.rs"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/local.rs")).unwrap(),
+            "// local sentinel\n"
+        );
+    }
+
+    /// #1633 remains scoped to shared Schema/CLI sections. A no-Changes
+    /// legacy Logic TD can still pass admission and infer its existing managed
+    /// target in the executor.
+    #[test]
+    fn generation_plan_preserves_legacy_no_changes_logic_inference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"legacy-plan\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let spec = write_plan_spec(
+            root,
+            "legacy-logic",
+            r#"## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: legacy-logic
+signature: "pub fn inferred() -> bool"
+entry: start
+nodes:
+  start: { kind: terminal, value: true }
+edges: []
+---
+flowchart TD
+  start
+```
+"#,
+        );
+        let spec_ref = "tech-design/legacy-logic.md#logic";
+        std::fs::write(
+            root.join("src/inferred.rs"),
+            format!(
+                "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\npub fn stale() -> bool {{ false }}\n// CODEGEN-END\n"
+            ),
+        )
+        .unwrap();
+
+        preflight_generation_plan(
+            &std::fs::read_to_string(&spec).unwrap(),
+            Path::new("tech-design/legacy-logic.md"),
+            root,
+            "aw td gen legacy --spec-path tech-design/legacy-logic.md",
+        )
+        .unwrap();
+        let report = run_apply(&spec, root, false).unwrap();
+        assert_eq!(report.files.len(), 1);
+        assert!(report.files[0].processed);
+        assert!(std::fs::read_to_string(root.join("src/inferred.rs"))
+            .unwrap()
+            .contains("pub fn inferred"));
+    }
+
+    /// AC4: an established no-Changes Schema TD with exactly one managed
+    /// target is fully knowable through read-only spec-ref inference. Caller
+    /// admission and executor inference must select the same target.
+    #[test]
+    fn generation_plan_preserves_single_inferred_schema_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"inferred-schema\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let spec = write_plan_spec(root, "inferred-schema", schema_section());
+        let spec_ref = "tech-design/inferred-schema.md#schema";
+        std::fs::write(
+            root.join("src/inferred_schema.rs"),
+            format!(
+                "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\npub struct StaleWidget;\n// CODEGEN-END\n"
+            ),
+        )
+        .unwrap();
+
+        preflight_generation_plan(
+            &std::fs::read_to_string(&spec).unwrap(),
+            Path::new("tech-design/inferred-schema.md"),
+            root,
+            "aw td gen inferred --spec-path tech-design/inferred-schema.md",
+        )
+        .unwrap();
+        let report = run_apply(&spec, root, false).unwrap();
+        assert_eq!(report.files.len(), 1);
+        assert!(report.files[0].processed);
+        assert!(std::fs::read_to_string(root.join("src/inferred_schema.rs"))
+            .unwrap()
+            .contains("pub struct Widget"));
+    }
+
+    /// Read-only inference is still a complete-plan gate: two existing files
+    /// claiming the same no-Changes Schema section are rejected in sorted
+    /// order before caller lifecycle mutation or executor target writes.
+    #[test]
+    fn ambiguous_generation_plan_rejects_multiple_inferred_schema_targets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let spec = write_plan_spec(root, "inferred-ambiguous", schema_section());
+        let spec_ref = "tech-design/inferred-ambiguous.md#schema";
+        for (path, body) in [
+            ("src/z_inferred.rs", "pub struct ZSentinel;"),
+            ("src/a_inferred.rs", "pub struct ASentinel;"),
+        ] {
+            std::fs::write(
+                root.join(path),
+                format!(
+                    "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\n{body}\n// CODEGEN-END\n"
+                ),
+            )
+            .unwrap();
+        }
+        let a_before = std::fs::read(root.join("src/a_inferred.rs")).unwrap();
+        let z_before = std::fs::read(root.join("src/z_inferred.rs")).unwrap();
+        let command = "aw td gen inferred --spec-path tech-design/inferred-ambiguous.md";
+
+        let error = preflight_generation_plan(
+            &std::fs::read_to_string(&spec).unwrap(),
+            Path::new("tech-design/inferred-ambiguous.md"),
+            root,
+            command,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::generate::GenerateError::AmbiguousGenerationPlan {
+                ref section,
+                ref targets,
+                ref next_command,
+                ..
+            } if section == "schema"
+                && targets == &["src/a_inferred.rs", "src/z_inferred.rs"]
+                && next_command == command
+        ));
+        assert!(matches!(
+            run_apply(&spec, root, false),
+            Err(crate::generate::GenerateError::AmbiguousGenerationPlan { .. })
+        ));
+        assert_eq!(
+            std::fs::read(root.join("src/a_inferred.rs")).unwrap(),
+            a_before
+        );
+        assert_eq!(
+            std::fs::read(root.join("src/z_inferred.rs")).unwrap(),
+            z_before
+        );
+    }
+
+    /// A shared whole-section generator with neither explicit Changes nor an
+    /// existing exact managed ref remains unknowable before lifecycle
+    /// mutation. Require explicit Changes and return typed remediation.
+    #[test]
+    fn generation_plan_unavailable_for_no_changes_schema_before_lifecycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let command = "aw td gen 1633 --spec-path tech-design/schema.md";
+        let error = preflight_generation_plan(
+            schema_section(),
+            Path::new("tech-design/schema.md"),
+            tmp.path(),
+            command,
+        )
+        .unwrap_err();
+        match error {
+            crate::generate::GenerateError::GenerationPlanUnavailable {
+                spec_path,
+                remediation,
+                next_command,
+            } => {
+                assert_eq!(spec_path, "tech-design/schema.md");
+                assert_eq!(next_command, command);
+                assert!(remediation.contains("typed `## Changes`"));
+                assert!(remediation.contains(command));
+            }
+            other => panic!("expected typed unavailable-plan error, got {other}"),
+        }
+    }
+
     // -------------------------------------------------------------------
     // Bug 2 fix: anchor extraction + per-entry routing
     // -------------------------------------------------------------------
@@ -7902,22 +9696,38 @@ fn try_generate_interaction(
 /// - `package.json` → `Some("typescript/javascript workspace; codegen not implemented")`
 /// - no manifest found → `None` (best-effort; don't block schema-only targets)
 fn is_rust_source(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()) == Some("rs")
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("rs"))
 }
 
 fn is_typescript_source(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("ts" | "tsx" | "js" | "jsx")
-    )
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
+            )
+        })
 }
 
 fn is_python_source(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()) == Some("py")
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
+}
+
+fn is_go_source(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("go"))
 }
 
 fn is_shell_source(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()) == Some("sh")
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("sh"))
 }
 
 fn is_cargo_toml(path: &Path) -> bool {
@@ -7950,14 +9760,29 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
     if is_rust_source(path) {
         return Some(Lang::Rust);
     }
-    if section == Some("text-source-unit") && (is_shell_source(path) || is_cargo_toml(path)) {
-        return Some(Lang::Toml);
+    if section == Some("text-source-unit") {
+        if is_shell_source(path) || is_cargo_toml(path) {
+            return Some(Lang::Toml);
+        }
+        if is_python_source(path) {
+            return Some(Lang::Python);
+        }
+        if is_typescript_source(path) {
+            return Some(Lang::TypeScript);
+        }
+        if is_go_source(path) {
+            // Go uses the same `//` ownership marker syntax as Rust.
+            return Some(Lang::Rust);
+        }
     }
     if supports_source_backed_replay_path(path, section) {
         return Some(Lang::TypeScript);
     }
     if section == Some("source") && is_typescript_source(path) {
         return Some(Lang::TypeScript);
+    }
+    if section == Some("source") && is_go_source(path) {
+        return Some(Lang::Rust);
     }
     if is_python_source(path) && is_python_codegen_section(section) {
         return Some(Lang::Python);
@@ -7988,7 +9813,10 @@ fn prepare_codegen_body_for_target(
     section: Option<&str>,
     generated_body: &str,
 ) -> PreparedCodegenBody {
-    if section == Some("text-source-unit") && is_shell_source(path) {
+    if matches!(section, Some("source" | "text-source-unit"))
+        && !is_rust_source(path)
+        && is_unix_shebang(generated_body.lines().next().unwrap_or_default())
+    {
         if let Some((shebang, body)) = split_shebang(generated_body) {
             return PreparedCodegenBody {
                 shebang: Some(shebang.to_string()),
@@ -8003,7 +9831,7 @@ fn prepare_codegen_body_for_target(
 }
 
 fn split_shebang(body: &str) -> Option<(&str, &str)> {
-    if !body.starts_with("#!") {
+    if !is_unix_shebang(body.lines().next().unwrap_or_default()) {
         return None;
     }
     match body.find('\n') {
@@ -8111,7 +9939,14 @@ fn check_workspace_language(
     target_path: &Path,
     section: Option<&str>,
 ) -> Option<String> {
-    if section == Some("source") {
+    if section == Some("source")
+        || (section == Some("text-source-unit")
+            && (is_python_source(target_path)
+                || is_typescript_source(target_path)
+                || is_go_source(target_path)
+                || is_shell_source(target_path)
+                || is_cargo_toml(target_path)))
+    {
         return None;
     }
     if is_python_source(target_path) && is_python_codegen_section(section) {
@@ -8197,6 +10032,16 @@ pub(crate) fn supports_source_backed_replay_for_spec(
     spec_rel_path: &str,
 ) -> bool {
     let path = Path::new(target_rel_path);
+    if matches!(
+        section,
+        Some("source" | "rust-source-unit" | "text-source-unit")
+    ) {
+        // Whole-file source units are TD-authoritative. Reading an existing
+        // JS/TS target here would bypass the partition decoder and silently
+        // preserve stale/corrupt target bytes instead of regenerating the TD
+        // payload (#1506).
+        return false;
+    }
     if matches!(section, Some("schema" | "logic"))
         && is_rust_source(path)
         && is_semantic_spec_path(spec_rel_path)
@@ -8947,6 +10792,1170 @@ fn yaml_fence_close_marker(line: &str) -> Option<String> {
     }
 }
 
+pub(crate) const RUST_SOURCE_PARTITION_MAX_BYTES: usize = 47 * 1024;
+pub(crate) const RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES: usize = 64 * 1024;
+const RUST_SOURCE_PARTITION_BASE64_WRAP: usize = 76;
+
+pub(crate) fn encode_source_partition_payload(bytes: &[u8]) -> String {
+    let encoded = BASE64_STANDARD.encode(bytes);
+    encoded
+        .as_bytes()
+        .chunks(RUST_SOURCE_PARTITION_BASE64_WRAP)
+        .map(|chunk| std::str::from_utf8(chunk).expect("base64 is ASCII"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DecodedPartitionedSource {
+    pub(crate) source: String,
+    pub(crate) source_lang: String,
+}
+
+/// Decode and strictly validate an AW partitioned source payload.
+///
+/// Legacy single-fence `rust-source-unit` / `text-source-unit` artifacts return
+/// `Ok(None)` and are handled unchanged by the caller. Once a partition
+/// manifest is present, every structural field is fail-closed: version,
+/// source language, count, source order, decoded/encoded bounds, encoding,
+/// terminal-newline metadata, per-chunk digest, and whole-source digest must
+/// all match before any generated bytes are returned (#1506).
+pub(crate) fn decode_partitioned_source(
+    spec_content: &str,
+) -> Result<Option<DecodedPartitionedSource>, String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let global_controls = partition_control_lines(&lines, 0, lines.len());
+    let global_sentinel_lines = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            line.trim()
+                .starts_with("// AW source partition manifest v1:")
+                .then_some(idx)
+        })
+        .collect::<Vec<_>>();
+    // The manifest/partition controls activate the protocol. A lone sentinel
+    // string is valid legacy source text (for example a Rust fixture that
+    // happens to mention this comment) and must not make an ordinary
+    // single-fence source unit look partitioned.
+    let has_global_partition_evidence = !global_controls.manifests.is_empty()
+        || global_controls.partition_metadata > 0
+        || global_controls.partition_headings > 0;
+    let source_sections = top_level_source_sections(&lines);
+    if source_sections.is_empty() {
+        return if has_global_partition_evidence {
+            Err("orphan source partition controls have no `## Source` section".to_string())
+        } else {
+            Ok(None)
+        };
+    }
+    let has_source_partition_evidence = source_sections.iter().any(|(start, end)| {
+        let controls = partition_control_lines(&lines, start + 1, *end);
+        !controls.manifests.is_empty()
+            || controls.partition_metadata > 0
+            || controls.partition_headings > 0
+    });
+    if !has_source_partition_evidence {
+        return if has_global_partition_evidence {
+            Err(
+                "orphan source partition controls/sentinel are outside the `## Source` section"
+                    .to_string(),
+            )
+        } else {
+            Ok(None)
+        };
+    }
+    if source_sections.len() != 1 {
+        return Err("partitioned TD must contain exactly one `## Source` section".to_string());
+    }
+    let (source_start, source_end) = source_sections[0];
+    let source_annotations = source_section_annotations(&lines, source_start + 1, source_end);
+    if source_annotations.len() != 1 || source_annotations[0].0 != source_start + 1 {
+        return Err(
+            "partitioned Source must have exactly one immediate typed source-unit annotation"
+                .to_string(),
+        );
+    }
+    let source_annotation = &source_annotations[0].1;
+    let control_lines = partition_control_lines(&lines, source_start + 1, source_end);
+    let source_sentinel_lines = global_sentinel_lines
+        .iter()
+        .copied()
+        .filter(|idx| *idx > source_start && *idx < source_end)
+        .collect::<Vec<_>>();
+    if control_lines.manifests.len() != global_controls.manifests.len()
+        || control_lines.partition_metadata != global_controls.partition_metadata
+        || control_lines.partition_headings != global_controls.partition_headings
+        || source_sentinel_lines.len() != global_sentinel_lines.len()
+    {
+        return Err(
+            "all partition controls/sentinel lines must belong to the unique `## Source` section"
+                .to_string(),
+        );
+    }
+    let manifest_lines = control_lines.manifests;
+    if manifest_lines.len() != 1 {
+        return Err("partition controls require exactly one canonical source manifest".to_string());
+    }
+    let manifest = parse_aw_partition_attributes(manifest_lines[0], "<!-- aw-source-partitions:")?;
+    require_partition_attr(&manifest, "version")?
+        .parse::<u32>()
+        .map_err(|_| "partition manifest `version` must be an integer".to_string())?
+        .eq(&1)
+        .then_some(())
+        .ok_or_else(|| "unsupported partition manifest version".to_string())?;
+    let expected_count = parse_partition_usize(&manifest, "count")?;
+    if expected_count == 0 {
+        return Err("partition manifest count must be greater than zero".to_string());
+    }
+    let max_bytes = parse_partition_usize(&manifest, "max_bytes")?;
+    let max_payload_bytes = parse_partition_usize(&manifest, "max_payload_bytes")?;
+    if max_bytes != RUST_SOURCE_PARTITION_MAX_BYTES
+        || max_payload_bytes != RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES
+    {
+        return Err(format!(
+            "partition manifest bounds must be max_bytes={} and max_payload_bytes={}",
+            RUST_SOURCE_PARTITION_MAX_BYTES, RUST_SOURCE_PARTITION_MAX_PAYLOAD_BYTES
+        ));
+    }
+    if require_partition_attr(&manifest, "encoding")? != "base64" {
+        return Err("partition manifest encoding must be base64".to_string());
+    }
+    let source_lang = require_partition_attr(&manifest, "source_lang")?;
+    if !matches!(
+        source_lang,
+        "rust" | "python" | "javascript" | "typescript" | "go"
+    ) {
+        return Err(format!(
+            "partition manifest has unsupported source_lang `{source_lang}`"
+        ));
+    }
+    let expected_annotation = if source_lang == "rust" {
+        ("rust-source-unit", "rust")
+    } else {
+        ("text-source-unit", "bash")
+    };
+    if source_annotation.section_type != expected_annotation.0
+        || source_annotation.lang.as_deref() != Some(expected_annotation.1)
+    {
+        return Err(format!(
+            "partitioned {source_lang} Source must use `<!-- type: {} lang: {} -->`",
+            expected_annotation.0, expected_annotation.1
+        ));
+    }
+    let expected_digest = require_partition_attr(&manifest, "digest")?;
+    if source_sentinel_lines.len() != 1 {
+        return Err("partition controls require exactly one canonical source sentinel".to_string());
+    }
+    let expected_sentinel = format!(
+        "// AW source partition manifest v1: {expected_count} ordered {source_lang} chunks, max {max_bytes} decoded / {max_payload_bytes} encoded bytes, digest {expected_digest}"
+    );
+    if lines[source_sentinel_lines[0]].trim() != expected_sentinel {
+        return Err("source partition sentinel does not match the manifest".to_string());
+    }
+
+    let mut chunks = Vec::new();
+    let mut chunk_boundaries = Vec::new();
+    let mut idx = source_start + 1;
+    let mut fence_open: Option<String> = None;
+    while idx < source_end {
+        let line = lines[idx];
+        if let Some(open) = &fence_open {
+            if fence_closes(line, open) {
+                fence_open = None;
+            }
+            idx += 1;
+            continue;
+        }
+        if let Some(open) = source_fence_close_marker(line) {
+            fence_open = Some(open);
+            idx += 1;
+            continue;
+        }
+        let Some(heading_index) = line.trim().strip_prefix("### Source Partition ") else {
+            idx += 1;
+            continue;
+        };
+        let heading_index = heading_index
+            .parse::<usize>()
+            .map_err(|_| format!("invalid source partition heading `{}`", line.trim()))?;
+        let expected_index = chunks.len() + 1;
+        if heading_index != expected_index
+            || line.trim() != format!("### Source Partition {expected_index:04}")
+        {
+            return Err(format!(
+                "source partitions must be contiguous and ordered; expected {expected_index:04}, found `{}`",
+                line.trim()
+            ));
+        }
+
+        let meta_line = lines
+            .get(idx + 1)
+            .ok_or_else(|| format!("partition {expected_index} is missing metadata"))?;
+        let meta = parse_aw_partition_attributes(meta_line, "<!-- aw-source-partition:")?;
+        if parse_partition_usize(&meta, "index")? != expected_index
+            || parse_partition_usize(&meta, "count")? != expected_count
+        {
+            return Err(format!(
+                "partition {expected_index} metadata index/count does not match the manifest"
+            ));
+        }
+        if require_partition_attr(&meta, "encoding")? != "base64" {
+            return Err(format!(
+                "partition {expected_index} encoding must be base64"
+            ));
+        }
+        let declared_bytes = parse_partition_usize(&meta, "bytes")?;
+        let declared_payload_bytes = parse_partition_usize(&meta, "payload_bytes")?;
+        if declared_bytes > max_bytes || declared_payload_bytes > max_payload_bytes {
+            return Err(format!(
+                "partition {expected_index} exceeds declared size bounds"
+            ));
+        }
+        let boundary = require_partition_attr(&meta, "boundary")?;
+        if !matches!(
+            boundary,
+            "ast" | "oversized-ast-fallback" | "parse-fallback"
+        ) {
+            return Err(format!(
+                "partition {expected_index} has unknown boundary `{boundary}`"
+            ));
+        }
+        let terminal_newline = require_partition_attr(&meta, "terminal_newline")?
+            .parse::<bool>()
+            .map_err(|_| format!("partition {expected_index} terminal_newline must be boolean"))?;
+        let chunk_digest = require_partition_attr(&meta, "digest")?;
+
+        let mut opener_idx = idx + 2;
+        while opener_idx < source_end && lines[opener_idx].trim().is_empty() {
+            opener_idx += 1;
+        }
+        let opener = lines
+            .get(opener_idx)
+            .ok_or_else(|| format!("partition {expected_index} is missing its payload fence"))?;
+        let marker = source_fence_close_marker(opener)
+            .ok_or_else(|| format!("partition {expected_index} has an invalid payload fence"))?;
+        if opener[marker.len()..].trim() != "text" {
+            return Err(format!(
+                "partition {expected_index} payload fence must use `text`"
+            ));
+        }
+        let close_idx = (opener_idx + 1..source_end)
+            .find(|line_idx| fence_closes(lines[*line_idx], &marker))
+            .ok_or_else(|| format!("partition {expected_index} payload fence is not closed"))?;
+        let payload_lines = &lines[opener_idx + 1..close_idx];
+        let mut payload_len = 0usize;
+        for (line_idx, line) in payload_lines.iter().enumerate() {
+            payload_len = payload_len
+                .checked_add(line.len())
+                .and_then(|len| len.checked_add(usize::from(line_idx > 0)))
+                .ok_or_else(|| format!("partition {expected_index} payload size overflow"))?;
+            if payload_len > max_payload_bytes {
+                return Err(format!(
+                    "partition {expected_index} payload exceeds {max_payload_bytes} bytes"
+                ));
+            }
+        }
+        if payload_len != declared_payload_bytes {
+            return Err(format!(
+                "partition {expected_index} payload byte count mismatch: declared {declared_payload_bytes}, actual {}",
+                payload_len
+            ));
+        }
+        let mut payload = String::with_capacity(payload_len);
+        for (line_idx, line) in payload_lines.iter().enumerate() {
+            if line_idx > 0 {
+                payload.push('\n');
+            }
+            payload.push_str(line);
+        }
+        let compact_payload = payload
+            .bytes()
+            .filter(|byte| !byte.is_ascii_whitespace())
+            .collect::<Vec<_>>();
+        let decoded = BASE64_STANDARD
+            .decode(compact_payload)
+            .map_err(|e| format!("partition {expected_index} base64 decode failed: {e}"))?;
+        if decoded.len() != declared_bytes || decoded.len() > max_bytes {
+            return Err(format!(
+                "partition {expected_index} decoded byte count mismatch: declared {declared_bytes}, actual {}",
+                decoded.len()
+            ));
+        }
+        if partition_sha256(&decoded) != chunk_digest {
+            return Err(format!("partition {expected_index} digest mismatch"));
+        }
+        let decoded = String::from_utf8(decoded)
+            .map_err(|_| format!("partition {expected_index} is not valid UTF-8"))?;
+        if decoded.ends_with('\n') != terminal_newline {
+            return Err(format!(
+                "partition {expected_index} terminal-newline metadata mismatch"
+            ));
+        }
+        chunks.push(decoded);
+        chunk_boundaries.push(boundary.to_string());
+        idx = close_idx + 1;
+    }
+
+    if chunks.len() != expected_count {
+        return Err(format!(
+            "partition count mismatch: manifest declares {expected_count}, found {}",
+            chunks.len()
+        ));
+    }
+    if control_lines.partition_metadata != expected_count
+        || control_lines.partition_headings != expected_count
+    {
+        return Err(format!(
+            "partition control count mismatch: expected {expected_count} headings/metadata, found {}/{}",
+            control_lines.partition_headings, control_lines.partition_metadata
+        ));
+    }
+    let source = chunks.concat();
+    if partition_sha256(source.as_bytes()) != expected_digest {
+        return Err("partitioned source digest mismatch".to_string());
+    }
+    let canonical = crate::fillback::code::canonical_source_partition_plan(&source, source_lang)
+        .map_err(|error| format!("failed to recompute canonical source partitions: {error}"))?;
+    if canonical.len() != chunks.len()
+        || canonical
+            .iter()
+            .zip(chunks.iter().zip(&chunk_boundaries))
+            .any(
+                |((canonical_content, canonical_boundary), (content, boundary))| {
+                    canonical_content != content || canonical_boundary != boundary
+                },
+            )
+    {
+        return Err(
+            "source partition chunks/boundaries do not match AW's canonical deterministic partition plan"
+                .to_string(),
+        );
+    }
+    Ok(Some(DecodedPartitionedSource {
+        source,
+        source_lang: source_lang.to_string(),
+    }))
+}
+
+fn validate_partitioned_source_targets(
+    partitioned: &DecodedPartitionedSource,
+    change_entries: &[ChangeEntry],
+) -> Result<(), String> {
+    let source_entries = change_entries
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.section_id.as_deref(),
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            )
+        })
+        .collect::<Vec<_>>();
+    if source_entries.len() != 1 {
+        return Err(format!(
+            "partitioned Source requires exactly one generated source target; found {}",
+            source_entries.len()
+        ));
+    }
+    if source_entries[0].impl_mode == ImplMode::HandWritten {
+        return Err(
+            "partitioned Source requires its unique source Changes entry to use impl_mode=codegen"
+                .to_string(),
+        );
+    }
+    let expected_sections: &[&str] = if partitioned.source_lang == "rust" {
+        &["source", "rust-source-unit"]
+    } else {
+        &["source", "text-source-unit"]
+    };
+    let actual_section = source_entries[0].section_id.as_deref().unwrap_or_default();
+    if !expected_sections.contains(&actual_section) {
+        return Err(format!(
+            "partitioned {} Source cannot target Changes section `{actual_section}`; expected one of {}",
+            partitioned.source_lang,
+            expected_sections.join(", ")
+        ));
+    }
+    validate_partitioned_source_target(partitioned, &source_entries[0].path)
+}
+
+fn validate_partitioned_source_target(
+    partitioned: &DecodedPartitionedSource,
+    target_rel_path: &str,
+) -> Result<(), String> {
+    let actual = source_language_for_path(Path::new(target_rel_path)).ok_or_else(|| {
+        format!(
+            "partitioned source target `{target_rel_path}` does not have a supported source extension"
+        )
+    })?;
+    if actual != partitioned.source_lang {
+        return Err(format!(
+            "partitioned source language mismatch: manifest declares `{}`, target `{target_rel_path}` is `{actual}`",
+            partitioned.source_lang
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ValidatedExactSourceSnapshot {
+    target: PathBuf,
+    content: Option<String>,
+    selected_change_index: usize,
+    authoritative_embedded_snapshot: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExactSourceContract {
+    section: String,
+    selected_change_index: usize,
+    authoritative_embedded_snapshot: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypedSourceUnitKind {
+    Rust,
+    Text,
+}
+
+impl TypedSourceUnitKind {
+    fn expected_sections(self) -> &'static [&'static str] {
+        match self {
+            Self::Rust => &["source", "rust-source-unit"],
+            Self::Text => &["source", "text-source-unit"],
+        }
+    }
+}
+
+/// Validate the metadata-only half of an exact source-unit request.
+///
+/// Fillback calls this before refreshing an existing owner TD so malformed
+/// annotation/fence metadata, an incompatible action, or a non-empty
+/// `replaces` list cannot be silently repaired by rewriting `## Source`.
+/// The normal exact apply path calls the same helper before inspecting or
+/// writing target bytes.
+pub(crate) fn validate_exact_source_spec_contract(
+    spec_content: &str,
+    root: &Path,
+    exact_target: &Path,
+) -> Result<String, String> {
+    validate_exact_source_spec_contract_details(spec_content, root, exact_target)
+        .map(|contract| contract.section)
+}
+
+fn validate_exact_source_spec_contract_details(
+    spec_content: &str,
+    root: &Path,
+    exact_target: &Path,
+) -> Result<ExactSourceContract, String> {
+    if let Some(typed_kind) = typed_source_unit_kind(spec_content)? {
+        return validate_typed_exact_source_contract(spec_content, root, exact_target, typed_kind);
+    }
+    validate_legacy_source_snapshot_contract(spec_content, root, exact_target)
+}
+
+fn validate_typed_exact_source_contract(
+    spec_content: &str,
+    root: &Path,
+    exact_target: &Path,
+    typed_kind: TypedSourceUnitKind,
+) -> Result<ExactSourceContract, String> {
+    // A partitioned Source owns several encoded payload fences and is
+    // validated by the strict manifest decoder.  A legacy unpartitioned
+    // source-unit must own exactly one closed payload fence.
+    if decode_partitioned_source(spec_content)?.is_none() {
+        extract_single_typed_source_fence(spec_content)?;
+    }
+
+    let target_rel = exact_target
+        .strip_prefix(root)
+        .map(normalize_path_for_spec_ref)
+        .map_err(|_| {
+            format!(
+                "exact source target `{}` is outside the repository root",
+                exact_target.display()
+            )
+        })?;
+    let change_entries = extract_change_entries(spec_content);
+    let source_entries = change_entries
+        .iter()
+        .enumerate()
+        .filter(|entry| {
+            matches!(
+                entry.1.section_id.as_deref(),
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            )
+        })
+        .collect::<Vec<_>>();
+    if source_entries.len() != 1 {
+        return Err(format!(
+            "exact source generation requires exactly one authoritative source Changes entry; found {}",
+            source_entries.len()
+        ));
+    }
+    let (selected_change_index, entry) = source_entries[0];
+    if entry.impl_mode == ImplMode::HandWritten {
+        return Err(
+            "exact source generation requires its unique source Changes entry to use impl_mode=codegen"
+                .to_string(),
+        );
+    }
+    if normalize_path_for_spec_ref(Path::new(&entry.path)) != target_rel {
+        return Err(format!(
+            "exact source generation requested `{target_rel}`, but the authoritative Changes entry targets `{}`",
+            entry.path
+        ));
+    }
+    let target_entries = change_entries
+        .iter()
+        .filter(|candidate| normalize_path_for_spec_ref(Path::new(&candidate.path)) == target_rel)
+        .collect::<Vec<_>>();
+    if target_entries.len() != 1 || !std::ptr::eq(target_entries[0], entry) {
+        return Err(format!(
+            "exact source generation requires the source CODEGEN entry to be the only Changes entry targeting `{target_rel}`; found {}",
+            target_entries.len()
+        ));
+    }
+    let section = entry.section_id.as_deref().unwrap_or_default();
+    if !typed_kind.expected_sections().contains(&section) {
+        return Err(format!(
+            "typed Source is incompatible with Changes section `{section}`; expected one of {}",
+            typed_kind.expected_sections().join(", ")
+        ));
+    }
+    if !entry.replaces.is_empty() {
+        return Err(
+            "exact source generation requires whole-file ownership and forbids `replaces`"
+                .to_string(),
+        );
+    }
+    let expected_action = if exact_target.exists() {
+        "modify"
+    } else {
+        "create"
+    };
+    if entry.action != expected_action {
+        return Err(format!(
+            "exact source generation target existence requires action `{expected_action}`, found `{}`",
+            entry.action
+        ));
+    }
+    match typed_kind {
+        TypedSourceUnitKind::Rust if !is_rust_source(exact_target) => {
+            return Err(format!(
+                "rust-source-unit exact target must use a Rust extension: `{target_rel}`"
+            ));
+        }
+        TypedSourceUnitKind::Text
+            if is_rust_source(exact_target)
+                || target_language(exact_target, Some(section)).is_none() =>
+        {
+            return Err(format!(
+                "text-source-unit exact target `{target_rel}` is incompatible with section `{section}`"
+            ));
+        }
+        _ => {}
+    }
+
+    Ok(ExactSourceContract {
+        section: section.to_string(),
+        selected_change_index,
+        authoritative_embedded_snapshot: false,
+    })
+}
+
+fn validate_legacy_source_snapshot_contract(
+    spec_content: &str,
+    root: &Path,
+    exact_target: &Path,
+) -> Result<ExactSourceContract, String> {
+    if !exact_target.exists() {
+        return Err(format!(
+            "legacy authoritative source-snapshot requires an existing whole-file CODEGEN target: `{}`; use `aw td create --from-source {}` to adopt a missing target",
+            exact_target.display(),
+            exact_target.display(),
+        ));
+    }
+
+    let target_rel = exact_target
+        .strip_prefix(root)
+        .map(normalize_path_for_spec_ref)
+        .map_err(|_| {
+            format!(
+                "exact source target `{}` is outside the repository root",
+                exact_target.display()
+            )
+        })?;
+    validate_legacy_source_annotation(spec_content, exact_target)?;
+    extract_authoritative_source_snapshot(spec_content)?;
+    let snapshot_path = authoritative_source_snapshot_path(spec_content)?;
+    if snapshot_path != target_rel {
+        return Err(format!(
+            "authoritative source-snapshot targets `{snapshot_path}`, not requested target `{target_rel}`; rerun with `--target {snapshot_path}`"
+        ));
+    }
+
+    let change_entries = extract_change_entries(spec_content);
+    let source_entries = change_entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            matches!(
+                entry.section_id.as_deref(),
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            )
+        })
+        .collect::<Vec<_>>();
+    if source_entries.is_empty() {
+        return Err(
+            "legacy authoritative source-snapshot requires at least one source Changes entry"
+                .to_string(),
+        );
+    }
+    for (_, entry) in &source_entries {
+        let entry_path = normalize_path_for_spec_ref(Path::new(&entry.path));
+        if entry_path != target_rel {
+            return Err(format!(
+                "legacy authoritative source-snapshot may only contain historical source Changes rows for `{target_rel}`; found different source target `{}`",
+                entry.path
+            ));
+        }
+        if entry.section_id.as_deref() != Some("source") {
+            return Err(format!(
+                "legacy authoritative source-snapshot requires Changes section `source`, found `{}` for `{target_rel}`",
+                entry.section_id.as_deref().unwrap_or_default()
+            ));
+        }
+        if entry.impl_mode == ImplMode::HandWritten {
+            return Err(format!(
+                "legacy authoritative source-snapshot requires impl_mode=codegen for `{target_rel}`"
+            ));
+        }
+        if !entry.replaces.is_empty() {
+            return Err(format!(
+                "legacy authoritative source-snapshot requires whole-file ownership and forbids `replaces` for `{target_rel}`"
+            ));
+        }
+        if !matches!(entry.action.as_str(), "create" | "modify") {
+            return Err(format!(
+                "legacy authoritative source-snapshot only accepts historical `create`/`modify` Changes rows for `{target_rel}`, found action `{}`",
+                entry.action
+            ));
+        }
+    }
+
+    let target_local_entries = change_entries
+        .iter()
+        .filter(|entry| normalize_path_for_spec_ref(Path::new(&entry.path)) == target_rel)
+        .collect::<Vec<_>>();
+    if target_local_entries.len() != source_entries.len() {
+        return Err(format!(
+            "legacy authoritative source-snapshot target `{target_rel}` has a non-source or incompatible Changes row; exact projection only accepts historical source rows"
+        ));
+    }
+    let selected_change_index = source_entries
+        .iter()
+        .rev()
+        .find_map(|(index, entry)| (entry.action == "modify").then_some(*index))
+        .ok_or_else(|| {
+            format!(
+                "legacy authoritative source-snapshot target `{target_rel}` exists but has no effective `action: modify` Changes row"
+            )
+        })?;
+
+    Ok(ExactSourceContract {
+        section: "source".to_string(),
+        selected_change_index,
+        authoritative_embedded_snapshot: true,
+    })
+}
+
+fn validate_legacy_source_annotation(
+    spec_content: &str,
+    exact_target: &Path,
+) -> Result<(), String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    if sections.len() != 1 {
+        return Err(format!(
+            "legacy authoritative source-snapshot requires exactly one top-level `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (source_start, source_end) = sections[0];
+    let annotations = source_section_annotations(&lines, source_start + 1, source_end);
+    if annotations.len() != 1 || annotations[0].0 != source_start + 1 {
+        return Err(
+            "legacy authoritative source-snapshot requires exactly one immediate top-level `type: source` annotation"
+                .to_string(),
+        );
+    }
+    let annotation = &annotations[0].1;
+    if annotation.section_type != "source" || !annotation.attributes.is_empty() {
+        return Err(
+            "legacy authoritative source-snapshot requires an exact `type: source` annotation without extra attributes"
+                .to_string(),
+        );
+    }
+    let expected_lang = source_language_for_path(exact_target).ok_or_else(|| {
+        format!(
+            "legacy authoritative source-snapshot target `{}` does not have a supported source extension",
+            exact_target.display()
+        )
+    })?;
+    if annotation.lang.as_deref() != Some(expected_lang) {
+        return Err(format!(
+            "legacy authoritative source-snapshot annotation language `{}` does not match target language `{expected_lang}`",
+            annotation.lang.as_deref().unwrap_or_default()
+        ));
+    }
+    Ok(())
+}
+
+fn authoritative_source_snapshot_path(spec_content: &str) -> Result<String, String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    if sections.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot requires exactly one top-level `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (start, end) = sections[0];
+    let directives = non_fenced_source_snapshot_directives(&lines)?;
+    if directives.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot requires exactly one non-fenced source-snapshot path in the TD; found {}",
+            directives.len()
+        ));
+    }
+    let (directive_index, path) = &directives[0];
+    if *directive_index <= start || *directive_index >= end {
+        return Err(
+            "the unique authoritative source-snapshot directive must belong to the unique top-level `## Source` section"
+                .to_string(),
+        );
+    }
+    Ok(path.clone())
+}
+
+fn non_fenced_source_snapshot_directives(lines: &[&str]) -> Result<Vec<(usize, String)>, String> {
+    let mut fence_open: Option<String> = None;
+    let mut paths = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if let Some(open) = &fence_open {
+            if fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = source_fence_close_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        let trimmed = line.trim();
+        let Some(body) = trimmed
+            .strip_prefix("<!-- source-snapshot:")
+            .and_then(|rest| rest.strip_suffix("-->"))
+        else {
+            continue;
+        };
+        let tokens = body.split_whitespace().collect::<Vec<_>>();
+        let [path_token] = tokens.as_slice() else {
+            return Err(format!(
+                "authoritative source-snapshot metadata must contain only `path=<repo-relative-file>`: `{trimmed}`"
+            ));
+        };
+        let path = path_token.strip_prefix("path=").ok_or_else(|| {
+            format!("authoritative source-snapshot metadata is missing `path=`: `{trimmed}`")
+        })?;
+        let candidate = Path::new(path);
+        if path.is_empty()
+            || path.trim() != path
+            || candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "authoritative source-snapshot path must be a normalized repository-relative file path: `{path}`"
+            ));
+        }
+        paths.push((index, normalize_path_for_spec_ref(candidate)));
+    }
+    Ok(paths)
+}
+
+fn extract_authoritative_source_snapshot(spec_content: &str) -> Result<String, String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    if sections.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot TD requires exactly one top-level `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (start, end) = sections[0];
+    let mut payloads = Vec::new();
+    let mut closes = Vec::new();
+    let mut index = start + 1;
+    while index < end {
+        let Some(marker) = source_fence_close_marker(lines[index]) else {
+            index += 1;
+            continue;
+        };
+        let close = (index + 1..end)
+            .find(|line_index| fence_closes(lines[*line_index], &marker))
+            .ok_or_else(|| {
+                "authoritative source-snapshot Source payload fence is unterminated before the next top-level section"
+                    .to_string()
+            })?;
+        let mut payload = lines[index + 1..close].join("\n");
+        if close > index + 1 {
+            payload.push('\n');
+        }
+        payloads.push(payload);
+        closes.push(close);
+        index = close + 1;
+    }
+    if payloads.len() != 1 {
+        return Err(format!(
+            "authoritative source-snapshot Source requires exactly one closed payload fence; found {}",
+            payloads.len()
+        ));
+    }
+    validate_complete_typed_changes_after_source(&lines, closes[0], end)?;
+    Ok(payloads.remove(0))
+}
+
+fn validate_complete_typed_changes_after_source(
+    lines: &[&str],
+    source_close: usize,
+    changes_start: usize,
+) -> Result<(), String> {
+    let next_nonblank =
+        (source_close + 1..lines.len()).find(|index| !lines[*index].trim().is_empty());
+    if next_nonblank != Some(changes_start) || changes_start >= lines.len() {
+        return Err(
+            "authoritative source-snapshot payload must be followed by one top-level typed Changes section"
+                .to_string(),
+        );
+    }
+    if lines[changes_start].trim() != "## Changes" {
+        return Err(
+            "authoritative source-snapshot payload must be followed by the literal top-level `## Changes` heading"
+                .to_string(),
+        );
+    }
+    let annotation_index = changes_start + 1;
+    let annotation = lines
+        .get(annotation_index)
+        .and_then(|line| crate::models::section::parse_section_annotation_parts(line))
+        .ok_or_else(|| {
+            "authoritative source-snapshot Changes heading requires an immediate typed annotation"
+                .to_string()
+        })?;
+    if annotation.section_type != "changes"
+        || annotation.lang.as_deref() != Some("yaml")
+        || !annotation.attributes.is_empty()
+    {
+        return Err(
+            "authoritative source-snapshot requires an exact `type: changes lang: yaml` annotation"
+                .to_string(),
+        );
+    }
+    let changes_end = (annotation_index + 1..lines.len())
+        .find(|index| lines[*index].starts_with("## "))
+        .unwrap_or(lines.len());
+    let mut payload_count = 0;
+    let mut index = annotation_index + 1;
+    while index < changes_end {
+        let Some(marker) = source_fence_close_marker(lines[index]) else {
+            index += 1;
+            continue;
+        };
+        if lines[index][marker.len()..].trim() != "yaml" {
+            return Err(
+                "authoritative source-snapshot Changes payload fence language must be literal `yaml`"
+                    .to_string(),
+            );
+        }
+        let close = (index + 1..changes_end)
+            .find(|line_index| fence_closes(lines[*line_index], &marker))
+            .ok_or_else(|| {
+                "authoritative source-snapshot Changes YAML payload fence is unterminated"
+                    .to_string()
+            })?;
+        payload_count += 1;
+        index = close + 1;
+    }
+    if payload_count != 1 {
+        return Err(format!(
+            "authoritative source-snapshot Changes requires exactly one closed YAML payload fence; found {payload_count}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_exact_source_request(
+    spec_content: &str,
+    spec_path: &str,
+    root: &Path,
+    exact_target: &Path,
+) -> Result<ValidatedExactSourceSnapshot, String> {
+    let contract = validate_exact_source_spec_contract_details(spec_content, root, exact_target)?;
+    let target_rel = exact_target
+        .strip_prefix(root)
+        .map(normalize_path_for_spec_ref)
+        .map_err(|_| {
+            format!(
+                "exact source target `{}` is outside the repository root",
+                exact_target.display()
+            )
+        })?;
+    let selected = if contract.authoritative_embedded_snapshot {
+        extract_authoritative_source_snapshot(spec_content)?
+    } else {
+        try_generate_source_section_code(spec_content, spec_path, Some(&target_rel), root)?
+    };
+    if !exact_target.exists() {
+        return Ok(ValidatedExactSourceSnapshot {
+            target: exact_target.to_path_buf(),
+            content: None,
+            selected_change_index: contract.selected_change_index,
+            authoritative_embedded_snapshot: contract.authoritative_embedded_snapshot,
+        });
+    }
+    let current = std::fs::read_to_string(exact_target).map_err(|error| {
+        format!("failed to inspect exact source target `{target_rel}` before generation: {error}")
+    })?;
+    let blocks = parse_source_codegen_blocks(exact_target, &current)?;
+    if blocks.is_empty() {
+        if contract.authoritative_embedded_snapshot {
+            return Err(format!(
+                "legacy authoritative source-snapshot target `{target_rel}` is not an existing whole-file CODEGEN owner; run `aw td create --from-source {target_rel}` before projection"
+            ));
+        }
+        if current != selected {
+            return Err(format!(
+                "unowned source target `{target_rel}` changed after fillback; rerun `aw td create --from-source {target_rel}` before adding CODEGEN ownership"
+            ));
+        }
+        return Ok(ValidatedExactSourceSnapshot {
+            target: exact_target.to_path_buf(),
+            content: Some(current),
+            selected_change_index: contract.selected_change_index,
+            authoritative_embedded_snapshot: contract.authoritative_embedded_snapshot,
+        });
+    }
+    let expected_ref = format!("{spec_path}#{}", contract.section);
+    if blocks.len() != 1
+        || !is_whole_file_codegen_content(&current, &blocks)
+        || blocks[0].spec_ref != expected_ref
+    {
+        return Err(format!(
+            "source target `{target_rel}` has partial, multiple, or foreign CODEGEN ownership; expected one whole-file block owned by `{expected_ref}`"
+        ));
+    }
+    Ok(ValidatedExactSourceSnapshot {
+        target: exact_target.to_path_buf(),
+        content: Some(current),
+        selected_change_index: contract.selected_change_index,
+        authoritative_embedded_snapshot: contract.authoritative_embedded_snapshot,
+    })
+}
+
+fn ensure_exact_target_snapshot_unchanged(
+    validated: &ValidatedExactSourceSnapshot,
+) -> Result<(), String> {
+    let current = if validated.target.exists() {
+        Some(std::fs::read_to_string(&validated.target).map_err(|error| {
+            format!(
+                "failed to re-read exact source target `{}` immediately before write: {error}",
+                validated.target.display()
+            )
+        })?)
+    } else {
+        None
+    };
+    if current != validated.content {
+        return Err(format!(
+            "exact source target `{}` changed after preflight; refusing concurrent overwrite",
+            validated.target.display()
+        ));
+    }
+    Ok(())
+}
+
+fn source_language_for_path(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "rs" => Some("rust"),
+        "py" => Some("python"),
+        "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
+        "ts" | "tsx" => Some("typescript"),
+        "go" => Some("go"),
+        _ => None,
+    }
+}
+
+struct PartitionControlLines<'a> {
+    manifests: Vec<&'a str>,
+    partition_metadata: usize,
+    partition_headings: usize,
+}
+
+fn source_section_annotations(
+    lines: &[&str],
+    start: usize,
+    end: usize,
+) -> Vec<(usize, crate::models::section::RawSectionAnnotation)> {
+    let mut annotations = Vec::new();
+    let mut fence_open: Option<String> = None;
+    for (idx, line) in lines.iter().enumerate().take(end).skip(start) {
+        if let Some(open) = &fence_open {
+            if fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = source_fence_close_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        if let Some(annotation) = crate::models::section::parse_section_annotation_parts(line) {
+            annotations.push((idx, annotation));
+        }
+    }
+    annotations
+}
+
+fn top_level_source_sections(lines: &[&str]) -> Vec<(usize, usize)> {
+    let mut starts = Vec::new();
+    let mut fence_open: Option<String> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if let Some(open) = &fence_open {
+            if fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = source_fence_close_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        if line.trim() == "## Source" {
+            starts.push(idx);
+        }
+    }
+    starts
+        .iter()
+        .map(|start| (*start, source_section_end(lines, *start + 1)))
+        .collect()
+}
+
+fn partition_control_lines<'a>(
+    lines: &'a [&'a str],
+    start: usize,
+    end: usize,
+) -> PartitionControlLines<'a> {
+    let mut controls = PartitionControlLines {
+        manifests: Vec::new(),
+        partition_metadata: 0,
+        partition_headings: 0,
+    };
+    let mut fence_open: Option<String> = None;
+    for line in &lines[start..end] {
+        if let Some(open) = &fence_open {
+            if fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = source_fence_close_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("<!-- aw-source-partitions:") {
+            controls.manifests.push(*line);
+        } else if trimmed.starts_with("<!-- aw-source-partition:") {
+            controls.partition_metadata += 1;
+        } else if trimmed.starts_with("### Source Partition ") {
+            controls.partition_headings += 1;
+        }
+    }
+    controls
+}
+
+fn source_section_end(lines: &[&str], start: usize) -> usize {
+    let mut fence_open: Option<String> = None;
+    for (idx, line) in lines.iter().enumerate().skip(start) {
+        if let Some(open) = &fence_open {
+            if fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = source_fence_close_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        if line.starts_with("## ") {
+            return idx;
+        }
+    }
+    lines.len()
+}
+
+fn parse_aw_partition_attributes(
+    line: &str,
+    prefix: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    let trimmed = line.trim();
+    let body = trimmed
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix("-->"))
+        .ok_or_else(|| format!("invalid partition metadata line `{trimmed}`"))?
+        .trim();
+    let mut attrs = BTreeMap::new();
+    for token in body.split_whitespace() {
+        let (key, value) = token
+            .split_once('=')
+            .ok_or_else(|| format!("invalid partition metadata token `{token}`"))?;
+        if attrs.insert(key.to_string(), value.to_string()).is_some() {
+            return Err(format!("duplicate partition metadata key `{key}`"));
+        }
+    }
+    Ok(attrs)
+}
+
+fn require_partition_attr<'a>(
+    attrs: &'a BTreeMap<String, String>,
+    key: &str,
+) -> Result<&'a str, String> {
+    attrs
+        .get(key)
+        .map(String::as_str)
+        .ok_or_else(|| format!("partition metadata is missing `{key}`"))
+}
+
+fn parse_partition_usize(attrs: &BTreeMap<String, String>, key: &str) -> Result<usize, String> {
+    require_partition_attr(attrs, key)?
+        .parse::<usize>()
+        .map_err(|_| format!("partition metadata `{key}` must be an integer"))
+}
+
+pub(crate) fn partition_sha256(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 /// Generate a `source` section payload for a target file.
 ///
 /// The source template is intentionally cross-language and mostly raw, but
@@ -8954,14 +11963,34 @@ fn yaml_fence_close_marker(line: &str) -> Option<String> {
 /// those breadcrumbs at render time so specs can stay focused on source shape
 /// instead of marker mechanics.
 /// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
-pub(crate) fn generate_source_section_code(
+pub(crate) fn try_generate_source_section_code(
     spec_content: &str,
     spec_path: &str,
     target_rel_path: Option<&str>,
     root: &Path,
-) -> String {
+) -> Result<String, String> {
     let spec_ref = format!("{spec_path}#source");
-    let embedded_source = extract_section_fence(spec_content, "Source").unwrap_or_default();
+    let partitioned_source = decode_partitioned_source(spec_content)?;
+
+    if let Some(partitioned) = partitioned_source {
+        if let Some(target_rel_path) = target_rel_path {
+            validate_partitioned_source_target(&partitioned, target_rel_path)?;
+        }
+        if partitioned.source_lang == "rust" {
+            return Ok(
+                crate::generate::rust_source_unit::regenerate(&partitioned.source)
+                    .unwrap_or(partitioned.source),
+            );
+        }
+        return Ok(partitioned.source);
+    }
+
+    let typed_kind = typed_source_unit_kind(spec_content)?;
+    let embedded_source = if typed_kind.is_some() {
+        extract_single_typed_source_fence(spec_content)?
+    } else {
+        extract_section_fence(spec_content, "Source").unwrap_or_default()
+    };
 
     // rust-source-unit (td_ast): regenerate the file by routing the TD-embedded
     // source through the structured lossless item-tree, NOT by replaying a
@@ -8970,14 +11999,15 @@ pub(crate) fn generate_source_section_code(
     // structured edit regenerates. A parse failure means the TD fence is not
     // clean Rust — fall back to the raw embedded source so apply still writes
     // something inspectable rather than silently dropping the section.
-    if source_is_rust_source_unit(spec_content) {
+    if typed_kind == Some(TypedSourceUnitKind::Rust) {
         let regenerated = crate::generate::rust_source_unit::regenerate(&embedded_source)
             .unwrap_or_else(|_| embedded_source.clone());
-        return if target_rel_path.is_some_and(is_rust_path_str) {
-            annotate_rust_source_items(&regenerated, &spec_ref)
-        } else {
-            regenerated
-        };
+        // rust-source-unit is the lossless whole-file primitive. Unlike the
+        // legacy source template, it must not inject per-item breadcrumbs:
+        // doing so changes the selected source during fillback regeneration
+        // and breaks byte-identical round trips (#1506). Ownership stays on
+        // the enclosing whole-file CODEGEN block/spec ref.
+        return Ok(regenerated);
     }
 
     // text-source-unit (td_ast): the language-agnostic sibling of rust-source-unit
@@ -8985,8 +12015,8 @@ pub(crate) fn generate_source_section_code(
     // The TD-embedded fence is the source of truth and is emitted VERBATIM — TD
     // edits regenerate, which is exactly what source-replay snapshots fail to do.
     // No parsing, no per-item annotation; byte-equivalent by construction.
-    if source_is_text_source_unit(spec_content) {
-        return embedded_source;
+    if typed_kind == Some(TypedSourceUnitKind::Text) {
+        return Ok(embedded_source);
     }
 
     let source = if let Some(directive) = source_from_target_directive(spec_content) {
@@ -9000,10 +12030,26 @@ pub(crate) fn generate_source_section_code(
         embedded_source
     };
     if target_rel_path.is_some_and(is_rust_path_str) {
-        annotate_rust_source_items(&source, &spec_ref)
+        Ok(annotate_rust_source_items(&source, &spec_ref))
     } else {
-        source
+        Ok(source)
     }
+}
+
+pub(crate) fn generate_source_section_code(
+    spec_content: &str,
+    spec_path: &str,
+    target_rel_path: Option<&str>,
+    root: &Path,
+) -> String {
+    try_generate_source_section_code(spec_content, spec_path, target_rel_path, root).unwrap_or_else(
+        |error| {
+            eprintln!("source generation refused invalid partition manifest: {error}");
+            target_rel_path
+                .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
+                .unwrap_or_default()
+        },
+    )
 }
 
 /// True when the `## Source` section opts into rust-source-unit (td_ast)
@@ -9012,35 +12058,74 @@ pub(crate) fn generate_source_section_code(
 /// TD-embedded fence is the source of truth and is regenerated through the
 /// structured item-tree instead of replayed.
 fn source_is_rust_source_unit(spec_content: &str) -> bool {
-    source_section_has_type_marker(spec_content, "type: rust-source-unit")
+    matches!(
+        typed_source_unit_kind(spec_content),
+        Ok(Some(TypedSourceUnitKind::Rust))
+    )
 }
 
 /// True when the `## Source` section opts into text-source-unit (td_ast)
 /// verbatim regeneration via a `<!-- type: text-source-unit ... -->` marker —
 /// the opaque-text counterpart of rust-source-unit (shell, dockerfile, etc.).
 fn source_is_text_source_unit(spec_content: &str) -> bool {
-    source_section_has_type_marker(spec_content, "type: text-source-unit")
+    matches!(
+        typed_source_unit_kind(spec_content),
+        Ok(Some(TypedSourceUnitKind::Text))
+    )
 }
 
-/// Scan the `## Source` section for a `<!-- type: <marker> ... -->` annotation.
-/// `marker` must be the full `type: <kind>` token so `rust-source-unit` does not
-/// accidentally match `text-source-unit` or the legacy `source` probe.
-fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
-    let mut in_source = false;
-    for line in spec_content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("## ") {
-            in_source = trimmed
-                .trim_start_matches('#')
-                .trim()
-                .eq_ignore_ascii_case("Source");
-            continue;
-        }
-        if in_source && trimmed.starts_with("<!--") && trimmed.contains(marker) {
-            return true;
+/// Return the unique top-level typed Source annotation.
+///
+/// Annotation-looking text inside fenced payloads is ignored. Once either
+/// source-unit type is present at top level, the contract becomes strict:
+/// exactly one `## Source`, exactly one immediate complete annotation, the
+/// canonical language, and no duplicate/extra annotation attributes.
+pub(crate) fn typed_source_unit_kind(
+    spec_content: &str,
+) -> Result<Option<TypedSourceUnitKind>, String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    let annotations = sections
+        .iter()
+        .flat_map(|(start, end)| source_section_annotations(&lines, start + 1, *end))
+        .collect::<Vec<_>>();
+    let has_typed_candidate = annotations.iter().any(|(_, annotation)| {
+        matches!(
+            annotation.section_type.as_str(),
+            "rust-source-unit" | "text-source-unit"
+        )
+    });
+    if !has_typed_candidate {
+        return Ok(None);
+    }
+    if sections.len() != 1 {
+        return Err(format!(
+            "typed source-unit TD requires exactly one `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (source_start, _) = sections[0];
+    if annotations.len() != 1 || annotations[0].0 != source_start + 1 {
+        return Err(
+            "typed Source requires exactly one immediate top-level source-unit annotation"
+                .to_string(),
+        );
+    }
+    let annotation = &annotations[0].1;
+    if !annotation.attributes.is_empty() {
+        return Err("typed Source annotation does not accept extra attributes".to_string());
+    }
+    match (annotation.section_type.as_str(), annotation.lang.as_deref()) {
+        ("rust-source-unit", Some("rust")) => Ok(Some(TypedSourceUnitKind::Rust)),
+        ("text-source-unit", Some("bash")) => Ok(Some(TypedSourceUnitKind::Text)),
+        (kind @ ("rust-source-unit" | "text-source-unit"), lang) => Err(format!(
+            "typed Source annotation `{kind}` has incompatible or missing lang `{}`",
+            lang.unwrap_or("")
+        )),
+        _ => {
+            Err("typed Source annotation must be rust-source-unit or text-source-unit".to_string())
         }
     }
-    false
 }
 
 enum SourceFromTargetDirective {
@@ -9204,16 +12289,37 @@ fn strip_managed_markers_from_target(content: &str) -> Option<String> {
     Some(rendered)
 }
 
-fn generated_codegen_body(generated: &str, spec_ref: &str) -> String {
-    let blocks = crate::generate::marker::parse_codegen_blocks(generated);
-    let body = if let Some(block) = blocks.iter().find(|block| block.spec_ref == spec_ref) {
+fn generated_codegen_body(
+    generated: &str,
+    spec_ref: &str,
+    target_path: &Path,
+    section: Option<&str>,
+) -> Result<String, String> {
+    let leading_shebang = generated
+        .lines()
+        .next()
+        .filter(|line| is_unix_shebang(line));
+    let blocks = if matches!(
+        section,
+        Some("source" | "rust-source-unit" | "text-source-unit")
+    ) {
+        parse_source_codegen_blocks(target_path, generated)?
+    } else {
+        crate::generate::marker::parse_codegen_blocks(generated)
+    };
+    let mut body = if let Some(block) = blocks.iter().find(|block| block.spec_ref == spec_ref) {
         block.content.clone()
     } else if blocks.len() == 1 {
         blocks[0].content.clone()
     } else {
         generated.to_string()
     };
-    body.trim_end_matches(['\r', '\n']).to_string()
+    if let Some(shebang) = leading_shebang {
+        if !is_unix_shebang(body.lines().next().unwrap_or_default()) {
+            body = format!("{shebang}\n{body}");
+        }
+    }
+    Ok(body.trim_end_matches(['\r', '\n']).to_string())
 }
 
 fn normalize_codegen_body(body: &str) -> String {
@@ -9469,6 +12575,46 @@ pub(crate) fn extract_section_fence(spec_content: &str, heading: &str) -> Option
     None
 }
 
+fn extract_single_typed_source_fence(spec_content: &str) -> Result<String, String> {
+    extract_single_source_fence(spec_content, "typed source-unit")
+}
+
+fn extract_single_source_fence(spec_content: &str, contract_name: &str) -> Result<String, String> {
+    let lines = spec_content.lines().collect::<Vec<_>>();
+    let sections = top_level_source_sections(&lines);
+    if sections.len() != 1 {
+        return Err(format!(
+            "{contract_name} TD requires exactly one top-level `## Source` section; found {}",
+            sections.len()
+        ));
+    }
+    let (start, end) = sections[0];
+    let mut payloads = Vec::new();
+    let mut idx = start + 1;
+    while idx < end {
+        let Some(marker) = source_fence_close_marker(lines[idx]) else {
+            idx += 1;
+            continue;
+        };
+        let close = (idx + 1..end)
+            .find(|line_idx| fence_closes(lines[*line_idx], &marker))
+            .ok_or_else(|| format!("{contract_name} Source payload fence is unterminated"))?;
+        let mut payload = lines[idx + 1..close].join("\n");
+        if close > idx + 1 {
+            payload.push('\n');
+        }
+        payloads.push(payload);
+        idx = close + 1;
+    }
+    if payloads.len() != 1 {
+        return Err(format!(
+            "{contract_name} Source requires exactly one closed payload fence; found {}",
+            payloads.len()
+        ));
+    }
+    Ok(payloads.remove(0))
+}
+
 fn source_fence_close_marker(line: &str) -> Option<String> {
     let first = line.as_bytes().first().copied()?;
     if first != b'`' && first != b'~' {
@@ -9492,5 +12638,4 @@ fn fence_closes(line: &str, opener: &str) -> bool {
         && marker.len() >= opener.len()
         && line[marker.len()..].trim().is_empty()
 }
-
 // CODEGEN-END

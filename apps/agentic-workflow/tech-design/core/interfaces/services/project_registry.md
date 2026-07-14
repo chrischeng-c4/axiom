@@ -14,6 +14,12 @@ capability_refs:
     claim: project-local-td-root-resolver
     coverage: full
     rationale: "Project registry exposes the shared TD root resolver used by project-local TD, lock, EC, and generator surfaces."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: full
+    rationale: "Project registry canonicalizes retired explicit project labels by row path before WI producers hand identity to the strict TD resolver."
 ---
 
 # Standardized apps/agentic-workflow/src/services/project_registry.rs
@@ -23,25 +29,38 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/services/project_registry.rs` generated from AST during Score force-regeneration standardization.
 
+`ProjectConfigRow::label_or_default` is the single registered-row label
+producer. It preserves supported explicit `app:`, `lib:`, and legacy `crate:`
+labels, but rewrites an explicit retired `project:` prefix from row path:
+`libs/**` and mambalibs rows become `lib:`, and current app rows become `app:`.
+The suffix always comes from the registered row name, never the retired label
+payload.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `TdResolveError` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 559 |  |
-| `TdRootInput` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 533 |  |
-| `TdRootResult` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 548 |  |
-| `check_drift` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 92 | check_drift(root: &Path) -> Result<Option<String>> |
-| `load_projects` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 66 | load_projects(root: &Path) -> Result<Vec<Project>> |
-| `resolve_td_root` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 620 | resolve_td_root(     input: &TdRootInput,     global_base: Option<&str>,     repo_root: &std::path::Path, ) -> std::result::Result<TdRootResult, TdResolveError> |
-| `resolve_td_root_from_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 664 | resolve_td_root_from_config(     repo_root: &std::path::Path,     project_name: &str, ) -> std::result::Result<TdRootResult, TdResolveError> |
-| `write_projects_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 30 | write_projects_config(root: &Path, projects: &[Project]) -> Result<()> |
+| `ProjectConfigRow` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 104 |  |
+| `TdResolveError` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1065 |  |
+| `TdRootInput` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1036 |  |
+| `TdRootResult` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1053 |  |
+| `check_drift` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 177 | check_drift(root: &Path) -> Result<Option<String>> |
+| `label_or_default` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 118 | label_or_default(&self) -> String |
+| `load_project_config_rows` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 141 | load_project_config_rows(root: &Path) -> Result<Vec<ProjectConfigRow>> |
+| `load_projects` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 71 | load_projects(root: &Path) -> Result<Vec<Project>> |
+| `resolve_project_config_row` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 164 | resolve_project_config_row(root: &Path, requested: &str) -> Result<ProjectConfigRow> |
+| `resolve_td_root` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 1125 | resolve_td_root(input: &TdRootInput, global_base: Option<&str>, repo_root: &Path) -> Result<TdRootResult, TdResolveError> |
+| `resolve_td_root_from_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 1174 | resolve_td_root_from_config(repo_root: &Path, project_name: &str) -> Result<TdRootResult, TdResolveError> |
+| `write_projects_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 34 | write_projects_config(root: &Path, projects: &[Project]) -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/services/project_registry.rs -->
-```rust
-//! Project registry: read/write `[[projects]]` block in `.aw/config.toml`.
+````rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
+// CODEGEN-BEGIN
+//! Project registry: read/write `[[projects]]` block in root `aw.toml`.
 //!
 //! The auto-generated block is delimited by:
 //! - `SYNC_BEGIN_MARKER` — `# BEGIN AW SYNC — auto-generated, do not edit by hand`
@@ -56,28 +75,27 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::models::app::{EcBinding, Project, Workspace};
+use crate::models::project::{EcBinding, Project, Workspace};
 use crate::services::project_discovery::discover_projects;
 use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, SYNC_END_MARKER};
 
-pub const ROOT_AW_CONFIG_FILE: &str = "aw.toml";
 pub const PROJECT_AW_CONFIG_FILE: &str = "aw.toml";
 
 // @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R1
 // @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R4
-/// Write `[[projects]]` entries into the marker-delimited block in `.aw/config.toml`.
+/// Write `[[projects]]` entries into the marker-delimited block in root `aw.toml`.
 ///
 /// - If the BEGIN/END AW SYNC marker pair is already present, the content
 ///   between the markers is replaced with a freshly serialized `[[projects]]` block.
 /// - If the markers are absent, the block (with markers) is appended at EOF.
 /// - After a successful write, `.aw/projects.toml` is deleted if it exists (R10 migration).
-/// - Non-generated content in `config.toml` is preserved byte-identical via `toml_edit`.
+/// - Non-generated content in `aw.toml` is preserved byte-identical via `toml_edit`.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn write_projects_config(root: &Path, projects: &[Project]) -> Result<()> {
     let config_file = config_path(root);
     std::fs::create_dir_all(config_file.parent().unwrap())?;
 
-    // Read existing config.toml or start with empty string
+    // Read existing aw.toml or start with empty string
     let existing = if config_file.exists() {
         std::fs::read_to_string(&config_file)
             .with_context(|| format!("reading {}", config_file.display()))?
@@ -105,9 +123,9 @@ pub fn write_projects_config(root: &Path, projects: &[Project]) -> Result<()> {
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R9
-/// Load the project list from `.aw/config.toml`.
+/// Load the project list from root `aw.toml`.
 ///
-/// Reads `[[projects]]` entries directly from `config.toml` — the marker block
+/// Reads `[[projects]]` entries directly from `aw.toml` — the marker block
 /// is written there by `write_projects_config`. No projects.toml overlay.
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
@@ -128,15 +146,6 @@ pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
         upsert_projects(&mut projects, parsed.projects);
     }
 
-    let root_aw = root_aw_config_path(root);
-    if root_aw.exists() {
-        let content = std::fs::read_to_string(&root_aw)
-            .with_context(|| format!("reading {}", root_aw.display()))?;
-        let parsed: ConfigWithProjects = toml::from_str(&content)
-            .with_context(|| format!("parsing projects from {}", root_aw.display()))?;
-        upsert_projects(&mut projects, parsed.projects);
-    }
-
     let project_aw = load_project_aw_projects(root)?;
     upsert_projects(&mut projects, project_aw);
 
@@ -144,10 +153,8 @@ pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
 }
 
 /// Root-level AW config path: `{repo}/aw.toml`.
-/// This is the new durable config surface; `.aw/config.toml` remains a
-/// compatibility source for existing checkouts and non-project state.
 pub fn root_aw_config_path(root: &Path) -> PathBuf {
-    root.join(ROOT_AW_CONFIG_FILE)
+    config_path(root)
 }
 
 /// Public row projection used by commands that need project identity fields
@@ -169,27 +176,28 @@ impl ProjectConfigRow {
     }
 
     pub fn label_or_default(&self) -> String {
-        self.label.clone().unwrap_or_else(|| {
-            let prefix = if self.path.starts_with("libs/") || self.path.contains("/mambalibs/") {
-                "lib"
-            } else {
-                "app"
-            };
-            format!("{prefix}:{}", self.name)
-        })
+        let prefix = if self.path.starts_with("libs/") || self.path.contains("/mambalibs/") {
+            "lib"
+        } else {
+            "app"
+        };
+        match self.label.as_deref() {
+            Some(label) => {
+                if !label.starts_with("project:") {
+                    return label.to_string();
+                }
+                format!("{prefix}:{}", self.name)
+            }
+            None => format!("{prefix}:{}", self.name),
+        }
     }
 }
 
-/// Load project identity rows from legacy `.aw/config.toml`, root `aw.toml`,
-/// and discovered project-local `aw.toml` files. Later sources override earlier
+/// Load project identity rows from root `aw.toml` and discovered project-local
+/// `aw.toml` files. Later sources override earlier
 /// ones by project name, matching `load_projects`.
 pub fn load_project_config_rows(root: &Path) -> Result<Vec<ProjectConfigRow>> {
     let mut rows = Vec::new();
-
-    let legacy = config_path(root);
-    if legacy.exists() {
-        rows.extend(load_project_config_rows_from_file(&legacy, None)?);
-    }
 
     let root_aw = root_aw_config_path(root);
     if root_aw.exists() {
@@ -219,7 +227,7 @@ pub fn resolve_project_config_row(root: &Path, requested: &str) -> Result<Projec
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/specs/sync-command.md#R11
-/// Compute a diff between the current marker-delimited block in `config.toml`
+/// Compute a diff between the current marker-delimited block in `aw.toml`
 /// and a freshly discovered set of projects.
 ///
 /// Returns `Some(unified_diff)` if different, `None` if identical.
@@ -234,23 +242,19 @@ pub fn check_drift(root: &Path) -> Result<Option<String>> {
         if fresh_block.trim().is_empty() {
             return Ok(None);
         }
-        return Ok(Some(build_diff("", &fresh_block, "config.toml")));
+        return Ok(Some(build_diff("", &fresh_block, "aw.toml")));
     }
 
     let existing_content = std::fs::read_to_string(&config_file)
         .with_context(|| format!("reading {}", config_file.display()))?;
 
-    // Extract the current block from config.toml (between markers)
+    // Extract the current block from aw.toml (between markers)
     let current_block = extract_sync_block(&existing_content).unwrap_or_default();
 
     if current_block.trim() == fresh_block.trim() {
         Ok(None)
     } else {
-        Ok(Some(build_diff(
-            &current_block,
-            &fresh_block,
-            "config.toml",
-        )))
+        Ok(Some(build_diff(&current_block, &fresh_block, "aw.toml")))
     }
 }
 
@@ -339,7 +343,13 @@ fn upsert_projects(projects: &mut Vec<Project>, incoming: Vec<Project>) {
 
 fn merge_project(mut existing: Project, incoming: Project) -> Project {
     existing.name = incoming.name;
-    existing.path = incoming.path;
+    let incoming_has_identity_override =
+        incoming.tech_design_dir.is_some() || !incoming.ec.is_empty();
+    if existing.path.as_os_str().is_empty()
+        || (!incoming.path.as_os_str().is_empty() && incoming_has_identity_override)
+    {
+        existing.path = incoming.path;
+    }
     if incoming.tech_design_dir.is_some() {
         existing.tech_design_dir = incoming.tech_design_dir;
     }
@@ -373,12 +383,16 @@ fn merge_project_config_row(
     incoming: ProjectConfigRow,
 ) -> ProjectConfigRow {
     existing.name = incoming.name;
+    let incoming_has_identity_override = !incoming.aliases.is_empty()
+        || incoming.td_path.is_some()
+        || incoming.cap_path.is_some()
+        || incoming.label.is_some();
     for alias in incoming.aliases {
         if !existing.aliases.contains(&alias) {
             existing.aliases.push(alias);
         }
     }
-    if !incoming.path.is_empty() {
+    if existing.path.is_empty() || (!incoming.path.is_empty() && incoming_has_identity_override) {
         existing.path = incoming.path;
     }
     if incoming.td_path.is_some() {
@@ -415,22 +429,14 @@ fn discover_project_aw_paths(root: &Path) -> Result<Vec<PathBuf>> {
         }
     }
     if patterns.is_empty() {
+        patterns.push("apps/*/aw.toml".to_string());
         patterns.push("projects/*/aw.toml".to_string());
     }
 
     let mut paths = Vec::new();
     for pattern in patterns {
-        if pattern == "projects/*/aw.toml" {
-            let projects_dir = root.join("projects");
-            let Ok(entries) = std::fs::read_dir(&projects_dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let candidate = entry.path().join(PROJECT_AW_CONFIG_FILE);
-                if candidate.is_file() {
-                    paths.push(candidate);
-                }
-            }
+        if let Some(parent_dir) = aw_toml_single_star_parent(&pattern) {
+            paths.extend(discover_project_aw_paths_under(root, parent_dir));
         } else {
             let candidate = root.join(&pattern);
             if candidate.is_file() {
@@ -441,6 +447,22 @@ fn discover_project_aw_paths(root: &Path) -> Result<Vec<PathBuf>> {
     paths.sort();
     paths.dedup();
     Ok(paths)
+}
+
+fn aw_toml_single_star_parent(pattern: &str) -> Option<&str> {
+    pattern.strip_suffix("/*/aw.toml")
+}
+
+fn discover_project_aw_paths_under(root: &Path, parent_dir: &str) -> Vec<PathBuf> {
+    let dir = root.join(parent_dir);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path().join(PROJECT_AW_CONFIG_FILE))
+        .filter(|candidate| candidate.is_file())
+        .collect()
 }
 
 fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
@@ -543,6 +565,7 @@ fn normalize_project_local_path(project_path: &str, value: &str) -> String {
     if trimmed.is_empty()
         || trimmed.starts_with('/')
         || trimmed.starts_with("projects/")
+        || trimmed.starts_with("apps/")
         || trimmed.starts_with("crates/")
         || trimmed.starts_with("packages/")
         || trimmed.starts_with(".aw/")
@@ -700,7 +723,7 @@ fn build_diff(old: &str, new: &str, label: &str) -> String {
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 mod tests {
     use super::*;
-    use crate::models::app::{Project, Workspace};
+    use crate::models::project::{Project, Workspace};
     use crate::models::tech_stack::Language;
     use std::fs;
     use std::path::PathBuf;
@@ -713,9 +736,9 @@ mod tests {
         tmp
     }
 
-    /// Write `content` to `.aw/config.toml` inside `root`.
+    /// Write `content` to `aw.toml` inside `root`.
     fn write_config_file(root: &std::path::Path, content: &str) {
-        let path = root.join(".aw").join("config.toml");
+        let path = root.join("aw.toml");
         fs::write(&path, content).unwrap();
     }
 
@@ -737,13 +760,13 @@ mod tests {
         }
     }
 
-    // REQ: REQ-001 (R1: writes to config.toml)
+    // REQ: REQ-001 (R1: writes to aw.toml)
     // T17: marker_upsert_first_run
     #[test]
     fn marker_upsert_first_run() {
         let tmp = make_score_root();
 
-        // config.toml exists but has no markers
+        // aw.toml exists but has no markers
         write_config_file(
             tmp.path(),
             "[agentic_workflow.test.scope]\nroots = [\"crates\"]\n",
@@ -756,23 +779,23 @@ mod tests {
         )];
         write_projects_config(tmp.path(), &projects).unwrap();
 
-        let path = tmp.path().join(".aw").join("config.toml");
+        let path = tmp.path().join("aw.toml");
         let content = fs::read_to_string(&path).unwrap();
 
         // R2: markers present
         assert!(
             content.contains(SYNC_BEGIN_MARKER),
-            "config.toml must contain BEGIN AW SYNC marker; got:\n{content}"
+            "aw.toml must contain BEGIN AW SYNC marker; got:\n{content}"
         );
         assert!(
             content.contains(SYNC_END_MARKER),
-            "config.toml must contain END AW SYNC marker; got:\n{content}"
+            "aw.toml must contain END AW SYNC marker; got:\n{content}"
         );
 
         // R1: [[projects]] entries present
         assert!(
             content.contains("proj-a"),
-            "config.toml must contain discovered project; got:\n{content}"
+            "aw.toml must contain discovered project; got:\n{content}"
         );
 
         // R3: user content untouched
@@ -812,11 +835,11 @@ mod tests {
 
         // First sync
         write_projects_config(tmp.path(), &projects).unwrap();
-        let after_first = fs::read_to_string(tmp.path().join(".aw").join("config.toml")).unwrap();
+        let after_first = fs::read_to_string(tmp.path().join("aw.toml")).unwrap();
 
         // Second sync with identical input (idempotency check, R5)
         write_projects_config(tmp.path(), &projects).unwrap();
-        let after_second = fs::read_to_string(tmp.path().join(".aw").join("config.toml")).unwrap();
+        let after_second = fs::read_to_string(tmp.path().join("aw.toml")).unwrap();
 
         assert_eq!(
             after_first, after_second,
@@ -872,7 +895,7 @@ mod tests {
         );
     }
 
-    // REQ: REQ-009 (R9: consumers read from config.toml only)
+    // REQ: REQ-009 (R9: consumers read from aw.toml only)
     #[test]
     fn load_reads_from_config_toml() {
         let tmp = make_score_root();
@@ -885,7 +908,7 @@ mod tests {
         )];
         write_projects_config(tmp.path(), &projects).unwrap();
 
-        // load_projects must return data from config.toml
+        // load_projects must return data from aw.toml
         let loaded = load_projects(tmp.path()).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "my-crate");
@@ -900,7 +923,7 @@ mod tests {
 [[projects]]
 name = "jet"
 path = "apps/jet"
-td_path = ".aw/tech-design/projects/jet"
+td_path = "apps/jet/tech-design"
 label = "app:jet"
 
 [[projects.workspaces]]
@@ -911,7 +934,7 @@ test_cmd = "cargo test -p jet -p jet-wasm"
 
 [[projects]]
 name = "jet"
-path = "apps/jet"
+path = "projects/stale-jet-sync"
 
 [[projects.workspaces]]
 name = "jet"
@@ -923,7 +946,8 @@ test_cmd = "cargo test -p jet"
 
         let rows = load_project_config_rows(tmp.path()).unwrap();
         let jet = rows.iter().find(|row| row.name == "jet").unwrap();
-        assert_eq!(jet.td_path.as_deref(), Some(".aw/tech-design/projects/jet"));
+        assert_eq!(jet.path, "apps/jet");
+        assert_eq!(jet.td_path.as_deref(), Some("apps/jet/tech-design"));
         assert_eq!(jet.label.as_deref(), Some("app:jet"));
 
         let projects = load_projects(tmp.path()).unwrap();
@@ -931,14 +955,49 @@ test_cmd = "cargo test -p jet"
             .iter()
             .find(|project| project.name == "jet")
             .unwrap();
-        assert_eq!(
-            jet.tech_design_dir.as_deref(),
-            Some(".aw/tech-design/projects/jet")
-        );
+        assert_eq!(jet.path, PathBuf::from("apps/jet"));
+        assert_eq!(jet.tech_design_dir.as_deref(), Some("apps/jet/tech-design"));
         assert_eq!(
             jet.workspaces[0].test_cmd.as_deref(),
             Some("cargo test -p jet")
         );
+    }
+
+    #[test]
+    fn project_aw_discovery_expands_libs_single_star_patterns() {
+        let tmp = make_score_root();
+        fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[agentic_workflow.projects]
+discover = ["libs/*/aw.toml"]
+"#,
+        )
+        .unwrap();
+        let compass = tmp.path().join("libs").join("compass");
+        fs::create_dir_all(&compass).unwrap();
+        fs::write(
+            compass.join(PROJECT_AW_CONFIG_FILE),
+            r#"
+[project]
+name = "compass"
+aliases = ["cclab-compass"]
+cap_path = "README.md"
+
+[[workspaces]]
+name = "compass"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-compass"
+"#,
+        )
+        .unwrap();
+
+        let row = resolve_project_config_row(tmp.path(), "cclab-compass").unwrap();
+
+        assert_eq!(row.name, "compass");
+        assert_eq!(row.path, "libs/compass");
+        assert_eq!(row.cap_path.as_deref(), Some("libs/compass/README.md"));
     }
 
     // REQ: REQ-005 (R5: check_drift detects changes)
@@ -955,7 +1014,7 @@ test_cmd = "cargo test -p jet"
         )
         .unwrap();
 
-        // Discover and write to config.toml.
+        // Discover and write to aw.toml.
         let discovered = discover_projects(tmp.path()).unwrap();
         write_projects_config(tmp.path(), &discovered).unwrap();
 
@@ -964,12 +1023,12 @@ test_cmd = "cargo test -p jet"
         assert!(drift.is_none(), "expected no drift after round-trip write");
     }
 
-    // REQ: REQ-011 (R11: --check / check_drift targets config.toml)
+    // REQ: REQ-011 (R11: --check / check_drift targets aw.toml)
     #[test]
     fn check_drift_no_write() {
         let tmp = make_score_root();
 
-        // Write a config.toml with a stale entry that won't match fresh discovery
+        // Write an aw.toml with a stale entry that won't match fresh discovery
         write_config_file(
             tmp.path(),
             &format!("{}\n\n[[projects]]\nname = \"stale-proj\"\npath = \"crates/stale-proj\"\n\n[[projects.workspaces]]\nname = \"stale-proj\"\npaths = [\"crates/stale-proj/**\"]\ntarget = \"rust\"\n\n{}\n", SYNC_BEGIN_MARKER, SYNC_END_MARKER),
@@ -978,15 +1037,15 @@ test_cmd = "cargo test -p jet"
         let drift = check_drift(tmp.path()).unwrap();
         assert!(
             drift.is_some(),
-            "expected drift when config.toml differs from fresh discovery"
+            "expected drift when aw.toml differs from fresh discovery"
         );
 
-        // config.toml must NOT be modified by check_drift
-        let path = tmp.path().join(".aw").join("config.toml");
+        // aw.toml must NOT be modified by check_drift
+        let path = tmp.path().join("aw.toml");
         let content = fs::read_to_string(&path).unwrap();
         assert!(
             content.contains("stale-proj"),
-            "check_drift must not modify config.toml"
+            "check_drift must not modify aw.toml"
         );
     }
 
@@ -995,7 +1054,7 @@ test_cmd = "cargo test -p jet"
     fn check_drift_exits_nonzero_on_diff() {
         let tmp = make_score_root();
 
-        // Write a config.toml that won't match fresh discovery (no real dirs)
+        // Write an aw.toml that won't match fresh discovery (no real dirs)
         write_config_file(
             tmp.path(),
             &format!("{}\n\n[[projects]]\nname = \"ghost\"\npath = \"crates/ghost\"\n\n[[projects.workspaces]]\nname = \"ghost\"\npaths = [\"crates/ghost/**\"]\ntarget = \"rust\"\n\n{}\n", SYNC_BEGIN_MARKER, SYNC_END_MARKER),
@@ -1008,12 +1067,12 @@ test_cmd = "cargo test -p jet"
         );
     }
 
-    // REQ: REQ-001 (R1: write target is config.toml, diff references config.toml)
+    // REQ: REQ-001 (R1: write target is aw.toml, diff references aw.toml)
     #[test]
     fn check_drift_references_config_toml() {
         let tmp = make_score_root();
 
-        // Stale config.toml with a ghost project
+        // Stale aw.toml with a ghost project
         write_config_file(
             tmp.path(),
             &format!("{}\n\n[[projects]]\nname = \"ghost2\"\npath = \"crates/ghost2\"\n\n[[projects.workspaces]]\nname = \"ghost2\"\npaths = [\"crates/ghost2/**\"]\ntarget = \"rust\"\n\n{}\n", SYNC_BEGIN_MARKER, SYNC_END_MARKER),
@@ -1021,14 +1080,14 @@ test_cmd = "cargo test -p jet"
 
         let drift = check_drift(tmp.path()).unwrap().expect("expected drift");
         assert!(
-            drift.contains("config.toml"),
-            "--check / check_drift output must reference config.toml, not projects.toml; got:\n{drift}"
+            drift.contains("aw.toml"),
+            "--check / check_drift output must reference aw.toml, not projects.toml; got:\n{drift}"
         );
     }
 }
 
 /// Project descriptor consumed by `ProjectRegistry::resolve_td_root`.
-/// Materialised from `[[projects]]` table rows in `.aw/config.toml`.
+/// Materialised from `[[projects]]` table rows in `aw.toml`.
 /// @spec apps/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
@@ -1163,7 +1222,7 @@ pub fn resolve_td_root(
     })
 }
 
-/// Convenience wrapper: load `.aw/config.toml`, look up the project by
+/// Convenience wrapper: load `aw.toml`, look up the project by
 /// name, and dispatch to `resolve_td_root`. Reads only the narrow
 /// projection needed (`[[projects]].{name,aliases,path,td_path}`) to stay decoupled from the broader
 /// `Project` schema.
@@ -1197,6 +1256,57 @@ mod resolver_tests {
         TempDir::new().unwrap()
     }
 
+    fn project_row(path: &str, label: Option<&str>) -> ProjectConfigRow {
+        ProjectConfigRow {
+            name: "demo".to_string(),
+            aliases: Vec::new(),
+            path: path.to_string(),
+            td_path: None,
+            cap_path: None,
+            label: label.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn project_label_canonicalization_uses_path_only_for_retired_prefixes() {
+        assert_eq!(
+            project_row("libs/demo", Some("project:demo")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", Some("project:wrong-name")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("projects/mamba/mambalibs/demo", Some("project:demo")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("apps/demo", Some("project:demo")).label_or_default(),
+            "app:demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", Some("project:")).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", None).label_or_default(),
+            "lib:demo"
+        );
+        assert_eq!(
+            project_row("apps/demo", Some("app:custom-demo")).label_or_default(),
+            "app:custom-demo"
+        );
+        assert_eq!(
+            project_row("libs/demo", Some("lib:custom-demo")).label_or_default(),
+            "lib:custom-demo"
+        );
+        assert_eq!(
+            project_row("crates/demo", Some("crate:legacy-demo")).label_or_default(),
+            "crate:legacy-demo"
+        );
+    }
+
     #[test]
     fn td_path_wins_when_set() {
         let tmp = repo();
@@ -1205,7 +1315,7 @@ mod resolver_tests {
             td_path: Some("apps/cgdb/tech_design".into()),
             source_path: "apps/cgdb".into(),
         };
-        let out = resolve_td_root(&input, Some(".aw/tech-design"), tmp.path()).unwrap();
+        let out = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap();
         assert_eq!(out.precedence, "td_path");
         assert_eq!(
             PathBuf::from(&out.root),
@@ -1221,7 +1331,7 @@ mod resolver_tests {
             td_path: None,
             source_path: "apps/agentic-workflow".into(),
         };
-        let out = resolve_td_root(&input, Some(".aw/tech-design"), tmp.path()).unwrap();
+        let out = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap();
         assert_eq!(out.precedence, "project_path");
         assert_eq!(
             PathBuf::from(&out.root),
@@ -1249,12 +1359,13 @@ mod resolver_tests {
             td_path: Some("../escape".into()),
             source_path: "x".into(),
         };
-        let err = resolve_td_root(&input, Some(".aw/tech-design"), tmp.path()).unwrap_err();
+        let err = resolve_td_root(&input, Some("tech-design"), tmp.path()).unwrap_err();
         assert_eq!(err.kind, "td_path_escapes_repo_root");
     }
 }
 
-```
+// CODEGEN-END
+````
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -1267,4 +1378,8 @@ changes:
     impl_mode: codegen
     description: |
       Source template owns the complete project registry synchronization module.
+      Issue #1519 canonicalizes retired explicit project labels by registered
+      path and registered name, preserves supported explicit label families,
+      and covers the producer-to-default-TD resolver boundary including a
+      project-local stale-label override of a root registry row.
 ```
