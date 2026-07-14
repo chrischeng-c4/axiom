@@ -10,7 +10,9 @@ ratchet.
 
 Both targets use the same intentionally constrained workload:
 
-- PostgreSQL simple-query protocol (`pgbench --protocol simple`)
+- PostgreSQL simple-query protocol (`pgbench --protocol simple`); the default
+  profile is TPC-B and `--workload select-only` removes TPC-B row-lock
+  contention to isolate relay-and-reset throughput
 - transaction pooling
 - 16 physical backend connections
 - 64 clients, 4 pgbench jobs, 30 seconds, TPC-B scale factor 1
@@ -23,12 +25,19 @@ Both targets use the same intentionally constrained workload:
   `server_reset_query_always = 1`, so the reset is executed on every
   transaction-pool return rather than merely configured
 
-The runner warms the shared backend before measurement and then measures the
-two targets sequentially. Its JSON includes raw TPS, average latency, and the
-explicit `pgpool_over_pgbouncer_tps` ratio; it deliberately does not encode a
-pass/fail threshold. It rejects a target that cannot establish all 64 declared
-clients or logs a pgbench client error, so a partial-workload run cannot be
-compared as a valid result.
+The runner warms the shared backend, starts both poolers, and then runs two
+counterbalanced paired trials sequentially: PgBouncer-first followed by
+pgpool-first. Each target therefore receives one first-position and one
+second-position 30-second trial without concurrent pgbench traffic against the
+shared capped backend. Its JSON preserves raw TPS, average latency, order, and
+each pair's `pgpool_over_pgbouncer_tps` ratio, then reports the paired mean.
+
+The comparison is valid only when the two pair ratios differ by at most 20%; a
+host-drifted result is explicit `comparison_valid: false` with
+`winner_by_tps: "invalid"`, not a claimed PgBouncer or pgpool win. It also
+rejects a target that cannot establish all 64 declared clients or logs a
+pgbench client error, so a partial-workload run cannot be compared as valid
+evidence.
 
 ## Run
 
@@ -45,6 +54,13 @@ temporary cluster, binding ports, or requiring any installed benchmark tool:
 
 ```bash
 apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --dry-run
+```
+
+For the contention-free transaction-relay profile used for P0 data-plane work:
+
+```bash
+apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
+  --workload select-only
 ```
 
 For a debug or custom pgpool binary, pass it explicitly:
@@ -72,14 +88,14 @@ apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
   --meter-bin target/debug/meter
 ```
 
-Meter starts the pgpool process and uses its opaque driver to run the same
+Meter starts the pgpool process and uses its opaque driver to run one matching
 64-client simple-protocol pgbench leg. The runner automatically retains the
 temporary directory it prints on exit; it contains `meter-report.json`,
 `meter.log`, `.meter/last-report.json`, and `.meter/*.collapsed` stack data.
 
 Sampling changes the pgpool leg's resource profile, so its comparison JSON adds
 `diagnostics.meter_sampled_pgpool: true` and
-`diagnostics.comparison_valid: false`. Treat this run as hotspot evidence only;
-run the ordinary unsampled command again to establish competitor-performance
-evidence.
+`diagnostics.comparison_valid: false`. It does not run the counterbalanced
+peer pairs. Treat this run as hotspot evidence only; run the ordinary unsampled
+command again to establish competitor-performance evidence.
 <!-- HANDWRITE-END -->

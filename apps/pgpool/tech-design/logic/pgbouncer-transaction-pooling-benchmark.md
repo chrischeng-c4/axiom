@@ -17,7 +17,7 @@ nodes:
     label: "The benchmark runner is the sole P0 entrypoint."
   profile_constants:
     kind: process
-    label: "Select the fixed simple-query transaction profile."
+    label: "Select the fixed simple-query transaction profile and paired evidence policy."
   fresh_postgres:
     kind: process
     label: "Create and seed a temporary trust-auth PostgreSQL backend."
@@ -29,10 +29,10 @@ nodes:
     label: "Start pgpool transaction mode with the same backend cap."
   pgbench_targets:
     kind: process
-    label: "Measure both targets sequentially with pgbench simple protocol."
+    label: "Run two counterbalanced sequential pgbench simple-protocol pairs."
   report_json:
     kind: process
-    label: "Emit the normalized comparison JSON document."
+    label: "Emit raw paired samples, aggregate ratio, and evidence validity."
   trap_cleanup:
     kind: terminal
     label: "Stop all temporary processes and delete the temporary cluster."
@@ -58,11 +58,11 @@ edges:
 ---
 flowchart TD
     run_sh([run.sh]) --> profile_constants[Fixed simple-query transaction profile]
-    profile_constants -->|--dry-run| report_json[Emit pgpool.pgbouncer-baseline.v1 profile/comparison JSON]
+    profile_constants -->|--dry-run| report_json[Emit pgpool.pgbouncer-baseline.v2 profile/comparison JSON]
     profile_constants -->|normal| fresh_postgres[initdb + pg_ctl temporary trust-auth PostgreSQL]
     fresh_postgres --> pgbouncer_target[Start PgBouncer: transaction, cap 16, DISCARD ALL]
     pgbouncer_target --> pgpool_target[Start pgpool: default transaction mode, cap 16]
-    pgpool_target --> pgbench_targets[Sequential pgbench -M simple measurements]
+    pgpool_target --> pgbench_targets[Two counterbalanced sequential pgbench simple pairs]
     pgbench_targets --> report_json
     report_json --> trap_cleanup([Trap: stop all processes and remove temp directory])
 ```
@@ -78,8 +78,9 @@ flowchart TD
 1. Both targets point at exactly one freshly initialized PostgreSQL backend and one seeded `pgpool_bench` database.
 2. Both use PostgreSQL simple-query protocol only; extended-query comparison is explicitly deferred until the pgpool wire contract supports it.
 3. Both use transaction pooling and a cap of 16 physical backend connections. PgBouncer's reset query is `DISCARD ALL`, matching pgpool's existing return-to-idle reset invariant.
-4. The same pgbench workload, client count, worker count, duration, database user, and cleartext loopback network path are used for each target. Measurements run sequentially to avoid shared-backend contention.
-5. The benchmark reports results but does not enforce an arbitrary ratio. A later competitor-performance gate may turn a demonstrated win into a host-scoped ratchet.
+4. Both poolers finish startup before either measured leg. The same pgbench workload, client count, worker count, duration, database user, and cleartext loopback network path are used for each target.
+5. Two sequential pairs avoid shared-backend contention while counterbalancing position: PgBouncer-first then pgpool-first. Every target therefore has one first-position and one second-position sample.
+6. The runner reports each raw sample and marks the comparison invalid when the two paired TPS ratios differ by more than 20%; it must not name a winner for invalid host evidence. A later competitor-performance gate may turn demonstrated stable wins into a host-scoped ratchet.
 
 ### Out of scope
 
@@ -93,13 +94,13 @@ id: pgpool-pgbouncer-transaction-pooling-baseline-verification
 requirements:
   ac1_real_runner_emits_nonzero_comparable_measurements:
     id: AC1
-    text: "With `PGPOOL_RUN_PGBOUNCER_BENCH=1`, all documented local tools present, and an explicit pgpool binary, the real runner produces one parseable comparison JSON document where both target TPS and average-latency values are positive and ratio fields are present. Without the opt-in variable, the integration test skips with an actionable command rather than changing the host or consuming benchmark time."
+    text: "With `PGPOOL_RUN_PGBOUNCER_BENCH=1`, all documented local tools present, and an explicit pgpool binary, the real runner produces one parseable comparison JSON document with two opposite-order samples, positive target TPS/average-latency values, ratio fields, and an explicit comparison-validity boolean. Without the opt-in variable, the integration test skips with an actionable command rather than changing the host or consuming benchmark time."
     kind: integration
     risk: high
     verify: pgbouncer_benchmark::live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled
   r1_dry_run_profile_is_exact_and_target_symmetric:
     id: R1
-    text: "`bash benchmarks/pgbouncer-transaction-pooling/run.sh --dry-run` emits parseable pgpool.pgbouncer-baseline.v1 JSON declaring `protocol: simple`, `pool_mode: transaction`, a backend cap of 16, 64 clients, 4 jobs, 30 seconds, and identical target settings for pgpool and PgBouncer."
+    text: "`bash benchmarks/pgbouncer-transaction-pooling/run.sh --dry-run` emits parseable pgpool.pgbouncer-baseline.v2 JSON declaring `protocol: simple`, `pool_mode: transaction`, a backend cap of 16, 64 clients, 4 jobs, 30 seconds per leg, two opposite-order paired trials, a 20% paired-ratio stability bound, and identical target settings for pgpool and PgBouncer."
     kind: functional
     risk: high
     verify: pgbouncer_benchmark::dry_run_profile_declares_equal_transaction_pooling_inputs
@@ -109,11 +110,18 @@ requirements:
     kind: regression
     risk: medium
     verify: pgbouncer_benchmark::runner_is_syntax_valid_and_dry_run_is_hermetic
+  r3_counterbalanced_order_is_documented_and_enforced:
+    id: R3
+    text: "The ordinary runner starts both targets before measurement, records PgBouncer-first and pgpool-first samples, and documents that unstable pair evidence produces comparison_valid false rather than a winner."
+    kind: regression
+    risk: high
+    verify: pgbouncer_benchmark::ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence
 ---
 flowchart TD
     ac1[AC1 ac1 real runner emits nonzero comparable measurements] --> pgbouncer_benchmark_live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled[pgbouncer_benchmark::live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled]
     r1[R1 r1 dry run profile is exact and target symmetric] --> pgbouncer_benchmark_dry_run_profile_declares_equal_transaction_pooling_inputs[pgbouncer_benchmark::dry_run_profile_declares_equal_transaction_pooling_inputs]
     r2[R2 r2 runner is hermetic until explicitly enabled] --> pgbouncer_benchmark_runner_is_syntax_valid_and_dry_run_is_hermetic[pgbouncer_benchmark::runner_is_syntax_valid_and_dry_run_is_hermetic]
+    r3[R3 r3 counterbalanced order is documented and enforced] --> pgbouncer_benchmark_ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence[pgbouncer_benchmark::ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence]
 ```
 
 ## Changes

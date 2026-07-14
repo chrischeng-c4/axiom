@@ -8,6 +8,8 @@ const SCRIPT: &str = concat!(
     "/benchmarks/pgbouncer-transaction-pooling/run.sh"
 );
 const RUNNER_SOURCE: &str = include_str!("../benchmarks/pgbouncer-transaction-pooling/run.sh");
+const BENCHMARK_README: &str =
+    include_str!("../benchmarks/pgbouncer-transaction-pooling/README.md");
 
 fn command(args: &[&str]) -> std::process::Output {
     Command::new("bash")
@@ -25,6 +27,16 @@ fn dry_run_profile() -> Value {
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("dry run should emit JSON")
+}
+
+fn select_only_dry_run_profile() -> Value {
+    let output = command(&["--dry-run", "--workload", "select-only"]);
+    assert!(
+        output.status.success(),
+        "select-only dry run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("select-only dry run should emit JSON")
 }
 
 #[test]
@@ -48,13 +60,22 @@ fn dry_run_profile_stays_immutable_when_meter_is_requested() {
 fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
     let profile = dry_run_profile();
 
-    assert_eq!(profile["schema"], "pgpool.pgbouncer-baseline.v1");
+    assert_eq!(profile["schema"], "pgpool.pgbouncer-baseline.v2");
     assert_eq!(profile["profile"]["protocol"], "simple");
     assert_eq!(profile["profile"]["pool_mode"], "transaction");
     assert_eq!(profile["profile"]["backend_connection_cap"], 16);
     assert_eq!(profile["profile"]["clients"], 64);
     assert_eq!(profile["profile"]["jobs"], 4);
     assert_eq!(profile["profile"]["duration_seconds"], 30);
+    assert_eq!(profile["profile"]["paired_trials"], 2);
+    assert_eq!(
+        profile["profile"]["orders"],
+        serde_json::json!(["pgbouncer-first", "pgpool-first"])
+    );
+    assert_eq!(
+        profile["profile"]["max_pair_ratio_relative_spread"],
+        serde_json::json!(0.20)
+    );
     assert_eq!(profile["profile"]["pool_acquire_timeout_ms"], 60_000);
     assert_eq!(profile["targets"]["pgbouncer"]["pool_mode"], "transaction");
     assert_eq!(profile["targets"]["pgpool"]["pool_mode"], "transaction");
@@ -82,6 +103,49 @@ fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
         profile["targets"]["pgpool"]["pool_acquire_timeout_ms"],
         profile["profile"]["pool_acquire_timeout_ms"]
     );
+}
+
+#[test]
+fn select_only_profile_keeps_pooler_inputs_equal_and_explicit() {
+    let tpcb = dry_run_profile();
+    let select_only = select_only_dry_run_profile();
+
+    assert_eq!(select_only["schema"], tpcb["schema"]);
+    assert_eq!(select_only["profile"]["workload"], "pgbench-select-only");
+    assert_eq!(tpcb["profile"]["workload"], "pgbench-tpcb");
+    for field in [
+        "protocol",
+        "pool_mode",
+        "backend_connection_cap",
+        "clients",
+        "jobs",
+        "duration_seconds",
+        "paired_trials",
+        "orders",
+        "max_pair_ratio_relative_spread",
+        "scale",
+        "pool_acquire_timeout_ms",
+    ] {
+        assert_eq!(
+            select_only["profile"][field], tpcb["profile"][field],
+            "select-only must preserve the fixed pooler input {field}"
+        );
+    }
+    assert_eq!(select_only["targets"], tpcb["targets"]);
+}
+
+#[test]
+fn ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence() {
+    let profile = dry_run_profile();
+
+    assert_eq!(profile["profile"]["paired_trials"], 2);
+    assert!(RUNNER_SOURCE.contains("start_pgpool\n\nPGBOUNCER_FIRST_LOG"));
+    assert!(RUNNER_SOURCE.contains("PGBOUNCER_FIRST_LOG"));
+    assert!(RUNNER_SOURCE.contains("PGPOOL_FIRST_LOG"));
+    assert!(RUNNER_SOURCE.contains("comparison_valid"));
+    assert!(RUNNER_SOURCE.contains("pair_ratio_relative_spread"));
+    assert!(BENCHMARK_README.contains("counterbalanced paired trials"));
+    assert!(BENCHMARK_README.contains("comparison_valid: false"));
 }
 
 #[test]
@@ -131,7 +195,10 @@ fn live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled() {
 
     let result: Value =
         serde_json::from_slice(&output.stdout).expect("live baseline should emit JSON");
-    assert_eq!(result["schema"], "pgpool.pgbouncer-baseline.v1");
+    assert_eq!(result["schema"], "pgpool.pgbouncer-baseline.v2");
+    assert_eq!(result["trials"].as_array().map(Vec::len), Some(2));
+    assert_eq!(result["trials"][0]["order"], "pgbouncer-first");
+    assert_eq!(result["trials"][1]["order"], "pgpool-first");
     assert!(
         result["targets"]["pgbouncer"]["tps"]
             .as_f64()
@@ -159,5 +226,6 @@ fn live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled() {
     assert!(result["ratios"]["pgpool_over_pgbouncer_tps"]
         .as_f64()
         .is_some());
+    assert!(result["comparison_valid"].is_boolean());
 }
 // HANDWRITE-END
