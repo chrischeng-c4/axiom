@@ -9,26 +9,31 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: td-fill-active-scope
-entry: resolve
+id: td-fill-active-scope-contract
+entry: load
 nodes:
-  resolve: { kind: start, label: Resolve active spec and its Changes paths }
-  scoped: { kind: process, label: Enumerate only markers under those paths }
-  foreign: { kind: terminal, label: Ignore markers outside the active scope }
-  local: { kind: terminal, label: Dispatch next local marker or code-check }
+  load: { kind: start, label: Load active issue and TD spec }
+  scope: { kind: process, label: Parse TD Changes into marker scope }
+  apply: { kind: process, label: Replace requested local marker body }
+  remaining: { kind: decision, label: Scoped queue has another marker }
+  next: { kind: terminal, label: Lock and dispatch the next local marker }
+  check: { kind: terminal, label: Mark filled and dispatch code-check }
 edges:
-  - { from: resolve, to: scoped }
-  - { from: scoped, to: foreign, label: foreign marker exists }
-  - { from: scoped, to: local, label: local queue }
+  - { from: load, to: scope }
+  - { from: scope, to: apply }
+  - { from: apply, to: remaining }
+  - { from: remaining, to: next, label: yes }
+  - { from: remaining, to: check, label: no }
 ---
 flowchart TD
-    resolve([active TD]) --> scoped[Changes-path marker queue]
-    scoped --> foreign([foreign markers ignored])
-    scoped --> local([local marker or code-check])
+    load([load issue + TD]) --> scope[parse Changes scope]
+    scope --> apply[apply local payload]
+    apply --> remaining{scoped markers remain?}
+    remaining -->|yes| next([dispatch next local marker])
+    remaining -->|no| check([dispatch code-check])
 ```
 
-Both brief and apply modes resolve the same active TD Changes paths. They enumerate and reconcile only HANDWRITE markers inside that scope. An unrelated marker can neither become the next fill target nor prevent the scoped queue from reaching code-check.
-
+`run_apply` derives the active TD spec exactly as brief mode does, parses its Changes paths, and uses `markers_for_td_changes` both to locate the requested marker and to compute `remaining`. If the local queue is empty after the replacement, it advances to `cb_filled` and dispatches code-check even when unrelated unfilled markers exist elsewhere.
 ## Changes
 <!-- type: changes lang: yaml -->
 
