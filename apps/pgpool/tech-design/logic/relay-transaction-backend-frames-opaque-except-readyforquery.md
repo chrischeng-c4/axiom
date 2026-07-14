@@ -10,81 +10,79 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: pgpool-opaque-backend-transaction-relay
-entry: buffered_backend_frame
+entry: complete_frame
 nodes:
-  buffered_backend_frame:
+  complete_frame:
     kind: start
-    label: "Established transaction relay has one complete tagged backend frame buffered."
-  bounded_envelope:
+    label: "An authenticated transaction backend supplies one complete tagged frame."
+  envelope:
     kind: decision
-    label: "Tagged length is at least four and no greater than max_frame_bytes."
+    label: "Frame has a legal PostgreSQL length and stays within max_frame_bytes."
   reject_envelope:
     kind: terminal
-    label: "Return FrameError; relay ends and the leased backend closes rather than returning to idle."
-  ready_tag:
+    label: "Reject framing failure; close the transaction lease and never return it to idle."
+  control_frame:
     kind: decision
-    label: "Frame tag is ReadyForQuery."
-  validate_ready:
+    label: "The tag is ReadyForQuery, the only backend frame that controls lease state."
+  validate_status:
     kind: process
-    label: "Require exactly one status byte and map I, T, or E to TransactionStatus."
-  reject_ready:
+    label: "Decode exactly one I, T, or E status byte; record TransactionStatus only after validation."
+  reject_status:
     kind: terminal
-    label: "Malformed ReadyForQuery fails before it can change ownership or permit reuse."
-  forward_opaque:
+    label: "Reject malformed ReadyForQuery before any reset or reuse transition."
+  opaque_forward:
     kind: process
-    label: "Forward every bounded non-ReadyForQuery frame as the original byte slice without payload parsing."
-  forward_ready:
+    label: "Send the original byte slice for every bounded non-control frame without parsing its payload."
+  controlled_forward:
     kind: process
-    label: "Forward the validated ReadyForQuery bytes and expose its TransactionStatus."
-  relay_more:
+    label: "Send the validated ReadyForQuery byte slice with its ownership status."
+  existing_boundary:
     kind: terminal
-    label: "Continue the same transaction for T/E, or trigger existing reset-before-reuse only for I."
+    label: "Existing transaction state machine continues; only Idle reaches its unchanged reset-before-reuse boundary."
 edges:
-  - from: buffered_backend_frame
-    to: bounded_envelope
-  - from: bounded_envelope
+  - from: complete_frame
+    to: envelope
+  - from: envelope
     to: reject_envelope
     label: "invalid or oversized"
-  - from: bounded_envelope
-    to: ready_tag
-    label: "complete bounded frame"
-  - from: ready_tag
-    to: validate_ready
-    label: "Z"
-  - from: ready_tag
-    to: forward_opaque
-    label: "any other backend tag"
-  - from: validate_ready
-    to: reject_ready
-    label: "payload invalid"
-  - from: validate_ready
-    to: forward_ready
-    label: "I, T, or E"
-  - from: forward_opaque
-    to: relay_more
-  - from: forward_ready
-    to: relay_more
+  - from: envelope
+    to: control_frame
+    label: "bounded"
+  - from: control_frame
+    to: opaque_forward
+    label: "not ReadyForQuery"
+  - from: control_frame
+    to: validate_status
+    label: "ReadyForQuery"
+  - from: validate_status
+    to: reject_status
+    label: "not exactly I, T, or E"
+  - from: validate_status
+    to: controlled_forward
+    label: "valid status"
+  - from: opaque_forward
+    to: existing_boundary
+  - from: controlled_forward
+    to: existing_boundary
 ---
 flowchart TD
-  frame([complete backend frame]) --> bounds{valid bounded envelope?}
-  bounds -->|no| close([FrameError and close lease])
-  bounds -->|yes| tag{ReadyForQuery?}
-  tag -->|no| opaque[forward original bytes without payload parse]
-  tag -->|yes| ready[validate 1-byte I/T/E status]
-  ready -->|invalid| reject([FrameError and close lease])
-  ready -->|valid| status[forward bytes and record status]
-  opaque --> continue([continue relay])
-  status --> continue
+  frame([complete authenticated backend frame]) --> bounds{legal bounded envelope?}
+  bounds -->|no| reject([close lease; never idle])
+  bounds -->|yes| control{ReadyForQuery?}
+  control -->|no| opaque[write original bytes; no payload parse]
+  control -->|yes| status[require exactly one I/T/E byte]
+  status -->|invalid| bad_ready([close lease; no reuse])
+  status -->|valid| tracked[write original bytes and record status]
+  opaque --> boundary([unchanged transaction state machine])
+  tracked --> boundary
 ```
 
-### Contract invariants
+### Compatibility boundary
 
-- This path begins only after the normal startup/authentication relay has established the backend connection. Startup, authentication, reset, session-mode, and typed codec callers retain their existing full decoder.
-- `take_frame` remains the sole envelope authority: every frame has a tagged PostgreSQL envelope, a length of at least four, and a configured maximum before any byte is exposed to the frontend.
-- `ReadyForQuery` is the sole backend control frame for transaction ownership. Its payload must be exactly one valid status byte before `TransactionStatus` changes or the idle/reset path can run.
-- Any other bounded backend frame is opaque to the transaction relay. Its payload cannot select a lease state, bypass `DISCARD ALL`, or cause a connection to re-enter the idle pool.
-- Frontend validation, pipelined-query staging, client-visible frame order, and the existing error/EOF close path do not change.
-
+- Opaque forwarding is limited to backend frames after the established startup/authentication path. It does not alter frontend validation or any typed-codec caller.
+- Framing is not opaque: `take_frame` still rejects short, negative, and oversized envelopes before a byte is written.
+- Payload opacity is not state opacity: only a fully valid `ReadyForQuery` records transaction status. All other tag/payload combinations are non-control data for this path.
+- The existing transaction handler still forwards in order, stages pipelined frontend frames, closes on EOF/frame errors, and sends `DISCARD ALL` before a successful Idle lease is reintroduced.
 ## Changes
 <!-- type: changes lang: yaml -->
 
