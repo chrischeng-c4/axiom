@@ -5,7 +5,7 @@
 //! Slice 1 ships a `StaticRouter` (in-memory map) sufficient for tests and
 //! a default routing table aligned with the team's per-task model strengths
 //! (Gemini for authoring, GPT for review, Claude for revise/default).
-//! Cue's `.cue/config.toml` lookup wraps this trait via its own impl.
+//! The AW host selects this trait implementation from repository configuration.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ pub trait ModelRouter: Send + Sync {
 }
 
 /// In-memory router used by tests and as a sensible default. Production code
-/// (cue TUI, conductor) wraps `ConfigRouter` (in cue::config) over user TOML.
+/// A repository host may wrap `ConfigRouter` over its configured model policy.
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
 pub struct StaticRouter {
     table: BTreeMap<&'static str, ModelChoice>,

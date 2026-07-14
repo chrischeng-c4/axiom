@@ -8,7 +8,7 @@ capability_refs:
     gap: core-concept-model-and-invariants
     claim: core-concept-model-and-invariants
     coverage: full
-    rationale: "This semantic TD covers AW core/client model source behavior and shared workflow domain primitives."
+    rationale: "This semantic TD covers agent-first AW workflow source behavior and shared domain primitives."
 ---
 
 # Semantic TD: agentic-workflow/ui

@@ -37,7 +37,9 @@ Public API manifest for `apps/agentic-workflow/src/runtime/mod.rs` generated fro
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/mod.rs -->
 ```rust
-//! Shared SDD agent runtime — consumed by score/cue/conductor frontends.
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/mod.md#source
+// CODEGEN-BEGIN
+//! Agent-first AW runtime used by the CLI lifecycle surface.
 //!
 //! Slice 1 surface: `Session`, `SessionEvent`, `ScoreProcess`, `ModelRouter`,
 //! enough to run "create issue → author Requirements section → apply".
@@ -69,6 +71,8 @@ pub use score_process::{
     RealScoreProcess, ScoreCall, ScoreProcess, ScoreProcessError,
 };
 pub use session::{IssueBinding, Phase, Session, SessionBuilder};
+
+// CODEGEN-END
 ```
 
 ## Changes

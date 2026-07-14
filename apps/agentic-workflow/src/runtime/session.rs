@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/session.md#source
 // CODEGEN-BEGIN
-//! `Session` — the per-issue agent loop, shared by all SDD frontends.
+//! `Session` — the per-issue loop used by AW's agent-first lifecycle.
 //!
 //! Slice 1 surface: `create_issue(title)` performs
 //!   1. `aw wi create <title>` → slug
@@ -52,7 +52,7 @@ const REVIEW_SYSTEM_PROMPT: &str = "You are an SDD section reviewer. For each fi
 
 const REVISE_SYSTEM_PROMPT: &str = "You are an SDD section reviser. Given the current issue body and reviewer feedback, rewrite the flagged sections so they address the feedback. Output the revised section(s) in Markdown only — no preamble, no fences.";
 
-const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are cue's mainthread agent — the dev's conversational counterpart. Classify each dev message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
+const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are AW's mainthread agent — the developer's project-iteration counterpart. Classify each developer message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
 
   {"action": "new_issue", "title": "<short slug-friendly title>"}
     when the dev wants to create a new SDD issue.
@@ -67,7 +67,7 @@ pub struct Session {
     provider: Arc<dyn LLMProvider>,
     score_process: Arc<dyn ScoreProcess>,
     /// Active issue backend selected at construction (per
-    /// `.cue/config.toml` `[issue].backend`). `Session::decide` /
+    /// repository issue-backend configuration). `Session::decide` /
     /// `run_create_issue` route `create` calls through this trait
     /// instead of `score_process.create` directly — that keeps the
     /// backend choice observable at runtime and avoids hardcoding

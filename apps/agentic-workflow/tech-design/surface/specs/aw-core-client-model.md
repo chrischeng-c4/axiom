@@ -1,6 +1,6 @@
 ---
 id: aw-core-client-model
-summary: "Define the client-independent AW Core concept model shared by aw CLI, Cue, and future clients."
+summary: "Define the single agent-first AW project-iteration concept model."
 fill_sections: [overview, schema, scenarios, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -8,160 +8,126 @@ capability_refs:
     gap: core-concept-model-and-invariants
     claim: core-concept-model-and-invariants
     coverage: full
-    rationale: "This spec defines the AW Core nouns, relationships, and client-independent invariants."
+    rationale: "This spec defines AW project-iteration nouns, relationships, responsibilities, and invariants."
 ---
 
-# AW Core Client Model
+# AW Agent-First Project Iteration Model
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-AW Core is the client-independent workflow model under Agentic Workflow clients.
-It defines the durable nouns, relationships, and invariants that every client
-must preserve. `aw CLI`, Cue, and future clients can expose different UX, but
-they share the same core protocol.
+Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding
+agents. It owns next-action guidance, durable artifact skeletons, strict format
+and phase validation, and code generation.
 
-Capability alignment: this spec covers the `aw-core-concept-model-and-invariants`
-gap under the `aw-core-client-model-workitem-first-artifact-lifecycle`
-capability root.
+The public model contains Project, Capability, WorkItem, Artifact, Gate,
+Evidence, and Rollup. The command-line surface is the product boundary. Each
+bounded iteration starts from a WorkItem, consumes AW-produced artifact
+skeletons, accepts agent-authored content only through declared fill slots, and
+advances only after deterministic validation or explicit HITL.
 
-The core model is intentionally not a CLI command taxonomy and not a Cue product
-taxonomy. CLI commands, JSON envelopes, branch/worktree mechanics, and terminal
-prompts are client adapters over AW Core. Cue screens, team collaboration,
-approval queues, registries, and runtime governance are also client adapters
-over AW Core. Neither client surface may redefine the core nouns.
+Capability alignment: this spec covers the
+`core-concept-model-and-invariants` gap under the stable
+`aw-core-client-model-workitem-first-artifact-lifecycle` capability identity.
+That identity is retained for traceability; it does not define a separate
+product architecture.
 
 ## Schema
 <!-- type: schema lang: yaml -->
 
 ```yaml
+product:
+  name: aw
+  form: agent_first_project_iteration_cli
+  primary_user: coding_agent
+  owns:
+    - next_action_guidance
+    - durable_artifact_skeletons
+    - strict_format_validation
+    - strict_phase_transitions
+    - code_generation
+
 concepts:
   project:
-    definition: "Governance and rollup root for one product or repo-side workflow scope."
-    owns:
-      - capability_map
-      - issue_backend_projection
-      - repo_owned_scopes
-      - verification_inventory
-    invariant: "Every capability, WorkItem, artifact, gate, and evidence item rolls up to exactly one Project context."
+    definition: "Repository-side product scope and parent rollup root."
+    owns: [meta_docs, capability_map, work_inventory, verification_inventory]
+    invariant: "Every capability, WorkItem, artifact, gate, and evidence item resolves to one Project context."
 
   capability:
-    definition: "Verifiable product promise inside a Project."
-    owns:
-      - gaps
-      - claims
-      - verification_contract
-      - work_roots
-    invariant: "A Capability is verified only through closed/non-deferred work roots plus required gates or accepted evidence."
+    definition: "Verifiable product promise declared in the META-doc goal contract."
+    owns: [gaps, claims, work_roots, verification_contract]
+    invariant: "A Capability is verified only by closed work roots and required evidence."
 
   work_item:
-    definition: "Accepted pre-plan and admission root for artifact work."
-    owns:
-      - problem
-      - capability_alignment
-      - requirements
-      - acceptance_criteria
-      - agent_estimate
-      - target_artifacts
-    invariant: "Artifact work starts from an accepted WorkItem, not from an unbounded raw prompt."
+    definition: "Bounded iteration root and durable loop state."
+    owns: [problem, capability_alignment, scope, acceptance_criteria, reference_context]
+    invariant: "Durable artifact work starts from an accepted, bounded WorkItem."
 
   artifact:
-    definition: "Durable output created or revised under a WorkItem."
-    examples:
-      - prd
-      - tech_design
-      - code_artifact
-      - app_spec
-      - workflow_spec
-      - policy
-      - test_plan
-      - release_package
-    invariant: "Every Artifact records its governing WorkItem, target route, gates, and evidence."
+    definition: "Durable WI, EC, TD, generated-code, or evidence output produced from an AW skeleton."
+    owns: [identity, skeleton, fill_slots, validation, generation, evidence, next_transition]
+    invariant: "An agent fills only declared slots; it does not invent a competing durable format."
 
   gate:
-    definition: "Executable or manual condition that must pass before rollup may advance."
-    examples:
-      - spec_validation
-      - tests
-      - capability_check
-      - review
-      - cold_verify
-      - human_approval
-    invariant: "Gate outcome is explicit: pass, fail, blocked, skipped_by_policy, or not_applicable."
+    definition: "Deterministic verifier or explicit HITL condition controlling a transition."
+    outcomes: [pass, fail, blocked, requires_hitl, not_applicable]
+    invariant: "A phase advances only from an explicit gate result."
 
   evidence:
-    definition: "Durable proof that a gate, artifact, claim, or rollup decision is valid."
-    examples:
-      - command_output
-      - review_verdict
-      - issue_comment
-      - commit
-      - generated_report
-      - fixture_result
-    invariant: "Verified state cannot rely on agent memory; it must cite evidence."
-
-  hitl:
-    definition: "Human-in-the-loop decision point for ambiguous, risky, or policy-sensitive workflow transitions."
-    invariant: "HITL blocks rollup until the human decision is captured as evidence."
+    definition: "Durable proof supporting a gate, claim, artifact, or rollup decision."
+    examples: [command_output, ec_result, issue_comment, commit, generated_report]
+    invariant: "Verified state cites evidence and never relies on agent memory."
 
   rollup:
-    definition: "Propagation of child state to parent WorkItem, Capability, and Project roots."
-    invariant: "A parent can complete only when every required child is complete, deferred by policy, or blocked with explicit HITL/evidence."
-
-  client:
-    definition: "UX or automation surface that reads and writes AW Core state through the shared protocol."
-    examples:
-      - aw_cli
-      - cue
-      - future_api_client
-    invariant: "Clients may specialize interaction and persistence adapters, but must not fork AW Core semantics."
+    definition: "Propagation of child state to WorkItem, Capability, and Project roots."
+    invariant: "A parent completes only when every required child is complete or explicitly blocked for HITL."
 
 relationships:
-  - "Project contains Capabilities."
-  - "Capability gaps become WorkItems or parent epics."
-  - "Accepted WorkItems admit Artifacts through target artifact routes."
-  - "Artifacts declare Gates."
-  - "Gate results produce Evidence."
+  - "Project META-docs declare Capabilities."
+  - "Capability gaps become bounded WorkItems."
+  - "Accepted WorkItems admit AW-produced Artifact skeletons."
+  - "Agents fill declared Artifact slots."
+  - "Gates evaluate Artifacts and record Evidence."
   - "Evidence enables Rollup."
-  - "Clients operate on the same AW Core state and cannot redefine it."
 ```
 
 ## Scenarios
 <!-- type: scenarios lang: yaml -->
 
 ```yaml
-id: aw-core-client-model
+id: aw-agent-first-project-iteration-model
 scenarios:
   - id: S1
-    title: "CLI and Cue share core concepts"
+    title: "AW owns the next action"
     given:
-      - "a WorkItem has accepted capability alignment and target artifacts"
+      - "a coding agent invokes a root runner for a bounded WorkItem"
     when:
-      - "aw CLI emits a JSON envelope"
-      - "Cue renders the same WorkItem in a collaborative web view"
+      - "the current lifecycle state is evaluated"
     then:
-      - "both clients use the same Project, Capability, WorkItem, Artifact, Gate, Evidence, HITL, Rollup, and Client meanings"
-      - "client-specific UX does not alter the AW Core state model"
+      - "stdout contains exactly one runnable next command or an explicit terminal/HITL marker"
+      - "the agent does not invent a hidden transition"
 
   - id: S2
-    title: "project rollup stays client-independent"
+    title: "AW owns durable artifact shape"
     given:
-      - "an Artifact passes its gates and records evidence"
+      - "a WorkItem needs an EC or TD artifact"
     when:
-      - "the workflow rolls up through WorkItem and Capability"
+      - "the agent starts authoring"
     then:
-      - "Project readiness is computed from core state"
-      - "the result does not depend on whether the action came from aw CLI or Cue"
+      - "AW creates the durable skeleton first"
+      - "stdout names the bounded fill slot and payload contract"
+      - "out-of-slot content fails before phase advancement"
 
   - id: S3
-    title: "raw prompt cannot become core artifact state"
+    title: "verification drives rollup"
     given:
-      - "a user asks a client to create an artifact from an unbounded prompt"
+      - "an implementation artifact has been generated or filled"
     when:
-      - "no accepted WorkItem exists"
+      - "its required gate runs"
     then:
-      - "AW Core has no Artifact admission root"
-      - "the client must create or select a WorkItem before artifact work proceeds"
+      - "pass records evidence and permits parent rollup"
+      - "fail returns to a bounded implementation action"
+      - "ambiguity emits HITL instead of guessing"
 ```
 
 ## Changes
@@ -170,25 +136,26 @@ scenarios:
 ```yaml
 changes:
   - path: apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md
-    action: create
-    section: overview
+    action: modify
+    section: schema
     impl_mode: hand-written
     description: |
-      Define the canonical AW Core concept model and client-independent invariants.
+      Replace the multi-surface ontology with the single agent-first CLI model
+      while preserving the stable spec and capability identities for traceability.
   - path: apps/agentic-workflow/README.md
     action: modify
     section: overview
     impl_mode: hand-written
     description: |
-      Point the project README at the AW Core concept model so clients share one vocabulary.
+      Publish the canonical product definition and seven public nouns.
+  - path: apps/agentic-workflow/CAPABILITIES.md
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: |
+      Register #1496 as the verified agent-first CLI product-model work root.
   - action: annotate
     section: scenarios
     impl_mode: hand-written
     description: "Traceability metadata edge for the scenarios section."
-
-  - action: annotate
-    section: schema
-    impl_mode: hand-written
-    description: "Traceability metadata edge for the schema section."
-
 ```

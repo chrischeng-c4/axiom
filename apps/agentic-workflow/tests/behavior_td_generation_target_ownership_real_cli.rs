@@ -1,22 +1,25 @@
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-client-boundary-model
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-ownership-real-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec aw-core-client-client-boundary-model
-// @capability aw-core-client-model-workitem-first-artifact-lifecycle
-// @claim client-boundary-model
-// @contract aw-core-client-client-boundary-model
+// @ec td-generation-target-ownership-real-cli
+// @capability td-cb-lifecycle-automation
+// @claim ambiguous-multi-target-generation-preflight
+// @contract td-generation-target-ownership-real-cli
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md
+// @command cargo test -p agentic-workflow --test cli_tests td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation -- --nocapture
 // AW-EC-END
 
-// Contract: client boundary TD validates as the shared client boundary claim
+// Contract: the public binary emits exactly one stdout JSON error envelope and no second stderr error
+// Contract: error_kind, section, sorted targets, completion, and executable next.command are stable
+// Contract: HEAD, symbolic branch, index tree, porcelain-z status, issue bytes, and TD branch ref are unchanged
+// Contract: the prepared spec and every target blob remain byte-identical
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn aw_core_client_client_boundary_model() {
+fn td_generation_target_ownership_real_cli() {
     let command =
-        "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md";
-    let id = "aw-core-client-client-boundary-model";
+        "cargo test -p agentic-workflow --test cli_tests td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation -- --nocapture";
+    let id = "td-generation-target-ownership-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

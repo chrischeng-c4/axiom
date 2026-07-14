@@ -1,24 +1,25 @@
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-screenshot
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-retry-transition-lease-real-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec aw-view-repo-screenshot
-// @capability repo-view-desktop-app
-// @claim repo-desktop-reader
-// @contract aw-view-repo-screenshot
+// @ec terminal-ec-retry-transition-lease-real-cli
+// @capability td-cb-lifecycle-automation
+// @claim terminal-ec-process-liveness
+// @contract terminal-ec-retry-transition-lease-real-cli
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png
+// @command cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture
 // AW-EC-END
 
-// Contract: app screenshot is produced without a browser or desktop screen capture
-// Contract: app screenshot is rendered from the same renderer-neutral surface tree
-// Contract: app screenshot contains project list, terminal status, and selected README, capability, EC, and TD detail panes
+// Contract: a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held
+// Contract: the second process reads retry phase and promptly receives terminal_ec_single_flight
+// Contract: the refusal points to the exact same-slug aw td code-check retry
+// Contract: after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn aw_view_repo_screenshot() {
+fn terminal_ec_retry_transition_lease_real_cli() {
     let command =
-        "./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png";
-    let id = "aw-view-repo-screenshot";
+        "cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture";
+    let id = "terminal-ec-retry-transition-lease-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

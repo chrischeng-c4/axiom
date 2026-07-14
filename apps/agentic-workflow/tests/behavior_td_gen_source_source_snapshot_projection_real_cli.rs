@@ -1,26 +1,27 @@
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-snapshot
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/td-gen-source-source-snapshot-projection.md#td-gen-source-source-snapshot-projection-real-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec aw-view-repo-snapshot
-// @capability repo-view-desktop-app
-// @claim repo-desktop-reader
-// @contract aw-view-repo-snapshot
+// @ec td-gen-source-source-snapshot-projection-real-cli
+// @capability existing-project-standardization
+// @claim authoritative-source-snapshot-projection
+// @contract td-gen-source-source-snapshot-projection-real-cli
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --snapshot
+// @command cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture
 // AW-EC-END
 
-// Contract: snapshot root is the repository, not a single project
-// Contract: snapshot includes the projects/libs catalog
-// Contract: snapshot includes terminal status for watching agent-side changes
-// Contract: snapshot includes selected README detail and capability rows
-// Contract: snapshot includes selected EC inventory and TD summary
-// Contract: snapshot includes a renderer-neutral surface tree for renderer-independent tests
+// Contract: a const changes from before to after in the exact requested target
+// Contract: a uniquely named generated Rust test is present in exact target bytes
+// Contract: cargo test with that unique filter reports running 1 test and 1 passed
+// Contract: siblings and an unmatched existing target remain byte-identical
+// Contract: a second replay reports summary.wrote_files=false
+// Contract: the unmatched target error names the snapshot target and runnable --target remediation
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn aw_view_repo_snapshot() {
-    let command = "./target/debug/aw view --snapshot";
-    let id = "aw-view-repo-snapshot";
+fn td_gen_source_source_snapshot_projection_real_cli() {
+    let command =
+        "cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture";
+    let id = "td-gen-source-source-snapshot-projection-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

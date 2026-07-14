@@ -8,6 +8,12 @@ capability_refs:
     claim: "core-concept-model-and-invariants"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `apps/agentic-workflow/src/cli`."
+  - id: aw-core-client-model-workitem-first-artifact-lifecycle
+    role: primary
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
+    coverage: full
+    rationale: "The CLI semantic domain owns binary product orientation and the regression that keeps README, CAPABILITIES, and canonical product TDs aligned on the single agent-first CLI model."
   - id: existing-project-standardization
     role: primary
     gap: force-regeneration-project-root-llms-projection
@@ -4392,7 +4398,10 @@ changes:
     description: |
       Issue #848: added the `source_units` evidence block for llm.rs (the
       live `aw llm` offline agent-orientation surface), missing from this
-      semantic domain's evidence list.
+      semantic domain's evidence list. Issue #1496 adds the `model` topic with
+      the canonical agent-first CLI definition and a compile-time contract
+      regression that rejects removed product architecture from active
+      README, CAPABILITIES, and product-model TD prose.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/loop_state.rs"
     action: add

@@ -7,7 +7,7 @@ capability_refs:
     gap: core-concept-model-and-invariants
     claim: core-concept-model-and-invariants
     coverage: full
-    rationale: "Agent-facing public interfaces are part of the AW Core client-independent workflow protocol surface."
+    rationale: "Agent-facing public interfaces support the single AW CLI workflow surface."
 ---
 
 # Restructure Agent Types

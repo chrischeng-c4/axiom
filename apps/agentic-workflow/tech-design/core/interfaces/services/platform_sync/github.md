@@ -4,10 +4,10 @@ fill_sections: [overview, schema, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "Service interfaces expose AW Core project, issue, and platform boundary behavior to clients."
+    rationale: "Service interfaces expose project, issue, and platform behavior to the single AW CLI."
 ---
 
 # GitHubProvider Type

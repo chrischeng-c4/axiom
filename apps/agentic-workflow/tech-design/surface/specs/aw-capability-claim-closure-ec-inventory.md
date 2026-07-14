@@ -27,19 +27,19 @@ e2e_tests:
     claim_id: core-concept-model-and-invariants
     command: ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md
     assertions:
-      - core client model TD validates as the source claim for AW core invariants
+      - agent-first project iteration model TD validates as the source claim for AW invariants
   - id: aw-core-client-workitem-artifact-admission-gate
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
     claim_id: workitem-artifact-admission-gate
     command: ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md
     assertions:
       - workitem artifact gate TD validates as the admission gate claim
-  - id: aw-core-client-client-boundary-model
+  - id: aw-core-client-agent-first-cli-product-model
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
-    claim_id: client-boundary-model
-    command: ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md
+    claim_id: agent-first-cli-product-model
+    command: cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture
     assertions:
-      - client boundary TD validates as the shared client boundary claim
+      - binary orientation, README, capability contract, and canonical product TDs share one agent-first CLI model and reject removed architecture prose
   - id: aw-core-client-agent-orientation-surface
     capability_id: aw-core-client-model-workitem-first-artifact-lifecycle
     claim_id: agent-orientation-surface

@@ -1,6 +1,6 @@
 ---
 id: aw-workitem-artifact-gate
-summary: "Define accepted WorkItem admission and artifact routes for AW Core artifact creation."
+summary: "Define accepted WorkItem admission and artifact routes for AW artifact creation."
 fill_sections: [overview, schema, scenarios, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -16,7 +16,7 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-AW Core artifact work is WorkItem-first. A client may help a user draft or
+AW artifact work is WorkItem-first. The CLI may help an agent draft or
 select a WorkItem, but it must not create a durable artifact from an unbounded
 raw prompt. The invariant is:
 
@@ -25,7 +25,7 @@ raw prompt. The invariant is:
 An accepted WorkItem is the admission root for artifact creation. It carries the
 bounded problem, capability alignment, requirements, acceptance criteria, agent
 estimate, unresolved HITL state, and target artifact routes. The requested
-artifact type must be allowed by one of those routes before a client can create
+artifact type must be allowed by one of those routes before the CLI can create
 or revise that artifact.
 
 The existing `aw wi -> aw td -> aw cb -> aw td code-check` path is the code route
@@ -60,9 +60,9 @@ admission_rule:
     - "The requested artifact type is allowed by target_artifact_routes."
     - "The route-specific gate can run or returns HITL/blocked with evidence."
   blocked_cases:
-    raw_prompt_without_work_item: "client must create or select a WorkItem first"
-    unaccepted_work_item: "client must complete acceptance gates first"
-    route_mismatch: "client must revise WorkItem target routes or request an allowed artifact"
+    raw_prompt_without_work_item: "CLI must create or select a WorkItem first"
+    unaccepted_work_item: "CLI must complete acceptance gates first"
+    route_mismatch: "CLI must revise WorkItem target routes or request an allowed artifact"
 
 artifact_routes:
   prd:
@@ -101,7 +101,7 @@ artifact_routes:
 route_invariants:
   - "A route is declared on the WorkItem before artifact creation."
   - "A route owns its artifact type vocabulary and first gate."
-  - "Clients may present route-specific UX, but route admission is AW Core state."
+  - "CLI commands may present route-specific prompts, but route admission is AW state."
   - "TD/CB remains the code route: WorkItem admission -> TD -> CB/code -> merge evidence."
 ```
 
@@ -114,12 +114,12 @@ scenarios:
   - id: S1
     title: "raw prompt artifact request is blocked"
     given:
-      - "a user asks a client to create a TD from a raw prompt"
+      - "a user asks the CLI to create a TD from a raw prompt"
       - "no accepted WorkItem exists"
     when:
-      - "the client asks AW Core for artifact admission"
+      - "the CLI asks AW for artifact admission"
     then:
-      - "AW Core denies artifact creation"
+      - "AW denies artifact creation"
       - "the next action is create_or_select_work_item"
       - "no TD, PRD, CB, App Spec, Workflow Spec, Policy, Test Plan, or Release Package is persisted"
 
@@ -128,9 +128,9 @@ scenarios:
     given:
       - "an accepted WorkItem targets only the test_plan route"
     when:
-      - "a client requests code_artifact creation"
+      - "the CLI requests code_artifact creation"
     then:
-      - "AW Core denies route admission"
+      - "AW denies route admission"
       - "the WorkItem must be revised before code artifact work proceeds"
 
   - id: S3

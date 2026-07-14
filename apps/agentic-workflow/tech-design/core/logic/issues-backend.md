@@ -5,10 +5,10 @@ merge_strategy: new
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "This logic TD supports AW Core client boundary behavior for issues or frontend clients."
+    rationale: "This logic TD supports issue projection inside the single AW CLI product boundary."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: project-label-producer-td-routing

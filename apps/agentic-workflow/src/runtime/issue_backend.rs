@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#source
 // CODEGEN-BEGIN
-//! Issue subsystem abstraction. cue's runtime talks to issues via this
+//! Issue subsystem abstraction. The AW runtime talks to configured issue state via this
 //! trait; concrete impls back it with local SDD files, GitHub Issues
 //! (gh CLI), GitLab Issues (glab CLI), or Jira REST API.
 //!
@@ -20,7 +20,7 @@ use thiserror::Error;
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#schema
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#changes
 /// Selects which backend `Session` constructs at startup. Matches the
-/// `[issue].backend` key in `.cue/config.toml`.
+/// repository configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendKind {

@@ -1,23 +1,26 @@
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-app-bundle
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-no-child-wrapper-real-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec aw-view-repo-app-bundle
-// @capability repo-view-desktop-app
-// @claim repo-desktop-reader
-// @contract aw-view-repo-app-bundle
+// @ec terminal-ec-no-child-wrapper-real-cli
+// @capability td-cb-lifecycle-automation
+// @claim terminal-ec-process-liveness
+// @contract terminal-ec-no-child-wrapper-real-cli
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app
+// @command cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture
 // AW-EC-END
 
-// Contract: native desktop bundle is produced as a macOS .app launcher
-// Contract: app bundle launches the repo-built aw view desktop surface
-// Contract: app bundle is produced without a browser or web runtime dependency
+// Contract: the real aw binary returns within the configured one-second deadline plus bounded cleanup grace
+// Contract: the helper confirms its external child exited before the wrapper timed out
+// Contract: the wrapper PID no longer exists after aw returns
+// Contract: the envelope has terminal_ec_timeout and exact aw td code-check slug next.command
+// Contract: the work item remains open in cb_filled and no terminal commit is created
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn aw_view_repo_app_bundle() {
-    let command = "./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app";
-    let id = "aw-view-repo-app-bundle";
+fn terminal_ec_no_child_wrapper_real_cli() {
+    let command =
+        "cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture";
+    let id = "terminal-ec-no-child-wrapper-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

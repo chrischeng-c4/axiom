@@ -12,29 +12,28 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| AW Core Client Model | #3894 | implemented | verified | smoke | ready | verified; shared AW Core nouns, WorkItem-first artifact admission, and client boundaries |
+| AW Agent-First CLI Model | #1496 | implemented | verified | smoke | ready | verified; one coding-agent CLI owns next-action guidance, artifact skeletons, strict validation/phases, codegen, WorkItem-first admission, and evidence-backed rollup |
 | Workflow Root Runner | - | implemented | verified | smoke | ready | verified; CLI workflow chain and root-to-child rollup contract |
 | Capability Control Plane | - | implemented | verified | smoke | ready | verified; CAPABILITIES.md capability map, `aw capability`, and verification summaries |
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
 | TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to code-check terminal workflow |
 | Project-Local TD and EC Gates | #13 | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, EC contracts default to `<project.path>/external-contracts`, and generated tests/tool configs stay project-local |
 | Manual Evidence Artifacts | #57 | implemented | verified | smoke | ready | verified; generated product manuals are tracked as EC evidence artifacts with runner commands and optional media |
-| Repo View Desktop App | - | implemented | verified | smoke | ready | verified; exposes `aw view`, `aw view --layout left-right|top-bottom`, `aw view --snapshot`, `aw view --check`, `aw view --screenshot <png>`, and `aw view --app <app>` for the native repo reader, in-app layout toggle, EC snapshot, quick headless contract check, app-level visual debug capture, and macOS app bundle |
 | Existing Project Standardization | - | implemented | verified | smoke | ready | verified; takeover readiness, managed/semantic/traceability gates, and generator gap requests |
 
-### AW Core Client Model
+### AW Agent-First CLI Model
 
 ID: aw-core-client-model-workitem-first-artifact-lifecycle
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw wi` + `aw td` + `aw wi run`/`aw capability run` - standalone AW Core client entrypoints over the shared workflow protocol.
+- CLI: `aw wi` + `aw ec` + `aw td` + `aw wi run`/`aw capability run` - the single agent-first project-iteration surface.
 EC Dimensions:
-- behavior: shared WorkItem-first artifact admission, client boundary, and rollup semantics from the AW Core TD set.
-Root WI: #3894
+- behavior: WorkItem-first artifact admission, agent-first CLI ownership, strict validation/phase transitions, codegen, and evidence-backed rollup semantics.
+Root WI: #1496
 Status: verified
 Required Verification: smoke
 Promise:
-AW Core defines the client-independent workflow and domain protocol shared by `aw CLI`, Cue, and future clients, with WorkItem-first artifact admission and evidence-backed rollup.
+Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding agents. It owns next-action guidance, durable artifact skeletons, strict format and phase validation, and code generation, with WorkItem-first admission and evidence-backed rollup.
 Gate Inventory:
 - apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md; apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md; apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md
 
@@ -42,7 +41,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Core concept model and invariants | change | #3894 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md |
 | WorkItem artifact admission gate | change | #3895 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md |
-| Client boundary model | change | #3896 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md |
+| Agent-first CLI product model | change | #1496 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md |
 | Agent orientation surface | change | #178 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands`; apps/agentic-workflow/tech-design/logic/aw-llm-offline-agent-orientation-command.md |
 | WorkItem loop-state model | change | #189 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib loop_state_round_trips`; apps/agentic-workflow/tech-design/logic/workitem-loop-state-model-additive-foundation.md |
 | AW epic project label dispatch | change | #1518 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md |
@@ -213,36 +212,6 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Generated manual EC evidence schema | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_generated_manual_artifact` |
 | Manual runner output convention | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory`; apps/agentic-workflow/src/tools/common_change_spec.rs |
-
-### Repo View Desktop App
-
-ID: repo-view-desktop-app
-Type: DeveloperTool
-Surfaces:
-- CLI: `aw view` + `aw view --layout left-right|top-bottom` + `aw view --snapshot` + `aw view --check` + `aw view --screenshot <png>` + `aw view --app <app>` - native desktop repo reader with fixed project list, in-app terminal/detail layout toggle, stable JSON/surface snapshot, quick headless contract check, app-level visual debug capture, and macOS app bundle generation for agents and EC gates.
-EC Dimensions:
-- behavior: `./target/debug/aw view --snapshot` - repo catalog, terminal status, focused README brief, capability map detail, EC inventory, TD summary, and renderer-neutral surface snapshot are present.
-- behavior: `./target/debug/aw view --check` - headless contract check contains the terminal pane, repo catalog, semantic layout toggle, selected README brief, capability map, EC, and TD detail panes.
-- behavior: `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png` - app-level PNG capture is rendered from the same surface tree without a browser or desktop screen capture.
-- behavior: `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png` - repo list stays fixed while the terminal/detail region can switch to top-bottom layout with a visible toggle control.
-- behavior: `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app` - native macOS app bundle is produced and launches the repo-built desktop view.
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-AW presents the repository as a visual-reader model: repo navigation is the root, selected repo items expose README brief text, configured capability-map detail, EC contract status, and TD relation summary, and the desktop artifact has stable semantic surface IDs so tests do not depend on a toolkit-private tree. The repo list stays fixed on the left; the right-side workspace can place terminal/status and current EC/capability detail either left-right or top-bottom, defaulting to left-right. A native toggle button switches that workspace layout in the running desktop app.
-Gate Inventory:
-- `cargo test -p agentic-workflow --lib view_repo_snapshot -- --nocapture`
-- `./target/debug/aw view --snapshot`
-- `./target/debug/aw view --check`
-- `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png`
-- `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png`
-- `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app`
-- apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Repo desktop reader | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib view_repo_snapshot -- --nocapture`; `./target/debug/aw view --snapshot`; `./target/debug/aw view --check`; `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png`; `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png`; `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app` |
 
 ### Existing Project Standardization
 

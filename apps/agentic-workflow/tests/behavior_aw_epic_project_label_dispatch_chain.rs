@@ -1,25 +1,23 @@
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-check
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#aw-epic-project-label-dispatch-chain
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec aw-view-repo-check
-// @capability repo-view-desktop-app
-// @claim repo-desktop-reader
-// @contract aw-view-repo-check
+// @ec aw-epic-project-label-dispatch-chain
+// @capability aw-core-client-model-workitem-first-artifact-lifecycle
+// @claim aw-epic-project-label-dispatch
+// @contract aw-epic-project-label-dispatch-chain
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --check
+// @command cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture
 // AW-EC-END
 
-// Contract: headless repo view check contains a projects/libs catalog
-// Contract: headless repo view check contains a terminal pane
-// Contract: headless repo view check contains README, capability, EC, and TD detail panes
-// Contract: headless repo view check exposes a semantic layout toggle button
-// Contract: headless repo view check preserves stable semantic IDs for e2e assertions
+// Contract: run.rs:open_epic_envelope is present in EMIT_REGISTRY
+// Contract: aw wi atomize --project pgpool parses through the real CLI tree
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn aw_view_repo_check() {
-    let command = "./target/debug/aw view --check";
-    let id = "aw-view-repo-check";
+fn aw_epic_project_label_dispatch_chain() {
+    let command =
+        "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture";
+    let id = "aw-epic-project-label-dispatch-chain";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

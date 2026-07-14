@@ -4,10 +4,10 @@ fill_sections: [overview, source, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "Issue backend interfaces implement the AW Core client boundary for projecting workflow state to configured issue platforms."
+    rationale: "Issue backend interfaces project the single AW CLI workflow state to configured issue platforms."
 ---
 
 # Local Backend Helpers Source

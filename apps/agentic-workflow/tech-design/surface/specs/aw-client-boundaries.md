@@ -1,152 +1,102 @@
 ---
 id: aw-client-boundaries
-summary: "Define aw CLI and Cue as separate clients over AW Core."
+summary: "Define the single agent-first AW CLI product boundary."
 fill_sections: [overview, schema, scenarios, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "This spec defines aw CLI and Cue as separate clients over AW Core."
+    rationale: "This spec defines one coding-agent CLI product boundary and its four owned responsibilities."
 ---
 
-# AW Client Boundaries
+# AW Agent-First CLI Product Boundary
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-AW Core is the shared workflow model. `aw CLI` and Cue are clients over that
-model, not layers inside each other.
+Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding
+agents. It owns next-action guidance, durable artifact skeletons, strict format
+and phase validation, and code generation.
 
-`aw CLI` is the standalone developer and agentic coding client. It is optimized
-for repo-local commands, machine-readable JSON envelopes, TD/CB lifecycle
-execution, hooks, branches, worktrees, and coding-agent prompts.
-
-Cue is the enterprise team collaboration web frontend/backend client. It is
-optimized for Project Sessions, WorkItem collaboration, artifact graphs,
-approvals, registry state, audit, ownership, runtime governance, and hidden app
-repo orchestration.
-
-Cue is not an `aw CLI` wrapper. It can share AW Core semantics and may call
-backend services that implement AW Core protocol, but its product architecture
-must not be a shell-out layer around terminal commands. Likewise, `aw CLI`
-must not absorb Cue-only team collaboration UX into repo-local command verbs.
+The CLI is the product. Repo-local commands, machine-readable envelopes,
+project META-docs, WorkItem state, EC verification, TD/codegen, scoped lifecycle
+commits, and evidence rollup all belong to this one boundary. AW does not own a
+parallel collaboration product, a general-purpose UI, or an alternate protocol
+whose state can diverge from CLI-observable workflow state.
 
 ## Schema
 <!-- type: schema lang: yaml -->
 
 ```yaml
-shared_layer:
-  name: aw_core
+product_boundary:
+  name: aw_cli
+  primary_user: coding_agent
+  environment: repository_checkout
   owns:
-    - project
-    - capability
-    - work_item
-    - artifact
-    - gate
-    - evidence
-    - hitl
-    - rollup
-    - client_contract
-  invariant: "Core semantics are client-independent."
-
-clients:
-  aw_cli:
-    definition: "Standalone developer and agentic coding client over AW Core."
-    primary_users:
-      - standalone_developer
-      - coding_agent
-      - repo_maintainer
-    owns_ux:
-      - repo_local_commands
-      - json_envelopes
-      - invoke_commands
-      - td_lifecycle
-      - cb_lifecycle
-      - worktrees
-      - branches
-      - hooks
-      - scoped_lifecycle_commits
-    must_not_own:
-      - enterprise_team_workspace
-      - runtime_registry_ui
-      - approval_queue_ui
-      - multi_user_artifact_studio
-      - generated_app_control_plane
-
-  cue:
-    definition: "Enterprise team collaboration web frontend/backend client over AW Core."
-    primary_users:
-      - app_owner
-      - project_owner
-      - platform_admin
-      - governed_agent_team
-    owns_ux:
-      - project_sessions
-      - work_item_collaboration
-      - artifact_graph_review
-      - prd_and_td_artifacts
-      - app_spec_and_runtime_artifacts
-      - approvals
-      - registry
-      - audit
-      - ownership
-      - runtime_governance
-      - hidden_app_repo_orchestration
-    must_not_own:
-      - terminal_first_end_user_experience
-      - visible_git_workflow_for_business_users
-      - shell_wrapper_as_product_architecture
-      - cli_command_taxonomy_as_ui_model
+    - next_action_guidance
+    - artifact_skeleton_and_fill_contracts
+    - format_and_phase_validation
+    - td_codegen
+    - ec_verification
+    - evidence_rollup
+  observable_contract:
+    - stdout_next_command_or_terminal_marker
+    - aw_cli_v1_envelope
+    - repo_and_project_meta_docs
+    - work_item_state
+    - generated_and_handwritten_ownership_markers
+  excluded_product_surfaces:
+    - parallel_collaboration_application
+    - general_purpose_repo_ui
+    - alternate_workflow_protocol
+    - hidden_lifecycle_state
 
 boundary_invariants:
-  - "Both clients preserve AW Core WorkItem-first artifact admission."
-  - "Both clients preserve AW Core evidence-backed rollup."
-  - "Client-specific UX may add fields or views, but must map back to AW Core concepts."
-  - "Cue is not an aw CLI wrapper."
-  - "aw CLI is not the enterprise collaboration surface."
-  - "AW Core must not depend on CLI-only commands or Cue-only screens."
+  - "Every mutating workflow transition is observable through the AW CLI contract."
+  - "AW creates each supported durable artifact skeleton before an agent fills it."
+  - "An invalid format or phase fails before durable state advances."
+  - "Generated implementation remains traceable to TD and EC evidence."
+  - "A new product surface requires its own product and must not redefine AW workflow semantics."
 ```
 
 ## Scenarios
 <!-- type: scenarios lang: yaml -->
 
 ```yaml
-id: aw-client-boundaries
+id: aw-agent-first-cli-product-boundary
 scenarios:
   - id: S1
-    title: "same WorkItem, different clients"
+    title: "coding agent follows one CLI contract"
     given:
-      - "a WorkItem is accepted under AW Core"
+      - "a coding agent is iterating on a registered project"
     when:
-      - "aw CLI advances TD/CB from the repo"
-      - "Cue displays the same WorkItem as an artifact graph"
+      - "it invokes a root or worker command"
     then:
-      - "both clients preserve the same WorkItem identity and evidence rollup"
-      - "CLI-specific branch/worktree state does not become a Cue UI requirement"
-      - "Cue-specific collaboration state does not become a CLI command requirement"
+      - "stdout names the only next action"
+      - "all durable state remains inspectable through repository artifacts and configured issue state"
 
   - id: S2
-    title: "Cue is not an aw CLI wrapper"
+    title: "artifact creation stays CLI-owned"
     given:
-      - "Cue needs to create or revise a PRD, TD, app spec, or runtime artifact"
+      - "a supported durable artifact does not exist"
     when:
-      - "Cue invokes AW Core behavior"
+      - "the workflow reaches its authoring phase"
     then:
-      - "Cue uses backend services or protocol adapters for AW Core state"
-      - "Cue does not model its product as shelling out to terminal commands"
-      - "business users never need to understand Git, branches, worktrees, or CLI prompts"
+      - "AW emits the canonical skeleton"
+      - "the agent receives a bounded fill contract"
+      - "freehand competing formats are rejected"
 
   - id: S3
-    title: "aw CLI remains repo-local"
+    title: "unowned product surface is excluded"
     given:
-      - "a coding agent works inside a project checkout"
+      - "a feature does not participate in META-doc to WI to EC to TD/codegen iteration"
     when:
-      - "`aw wi run`, `aw capability run`, `aw wi`, or `aw td` emits next steps"
+      - "its ownership is evaluated"
     then:
-      - "the CLI stays focused on repo-local lifecycle execution"
-      - "enterprise approval queues, registry dashboards, and runtime ownership screens remain Cue surfaces"
+      - "it is not advertised as an AW product capability"
+      - "its implementation is removed or moved under a separately owned product"
 ```
 
 ## Changes
@@ -155,31 +105,27 @@ scenarios:
 ```yaml
 changes:
   - path: apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md
-    action: create
-    section: overview
+    action: modify
+    section: schema
     impl_mode: hand-written
     description: |
-      Define aw CLI and Cue client boundaries over AW Core.
+      Rewrite the historical boundary spec as the single agent-first CLI
+      product boundary while retaining its stable path and id for traceability.
+  - path: apps/agentic-workflow/src/cli/llm.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: |
+      Add a binary-owned product-model topic and a regression that rejects the
+      removed architecture from active product contracts.
   - path: apps/agentic-workflow/README.md
     action: modify
     section: overview
     impl_mode: hand-written
     description: |
-      Point Agentic Workflow readers at the client boundary contract.
-  - path: projects/cue/README.md
-    action: modify
-    section: overview
-    impl_mode: hand-written
-    description: |
-      Clarify that Cue is an AW Core web/backend client, not an aw CLI wrapper.
+      Keep the canonical product definition aligned with binary orientation.
   - action: annotate
     section: scenarios
     impl_mode: hand-written
     description: "Traceability metadata edge for the scenarios section."
-
-  - action: annotate
-    section: schema
-    impl_mode: hand-written
-    description: "Traceability metadata edge for the schema section."
-
 ```

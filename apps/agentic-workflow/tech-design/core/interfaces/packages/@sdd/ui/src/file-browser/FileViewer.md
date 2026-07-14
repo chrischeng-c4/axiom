@@ -4,10 +4,10 @@ fill_sections: [overview, source, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "The @sdd package interfaces are client embedding surfaces over the AW Core workflow protocol."
+    rationale: "The @sdd package interfaces are legacy implementation evidence and do not define a separate AW product surface."
 ---
 
 # Standardized apps/agentic-workflow/packages/@sdd/ui/src/file-browser/FileViewer.tsx

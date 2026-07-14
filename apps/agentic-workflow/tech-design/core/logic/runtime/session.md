@@ -468,7 +468,9 @@ All five must pass byte-for-byte after CODEGEN conversion.
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/session.rs -->
 ```rust
-//! `Session` — the per-issue agent loop, shared by all SDD frontends.
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/session.md#source
+// CODEGEN-BEGIN
+//! `Session` — the per-issue loop used by AW's agent-first lifecycle.
 //!
 //! Slice 1 surface: `create_issue(title)` performs
 //!   1. `aw wi create <title>` → slug
@@ -520,7 +522,7 @@ const REVIEW_SYSTEM_PROMPT: &str = "You are an SDD section reviewer. For each fi
 
 const REVISE_SYSTEM_PROMPT: &str = "You are an SDD section reviser. Given the current issue body and reviewer feedback, rewrite the flagged sections so they address the feedback. Output the revised section(s) in Markdown only — no preamble, no fences.";
 
-const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are cue's mainthread agent — the dev's conversational counterpart. Classify each dev message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
+const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are AW's mainthread agent — the developer's project-iteration counterpart. Classify each developer message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
 
   {"action": "new_issue", "title": "<short slug-friendly title>"}
     when the dev wants to create a new SDD issue.
@@ -535,7 +537,7 @@ pub struct Session {
     provider: Arc<dyn LLMProvider>,
     score_process: Arc<dyn ScoreProcess>,
     /// Active issue backend selected at construction (per
-    /// `.cue/config.toml` `[issue].backend`). `Session::decide` /
+    /// repository issue-backend configuration). `Session::decide` /
     /// `run_create_issue` route `create` calls through this trait
     /// instead of `score_process.create` directly — that keeps the
     /// backend choice observable at runtime and avoids hardcoding
@@ -570,7 +572,7 @@ impl Session {
         let (tx, rx) = mpsc::channel(SESSION_CHANNEL_BUFFER);
 
         let provider = self.provider.clone();
-        let score_process = self.aw_process.clone();
+        let score_process = self.score_process.clone();
         let issue_backend = self.issue_backend.clone();
         let router = self.router.clone();
         let _turn_id = self.next_turn_id();
@@ -602,7 +604,7 @@ impl Session {
         let (tx, rx) = mpsc::channel(SESSION_CHANNEL_BUFFER);
 
         let provider = self.provider.clone();
-        let score_process = self.aw_process.clone();
+        let score_process = self.score_process.clone();
         let issue_backend = self.issue_backend.clone();
         let router = self.router.clone();
         let _turn_id = self.next_turn_id();
@@ -1164,7 +1166,7 @@ impl SessionBuilder {
         self
     }
     pub fn score_process(mut self, s: Arc<dyn ScoreProcess>) -> Self {
-        self.aw_process = Some(s);
+        self.score_process = Some(s);
         self
     }
     /// Override the active issue backend. Defaults to a
@@ -1185,7 +1187,7 @@ impl SessionBuilder {
     }
     pub fn build(self) -> Result<Session> {
         let score_process = self
-            .aw_process
+            .score_process
             .ok_or_else(|| anyhow!("SessionBuilder: score_process is required"))?;
         // Default the issue backend to LocalIssueBackend over the
         // provided ScoreProcess — keeps tests that only set score_process
@@ -1292,6 +1294,7 @@ mod tests {
                     "sections": ["requirements"],
                 }),
             }),
+            artifact_quality_profile: None,
         });
         mock.enqueue_fill_section(Envelope::Done {
             slug: "add-metrics-dashboard".into(),
@@ -1305,7 +1308,7 @@ mod tests {
 
         let mut session = Session::builder()
             .provider(provider)
-            .aw_process(mock.clone())
+            .score_process(mock.clone())
             .router(Arc::new(StaticRouter::empty().with_route(
                 Task::Author,
                 ModelChoice {
@@ -1366,7 +1369,7 @@ mod tests {
 
         let mut session = Session::builder()
             .provider(provider)
-            .aw_process(mock.clone())
+            .score_process(mock.clone())
             .router(Arc::new(StaticRouter::defaults()))
             .build()
             .unwrap();
@@ -1392,7 +1395,7 @@ mod tests {
             id: IssueId::new("alpha"),
             title: "Alpha".into(),
             state: IssueState::Open,
-            labels: vec!["app:cue".into()],
+            labels: vec!["app:jet".into()],
         }]);
         mock_backend.enqueue_read(IssueBody {
             id: IssueId::new("alpha"),
@@ -1402,7 +1405,7 @@ mod tests {
         });
         let session = Session::builder()
             .provider(Arc::new(ScriptedProvider::new(vec![])))
-            .aw_process(mock_score)
+            .score_process(mock_score)
             .issue_backend(mock_backend.clone())
             .router(Arc::new(StaticRouter::defaults()))
             .build()
@@ -1437,6 +1440,8 @@ mod tests {
         );
     }
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

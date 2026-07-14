@@ -4,10 +4,10 @@ fill_sections: [overview, source, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "Issue/runtime boundary logic projects AW workflow state through configured external clients."
+    rationale: "Issue/runtime boundary logic projects AW workflow state through configured issue platforms."
   - id: td-cb-lifecycle-automation
     role: primary
     gap: project-qualified-terminal-td-resolution

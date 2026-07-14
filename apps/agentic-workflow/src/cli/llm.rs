@@ -19,6 +19,8 @@ use clap::{Command, Subcommand};
 pub enum LlmTopic {
     /// The loop model + topic map. Agents start here.
     Outline,
+    /// The product: one agent-first project-iteration CLI and its ownership.
+    Model,
     /// The goal: capability defines function; what to build + is it ready.
     Capability,
     /// The artifact: spec defines how; td code is what runs (caps-agnostic).
@@ -40,8 +42,9 @@ pub enum LlmFormat {
 }
 
 /// Print agent-facing orientation topics -- offline, no server, no model.
-/// `outline` maps the topics; `capability` / `td` / `ec` are the three
-/// pillars; `wi` is how to operate aw. Markdown by default; `--format
+/// `outline` maps the topics; `model` defines the product boundary;
+/// `capability` / `td` / `ec` are the three pillars; `wi` is how to operate
+/// aw. Markdown by default; `--format
 /// json` for a machine-readable form. For exact flags of any verb, run
 /// `aw <verb> --help` -- this surface is orientation, not reference.
 #[derive(Debug, Args, Clone)]
@@ -56,6 +59,12 @@ pub struct LlmArgs {
 }
 
 const TOPICS: &[cli_std::llm::Topic] = &[
+    cli_std::llm::Topic {
+        id: "model",
+        summary:
+            "the product: one agent-first CLI owns guidance, skeletons, strict phases, and codegen",
+        body: MODEL_MD,
+    },
     cli_std::llm::Topic {
         id: "capability",
         summary: "the goal: what to build and whether it is ready",
@@ -101,12 +110,37 @@ fn cli_std_format(format: LlmFormat) -> cli_std::llm::Format {
 fn topic_name(topic: LlmTopic) -> &'static str {
     match topic {
         LlmTopic::Outline => "outline",
+        LlmTopic::Model => "model",
         LlmTopic::Capability => "capability",
         LlmTopic::Td => "td",
         LlmTopic::Ec => "ec",
         LlmTopic::Wi => "wi",
     }
 }
+
+const MODEL_MD: &str = r#"# aw llm --topic model -- the product boundary
+
+Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding agents. It owns next-action guidance, durable artifact skeletons, strict format and phase validation, and code generation.
+
+## Public model
+
+- Project owns the repository-side product scope and rollup root.
+- Capability is the META-doc goal contract.
+- WorkItem is one bounded iteration and its durable loop state.
+- Artifact is an AW-produced skeleton plus declared fill slots.
+- Gate evaluates a transition and records Evidence.
+- Evidence permits Rollup through WorkItem, Capability, and Project roots.
+
+## Product boundary
+
+- The CLI is the product: stdout owns the unique next command or terminal/HITL marker.
+- AW creates supported durable artifact skeletons before an agent fills them.
+- Strict format and phase validation runs before durable state advances.
+- TD codegen owns generated implementation; EC owns observable verification.
+- A parallel collaboration application, general-purpose UI, or alternate workflow protocol is not part of AW.
+
+For the current command surface, run `aw --help`.
+"#;
 
 /// The registered top-level verbs, sourced from the `Commands` enum itself so
 /// the outline can never drift from the actual CLI. Sorted for determinism.
@@ -273,6 +307,7 @@ mod tests {
 
         assert!(outline.contains("aw upgrade"));
         assert!(outline.contains("aw issue"));
+        assert!(outline.contains("`model`"));
         assert!(outline.contains("`capability`"));
     }
 
@@ -281,6 +316,7 @@ mod tests {
     fn llm_every_topic_emits_markdown() {
         for topic in [
             LlmTopic::Outline,
+            LlmTopic::Model,
             LlmTopic::Capability,
             LlmTopic::Td,
             LlmTopic::Ec,
@@ -326,6 +362,11 @@ mod tests {
             .unwrap()
             .iter()
             .any(|topic| topic["id"] == "capability"));
+        assert!(value["topics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|topic| topic["id"] == "model"));
 
         let topic = cli_std::llm::render(
             "aw",
@@ -345,6 +386,7 @@ mod tests {
     fn llm_topics_are_deterministic() {
         for topic in [
             LlmTopic::Outline,
+            LlmTopic::Model,
             LlmTopic::Capability,
             LlmTopic::Td,
             LlmTopic::Ec,
@@ -370,6 +412,54 @@ mod tests {
                 "{} topic must be pure and deterministic",
                 topic_name(topic)
             );
+        }
+    }
+
+    /// #1496: binary orientation and canonical active contracts teach one
+    /// agent-first CLI product. Stable legacy machine ids and paths remain for
+    /// traceability, but removed product semantics may not return in prose.
+    #[test]
+    fn agent_first_product_contracts_reject_removed_architecture() {
+        let active_contracts = [
+            ("aw llm model", MODEL_MD),
+            ("README", include_str!("../../README.md")),
+            ("CAPABILITIES", include_str!("../../CAPABILITIES.md")),
+            (
+                "project iteration model TD",
+                include_str!("../../tech-design/surface/specs/aw-core-client-model.md"),
+            ),
+            (
+                "CLI product boundary TD",
+                include_str!("../../tech-design/surface/specs/aw-client-boundaries.md"),
+            ),
+        ];
+
+        for (name, contract) in active_contracts {
+            let normalized = contract.to_ascii_lowercase();
+            for required in [
+                "agent-first project-iteration cli",
+                "next-action guidance",
+                "durable artifact skeletons",
+                "strict format",
+                "code generation",
+            ] {
+                assert!(
+                    normalized.contains(required),
+                    "{name} must contain canonical product responsibility `{required}`",
+                );
+            }
+            for removed in [
+                "cue",
+                "multi-client",
+                "future client",
+                "client-independent",
+                "repo view desktop app",
+            ] {
+                assert!(
+                    !normalized.contains(removed),
+                    "{name} still advertises removed product semantics `{removed}`",
+                );
+            }
         }
     }
 }

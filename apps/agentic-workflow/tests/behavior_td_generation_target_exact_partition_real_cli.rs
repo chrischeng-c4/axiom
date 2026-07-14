@@ -1,25 +1,24 @@
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-layout-option
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-exact-partition-real-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec aw-view-repo-layout-option
-// @capability repo-view-desktop-app
-// @claim repo-desktop-reader
-// @contract aw-view-repo-layout-option
+// @ec td-generation-target-exact-partition-real-cli
+// @capability td-cb-lifecycle-automation
+// @claim exact-generated-unit-target-ownership
+// @contract td-generation-target-exact-partition-real-cli
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png
+// @command cargo test -p agentic-workflow --test cli_tests td_gen_exact_schema_unit_ownership_partitions_real_targets -- --nocapture
 // AW-EC-END
 
-// Contract: project list stays fixed while the terminal/detail region can switch layout
-// Contract: top-bottom layout screenshot is rendered without changing the default left-right layout
-// Contract: layout is an explicit CLI option for the native repo view renderer
-// Contract: app screenshot includes the visible layout toggle control
+// Contract: a cold public TD generation accepts two exact Schema owners
+// Contract: Alpha and Beta appear only in their declared target files
+// Contract: the admitted lifecycle advances to cb_genned
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn aw_view_repo_layout_option() {
+fn td_generation_target_exact_partition_real_cli() {
     let command =
-        "./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png";
-    let id = "aw-view-repo-layout-option";
+        "cargo test -p agentic-workflow --test cli_tests td_gen_exact_schema_unit_ownership_partitions_real_targets -- --nocapture";
+    let id = "td-generation-target-exact-partition-real-cli";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
