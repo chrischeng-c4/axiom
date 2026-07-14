@@ -94,69 +94,68 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Add an optional OTLP feature and its tracing/export dependencies without changing the default logging-only dependency graph.
+    description: Add a default-off otlp feature and optional OpenTelemetry dependencies while preserving the plain logging build.
   - path: libs/service-http/src/config.rs
     action: modify
-    section: logic
+    section: contract
     impl_mode: hand-written
-    description: Define explicit stable service identity input alongside the existing optional OTLP endpoint configuration.
+    description: Add a backward-compatible ServiceIdentity contract with validated stable name and version fields for shared tracing initialization.
   - path: libs/service-http/src/logging.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Replace the OTLP TODO with feature-gated exporter setup, resource attributes, and non-fatal logging-only fallback.
+    description: Construct an optional OTLP tracer from HttpConfig and ServiceIdentity, preserve the formatter, and fall back non-fatally on missing feature or exporter construction failure.
   - path: libs/service-http/src/transport.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Extend the standard request trace layer with W3C trace-context extraction while preserving the existing span shape.
+    description: Add a shared propagation middleware that extracts W3C traceparent/tracestate into the existing request span without changing route behavior.
   - path: libs/service-http/src/lib.rs
     action: modify
     section: contract
     impl_mode: hand-written
-    description: Export the stable tracing identity and initialization contract for service binaries.
+    description: Export the public service identity, initialization, and propagation surface with explicit logging-only defaults.
   - path: libs/service-http/README.md
     action: modify
     section: contract
     impl_mode: hand-written
-    description: Document logging-only defaults, opt-in OTLP behavior, stable resource fields, and ownership boundaries.
+    description: Document opt-in OTLP, stable resource attributes, fallback semantics, and the Lumen/Tape adoption handoff.
   - path: libs/service-http/external-contracts/behavior/shared-http-service-scaffold-contract.md
     action: modify
     section: contract
     impl_mode: hand-written
-    description: Extend the shared service-scaffold claim with optional trace export and context propagation behavior.
+    description: Add claim closure for optional OTLP export and propagated request context while retaining no-endpoint behavior.
   - path: libs/service-http/tests/otlp_tracing.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Verify default logging-only initialization, explicit OTLP service identity, graceful exporter fallback, and propagated request context without a vendor collector.
+    description: Cover plain startup, identity stability, exporter construction fallback, and W3C parent propagation with local deterministic fixtures.
   - path: libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md
     action: modify
     section: source
     impl_mode: hand-written
-    description: Refresh semantic source coverage for the tracing identity configuration.
+    description: Refresh configuration semantic source coverage.
   - path: libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md
     action: modify
     section: source
     impl_mode: hand-written
-    description: Refresh semantic source coverage for exporter and fallback behavior.
+    description: Refresh exporter and fallback semantic source coverage.
   - path: libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md
     action: modify
     section: source
     impl_mode: hand-written
-    description: Refresh semantic source coverage for propagated request tracing.
+    description: Refresh propagation middleware semantic source coverage.
   - path: libs/service-http/tech-design/semantic/source/libs-service-http-src-lib-rs.md
     action: modify
     section: source
     impl_mode: hand-written
-    description: Refresh semantic source coverage for the public tracing API.
+    description: Refresh public tracing API semantic source coverage.
   - path: libs/service-http/tech-design/semantic/source/libs-service-http-tests-otlp-tracing-rs.md
     action: create
     section: source
     impl_mode: hand-written
-    description: Add semantic source coverage for OTLP contract tests.
+    description: Add semantic coverage for OTLP contract verification tests.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
