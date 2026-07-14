@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, ExitStatus};
 
 const TD_LOCK_VERSION: u8 = 2;
 const TD_IR_KIND: &str = "td";
@@ -127,6 +128,19 @@ struct TdLockTarget {
     lock_path_display: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TdLockWriteAction {
+    WroteAndCommitted,
+    RecoveredAndCommitted,
+    AlreadyClean,
+}
+
+#[derive(Debug)]
+struct TdLockWriteResult {
+    status: TdLockStatus,
+    action: TdLockWriteAction,
+}
+
 #[derive(Debug, Deserialize)]
 struct TdLockConfig {
     #[serde(default)]
@@ -163,17 +177,19 @@ pub fn run(project: Option<&str>, args: TdLockArgs) -> Result<()> {
         return Ok(());
     }
 
-    let (status, wrote) = write_project_td_lock(project)?;
+    let result = write_project_td_lock(project)?;
+    let status = result.status;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
+        let action = match result.action {
+            TdLockWriteAction::WroteAndCommitted => "wrote and committed",
+            TdLockWriteAction::RecoveredAndCommitted => "recovered and committed",
+            TdLockWriteAction::AlreadyClean => "already clean",
+        };
         println!(
             "td lock {}: {} {} ({} file(s), {})",
-            status.project,
-            if wrote { "wrote" } else { "already clean" },
-            status.lock_path,
-            status.file_count,
-            status.current_digest
+            status.project, action, status.lock_path, status.file_count, status.current_digest
         );
     }
     Ok(())
@@ -216,11 +232,37 @@ pub(crate) fn check_project_td_lock_for_spec_at_root(
     )
 }
 
-fn write_project_td_lock(project: &str) -> Result<(TdLockStatus, bool)> {
+fn write_project_td_lock(project: &str) -> Result<TdLockWriteResult> {
     let project_root = crate::find_project_root()?;
-    let target = resolve_td_lock_target(&project_root, project)?;
+    write_project_td_lock_at_root(&project_root, project)
+}
+
+fn write_project_td_lock_at_root(project_root: &Path, project: &str) -> Result<TdLockWriteResult> {
+    let target = resolve_td_lock_target(project_root, project)?;
+    let lock_path = preflight_repo_relative_td_lock_path(project_root, &target.lock_path)?;
+    let (status, wrote) = write_project_td_lock_file_at_root(project_root, &target)?;
+    let committed = commit_td_lock_update(project_root, &target, &lock_path)?;
+    if wrote && !committed {
+        anyhow::bail!(
+            "td lock wrote {} but could not commit the generated lock",
+            target.lock_path_display
+        );
+    }
+    let action = match (wrote, committed) {
+        (true, true) => TdLockWriteAction::WroteAndCommitted,
+        (false, true) => TdLockWriteAction::RecoveredAndCommitted,
+        (false, false) => TdLockWriteAction::AlreadyClean,
+        (true, false) => unreachable!("changed TD lock must fail before returning"),
+    };
+    Ok(TdLockWriteResult { status, action })
+}
+
+fn write_project_td_lock_file_at_root(
+    project_root: &Path,
+    target: &TdLockTarget,
+) -> Result<(TdLockStatus, bool)> {
     if target.lock_path.is_file() {
-        let status = check_project_td_lock_at_root(&project_root, project)?;
+        let status = check_project_td_lock_at_root(project_root, &target.project)?;
         if status.clean {
             return Ok((status, false));
         }
@@ -276,6 +318,188 @@ fn write_project_td_lock(project: &str) -> Result<(TdLockStatus, bool)> {
         ),
         true,
     ))
+}
+
+/// Commit only the generated lock while deliberately allowing unrelated index
+/// state. The shared lifecycle commit helper rejects any pre-existing staged
+/// change, so this lock handoff needs the narrower `git commit --only` policy.
+fn commit_td_lock_update(
+    project_root: &Path,
+    target: &TdLockTarget,
+    lock_path: &Path,
+) -> Result<bool> {
+    if !crate::git::is_git_repo(project_root) {
+        return Ok(false);
+    }
+    let current_lock_path = preflight_repo_relative_td_lock_path(project_root, &target.lock_path)?;
+    if current_lock_path != lock_path {
+        anyhow::bail!(
+            "generated TD lock path changed between write and commit: {}",
+            target.lock_path_display
+        );
+    }
+    let git = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+
+    let add = Command::new(&git)
+        .arg("--literal-pathspecs")
+        .arg("-C")
+        .arg(project_root)
+        .arg("add")
+        .arg("--")
+        .arg(&lock_path)
+        .output()
+        .context("git add generated TD lock")?;
+    if !add.status.success() {
+        anyhow::bail!(
+            "git add generated TD lock failed: {}",
+            String::from_utf8_lossy(&add.stderr).trim()
+        );
+    }
+
+    let staged = Command::new(&git)
+        .arg("--literal-pathspecs")
+        .arg("-C")
+        .arg(project_root)
+        .args(["diff", "--cached", "--quiet", "--"])
+        .arg(&lock_path)
+        .status()
+        .context("git diff --cached generated TD lock")?;
+    if !git_diff_has_changes(staged, "git diff --cached generated TD lock")? {
+        return Ok(false);
+    }
+
+    let message = format!(
+        "td-lock({}) — update TD IR snapshot\n\nTD-Lock-Project: {}\nTD-Lock-Path: {}",
+        target.project, target.project, target.lock_path_display
+    );
+    let commit = Command::new(&git)
+        .arg("--literal-pathspecs")
+        .arg("-C")
+        .arg(project_root)
+        .args(["commit", "--only", "-m"])
+        .arg(message)
+        .arg("--")
+        .arg(&lock_path)
+        .output()
+        .context("git commit generated TD lock")?;
+    if !commit.status.success() {
+        anyhow::bail!(
+            "git commit generated TD lock failed: {}",
+            String::from_utf8_lossy(&commit.stderr).trim()
+        );
+    }
+
+    let lock_status = Command::new(git)
+        .arg("--literal-pathspecs")
+        .arg("-C")
+        .arg(project_root)
+        .args([
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+        ])
+        .arg(&lock_path)
+        .output()
+        .context("git status generated TD lock")?;
+    if !lock_status.status.success() {
+        anyhow::bail!(
+            "git status generated TD lock failed: {}",
+            String::from_utf8_lossy(&lock_status.stderr).trim()
+        );
+    }
+    if !lock_status.stdout.is_empty() {
+        anyhow::bail!(
+            "generated TD lock remained dirty after commit: {}",
+            target.lock_path_display
+        );
+    }
+    Ok(true)
+}
+
+fn preflight_repo_relative_td_lock_path(project_root: &Path, lock_path: &Path) -> Result<PathBuf> {
+    let canonical_root = fs::canonicalize(project_root)
+        .with_context(|| format!("resolve repository root {}", project_root.display()))?;
+    let relative = lock_path.strip_prefix(project_root).map_err(|_| {
+        anyhow::anyhow!(
+            "generated TD lock is outside repository root: {}",
+            lock_path.display()
+        )
+    })?;
+    let file_name = relative.file_name().ok_or_else(|| {
+        anyhow::anyhow!(
+            "generated TD lock path has no file name: {}",
+            lock_path.display()
+        )
+    })?;
+    let relative_parent = relative.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "generated TD lock path has no parent: {}",
+            lock_path.display()
+        )
+    })?;
+    let mut lexical_parent = project_root.to_path_buf();
+    for component in relative_parent.components() {
+        let Component::Normal(component) = component else {
+            anyhow::bail!(
+                "generated TD lock path contains a non-normal repository component: {}",
+                lock_path.display()
+            );
+        };
+        lexical_parent.push(component);
+        let metadata = fs::symlink_metadata(&lexical_parent)
+            .with_context(|| format!("stat TD lock parent {}", lexical_parent.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            anyhow::bail!(
+                "generated TD lock parent must be a real repository directory: {}",
+                lexical_parent.display()
+            );
+        }
+    }
+    let canonical_parent = fs::canonicalize(&lexical_parent)
+        .with_context(|| format!("resolve TD lock parent {}", lexical_parent.display()))?;
+    if !canonical_parent.starts_with(&canonical_root) {
+        anyhow::bail!(
+            "generated TD lock parent is outside repository root: {}",
+            lexical_parent.display()
+        );
+    }
+    let expected_lock = canonical_parent.join(file_name);
+    match fs::symlink_metadata(lock_path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                anyhow::bail!(
+                    "generated TD lock must be a non-symlink regular file inside the repository: {}",
+                    lock_path.display()
+                );
+            }
+            let canonical_lock = fs::canonicalize(lock_path)
+                .with_context(|| format!("resolve generated TD lock {}", lock_path.display()))?;
+            if canonical_lock != expected_lock || !canonical_lock.starts_with(&canonical_root) {
+                anyhow::bail!(
+                    "generated TD lock does not resolve to its exact repository path: {}",
+                    lock_path.display()
+                );
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("stat generated TD lock {}", lock_path.display()));
+        }
+    }
+    Ok(relative.to_path_buf())
+}
+
+fn git_diff_has_changes(status: ExitStatus, operation: &str) -> Result<bool> {
+    match status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        Some(code) => anyhow::bail!("{operation} failed with exit code {code}"),
+        None => anyhow::bail!("{operation} terminated without an exit code"),
+    }
 }
 
 pub(crate) fn check_project_td_lock_at_root(
@@ -763,6 +987,56 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn git_available() -> bool {
+        crate::git::find_git_bin().is_some()
+    }
+
+    fn git_output(root: &Path, args: &[&str]) -> std::process::Output {
+        let git = crate::git::find_git_bin().expect("git binary");
+        let output = Command::new(git)
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap_or_else(|error| panic!("git {args:?}: {error}"));
+        assert!(
+            output.status.success(),
+            "git {args:?} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn git_stdout(root: &Path, args: &[&str]) -> String {
+        String::from_utf8(git_output(root, args).stdout).expect("utf-8 git stdout")
+    }
+
+    fn init_git_repo(root: &Path) {
+        git_output(root, &["init", "-q"]);
+        git_output(root, &["config", "user.email", "aw-test@example.com"]);
+        git_output(root, &["config", "user.name", "AW Test"]);
+    }
+
+    fn write_td_lock_repo(root: &Path) {
+        write(
+            &root.join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "projects/demo"
+"#,
+        );
+        write(
+            &root.join("projects/demo/tech-design/design.md"),
+            "# Demo design\n",
+        );
+        write(&root.join("notes/staged.txt"), "staged baseline\n");
+        write(&root.join("notes/unstaged.txt"), "unstaged baseline\n");
+        git_output(root, &["add", "."]);
+        git_output(root, &["commit", "-m", "bootstrap TD lock fixture"]);
+    }
+
     fn write(path: &Path, body: &str) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -778,6 +1052,236 @@ mod tests {
             parse_error: None,
             section_count: Some(1),
         }
+    }
+
+    #[test]
+    fn td_lock_commit_preserves_unrelated_staged_unstaged_and_untracked_state() {
+        if !git_available() {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        write_td_lock_repo(root);
+
+        write(&root.join("notes/staged.txt"), "staged change\n");
+        git_output(root, &["add", "notes/staged.txt"]);
+        write(&root.join("notes/unstaged.txt"), "unstaged change\n");
+        write(&root.join("notes/untracked.txt"), "untracked change\n");
+        let unrelated_before = git_output(
+            root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .stdout;
+        let head_before = git_stdout(root, &["rev-parse", "HEAD"]);
+
+        let result = write_project_td_lock_at_root(root, "demo").unwrap();
+
+        assert_eq!(result.action, TdLockWriteAction::WroteAndCommitted);
+        assert!(result.status.clean);
+        assert_ne!(git_stdout(root, &["rev-parse", "HEAD"]), head_before);
+        assert_eq!(
+            git_stdout(root, &["show", "--format=", "--name-only", "HEAD"])
+                .lines()
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>(),
+            vec!["projects/demo/tech-design/td.lock"]
+        );
+        assert_eq!(
+            git_stdout(root, &["log", "-1", "--format=%s"]).trim(),
+            "td-lock(demo) — update TD IR snapshot"
+        );
+        let message = git_stdout(root, &["log", "-1", "--format=%B"]);
+        assert!(message.contains("TD-Lock-Project: demo"));
+        assert!(message.contains("TD-Lock-Path: projects/demo/tech-design/td.lock"));
+        assert_eq!(
+            git_output(
+                root,
+                &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            )
+            .stdout,
+            unrelated_before,
+            "the lock-only commit must preserve every unrelated index/worktree byte"
+        );
+
+        let committed_head = git_stdout(root, &["rev-parse", "HEAD"]);
+        let repeat = write_project_td_lock_at_root(root, "demo").unwrap();
+        assert_eq!(repeat.action, TdLockWriteAction::AlreadyClean);
+        assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]), committed_head);
+        assert_eq!(
+            git_output(
+                root,
+                &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            )
+            .stdout,
+            unrelated_before,
+            "an already-clean lock must remain a no-op even with unrelated staged state"
+        );
+    }
+
+    #[test]
+    fn td_lock_commit_recovers_semantically_clean_uncommitted_lock_once() {
+        if !git_available() {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        write_td_lock_repo(root);
+        let target = resolve_td_lock_target(root, "demo").unwrap();
+        let (status, wrote) = write_project_td_lock_file_at_root(root, &target).unwrap();
+        assert!(wrote);
+        assert!(status.clean);
+        assert!(
+            git_stdout(
+                root,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                    "--",
+                    "projects/demo/tech-design/td.lock",
+                ],
+            )
+            .starts_with("?? "),
+            "fixture must reproduce the old semantically-clean uncommitted lock"
+        );
+        let head_before = git_stdout(root, &["rev-parse", "HEAD"]);
+
+        let recovered = write_project_td_lock_at_root(root, "demo").unwrap();
+
+        assert_eq!(recovered.action, TdLockWriteAction::RecoveredAndCommitted);
+        assert_ne!(git_stdout(root, &["rev-parse", "HEAD"]), head_before);
+        assert_eq!(
+            git_stdout(root, &["show", "--format=", "--name-only", "HEAD"])
+                .lines()
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>(),
+            vec!["projects/demo/tech-design/td.lock"]
+        );
+        let recovered_head = git_stdout(root, &["rev-parse", "HEAD"]);
+        let repeat = write_project_td_lock_at_root(root, "demo").unwrap();
+        assert_eq!(repeat.action, TdLockWriteAction::AlreadyClean);
+        assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]), recovered_head);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn td_lock_commit_preflight_rejects_external_td_path_symlink_without_mutation() {
+        use std::os::unix::fs::symlink;
+
+        if !git_available() {
+            return;
+        }
+        let repo = TempDir::new().unwrap();
+        let external = TempDir::new().unwrap();
+        let root = repo.path();
+        init_git_repo(root);
+        write(
+            &root.join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "projects/demo"
+td_path = "projects/demo/tech-design"
+"#,
+        );
+        fs::create_dir_all(root.join("projects/demo")).unwrap();
+        let external_design = external.path().join("design.md");
+        write(&external_design, "external design sentinel\n");
+        symlink(external.path(), root.join("projects/demo/tech-design")).unwrap();
+        git_output(root, &["add", "."]);
+        git_output(root, &["commit", "-m", "bootstrap external TD path"]);
+        let external_before = fs::read(&external_design).unwrap();
+        let head_before = git_stdout(root, &["rev-parse", "HEAD"]);
+        let status_before = git_output(
+            root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .stdout;
+
+        let error = write_project_td_lock_at_root(root, "demo").unwrap_err();
+
+        assert!(
+            error.to_string().contains("outside repository root")
+                || error.to_string().contains("real repository directory"),
+            "unexpected preflight error: {error:#}"
+        );
+        assert_eq!(fs::read(&external_design).unwrap(), external_before);
+        assert!(!external.path().join("td.lock").exists());
+        assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]), head_before);
+        assert_eq!(
+            git_output(
+                root,
+                &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            )
+            .stdout,
+            status_before
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn td_lock_commit_preflight_rejects_external_lock_symlink_without_mutation() {
+        use std::os::unix::fs::symlink;
+
+        if !git_available() {
+            return;
+        }
+        let repo = TempDir::new().unwrap();
+        let external = TempDir::new().unwrap();
+        let root = repo.path();
+        init_git_repo(root);
+        write(
+            &root.join("aw.toml"),
+            r#"
+[[projects]]
+name = "demo"
+path = "projects/demo"
+"#,
+        );
+        let td_root = root.join("projects/demo/tech-design");
+        write(&td_root.join("design.md"), "current design\n");
+        let stale_lock = TdLockFile {
+            version: TD_LOCK_VERSION,
+            project: "demo".to_string(),
+            ir_kind: Some(TD_IR_KIND.to_string()),
+            td_path: "projects/demo/tech-design".to_string(),
+            generated_at: "2026-07-14T00:00:00Z".to_string(),
+            digest: "sha256:stale".to_string(),
+            source_digest: Some("sha256:stale".to_string()),
+            ir_digest: Some("sha256:stale-ir".to_string()),
+            files: Vec::new(),
+        };
+        let external_lock = external.path().join("td.lock");
+        fs::write(&external_lock, toml::to_string_pretty(&stale_lock).unwrap()).unwrap();
+        symlink(&external_lock, td_root.join("td.lock")).unwrap();
+        git_output(root, &["add", "."]);
+        git_output(root, &["commit", "-m", "bootstrap external TD lock leaf"]);
+        let external_before = fs::read(&external_lock).unwrap();
+        let head_before = git_stdout(root, &["rev-parse", "HEAD"]);
+        let status_before = git_output(
+            root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .stdout;
+
+        let error = write_project_td_lock_at_root(root, "demo").unwrap_err();
+
+        assert!(
+            error.to_string().contains("non-symlink regular file"),
+            "unexpected preflight error: {error:#}"
+        );
+        assert_eq!(fs::read(&external_lock).unwrap(), external_before);
+        assert_eq!(git_stdout(root, &["rev-parse", "HEAD"]), head_before);
+        assert_eq!(
+            git_output(
+                root,
+                &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            )
+            .stdout,
+            status_before
+        );
     }
 
     #[test]

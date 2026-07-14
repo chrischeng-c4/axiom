@@ -1831,6 +1831,16 @@ path = "."
         String::from_utf8_lossy(&final_check.stderr),
     );
 
+    let pre_lock_head = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read pre-lock HEAD");
+    assert!(pre_lock_head.status.success());
+    let pre_lock_head = String::from_utf8_lossy(&pre_lock_head.stdout)
+        .trim()
+        .to_string();
     let lock = Command::new(&bin)
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
@@ -1842,18 +1852,97 @@ path = "."
         String::from_utf8_lossy(&lock.stdout),
         String::from_utf8_lossy(&lock.stderr),
     );
-    Command::new(&git)
+    let lock_head = Command::new(&git)
         .arg("-C")
         .arg(root)
-        .args(["add", "tech-design/td.lock"])
-        .status()
-        .unwrap();
-    Command::new(&git)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read lock HEAD");
+    assert!(lock_head.status.success());
+    let lock_head = String::from_utf8_lossy(&lock_head.stdout)
+        .trim()
+        .to_string();
+    assert_ne!(lock_head, pre_lock_head, "aw td lock must create a commit");
+    let lock_commit_count = Command::new(&git)
         .arg("-C")
         .arg(root)
-        .args(["commit", "-m", "lock #1598 fixture TD"])
-        .status()
-        .unwrap();
+        .args([
+            "rev-list",
+            "--count",
+            &format!("{pre_lock_head}..{lock_head}"),
+        ])
+        .output()
+        .expect("count lock commits");
+    assert!(lock_commit_count.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&lock_commit_count.stdout).trim(),
+        "1",
+        "aw td lock must add exactly one lifecycle commit"
+    );
+    let lock_commit_paths = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--format=", "--name-only", "HEAD"])
+        .output()
+        .expect("read lock commit paths");
+    assert!(lock_commit_paths.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&lock_commit_paths.stdout)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>(),
+        vec!["tech-design/td.lock"],
+        "generated lock commit must contain only the configured lock path"
+    );
+    let lock_commit_message = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["log", "-1", "--format=%B"])
+        .output()
+        .expect("read lock commit message");
+    assert!(lock_commit_message.status.success());
+    let lock_commit_message = String::from_utf8_lossy(&lock_commit_message.stdout);
+    assert!(lock_commit_message.starts_with("td-lock(agentic-workflow) — update TD IR snapshot\n"));
+    assert!(lock_commit_message.contains("TD-Lock-Project: agentic-workflow"));
+    assert!(lock_commit_message.contains("TD-Lock-Path: tech-design/td.lock"));
+    assert_eq!(
+        git_status(&git, root),
+        "",
+        "aw td lock must leave its generated lock committed and clean"
+    );
+
+    for read_only_flag in ["--check", "--show"] {
+        let read_only = Command::new(&bin)
+            .args([
+                "td",
+                "lock",
+                "--project",
+                "agentic-workflow",
+                read_only_flag,
+            ])
+            .current_dir(root)
+            .output()
+            .unwrap_or_else(|error| panic!("run td lock {read_only_flag}: {error}"));
+        assert!(
+            read_only.status.success(),
+            "td lock {read_only_flag} must stay read-only:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&read_only.stdout),
+            String::from_utf8_lossy(&read_only.stderr)
+        );
+        let after_read_only = Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("read post-check HEAD");
+        assert!(after_read_only.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&after_read_only.stdout).trim(),
+            lock_head,
+            "td lock {read_only_flag} must not commit"
+        );
+        assert_eq!(git_status(&git, root), "");
+    }
 
     let gen = Command::new(&bin)
         .args(["td", "gen", slug, "--spec-path", spec_path])
