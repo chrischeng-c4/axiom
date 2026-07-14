@@ -82,3 +82,42 @@ changes:
     impl_mode: hand-written
     reason: Preserve transaction reuse, capped replay admission, reset isolation, and no session-state leak under queued acquisition.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-capacity-deadline-scheduler-verification
+requirements:
+  benchmark_contract:
+    id: AC6
+    text: "The immutable 64-client, 16-backend, 30-second transaction-pooling comparison retains all clients and no pgbench errors; meter sampling remains diagnostic only."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+  deadline_and_cancellation:
+    id: R3
+    text: "An expired or cancelled capacity waiter returns the established saturated outcome and cannot leak or steal a physical backend permit."
+    kind: regression
+    risk: high
+    verify: pool::capacity_waiter_expiry_and_cancellation_preserve_permits
+  fifo_handoff:
+    id: R1
+    text: "Saturated capacity requests are admitted in FIFO order, and each released slot resolves exactly one oldest live waiter without exceeding the configured backend cap."
+    kind: regression
+    risk: high
+    verify: pool::fifo_capacity_handoff_admits_one_waiter_per_release
+  transaction_isolation:
+    id: R2
+    text: "Queued transaction acquisition preserves DISCARD ALL reset isolation, replay admission, reuse, and session-state separation under backend caps."
+    kind: integration
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay
+---
+flowchart TD
+    r1[R1 fifo handoff] --> pool_fifo_capacity_handoff_admits_one_waiter_per_release[pool::fifo_capacity_handoff_admits_one_waiter_per_release]
+    r2[R2 transaction isolation] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay]
+    r3[R3 deadline and cancellation] --> pool_capacity_waiter_expiry_and_cancellation_preserve_permits[pool::capacity_waiter_expiry_and_cancellation_preserve_permits]
+    ac6[AC6 benchmark contract] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh]
+```
