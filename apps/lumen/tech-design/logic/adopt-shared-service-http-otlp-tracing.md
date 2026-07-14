@@ -84,6 +84,12 @@ requirements:
     kind: regression
     risk: medium
     verify: cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact
+  no_local_trace_pipeline:
+    id: R3
+    text: "The Lumen binary owns no OTLP trace pipeline or tracing-opentelemetry layer after adoption; the shared service-http package owns trace construction and W3C propagation."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --test shared_otlp_tracing -- --exact
   shared_trace_contract:
     id: R1
     text: "The Lumen executable passes its resolved endpoint, log settings, and stable identity through the public service-http trace initializer."
@@ -93,5 +99,6 @@ requirements:
 ---
 flowchart TD
     r1[R1 shared trace contract] --> cargo_test_p_lumen_test_shared_otlp_tracing_exact[cargo test -p lumen --test shared_otlp_tracing -- --exact]
+    r3[R3 no local trace pipeline] --> cargo_test_p_lumen_test_shared_otlp_tracing_exact
     r2[R2 metrics scope retained] --> cargo_test_p_lumen_features_otel_test_shared_otlp_tracing_exact[cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact]
 ```
