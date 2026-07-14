@@ -52,3 +52,28 @@ changes:
     impl_mode: codegen
     description: Regenerate the real-AW integration regression from the updated source snapshot.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: terminal-code-check-exact-spec-evidence-scope-verification
+requirements:
+  failure_diagnostics:
+    id: R2
+    text: "When the completing WI lacks evidence, its refusal names its own declared paths and never names another project's TD paths."
+    kind: regression
+    risk: high
+    verify: cargo test -p agentic-workflow --test cli_tests test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec -- --nocapture
+  target_spec_only:
+    id: R1
+    text: "A completed hand-written WI must close even when a different project's TD declares unimplemented hand-written paths, because terminal evidence is resolved only from the completing WI's Issue.implements path."
+    kind: regression
+    risk: high
+    verify: cargo test -p agentic-workflow --test cli_tests test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec -- --nocapture
+---
+flowchart TD
+    r1[R1 target spec only] --> cargo_test_p_agentic_workflow_test_cli_tests_test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec_nocapture[cargo test -p agentic-workflow --test cli_tests test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec -- --nocapture]
+    r2[R2 failure diagnostics] --> cargo_test_p_agentic_workflow_test_cli_tests_test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec_nocapture
+```
