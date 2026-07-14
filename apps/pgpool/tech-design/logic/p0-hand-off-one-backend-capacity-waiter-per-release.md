@@ -92,7 +92,7 @@ requirements:
     verify: cargo test -p pgpool --test pool --test pool_modes
   replay_broadcast:
     id: R2
-    text: "Publishing a replay-safe startup response still wakes all relevant startup admissions so they can re-check the shared reply cache."
+    text: "Publishing a replay-safe startup response wakes every startup admission that must re-check the shared reply cache."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test pool_modes replayed_startup_admits_while_all_backends_are_active
