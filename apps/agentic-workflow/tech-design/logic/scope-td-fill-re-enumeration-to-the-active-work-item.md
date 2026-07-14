@@ -47,3 +47,21 @@ changes:
     section: logic
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: td-fill-active-scope-verification
+requirements:
+  local_marker_queue:
+    id: R1
+    text: "Applying a marker continues only through the active TD Changes paths and reaches code-check when that scoped queue is exhausted."
+    kind: regression
+    risk: high
+    verify: cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture
+---
+flowchart TD
+    r1[R1 local marker queue] --> cargo_test_p_agentic_workflow_lib_cb_fill_apply_scopes_remaining_markers_to_active_changes_nocapture[cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture]
+```
