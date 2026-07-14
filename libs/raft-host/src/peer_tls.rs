@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:b147179b" tracker="pending-tracker" reason="scaffold for libs/raft-host/src/peer_tls.rs — fill in by hand and update tracker when codegen is ready"
+// HANDWRITE-BEGIN gap="missing-generator:logic:b147179b" tracker="#1704" reason="shared peer TLS adapter awaits a deterministic raft-host transport generator"
 //! Peer TLS material for Raft-hosted services.
 //!
 //! This is the shared ownership boundary between a service-specific environment
