@@ -10,35 +10,45 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: pgpool-reset-reader-reuse
-entry: transaction_ready
+entry: leg_ready
 nodes:
-  transaction_ready: { kind: start, label: "Transaction reader observed ReadyForQuery Idle" }
-  drained: { kind: decision, label: "Reader buffer is empty at the ownership boundary" }
-  transfer: { kind: process, label: "Reunite backend stream and transfer the same reader to reset" }
-  reset: { kind: process, label: "Send static DISCARD ALL and validate its response with the transferred reader" }
-  fallback: { kind: process, label: "Generic pool release creates its existing reset reader" }
-  park: { kind: terminal, label: "Park only reset-clean backend in idle pool" }
-  close: { kind: terminal, label: "Close stream on residual bytes or reset failure" }
+  leg_ready: { kind: start, label: "Transaction relay has validated ReadyForQuery Idle" }
+  buffered: { kind: decision, label: "Backend reader has residual bytes" }
+  close_residual: { kind: terminal, label: "Close; residual backend bytes never cross reset ownership" }
+  reunite: { kind: process, label: "Reunite the two backend TCP halves" }
+  reset_same_reader: { kind: process, label: "Send static DISCARD ALL and read response with transferred reader" }
+  reset_new_reader: { kind: process, label: "Generic pool release constructs its existing reset reader" }
+  reset_ready: { kind: decision, label: "Reset reaches valid ReadyForQuery Idle before timeout" }
+  park: { kind: terminal, label: "Park same stream and permit in idle" }
+  close_reset: { kind: terminal, label: "Shutdown and free permit" }
 edges:
-  - { from: transaction_ready, to: drained }
-  - { from: drained, to: transfer, label: "yes" }
-  - { from: drained, to: close, label: "no" }
-  - { from: transfer, to: reset }
-  - { from: reset, to: park, label: "ReadyForQuery Idle" }
-  - { from: reset, to: close, label: "EOF malformed timeout" }
-  - { from: fallback, to: reset }
+  - { from: leg_ready, to: buffered }
+  - { from: buffered, to: close_residual, label: "yes" }
+  - { from: buffered, to: reunite, label: "no" }
+  - { from: reunite, to: reset_same_reader }
+  - { from: reset_same_reader, to: reset_ready }
+  - { from: reset_new_reader, to: reset_ready }
+  - { from: reset_ready, to: park, label: "yes" }
+  - { from: reset_ready, to: close_reset, label: "no" }
 ---
 flowchart LR
-  ready([transaction ReadyForQuery Idle]) --> drained{reader buffer drained?}
-  drained -->|yes| transfer[transfer stream and same reader to reset]
-  drained -->|no| close([close backend])
-  transfer --> reset[DISCARD ALL with transferred reader]
-  reset -->|valid Idle| park([park reset-clean backend])
-  reset -->|EOF malformed timeout| close
-  fallback[generic release] --> new_reader[existing fresh reset reader]
-  new_reader --> reset
+  ready([validated transaction ReadyForQuery Idle]) --> bytes{reader buffer empty?}
+  bytes -->|no| reject([close backend; never reset or reuse])
+  bytes -->|yes| reunite[reunite backend halves]
+  reunite --> same[send DISCARD ALL; reuse reader]
+  same --> valid{valid reset Idle before timeout?}
+  generic[generic release] --> fresh[construct fresh reader]
+  fresh --> valid
+  valid -->|yes| idle([park stream and permit])
+  valid -->|no| close([shutdown stream and free permit])
 ```
 
+### Ownership rules
+
+- `FrameReader` ownership transfers only after the transaction relay has already emitted and validated `ReadyForQuery(Idle)` and its internal buffer is empty. A residual byte is a protocol-boundary failure, not an opportunity to reset or reuse the connection.
+- The transferred reader is used only for the reset response. It keeps the existing bounded frame decoding, timeout, malformed-frame rejection, and valid-Idle condition; it cannot make reset payloads opaque or relax `DISCARD ALL`.
+- Generic `BackendPool::release` callers do not supply a reader and therefore retain the current fresh-reader reset path. Both routes preserve the existing stream/permit transition: only success parks the exact stream in `idle`; any failure shuts it down and releases capacity.
+- The transaction lease's capacity guard remains alive through the explicit pool release. Reusing a reader adds no permit, waiter, or scheduling ownership path.
 ## Changes
 <!-- type: changes lang: yaml -->
 
