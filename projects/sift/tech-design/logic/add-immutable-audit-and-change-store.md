@@ -9,30 +9,26 @@ fill_sections: [logic]
 
 ```mermaid
 ---
-id: sift-audit-change-store
+id: sift-audit-change-contract
 entry: event
 nodes:
-  event: { kind: start, label: "committed audit or change event" }
-  normalize: { kind: process, label: "normalize actor subject action target and correlations" }
-  chain: { kind: process, label: "append project hash-chain record" }
-  hold: { kind: process, label: "apply retention and legal-hold metadata" }
-  checkpoint: { kind: terminal, label: "independent immutable timeline checkpoint" }
-  query: { kind: start, label: "authorized query or export" }
-  authorize: { kind: decision, label: "project read or admin export access" }
-  page: { kind: terminal, label: "stable timeline page or controlled manifest" }
-  deny: { kind: terminal, label: "explicit denial" }
+  event: { kind: start, label: "durable audit or change event" }
+  validate: { kind: process, label: "require actor action target and factual payload" }
+  append: { kind: process, label: "append cursor ordered hash chained record" }
+  checkpoint: { kind: terminal, label: "immutable projection checkpoint" }
+  control: { kind: start, label: "admin hold or export request" }
+  commit: { kind: process, label: "single Sift state machine commit" }
+  evidence: { kind: process, label: "append audit and change evidence for control mutation" }
+  export: { kind: terminal, label: "content hash manifest and bounded records" }
 edges:
-  - { from: event, to: normalize }
-  - { from: normalize, to: chain }
-  - { from: chain, to: hold }
-  - { from: hold, to: checkpoint }
-  - { from: query, to: authorize }
-  - { from: authorize, to: page, when: allowed }
-  - { from: authorize, to: deny, when: denied }
+  - { from: event, to: validate }
+  - { from: validate, to: append }
+  - { from: append, to: checkpoint }
+  - { from: control, to: commit }
+  - { from: commit, to: evidence }
+  - { from: evidence, to: export }
 ---
 flowchart LR
-    event([audit/change]) --> normalize[normalize] --> chain[hash chain] --> hold[retention/hold] --> checkpoint([checkpoint])
-    query([query/export]) --> authorize{authorized}
-    authorize -->|yes| page([timeline/manifest])
-    authorize -->|no| deny([denied])
+    event([event]) --> validate[validate] --> append[hash chain] --> checkpoint([checkpoint])
+    control([hold/export]) --> commit[state machine] --> evidence[audit/change evidence] --> export([manifest])
 ```
