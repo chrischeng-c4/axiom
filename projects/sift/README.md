@@ -71,8 +71,8 @@ first-class domain roots.
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
 | Backup And Restore | 1659 | implemented | partial | conformance | not_ready | snapshot plus real Vat-backed GCS archive/cold restore pass; scheduled off-node and three-node proof remain #1676 |
 | Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy and fixed projection-index allowlist are verified; metric cardinality remains |
-| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | independent durable projection runtime, embedded index, lag waits, and rebuild equality pass; domain stores remain #1664-#1670 |
-| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay start/status and view rebuild pass; typed cross-signal query, tail resume, correlation, and pagination remain #1671 |
+| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | independent projection runtime plus the logging store/query/rebuild gate pass; trace, error, metric, audit/change, profile, and GenAI stores remain #1665-#1670 |
+| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus typed logging query, cursor pagination, bounded tail resume, and projection-lag handling pass; unified cross-signal query and streaming tail remain #1671 |
 | GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
 | Security Audit And Governance | 1668 | planned | planned | conformance | not_ready | immutable audit/change projections, legal hold, scoped access, and export controls |
 | Profile Observability | 1669 | planned | planned | conformance | not_ready | OTel profiles, blob durability, flamegraphs, top functions, diffs, and trace correlation |
@@ -93,7 +93,7 @@ first-class domain roots.
 | Security Hardening | 1616 | implemented | partial | conformance | not_ready | shared auth and deployment hardening exist; content governance and audit controls remain |
 | Competitor Feature Parity | 1676 | planned | planned | conformance | not_ready | explicit GCP Observability, OTel, and agent-observability comparison boundaries |
 | Competitor Performance | 1676 | planned | planned | conformance | not_ready | retained performance floors for ingest, query, tail, replay, rules, and rebuild |
-| GCP Cloud Logging Compatibility | 1664 | implemented | partial | conformance | not_ready | structured ingest normalization is verified; logging-store query compatibility and coexistence dedupe remain |
+| GCP Cloud Logging Compatibility | 1664 | implemented | partial | conformance | not_ready | structured ingest plus dedicated jsonPayload/GKE log projection, full-text query, cursor/tail, retention, and raw rebuild pass; collector coexistence remains #1675 |
 
 ### Operational Event Ingest
 
@@ -318,9 +318,10 @@ Surfaces: Storage: first-class logging, trace, error-report, metric,
 audit/change, profile, and GenAI/evaluation stores with independent schemas,
 indexes, retention, and rebuild checkpoints; HTTP/CLI: store-specific query
 and correlation routes.
-EC Dimensions: behavior: pending store gate - logging search, trace topology,
-error fingerprint/group lifecycle, direct metric time-series and exemplar
-ingest, audit/change timeline, and replay rebuild consistency.
+EC Dimensions: behavior: logging search, typed query/tail, retention, project
+authorization, and raw rebuild equality pass; trace topology, error
+fingerprint/group lifecycle, direct metric time-series and exemplar ingest,
+audit/change timeline, profile analysis, and GenAI views remain pending.
 Required Verification: conformance, dogfood
 Promise:
 Expose logging, tracing, error reporting, metrics, audit/change, profiles, and
@@ -331,7 +332,7 @@ resource dimensions; they are not merely log/span-derived counters.
 Gate Inventory:
 - implemented runtime/rebuild foundation: projects/sift/tests/projection_runtime.rs
 - implemented embedded index boundary: projects/sift/tests/embedded_lumen_projection.rs
-- pending: projects/sift/tests/logging_store.rs
+- implemented logging projection/query: projects/sift/tests/logging_store.rs and projects/sift/tests/logging_api.rs
 - pending: projects/sift/tests/trace_store.rs
 - pending: projects/sift/tests/error_report_store.rs
 - pending: projects/sift/tests/metric_store.rs
@@ -340,7 +341,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | projection-runtime-and-checkpoints | change | #1660 | implemented | passing | conformance | idempotent apply, atomic independent checkpoint, typed lag, and restart gate |
-| logging-store-over-events | change | 1664 | planned | planned | conformance | log stream/index/query/rebuild gate |
+| logging-store-over-events | change | 1664 | implemented | passing | conformance | projects/sift/tests/logging_store.rs and projects/sift/tests/logging_api.rs |
 | trace-store-topology-and-correlation | change | 1665 | planned | planned | conformance | span tree, critical path, and correlation gate |
 | error-report-store-grouping-lifecycle | change | 1666 | planned | planned | conformance | fingerprint, group, occurrence, and lifecycle gate |
 | metric-store-direct-points-and-exemplars | change | 1667 | planned | planned | conformance | temporality, histogram, cardinality, exemplar, and rollup gate |
@@ -367,8 +368,9 @@ Let SRE, developer, and security users find correlated operational events by
 time, service, resource, signal, trace, request, severity, actor, subject, and
 change context, then tail or replay matching events during incidents.
 Gate Inventory:
-- pending: projects/sift/tests/event_query_api.rs
-- pending: projects/sift/tests/tail_api.rs
+- implemented log-specific query/tail primitives: projects/sift/tests/logging_api.rs
+- pending unified query: projects/sift/tests/event_query_api.rs
+- pending streaming tail: projects/sift/tests/tail_api.rs
 - implemented: projects/sift/tests/replay_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
@@ -960,10 +962,12 @@ Status: confirmed
 Surfaces: Schema: GCP-style `jsonPayload` compatibility, `k8s_container`
 resource labels, severity mapping, trace/span/request correlation, and
 structured-only log payload handling.
-EC Dimensions: behavior: `cargo test -p sift --test otlp_gcp_ingest
-bounded_batch_preserves_outcomes_and_normalizes_gcp_structured_logs -- --exact`
-- representative GCP/GKE structured payload, severity, monitored-resource
-labels, and trace/span/request context are normalized before durability.
+EC Dimensions: behavior: `cargo test -p sift --test otlp_gcp_ingest --test
+logging_store --test logging_api` verifies representative GCP/GKE structured
+payload normalization before durability and dedicated-view jsonPayload,
+severity, monitored-resource labels, trace/span/request/session correlation,
+full-text search, read authorization, cursor/tail resume, retention, and raw
+rebuild equality.
 Required Verification: conformance
 Promise:
 Make the first Sift log producer and log view comfortable for teams familiar
@@ -971,12 +975,12 @@ with GCP Cloud Logging's structured `jsonPayload` model, while keeping Sift's
 source of truth at the broader operational event layer.
 Gate Inventory:
 - implemented ingest compatibility: projects/sift/tests/otlp_gcp_ingest.rs
-- pending logging projection/query compatibility: 1664
+- implemented logging projection/query compatibility: projects/sift/tests/logging_store.rs and projects/sift/tests/logging_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | jsonpayload-style-body-compatibility | change | 1658 | implemented | passing | conformance | projects/sift/tests/otlp_gcp_ingest.rs |
 | k8s-container-resource-labels | change | 1658 | implemented | passing | conformance | monitored-resource label normalization gate |
 | severity-and-trace-context-normalization | change | 1658 | implemented | passing | conformance | severity/trace/span/request normalization gate |
-| logging-view-query-compatibility | change | 1664 | planned | planned | conformance | dedicated log record, typed query, full-text, cursor, tail-resume, retention, and rebuild gate |
+| logging-view-query-compatibility | change | 1664 | implemented | passing | conformance | dedicated log schema, embedded-Lumen full-text, typed filters, project auth, cursor/tail resume, retention, projection lag, and raw rebuild equality |
 | cloud-logging-coexistence-dedupe | change | 1675 | planned | planned | dogfood | collector coexistence identity gate |
