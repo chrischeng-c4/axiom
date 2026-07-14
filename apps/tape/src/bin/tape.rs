@@ -131,6 +131,10 @@ struct ServeArgs {
     /// listener closes, while `/readyz` reports 503 so k8s stops routing.
     #[arg(long, env = "TAPE_GRACE_SECS", default_value_t = 10)]
     grace_secs: u64,
+    /// OTLP gRPC endpoint for opt-in shared trace export. Unset preserves
+    /// logging-only startup; requires the `otel` build feature to export.
+    #[arg(long, env = "TAPE_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
     /// Request-auth mode for the /topics data plane: `off` (tokenless dev,
     /// the default) or `required` (bearer tokens from the registry file).
     /// Probes stay tokenless either way.
@@ -603,10 +607,17 @@ fn checkpoint(args: CheckpointArgs) -> Result<()> {
 /// `/topics` data plane) over HTTP/1.1 + h2c on one port, with a
 /// SIGTERM-aware graceful drain (`--grace-secs`).
 async fn serve_main(args: ServeArgs) -> Result<()> {
-    // RUST_LOG wins; otherwise default to info.
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let tracing_config = service_http::HttpConfig::new(
+        "127.0.0.1",
+        0,
+        "info",
+        service_http::LogFormat::Pretty,
+        args.grace_secs,
+        0,
+        args.otlp_endpoint.clone(),
+    );
+    let tracing_identity = service_http::ServiceIdentity::new("tape", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&tracing_config, &tracing_identity)?;
 
     // Resolve the bearer-auth contract (#1326) BEFORE anything serves: with
     // --auth required a missing/unparseable/empty registry file is a startup
