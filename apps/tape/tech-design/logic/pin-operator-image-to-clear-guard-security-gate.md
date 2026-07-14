@@ -50,3 +50,21 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-operator-image-pin-verification
+requirements:
+  pinned_operator_image:
+    id: R1
+    text: "The checked-in operator Deployment and the rendered control-plane manifest use the concrete Tape release image rather than a mutable latest tag."
+    kind: regression
+    risk: high
+    verify: render_verbs_emit_parseable_yaml_offline
+---
+flowchart TD
+    r1[R1 pinned operator image] --> render_verbs_emit_parseable_yaml_offline[render_verbs_emit_parseable_yaml_offline]
+```
