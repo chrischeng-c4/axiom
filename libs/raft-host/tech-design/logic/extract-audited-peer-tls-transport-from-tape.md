@@ -88,3 +88,28 @@ changes:
     section: changes
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: raft-host-peer-tls-configuration-verification
+requirements:
+  shared_config_contract:
+    id: R1
+    text: "raft-host exposes a prefix-scoped peer TLS configuration that preserves service-tls validation and rustls builder behavior."
+    kind: functional
+    risk: medium
+    verify: cargo test -p raft-host --test peer_tls
+  tape_adapter_migration:
+    id: R2
+    text: "Tape consumes the raft-host peer TLS adapter without retaining local unsafe environment-mutating test code."
+    kind: regression
+    risk: medium
+    verify: cargo test -p tape --lib
+---
+flowchart TD
+    r1[R1 shared config contract] --> cargo_test_p_raft_host_test_peer_tls[cargo test -p raft-host --test peer_tls]
+    r2[R2 tape adapter migration] --> cargo_test_p_tape_lib[cargo test -p tape --lib]
+```
