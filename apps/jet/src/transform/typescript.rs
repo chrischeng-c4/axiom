@@ -63,10 +63,22 @@ fn visit_node<'a>(
             | "type_predicate_annotation"
             | "accessibility_modifier"
             | "readonly"
+            | "implements_clause"
             | "interface_declaration"
             | "type_alias_declaration"
             | "function_signature"
             | "internal_module" => {
+                if *last_pos < child.start_byte() {
+                    result.push_str(&source[*last_pos..child.start_byte()]);
+                }
+                *last_pos = child.end_byte();
+            }
+
+            // Class field `?` and definite-assignment `!` markers are
+            // TypeScript-only syntax. They are token children rather than
+            // type annotations, so strip them explicitly while preserving
+            // the field name and any runtime initializer.
+            "?" | "!" if is_class_field_type_marker(node, &child, source) => {
                 if *last_pos < child.start_byte() {
                     result.push_str(&source[*last_pos..child.start_byte()]);
                 }
@@ -187,6 +199,14 @@ fn visit_node<'a>(
     }
 
     Ok(())
+}
+
+fn is_class_field_type_marker(parent: &Node, child: &Node, source: &str) -> bool {
+    matches!(
+        parent.kind(),
+        "public_field_definition" | "private_field_definition"
+    ) && matches!(child.kind(), "?" | "!")
+        && matches!(&source[child.byte_range()], "?" | "!")
 }
 
 fn method_name(source: &str, node: &Node) -> Option<String> {
@@ -769,6 +789,35 @@ export const value = ThemeContext"#;
         assert!(
             result.code.contains("steps = []"),
             "must preserve runtime class field initializer: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_class_fields_strip_optional_definite_and_implements_syntax() {
+        let source = r#"
+interface Named { label?: string; }
+class Item implements Named {
+  public label?: string;
+  id!: string;
+  constructor() { this.id = "item"; }
+}
+"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            result.code.contains("class Item")
+                && result.code.contains("label;")
+                && result.code.contains("id;"),
+            "must preserve runtime class fields: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("implements Named")
+                && !result.code.contains("label?")
+                && !result.code.contains("id!"),
+            "must strip class-only TypeScript syntax: {}",
             result.code
         );
     }

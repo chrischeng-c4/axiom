@@ -216,10 +216,15 @@ impl RunnerConfig {
                 "**/*.test.tsx".to_string(),
                 "**/*.spec.js".to_string(),
                 "**/*.test.js".to_string(),
+                "**/*.spec.mjs".to_string(),
+                "**/*.test.mjs".to_string(),
+                "**/*.spec.cjs".to_string(),
+                "**/*.test.cjs".to_string(),
             ],
             test_ignore: vec![
                 "**/node_modules/**".to_string(),
                 "**/.jet/**".to_string(),
+                "**/.jet-test-*/**".to_string(),
                 "**/dist/**".to_string(),
                 "**/target/**".to_string(),
                 "**/.git/**".to_string(),
@@ -259,7 +264,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
         assert!(cfg.test_match.iter().any(|p| p.contains("spec.ts")));
+        assert!(cfg.test_match.iter().any(|p| p.contains("spec.cjs")));
         assert!(cfg.test_ignore.iter().any(|p| p.contains("node_modules")));
+        assert!(cfg.test_ignore.iter().any(|p| p.contains(".jet-test-")));
         assert_eq!(cfg.timeout_ms, 30_000);
         assert!(cfg.workers >= 1);
     }

@@ -207,7 +207,7 @@ pub(super) fn transform_node(
     let mut last_pos = node.start_byte();
 
     for child in node.children(&mut cursor) {
-        if is_optional_type_marker(node, &child, source) {
+        if is_type_only_field_marker(node, &child, source) {
             if child.start_byte() > last_pos {
                 result.push_str(&source[last_pos..child.start_byte()]);
             }
@@ -384,6 +384,7 @@ fn should_skip_node(node: &Node) -> bool {
             | "type_arguments"
             | "type_parameters"
             | "type_predicate_annotation"
+            | "implements_clause"
             | "interface_declaration"
             | "type_alias_declaration"
             | "function_signature"
@@ -396,13 +397,21 @@ fn should_skip_node(node: &Node) -> bool {
     )
 }
 
-fn is_optional_type_marker(parent: &Node, child: &Node, source: &str) -> bool {
-    child.kind() == "?"
-        && &source[child.byte_range()] == "?"
-        && matches!(
+fn is_type_only_field_marker(parent: &Node, child: &Node, source: &str) -> bool {
+    match (&source[child.byte_range()], child.kind()) {
+        ("?", "?") => matches!(
             parent.kind(),
-            "public_field_definition" | "property_signature" | "property_identifier"
-        )
+            "public_field_definition"
+                | "private_field_definition"
+                | "property_signature"
+                | "property_identifier"
+        ),
+        ("!", "!") => matches!(
+            parent.kind(),
+            "public_field_definition" | "private_field_definition"
+        ),
+        _ => false,
+    }
 }
 
 fn transform_value_namespace_export(

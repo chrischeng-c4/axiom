@@ -566,9 +566,11 @@ class LoadingData {
 #[test]
 fn strips_optional_marker_from_class_field_definition() {
     let source = r#"
-class ImageNode {
+interface ImageLike { __dataSrc?: string; }
+class ImageNode implements ImageLike {
   __src: string;
   __dataSrc?: string;
+  __id!: string;
 }
 "#;
     let options = TransformOptions::default();
@@ -581,6 +583,13 @@ class ImageNode {
     assert!(
         !result.code.contains("__dataSrc?"),
         "must strip TS optional marker from class field: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("__id;")
+            && !result.code.contains("__id!")
+            && !result.code.contains("implements ImageLike"),
+        "must strip definite-assignment and implements syntax: {}",
         result.code
     );
 }
