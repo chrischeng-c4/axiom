@@ -5304,53 +5304,22 @@ async fn run_check_lifecycle_terminal(
     Ok(true)
 }
 
-/// Resolve the completing slug's own TD spec file(s) (issue #854): every
-/// `.md` ref in `Issue.implements`; else the deterministic project-qualified
-/// path `aw td create` would have used for this issue
-/// (`td::default_spec_path_for_issue_in_project`); else the worktree's unique
-/// legacy branch-diff TD (`td::discover_worktree_spec`) as a last resort.
-/// The project default must precede legacy discovery because the local issue
-/// cache is ephemeral: a cache-loss retry with an `app:<name>` label must not
-/// inherit a foreign legacy TD merely because it is the sole `.aw` diff.
-/// Both terminal gates below scope to exactly this
-/// set instead of the whole `tech_design_path` tree / whole worktree, so an
-/// unrelated stale spec or inherited HANDWRITE marker elsewhere in a
-/// monorepo checkout can no longer block this WI's own completion.
-///
-/// An empty result — no source resolves a spec (a fresh issue with a title
-/// that derives no spec filename) — is a legitimate "nothing to scope
-/// against" outcome. Callers must treat it as pass vacuously, not fall back
-/// to a whole-tree scan (that whole-tree fallback is exactly the bug issue
-/// #854 fixes). A resolved path that does not exist on disk (the default
-/// guess was wrong, or the spec genuinely has no Changes section) is
-/// likewise harmless — callers below already skip unreadable spec files.
+/// Resolve the completing slug's issue-owned TD spec file(s). Exact
+/// `Issue.implements` refs win; older lifecycle entries recover through the
+/// configured project-qualified default. Existing issues never consult the
+/// checkout-global legacy branch diff: a stale local `main` can contain a
+/// sole Mamba TD while Tape is completing, and that candidate is not evidence
+/// for the Tape WI (#1679).
 fn resolve_slug_spec_paths(
     project_root: &std::path::Path,
     issue: &crate::issues::Issue,
-) -> Vec<std::path::PathBuf> {
-    let mut rels: Vec<String> = issue
-        .implements
-        .iter()
-        .filter(|s| s.ends_with(".md"))
-        .cloned()
-        .collect();
-    if rels.is_empty() {
-        // #1403: project-qualified derivation hard-errors on an
-        // unrecognized/unresolvable project label instead of falling back to
-        // an invented legacy path. That failure is not this gate's to raise:
-        // a real, branch-diff-discovered legacy TD remains a final fallback.
-        if let Ok(derived) =
-            crate::cli::td::default_spec_path_for_issue_in_project(project_root, issue, &issue.slug)
-        {
-            rels.push(derived);
-        }
-    }
-    if rels.is_empty() {
-        if let Some(discovered) = crate::cli::td::discover_worktree_spec(project_root) {
-            rels.push(discovered);
-        }
-    }
-    rels.into_iter().map(|r| project_root.join(r)).collect()
+) -> Result<Vec<std::path::PathBuf>> {
+    Ok(
+        crate::cli::td::resolve_issue_td_spec_paths(project_root, issue, &issue.slug)?
+            .into_iter()
+            .map(|path| project_root.join(path))
+            .collect(),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -582,12 +582,24 @@ fn resolve_active_spec_path(
     args: &CbFillArgs,
     issue: Option<&crate::issues::Issue>,
     worktree_abs: &Path,
-) -> Option<String> {
-    args.spec_path
-        .clone()
-        .filter(|p| !p.is_empty())
-        .or_else(|| issue.and_then(derive_spec_path_from_implements))
-        .or_else(|| crate::cli::td::discover_worktree_spec(worktree_abs))
+) -> Result<Option<String>> {
+    if let Some(explicit) = args.spec_path.clone().filter(|p| !p.is_empty()) {
+        return Ok(Some(explicit));
+    }
+    if let Some(issue) = issue {
+        let paths = crate::cli::td::resolve_issue_td_spec_paths(worktree_abs, issue, &args.slug)?;
+        return match paths.as_slice() {
+            [path] => Ok(Some(path.clone())),
+            _ => anyhow::bail!(
+                "issue '{}' owns multiple TD specs ({}); rerun aw td fill with --spec-path",
+                args.slug,
+                paths.join(", ")
+            ),
+        };
+    }
+    // Legacy no-issue utility mode only. An existing WI must never inherit a
+    // foreign project TD from checkout-global branch discovery (#1679).
+    Ok(crate::cli::td::discover_worktree_spec(worktree_abs))
 }
 
 // Resolve the active TD and enumerate only the HANDWRITE markers it owns.
@@ -602,7 +614,7 @@ fn markers_for_active_td(
     Option<Vec<String>>,
     Option<String>,
 )> {
-    let spec_path = resolve_active_spec_path(args, issue, worktree_abs);
+    let spec_path = resolve_active_spec_path(args, issue, worktree_abs)?;
     let markers_and_changes = match spec_path.as_deref().filter(|path| !path.is_empty()) {
         Some(path) => {
             let spec_abs = worktree_abs.join(path);
@@ -617,16 +629,6 @@ fn markers_for_active_td(
         None => (markers_for_td_changes(worktree_abs, None), None),
     };
     Ok((markers_and_changes.0, markers_and_changes.1, spec_path))
-}
-
-// Resolve a worktree-relative spec path from `Issue.implements` (best
-// effort — agents may also rely on the worktree's tech_design tree).
-fn derive_spec_path_from_implements(issue: &crate::issues::Issue) -> Option<String> {
-    issue
-        .implements
-        .iter()
-        .find(|s| s.ends_with(".md"))
-        .cloned()
 }
 
 // Extract repo-relative path entries from a TD `## Changes` YAML block.
