@@ -6712,31 +6712,39 @@ fn mb_getattr_impl(
                         }
                     }
                     // A real module value reports missing non-dunder attrs as
-                    // module AttributeError. A vars(module) / module.__dict__
-                    // snapshot also carries "__name__", but remains a dict and
-                    // must expose dict methods such as items().
+                    // The test.* scaffolding modules (test.string_tests,
+                    // test.list_tests, ...) are deliberately empty stubs;
+                    // consumers like `class Foo(test.string_tests.BaseTest)`
+                    // rely on a missing attribute lookup leniently returning
+                    // None rather than raising, so real fixtures that only
+                    // reference such stub classes for MRO shape (never
+                    // exercising their behavior) keep working.
+                    //
+                    // `__name__` is a DictKey::Str entry, which no longer
+                    // shares Rust's native str hashing domain (#1028) — a raw
+                    // `guard.contains_key("__name__")` / `guard.get(...)`
+                    // probe always misses, so this carve-out was silently
+                    // dead. Route through the hash-domain-safe helper instead
+                    // (same fix shape as dde0a6e98 / b789a7900).
+                    //
+                    // Deliberately narrow: do NOT also hard-raise
+                    // AttributeError here for non-test.* modules on a dict
+                    // miss — `dir()` on a real/freshly-reimported module can
+                    // itself (pre-existing, separate bug) surface the
+                    // backing dict's own method names (`clear`, `items`,
+                    // ...), and callers that enumerate via `dir()` then
+                    // `getattr` every name need those resolved as the dict's
+                    // bound methods, not hard-rejected. Fall through to the
+                    // slow path for every other case, same as before this
+                    // carve-out was revived.
                     if !attr_s.starts_with("__")
-                        && guard.contains_key("__name__")
                         && super::module::is_module_value(obj)
-                    {
-                        let mod_name = guard
-                            .get("__name__")
-                            .copied()
+                        && super::dict_ops::dict_get_exact_str(&guard, "__name__")
                             .and_then(extract_str)
-                            .unwrap_or_default();
-                        drop(guard);
-                        // The test.* scaffolding modules are deliberately
-                        // empty stubs whose consumers rely on lenient
-                        // None-miss; keep them out of the strict path.
-                        if mod_name == "test" || mod_name.starts_with("test.") {
-                            return MbValue::none();
-                        }
-                        super::exception::mb_raise(
-                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(format!(
-                                "module '{mod_name}' has no attribute '{attr_s}'"
-                            ))),
-                        );
+                            .is_some_and(|mod_name| {
+                                mod_name == "test" || mod_name.starts_with("test.")
+                            })
+                    {
                         return MbValue::none();
                     }
                     // Dict miss is a real AttributeError shape; fall through
