@@ -56,29 +56,22 @@ changes:
 
 ```mermaid
 ---
-id: lumen-adopt-shared-otlp-tracing-verification
+id: lumen-shared-otlp-contract-verification
 requirements:
-  feature_propagation:
+  metrics_scope_retained:
     id: R2
-    text: "The Lumen otel feature enables the shared service-http otlp feature while keeping the metrics exporter dependencies available."
-    kind: contract
-    risk: high
-    verify: cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact
-  no_duplicate_trace_constructor:
-    id: R3
-    text: "Lumen no longer owns an OTLP trace pipeline or tracing-opentelemetry layer; Lumen-owned OTLP metrics instrumentation remains separate."
+    text: "The Lumen-owned OTLP metrics exporter remains compiled and available under the existing otel feature after trace extraction."
     kind: regression
     risk: medium
-    verify: cargo test -p lumen --test shared_otlp_tracing -- --exact
-  shared_trace_initializer:
+    verify: cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact
+  shared_trace_contract:
     id: R1
-    text: "Lumen delegates trace subscriber initialization to service-http with a stable lumen name and build-version identity instead of constructing a local tracer."
-    kind: regression
+    text: "The Lumen executable passes its resolved endpoint, log settings, and stable identity through the public service-http trace initializer."
+    kind: contract
     risk: high
     verify: cargo test -p lumen --test shared_otlp_tracing -- --exact
 ---
 flowchart TD
-    r1[R1 shared trace initializer] --> cargo_test_p_lumen_test_shared_otlp_tracing_exact[cargo test -p lumen --test shared_otlp_tracing -- --exact]
-    r3[R3 no duplicate trace constructor] --> cargo_test_p_lumen_test_shared_otlp_tracing_exact
-    r2[R2 feature propagation] --> cargo_test_p_lumen_features_otel_test_shared_otlp_tracing_exact[cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact]
+    r1[R1 shared trace contract] --> cargo_test_p_lumen_test_shared_otlp_tracing_exact[cargo test -p lumen --test shared_otlp_tracing -- --exact]
+    r2[R2 metrics scope retained] --> cargo_test_p_lumen_features_otel_test_shared_otlp_tracing_exact[cargo test -p lumen --features otel --test shared_otlp_tracing -- --exact]
 ```
