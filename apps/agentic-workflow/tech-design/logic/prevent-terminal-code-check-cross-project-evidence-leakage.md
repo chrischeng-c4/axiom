@@ -51,7 +51,6 @@ changes:
     impl_mode: codegen
     description: Regenerate the real-AW integration regression from the updated source snapshot.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
