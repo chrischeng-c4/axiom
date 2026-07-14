@@ -9,53 +9,43 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-contiguous-validated-relay-prefix
-entry: read
+id: pgpool-contiguous-validated-relay-prefix-contract
+entry: scan
 nodes:
-  read: { kind: start, label: "Read backend bytes into FrameReader buffer" }
-  scan: { kind: process, label: "Non-consumingly validate contiguous complete relay frames" }
-  first_invalid: { kind: terminal, label: "Malformed first frame: send nothing and end backend leg" }
-  incomplete: { kind: process, label: "Keep incomplete suffix buffered; select validated prefix only" }
-  ready: { kind: process, label: "Stop selected prefix at first ReadyForQuery" }
-  write: { kind: process, label: "write_all the borrowed contiguous prefix" }
-  consume: { kind: process, label: "Advance reader exactly after successful write" }
-  close_suffix: { kind: terminal, label: "After valid prefix before malformed suffix, end backend leg" }
-  await_more: { kind: terminal, label: "Await more backend bytes" }
+  scan: { kind: start, label: "FrameReader scans the current backend buffer without consuming" }
+  selected: { kind: process, label: "Return RelayPrefix { len, ready, terminal_error }" }
+  write: { kind: process, label: "Borrow reader prefix and write_all once" }
+  consume: { kind: process, label: "Verify descriptor then advance len and commit Ready status" }
+  retry: { kind: terminal, label: "Retain incomplete suffix for next read" }
+  terminal: { kind: terminal, label: "End leg after valid prefix or on write failure" }
 edges:
-  - { from: read, to: scan }
-  - { from: scan, to: first_invalid, label: "first frame malformed" }
-  - { from: scan, to: incomplete, label: "valid prefix then incomplete suffix" }
-  - { from: scan, to: ready, label: "valid prefix reaches ReadyForQuery" }
-  - { from: scan, to: write, label: "valid complete prefix" }
-  - { from: incomplete, to: write }
-  - { from: ready, to: write }
-  - { from: write, to: consume, label: "write succeeds" }
-  - { from: consume, to: close_suffix, label: "malformed suffix recorded" }
-  - { from: consume, to: await_more, label: "no ReadyForQuery" }
+  - { from: scan, to: selected, label: "nonempty valid prefix" }
+  - { from: selected, to: write }
+  - { from: write, to: consume, label: "success" }
+  - { from: write, to: terminal, label: "error" }
+  - { from: consume, to: retry, label: "no ready and no terminal error" }
+  - { from: consume, to: terminal, label: "ready or malformed suffix" }
 ---
 flowchart LR
-  read([backend read]) --> scan[validate contiguous frames\nwithout consuming]
-  scan -->|malformed first| reject([send nothing; close])
-  scan -->|valid prefix| write[write_all borrowed prefix]
-  write -->|success| consume[advance exactly prefix length]
-  consume -->|incomplete suffix| wait([await next backend bytes])
-  consume -->|ReadyForQuery| boundary([apply lease boundary])
-  consume -->|malformed suffix| close([close after valid prefix])
+  scan[scan reader buffer] --> desc[RelayPrefix descriptor]
+  desc --> out[borrowed write_all]
+  out -->|ok| consume[verified post-write consume]
+  out -->|err| close([end leg; no consume])
+  consume -->|incomplete suffix| more([read later])
+  consume -->|ready or terminal| done([return existing outcome])
 ```
 
-### Invariants
+### API contract
 
-- The scan uses the same declared-length bounds and frame-specific structural validation as `FrameReader::next_relay_frame_with_raw`; no buffer bytes are exposed to the writer until every frame in the selected prefix has been accepted.
-- The selected prefix begins at the current reader offset, ends at the first incomplete frame, first `ReadyForQuery`, or before malformed input, and is written by the existing single contiguous `write_all` path. It never performs an additional read to enlarge a batch.
-- During the asynchronous write, the prefix is borrowed immutably from the reader and the reader cannot be read, mutated, or scanned again. A successful write is followed by exactly one advance of the selected byte count; a failed write consumes nothing and ends the leg.
-- A malformed first frame has a zero-length validated prefix and fails before any client write. A malformed suffix after a nonempty valid prefix preserves existing ordering: write and consume that prefix once, then terminate without forwarding the invalid bytes.
-- `ReadyForQuery` status is committed with the successful consume, before the transaction handler observes the batch result. Therefore lease return/reset decisions remain after the exact response bytes have reached the client.
-- This design does not use scatter-gather `writev` (#1637) and does not alter `TcpStream` split/reunite ownership (#1663).
+- `FrameReader` exposes an internal backend-only scan that returns no raw `Bytes`. Its descriptor contains the exact prefix length, the final validated `ReadyForQuery` status if present, and whether the next unselected bytes were malformed after a valid prefix. A zero-length descriptor is never forwarded.
+- The scan parses frame headers by offset within the same `BytesMut`, applies the existing maximum-length and `validate_backend_relay` rules to borrowed frame slices, and stops before the first incomplete frame or after the first valid Ready frame. It does not mutate `buf` or `tx_status`.
+- The relay obtains an immutable `&[u8]` prefix from the reader, completes `write_all`, drops that borrow, then calls the matching consume API. The consume API checks that its descriptor still matches the unmodified front of the buffer, advances exactly `len`, and commits the descriptor's Ready status.
+- `relay_backend_batch` returns `Ok(Some(status))` only after the output write and post-write consume succeed. It returns `Err(())` for a malformed first frame, write failure, or a recorded malformed suffix after forwarding its valid prefix.
+- Existing `next_frame*` and `next_relay_frame_with_raw` remain owned-frame APIs for frontend/startup and non-target paths. The contiguous backend prefix path never uses `write_vectored`, `BytesMut` concatenation, or backend TCP split/reunite changes.
 
-### Error handling
+### Failure contract
 
-I/O and zero-write failures retain the existing relay outcome: the transaction backend leg ends and the pool closes rather than reuses the stream. Parser errors on an empty prefix produce no client output. Parser errors after a valid prefix are represented in the scan result so the caller forwards only that validated prefix, consumes it after success, then closes. Incomplete suffixes are neither consumed nor written and are completed by the next backend read.
-
+A descriptor cannot be consumed twice or after another reader mutation. Write failure retains its unconsumed buffer only until the caller terminates the connection; it is never reused as a new transport input. An incomplete suffix has no descriptor bytes and remains untouched. A parser error before any accepted frame is returned directly; a parser error after accepted frames is encoded as `terminal_error`, so only the known-valid prefix is sent before shutdown.
 ## Changes
 <!-- type: changes lang: yaml -->
 
