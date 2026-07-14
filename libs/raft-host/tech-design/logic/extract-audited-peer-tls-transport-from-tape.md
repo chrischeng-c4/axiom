@@ -3,3 +3,57 @@ id: '1704'
 summary: (fill)
 fill_sections: [logic, changes, unit-test]
 ---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: raft-host-peer-tls-configuration
+entry: env
+nodes:
+  env:
+    kind: start
+    label: "Service-specific peer TLS environment prefix"
+  resolve:
+    kind: process
+    label: "raft-host PeerTlsConfig resolves the shared service-tls configuration"
+  validate:
+    kind: decision
+    label: "Complete cert/key/CA material present and valid?"
+  plain:
+    kind: terminal
+    label: "No material: explicit plaintext h2c mode"
+  typed:
+    kind: process
+    label: "Validated typed rustls client/server configuration"
+  adopt:
+    kind: terminal
+    label: "Tape consumes shared adapter; no local unsafe environment test surface"
+edges:
+  - { from: env, to: resolve }
+  - { from: resolve, to: plain, label: "none configured" }
+  - { from: resolve, to: validate, label: "material configured" }
+  - { from: validate, to: typed, label: "valid" }
+  - { from: validate, to: plain, label: "invalid: fail startup" }
+  - { from: typed, to: adopt }
+---
+flowchart TD
+    env([service prefix]) --> resolve[raft-host PeerTlsConfig resolves service-tls]
+    resolve -->|none| plain([explicit plaintext h2c])
+    resolve -->|configured| validate{complete and valid material?}
+    validate -->|valid| typed[typed rustls client/server configuration]
+    validate -->|invalid| fail([startup error])
+    typed --> adopt([Tape consumes shared adapter])
+```
+
+`raft-host` owns the shared peer-transport configuration boundary. It delegates
+PEM parsing, client/server config construction, and mTLS policy validation to
+`service-tls`, preserving the existing all-or-nothing material contract. Tape
+will consume this typed adapter instead of maintaining a local wrapper and
+unsafe environment-mutating tests.
+
+This slice deliberately does not claim TLS termination on the current h2c peer
+router: that transport seam is absent today. A configured peer policy is
+validated and represented by the host; actual acceptor/connector wiring remains
+a later transport change.
