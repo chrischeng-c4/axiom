@@ -648,6 +648,13 @@ fn split_arrow_head_params_and_return(head: &str) -> Option<(&str, &str)> {
     split_once_top_level(head, ':')
 }
 
+/// `>` is only a generic closer when it is not part of an arrow or `>=`
+/// comparison token. The declaration scanner otherwise treats `>=` in an
+/// expression body as a closing generic and loses every following member.
+fn is_non_generic_greater_than(text: &str, idx: usize, prev: char) -> bool {
+    prev == '=' || text[idx..].starts_with(">=")
+}
+
 fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
     let mut depth = 0i32;
     let mut quote = None;
@@ -673,10 +680,10 @@ fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
-            // The trailing `>` in a nested function type's `=>` is not a
-            // generic close. Keep the surrounding parameter depth intact so
-            // the outer arrow can still be found (#1533).
-            '>' if prev == '=' => {}
+            // Neither `=>` nor `>=` ends a TypeScript generic. Keep the
+            // surrounding depth intact so an outer arrow remains findable
+            // and comparison bodies cannot swallow following members.
+            '>' if is_non_generic_greater_than(text, idx, prev) => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             '=' if depth == 0 && text[idx..].starts_with("=>") => {
@@ -1315,13 +1322,11 @@ fn split_top_level(text: &str, delimiter: char) -> Vec<String> {
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
-            // `=>` (arrow function token): the trailing `>` is not a
-            // closing generic bracket, so it must not decrement depth --
-            // otherwise multiple arrow-typed members/params in the same
-            // top-level list (e.g. two object properties whose arrow
-            // return types are themselves generic, `Promise<string>`)
-            // would be merged into one part (#1264).
-            '>' if prev == '=' => {}
+            // Neither `=>` nor `>=` ends a generic. In particular, an `>=`
+            // comparison in an arrow body must not force depth negative and
+            // merge every following object member into the current property
+            // (#1532).
+            '>' if is_non_generic_greater_than(text, idx, prev) => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             _ if ch == delimiter && depth == 0 => {
@@ -1361,9 +1366,9 @@ fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, 
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
-            // See the matching comment in `split_top_level` (#1264): `=>`'s
-            // trailing `>` is not a closing generic bracket.
-            '>' if prev == '=' => {}
+            // Match `split_top_level`: arrows and `>=` comparisons are not
+            // generic closers (#1264, #1532).
+            '>' if is_non_generic_greater_than(text, idx, prev) => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             // An arrow token is not a default-value assignment. In particular,
@@ -2438,7 +2443,8 @@ export const SpAlert = Alert as AlertInterface;
         Object.entries(obj)
             .map(([k, v]) => `${k}=${v}`)
             .join('&'),
-    int: (str: string): number => parseInt(str, 10),
+    int: (str: string | number, min = 1): number =>
+        Number.isSafeInteger(Number(str)) && Number(str) >= min ? Number(str) : min,
     genOrderList: (list: string[]): string[] => [...list],
     genOrderStrList: (list: string[]): string => list.join(','),
 };
@@ -2453,7 +2459,7 @@ export const SpAlert = Alert as AlertInterface;
             "snakeCase: (str: string) => string;",
             "kebabCase: (str: string) => string;",
             "formatToQueryString: (obj: Record<string, string>) => string;",
-            "int: (str: string) => number;",
+            "int: (str: string | number, min?: number) => number;",
             "genOrderList: (list: string[]) => string[];",
             "genOrderStrList: (list: string[]) => string;",
         ];

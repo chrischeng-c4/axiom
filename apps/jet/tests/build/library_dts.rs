@@ -882,7 +882,8 @@ fn library_dts_keeps_all_query_members_after_object_assign_computed_key_reexport
         Object.entries(obj)
             .map(([k, v]) => `${k}=${v}`)
             .join('&'),
-    int: (str: string): number => parseInt(str, 10),
+    int: (str: string | number, min = 1): number =>
+        Number.isSafeInteger(Number(str)) && Number(str) >= min ? Number(str) : min,
     genOrderList: (list: string[]): string[] => [...list],
     genOrderStrList: (list: string[]): string => list.join(','),
 };
@@ -904,7 +905,7 @@ fn library_dts_keeps_all_query_members_after_object_assign_computed_key_reexport
         "snakeCase: (str: string) => string;",
         "kebabCase: (str: string) => string;",
         "formatToQueryString: (obj: Record<string, string>) => string;",
-        "int: (str: string) => number;",
+        "int: (str: string | number, min?: number) => number;",
         "genOrderList: (list: string[]) => string[];",
         "genOrderStrList: (list: string[]) => string;",
     ];
