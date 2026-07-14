@@ -452,28 +452,14 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
     // the legacy all-marker behavior.
     let backend = LocalBackend::from_project_root(&worktree_abs);
     let issue = backend.get(&slug).await.ok().flatten();
-    let spec_path = resolve_active_spec_path(&args, issue.as_ref(), &worktree_abs);
-    let (markers, change_paths) = match spec_path.as_deref().filter(|p| !p.is_empty()) {
-        Some(path) => {
-            let spec_abs = worktree_abs.join(path);
-            let spec_content = match std::fs::read_to_string(&spec_abs) {
-                Ok(content) => content,
-                Err(e) => {
-                    emit_error(
-                        &slug,
-                        &format!("spec_path not readable at {}: {}", spec_abs.display(), e),
-                    )?;
-                    std::process::exit(2);
-                }
-            };
-            let change_paths = extract_change_paths_from_spec(&spec_content);
-            (
-                markers_for_td_changes(&worktree_abs, Some(&change_paths)),
-                Some(change_paths),
-            )
-        }
-        None => (markers_for_td_changes(&worktree_abs, None), None),
-    };
+    let (markers, change_paths, spec_path) =
+        match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
+            Ok(queue) => queue,
+            Err(e) => {
+                emit_error(&slug, &e.to_string())?;
+                std::process::exit(2);
+            }
+        };
     let spec_path = spec_path.unwrap_or_default();
 
     if markers.is_empty() {
@@ -602,6 +588,35 @@ fn resolve_active_spec_path(
         .filter(|p| !p.is_empty())
         .or_else(|| issue.and_then(derive_spec_path_from_implements))
         .or_else(|| crate::cli::td::discover_worktree_spec(worktree_abs))
+}
+
+// Resolve the active TD and enumerate only the HANDWRITE markers it owns.
+// Both brief and apply mode use this queue so that applying a local marker
+// cannot reintroduce an unrelated app or library marker on the next step.
+fn markers_for_active_td(
+    args: &CbFillArgs,
+    issue: Option<&crate::issues::Issue>,
+    worktree_abs: &Path,
+) -> Result<(
+    Vec<HandwriteMarkerEntry>,
+    Option<Vec<String>>,
+    Option<String>,
+)> {
+    let spec_path = resolve_active_spec_path(args, issue, worktree_abs);
+    let markers_and_changes = match spec_path.as_deref().filter(|path| !path.is_empty()) {
+        Some(path) => {
+            let spec_abs = worktree_abs.join(path);
+            let spec_content = std::fs::read_to_string(&spec_abs)
+                .with_context(|| format!("spec_path not readable at {}", spec_abs.display()))?;
+            let change_paths = extract_change_paths_from_spec(&spec_content);
+            (
+                markers_for_td_changes(worktree_abs, Some(&change_paths)),
+                Some(change_paths),
+            )
+        }
+        None => (markers_for_td_changes(worktree_abs, None), None),
+    };
+    Ok((markers_and_changes.0, markers_and_changes.1, spec_path))
 }
 
 // Resolve a worktree-relative spec path from `Issue.implements` (best
@@ -778,7 +793,10 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         std::process::exit(2);
     }
 
-    // Locate the marker in the worktree source tree. R5
+    let backend = LocalBackend::from_project_root(&worktree_abs);
+    let issue = backend.get(&slug).await?;
+
+    // Locate the marker in the active TD's source scope. R5
     // (bug-cb-fill-payload-routes-by-marker-id-alone-collides): when
     // multiple markers share an id (e.g. legacy markers emitted before
     // the R1 scaffold disambiguator landed), surface the collision as a
@@ -786,7 +804,13 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     // match. Callers must rebuild the marker list (which now uses the
     // R1-disambiguated ids) and re-dispatch with the correct id.
     // @spec apps/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic-resolve_marker_file
-    let markers = enumerate_worktree_markers(&worktree_abs);
+    let (markers, _, _) = match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
+        Ok(queue) => queue,
+        Err(e) => {
+            emit_error(&slug, &e.to_string())?;
+            std::process::exit(2);
+        }
+    };
     let matches: Vec<&HandwriteMarkerEntry> =
         markers.iter().filter(|m| m.id == marker_id).collect();
     let target = match matches.as_slice() {
@@ -848,8 +872,15 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     })?;
     std::fs::write(&source_abs, &new_content)
         .with_context(|| format!("writing source {}", source_abs.display()))?;
-    // Re-enumerate.
-    let remaining = enumerate_worktree_markers(&worktree_abs);
+    // Re-enumerate against the same active TD scope. A foreign marker must
+    // not block this work item's terminal code-check.
+    let (remaining, _, _) = match markers_for_active_td(&args, issue.as_ref(), &worktree_abs) {
+        Ok(queue) => queue,
+        Err(e) => {
+            emit_error(&slug, &e.to_string())?;
+            std::process::exit(2);
+        }
+    };
 
     if !remaining.is_empty() {
         let next = &remaining[0];
@@ -870,12 +901,10 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             .with_dirty_paths([next.source_path.clone()]),
         )
         .await?;
-        let backend = LocalBackend::from_project_root(&worktree_abs);
-        let issue = backend
-            .get(&slug)
-            .await?
+        let issue = issue
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
-        let issue_path_s = backend.issue_path(&issue).to_string_lossy().into_owned();
+        let issue_path_s = backend.issue_path(issue).to_string_lossy().into_owned();
         if let Err(e) = stage_and_commit_cb_marker(
             &worktree_abs,
             &slug,
@@ -909,18 +938,12 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         return Ok(());
     }
 
-    // All markers applied — `remaining` above (line ~741) already
-    // re-enumerated the whole worktree after this apply and found zero
-    // unfilled markers, so calling `run_cb_check_gate` here would only
-    // re-confirm that same emptiness via a second full walk: any
-    // scope-filtered subset of an already-empty global marker set is itself
-    // empty. Issue #859 part a: this was the second of three redundant
-    // full-tree marker walks in one fill->close chain (the third being
-    // terminal `aw td code-check`'s own gate at `cb_filled`, skipped below
-    // in `run_check_lifecycle_terminal` for exactly this reason).
+    // All active-TD markers are filled. `remaining` above has already
+    // re-enumerated that TD's declared Changes paths, so terminal code-check
+    // can validate the same bounded scope without a foreign marker changing
+    // this work item's lifecycle.
 
     // Commit Cb-Fill trailer + advance phase.
-    let backend = LocalBackend::from_project_root(&worktree_abs);
     let issue = backend
         .get(&slug)
         .await?
@@ -1508,6 +1531,54 @@ mod tests {
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].source_path, "apps/tape/src/push.rs");
         assert_eq!(markers[0].id, "missing-generator:push");
+    }
+
+    #[test]
+    fn cb_fill_apply_scopes_remaining_markers_to_active_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local_path = "apps/local/src/peer_tls.rs";
+        let foreign_path = "apps/foreign/src/fixture.rs";
+        for (path, gap) in [
+            (local_path, "missing-generator:local"),
+            (foreign_path, "missing-generator:foreign"),
+        ] {
+            let source = tmp.path().join(path);
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(
+                source,
+                format!(
+                    "{}\n// TODO: hand-write content for `{path}`.\n{}\n",
+                    handwrite_begin(&format!("gap=\"{gap}\" reason=\"scope test\"")),
+                    handwrite_end(),
+                ),
+            )
+            .unwrap();
+        }
+        let spec_path = "apps/local/tech-design/logic/local-marker.md";
+        let spec = tmp.path().join(spec_path);
+        std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec,
+            format!("## Changes\n```yaml\nchanges:\n  - path: {local_path}\n```\n"),
+        )
+        .unwrap();
+        let args = CbFillArgs {
+            slug: "1717".to_string(),
+            spec_path: Some(spec_path.to_string()),
+            apply: true,
+            marker: Some("missing-generator:local".to_string()),
+            json: false,
+            force: false,
+        };
+
+        let (markers, changes, resolved_spec) =
+            markers_for_active_td(&args, None, tmp.path()).unwrap();
+
+        assert_eq!(resolved_spec.as_deref(), Some(spec_path));
+        assert_eq!(changes.unwrap(), vec![local_path.to_string()]);
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].source_path, local_path);
+        assert_eq!(markers[0].id, "missing-generator:local");
     }
 
     #[test]
