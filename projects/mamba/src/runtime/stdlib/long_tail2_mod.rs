@@ -830,11 +830,17 @@ fn register_turtle() {
 
 fn register_tkinter_type_walls() {
     let configure = tk_configure_cnf_str as *const () as usize;
+    // "Message" is deliberately excluded here: mamba's class registry is a
+    // flat namespace keyed by bare class name, and email.message.Message
+    // already owns that name (with a full method set). Registering a
+    // tkinter widget under the same bare name would clobber it — tkinter's
+    // wall fixtures for Message are rejected at compile time via typeshed
+    // signatures regardless of runtime registration, so nothing depends on
+    // it being registered here.
     for class_name in [
         "Checkbutton",
         "LabelFrame",
         "Menubutton",
-        "Message",
         "PanedWindow",
         "Radiobutton",
         "Spinbox",
@@ -888,7 +894,9 @@ fn register_tkinter_modules() {
         "Checkbutton",
         "LabelFrame",
         "Menubutton",
-        "Message",
+        // "Message" intentionally omitted — see register_tkinter_type_walls;
+        // it would clobber the flat-namespace class registry entry that
+        // email.message.Message needs (Issue #1615 cluster).
         "Misc",
         "PanedWindow",
         "PhotoImage",
