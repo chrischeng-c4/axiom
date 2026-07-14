@@ -722,6 +722,72 @@ test("loads a transitive barrel with inline type exports", () => {
 }
 
 #[tokio::test]
+async fn test_worker_strips_complex_destructured_parameter_types() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        src.join("destructured-parameters.tsx"),
+        r#"
+type DraftEditorFormatOptions = { isNullable?: boolean };
+type EditorState = { value: string; nullable: boolean };
+
+export const formatFromString = (
+  value: string,
+  { isNullable = true }: DraftEditorFormatOptions = {},
+): EditorState | null => ({ value, nullable: isNullable });
+
+type PlatformConfigContextProps = { variableText: string };
+type Menu = { name: string };
+
+export const nameSeatalkBotCol = ({
+  record,
+  variableText,
+  value,
+}: Pick<PlatformConfigContextProps, 'variableText'> & {
+  record: Menu;
+  value: string;
+}) => `${record.name}:${variableText}:${value}`;
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("destructured-parameters.test.tsx"),
+        r#"
+import { test, expect } from "@jet/test";
+import { formatFromString, nameSeatalkBotCol } from "./src/destructured-parameters.tsx";
+
+test("loads complex destructured parameter annotations", () => {
+  expect(formatFromString("value")).toEqual({ value: "value", nullable: true });
+  expect(formatFromString("value", { isNullable: false })).toEqual({ value: "value", nullable: false });
+  expect(nameSeatalkBotCol({
+    record: { name: "bot" },
+    variableText: "label",
+    value: "value",
+  })).toBe("bot:label:value");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "complex destructured parameter annotations must be fully stripped: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
 async fn test_worker_resolves_extensionless_legacy_package_subpaths_and_indexes() {
     if which::which("node").is_err() {
         eprintln!("skipping: node not on PATH");
@@ -733,9 +799,11 @@ async fn test_worker_resolves_extensionless_legacy_package_subpaths_and_indexes(
     let legacy_cjs = node_modules.join("legacy-cjs");
     let scoped_legacy = node_modules.join("@scope").join("legacy-utils");
     let partial_exports = node_modules.join("exports-without-subpath");
+    let relative_index = tmp.path().join("src").join("relative-index");
     fs::create_dir_all(legacy_cjs.join("nested")).unwrap();
     fs::create_dir_all(scoped_legacy.join("dist")).unwrap();
     fs::create_dir_all(&partial_exports).unwrap();
+    fs::create_dir_all(&relative_index).unwrap();
 
     fs::write(
         legacy_cjs.join("package.json"),
@@ -780,6 +848,11 @@ async fn test_worker_resolves_extensionless_legacy_package_subpaths_and_indexes(
         "export const legacy = \"unexported-subpath\";\n",
     )
     .unwrap();
+    fs::write(
+        relative_index.join("index.ts"),
+        "export default \"relative-index\";\n",
+    )
+    .unwrap();
 
     fs::write(
         tmp.path().join("legacy-subpaths.test.ts"),
@@ -789,6 +862,7 @@ import camelCase from "legacy-cjs/camelCase";
 import nestedIndex from "legacy-cjs/nested";
 import scopedLabel from "@scope/legacy-utils/dist/label";
 import { legacy } from "exports-without-subpath/legacy";
+import relativeIndex from "./src/relative-index";
 import path from "path";
 
 test("resolves legacy files and directory indexes without extensions", () => {
@@ -796,6 +870,7 @@ test("resolves legacy files and directory indexes without extensions", () => {
   expect(nestedIndex).toBe("nested-index");
   expect(scopedLabel).toBe("scoped-deep-import");
   expect(legacy).toBe("unexported-subpath");
+  expect(relativeIndex).toBe("relative-index");
   expect(path.basename("/tmp/jet")).toBe("jet");
 });
 "#,
