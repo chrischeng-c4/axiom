@@ -3603,6 +3603,85 @@ fn class_overrides_new(class_name: &str) -> bool {
     !lookup_method(class_name, "__new__").is_none()
 }
 
+/// True for `ExceptionGroup`/`BaseExceptionGroup` themselves or any
+/// subclass — keeps #1557's args-pre-store fix (see
+/// `seed_exception_args_fields`) from touching EG's own richer
+/// __new__-time nesting-validation semantics, which stay solely in
+/// `instance_new_with_init_impl`'s `!has_init` fallback.
+fn is_eg_class(class_name: &str) -> bool {
+    class_name == "ExceptionGroup"
+        || class_name == "BaseExceptionGroup"
+        || CLASS_REGISTRY.with(|reg| {
+            reg.borrow()
+                .get(class_name)
+                .map(|cls| {
+                    cls.mro
+                        .iter()
+                        .any(|c| c == "BaseExceptionGroup" || c == "ExceptionGroup")
+                })
+                .unwrap_or(false)
+        })
+}
+
+/// Seed `message`/`__type__`/`args` (+ StopIteration's `.value` /
+/// SystemExit's `.code`) from the constructor args — the
+/// `BaseException.__new__` pre-store CPython performs before `__init__`
+/// runs (#1557 P3). Mirrors the shape of the (already-tested) `!has_init`
+/// fallback in `instance_new_with_init_impl` so the two call sites read
+/// the same way; kept separate rather than shared to avoid touching that
+/// verified path.
+fn seed_exception_args_fields(instance: MbValue, init_class: &str, args_list: MbValue) {
+    let Some(ptr) = args_list.as_ptr() else {
+        return;
+    };
+    unsafe {
+        let ObjData::List(ref lock) = (*ptr).data else {
+            return;
+        };
+        let items = lock.read().unwrap();
+        if let Some(first) = items.first() {
+            let msg = super::builtins::mb_str(*first);
+            mb_setattr(
+                instance,
+                MbValue::from_ptr(MbObject::new_str("message".to_string())),
+                msg,
+            );
+        }
+        mb_setattr(
+            instance,
+            MbValue::from_ptr(MbObject::new_str("__type__".to_string())),
+            MbValue::from_ptr(MbObject::new_str(init_class.to_string())),
+        );
+        let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(items.to_vec()));
+        mb_setattr(
+            instance,
+            MbValue::from_ptr(MbObject::new_str("args".to_string())),
+            args_tuple,
+        );
+        if init_class == "StopIteration" {
+            let value_val = items.first().copied().unwrap_or_else(MbValue::none);
+            super::rc::retain_if_ptr(value_val);
+            mb_setattr(
+                instance,
+                MbValue::from_ptr(MbObject::new_str("value".to_string())),
+                value_val,
+            );
+        } else if init_class == "SystemExit" {
+            let code_val = match items.as_slice() {
+                [] => MbValue::none(),
+                [single] => *single,
+                _ => MbValue::from_ptr(MbObject::new_tuple_borrowed(items.to_vec())),
+            };
+            super::rc::retain_if_ptr(code_val);
+            mb_setattr(
+                instance,
+                MbValue::from_ptr(MbObject::new_str("code".to_string())),
+                code_val,
+            );
+        }
+    }
+}
+
 fn unsafe_object_new_type_name(class_name: &str) -> Option<&'static str> {
     match class_name {
         "Certificate" => Some("_ssl.Certificate"),
@@ -3967,6 +4046,27 @@ fn instance_new_with_init_impl(
             return MbValue::none();
         }
         return instance;
+    }
+
+    // #1557 P3: CPython's `BaseException.__new__` pre-stores the ctor args
+    // (and derives `message`) at allocation, BEFORE `__init__` ever runs —
+    // unconditionally, regardless of whether the subclass defines its own
+    // `__init__`. The `!has_init` fallback below only mirrors that when NO
+    // `__init__` exists at all, so a subclass `__init__` that never chains
+    // to the base (`class C(Exception): def __init__(self, a): ...` with no
+    // `super().__init__`/`Exception.__init__` call) left `args`/`message`
+    // unset and `str(c)` fell back to a generic instance repr instead of the
+    // exception str machinery. Pre-seed here for the has-custom-init case
+    // (the no-init case is already covered below); a chaining `__init__`
+    // simply overwrites these same fields afterward via the real base
+    // `__init__` call. Scoped to plain exceptions — `BaseExceptionGroup`'s
+    // richer __new__-time nesting validation stays solely in the `!has_init`
+    // branch below to avoid widening this fix's blast radius.
+    let pre_stores_exception_args = !is_eg_class(&init_class)
+        && is_base_exception_like(&init_class)
+        && class_overrides_init(&init_class);
+    if pre_stores_exception_args {
+        seed_exception_args_fields(instance, &init_class, args_list);
     }
 
     let has_init = if let Some(kw) = kwargs_dict {
@@ -7627,6 +7727,23 @@ fn mb_getattr_impl(
                             if type_name_str == "type" && attr_name == "__init__" {
                                 return make_unbound_method("type", "__init__");
                             }
+                            // BaseException-family `__init__` accessed
+                            // unbound directly on the class
+                            // (`Exception.__init__(self, a)`,
+                            // `TypeError.__init__(self)`) — mirrors the
+                            // `object.__init__` arm below: base-exception's
+                            // arg-storage constructor isn't modeled as a
+                            // registered method (it's empty() in
+                            // mb_class_register), so without this arm the
+                            // lookup fell all the way through to the
+                            // dunder-exempt AttributeError skip and
+                            // silently yielded None (#1557). Dispatch lands
+                            // in mb_call_spread_impl's `__unbound_method__`
+                            // arm, mirroring SUPER_MISSING_INIT_METHOD's
+                            // `super().__init__` path.
+                            if attr_name == "__init__" && is_base_exception_like(&type_name_str) {
+                                return make_unbound_method(&type_name_str, "__init__");
+                            }
                             // <type>.__new__ — every type inherits
                             // object.__new__(cls), which allocates a BARE
                             // instance without running __init__ (used by the
@@ -8716,6 +8833,19 @@ fn mb_getattr_impl(
                                 // member descriptor (CPython semantics).
                                 if class_slot_names(s).iter().any(|n| n == &attr_name) {
                                     return make_member_descriptor(s, &attr_name);
+                                }
+                                // BaseException-family `__init__` accessed
+                                // unbound directly on the class-name-string
+                                // token (`Exception.__init__(self, a)`,
+                                // `TypeError.__init__(self)`) — exception
+                                // classes evaluate to a bare ObjData::Str
+                                // (not a `type` instance), so this mirrors
+                                // the type-object-instance arm's identical
+                                // fix (#1557): without it the lookup fell
+                                // through the dunder-exempt AttributeError
+                                // skip below and silently yielded None.
+                                if attr_name == "__init__" && is_base_exception_like(s) {
+                                    return make_unbound_method(s, "__init__");
                                 }
                                 // CPython: class attribute lookup continues
                                 // through the metaclass (a @property or plain
@@ -13592,7 +13722,7 @@ pub fn mb_super_argcount_error(count: MbValue) -> MbValue {
 const SUPER_MISSING_INIT_METHOD: &str = "__super_missing_init__";
 const SUPER_TYPE_INIT_METHOD: &str = "__super_type_init__";
 
-fn is_base_exception_like(class_name: &str) -> bool {
+pub(crate) fn is_base_exception_like(class_name: &str) -> bool {
     class_name == "BaseException"
         || super::exception::is_subclass_of(class_name, "BaseException")
         || check_class_hierarchy(class_name, "BaseException")
