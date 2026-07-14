@@ -4030,13 +4030,32 @@ fn instance_new_with_init_impl(
             }
             if let Some(kw) = kwargs_dict {
                 if kwargs_dict_has_entries(kw) && !class_overrides_init(&init_class) {
-                    super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "{base}() takes no keyword arguments"
-                        ))),
-                    );
-                    return MbValue::none();
+                    if base == "dict" {
+                        // dict ACCEPTS kwargs (unlike list/set/frozenset/tuple/
+                        // int/str/float/complex, which all reject them, #220's
+                        // invariant note) — merge the keyword entries into the
+                        // just-seeded payload dict. Same-key positional entries
+                        // are overridden in place (insertion order preserved),
+                        // matching CPython's `dict(iterable, **kwargs)`. #1549.
+                        let payload = instance.as_ptr().and_then(|ptr| unsafe {
+                            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                                fields.read().unwrap().get(payload_field_for_base(base)).copied()
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(payload) = payload {
+                            super::dict_ops::mb_dict_update(payload, kw);
+                        }
+                    } else {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "{base}() takes no keyword arguments"
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
                 }
             }
         }
