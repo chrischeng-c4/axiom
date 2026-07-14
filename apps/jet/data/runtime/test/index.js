@@ -464,6 +464,56 @@ function describe(name, body) {
 function test(name, body) {
   current().tests.push({ name, body, skip: false, only: false, fixtures: null });
 }
+
+function eachRowValues(row) {
+  return Array.isArray(row) ? row : [row];
+}
+
+function formatEachTitle(name, values, index) {
+  let valueIndex = 0;
+  const title = String(name).replace(/%[sdifjoO%]/g, (token) => {
+    if (token === "%%") return "%";
+    const value = values[valueIndex++];
+    switch (token) {
+      case "%d":
+      case "%i":
+        return String(Number.parseInt(value, 10));
+      case "%f":
+        return String(Number(value));
+      case "%j":
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return "[Circular]";
+        }
+      case "%o":
+      case "%O":
+        return typeof value === "string" ? value : JSON.stringify(value);
+      case "%s":
+      default:
+        return String(value);
+    }
+  });
+  return title.replace(/\$#/g, String(index));
+}
+
+function makeEach(register) {
+  return (table) => {
+    if (!Array.isArray(table)) {
+      throw new TypeError("test.each/describe.each expects an array of rows");
+    }
+    return (name, body) => {
+      if (typeof body !== "function") {
+        throw new TypeError("test.each/describe.each requires a callback");
+      }
+      table.forEach((row, index) => {
+        const values = eachRowValues(row);
+        register(formatEachTitle(name, values, index), () => body(...values));
+      });
+    };
+  };
+}
+
 test.skip = (name, body) => {
   current().tests.push({ name, body, skip: true, only: false, fixtures: null });
 };
@@ -518,6 +568,9 @@ test.step = async (name, body) => {
     __jet.currentStepStack.pop();
   }
 };
+test.each = makeEach(test);
+test.skip.each = makeEach(test.skip);
+test.only.each = makeEach(test.only);
 
 // ── test.extend(fixtures) — flat + DI-graph fixture API ──────────────────
 // Returns a new `test` function bound to the given fixtures. Each fixture
@@ -561,6 +614,9 @@ test.extend = (fixtures) => {
   };
   boundTest.extend = (extra) => test.extend({ ...fixtures, ...extra });
   boundTest.step = test.step;
+  boundTest.each = makeEach(boundTest);
+  boundTest.skip.each = makeEach(boundTest.skip);
+  boundTest.only.each = makeEach(boundTest.only);
   return boundTest;
 };
 
@@ -576,6 +632,117 @@ function beforeEach(fn) {
 function afterEach(fn) {
   current().after_each.push(fn);
 }
+
+describe.each = makeEach(describe);
+
+const __jestMockFunctions = new Set();
+const __jestModuleMocks = new Map();
+
+function makeJestMock(implementation) {
+  let defaultImplementation =
+    typeof implementation === "function" ? implementation : () => undefined;
+  const onceImplementations = [];
+
+  const mock = function (...args) {
+    const impl = onceImplementations.length > 0 ? onceImplementations.shift() : defaultImplementation;
+    mock.mock.calls.push(args);
+    mock.mock.contexts.push(this);
+    mock.mock.instances.push(new.target ? this : undefined);
+    try {
+      const value = impl.apply(this, args);
+      mock.mock.results.push({ type: "return", value });
+      return value;
+    } catch (value) {
+      mock.mock.results.push({ type: "throw", value });
+      throw value;
+    }
+  };
+
+  mock.mock = { calls: [], contexts: [], instances: [], results: [] };
+  mock._isMockFunction = true;
+  mock.mockImplementation = (next) => {
+    if (typeof next !== "function") throw new TypeError("jest.fn mockImplementation expects a function");
+    defaultImplementation = next;
+    return mock;
+  };
+  mock.mockImplementationOnce = (next) => {
+    if (typeof next !== "function") throw new TypeError("jest.fn mockImplementationOnce expects a function");
+    onceImplementations.push(next);
+    return mock;
+  };
+  mock.mockReturnValue = (value) => mock.mockImplementation(() => value);
+  mock.mockReturnValueOnce = (value) => mock.mockImplementationOnce(() => value);
+  mock.mockResolvedValue = (value) => mock.mockImplementation(() => Promise.resolve(value));
+  mock.mockResolvedValueOnce = (value) => mock.mockImplementationOnce(() => Promise.resolve(value));
+  mock.mockRejectedValue = (value) => mock.mockImplementation(() => Promise.reject(value));
+  mock.mockRejectedValueOnce = (value) => mock.mockImplementationOnce(() => Promise.reject(value));
+  mock.mockClear = () => {
+    mock.mock.calls.length = 0;
+    mock.mock.contexts.length = 0;
+    mock.mock.instances.length = 0;
+    mock.mock.results.length = 0;
+    return mock;
+  };
+  mock.mockReset = () => {
+    mock.mockClear();
+    onceImplementations.length = 0;
+    defaultImplementation = () => undefined;
+    return mock;
+  };
+
+  __jestMockFunctions.add(mock);
+  return mock;
+}
+
+const jest = {
+  fn: makeJestMock,
+  isMockFunction(value) {
+    return Boolean(value && value._isMockFunction === true);
+  },
+  spyOn(object, property) {
+    if (object == null || typeof object[property] !== "function") {
+      throw new TypeError("jest.spyOn expects an existing function property");
+    }
+    const original = object[property];
+    const mock = makeJestMock(function (...args) {
+      return original.apply(this, args);
+    });
+    mock.mockRestore = () => {
+      object[property] = original;
+      return mock;
+    };
+    object[property] = mock;
+    return mock;
+  },
+  // Factories are retained for explicit `jest.requireMock()` consumers. ESM
+  // static-import interception is intentionally not implied by this registry.
+  mock(moduleName, factory) {
+    if (typeof moduleName !== "string") {
+      throw new TypeError("jest.mock expects a module name string");
+    }
+    if (factory !== undefined && typeof factory !== "function") {
+      throw new TypeError("jest.mock factory must be a function");
+    }
+    __jestModuleMocks.set(moduleName, factory ? factory() : {});
+    return jest;
+  },
+  unmock(moduleName) {
+    __jestModuleMocks.delete(moduleName);
+    return jest;
+  },
+  requireMock(moduleName) {
+    if (!__jestModuleMocks.has(moduleName)) {
+      throw new Error(`jest.requireMock: no mock registered for ${moduleName}`);
+    }
+    return __jestModuleMocks.get(moduleName);
+  },
+  clearAllMocks() {
+    __jestMockFunctions.forEach((mock) => mock.mockClear());
+  },
+  resetAllMocks() {
+    __jestMockFunctions.forEach((mock) => mock.mockReset());
+  },
+};
 
 // Playwright-compatible surface: expose suite builders as methods on `test`
 // so specs can write `test.describe(...)` / `test.beforeEach(...)` without
@@ -1203,6 +1370,7 @@ export async function __jetRun(opts) {
   globalThis.test = test;
   globalThis.it = test;
   globalThis.expect = expect;
+  globalThis.jest = jest;
   globalThis.beforeAll = beforeAll;
   globalThis.afterAll = afterAll;
   globalThis.beforeEach = beforeEach;
@@ -1547,6 +1715,7 @@ export {
   afterAll,
   beforeEach,
   afterEach,
+  jest,
   Page,
   browser,
 };
@@ -1563,6 +1732,7 @@ export const __JET_TEST_CONTRACT = Object.freeze([
   "afterAll",
   "beforeEach",
   "afterEach",
+  "jest",
   "Page",
   "browser",
   "__JET_TEST_CONTRACT",
@@ -1610,10 +1780,6 @@ function __makeTripwire(symbol, alt) {
   });
 }
 
-export const jest = __makeTripwire(
-  "jest",
-  "`@jet/test` (describe/test/expect) and the post-#2605 matchers"
-);
 export const vi = __makeTripwire(
   "vi",
   "`@jet/test` (describe/test/expect) and the post-#2605 matchers"

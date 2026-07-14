@@ -547,7 +547,7 @@ fn infer_object_literal_type_from_text(text: &str) -> Option<String> {
     let mut members = Vec::new();
     let empty_param_types = HashMap::new();
     for raw_property in split_top_level(inner, ',') {
-        let property = raw_property.trim();
+        let property = strip_leading_object_member_comments(&raw_property)?.trim();
         if property.is_empty() {
             continue;
         }
@@ -580,6 +580,30 @@ fn infer_object_literal_type_from_text(text: &str) -> Option<String> {
         return Some("{}".to_string());
     }
     Some(format!("{{\n{}\n}}", members.join("\n")))
+}
+
+/// Object-member comments are trivia, not part of the following member key.
+///
+/// The declaration emitter reads this narrow object-literal shape from source
+/// text. A lint directive between members would otherwise become part of the
+/// next key and produce an isolatedDeclarations false positive (#1533).
+fn strip_leading_object_member_comments(mut text: &str) -> Option<&str> {
+    loop {
+        text = text.trim_start();
+        if let Some(after_line_comment) = text.strip_prefix("//") {
+            text = after_line_comment
+                .split_once('\n')
+                .map(|(_, after_comment)| after_comment)
+                .unwrap_or_default();
+            continue;
+        }
+        if let Some(after_block_comment) = text.strip_prefix("/*") {
+            let end = after_block_comment.find("*/")?;
+            text = &after_block_comment[end + 2..];
+            continue;
+        }
+        return Some(text);
+    }
 }
 
 fn is_supported_object_literal_key(key: &str) -> bool {
@@ -648,6 +672,13 @@ fn split_arrow_head_params_and_return(head: &str) -> Option<(&str, &str)> {
     split_once_top_level(head, ':')
 }
 
+/// `>` is only a generic closer when it is not part of an arrow or `>=`
+/// comparison token. The declaration scanner otherwise treats `>=` in an
+/// expression body as a closing generic and loses every following member.
+fn is_non_generic_greater_than(text: &str, idx: usize, prev: char) -> bool {
+    prev == '=' || text[idx..].starts_with(">=")
+}
+
 fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
     let mut depth = 0i32;
     let mut quote = None;
@@ -673,10 +704,10 @@ fn split_once_top_level_arrow(text: &str) -> Option<(&str, &str)> {
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
-            // The trailing `>` in a nested function type's `=>` is not a
-            // generic close. Keep the surrounding parameter depth intact so
-            // the outer arrow can still be found (#1533).
-            '>' if prev == '=' => {}
+            // Neither `=>` nor `>=` ends a TypeScript generic. Keep the
+            // surrounding depth intact so an outer arrow remains findable
+            // and comparison bodies cannot swallow following members.
+            '>' if is_non_generic_greater_than(text, idx, prev) => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             '=' if depth == 0 && text[idx..].starts_with("=>") => {
@@ -1315,13 +1346,11 @@ fn split_top_level(text: &str, delimiter: char) -> Vec<String> {
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
-            // `=>` (arrow function token): the trailing `>` is not a
-            // closing generic bracket, so it must not decrement depth --
-            // otherwise multiple arrow-typed members/params in the same
-            // top-level list (e.g. two object properties whose arrow
-            // return types are themselves generic, `Promise<string>`)
-            // would be merged into one part (#1264).
-            '>' if prev == '=' => {}
+            // Neither `=>` nor `>=` ends a generic. In particular, an `>=`
+            // comparison in an arrow body must not force depth negative and
+            // merge every following object member into the current property
+            // (#1532).
+            '>' if is_non_generic_greater_than(text, idx, prev) => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             _ if ch == delimiter && depth == 0 => {
@@ -1361,9 +1390,9 @@ fn split_once_top_level<'a>(text: &'a str, delimiter: char) -> Option<(&'a str, 
         }
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
-            // See the matching comment in `split_top_level` (#1264): `=>`'s
-            // trailing `>` is not a closing generic bracket.
-            '>' if prev == '=' => {}
+            // Match `split_top_level`: arrows and `>=` comparisons are not
+            // generic closers (#1264, #1532).
+            '>' if is_non_generic_greater_than(text, idx, prev) => {}
             '(' | '[' | '{' | '<' => depth += 1,
             ')' | ']' | '}' | '>' => depth -= 1,
             // An arrow token is not a default-value assignment. In particular,
@@ -2336,27 +2365,30 @@ export const SpAlert = Alert as AlertInterface;
 
     #[test]
     fn infers_exported_const_arrow_body_typed_object_with_function_typed_parameter() {
-        // #1533: `srcHelper` returns an object whose first member accepts a
-        // callback function type. The inner `=>` must not hide the outer
-        // member arrow from the declaration emitter.
+        // #1533: the real `srcHelper` has a lint directive between typed
+        // object members. The comment is trivia, not part of `toOutsource`.
         let src = r#"export const srcHelper = (
     editorJson: SerializedEditorState<TSerializedLexicalNode>,
     replaceTypes: string[] = ['image', 'video'],
 ) => {
     return {
         fromOutsource: (
-            callback?: (value: string) => Promise<string | undefined> | string | undefined,
+            callback?: (
+                data?: TSerializedLexicalNode,
+            ) => Promise<string | undefined> | string | undefined,
         ): Promise<Record<string, unknown>> => Promise.resolve({}),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         toOutsource: (parent?: TSerializedLexicalNode): any => parent,
     };
 };
 "#;
         let dts = emit_declarations(src).unwrap();
+        let normalized_dts = dts.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            dts.contains("export declare const srcHelper: (editorJson: SerializedEditorState<TSerializedLexicalNode>, replaceTypes?: string[]) => {")
-                && dts.contains("fromOutsource: (callback?: (value: string) => Promise<string | undefined> | string | undefined) => Promise<Record<string, unknown>>;")
-                && dts.contains("toOutsource: (parent?: TSerializedLexicalNode) => any;"),
-            "function-typed callback member should remain inferable, got:\n{dts}"
+            normalized_dts.contains("export declare const srcHelper: (editorJson: SerializedEditorState<TSerializedLexicalNode>, replaceTypes?: string[]) => {")
+                && normalized_dts.contains("fromOutsource: (callback?: ( data?: TSerializedLexicalNode, ) => Promise<string | undefined> | string | undefined) => Promise<Record<string, unknown>>;")
+                && normalized_dts.contains("toOutsource: (parent?: TSerializedLexicalNode) => any;"),
+            "typed members after a lint comment should remain inferable, got:\n{dts}"
         );
     }
 
@@ -2438,7 +2470,8 @@ export const SpAlert = Alert as AlertInterface;
         Object.entries(obj)
             .map(([k, v]) => `${k}=${v}`)
             .join('&'),
-    int: (str: string): number => parseInt(str, 10),
+    int: (str: string | number, min = 1): number =>
+        Number.isSafeInteger(Number(str)) && Number(str) >= min ? Number(str) : min,
     genOrderList: (list: string[]): string[] => [...list],
     genOrderStrList: (list: string[]): string => list.join(','),
 };
@@ -2453,7 +2486,7 @@ export const SpAlert = Alert as AlertInterface;
             "snakeCase: (str: string) => string;",
             "kebabCase: (str: string) => string;",
             "formatToQueryString: (obj: Record<string, string>) => string;",
-            "int: (str: string) => number;",
+            "int: (str: string | number, min?: number) => number;",
             "genOrderList: (list: string[]) => string[];",
             "genOrderStrList: (list: string[]) => string;",
         ];

@@ -843,6 +843,54 @@ fn object_literal_arrow_property_with_object_assign_computed_key_body_emits_dts(
 }
 
 #[test]
+fn library_dts_emits_typed_object_members_after_lint_comment() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{ "name": "src-helper-dts-lib", "version": "1.0.0", "module": "./src/index.ts" }"#,
+    );
+    write_file(
+        root,
+        "src/index.ts",
+        r#"export type TSerializedLexicalNode = { type?: string };
+
+export const srcHelper = (
+    editorJson: SerializedEditorState<TSerializedLexicalNode>,
+    replaceTypes: string[] = ['image', 'video'],
+) => {
+    return {
+        fromOutsource: (
+            callback?: (
+                data?: TSerializedLexicalNode,
+            ) => Promise<string | undefined> | string | undefined,
+        ): Promise<Record<string, unknown>> => Promise.resolve({}),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        toOutsource: (parent?: TSerializedLexicalNode): any => parent,
+    };
+};
+"#,
+    );
+
+    let result = build_library(lib_options(root))
+        .expect("lint comments before typed object members should not trip isolatedDeclarations");
+    let dts = std::fs::read_to_string(&result.types[0].path).unwrap();
+    let normalized_dts = dts.split_whitespace().collect::<Vec<_>>().join(" ");
+    for expected in [
+        "export declare const srcHelper: (editorJson: SerializedEditorState<TSerializedLexicalNode>, replaceTypes?: string[]) => {",
+        "fromOutsource: (callback?: ( data?: TSerializedLexicalNode, ) => Promise<string | undefined> | string | undefined) => Promise<Record<string, unknown>>;",
+        "toOutsource: (parent?: TSerializedLexicalNode) => any;",
+    ] {
+        assert!(
+            normalized_dts.contains(expected),
+            "expected `{expected}` in declaration output, got:\n{dts}"
+        );
+    }
+}
+
+#[test]
 fn library_dts_keeps_all_query_members_after_object_assign_computed_key_reexport() {
     let dir = tempdir().unwrap();
     let root = dir.path();
@@ -882,7 +930,8 @@ fn library_dts_keeps_all_query_members_after_object_assign_computed_key_reexport
         Object.entries(obj)
             .map(([k, v]) => `${k}=${v}`)
             .join('&'),
-    int: (str: string): number => parseInt(str, 10),
+    int: (str: string | number, min = 1): number =>
+        Number.isSafeInteger(Number(str)) && Number(str) >= min ? Number(str) : min,
     genOrderList: (list: string[]): string[] => [...list],
     genOrderStrList: (list: string[]): string => list.join(','),
 };
@@ -904,7 +953,7 @@ fn library_dts_keeps_all_query_members_after_object_assign_computed_key_reexport
         "snakeCase: (str: string) => string;",
         "kebabCase: (str: string) => string;",
         "formatToQueryString: (obj: Record<string, string>) => string;",
-        "int: (str: string) => number;",
+        "int: (str: string | number, min?: number) => number;",
         "genOrderList: (list: string[]) => string[];",
         "genOrderStrList: (list: string[]) => string;",
     ];

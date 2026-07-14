@@ -35,6 +35,7 @@ without an npm publish.
 | `afterAll`       | `(fn) => void`                     | Once per spec file                   |
 | `beforeEach`     | `(fn) => void`                     | Per-test                             |
 | `afterEach`      | `(fn) => void`                     | Per-test                             |
+| `jest`           | compatibility object                | `fn`, `spyOn`, and explicit mock registry helpers |
 | `Page`           | class                              | CDP-backed Playwright-compat surface |
 | `browser`        | lazy `Browser` singleton           | Constructed on first `new_page`      |
 | `__JET_TEST_CONTRACT` | `readonly string[]`           | Self-introspection list              |
@@ -49,7 +50,6 @@ Node's generic `does not provide an export named` error.
 
 | Tripwire | Recommended alternative                                                    |
 |----------|----------------------------------------------------------------------------|
-| `jest`   | `@jet/test` (`describe` / `test` / `expect`) + the matchers landed in #2605 |
 | `vi`     | `@jet/test` + the matchers landed in #2605                                 |
 | `vitest` | `@jet/test`                                                                |
 | `mock`   | Manual fakes — built-in mocking is not in the contract yet                 |
@@ -59,6 +59,22 @@ Anything else (`fc`, `chai`, `sinon`, ...) currently fails with Node's
 default `does not provide an export named` error. Add tripwires here as
 real migration friction shows up; do not invent a tripwire for a name
 that has never been requested.
+
+## Jest compatibility
+
+`jest` is installed as a global before every spec and is also available as a
+named `@jet/test` export. The native runner supports `jest.fn`, call/result
+metadata, implementation and return-value helpers, `jest.spyOn`, and the
+explicit `jest.mock(name, factory)` / `jest.requireMock(name)` registry.
+
+`test.each`, `it.each`, and `describe.each` expand array rows into ordinary
+Jet tests or suites. Titles support `%s`, `%d`/`%i`, `%f`, `%j`, `%o`, `%%`,
+and `$#` substitutions.
+
+The registry does not intercept ESM static imports. Code that needs an
+import-substitution loader should keep using an explicit fake or access a
+registered factory through `jest.requireMock`; full Jest module-loader
+semantics are not part of this virtual-module contract yet.
 
 ## Fixture lifecycle (#2711)
 
