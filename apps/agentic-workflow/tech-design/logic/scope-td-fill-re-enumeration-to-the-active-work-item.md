@@ -57,15 +57,15 @@ changes:
 
 ```mermaid
 ---
-id: td-fill-active-scope-verification
+id: scope-td-fill-re-enumeration-to-the-active-work-item-verification
 requirements:
-  local_marker_queue:
+  active_td_marker_scope:
     id: R1
-    text: "Applying a marker continues only through the active TD Changes paths and reaches code-check when that scoped queue is exhausted."
+    text: "Applying a marker only queues unresolved HANDWRITE markers whose source paths are declared by the active TD Changes section; a marker in an unrelated app cannot prevent code-check for this work item."
     kind: regression
     risk: high
-    verify: cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture
+    verify: cb_fill_apply_scopes_remaining_markers_to_active_changes
 ---
 flowchart TD
-    r1[R1 local marker queue] --> cargo_test_p_agentic_workflow_lib_cb_fill_apply_scopes_remaining_markers_to_active_changes_nocapture[cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture]
+    r1[R1 active td marker scope] --> cb_fill_apply_scopes_remaining_markers_to_active_changes[cb_fill_apply_scopes_remaining_markers_to_active_changes]
 ```
