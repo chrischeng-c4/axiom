@@ -607,6 +607,12 @@ pub struct TypeChecker {
     /// last-definition-wins method map cannot represent both contracts.
     pub(crate) class_property_getters: HashMap<SymbolId, HashMap<String, TypeId>>,
     pub(crate) class_property_setters: HashMap<SymbolId, HashMap<String, TypeId>>,
+    /// Attributes decorated `@functools.cached_property`. Unlike `@property`,
+    /// `cached_property` is a non-data descriptor (only `__get__`): CPython
+    /// lets any assignment to the attribute freely overwrite the instance
+    /// `__dict__` entry (any type, not just the getter's return type), so
+    /// assignment must skip the strict property-setter type wall (#1615).
+    pub(crate) class_cached_properties: HashMap<SymbolId, HashSet<String>>,
     /// User classes declared with `TypedDict` in their base chain. Runtime
     /// instances of these classes are plain dict values, so a variable annotated
     /// as the TypedDict class accepts dict literals/values.
@@ -738,6 +744,7 @@ impl TypeChecker {
             class_unbound_method_param_sigs: HashMap::new(),
             class_property_getters: HashMap::new(),
             class_property_setters: HashMap::new(),
+            class_cached_properties: HashMap::new(),
             typed_dict_classes: HashSet::new(),
             typed_dict_class_symbols: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
@@ -4350,6 +4357,7 @@ impl TypeChecker {
         let mut unbound_method_param_sigs = HashMap::new();
         let mut property_getters = HashMap::new();
         let mut property_setters = HashMap::new();
+        let mut cached_properties = HashSet::new();
         self.class_method_generic_defs
             .retain(|(owner, _), _| *owner != class_symbol);
         let receiver_ty = self.get_symbol_type(class_symbol).unwrap_or_else(|| {
@@ -4447,6 +4455,16 @@ impl TypeChecker {
                     matches!(&decorator.node, Expr::Ident(name) if name == "property")
                         || matches!(&decorator.node, Expr::Attr { attr, .. } if attr == "property")
                 });
+                let is_cached_property = decorators.iter().any(|decorator| {
+                    matches!(&decorator.node, Expr::Ident(name) if name == "cached_property")
+                        || matches!(
+                            &decorator.node,
+                            Expr::Attr { attr, .. } if attr == "cached_property"
+                        )
+                });
+                if is_cached_property {
+                    cached_properties.insert(name.clone());
+                }
                 let is_property_setter = decorators.iter().any(|decorator| {
                     matches!(&decorator.node, Expr::Attr { attr, .. } if attr == "setter")
                 });
@@ -4502,6 +4520,8 @@ impl TypeChecker {
             .insert(class_symbol, property_getters);
         self.class_property_setters
             .insert(class_symbol, property_setters);
+        self.class_cached_properties
+            .insert(class_symbol, cached_properties);
     }
 
     fn base_is_typed_dict(&self, expr: &Expr) -> bool {
