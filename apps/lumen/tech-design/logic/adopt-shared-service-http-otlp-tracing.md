@@ -9,49 +9,32 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: lumen-adopt-shared-otlp-tracing
-entry: start
+id: lumen-shared-otlp-contract
+entry: config
 nodes:
-  start: { kind: start, label: "lumen serve resolves log settings and LUMEN_OTLP_ENDPOINT" }
-  config: { kind: process, label: "build service_http::HttpConfig" }
-  identity: { kind: process, label: "ServiceIdentity::new(lumen, CARGO_PKG_VERSION)" }
-  init: { kind: process, label: "service_http::init_tracing_with_identity" }
-  mode: { kind: decision, label: "shared tracing mode" }
-  logging: { kind: process, label: "install existing JSON or pretty structured logging" }
-  exporter: { kind: process, label: "shared tracer has stable resource attributes and W3C propagator" }
-  fallback: { kind: process, label: "redacted warning; keep structured logging" }
-  engine: { kind: process, label: "start Lumen engine and HTTP server" }
-  metrics: { kind: process, label: "retain Lumen local OTLP metrics exporter and instruments" }
-  shutdown: { kind: terminal, label: "conditional global tracer shutdown on service exit" }
+  config: { kind: start, label: "Lumen ServeArgs owns LUMEN_OTLP_ENDPOINT, log level, and log format" }
+  http_config: { kind: process, label: "map resolved values to service_http::HttpConfig" }
+  identity: { kind: process, label: "create non-empty ServiceIdentity lumen plus build version" }
+  shared: { kind: process, label: "call init_tracing_with_identity before engine startup" }
+  trace_boundary: { kind: process, label: "service-http owns OTLP trace pipeline, fallback, and W3C propagation" }
+  metrics_boundary: { kind: process, label: "Lumen owns engine-counter OTLP metrics provider and cadence" }
+  contract: { kind: terminal, label: "one endpoint flag, shared traces, retained Lumen metrics" }
 edges:
-  - { from: start, to: config }
-  - { from: config, to: identity }
-  - { from: identity, to: init }
-  - { from: init, to: mode }
-  - { from: mode, to: logging, label: "no endpoint" }
-  - { from: mode, to: exporter, label: "otlp feature and valid endpoint" }
-  - { from: mode, to: fallback, label: "feature missing or invalid/exporter failure" }
-  - { from: logging, to: engine }
-  - { from: exporter, to: engine }
-  - { from: fallback, to: engine }
-  - { from: engine, to: metrics }
-  - { from: metrics, to: shutdown }
+  - { from: config, to: http_config }
+  - { from: http_config, to: identity }
+  - { from: identity, to: shared }
+  - { from: shared, to: trace_boundary }
+  - { from: trace_boundary, to: metrics_boundary }
+  - { from: metrics_boundary, to: contract }
 ---
 flowchart TD
-    start([lumen serve resolves log settings and LUMEN_OTLP_ENDPOINT]) --> config[build service_http::HttpConfig]
-    config --> identity[ServiceIdentity::new lumen and build version]
-    identity --> init[service_http::init_tracing_with_identity]
-    init --> mode{shared tracing mode}
-    mode -->|no endpoint| logging[install existing JSON or pretty structured logging]
-    mode -->|otlp feature and valid endpoint| exporter[shared tracer has stable resource attributes and W3C propagator]
-    mode -->|feature missing or invalid/exporter failure| fallback[redacted warning; keep structured logging]
-    logging --> engine[start Lumen engine and HTTP server]
-    exporter --> engine
-    fallback --> engine
-    engine --> metrics[retain Lumen local OTLP metrics exporter and instruments]
-    metrics --> shutdown([conditional global tracer shutdown on service exit])
+    config([Lumen ServeArgs owns endpoint and logging settings]) --> http_config[map resolved values to service_http HttpConfig]
+    http_config --> identity[create non-empty ServiceIdentity with lumen and build version]
+    identity --> shared[call init_tracing_with_identity before engine startup]
+    shared --> trace_boundary[service-http owns trace pipeline fallback and W3C propagation]
+    trace_boundary --> metrics_boundary[Lumen owns engine-counter OTLP metrics provider and cadence]
+    metrics_boundary --> contract([one endpoint flag shared traces retained Lumen metrics])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
