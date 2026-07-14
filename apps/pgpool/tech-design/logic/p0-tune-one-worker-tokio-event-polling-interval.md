@@ -44,3 +44,15 @@ flowchart LR
 
 - A bootstrap failure, behavior regression, or first valid normal-baseline 30-second comparison that loses to PgBouncer reverts the runtime bootstrap immediately.
 - Meter output may diagnose event-polling effects but cannot decide candidate retention.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    section: pgpool-one-worker-event-polling
+    impl_mode: hand-written
+    reason: Replace only macro bootstrap with an equivalent explicit one-worker runtime builder that checks I/O and timers each scheduler tick.
+```
