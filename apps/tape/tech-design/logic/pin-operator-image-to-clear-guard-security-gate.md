@@ -35,3 +35,18 @@ flowchart TD
 ```
 
 The operator control-plane fixture is the renderer-owned production artifact. Its image must use the current concrete Tape release tag rather than `latest`, so the checked-in manifest and rendered output are reproducible and pass K8003. Namespace replacement remains image-neutral. The explicit image argument for instance rendering, including the dev profile's local image default, is a separate data-plane contract and remains unchanged.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/k8s/operator/deployment.yaml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/tape/tests/deploy_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+```
