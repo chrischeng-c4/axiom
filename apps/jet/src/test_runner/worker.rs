@@ -61,15 +61,29 @@ pub async fn run_spec(
     config: &RunnerConfig,
     reporter: &MultiReporter,
 ) -> Result<Summary> {
-    // 1. Transform the spec file (TS → JS). Skip type-stripping for
-    //    already-JS files, but still normalize Jet's virtual test module.
-    let transformed = transform_spec(&spec.path).context("Failed to type-strip spec")?;
+    // 1. Preserve CommonJS specs at their original location. Moving them to
+    //    the ESM temp graph would change `require`, `__dirname`, relative
+    //    module lookup, and the nearest package.json boundary. The runtime
+    //    installs globals before importing this path, so CJS specs can still
+    //    use `test` and `expect` without an ESM wrapper.
+    let spec_kind = test_module_kind(&spec.path).context("Detecting spec module kind")?;
+    let transformed = if spec_kind == TestModuleKind::Esm {
+        Some(transform_spec(&spec.path).context("Failed to type-strip spec")?)
+    } else {
+        None
+    };
 
     // 2. Write transformed spec + boot shim to a temp dir. The runtime is
     //    installed as a `node_modules/@jet/test/` package so specs (migrated
     //    off `@playwright/test` in Phase 5b) resolve the bare specifier via
     //    Node's standard ESM resolver.
-    let tmp = tempfile::tempdir().context("Failed to create worker temp dir")?;
+    // Keep generated ESM modules beneath the project root. Node resolves bare
+    // package specifiers from the importing module's path, not from cwd; an OS
+    // temp directory therefore made the project's node_modules invisible.
+    let tmp = tempfile::Builder::new()
+        .prefix(".jet-test-")
+        .tempdir_in(&config.project_root)
+        .context("Failed to create worker temp dir under project root")?;
     let boot_path = tmp.path().join("__jet_boot.mjs");
 
     let shim_dir = tmp.path().join("node_modules").join("@jet").join("test");
@@ -110,10 +124,17 @@ export default __jet;
     )?;
 
     let modules_dir = tmp.path().join("__jet_modules");
-    let spec_path = {
+    let spec_path = if spec_kind == TestModuleKind::CommonJs {
+        spec.path
+            .canonicalize()
+            .with_context(|| format!("canonicalizing CommonJS spec {}", spec.path.display()))?
+    } else {
         let mut emitter = TempModuleGraphEmitter::new(&modules_dir);
         emitter
-            .emit(&spec.path, Some(transformed))
+            .emit(
+                &spec.path,
+                Some(transformed.expect("ESM specs have transformed source")),
+            )
             .context("Failed to emit transformed spec module graph")?
     };
     std::fs::write(&boot_path, build_boot(&spec_path, spec, config))?;
@@ -2125,13 +2146,16 @@ fn transform_spec(path: &Path) -> Result<String> {
         .with_context(|| format!("Failed to read spec: {}", path.display()))?;
 
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if ext == "js" || ext == "mjs" {
+    if matches!(ext, "js" | "mjs" | "cjs") {
         return Ok(normalize_jet_test_virtual_imports(source));
     }
 
     let options = TransformOptions {
         source_maps: false,
         jsx_automatic: true,
+        // Tests run as one-shot Node modules, not inside the dev server. HMR
+        // imports such as /@react-refresh have no Node-side implementation.
+        dev_mode: false,
         ..Default::default()
     };
     let transformer = Transformer::new(options);
@@ -2139,6 +2163,114 @@ fn transform_spec(path: &Path) -> Result<String> {
         .transform_js(&source, path)
         .with_context(|| format!("Failed to type-strip {}", path.display()))?;
     Ok(normalize_jet_test_virtual_imports(result.code))
+}
+
+/// The execution mode a test module needs after Jet has prepared the graph.
+///
+/// ESM modules are emitted to the temporary graph so Jet can type-strip and
+/// rewrite TypeScript-relative imports. CommonJS modules must stay at their
+/// original path, where Node can preserve native `require` and package lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestModuleKind {
+    Esm,
+    CommonJs,
+}
+
+fn test_module_kind(path: &Path) -> Result<TestModuleKind> {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("cjs") => Ok(TestModuleKind::CommonJs),
+        Some("mjs") | Some("ts") | Some("tsx") | Some("jsx") => Ok(TestModuleKind::Esm),
+        Some("js") => js_module_kind(path),
+        // Test discovery only passes JavaScript-family inputs, but keep the
+        // emitter conservative if a new extension reaches this helper.
+        _ => Ok(TestModuleKind::Esm),
+    }
+}
+
+fn js_module_kind(path: &Path) -> Result<TestModuleKind> {
+    match nearest_package_type(path)? {
+        Some(package_type) if package_type == "module" => Ok(TestModuleKind::Esm),
+        Some(package_type) if package_type == "commonjs" => Ok(TestModuleKind::CommonJs),
+        Some(package_type) => anyhow::bail!(
+            "Unsupported package.json type {package_type:?} while resolving {}",
+            path.display()
+        ),
+        // Jet historically accepts ESM-authored .js fixtures without a local
+        // package.json. Retain that compatibility while correctly preserving
+        // unmistakable CommonJS scripts such as the issue #1655 repro.
+        None => {
+            let source = std::fs::read_to_string(path)
+                .with_context(|| format!("reading JavaScript module {}", path.display()))?;
+            if source_uses_commonjs(&source) {
+                Ok(TestModuleKind::CommonJs)
+            } else {
+                Ok(TestModuleKind::Esm)
+            }
+        }
+    }
+}
+
+fn nearest_package_type(path: &Path) -> Result<Option<String>> {
+    let mut directory = path.parent();
+    while let Some(dir) = directory {
+        let package_json = dir.join("package.json");
+        if package_json.is_file() {
+            let source = std::fs::read_to_string(&package_json)
+                .with_context(|| format!("reading {}", package_json.display()))?;
+            let package: serde_json::Value = serde_json::from_str(&source)
+                .with_context(|| format!("parsing {}", package_json.display()))?;
+            return Ok(package
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned));
+        }
+        directory = dir.parent();
+    }
+    Ok(None)
+}
+
+fn source_uses_commonjs(source: &str) -> bool {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .is_err()
+    {
+        return source.contains("require(") || source.contains("module.exports");
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return source.contains("require(") || source.contains("module.exports");
+    };
+    has_commonjs_syntax(source, &tree.root_node())
+}
+
+fn has_commonjs_syntax(source: &str, node: &tree_sitter::Node<'_>) -> bool {
+    if node.kind() == "call_expression" && is_require_call(source, node) {
+        return true;
+    }
+    if node.kind() == "assignment_expression" {
+        let text = source[node.byte_range()].trim_start();
+        if text.starts_with("module.exports") || text.starts_with("exports.") {
+            return true;
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if has_commonjs_syntax(source, &child) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_require_call(source: &str, node: &tree_sitter::Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" && &source[child.byte_range()] == "require" {
+            return true;
+        }
+    }
+    false
 }
 
 struct TempModuleGraphEmitter<'a> {
@@ -2213,16 +2345,11 @@ fn rewrite_relative_test_imports(
         .context("parsing transformed test module")?;
     let root = tree.root_node();
 
+    let mut module_specifier_ranges = Vec::new();
+    collect_test_module_specifier_ranges(&root, &mut module_specifier_ranges);
+
     let mut replacements = Vec::new();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        let kind = child.kind();
-        if kind != "import_statement" && kind != "export_statement" {
-            continue;
-        }
-        let Some((start, end)) = first_module_string_range(&child) else {
-            continue;
-        };
+    for (start, end) in module_specifier_ranges {
         let raw = &source[start..end];
         let spec = strip_module_quotes(raw);
         if !is_relative_or_absolute_specifier(&spec) {
@@ -2231,7 +2358,16 @@ fn rewrite_relative_test_imports(
         let Some(target) = resolve_test_relative_module(source_path, &spec)? else {
             continue;
         };
-        let target_out = emitter.emit(&target, None)?;
+        // Do not relocate CommonJS modules. Node resolves require() relative
+        // to the physical module path, and an emitted .mjs/.cjs copy loses
+        // that package boundary and its original relative dependencies.
+        let target_out = if test_module_kind(&target)? == TestModuleKind::CommonJs {
+            target
+                .canonicalize()
+                .with_context(|| format!("canonicalizing CommonJS module {}", target.display()))?
+        } else {
+            emitter.emit(&target, None)?
+        };
         let rewritten = serde_json::to_string(&path_to_file_url(&target_out))
             .expect("file URL string serializes");
         replacements.push((start, end, rewritten));
@@ -2241,6 +2377,7 @@ fn rewrite_relative_test_imports(
         return Ok(source.to_string());
     }
 
+    replacements.sort_by_key(|(start, _, _)| *start);
     let mut out = String::with_capacity(source.len());
     let mut last = 0usize;
     for (start, end, replacement) in replacements {
@@ -2250,6 +2387,55 @@ fn rewrite_relative_test_imports(
     }
     out.push_str(&source[last..]);
     Ok(out)
+}
+
+/// Collect static import/export module strings and literal dynamic imports at
+/// any nesting level. Dynamic import calls inside a test body previously kept
+/// their original relative path and therefore resolved against __jet_modules.
+fn collect_test_module_specifier_ranges(
+    node: &tree_sitter::Node<'_>,
+    ranges: &mut Vec<(usize, usize)>,
+) {
+    match node.kind() {
+        "import_statement" | "export_statement" => {
+            if let Some(range) = first_module_string_range(node) {
+                ranges.push(range);
+            }
+            return;
+        }
+        "call_expression" if is_dynamic_test_import(node) => {
+            if let Some(range) = dynamic_import_string_range(node) {
+                ranges.push(range);
+            }
+            return;
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_test_module_specifier_ranges(&child, ranges);
+    }
+}
+
+fn is_dynamic_test_import(node: &tree_sitter::Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "import" {
+            return true;
+        }
+    }
+    false
+}
+
+fn dynamic_import_string_range(node: &tree_sitter::Node<'_>) -> Option<(usize, usize)> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "arguments" {
+            return first_module_string_range(&child);
+        }
+    }
+    None
 }
 
 fn first_module_string_range(node: &tree_sitter::Node) -> Option<(usize, usize)> {
@@ -2439,6 +2625,101 @@ mod tests {
         assert!(out.contains("const x"));
         // `: number` annotation should be gone
         assert!(!out.contains(": number"));
+    }
+
+    #[test]
+    fn transform_spec_disables_react_refresh_for_tsx() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("component.spec.tsx");
+        std::fs::write(&p, "export function App() { return <div />; }\n").unwrap();
+        let out = transform_spec(&p).unwrap();
+        assert!(out.contains("react/jsx-runtime"));
+        assert!(
+            !out.contains("/@react-refresh"),
+            "test transform must not inject a dev-server-only HMR import: {out}"
+        );
+    }
+
+    #[test]
+    fn module_kind_preserves_commonjs_and_esm_boundaries() {
+        let tmp = TempDir::new().unwrap();
+        let cjs = tmp.path().join("legacy.test.js");
+        std::fs::write(&cjs, "const path = require('node:path');\n").unwrap();
+        assert_eq!(test_module_kind(&cjs).unwrap(), TestModuleKind::CommonJs);
+
+        let esm = tmp.path().join("modern.test.js");
+        std::fs::write(&esm, "import value from './value.js';\n").unwrap();
+        assert_eq!(test_module_kind(&esm).unwrap(), TestModuleKind::Esm);
+
+        std::fs::write(tmp.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
+        let package_esm = tmp.path().join("package-boundary.js");
+        std::fs::write(&package_esm, "const value = require('legacy');\n").unwrap();
+        assert_eq!(test_module_kind(&package_esm).unwrap(), TestModuleKind::Esm);
+    }
+
+    #[test]
+    fn emitter_rewrites_literal_dynamic_directory_imports() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("feature");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let spec = source_dir.join("index.test.ts");
+        std::fs::write(&spec, "const feature = await import('./');\n").unwrap();
+        std::fs::write(
+            source_dir.join("index.ts"),
+            "export const answer: number = 84;\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir);
+        let emitted = emitter
+            .emit(
+                &spec,
+                Some("const feature = await import('./');\n".to_string()),
+            )
+            .unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("file://"),
+            "dynamic import was not rewritten: {code}"
+        );
+        assert!(
+            !code.contains("import('./')"),
+            "dynamic directory import must point at the emitted index module: {code}"
+        );
+    }
+
+    #[test]
+    fn worker_runtime_exposes_jest_globals_and_table_helpers() {
+        assert!(
+            WORKER_RUNTIME.contains("globalThis.jest = jest"),
+            "jest must be installed before importing the spec graph"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("test.each = makeEach(test)"),
+            "test.each must be available on the shared it/test function"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("describe.each = makeEach(describe)"),
+            "describe.each must expand parameterized suites"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("fn: makeJestMock"),
+            "jest.fn must provide a real mock implementation"
+        );
+    }
+
+    #[test]
+    fn worker_runtime_is_valid_javascript() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(WORKER_RUNTIME, None).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "embedded runtime has JavaScript syntax errors"
+        );
     }
 
     #[test]

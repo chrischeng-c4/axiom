@@ -185,8 +185,13 @@ describe("@jet/test contract", () => {
     expect(() => vi.fn()).toThrow(/@jet\/test:\s*`vi`\s+is not part of the @jet\/test contract/);
   });
 
-  test("jest tripwire throws a jet-owned diagnostic", () => {
-    expect(() => jest.fn()).toThrow(/@jet\/test:\s*`jest`/);
+  test("jest compatibility exposes mocks and the shared global", () => {
+    const addOne = jest.fn((value) => value + 1);
+    expect(addOne(2)).toBe(3);
+    expect(addOne.mock.calls.length).toBe(1);
+    expect(globalThis.jest).toBe(jest);
+    jest.mock("example", () => ({ answer: 42 }));
+    expect(jest.requireMock("example").answer).toBe(42);
   });
 
   test("mock tripwire throws on call", () => {
@@ -214,6 +219,54 @@ describe("@jet/test contract", () => {
         "expected 5 passing contract tests, got {}",
         summary.passed
     );
+}
+
+#[tokio::test]
+async fn jest_each_and_describe_each_expand_rows() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("src/jest-helper.ts"),
+        r#"export const importedSpy = jest.fn((value: string) => value.toUpperCase());"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("jest-each.test.js"),
+        r#"
+import { importedSpy } from "./src/jest-helper";
+
+it.each([
+  [1, 2, 3],
+  [2, 3, 5],
+])("%i + %i = %i", (left, right, total) => {
+  expect(left + right).toBe(total);
+  expect(importedSpy("jet")).toBe("JET");
+});
+
+describe.each([["first", 1], ["second", 2]])("case %s", (label, value) => {
+  test("keeps row value " + label, () => {
+    expect(value).toBeGreaterThan(0);
+  });
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "Jest table compatibility must pass: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 4, "expected one test per table row");
 }
 
 #[tokio::test]
@@ -326,5 +379,198 @@ test("extensionless relative specifier resolves TS source", () => {
         summary.reports
     );
     assert_eq!(summary.passed, 3, "all relative import specs should pass");
+}
+
+#[tokio::test]
+async fn test_worker_resolves_project_packages_and_disables_dev_refresh() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let node_modules = tmp.path().join("node_modules");
+    let demo_dep = node_modules.join("demo-dep");
+    let react = node_modules.join("react");
+    fs::create_dir_all(&demo_dep).unwrap();
+    fs::create_dir_all(&react).unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        demo_dep.join("package.json"),
+        r#"{"name":"demo-dep","type":"module","exports":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(demo_dep.join("index.js"), "export const answer = 42;\n").unwrap();
+    fs::write(
+        react.join("package.json"),
+        r#"{"name":"react","type":"module","exports":{"./jsx-runtime":"./jsx-runtime.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        react.join("jsx-runtime.js"),
+        r#"export const Fragment = Symbol.for("fragment");
+export const jsx = (tag, props) => ({ tag, props });
+export const jsxs = jsx;
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("src/Panel.tsx"),
+        r#"export function Panel() { return <div>panel</div>; }"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("packages-and-tsx.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { answer } from "demo-dep";
+import { Panel } from "./src/Panel";
+
+test("resolves workspace packages without dev-only refresh imports", () => {
+  expect(answer).toBe(42);
+  expect(typeof Panel).toBe("function");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "project packages and TSX imports must run in Node: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_strips_class_field_ts_syntax_in_imported_modules() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("src/model.ts"),
+        r#"
+interface Labelled { label?: string; }
+export class Model implements Labelled {
+  public label?: string;
+  id!: string;
+  constructor() { this.id = "model"; }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("class-fields.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { Model } from "./src/model";
+
+test("imports TypeScript class fields without raw TS syntax", () => {
+  const model = new Model();
+  expect(model.id).toBe("model");
+  expect(model.label).toBeUndefined();
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "imported TypeScript class syntax must be stripped: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_rewrites_dynamic_directory_imports_to_index_modules() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let directory = tmp.path().join("src/dynamic");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("index.ts"),
+        "export const answer: number = 84;\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("index.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+
+test("loads the sibling directory index dynamically", async () => {
+  const { answer } = await import("./");
+  expect(answer).toBe(84);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "dynamic directory imports must resolve their index module: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_preserves_commonjs_spec_location_and_require() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("local.cjs"),
+        "module.exports = { answer: 42 };\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("commonjs.test.js"),
+        r#"
+const path = require("node:path");
+const local = require("./local.cjs");
+
+test("CommonJS globals and require stay native", () => {
+  expect(path.basename("/tmp/jet")).toBe("jet");
+  expect(__dirname).toBeTruthy();
+  expect(local.answer).toBe(42);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "CommonJS specs must execute at their original path: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
 }
 // CODEGEN-END
