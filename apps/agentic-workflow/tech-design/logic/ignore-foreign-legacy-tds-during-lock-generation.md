@@ -9,37 +9,46 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: configured-td-lock-discovery
-entry: candidates
+id: td-gen-spec-resolution-contract
+entry: requested
 nodes:
-  candidates:
+  requested:
     kind: start
-    label: "TD lock discovery candidates"
-  configured:
+    label: "td gen work-item request"
+  explicit:
     kind: decision
-    label: "Candidate is active spec or under a configured project td_path?"
-  include:
+    label: "Explicit or project-qualified TD spec available?"
+  active:
     kind: process
-    label: "Validate or generate the configured TD lock"
-  ignore:
+    label: "Use the active configured spec and its project lock"
+  legacy:
+    kind: decision
+    label: "A unique legacy candidate is configured?"
+  fallback:
     kind: terminal
-    label: "Ignore foreign unconfigured legacy TD"
+    label: "Use configured legacy fallback only"
+  error:
+    kind: terminal
+    label: "Require an explicit spec path"
 edges:
-  - { from: candidates, to: configured }
-  - { from: configured, to: include, label: "yes" }
-  - { from: configured, to: ignore, label: "no" }
+  - { from: requested, to: explicit }
+  - { from: explicit, to: active, label: "yes" }
+  - { from: explicit, to: legacy, label: "no" }
+  - { from: legacy, to: fallback, label: "yes" }
+  - { from: legacy, to: error, label: "no" }
 ---
 flowchart TD
-    candidates([lock candidates]) --> configured{active or configured td_path?}
-    configured -->|yes| include[validate/generate lock]
-    configured -->|no| ignore([foreign legacy ignored])
+    requested([td gen request]) --> explicit{configured or explicit spec?}
+    explicit -->|yes| active[use active project spec + lock]
+    explicit -->|no| legacy{unique configured legacy candidate?}
+    legacy -->|yes| fallback([configured fallback])
+    legacy -->|no| error([request explicit spec])
 ```
 
-TD generation considers the requested active spec and TDs under configured
-project roots only. A worktree-local legacy `.aw` file outside every configured
-`td_path` is preservation input, not a lock participant, and cannot block an
-unrelated project's generation.
-
+`td gen` resolves an explicit or project-qualified active spec before any
+legacy worktree discovery. Legacy fallback is valid only for a unique candidate
+under a configured project root. A foreign `.aw` path is never selected and is
+never passed into TD lock validation.
 ## Changes
 <!-- type: changes lang: yaml -->
 
