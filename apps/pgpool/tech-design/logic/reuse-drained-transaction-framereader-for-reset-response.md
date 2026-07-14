@@ -58,34 +58,33 @@ changes:
     action: modify
     section: pgpool-reset-reader-reuse
     impl_mode: hand-written
-    reason: Accept an optional drained transaction reader for reset validation while preserving the generic fresh-reader release path.
+    reason: Add an internal reset route that consumes a caller-supplied drained backend reader while retaining the public generic release fallback.
   - path: apps/pgpool/src/pool/transaction.rs
     action: modify
     section: pgpool-reset-reader-reuse
     impl_mode: hand-written
-    reason: Transfer the established transaction backend reader only at the verified Idle lease boundary.
+    reason: Hand the transaction reader to reset only after a validated idle result and reunite failure handling.
   - path: apps/pgpool/src/wire/reader.rs
     action: modify
     section: pgpool-reset-reader-reuse
     impl_mode: hand-written
-    reason: Expose the bounded drained-buffer fact needed to reject unsafe reader reuse without weakening frame validation.
+    reason: Provide an explicit drained-buffer predicate without exposing mutable parser internals.
   - path: apps/pgpool/tests/pool.rs
     action: modify
     section: pgpool-reset-reader-reuse
     impl_mode: hand-written
-    reason: Exercise generic reset fallback and malformed reset close behavior when no transaction reader is supplied.
+    reason: Preserve generic reset and failure-close regression coverage.
   - path: apps/pgpool/tests/pool_modes.rs
     action: modify
     section: pgpool-reset-reader-reuse
     impl_mode: hand-written
-    reason: Verify a contended real transaction remains reset-isolated and backend-cap bounded through the reused-reader path.
+    reason: Exercise contended transaction reset isolation and one-backend capacity through the reused-reader path.
   - path: apps/pgpool/tests/wire_codec.rs
     action: modify
     section: pgpool-reset-reader-reuse
     impl_mode: hand-written
-    reason: Pin the drained reader precondition and preserve strict ReadyForQuery state validation.
+    reason: Test the reader-drained precondition and state-validating reset boundary.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
