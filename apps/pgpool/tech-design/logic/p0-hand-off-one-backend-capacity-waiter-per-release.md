@@ -43,17 +43,16 @@ one capacity waiter]
 
 ### Invariants
 
-- A capacity transition exposes exactly one physical backend slot: a reset-clean idle tuple, a permit released after terminal disposal, a failed connect, or a dead-idle drop. Its notifier therefore calls `notify_one`, not `notify_waiters`.
-- A notified waiter repeats the existing acquisition order: take a live idle stream first, then try one semaphore permit for a fresh connect. A spurious/raced wake does not claim capacity and re-arms the same deadline-bounded wait.
-- Each successive capacity transition emits another one-waiter handoff. No handoff is coupled to a particular client, so a cancelled waiter loses only its own notification; the next release still wakes a remaining waiter and no permit is stranded.
-- `publish_startup_replay` remains the sole broadcast path because its shared cache can satisfy multiple distinct startup admissions without consuming a backend slot.
-- `DISCARD ALL` still completes before an idle tuple is exposed. Liveness failure, stream shutdown, fresh-connect failure, lease-drop cleanup, and reset failure each free exactly one permit and issue exactly one capacity handoff.
-- Semaphore permits and `PoolState` ownership remain unchanged: active and idle physical streams each own exactly one permit; a notified waiter cannot exceed the configured physical backend cap.
+- `BackendPool` has two deliberately separate notification intents. `publish_startup_replay` stores an exact shared reply while holding `PoolState`, drops the lock, then calls `notify_waiters`; every other path that makes one physical slot available calls a `notify_one` capacity handoff.
+- Capacity handoff occurs only after the released permit is either installed inside one idle tuple or dropped. Therefore the awakened waiter cannot observe a notification before the corresponding resource is visible.
+- `acquire_internal`, `acquire_for_startup`, and `acquire_for_replayed_startup` keep their existing deadline and notified-before-check ordering. A one-shot notification can be spurious or won by another waiter, but the loser re-arms its wait without resetting its deadline or claiming a phantom slot.
+- Each release, reset failure, close, dead-idle removal, failed fresh connect, or abandoned lease can free at most one permit and emits at most one capacity notification. Consecutive transitions eventually wake distinct pending waiters under Tokio `Notify` FIFO wake discipline.
+- Replay cache entries do not consume backend capacity; publishing one can satisfy multiple matching startup identities, so its broadcast is semantically distinct and remains unchanged.
+- `DISCARD ALL`, liveness checking, semaphore permit ownership, physical cap, timeout surface, transaction relay, and session state isolation are untouched.
 
 ### Error handling
 
-All existing timeout and I/O failures remain terminal for their stream and release their permit before notifying one capacity waiter. A waiter that wakes after another task consumed the resource simply re-enters its deadline-bounded wait; it never reports a false saturation error before the original deadline. Replay publication still broadcasts after the entry is committed under the pool mutex, so every awakened startup admission sees either the exact cached reply or safely retries.
-
+A notified waiter that races and finds neither idle stream nor semaphore permit simply waits again until its original deadline. It never closes another client's stream or reports saturation early. Every I/O, timeout, or liveness failure follows the existing stream disposal path, drops or preserves exactly the same permit as before, and performs the matching one-slot handoff only after capacity is genuinely free. A replay-cache broadcast remains after cache insertion, so it cannot wake a startup admission that has no committed reply to consume.
 ## Changes
 <!-- type: changes lang: yaml -->
 
