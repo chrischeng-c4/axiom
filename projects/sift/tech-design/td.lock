@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T08:33:57.768766+00:00"
-digest = "sha256:2f81cf07e3da05bf7dc2797e1656e41e8f4a9867187ecd635ee6ee13c8b66ba7"
-source_digest = "sha256:2f81cf07e3da05bf7dc2797e1656e41e8f4a9867187ecd635ee6ee13c8b66ba7"
-ir_digest = "sha256:838bfb6b42fc3c9b8eaa549f0df58e658991bcb9d21c79c4a539ae34fc5bdbf7"
+generated_at = "2026-07-14T08:52:08.608760+00:00"
+digest = "sha256:f06604942394df216a5aa82dba5520a9b327986bf4e19dd1c76c994a5dba591c"
+source_digest = "sha256:f06604942394df216a5aa82dba5520a9b327986bf4e19dd1c76c994a5dba591c"
+ir_digest = "sha256:dc2c83cbf6e396813a0aa6b3ba7fb0b51202ce6707cbbdb1dd995434400484e2"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -54,6 +54,12 @@ path = "logic/add-kubernetes-deployment-and-operator-surfaces.md"
 digest = "sha256:9b6f2a3218e854412694f67da3a826b698f96537ab3004a973146eb5dff6ed8d"
 ir_digest = "sha256:bc96432ba6a1f38ec53195ae5815290b215ae8ee0bc44964d54b50301116ec0a"
 section_count = 2
+
+[[files]]
+path = "logic/add-metric-time-series-store-and-rollups.md"
+digest = "sha256:3d6ba66f885aea7303fab7fd69ed615e961e40208385893ac939e8e4e8ca85c5"
+ir_digest = "sha256:171c8a9c26c190ca7f76ebcc7c6b92a8a8ded9fcf3f83c809ff8363bf000c9d4"
+section_count = 5
 
 [[files]]
 path = "logic/add-operational-ec-stability-and-governance-gates.md"
