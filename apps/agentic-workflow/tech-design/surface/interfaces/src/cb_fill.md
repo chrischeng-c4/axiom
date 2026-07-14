@@ -17,6 +17,13 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/cli/cb_fill.rs` generated from AST during Score force-regeneration standardization.
 
+### Active TD marker queue
+
+Both `aw td fill` brief mode and its `--apply` continuation derive the marker
+queue from the active TD's `## Changes` paths. After an apply, re-enumeration
+uses that same queue; unresolved markers owned by another app or library are
+not eligible to delay this work item's code-check.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -1683,6 +1690,7 @@ changes:
     section: source
     description: |
       Whole-file source template generated from the standardized target body.
-      Updates CB fill to write WI workflow projection locks for marker payloads
-      and commit per-marker progress before dispatching the next marker.
+      Updates CB fill to resolve and re-enumerate only active-TD Changes paths,
+      write WI workflow projection locks for owned marker payloads, and commit
+      per-marker progress before dispatching the next marker.
 ```

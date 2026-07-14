@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-14T06:30:56.599461+00:00"
-digest = "sha256:a1a58b6d24f17370d116f667e1e0fee41a9c2c790da73f291303196ef795d6b1"
-source_digest = "sha256:a1a58b6d24f17370d116f667e1e0fee41a9c2c790da73f291303196ef795d6b1"
-ir_digest = "sha256:47eaee94a66e28137140ad5c2e9efacfb5650bf41db90ec4a226e874815e677f"
+generated_at = "2026-07-14T10:51:59.248944+00:00"
+digest = "sha256:a4469c6bc47c35abd8a545e07256cdfb7b1806777488b27ae041b626a1f1ba12"
+source_digest = "sha256:a4469c6bc47c35abd8a545e07256cdfb7b1806777488b27ae041b626a1f1ba12"
+ir_digest = "sha256:1b8a83f8862f807d6b201860920439cc2bf09f4617ffbc0dc28b2bf9f61fc477"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4931,6 +4931,12 @@ ir_digest = "sha256:02d665b078c4d2210c76130e3397e5799713dd8699da6ed67110400c8ead
 section_count = 3
 
 [[files]]
+path = "logic/ignore-foreign-legacy-tds-during-lock-generation.md"
+digest = "sha256:d6bc1c4de969183b7dae3c1013841863f274e368bed3929a5ab51e0b0b92abcd"
+ir_digest = "sha256:4dc67174123cfbcc2b6a876a330a1171e687604df3ac481eb340b60a7b347b76"
+section_count = 3
+
+[[files]]
 path = "logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
 digest = "sha256:f7eaed2d62f135033424abaefbe500635e9245007d4567ed2da283e100a7648f"
 ir_digest = "sha256:d2a6be37aa874f60fae352733644a97ea6f75b2e00643a9447f57aa0474d1953"
@@ -4970,6 +4976,12 @@ section_count = 2
 path = "logic/resolve-project-td-before-foreign-legacy-fallback.md"
 digest = "sha256:b7deacd47fa7119ce4497fd428be3cf21531af790375e0553a1346f25d88b5b4"
 ir_digest = "sha256:ad740481a9285cb55760242a2de507c4e65f237c38df7da8647e8e3fb6a608f5"
+section_count = 3
+
+[[files]]
+path = "logic/scope-td-fill-re-enumeration-to-the-active-work-item.md"
+digest = "sha256:f389ae063a70ccad9c5183a27e7acb89f660da397108bbd8124a9e2d07d8932f"
+ir_digest = "sha256:ba2a8b5ad3ea9b5b7ca50a8ecb5822958c79c8ae3b938fc86652e86af28867c0"
 section_count = 3
 
 [[files]]
@@ -5373,8 +5385,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/cb.md"
-digest = "sha256:d1369b356193029f0711c5d569f65a93d02d88cea910dd2e87a4fe3cd2873534"
-ir_digest = "sha256:8d3fc6c28bc97dd5227c661bd44ed7791c66ae0c497d29a7d8bdd3d273c5814a"
+digest = "sha256:7bd347d8cd66235ef54e330721129dccd2419aaab24e511dd29b8d97a4a3b4fc"
+ir_digest = "sha256:00016ec2372fae5adc4fc2e264b2298bfd62b4b603c72a48e3a4fc3e03832597"
 section_count = 3
 
 [[files]]
@@ -5385,8 +5397,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/cb_fill.md"
-digest = "sha256:290ad5722ae3d8b9c0333cfef852fdc489c691bffa05f14dc2e52e720d306047"
-ir_digest = "sha256:afce3381c49a2288dad82a0e31b6dfa643a45f7b4116be9fb858516780ea1275"
+digest = "sha256:4c5f5326f288a254391ff818e8d0d6acdb66008bdf5006132a0b6a4f0c0afdfc"
+ir_digest = "sha256:7979dd9e7592c07215be367aeda4c29375ea6c65b36d776587ebfbea4068544e"
 section_count = 2
 
 [[files]]
@@ -5541,8 +5553,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:8f69d208f7050696cfeb5f79b1860f4e4e68bb8b5f21347617b085b73951f24f"
-ir_digest = "sha256:693af79b854cde1af118cf4748c8b903773a12220664a8258d8e0b1ef9560dac"
+digest = "sha256:baad118123dfda31fd91b503d743445fcfd637ad905f49a0ddc9691e2485866b"
+ir_digest = "sha256:78ea2b00c2b478df90a3e9523b8243dacd35617e7f6f243904e01930be9c0eb4"
 section_count = 2
 
 [[files]]
@@ -6033,8 +6045,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_no_merge_test.md"
-digest = "sha256:7d35d7c5fb16db3ce524b98d2bfedb298df2fad5079e6c8fed8773cb7e4f4c09"
-ir_digest = "sha256:4a65e389b90a750a0ad6562aeb84de6e521b78b929c616cd2ce10f17f0f9efbc"
+digest = "sha256:55b1ff17b7f9d03bb712ae98159059e7b2f050b9bbd8798b58fe3905fd07f89e"
+ir_digest = "sha256:85743f1837ec8cb8a9060f0d45c486eb2fb3034508485c9055583d85fe10fa8f"
 section_count = 2
 
 [[files]]
