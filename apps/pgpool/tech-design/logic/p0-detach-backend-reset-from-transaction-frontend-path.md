@@ -32,3 +32,26 @@ flowchart LR
   reset -->|clean Ready| idle[park idle + notify]
   reset -->|fail/cancel| dispose[drop stream + permit + notify]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-detached-reset
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: pgpool-detached-reset
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-detached-reset
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-detached-reset
+    impl_mode: hand-written
+```
