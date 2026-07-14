@@ -403,8 +403,7 @@ pub fn register() {
     attrs.insert("COPY_BUFSIZE".to_string(), MbValue::from_int(COPY_BUFSIZE));
 
     // Error sentinels — Instance stubs with __name__/__module__ so
-    // identity + attribute access work. Hierarchy is flat (no inheritance
-    // modelled yet).
+    // identity + attribute access work.
     for err_name in [
         "Error",
         "SameFileError",
@@ -415,6 +414,31 @@ pub fn register() {
     ] {
         attrs.insert(err_name.to_string(), make_error_sentinel(err_name));
     }
+    // Register the real CPython hierarchy so `except Exception:` /
+    // `except OSError:` / `except shutil.SameFileError:` matcher validation
+    // sees these as genuine exception subclasses (`Error(OSError)`,
+    // `SameFileError(Error)`, `SpecialFileError`/`ExecError`/`ReadError`
+    // ⊂ `OSError`, `RegistryError(Exception)` — CPython 3.12). Without this,
+    // `mb_exception_matches` rejects the except-clause with "catching classes
+    // that do not inherit from BaseException is not allowed" (#1615).
+    super::super::class::mb_class_register("Error", vec!["OSError".to_string()], HashMap::new());
+    super::super::class::mb_class_register(
+        "SameFileError",
+        vec!["Error".to_string()],
+        HashMap::new(),
+    );
+    super::super::class::mb_class_register(
+        "SpecialFileError",
+        vec!["OSError".to_string()],
+        HashMap::new(),
+    );
+    super::super::class::mb_class_register("ExecError", vec!["OSError".to_string()], HashMap::new());
+    super::super::class::mb_class_register("ReadError", vec!["OSError".to_string()], HashMap::new());
+    super::super::class::mb_class_register(
+        "RegistryError",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
 
     // Module re-exports — CPython's `shutil` does `import collections`,
     // `import os`, etc.; expose as None placeholders. `posix` and `nt`

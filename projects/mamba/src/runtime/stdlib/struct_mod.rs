@@ -272,6 +272,13 @@ pub fn register() {
         "error".to_string(),
         MbValue::from_ptr(MbObject::new_str_immortal("error".to_string())),
     );
+    // Register the hierarchy so `except Exception:` / `except BaseException:`
+    // (and `is_subclass_of`'s `except struct.error:` matcher validation) see
+    // `struct.error` as a real `Exception` subclass, matching CPython
+    // (`class error(Exception): ...`). Without this, `mb_exception_matches`
+    // rejects `except struct.error:` with "catching classes that do not
+    // inherit from BaseException is not allowed" (#1615).
+    super::super::class::mb_class_register("error", vec!["Exception".to_string()], HashMap::new());
 
     super::register_module("struct", attrs);
 }

@@ -1211,6 +1211,16 @@ fn register_cookie_classes() {
         d_cookie_error as *const () as usize as u64,
         "CookieError".to_string(),
     );
+    // Register the hierarchy so `except Exception:`/`except cookies.CookieError:`
+    // matcher validation sees a real `Exception` subclass, matching CPython
+    // (`class CookieError(Exception): ...`). Without this, `mb_exception_matches`
+    // rejects the except-clause with "catching classes that do not inherit
+    // from BaseException is not allowed" (#1615).
+    super::super::class::mb_class_register(
+        "CookieError",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
     super::super::module::register_native_type_name(
         d_simple_cookie as *const () as usize as u64,
         "SimpleCookie".to_string(),
