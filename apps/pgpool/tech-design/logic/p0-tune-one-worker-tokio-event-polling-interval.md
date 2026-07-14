@@ -44,7 +44,6 @@ flowchart LR
 
 - A bootstrap failure, behavior regression, or first valid normal-baseline 30-second comparison that loses to PgBouncer reverts the runtime bootstrap immediately.
 - Meter output may diagnose event-polling effects but cannot decide candidate retention.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
