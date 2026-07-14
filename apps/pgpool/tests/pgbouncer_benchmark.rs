@@ -162,6 +162,13 @@ fn ordinary_peer_profile_counterbalances_order_and_documents_peer_verdict_rules(
     let profile = dry_run_profile();
 
     assert_eq!(profile["profile"]["paired_trials"], 2);
+    assert_eq!(profile["profile"]["duration_seconds"], 30);
+    assert!(RUNNER_SOURCE.contains("readonly TARGET_WARMUP_SECONDS=5"));
+    assert!(RUNNER_SOURCE.contains("run_target_warmup"));
+    assert!(RUNNER_SOURCE.contains("pgbouncer-first-warmup-pgbench.log"));
+    assert!(RUNNER_SOURCE.contains("pgpool-second-warmup-pgbench.log"));
+    assert!(RUNNER_SOURCE.contains("pgpool-first-warmup-pgbench.log"));
+    assert!(RUNNER_SOURCE.contains("pgbouncer-second-warmup-pgbench.log"));
     assert!(RUNNER_SOURCE.contains("start_pgpool\n\nPGBOUNCER_FIRST_LOG"));
     assert!(RUNNER_SOURCE.contains("PGBOUNCER_FIRST_LOG"));
     assert!(RUNNER_SOURCE.contains("PGPOOL_FIRST_LOG"));
@@ -171,6 +178,8 @@ fn ordinary_peer_profile_counterbalances_order_and_documents_peer_verdict_rules(
     assert!(RUNNER_SOURCE.contains("comparison_valid"));
     assert!(RUNNER_SOURCE.contains("pgpool_win_eligible"));
     assert!(BENCHMARK_README.contains("counterbalanced paired trials"));
+    assert!(BENCHMARK_README.contains("five-second target-specific warmup"));
+    assert!(BENCHMARK_README.contains("excluded from the JSON and verdict"));
     assert!(BENCHMARK_README.contains("both clean pairs favor PgBouncer"));
     assert!(BENCHMARK_README.contains("pgpool_win_eligible: false"));
 }

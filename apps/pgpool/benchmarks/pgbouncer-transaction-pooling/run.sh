@@ -7,6 +7,7 @@ readonly BACKEND_CAP=16
 readonly CLIENTS=64
 readonly JOBS=4
 readonly DURATION_SECONDS=30
+readonly TARGET_WARMUP_SECONDS=5
 readonly PAIRED_TRIALS=2
 readonly MAX_PAIR_RATIO_RELATIVE_SPREAD=0.20
 readonly METER_DURATION_CAP_SECONDS=$((DURATION_SECONDS + 30))
@@ -83,6 +84,15 @@ run_pgbench_workload() {
         workload_args+=(--select-only)
     fi
     pgbench --no-vacuum --protocol simple "${workload_args[@]}" --client "$clients" --jobs "$jobs" --time "$seconds" --host "$host" --port "$port" --username postgres "$DATABASE" >"$output" 2>&1
+}
+
+run_target_warmup() {
+    local host="$1"
+    local port="$2"
+    local output="$3"
+    local target="$4"
+    run_pgbench_workload "$host" "$port" "$CLIENTS" "$JOBS" "$TARGET_WARMUP_SECONDS" "$output"
+    validate_benchmark_sample "$output" "$target target-specific warmup"
 }
 
 fail() {
@@ -477,12 +487,16 @@ PGPOOL_SECOND_LOG="$WORK_DIR/pgpool-second-pgbench.log"
 PGPOOL_FIRST_LOG="$WORK_DIR/pgpool-first-pgbench.log"
 PGBOUNCER_SECOND_LOG="$WORK_DIR/pgbouncer-second-pgbench.log"
 
+run_target_warmup 127.0.0.1 "$PGBOUNCER_PORT" "$WORK_DIR/pgbouncer-first-warmup-pgbench.log" "PgBouncer first trial"
 run_pgbench_workload 127.0.0.1 "$PGBOUNCER_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGBOUNCER_FIRST_LOG"
 validate_benchmark_sample "$PGBOUNCER_FIRST_LOG" "PgBouncer first trial"
+run_target_warmup 127.0.0.1 "$PGPOOL_PORT" "$WORK_DIR/pgpool-second-warmup-pgbench.log" "pgpool second trial"
 run_pgbench_workload 127.0.0.1 "$PGPOOL_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGPOOL_SECOND_LOG"
 validate_benchmark_sample "$PGPOOL_SECOND_LOG" "pgpool second trial"
+run_target_warmup 127.0.0.1 "$PGPOOL_PORT" "$WORK_DIR/pgpool-first-warmup-pgbench.log" "pgpool first trial"
 run_pgbench_workload 127.0.0.1 "$PGPOOL_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGPOOL_FIRST_LOG"
 validate_benchmark_sample "$PGPOOL_FIRST_LOG" "pgpool first trial"
+run_target_warmup 127.0.0.1 "$PGBOUNCER_PORT" "$WORK_DIR/pgbouncer-second-warmup-pgbench.log" "PgBouncer second trial"
 run_pgbench_workload 127.0.0.1 "$PGBOUNCER_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGBOUNCER_SECOND_LOG"
 validate_benchmark_sample "$PGBOUNCER_SECOND_LOG" "PgBouncer second trial"
 

@@ -25,9 +25,12 @@ Both targets use the same intentionally constrained workload:
   `server_reset_query_always = 1`, so the reset is executed on every
   transaction-pool return rather than merely configured
 
-The runner warms the shared backend, starts both poolers, and then runs two
-counterbalanced paired trials sequentially: PgBouncer-first followed by
-pgpool-first. Each target therefore receives one first-position and one
+The runner warms the shared backend, starts both poolers, then gives the target
+of each scored leg a five-second target-specific warmup with the same client,
+job, protocol, cap, and reset settings. Warmup validation still rejects client
+errors, but its TPS and latency are excluded from the JSON and verdict. It then
+runs two counterbalanced paired trials sequentially: PgBouncer-first followed
+by pgpool-first. Each target therefore receives one first-position and one
 second-position 30-second trial without concurrent pgbench traffic against the
 shared capped backend. Its JSON preserves raw TPS, average latency, order, and
 each pair's `pgpool_over_pgbouncer_tps` ratio, then reports the paired mean.
