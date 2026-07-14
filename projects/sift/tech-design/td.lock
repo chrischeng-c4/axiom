@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T05:10:03.250129+00:00"
-digest = "sha256:fb13aa6dc67ac72fb6a47b30f372ca49b217a6aa9d226437f7f635617718ce06"
-source_digest = "sha256:fb13aa6dc67ac72fb6a47b30f372ca49b217a6aa9d226437f7f635617718ce06"
-ir_digest = "sha256:be8f2e019745231c9e3a5600126add32176004314755bcd8959e6e6cf304a5ea"
+generated_at = "2026-07-14T06:12:00.639367+00:00"
+digest = "sha256:fc7c22e2c9cb29c5a048eea950500052dc601804da305c99f56d34fb6190db73"
+source_digest = "sha256:fc7c22e2c9cb29c5a048eea950500052dc601804da305c99f56d34fb6190db73"
+ir_digest = "sha256:11e85735c5e4d6ef49fef66ee404ef76be1f6748361e33da84691d4a8002fec7"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -26,9 +26,15 @@ ir_digest = "sha256:0b88419781dd0923c1510b53ddd146a17787c0596fb2b34a803f22f42f16
 section_count = 2
 
 [[files]]
+path = "logic/add-durable-projection-runtime-and-embedded-lumen-index.md"
+digest = "sha256:84c4e8c289f559712e2d8de3cdfdbef88ce0e90cfb43a751365ac72ec355d72a"
+ir_digest = "sha256:2688b2e252085a86efb7bda7f4389f83cc8247539bbe831f43679d7f8ded7e00"
+section_count = 5
+
+[[files]]
 path = "logic/add-epoch-sharded-journal-blobs-and-gcs-archive.md"
-digest = "sha256:1167edcf48aada55eb5a4335e28a7acaf8dab51ffdfc46910e9daa71a88c7a33"
-ir_digest = "sha256:3433d993bb2167154eda88b3a5b35eadf0650ac7694f95ef84bdde04249ee035"
+digest = "sha256:9f287a5b8f307ffa883604caf737e40b555214c1ba6e6df0f8aa4c669763a806"
+ir_digest = "sha256:317cdb56e94d19743e5bab2b28e781c129633d94895e3d0dd72b96c41254cf43"
 section_count = 4
 
 [[files]]
