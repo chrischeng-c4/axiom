@@ -46,3 +46,26 @@ flowchart LR
 ### Error handling
 
 A `WouldBlock` result can represent either no registered readability or a stale readability bit after the peek syscall. Both mean the descriptor has no observable EOF/error and is returned unchanged. `Ok(0)` and non-`WouldBlock` errors drop the idle tuple before the acquire loop proceeds, preserving the physical cap.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/Cargo.toml
+    action: modify
+    section: pgpool-readiness-gated-idle-liveness
+    impl_mode: hand-written
+    reason: Declare the safe socket facade used solely inside Tokio's readiness-gated closure.
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: pgpool-readiness-gated-idle-liveness
+    impl_mode: hand-written
+    reason: Replace timer liveness with Tokio READABLE gating and conditional non-consuming socket peek classification.
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: pgpool-readiness-gated-idle-liveness
+    impl_mode: hand-written
+    reason: Cover no-readiness reuse, ready EOF rejection, and preserved queued protocol bytes.
+```
