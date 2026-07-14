@@ -2259,20 +2259,42 @@ async fn test_code_check_partial_implementation_completes() {
 fn write_854_marker_file(root: &std::path::Path, rel_path: &str, gap: &str, filled: bool) {
     let path = root.join(rel_path);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // Keep the fixture's runtime marker exact while avoiding a literal
+    // HANDWRITE-BEGIN/END pair in this test source: td fill must scan source
+    // markers, not marker-shaped strings that this fixture writes into a
+    // temporary repository.
+    let marker_begin = ["HANDWRITE", "BEGIN"].join("-");
+    let marker_end = ["HANDWRITE", "END"].join("-");
     let body = if filled {
         format!(
-            "// HANDWRITE-BEGIN gap=\"{gap}\" tracker=\"none\" reason=\"filled\"\n\
+            "// {marker_begin} gap=\"{gap}\" tracker=\"none\" reason=\"filled\"\n\
              // implemented\n\
-             // HANDWRITE-END\n"
+             // {marker_end}\n"
         )
     } else {
         format!(
-            "// HANDWRITE-BEGIN gap=\"{gap}\" tracker=\"none\" reason=\"unfilled\"\n\
+            "// {marker_begin} gap=\"{gap}\" tracker=\"none\" reason=\"unfilled\"\n\
              // TODO: hand-write content for `{rel_path}`.\n\
-             // HANDWRITE-END\n"
+             // {marker_end}\n"
         )
     };
     std::fs::write(path, body).unwrap();
+}
+
+/// Write one exact TD Changes spec for #1679's two-project isolation
+/// fixture. The completing issue records only the Tape spec in
+/// `Issue.implements`; the Mamba spec exists solely to prove it cannot
+/// become evidence input for the Tape terminal gate.
+fn write_1679_changes_spec(root: &std::path::Path, spec_rel: &str, path: &str) {
+    let spec_abs = root.join(spec_rel);
+    std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+    std::fs::write(
+        spec_abs,
+        format!(
+            "---\nid: scope-isolation\nfill_sections: [changes]\n---\n\n# Scope isolation\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {path}\n    action: modify\n    impl_mode: hand-written\n```\n"
+        ),
+    )
+    .unwrap();
 }
 
 /// (a) An unfilled HANDWRITE marker outside the WI's own Changes-listed
@@ -2345,6 +2367,69 @@ async fn test_code_check_ignores_unrelated_marker_outside_wi_scope() {
         Some(td_phase::TD_MERGED),
         "code-check must still advance phase to td_merged"
     );
+}
+
+/// #1679: terminal hand-written implementation evidence is scoped to the
+/// completing WI's exact `Issue.implements` TD path. An unrelated Mamba TD
+/// with a missing hand-written target must not block a Tape WI whose declared
+/// Tape target has a committed diff after that WI's Td-Init baseline.
+#[tokio::test]
+async fn test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec() {
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    let tape_target = "apps/tape/src/server.rs";
+    let tape_spec = "apps/tape/tech-design/logic/tape-scope.md";
+    let mamba_target = "projects/mamba/src/pkgmanage/add.rs";
+    let mamba_spec = "projects/mamba/tech-design/logic/mamba-scope.md";
+    let tape_target_abs = root.join(tape_target);
+    std::fs::create_dir_all(tape_target_abs.parent().unwrap()).unwrap();
+    std::fs::write(&tape_target_abs, "pub fn server() { /* before */ }\n").unwrap();
+    commit_all(&git, root);
+
+    let slug = "cross-project-hand-written-evidence-test";
+    write_1679_changes_spec(root, tape_spec, tape_target);
+    write_1679_changes_spec(root, mamba_spec, mamba_target);
+    commit_td_init(&git, root, slug);
+    std::fs::write(&tape_target_abs, "pub fn server() { /* implemented */ }\n").unwrap();
+    commit_all(&git, root);
+    seed_847_open_issue(root, slug, td_phase::CB_FILLED, tape_spec).await;
+
+    let output = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("\"action\":\"done\""),
+        "Tape WI must close from its own evidence despite unrelated Mamba TD, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains(mamba_target),
+        "target-scoped completion must never report unrelated Mamba paths, got:\n{stdout}"
+    );
+
+    let after = LocalBackend::from_project_root(root)
+        .get(slug)
+        .await
+        .expect("read issue")
+        .expect("issue remains");
+    assert_eq!(after.phase.as_deref(), Some(td_phase::TD_MERGED));
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 1);
 }
 
 /// (b) An unfilled HANDWRITE marker in a file the WI's own Changes section
@@ -3346,5 +3431,4 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
         "code-check must still advance phase to td_merged"
     );
 }
-
 // CODEGEN-END
