@@ -7,28 +7,32 @@ Sift is the GCP/GKE-first operational event platform in the Axiom stack.
 It is not a traditional logging service. Logs are Sift's first producer and
 first materialized view, but the source of truth is a replayable raw operational
 event journal. Sift standardizes, validates, stores, indexes, correlates, and
-replays operational facts so logging, trace, error-report, metric, audit, and
-change stores share one event backbone while remaining independently queryable
-and rebuildable.
+replays operational facts so logging, trace, error-report, metric, audit/change,
+profile, and GenAI/evaluation stores share one event backbone while remaining
+independently queryable and rebuildable.
 
 Sift is one service, not a first-wave microservice fleet: public API, auth,
 raw journal, correlation, and query live behind one service boundary. The
-logging, trace, error-report, metric, and audit/change stores are internal
-modules and materialized physical layouts that may be deployed as separate
-roles only when scale or SLO evidence requires it.
+logging, trace, error-report, metric, audit/change, profile, and GenAI stores
+are internal modules and materialized physical layouts that may be deployed as
+separate roles only when scale or SLO evidence requires it. Lumen is embedded
+as a rebuildable index crate; it does not run as a second service or Raft group.
 
 Sift owns the operational event domain:
 
 - GCP/GKE-oriented operational event schema and validation.
 - Raw event journal, replayable archive, hot storage, and rebuildable indexes.
 - First-class signal records for logs, spans, metrics, exceptions, audit
-  events, and change events.
+  events, change events, profiles, and evaluations.
 - First-class materialized stores for logging search, trace topology,
   error-report grouping, direct metric time series and exemplars, audit search,
-  and change correlation.
-- Query, tail, replay, and incident-time CLI/API ergonomics.
+  change correlation, profile analysis, and GenAI session/cost/quality views.
+- Query, tail, replay, rules, SLO/error-budget, monitor, incident, and
+  deterministic diagnosis-evidence CLI/API ergonomics.
 - Governance for schema versions, indexed fields, high-cardinality attributes,
   retention, redaction, and access boundaries.
+- Native HTTP/TCP uptime checks, Jet-delegated browser journey results, and a
+  privacy-governed RUM/Web-Vitals backend.
 
 Sift does not own generic search, topic replay, or online broker delivery:
 
@@ -39,6 +43,10 @@ Sift does not own generic search, topic replay, or online broker delivery:
   views and the GCS raw operational event archive.
 - `relay` owns online broker delivery. Sift may integrate with a broker later,
   but its product contract is the operational event platform.
+- External agents own narrative diagnosis and developer interaction. Sift does
+  not embed an LLM, generate unsupported prose, manage prompts/datasets, execute
+  experiments, or ship a GUI; `sift.diagnosis.v1` exposes deterministic facts,
+  correlations, evidence references, data gaps, and executable next queries.
 
 The first implementation should prioritize the Sift core API and storage path.
 The GKE DaemonSet collector remains a planned producer path, not the first
@@ -56,36 +64,42 @@ first-class domain roots.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Operational Event Ingest | 1157 | planned | planned | conformance | not_ready | structured GCP/GKE and OTLP ingest with bounded batches, idempotency, and normalized resource/context |
-| Raw Event Journal And Archive | 1157 | planned | planned | conformance | not_ready | canonical append-only journal, replay, and GCS archive manifest |
-| Durability And Acknowledgment | 1157 | planned | planned | conformance | not_ready | an accepted mutation is durable before its success response |
-| Shard-Aware Hot Storage | 1157 | planned | planned | conformance | not_ready | logical shards, epochs, sealed segments, and autonomous disk-driven splits |
-| Replica Sync And Bootstrap | 1157 | planned | planned | conformance | not_ready | `raft-core` + `raft-host` replicated state machine, follower bootstrap, and read consistency |
-| Backup And Restore | 1157 | planned | planned | conformance | not_ready | consistent snapshot/restore and scheduled off-node object-storage backup |
-| Schema Governance | 1157 | planned | planned | conformance | not_ready | signal taxonomy, schema versions, validation, indexed-field policy, and high-cardinality controls |
-| Materialized Observability Stores | 1157 | planned | planned | conformance | not_ready | first-class logging, trace, error-report, metric, and audit/change stores rebuildable from raw events |
-| Query Tail And Replay | 1157 | planned | planned | conformance | not_ready | cross-signal query, log tail, correlation, cursoring, and replay-driven rebuilds |
-| GKE Event Collection | 1157 | planned | planned | conformance | not_ready | later DaemonSet producer reads node-local CRI logs and emits structured operational events |
-| Security Audit And Governance | 1157 | planned | planned | conformance | not_ready | immutable audit/change projections, stricter retention, scoped access, and export controls |
-| HTTP2 API List | 1157 | planned | planned | conformance | not_ready | h2c/OpenAPI service routes and generated clients |
-| Standard Operational Endpoints | 1157 | implemented | verified | conformance | ready | auth-exempt `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` on the service port |
-| Kubernetes-Native Deployment | 1157 | planned | planned | conformance | not_ready | service/operator/instance artifacts, durable StatefulSet, HPA, and later collector DaemonSet |
-| CLI Interface | 1157 | planned | planned | conformance | not_ready | service, domain, spec, deploy, and connect command surface |
-| CLI Standard Surface | 1157 | planned | planned | conformance | not_ready | shared `llm`, `upgrade`, and `issue` command contract |
-| Chainable Output Conformance | 1157 | planned | planned | conformance | not_ready | operational CLI commands emit executable next steps or terminal markers |
-| EC Gates Configured | 1157 | planned | planned | conformance | not_ready | behavior, security, stability, and performance claims are executable gates |
-| Developer And Agent Experience | 1157 | planned | planned | conformance | not_ready | offline contract, onboarding, interactive tooling, and integration contract |
-| Long-Running Stability | 1157 | planned | planned | conformance | not_ready | ingest/query/replay soak, restart recovery, retention workers, and bounded disk/memory behavior |
-| Security Hardening | 1157 | planned | planned | conformance | not_ready | bearer-token auth, scoped access, audit controls, redaction, and guard evidence |
-| Competitor Feature Parity | 1157 | planned | planned | conformance | not_ready | explicit GCP Cloud Logging, Monitoring, Trace, and Error Reporting comparison boundaries |
-| Competitor Performance | 1157 | planned | planned | conformance | not_ready | retained performance floors for ingest, query, tail, and replay workloads |
-| GCP Cloud Logging Compatibility | 1157 | planned | planned | conformance | not_ready | GCP/GKE-first structured log compatibility without claiming every Cloud Logging feature |
+| Operational Event Ingest | 1658 | planned | planned | conformance | not_ready | structured GCP/GKE and OTLP ingest with bounded batches, idempotency, and normalized resource/context |
+| Raw Event Journal And Archive | 1659 | planned | planned | conformance | not_ready | canonical append-only journal, replay, and GCS archive manifest |
+| Durability And Acknowledgment | 1659 | planned | planned | conformance | not_ready | an accepted mutation is durable before its success response |
+| Shard-Aware Hot Storage | 1659 | planned | planned | conformance | not_ready | 4096 virtual buckets, epochs, sealed segments, and movable history |
+| Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
+| Backup And Restore | 1659 | implemented | partial | conformance | not_ready | existing snapshot lifecycle plus pending real GCS archive and cold restore |
+| Schema Governance | 1657 | planned | planned | conformance | not_ready | OperationalEventV2, v1 upcast, typed attributes, privacy, and cardinality controls |
+| Materialized Observability Stores | 1660 | planned | planned | conformance | not_ready | independent logging, trace, error, metric, audit/change, profile, and GenAI views |
+| Query Tail And Replay | 1671 | planned | planned | conformance | not_ready | typed cross-signal query, tail resume, correlation, cursoring, and replay jobs |
+| GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
+| Security Audit And Governance | 1668 | planned | planned | conformance | not_ready | immutable audit/change projections, legal hold, scoped access, and export controls |
+| Profile Observability | 1669 | planned | planned | conformance | not_ready | OTel profiles, blob durability, flamegraphs, top functions, diffs, and trace correlation |
+| AI And Agent Observability | 1670 | planned | planned | conformance | not_ready | GenAI observations, sessions, token/cost views, and typed evaluation scores |
+| Alert Rules And Incident Lifecycle | 1672 | planned | planned | conformance | not_ready | durable typed rules, deduplicated incidents, and audited lifecycle transitions |
+| SLO And Error Budget | 1672 | planned | planned | conformance | not_ready | SLIs, objectives, error budgets, and multi-window burn-rate evaluation |
+| Uptime Synthetic And RUM | 1674 | planned | planned | conformance | not_ready | native HTTP/TCP uptime, Jet journey results, and OTel/Web-Vitals RUM backend |
+| Agent Diagnosis Evidence | 1673 | planned | planned | conformance | not_ready | deterministic `sift.diagnosis.v1` facts, correlations, gaps, refs, and next queries |
+| HTTP2 API List | 1604 | implemented | partial | conformance | not_ready | h2c/OpenAPI baseline is verified; Domain v1 route and generated-client expansion remains |
+| Standard Operational Endpoints | 1576 | implemented | verified | conformance | ready | auth-exempt `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` on the service port |
+| Kubernetes-Native Deployment | 1606 | implemented | verified | conformance | ready | Dockerfile, CRD/operator/instance, StatefulSet, PVC, probes, and backup schedule |
+| CLI Interface | 1576 | implemented | partial | conformance | not_ready | baseline service/deploy commands exist; Domain v1 query/ops commands remain under #1671-#1674 |
+| CLI Standard Surface | 1604 | implemented | verified | conformance | ready | shared `llm`, `upgrade`, and `issue` command contract |
+| Chainable Output Conformance | 1604 | implemented | partial | conformance | not_ready | baseline outputs are chainable; new Domain v1 commands must preserve the contract |
+| EC Gates Configured | 1607 | implemented | partial | conformance | not_ready | baseline behavior/security/stability gates exist; Domain v1 claim closure is #1676 |
+| Developer And Agent Experience | 1604 | implemented | partial | conformance | not_ready | offline spec/client/onboarding baseline exists; unified Domain v1 operations remain |
+| Long-Running Stability | 1607 | implemented | partial | conformance | not_ready | restart/resilience baseline exists; full ingest/query/replay/retention soak is #1676 |
+| Security Hardening | 1616 | implemented | partial | conformance | not_ready | shared auth and deployment hardening exist; content governance and audit controls remain |
+| Competitor Feature Parity | 1676 | planned | planned | conformance | not_ready | explicit GCP Observability, OTel, and agent-observability comparison boundaries |
+| Competitor Performance | 1676 | planned | planned | conformance | not_ready | retained performance floors for ingest, query, tail, replay, rules, and rebuild |
+| GCP Cloud Logging Compatibility | 1664 | planned | planned | conformance | not_ready | GCP/GKE-first structured log compatibility without claiming every Cloud Logging feature |
 
 ### Operational Event Ingest
 
 ID: operational-event-ingest
 Type: Service
-Root WI: -
+Root WI: 1658
 Status: confirmed
 Surfaces: HTTP: `POST /v1/events:write` and OTLP signal ingest; CLI: event
 write/import paths; OpenAPI: offline event schema and error contract.
@@ -104,16 +118,17 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| h2c-openapi-event-write-route | epic | - | planned | planned | none | pending ingest API contract gate |
-| gcp-gke-event-envelope-validation | epic | - | planned | planned | none | pending schema validation gate |
-| otlp-log-span-metric-normalization | epic | 1157 | planned | planned | conformance | pending OTLP signal/resource/context gate |
-| quota-backpressure-and-idempotency | epic | - | planned | planned | none | pending overload and duplicate gate |
+| operational-event-v2-and-policy | change | 1657 | planned | planned | conformance | v1 upcast, typed attributes, content policy, and redaction gate |
+| h2c-openapi-event-write-route | change | 1658 | planned | planned | conformance | bounded JSON batch and OpenAPI contract gate |
+| gcp-gke-event-envelope-validation | change | 1658 | planned | planned | conformance | structured GCP/GKE normalization gate |
+| otlp-log-span-metric-profile-normalization | change | 1658 | planned | planned | conformance | OTLP JSON/protobuf/gzip partial-success gate |
+| quota-backpressure-and-idempotency | change | 1658 | planned | planned | conformance | overload, quota, duplicate, and body-limit gate |
 
 ### Raw Event Journal And Archive
 
 ID: raw-event-journal-and-archive
 Type: Service
-Root WI: -
+Root WI: 1659
 Status: confirmed
 Surfaces: Storage: append-only raw operational event journal, GCS archive
 writer, archive manifest, replay cursor, and rebuild checkpoints; HTTP/CLI:
@@ -132,15 +147,16 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| append-only-operational-event-journal | epic | - | planned | planned | none | pending journal append/read gate |
-| gcs-raw-archive-manifest | epic | - | planned | planned | none | pending archive manifest gate |
-| replayable-view-rebuild | epic | - | planned | planned | none | pending replay rebuild gate |
+| append-only-operational-event-journal | change | 1659 | planned | planned | conformance | sharded segment append/read and torn-tail gate |
+| durable-content-addressed-blobs | change | 1659 | planned | planned | conformance | blob-before-journal-ack gate |
+| gcs-raw-archive-manifest | change | 1659 | planned | planned | dogfood | real GCS sink, archive manifest, and cold-restore gate |
+| replayable-view-rebuild | change | 1660 | planned | planned | dogfood | durable replay job and projection equality gate |
 
 ### Durability And Acknowledgment
 
 ID: durability-and-acknowledgment
 Type: Service
-Root WI: 1157
+Root WI: 1659
 Status: confirmed
 Surfaces: Storage: service-owned durable journal/state store and projection
 checkpoints; HTTP: accepted event responses carry the durable cursor and commit
@@ -161,15 +177,15 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| fsync-before-success-response | epic | 1157 | planned | planned | conformance | pending durable acknowledgement contract gate |
-| committed-raft-apply-before-success | epic | 1157 | planned | planned | conformance | pending primary/quorum commit gate |
-| crash-restart-acknowledged-event-recovery | epic | 1157 | planned | planned | dogfood | pending power-loss/restart fixture gate |
+| fsync-before-success-response | change | 1659 | planned | planned | conformance | durable raw cursor acknowledgement gate |
+| committed-raft-apply-before-success | change | 1659 | planned | planned | conformance | primary/quorum commit-before-raw-append gate |
+| crash-restart-acknowledged-event-recovery | change | 1676 | planned | planned | dogfood | three-node failover and power-loss recovery gate |
 
 ### Shard-Aware Hot Storage
 
 ID: shard-aware-hot-storage
 Type: Service
-Root WI: -
+Root WI: 1659
 Status: confirmed
 Surfaces: Storage: bucket-scoped logical shards, epoch shard maps, sealed
 segments, hot indexes, placement metadata, retention workers, and
@@ -191,16 +207,16 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| logical-shard-routing | epic | - | planned | planned | none | pending shard routing gate |
-| epoch-based-future-write-split | epic | - | planned | planned | none | pending epoch split gate |
-| sealed-segment-retention-and-move | epic | - | planned | planned | none | pending segment lifecycle gate |
-| rebuildable-hot-index | epic | - | planned | planned | none | pending index rebuild gate |
+| 4096-virtual-bucket-routing | change | 1659 | planned | planned | conformance | deterministic bucket and logical-shard routing gate |
+| epoch-based-future-write-split | change | 1659 | planned | planned | conformance | versioned future-write-only epoch transition gate |
+| sealed-segment-retention-and-move | change | 1659 | planned | planned | dogfood | historical ownership, retention, and segment-move gate |
+| rebuildable-hot-index | change | 1660 | planned | planned | dogfood | embedded-Lumen rebuild equality gate |
 
 ### Replica Sync And Bootstrap
 
 ID: replica-sync-and-bootstrap
 Type: Service
-Root WI: 1157
+Root WI: 1676
 Status: confirmed
 Surfaces: Storage: `raft-core` consensus and `raft-host` transport, apply,
 snapshot, compaction, and read-consistency primitives; HTTP: cluster and
@@ -220,15 +236,15 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| sift-raft-state-machine | epic | 1157 | planned | planned | conformance | pending `RaftStateMachine` apply/snapshot/restore gate |
-| h2c-follower-replication | epic | 1157 | planned | planned | conformance | pending leader/follower replication gate |
-| snapshot-seed-and-catchup-bootstrap | epic | 1157 | planned | planned | dogfood | pending empty-PVC bootstrap gate |
+| sift-raft-state-machine | change | 1605 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs |
+| h2c-follower-replication | change | 1676 | planned | planned | dogfood | three-node leader/follower failover gate |
+| snapshot-seed-and-catchup-bootstrap | change | 1676 | planned | planned | dogfood | empty-PVC snapshot seed and catch-up gate |
 
 ### Backup And Restore
 
 ID: backup-and-restore
 Type: Service
-Root WI: 1157
+Root WI: 1659
 Status: confirmed
 Surfaces: CLI: `sift backup export|restore`; Storage: consistent raw-journal
 and state-machine snapshots, archive manifests, and object-storage destination
@@ -249,15 +265,16 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| consistent-state-machine-snapshot | epic | 1157 | planned | planned | conformance | pending snapshot byte/restore gate |
-| service-backup-policy-and-runner | epic | 1157 | planned | planned | conformance | pending backup destination/policy gate |
-| scheduled-gcs-object-backup | epic | 1157 | planned | planned | dogfood | pending operator CronJob and GCS restore gate |
+| consistent-state-machine-snapshot | change | 1605 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs |
+| service-backup-policy-and-runner | change | 1605 | implemented | passing | conformance | projects/sift/tests/ha_backup_e2e.rs |
+| real-service-backup-gcs-sink | change | 1659 | planned | planned | conformance | Vat GCS emulator sink contract gate |
+| scheduled-gcs-object-backup | change | 1676 | planned | planned | dogfood | CronJob, object snapshot, and cold-restore gate |
 
 ### Schema Governance
 
 ID: schema-governance
 Type: Service
-Root WI: -
+Root WI: 1657
 Status: confirmed
 Surfaces: Schema: operational event envelope, signal taxonomy, schema registry,
 indexed-field policy, high-cardinality guardrails, redaction policy, and
@@ -277,30 +294,31 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| operational-event-envelope | epic | - | planned | planned | none | pending envelope schema gate |
-| signal-taxonomy-and-versioning | epic | - | planned | planned | none | pending signal schema gate |
-| indexed-field-and-cardinality-policy | epic | - | planned | planned | none | pending index policy gate |
-| pii-redaction-and-policy-check | epic | - | planned | planned | none | pending redaction gate |
+| operational-event-v2-envelope | change | 1657 | planned | planned | conformance | V2 round-trip and v1 journal upcast gate |
+| signal-taxonomy-and-versioning | change | 1657 | planned | planned | conformance | eight-signal schema and compatibility gate |
+| indexed-field-and-cardinality-policy | change | 1657 | planned | planned | conformance | typed attribute/index allowlist gate |
+| pii-and-genai-content-policy | change | 1657 | planned | planned | negative | pre-journal truncate/redact/default-off content gate |
 
 ### Materialized Observability Stores
 
 ID: materialized-observability-stores
 Type: Service
-Root WI: 1157
+Root WI: 1660
 Status: confirmed
-Surfaces: Storage: first-class logging, trace, error-report, metric, and
-audit/change stores with independent schemas, indexes, retention, and rebuild
-checkpoints; HTTP/CLI: store-specific query and correlation routes.
+Surfaces: Storage: first-class logging, trace, error-report, metric,
+audit/change, profile, and GenAI/evaluation stores with independent schemas,
+indexes, retention, and rebuild checkpoints; HTTP/CLI: store-specific query
+and correlation routes.
 EC Dimensions: behavior: pending store gate - logging search, trace topology,
 error fingerprint/group lifecycle, direct metric time-series and exemplar
 ingest, audit/change timeline, and replay rebuild consistency.
 Required Verification: conformance, dogfood
 Promise:
-Expose logging, tracing, error reporting, metrics, and audit/change as
-first-class Sift stores over the raw operational-event journal. Each store is
-materialized and rebuildable, but metrics are also accepted as the direct
-`metric` signal with points, temporality, exemplars, and resource dimensions;
-they are not merely log/span-derived counters.
+Expose logging, tracing, error reporting, metrics, audit/change, profiles, and
+GenAI/evaluation as first-class Sift stores over the raw operational-event
+journal. Each store is materialized and rebuildable, but metrics are also
+accepted as the direct `metric` signal with points, temporality, exemplars, and
+resource dimensions; they are not merely log/span-derived counters.
 Gate Inventory:
 - pending: projects/sift/tests/logging_store.rs
 - pending: projects/sift/tests/trace_store.rs
@@ -310,18 +328,21 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| logging-store-over-events | epic | 1157 | planned | planned | conformance | pending log stream/index/query/rebuild gate |
-| trace-store-topology-and-correlation | epic | 1157 | planned | planned | conformance | pending span tree, trace-log, and resource correlation gate |
-| error-report-store-grouping-lifecycle | epic | 1157 | planned | planned | conformance | pending fingerprint, group, occurrence, and state-transition gate |
-| metric-store-direct-points-and-exemplars | epic | 1157 | planned | planned | conformance | pending direct metric point, temporality, dimension, and exemplar gate |
-| audit-and-change-store-timeline | epic | 1157 | planned | planned | conformance | pending immutable audit/change timeline and scoped access gate |
-| store-rebuild-from-raw-journal | epic | 1157 | planned | planned | dogfood | pending independent projection rebuild gate |
+| projection-runtime-and-checkpoints | change | 1660 | planned | planned | conformance | async idempotent apply, lag, checkpoint, and replay-job gate |
+| logging-store-over-events | change | 1664 | planned | planned | conformance | log stream/index/query/rebuild gate |
+| trace-store-topology-and-correlation | change | 1665 | planned | planned | conformance | span tree, critical path, and correlation gate |
+| error-report-store-grouping-lifecycle | change | 1666 | planned | planned | conformance | fingerprint, group, occurrence, and lifecycle gate |
+| metric-store-direct-points-and-exemplars | change | 1667 | planned | planned | conformance | temporality, histogram, cardinality, exemplar, and rollup gate |
+| audit-and-change-store-timeline | change | 1668 | planned | planned | conformance | immutable timeline, legal hold, and export gate |
+| profile-store-and-analysis | change | 1669 | planned | planned | conformance | flamegraph, top-functions, diff, and trace-correlation gate |
+| genai-session-cost-evaluation-views | change | 1670 | planned | planned | conformance | observation, session, token/cost, and evaluation gate |
+| store-rebuild-from-raw-journal | change | 1660 | planned | planned | dogfood | independent projection rebuild equality gate |
 
 ### Query Tail And Replay
 
 ID: query-tail-and-replay
 Type: Service
-Root WI: -
+Root WI: 1671
 Status: confirmed
 Surfaces: HTTP: `POST /v1/events:query`, log tail stream route, trace/error
 lookup routes, audit/change lookup routes, and replay routes; CLI: `sift query`,
@@ -341,16 +362,16 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| indexed-event-query | epic | - | planned | planned | none | pending query API gate |
-| cursor-pagination-and-ordering | epic | - | planned | planned | none | pending pagination gate |
-| live-tail-resume | epic | - | planned | planned | none | pending tail gate |
-| replay-cursor-and-view-rebuild | epic | - | planned | planned | none | pending replay gate |
+| typed-cross-signal-query | change | 1671 | planned | planned | conformance | store routes and typed DSL contract gate |
+| cursor-pagination-and-ordering | change | 1671 | planned | planned | conformance | stable cursor and sort gate |
+| live-tail-resume | change | 1671 | planned | planned | dogfood | reconnect/resume streaming gate |
+| replay-cursor-and-view-rebuild | change | 1671 | planned | planned | dogfood | durable replay start/status and idempotency gate |
 
 ### GKE Event Collection
 
 ID: gke-event-collection
 Type: Service
-Root WI: -
+Root WI: 1675
 Status: confirmed
 Surfaces: K8s: later Sift collector DaemonSet for GKE nodes; File: container
 runtime CRI log files under the node log directory; HTTP: collector to Sift
@@ -369,16 +390,16 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| daemonset-collector-node-log-read | epic | - | planned | planned | none | pending collector CRI fixture gate |
-| structured-json-payload-validation | epic | - | planned | planned | none | pending structured-only gate |
-| kubernetes-metadata-enrichment | epic | - | planned | planned | none | pending metadata enrichment gate |
-| cloud-logging-coexistence-duplicate-prevention | epic | - | planned | planned | none | pending GKE coexistence gate |
+| daemonset-collector-node-log-read | change | 1675 | planned | planned | dogfood | CRI rotation handoff and restart gate |
+| structured-json-payload-validation | change | 1675 | planned | planned | conformance | structured-only validation gate |
+| kubernetes-metadata-enrichment | change | 1675 | planned | planned | conformance | GKE resource enrichment gate |
+| cloud-logging-coexistence-duplicate-prevention | change | 1675 | planned | planned | dogfood | coexistence identity and outage-recovery gate |
 
 ### Security Audit And Governance
 
 ID: security-audit-and-governance
 Type: SecurityTool
-Root WI: 1157
+Root WI: 1668
 Status: confirmed
 Surfaces: Storage: immutable audit and change-event stores with stricter
 retention and legal-hold policy; HTTP/CLI: actor, subject, resource, and change
@@ -398,15 +419,185 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| immutable-audit-event-projection | epic | 1157 | planned | planned | conformance | pending audit append/order gate |
-| change-event-causality-timeline | epic | 1157 | planned | planned | conformance | pending change correlation gate |
-| audit-retention-hold-and-export-controls | epic | 1157 | planned | planned | negative | pending governance policy gate |
+| immutable-audit-event-projection | change | 1668 | planned | planned | conformance | audit append/order/immutability gate |
+| change-event-causality-timeline | change | 1668 | planned | planned | conformance | cross-signal change correlation gate |
+| audit-retention-hold-and-export-controls | change | 1668 | planned | planned | negative | legal hold, retention, auth, and export gate |
+
+### Profile Observability
+
+ID: profile-observability
+Type: Service
+Root WI: 1669
+Status: confirmed
+Surfaces: HTTP: OTLP `/v1/profiles`, `POST /v1/profiles:query`; CLI: `sift
+query profiles`; Storage: content-addressed profile blobs and rebuildable
+profile projections.
+EC Dimensions: behavior: pending profile gate - OTel profile ingest,
+flamegraph, top-functions, diff, trace correlation, retention, and rebuild;
+stability: pending large-payload durability and cold-restore gate.
+Required Verification: conformance, dogfood
+Promise:
+Store OpenTelemetry profiles as first-class operational evidence. Large profile
+payloads become durable content-addressed blobs before their bounded metadata
+event is acknowledged; agents can query flamegraphs, top functions, diffs, and
+trace correlations without a GUI.
+Gate Inventory:
+- pending: projects/sift/tests/profile_store.rs
+- pending: projects/sift/tests/profile_blob_durability.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| otel-profile-ingest-and-blob-durability | change | 1669 | planned | planned | conformance | OTLP profile and blob-before-ack gate |
+| flamegraph-top-functions-and-diff | change | 1669 | planned | planned | conformance | deterministic profile analysis gate |
+| profile-trace-correlation-and-rebuild | change | 1669 | planned | planned | dogfood | correlation, retention, and raw rebuild gate |
+
+### AI And Agent Observability
+
+ID: ai-and-agent-observability
+Type: Service
+Root WI: 1670
+Status: confirmed
+Surfaces: HTTP: `POST /v1/genai:query`, `GET /v1/sessions/{id}`, evaluation
+event append; CLI: `sift query genai`; Storage: OTel span specializations,
+session groupings, cost/token views, and typed evaluations.
+EC Dimensions: behavior: pending GenAI gate - generation/tool/RAG observation,
+session grouping, token/cost accounting, and evaluation append; security:
+pending default-off prompt/response content and pre-journal redaction gate.
+Required Verification: conformance, security
+Promise:
+Expose generation, tool, agent, retrieval, and RAG work as specialized OTel
+spans; group observations into cross-trace sessions and append typed evaluation
+scores without mutating the source observation. Prompt and response content is
+disabled by default and governed before raw durability.
+Gate Inventory:
+- pending: projects/sift/tests/genai_observations.rs
+- pending: projects/sift/tests/genai_content_policy.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| genai-span-specializations | change | 1670 | planned | planned | conformance | OTel GenAI generation/tool/RAG normalization gate |
+| cross-trace-sessions-and-cost-views | change | 1670 | planned | planned | conformance | session, provider/model, token, cost, and latency gate |
+| typed-append-only-evaluations | change | 1670 | planned | planned | conformance | trace/span/session evaluation linkage gate |
+| prompt-response-content-governance | change | 1657 | planned | planned | negative | default-off, truncation, and pre-journal redaction gate |
+
+### Alert Rules And Incident Lifecycle
+
+ID: alert-rules-and-incident-lifecycle
+Type: Service
+Root WI: 1672
+Status: confirmed
+Surfaces: HTTP/CLI: CRUD for rules and incidents, incident stream, lifecycle
+commands, and webhook/Relay integration records; Storage: durable definitions,
+evaluator state, transitions, and audit/change events.
+EC Dimensions: behavior: pending rule/incident gate - evaluation, deduplication,
+acknowledge, resolve, mute, reopen, and audit; stability: pending evaluator
+restart/failover exactly-once transition gate.
+Required Verification: conformance, dogfood
+Promise:
+Evaluate typed operational rules and maintain deduplicated incidents through
+the same Sift Raft state machine as every other mutation. Every definition and
+transition is durable and audited; v1 exposes streams/webhooks for external
+automation instead of embedding Slack or email connectors.
+Gate Inventory:
+- pending: projects/sift/tests/rule_incident_lifecycle.rs
+- pending: projects/sift/tests/incident_failover.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| typed-rule-definitions-and-evaluation | change | 1672 | planned | planned | conformance | threshold, absence, error-rate, and recovery gate |
+| incident-dedup-and-lifecycle | change | 1672 | planned | planned | conformance | dedupe, ack, resolve, mute, and reopen gate |
+| durable-audited-incident-stream | change | 1672 | planned | planned | dogfood | failover, audit/change, stream, and webhook record gate |
+
+### SLO And Error Budget
+
+ID: slo-and-error-budget
+Type: Service
+Root WI: 1672
+Status: confirmed
+Surfaces: HTTP/CLI: CRUD and status for SLOs; Storage: SLI windows, objectives,
+error-budget state, and burn-rate evaluations over Sift metric/error/uptime
+facts.
+EC Dimensions: behavior: pending SLO gate - SLI selection, objective/error
+budget math, windowing, and multi-window burn rate; stability: pending restart
+and late-point recomputation gate.
+Required Verification: conformance, dogfood
+Promise:
+Calculate service objectives and remaining error budget from typed Sift facts,
+including deterministic multi-window burn-rate rules. SLO definitions and state
+are durable, project-scoped, queryable, and linked to incident evidence.
+Gate Inventory:
+- pending: projects/sift/tests/slo_error_budget.rs
+- pending: projects/sift/tests/slo_burn_rate.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| sli-objective-and-error-budget | change | 1672 | planned | planned | conformance | objective, good/total, and remaining-budget gate |
+| multi-window-burn-rate | change | 1672 | planned | planned | conformance | short/long window burn-rate and recovery gate |
+| durable-slo-state-and-incident-linkage | change | 1672 | planned | planned | dogfood | late data, restart, audit, and incident evidence gate |
+
+### Uptime Synthetic And RUM
+
+ID: uptime-synthetic-and-rum
+Type: Service
+Root WI: 1674
+Status: confirmed
+Surfaces: HTTP/CLI: monitor CRUD/status and RUM event ingest; Runtime: native
+HTTP/TCP check runner; Integration: Jet browser journey dispatch/result events;
+Storage: uptime, synthetic, and Web-Vitals projections.
+EC Dimensions: behavior: pending monitor/RUM gate - uptime transitions, Jet
+result ingest, Web-Vitals normalization, regression detection, and incident
+correlation; stability: pending scheduler failover gate; security: pending RUM
+privacy policy gate.
+Required Verification: conformance, dogfood, security
+Promise:
+Run bounded HTTP/TCP uptime checks natively, delegate browser execution to Jet,
+and accept OTel/Web-Vitals structured RUM facts. Results feed rules, SLOs,
+incidents, and diagnosis without placing a browser engine or frontend UI inside
+Sift.
+Gate Inventory:
+- pending: projects/sift/tests/uptime_synthetic.rs
+- pending: projects/sift/tests/rum_web_vitals.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| native-http-tcp-uptime-runner | change | 1674 | planned | planned | dogfood | schedule, timeout, retry, failover, and recovery gate |
+| jet-browser-journey-results | change | 1674 | planned | planned | conformance | external dispatch/result event contract gate |
+| otel-web-vitals-rum-backend | change | 1674 | planned | planned | negative | RUM privacy, release context, regression, and incident gate |
+
+### Agent Diagnosis Evidence
+
+ID: agent-diagnosis-evidence
+Type: AgentFirst
+Root WI: 1673
+Status: confirmed
+Surfaces: HTTP: `GET /v1/incidents/{id}/evidence`; CLI: `sift diagnose`;
+Schema: deterministic `sift.diagnosis.v1` fact, timeline, correlation,
+candidate-cause, evidence-reference, data-gap, and next-query bundle.
+EC Dimensions: behavior: pending diagnosis gate - seeded incident completeness,
+reference resolution, deterministic candidate ranking, explicit gaps, and
+executable next queries; security: pending project-scoped evidence gate.
+Required Verification: conformance, dogfood, security
+Promise:
+Give an external agent enough deterministic evidence to answer what happened,
+what was affected, when it began, which changes correlate, and what to query
+next. Sift returns facts and evidence-backed candidates only; the external
+agent owns natural-language explanation and must not receive invented causal
+conclusions from Sift.
+Gate Inventory:
+- pending: projects/sift/tests/diagnosis_bundle.rs
+- pending: projects/sift/tests/diagnosis_authorization.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| diagnosis-v1-schema-and-ordering | change | 1673 | planned | planned | conformance | deterministic schema and stable ordering gate |
+| cross-signal-evidence-correlation | change | 1673 | planned | planned | dogfood | changes/SLO/metrics/errors/traces/logs/profiles/synthetic/RUM/GenAI gate |
+| evidence-gaps-and-executable-next-queries | change | 1673 | planned | planned | conformance | reference resolution, explicit gaps, and command execution gate |
 
 ### HTTP2 API List
 
 ID: http2-api-list
 Type: Service
-Root WI: -
+Root WI: 1604
 Status: confirmed
 Surfaces: HTTP: h2c and HTTP/1.1 on one port, `/healthz`, `/readyz`,
 `/metrics`, `/openapi.json`, `/docs`, `POST /v1/events:write`,
@@ -421,21 +612,24 @@ h2c plus HTTP/1.1 on one port, one OpenAPI contract available offline and
 online, standard operational endpoints, and generated clients from the same
 spec.
 Gate Inventory:
-- pending: projects/sift/tests/http2_api.rs
-- pending: projects/sift/tests/openapi_contract.rs
+- implemented: projects/sift/tests/behavior_one_port_health_readiness_metrics_contract.rs
+- implemented: projects/sift/tests/behavior_served_openapi_and_docs_contract.rs
+- implemented: projects/sift/tests/cli_contract.rs
+- pending Domain v1 expansion: projects/sift/tests/http2_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| h2c-openapi-one-port-service | epic | - | planned | planned | none | pending h2c/OpenAPI gate |
-| standard-operational-endpoints | epic | - | planned | planned | none | pending standard endpoint gate |
-| offline-and-served-spec-parity | epic | - | planned | planned | none | pending spec parity gate |
-| generated-client-smoke | epic | - | planned | planned | none | pending generated client gate |
+| h2c-openapi-one-port-service | change | 1576 | implemented | passing | conformance | behavior one-port contract tests |
+| standard-operational-endpoints | change | 1576 | implemented | passing | conformance | behavior standard endpoint contract tests |
+| offline-and-served-spec-parity | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
+| generated-client-smoke | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
+| domain-v1-api-and-client-expansion | change | 1671 | planned | planned | conformance | complete ingest/query/ops OpenAPI and generated-client gate |
 
 ### Standard Operational Endpoints
 
 ID: standard-operational-endpoints
 Type: Service
-Root WI: 1157
+Root WI: 1576
 Status: verified
 Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and
 `/docs` are auth-exempt, always-on routes on the same h2c/HTTP/1.1 service
@@ -451,15 +645,15 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| one-port-health-readiness-metrics | epic | 1157 | implemented | passing | conformance | projects/sift/tests/ingest_api.rs |
-| served-openapi-and-docs | epic | 1157 | implemented | passing | conformance | projects/sift/tests/ingest_api.rs |
+| one-port-health-readiness-metrics | change | 1576 | implemented | passing | conformance | projects/sift/tests/ingest_api.rs |
+| served-openapi-and-docs | change | 1576 | implemented | passing | conformance | projects/sift/tests/ingest_api.rs |
 
 ### Kubernetes-Native Deployment
 
 ID: kubernetes-native-deployment
 Type: Service
-Root WI: -
-Status: confirmed
+Root WI: 1606
+Status: verified
 Surfaces: CLI: `sift dockerfile render`, `sift k8s crd render`,
 `sift k8s operator render`, `sift k8s operator run`, and
 `sift k8s instance render`; K8s: service CRD, operator, instance custom
@@ -473,21 +667,21 @@ Deploy Sift as a dedicated, Kubernetes-native service using the repo service
 archetype, with direct single-node install for smoke tests and operator-managed
 StatefulSet topology for production.
 Gate Inventory:
-- pending: projects/sift/tests/k8s_render.rs
-- pending: projects/sift/tests/dockerfile_render.rs
+- projects/sift/tests/deployment_cli.rs
+- projects/sift/tests/ha_backup_e2e.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| dockerfile-render-surface | epic | - | planned | planned | none | pending Dockerfile render gate |
-| crd-operator-instance-render | epic | - | planned | planned | none | pending k8s render gate |
-| dedicated-stateful-service-topology | epic | - | planned | planned | none | pending topology gate |
-| collector-daemonset-artifacts-later | epic | - | planned | planned | none | pending collector deployment gate |
+| dockerfile-render-surface | change | 1606 | implemented | passing | conformance | projects/sift/tests/deployment_cli.rs |
+| crd-operator-instance-render | change | 1606 | implemented | passing | conformance | projects/sift/tests/deployment_cli.rs |
+| dedicated-stateful-service-topology | change | 1606 | implemented | passing | dogfood | projects/sift/tests/ha_backup_e2e.rs |
+| deployment-guard-hardening | change | 1616 | implemented | passing | negative | projects/sift/tests/deployment_cli.rs |
 
 ### EC Gates Configured
 
 ID: ec-gates-configured
 Type: Devops
-Root WI: 1157
+Root WI: 1607
 Status: confirmed
 Surfaces: Config: `aw.toml` EC bindings and generated claim manifest; Tests:
 behavior, security, stability, and efficiency gates for every production claim.
@@ -500,21 +694,25 @@ Keep Sift's public and operational promises executable: every claim has a TD
 reference, generated or hand-written test path, runnable command, and a
 production-required gate when its capability is in release scope.
 Gate Inventory:
-- pending: projects/sift/external-contracts/claim-closure/production-claims.md
-- pending: projects/sift/tests/ec_claims.rs
+- implemented: projects/sift/vat.toml
+- implemented: projects/sift/guard.toml
+- implemented: projects/sift/rig.toml
+- implemented: projects/sift/meter-stability.toml
+- pending Domain v1 claim closure: 1676
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| behavior-and-claim-closure-manifest | epic | 1157 | planned | planned | conformance | pending `aw ec gen --verify` gate |
-| guard-security-contract-runner | epic | 1157 | planned | planned | negative | pending Guard runner gate |
-| rig-resilience-contract-runner | epic | 1157 | planned | planned | dogfood | pending Rig runner gate |
-| meter-performance-contract-runner | epic | 1157 | planned | planned | conformance | pending Meter ratchet gate |
+| behavior-and-claim-closure-manifest | change | 1607 | implemented | passing | conformance | projects/sift/external-contracts/behavior/ |
+| guard-security-contract-runner | change | 1607 | implemented | passing | negative | projects/sift/guard.toml |
+| rig-resilience-contract-runner | change | 1607 | implemented | passing | dogfood | projects/sift/rig.toml |
+| meter-stability-contract-runner | change | 1607 | implemented | passing | conformance | projects/sift/meter-stability.toml |
+| domain-v1-claim-closure-and-performance | change | 1676 | planned | planned | dogfood | full `aw ec gen --verify` and retained performance gate |
 
 ### CLI Interface
 
 ID: cli-interface
 Type: Service
-Root WI: -
+Root WI: 1576
 Status: confirmed
 Surfaces: CLI: `sift llm`, `sift upgrade`, `sift issue`, `sift event`,
 `sift query`, `sift tail`, `sift replay`, `sift view`, `sift spec`,
@@ -528,22 +726,24 @@ without prior project knowledge, including standard ecosystem commands and
 event-platform commands whose outputs carry runnable next steps or terminal
 markers.
 Gate Inventory:
-- pending: projects/sift/tests/cli_surface.rs
-- pending: projects/sift/tests/cli_chainable_output.rs
+- implemented baseline: projects/sift/tests/operational_cli.rs
+- implemented deployment: projects/sift/tests/deployment_cli.rs
+- pending Domain v1 expansion: projects/sift/tests/cli_surface.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| cli-std-llm-upgrade-issue | epic | - | planned | planned | none | pending cli-std gate |
-| event-query-tail-replay-commands | epic | - | planned | planned | none | pending event command gate |
-| spec-dockerfile-k8s-commands | epic | - | planned | planned | none | pending service command gate |
-| chainable-output-contract | epic | - | planned | planned | none | pending chainable output gate |
+| cli-std-llm-upgrade-issue | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
+| baseline-event-query-replay-commands | change | 1576 | implemented | passing | conformance | projects/sift/tests/operational_cli.rs |
+| domain-v1-query-tail-ops-commands | change | 1671 | planned | planned | conformance | complete query/tail/replay command gate |
+| rule-slo-incident-monitor-diagnose-commands | change | 1672 | planned | planned | conformance | headless operations CLI gate |
+| spec-dockerfile-k8s-commands | change | 1606 | implemented | passing | conformance | projects/sift/tests/deployment_cli.rs |
 
 ### CLI Standard Surface
 
 ID: cli-standard-surface
 Type: AgentFirst
-Root WI: 1157
-Status: confirmed
+Root WI: 1604
+Status: verified
 Surfaces: CLI: `sift llm [--topic <topic>] [--format md|json]`, `sift upgrade
 [--version <tag>] [--check]`, and `sift issue search|view|create` composed from
 `cli-std`.
@@ -556,19 +756,19 @@ Ship the shared agent-facing `llm`, `upgrade`, and `issue` surface as real Sift
 commands, without replacing the domain `event`, `query`, `tail`, `replay`, or
 `view` verbs.
 Gate Inventory:
-- pending: projects/sift/tests/cli_standard_surface.rs
+- projects/sift/tests/cli_contract.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| offline-llm-topics | epic | 1157 | planned | planned | conformance | pending `sift llm` topic gate |
-| upgrade-check-and-atomic-replace | epic | 1157 | planned | planned | conformance | pending `sift upgrade --check` gate |
-| project-scoped-issue-surface | epic | 1157 | planned | planned | conformance | pending `sift issue` help and request gate |
+| offline-llm-topics | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
+| upgrade-check-and-atomic-replace | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
+| project-scoped-issue-surface | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
 
 ### Chainable Output Conformance
 
 ID: chainable-output-conformance
 Type: AgentFirst
-Root WI: 1157
+Root WI: 1604
 Status: confirmed
 Surfaces: CLI: every non-streaming operational command emits a final executable
 `next:` command or explicit terminal marker; raw event, tail, and artifact
@@ -582,18 +782,21 @@ Make Sift safe to drive in agent loops by guaranteeing a usable continuation or
 done marker for its operational commands while preserving raw data streams for
 pipelines and tailing.
 Gate Inventory:
-- pending: projects/sift/tests/cli_chainable_output.rs
+- implemented baseline: projects/sift/tests/cli_contract.rs
+- implemented deployment: projects/sift/tests/deployment_cli.rs
+- pending Domain v1 expansion: 1671, 1672, 1673, 1674
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| executable-next-command-validation | epic | 1157 | planned | planned | conformance | pending CLI next/done parser gate |
-| artifact-and-stream-output-separation | epic | 1157 | planned | planned | conformance | pending render vs stream output gate |
+| executable-next-command-validation | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
+| artifact-and-stream-output-separation | change | 1606 | implemented | passing | conformance | projects/sift/tests/deployment_cli.rs |
+| domain-v1-command-chainability | change | 1671 | planned | planned | conformance | all new non-stream command next/done gate |
 
 ### Developer And Agent Experience
 
 ID: developer-and-agent-experience
 Type: AgentFirst
-Root WI: 1157
+Root WI: 1604
 Status: confirmed
 Surfaces: Offline contract: committed OpenAPI, schema, CLI help, and generated
 clients; Agent onboarding: README quickstart and `sift llm`; Interactive
@@ -609,22 +812,22 @@ available, then provide the shared Kubernetes connection and query tooling once
 it is deployed. Client-visible retry, pagination, idempotency, and error
 semantics are explicit, versioned contracts rather than incidental behavior.
 Gate Inventory:
-- pending: projects/sift/tests/spec_cli.rs
-- pending: projects/sift/tests/connect_cli.rs
-- pending: projects/sift/tests/integration_contract.rs
+- implemented baseline: projects/sift/tests/cli_contract.rs
+- implemented operational tooling: projects/sift/tests/operational_cli.rs
+- pending Domain v1 integration: projects/sift/tests/integration_contract.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| offline-contract | epic | 1157 | planned | planned | conformance | pending OpenAPI/schema/help parity gate |
-| agent-onboarding | epic | 1157 | planned | planned | conformance | pending quickstart and `sift llm` gate |
-| interactive-tooling | epic | 1157 | planned | planned | conformance | pending `sift connect` and tail/query workflow gate |
-| integration-contract | epic | 1157 | planned | planned | conformance | pending retry/error/pagination/idempotency gate |
+| offline-contract | change | 1604 | implemented | passing | conformance | projects/sift/tests/cli_contract.rs |
+| agent-onboarding | change | 1604 | implemented | passing | conformance | `sift llm` and README baseline |
+| interactive-tooling | change | 1576 | implemented | planned | conformance | operational CLI baseline exists; tail and unified query are #1671 |
+| integration-contract | change | 1671 | planned | planned | conformance | retry/error/pagination/idempotency/projection-lag gate |
 
 ### Long-Running Stability
 
 ID: long-running-stability
 Type: Service
-Root WI: -
+Root WI: 1607
 Status: confirmed
 Surfaces: Runtime: graceful drain, restart recovery, WAL recovery, replay
 resume, retention workers, archive workers, shard placement workers, metrics,
@@ -638,21 +841,22 @@ Run Sift as a long-lived operational service with predictable resource use,
 bounded backpressure, recoverable writers, resumable replay, and health signals
 that protect ingest before disk or memory exhaustion.
 Gate Inventory:
-- pending: projects/sift/tests/stability_soak.rs
-- pending: projects/sift/tests/restart_recovery.rs
+- implemented baseline: projects/sift/tests/stability_e2e.rs
+- implemented recovery: projects/sift/tests/stability_sift_long_running_stability_resilience.rs
+- pending full Domain v1 soak: 1676
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| ingest-query-replay-soak | epic | - | planned | planned | none | pending soak gate |
-| restart-and-wal-recovery | epic | - | planned | planned | none | pending recovery gate |
-| retention-and-archive-worker-lag | epic | - | planned | planned | none | pending worker lag gate |
-| bounded-disk-memory-backpressure | epic | - | planned | planned | none | pending resource bound gate |
+| baseline-ingest-and-restart-resilience | change | 1607 | implemented | passing | conformance | projects/sift/tests/stability_e2e.rs |
+| ingest-query-replay-soak | change | 1676 | planned | planned | dogfood | full signal/store/ops soak gate |
+| retention-and-archive-worker-lag | change | 1676 | planned | planned | dogfood | retention/GCS/segment-move lag gate |
+| bounded-disk-memory-backpressure | change | 1676 | planned | planned | dogfood | sustained resource and cardinality pressure gate |
 
 ### Security Hardening
 
 ID: security-hardening
 Type: Service
-Root WI: -
+Root WI: 1616
 Status: confirmed
 Surfaces: HTTP: bearer-token auth, scoped authorization, auth-exempt standard
 endpoints, audit event writes, redaction policy, and request limits; Config:
@@ -666,49 +870,52 @@ Protect operational events with the shared bearer-token service contract,
 resource-scoped authorization, strict audit semantics, redaction policy, and
 guard evidence for network-exposed deployments.
 Gate Inventory:
-- pending: projects/sift/tests/auth.rs
-- pending: projects/sift/tests/audit_security.rs
-- pending: projects/sift/guard-sift-security.toml
+- implemented auth: projects/sift/tests/runtime_security_e2e.rs
+- implemented guard: projects/sift/guard.toml
+- pending content governance: 1657
+- pending immutable audit controls: 1668
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| shared-bearer-token-auth | epic | - | planned | planned | none | pending auth gate |
-| scoped-event-view-access | epic | - | planned | planned | none | pending authorization gate |
-| audit-event-retention-policy | epic | - | planned | planned | none | pending audit policy gate |
-| pii-redaction-and-index-denylist | epic | - | planned | planned | none | pending redaction/security gate |
+| shared-bearer-token-auth | change | 1604 | implemented | passing | conformance | projects/sift/tests/runtime_security_e2e.rs |
+| deployment-guard-hardening | change | 1616 | implemented | passing | negative | projects/sift/guard.toml |
+| scoped-event-view-access | change | 1671 | planned | planned | negative | store/query project authorization gate |
+| audit-event-retention-policy | change | 1668 | planned | planned | negative | legal hold, export, and retention gate |
+| pii-redaction-and-index-denylist | change | 1657 | planned | planned | negative | pre-journal content and attribute policy gate |
 
 ### Competitor Feature Parity
 
 ID: competitor-feature-parity
 Type: Service
-Root WI: -
+Root WI: 1676
 Status: confirmed
-Surfaces: Docs: GCP Cloud Logging parity matrix; Tests: structured event ingest,
-GKE resource metadata, trace correlation, log query, audit/change lookup, and
-replay rebuild comparison cases.
+Surfaces: Docs: selected GCP Observability, OpenTelemetry, and Langfuse-model
+parity matrices; Tests: ingest, resource metadata, correlation, store/query,
+incident, diagnosis, and rebuild comparison cases.
 EC Dimensions: behavior: pending parity gate - selected Cloud Logging structured
 log capabilities, GKE metadata fidelity, query filters, and trace/log
 correlation.
 Required Verification: conformance
 Promise:
-Track Sift's selected replacement boundary against GCP Cloud Logging without
-claiming full feature parity before the corresponding ingest, storage, query,
-and governance gates exist.
+Track Sift's selected replacement boundary against Google Cloud Observability,
+OpenTelemetry, and the Langfuse observation/session model without claiming full
+feature parity before the corresponding ingest, storage, operations, query,
+governance, and recovery gates exist.
 Gate Inventory:
 - pending: projects/sift/tests/gcp_cloud_logging_parity.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| gcp-structured-log-envelope-parity | epic | - | planned | planned | none | pending structured log parity gate |
-| gke-resource-metadata-parity | epic | - | planned | planned | none | pending metadata parity gate |
-| trace-log-correlation-parity | epic | - | planned | planned | none | pending trace correlation gate |
-| query-filter-parity-slice | epic | - | planned | planned | none | pending query parity gate |
+| gcp-observability-domain-parity | change | 1676 | planned | planned | conformance | selected logs/traces/errors/metrics/profile/SLO comparison gate |
+| otel-signal-and-protocol-parity | change | 1676 | planned | planned | conformance | OTLP and semantic-convention fixture gate |
+| langfuse-observation-session-parity | change | 1676 | planned | planned | conformance | GenAI trace/session/observation/evaluation comparison gate |
+| headless-operations-and-diagnosis-parity | change | 1676 | planned | planned | dogfood | rule/SLO/incident/evidence comparison gate |
 
 ### Competitor Performance
 
 ID: competitor-performance
 Type: Service
-Root WI: -
+Root WI: 1676
 Status: confirmed
 Surfaces: Benchmarks: ingest throughput, query latency, tail latency, replay
 throughput, shard fanout, archive writer throughput, and retained comparison
@@ -727,16 +934,17 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| ingest-throughput-floor | epic | - | planned | planned | none | pending ingest benchmark gate |
-| query-tail-latency-floor | epic | - | planned | planned | none | pending query/tail benchmark gate |
-| replay-archive-throughput-floor | epic | - | planned | planned | none | pending replay/archive benchmark gate |
-| cloud-logging-peer-recalibration | epic | - | planned | planned | none | pending peer calibration gate |
+| ingest-throughput-floor | change | 1676 | planned | planned | conformance | retained OTLP/GCP batch ingest floor |
+| query-tail-latency-floor | change | 1676 | planned | planned | conformance | retained store query/tail floor |
+| replay-archive-throughput-floor | change | 1676 | planned | planned | conformance | retained rebuild/GCS archive floor |
+| rules-diagnosis-overhead-floor | change | 1676 | planned | planned | conformance | evaluator and evidence-bundle overhead floor |
+| peer-recalibration | change | 1676 | planned | planned | dogfood | explicit GCP/OTel/Langfuse peer calibration evidence |
 
 ### GCP Cloud Logging Compatibility
 
 ID: gcp-cloud-logging-compatibility
 Type: Service
-Root WI: -
+Root WI: 1664
 Status: confirmed
 Surfaces: Schema: GCP-style `jsonPayload` compatibility, `k8s_container`
 resource labels, severity mapping, trace/span/request correlation, and
@@ -754,6 +962,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| jsonpayload-style-body-compatibility | epic | - | planned | planned | none | pending jsonPayload compatibility gate |
-| k8s-container-resource-labels | epic | - | planned | planned | none | pending GKE resource label gate |
-| severity-and-trace-context-normalization | epic | - | planned | planned | none | pending severity/trace normalization gate |
+| jsonpayload-style-body-compatibility | change | 1664 | planned | planned | conformance | jsonPayload compatibility gate |
+| k8s-container-resource-labels | change | 1664 | planned | planned | conformance | GKE resource label gate |
+| severity-and-trace-context-normalization | change | 1664 | planned | planned | conformance | severity/trace/request normalization gate |
+| cloud-logging-coexistence-dedupe | change | 1675 | planned | planned | dogfood | collector coexistence identity gate |
