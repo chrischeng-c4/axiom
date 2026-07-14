@@ -45,7 +45,6 @@ flowchart TD
   legacy --> scoped
   scoped --> verify([verify scoped evidence])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
