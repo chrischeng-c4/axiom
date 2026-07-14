@@ -66,7 +66,6 @@ changes:
     section: pgpool-vectored-buffered-relay
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
