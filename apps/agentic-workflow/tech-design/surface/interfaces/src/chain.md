@@ -413,8 +413,8 @@ const EMIT_REGISTRY: &[EmitSite] = &[
 ///     `gen` -> `fill` -> `code-check`) and its sibling ec/capability/health
 ///     loops actually dispatch through.
 ///   - `Utility`: support tooling that is not itself a lifecycle-loop step —
-///     the CLI-convention trio (`llm`/`upgrade`/`issue`), `chat`/`guard`/
-///     `new`/`report-issue`/`generator`, and the read-only/debug `td`
+///     the CLI-convention trio (`llm`/`upgrade`/`issue`), `guard`/`new`/
+///     `report-issue`/`generator`, and the read-only/debug `td`
 ///     verbs (`ast`, `check`, `lock`, `promote`,
 ///     `audit-record` -- the former `standardize audit record`, rehomed by
 ///     #1278).
@@ -666,37 +666,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "wi.arbitrate",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    // -- chat (support: cross-checkout agent messaging) -----------------
-    VerbLifecycle {
-        path: "chat.post",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.list",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.read",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.members",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.listen",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- issue (support: CLI-convention trio's issue verb) ---------------
@@ -1462,7 +1431,6 @@ mod tests {
             "capability.next",
             "capability.check",
             "conf.check",
-            "chat.list",
         ];
         for path in read_only {
             assert_eq!(

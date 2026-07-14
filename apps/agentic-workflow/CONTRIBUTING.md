@@ -61,7 +61,7 @@ Every registered `aw` CLI verb carries a lifecycle class in
   `fill` -> `code-check`) and its sibling `ec`/`capability`/`health` loops
   actually dispatch through.
 - `Utility` — support tooling that is not itself a lifecycle-loop step: the
-  CLI-convention trio (`llm`/`upgrade`/`issue`), `chat`/`guard`/`view`/`new`/
+  CLI-convention trio (`llm`/`upgrade`/`issue`), `guard`/`new`/
   `report-issue`/`generator`, and the read-only/debug `td` verbs (`ast`,
   `check`, `lock`, `gen-source`, `promote`, `audit-record` — the former
   `standardize audit record`, rehomed by #1278; `standardize audit check`'s

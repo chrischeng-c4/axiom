@@ -151,7 +151,7 @@ pub const WORKFLOW_TABLE_VERBS: &[&str] = &["wi", "capability", "td", "ec", "hea
 /// table: the CLI-convention trio (`llm`/`upgrade`/`issue` — see "CLI
 /// Convention: every CLI ships `llm`, `upgrade`, `issue`") plus the
 /// remaining agent-support verbs.
-pub const SUPPORT_TABLE_VERBS: &[&str] = &["chat", "guard", "llm", "upgrade", "issue", "view"];
+pub const SUPPORT_TABLE_VERBS: &[&str] = &["guard", "llm", "upgrade", "issue"];
 
 /// Marker pair around the generated Workflow CLI table, nested inside the
 /// `aw:start`/`aw:end` managed block.

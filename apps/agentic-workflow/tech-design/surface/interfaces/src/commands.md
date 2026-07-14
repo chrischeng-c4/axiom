@@ -35,7 +35,6 @@ use crate::Result;
 use clap::Subcommand;
 
 use crate::cli::capability;
-use crate::cli::chat;
 use crate::cli::conf;
 use crate::cli::drift;
 use crate::cli::ec;
@@ -75,9 +74,6 @@ pub enum Commands {
     // @spec apps/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
     #[command(name = "wi")]
     Issues(issues::IssuesArgs),
-
-    /// Cross-checkout agent messaging via shared plain-text channel
-    Chat(chat::ChatArgs),
 
     /// Offline agent orientation: outline + capability/td/ec pillars + loop.
     Llm(llm::LlmArgs),
@@ -127,9 +123,6 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Issues(args) => {
             issues::run(args).await?;
-        }
-        Commands::Chat(args) => {
-            chat::run_chat(args)?;
         }
         Commands::Llm(args) => {
             llm::run(args)?;

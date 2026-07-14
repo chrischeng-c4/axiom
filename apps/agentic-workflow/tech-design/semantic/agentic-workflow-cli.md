@@ -807,98 +807,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/agentic-workflow/src/cli"
-      - path: "apps/agentic-workflow/src/cli/chat_members.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method"]
-        symbols:
-          - name: "ChannelMessage"
-            kind: "struct"
-            public: true
-          - name: "MessageFrontmatter"
-            kind: "struct"
-            public: true
-          - name: "Member"
-            kind: "struct"
-            public: true
-          - name: "MembersFile"
-            kind: "struct"
-            public: true
-          - name: "default"
-            kind: "function"
-            public: false
-          - name: "resolve_identity"
-            kind: "function"
-            public: true
-          - name: "git_toplevel_from"
-            kind: "function"
-            public: false
-          - name: "git_branch_from"
-            kind: "function"
-            public: false
-          - name: "detect_team_identity"
-            kind: "function"
-            public: true
-          - name: "detect_git_branch"
-            kind: "function"
-            public: true
-          - name: "detect_git_toplevel"
-            kind: "function"
-            public: true
-          - name: "lookup_member_name_by_branch"
-            kind: "function"
-            public: true
-          - name: "read_config_team_name"
-            kind: "function"
-            public: true
-          - name: "is_old_pipe_format"
-            kind: "function"
-            public: true
-          - name: "parse_pipe_line"
-            kind: "function"
-            public: true
-          - name: "parse_pipe_format"
-            kind: "function"
-            public: true
-          - name: "serialize_message_block"
-            kind: "function"
-            public: true
-          - name: "rewrite_channel_as_frontmatter"
-            kind: "function"
-            public: true
-          - name: "parse_channel_markdown"
-            kind: "function"
-            public: true
-          - name: "looks_like_jsonl"
-            kind: "function"
-            public: false
-          - name: "parse_channel_jsonl"
-            kind: "function"
-            public: true
-          - name: "serialize_message_jsonl"
-            kind: "function"
-            public: true
-          - name: "parse_frontmatter_blocks"
-            kind: "function"
-            public: true
-          - name: "read_members_file"
-            kind: "function"
-            public: true
-          - name: "write_members_file"
-            kind: "function"
-            public: true
-          - name: "run_members_register"
-            kind: "function"
-            public: true
-          - name: "tests"
-            kind: "module"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "apps/agentic-workflow/src/cli"
       - path: "apps/agentic-workflow/src/cli/capability_type.rs"
         language: "rust"
         ownership_state: "unmanaged"
@@ -2759,110 +2667,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/agentic-workflow/src/cli"
-      - path: "apps/agentic-workflow/src/cli/chat.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method", "ts_type_surface"]
-        symbols:
-          - name: "chat_members"
-            kind: "module"
-            public: true
-          - name: "CHANNEL_PATH"
-            kind: "constant"
-            public: false
-          - name: "MEMBERS_PATH"
-            kind: "constant"
-            public: false
-          - name: "ChatArgs"
-            kind: "struct"
-            public: true
-          - name: "ChatCommand"
-            kind: "enum"
-            public: true
-          - name: "PostArgs"
-            kind: "struct"
-            public: true
-          - name: "ListArgs"
-            kind: "struct"
-            public: true
-          - name: "ReadArgs"
-            kind: "struct"
-            public: true
-          - name: "MembersArgs"
-            kind: "struct"
-            public: true
-          - name: "ListenArgs"
-            kind: "struct"
-            public: true
-          - name: "AgentLastSeen"
-            kind: "struct"
-            public: true
-          - name: "ListenState"
-            kind: "type"
-            public: true
-          - name: "OutputFormat"
-            kind: "enum"
-            public: false
-          - name: "run_chat"
-            kind: "function"
-            public: true
-          - name: "detect_output_format"
-            kind: "function"
-            public: false
-          - name: "parse_channel"
-            kind: "function"
-            public: false
-          - name: "format_terse"
-            kind: "function"
-            public: false
-          - name: "format_listen"
-            kind: "function"
-            public: false
-          - name: "format_human"
-            kind: "function"
-            public: false
-          - name: "render"
-            kind: "function"
-            public: false
-          - name: "run_post"
-            kind: "function"
-            public: false
-          - name: "run_list"
-            kind: "function"
-            public: false
-          - name: "run_read"
-            kind: "function"
-            public: false
-          - name: "run_members"
-            kind: "function"
-            public: false
-          - name: "run_members_list"
-            kind: "function"
-            public: false
-          - name: "TailGuard"
-            kind: "struct"
-            public: false
-          - name: "drop"
-            kind: "function"
-            public: false
-          - name: "run_listen"
-            kind: "function"
-            public: false
-          - name: "should_emit"
-            kind: "function"
-            public: false
-          - name: "thread_root_of"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "apps/agentic-workflow/src/cli"
       - path: "apps/agentic-workflow/src/cli/generator.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -3610,12 +3414,6 @@ changes:
       CODEGEN document with no generic TODO and preserves a HANDWRITE sibling
       byte-for-byte.
     impl_mode: hand-written
-  - path: "apps/agentic-workflow/src/cli/chat_members.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/capability_type.rs"
     action: modify
     section: schema
@@ -3915,12 +3713,6 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/standardize.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - path: "apps/agentic-workflow/src/cli/chat.rs"
     action: modify
     section: schema
     description: |

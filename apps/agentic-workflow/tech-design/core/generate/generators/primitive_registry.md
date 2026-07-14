@@ -75,10 +75,13 @@ pub struct PrimitiveEntry {
 
 /// Static primitive vocabulary registry: 15 entries.
 ///
-/// 12 MVP + 3 added by score-chat-jsonl-migration self-bootstrap:
-///   - parse_jsonl_stream  (closes gap-blocker #parse-jsonl-stream)
-///   - append_line_atomic  (closes gap-blocker #append-line-atomic)
-///   - run_subprocess      (partial closure of #tail-f-stream — emits the
+/// The canonical vocabulary includes generic JSONL stream/string operations
+/// plus subprocess spawning:
+///   - parse_jsonl_stream
+///   - append_line_atomic
+///   - parse_jsonl_str
+///   - serialize_jsonl_line
+///   - run_subprocess      (emits the
 ///     spawn step; RAII Drop guard + stream loop remain deferred because
 ///     primitives emit single statements, not multi-line patterns. A
 ///     follow-up SDD issue is needed for block-level codegen.)
@@ -119,7 +122,7 @@ pub const REGISTRY: &[PrimitiveEntry] = &[
         fallible: false,
         output_type: "bool",
     },
-    // ── JSONL stream IO (closes gap-blockers from score-chat-jsonl-migration) ─
+    // ── JSONL stream IO ─────────────────────────────────────────────────────
     PrimitiveEntry {
         name: "parse_jsonl_stream",
         signature: "fn parse_jsonl_stream<T: DeserializeOwned>(path: &str) -> Vec<T>",
@@ -134,7 +137,7 @@ pub const REGISTRY: &[PrimitiveEntry] = &[
         fallible: true,
         output_type: "unit",
     },
-    // ── JSONL string variants (closes prior chat_members.rs gap) ─────────────
+    // ── JSONL string variants ───────────────────────────────────────────────
     PrimitiveEntry {
         name: "parse_jsonl_str",
         signature: "fn parse_jsonl_str<T: DeserializeOwned>(content: &str) -> Vec<T>",
@@ -237,7 +240,7 @@ pub fn lookup(kind: &PrimitiveKind) -> Option<&'static PrimitiveEntry> {
 /// as YAML — the YAML parser stores the name as `String` rather than the typed
 /// enum to keep `content::logic` decoupled from `flowchart_plus::schema`.
 ///
-/// @spec apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md (gap-blocker #flowchart-to-fn)
+/// @spec apps/agentic-workflow/tech-design/surface/specs/mermaid-plus-primitive-vocabulary.md#logic
 pub fn lookup_by_name(name: &str) -> Option<&'static PrimitiveEntry> {
     REGISTRY.iter().find(|e| e.name == name)
 }
@@ -248,7 +251,7 @@ pub fn lookup_by_name(name: &str) -> Option<&'static PrimitiveEntry> {
 /// escapes for the emitted code. Unknown vars are preserved literally so a
 /// missing binding surfaces as a compile error pointing at the exact placeholder.
 ///
-/// @spec apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md (gap-blocker #flowchart-to-fn)
+/// @spec apps/agentic-workflow/tech-design/surface/specs/mermaid-plus-primitive-vocabulary.md#logic
 pub fn substitute_template(template: &str, bindings: &[(&str, &str)]) -> String {
     let chars: Vec<char> = template.chars().collect();
     let mut out = String::with_capacity(template.len());
@@ -344,10 +347,8 @@ mod tests {
 
     #[test]
     fn test_registry_has_seventeen_entries() {
-        // 12 MVP + 3 added by score-chat-jsonl-migration (parse_jsonl_stream,
-        // append_line_atomic, run_subprocess) + 2 added by
-        // enhancement-swap-handwrite-codegen-on-parse-channel-jsonl-seri
-        // (parse_jsonl_str, serialize_jsonl_line)
+        // Canonical registry: the base twelve entries plus five generic
+        // JSONL stream/string and subprocess entries.
         assert_eq!(REGISTRY.len(), 17);
     }
 
@@ -483,7 +484,7 @@ mod tests {
         assert!(entry.emit_template.contains("read_to_string"));
     }
 
-    // REQ score-chat-jsonl-migration — substitute_template basic vars
+    // REQ mermaid-plus-primitive-vocabulary — substitute_template basic vars
     #[test]
     fn test_substitute_template_basic_vars() {
         let out = substitute_template(
@@ -493,21 +494,21 @@ mod tests {
         assert_eq!(out, "let msgs: Vec<Msg> = parse(PATH)?;");
     }
 
-    // REQ score-chat-jsonl-migration — preserves {{ }} format escapes
+    // REQ mermaid-plus-primitive-vocabulary — preserves {{ }} format escapes
     #[test]
     fn test_substitute_template_preserves_double_brace_escapes() {
         let out = substitute_template("println!(\"{{}}\", {x});", &[("x", "42")]);
         assert_eq!(out, "println!(\"{{}}\", 42);");
     }
 
-    // REQ score-chat-jsonl-migration — unknown var stays literal
+    // REQ mermaid-plus-primitive-vocabulary — unknown var stays literal
     #[test]
     fn test_substitute_template_unknown_var_preserved() {
         let out = substitute_template("a {known} b {unknown} c", &[("known", "K")]);
         assert_eq!(out, "a K b {unknown} c");
     }
 
-    // REQ score-chat-jsonl-migration — lookup_by_name finds entries
+    // REQ mermaid-plus-primitive-vocabulary — lookup_by_name finds entries
     #[test]
     fn test_lookup_by_name_finds_jsonl_primitives() {
         assert!(lookup_by_name("parse_jsonl_stream").is_some());

@@ -71,8 +71,6 @@ const SKILL_CB_CLAIM: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-cb-claim/SKILL.md");
 const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
-const SKILL_CHAT_LISTEN: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-chat-listen/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
 const SKILL_GUARD: &str = include_str!("../../templates/cli/mainthread/skills/aw-guard/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
@@ -1282,7 +1280,6 @@ fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
         ("aw-cb-fill", SKILL_CB_FILL),
         ("aw-cb-claim", SKILL_CB_CLAIM),
         ("aw-build-release", SKILL_BUILD_RELEASE),
-        ("aw-chat-listen", SKILL_CHAT_LISTEN),
         ("aw-health", SKILL_HEALTH),
         ("aw-guard", SKILL_GUARD),
     ]
@@ -1389,6 +1386,9 @@ fn deprecated_skill_names() -> Vec<&'static str> {
         "score-build-release",
         "score-chat-listen",
         "score-fillback-main-specs",
+        // #1503: the cross-checkout chat transport and its listener skill are
+        // retired without a compatibility alias or subagent replacement.
+        "aw-chat-listen",
         // Removed: `aw td merge` no longer exists (LINEAR lifecycle;
         // `aw td code-check` is the terminal step).
         "aw-merge",
@@ -2284,6 +2284,29 @@ auth_method = "cli"
             !skills_dir.join("aw-standardize").exists(),
             "removed aw-standardize skill should be pruned"
         );
+    }
+
+    // #1503: both skill-tree installers share the same deprecated-skill
+    // pruning path, so a previous aw-chat-listen install cannot survive.
+    #[test]
+    fn test_install_skills_prunes_aw_chat_listen() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            let retired = skills_dir.join("aw-chat-listen");
+            fs::create_dir_all(&retired).unwrap();
+            fs::write(retired.join("SKILL.md"), "# retired chat listener").unwrap();
+
+            install(&skills_dir).unwrap();
+
+            assert!(
+                !retired.exists(),
+                "removed aw-chat-listen skill should be pruned"
+            );
+        }
     }
 
     #[test]

@@ -68,7 +68,6 @@ fn legacy_top_level_commands_are_removed() {
         "workflow",
         "revise-artifact",
         "artifact",
-        "view",
         "validate-spec-structure",
         "check-alignment",
         "iss",
@@ -83,6 +82,9 @@ fn legacy_top_level_commands_are_removed() {
         "cb",
         "init",
         "sync",
+        // #1503: the shared cross-checkout transport is retired without an
+        // alias; future subagent design has no aw-chat compatibility burden.
+        "chat",
     ] {
         assert!(
             cmd.find_subcommand(name).is_none(),
@@ -94,15 +96,7 @@ fn legacy_top_level_commands_are_removed() {
 #[test]
 fn workflow_protocol_commands_remain_registered() {
     let cmd = Cli::command();
-    for name in [
-        "health",
-        "capability",
-        "wi",
-        "td",
-        "generator",
-        "conf",
-        "chat",
-    ] {
+    for name in ["health", "capability", "wi", "td", "generator", "conf"] {
         assert!(
             cmd.find_subcommand(name).is_some(),
             "{name} should remain registered"
@@ -137,6 +131,8 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
         "workflow",
         "revise-artifact",
         "artifact",
+        "view",
+        "chat",
         "validate-spec-structure",
         "check-alignment",
         "iss",
@@ -176,9 +172,14 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         .parent()
         .and_then(Path::parent)
         .expect("repo root");
-    let mut docs = vec![repo_root.join("AGENTS.md")];
+    let mut docs = vec![
+        repo_root.join("AGENTS.md"),
+        repo_root.join("CLAUDE.md"),
+        manifest_dir.join("CONTRIBUTING.md"),
+    ];
     collect_markdown_files(&manifest_dir.join("templates/cli"), &mut docs);
     collect_markdown_files(&repo_root.join(".agents/skills"), &mut docs);
+    collect_markdown_files(&repo_root.join(".claude/skills"), &mut docs);
 
     let deleted = [
         // #918: `aw run` fully removed from the clap tree (superseded by
@@ -193,6 +194,7 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw revise-artifact",
         "aw artifact",
         "aw view",
+        "aw chat",
         "aw validate-spec-structure",
         "aw check-alignment",
         // Trailing space (like `standardize.rs`'s `DELETED_COMMAND_PATHS`
@@ -202,7 +204,6 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         // `` `aw issue` `` verbatim).
         "aw iss ",
         "aw issues",
-        "aw chat agents",
         "aw handoff",
         "aw takeoff",
         "aw platform",

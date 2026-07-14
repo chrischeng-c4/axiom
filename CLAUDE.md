@@ -146,7 +146,6 @@ deliberately separate commands.
 <!-- aw:cli-table:support:start -->
 | Verb | About |
 |------|-------|
-| `aw chat` | Cross-checkout agent messaging via shared plain-text channel |
 | `aw guard` | Agent-runtime direct edit/create guard for Codex and Claude Code |
 | `aw llm` | Offline agent orientation: outline + capability/td/ec pillars + loop |
 | `aw upgrade` | Self-update this binary from a published GitHub release |
@@ -157,9 +156,6 @@ deliberately separate commands.
 without writing; `aw conf sync` auto-discovers projects and refreshes that
 block. Other projected artifacts are owned by their own producer commands and
 should be routed through `aw health` once those health checks are wired.
-`aw chat post/list/read/members/listen` is cross-checkout coordination
-through the shared Agentic Workflow chat channel.
-
 `aw llm`, `aw upgrade`, and `aw issue` are the CLI-convention trio every
 ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 `upgrade`, `issue`" below for the full contract.
