@@ -12,6 +12,7 @@ use crate::browser::context::BrowserContext;
 use crate::browser::page::Page;
 use crate::browser::{Browser, LaunchOptions};
 use crate::cdp_driver::{dispatch_page_request, parse_page_request, write_page_response};
+use crate::resolver::alias::AliasResolver;
 use crate::resolver::{is_node_builtin_specifier, ModuleResolver, ResolveOptions};
 use crate::test_runner::config::{LiveE2eConfig, RunnerConfig};
 use crate::test_runner::discovery::SpecFile;
@@ -50,18 +51,133 @@ const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
 /// Production builds route assets through Jet's bundler. Test workers instead
 /// execute source and installed packages directly under Node, so a package
 /// barrel such as `export { default as logo } from "./logo.svg"` would
-/// otherwise fail before a test can run. Stubbing the default export to the
-/// source file URL keeps unit tests deterministic without pretending to build
-/// an emitted production asset.
-const TEST_ASSET_LOADER: &str = r#"
+/// otherwise fail before a test can run. The loader also supplies the legacy
+/// directory-index fallback that physical third-party ESM packages can use for
+/// internal relative imports (for example `./affix` -> `./affix/index.js`).
+/// Both behaviors stay test-only and leave package export resolution intact.
+const TEST_ASSET_LOADER: &str = r##"
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
 const ASSET_EXTENSIONS = new Set([
   ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
   ".woff", ".woff2", ".ttf", ".otf",
 ]);
 
+function isRelativeSpecifier(specifier) {
+  return specifier === "."
+    || specifier === ".."
+    || specifier.startsWith("./")
+    || specifier.startsWith("../");
+}
+
+function isTemporaryJetModuleParent(parentURL) {
+  return parentURL.startsWith("file:")
+    && new URL(parentURL).pathname.includes("/__jet_modules/");
+}
+
+function isVirtualOrBuiltinSpecifier(specifier) {
+  return specifier === "@jet/test"
+    || specifier === "@playwright/test"
+    || specifier.startsWith("node:")
+    || specifier.startsWith("virtual:")
+    || specifier.startsWith("\0")
+    || specifier.startsWith("#")
+    || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier);
+}
+
+function isUnsupportedCommonJsFacadeSpecifier(specifier) {
+  return specifier === "@jet/test"
+    || specifier === "@playwright/test"
+    || specifier.startsWith("node:")
+    || specifier.startsWith("virtual:")
+    || specifier.startsWith("\0")
+    || specifier.startsWith("#")
+    || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier) && !specifier.startsWith("file:"));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function namedCommonJsFacadeUrl(specifier, context, resolved) {
+  if (
+    resolved.format !== "commonjs"
+    || !resolved.url?.startsWith("file:")
+    || !context.parentURL?.startsWith("file:")
+    || isUnsupportedCommonJsFacadeSpecifier(specifier)
+  ) {
+    return null;
+  }
+
+  try {
+    const parentSource = readFileSync(fileURLToPath(context.parentURL), "utf8");
+    const namedImportPattern = new RegExp(
+      `\\b(?:import\\s+(?:[A-Za-z_$][A-Za-z0-9_$]*\\s*,\\s*)?|export\\s*)\\{([^}]*)\\}\\s*from\\s*(["'])${escapeRegExp(specifier)}\\2`,
+      "g",
+    );
+    const names = new Set();
+    for (const match of parentSource.matchAll(namedImportPattern)) {
+      for (const binding of match[1].split(",")) {
+        const name = binding.trim().split(/\s+as\s+/)[0].trim();
+        if (name !== "default" && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
+          names.add(name);
+        }
+      }
+    }
+    if (names.size === 0) {
+      return null;
+    }
+
+    const source = [
+      'import { createRequire } from "node:module";',
+      `const require = createRequire(${JSON.stringify(resolved.url)});`,
+      `const object = require(${JSON.stringify(fileURLToPath(resolved.url))});`,
+      "export default object;",
+      ...[...names].map((name) => `export const ${name} = object[${JSON.stringify(name)}];`),
+    ].join("\n");
+    return `data:text/javascript,${encodeURIComponent(source)}`;
+  } catch {
+    return null;
+  }
+}
+
 function isTestAssetUrl(url) {
   return url.startsWith("file:")
     && [...ASSET_EXTENSIONS].some((extension) => new URL(url).pathname.toLowerCase().endsWith(extension));
+}
+
+export async function resolve(specifier, context, nextResolve) {
+  try {
+    const resolved = await nextResolve(specifier, context);
+    const facadeUrl = namedCommonJsFacadeUrl(specifier, context, resolved);
+    if (facadeUrl) {
+      return { url: facadeUrl, shortCircuit: true };
+    }
+    return resolved;
+  } catch (error) {
+    const isLegacyFileOrDirectoryMiss = error?.code === "ERR_MODULE_NOT_FOUND"
+      || (error?.code === "ERR_UNSUPPORTED_DIR_IMPORT" && isRelativeSpecifier(specifier));
+    if (
+      !isLegacyFileOrDirectoryMiss
+      || !context.parentURL?.startsWith("file:")
+      || isTemporaryJetModuleParent(context.parentURL)
+      || isVirtualOrBuiltinSpecifier(specifier)
+    ) {
+      throw error;
+    }
+
+    try {
+      const resolvedPath = createRequire(context.parentURL).resolve(specifier);
+      return {
+        url: pathToFileURL(resolvedPath).href,
+        shortCircuit: true,
+      };
+    } catch {
+      throw error;
+    }
+  }
 }
 
 export async function load(url, context, nextLoad) {
@@ -74,7 +190,7 @@ export async function load(url, context, nextLoad) {
   }
   return nextLoad(url, context);
 }
-"#;
+"##;
 
 const TEST_ASSET_EXTENSIONS: &[&str] = &[
     "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp", "woff", "woff2", "ttf", "otf",
@@ -168,7 +284,7 @@ export default __jet;
             .canonicalize()
             .with_context(|| format!("canonicalizing CommonJS spec {}", spec.path.display()))?
     } else {
-        let mut emitter = TempModuleGraphEmitter::new(&modules_dir)
+        let mut emitter = TempModuleGraphEmitter::new(&modules_dir, &config.project_root)
             .context("Failed to create Node test module resolver")?;
         emitter
             .emit(
@@ -2327,10 +2443,14 @@ struct TempModuleGraphEmitter<'a> {
 }
 
 impl<'a> TempModuleGraphEmitter<'a> {
-    fn new(out_dir: &'a Path) -> Result<Self> {
+    fn new(out_dir: &'a Path, project_root: &Path) -> Result<Self> {
+        let aliases = AliasResolver::load(project_root, &HashMap::new());
+        let mut resolve_options = ResolveOptions::for_node_test();
+        resolve_options.alias = aliases.to_resolve_aliases();
+        resolve_options.base_url = aliases.base_url().map(Path::to_path_buf);
         Ok(Self {
             out_dir,
-            package_resolver: ModuleResolver::new(ResolveOptions::for_node_test())?,
+            package_resolver: ModuleResolver::new(resolve_options)?,
             outputs: HashMap::new(),
             next_id: 0,
         })
@@ -2443,13 +2563,16 @@ fn rewrite_test_module_imports(
 /// temporary ESM graph. Relative JS/TS modules retain the existing emitter
 /// behavior. Bare package specifiers use Jet's resolver so legacy CJS deep
 /// imports gain extension probing (for example `lodash/camelCase` →
-/// `lodash/camelCase.js`) before Node's strict ESM loader sees them.
+/// `lodash/camelCase.js`) before Node's strict ESM loader sees them. Physical
+/// JavaScript packages retain their on-disk location so Node preserves package
+/// boundaries, while TS/TSX/JSX package sources enter the temp graph for
+/// transformation before Node sees them.
 struct ResolvedTestModuleTarget {
     path: PathBuf,
-    /// Bare packages must keep their physical location: their own relative
-    /// imports, package boundary, and nested node_modules lookup are all part
-    /// of their runtime contract. Source modules are emitted into the temp
-    /// graph because they need TypeScript stripping first.
+    /// Node-native package files keep their physical location: their own
+    /// relative imports, package boundary, and nested node_modules lookup are
+    /// all part of their runtime contract. Source-like TS/TSX/JSX targets are
+    /// emitted into the temp graph because Node cannot execute them raw.
     preserve_node_location: bool,
 }
 
@@ -2491,9 +2614,16 @@ fn resolve_test_module_specifier(
     {
         return Ok(None);
     }
+    let preserve_node_location = matches!(
+        resolved
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str()),
+        Some("js" | "mjs" | "cjs")
+    );
     Ok(Some(ResolvedTestModuleTarget {
         path: resolved.path,
-        preserve_node_location: true,
+        preserve_node_location,
     }))
 }
 
@@ -2564,7 +2694,10 @@ fn strip_module_quotes(raw: &str) -> String {
 }
 
 fn is_relative_or_absolute_specifier(spec: &str) -> bool {
-    spec.starts_with("./") || spec.starts_with("../") || spec.starts_with('/')
+    matches!(spec, "." | "..")
+        || spec.starts_with("./")
+        || spec.starts_with("../")
+        || spec.starts_with('/')
 }
 
 fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBuf>> {
@@ -2788,7 +2921,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.path().join("out");
-        let mut emitter = TempModuleGraphEmitter::new(&out_dir).unwrap();
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
         let emitted = emitter
             .emit(
                 &spec,
@@ -2849,7 +2982,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.path().join("out");
-        let mut emitter = TempModuleGraphEmitter::new(&out_dir).unwrap();
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
         let emitted = emitter
             .emit(
                 &spec,

@@ -6,7 +6,7 @@
 //! asserts the summary reflects the expected pass/fail/skip counts.
 
 use jet::test_runner::{self, Outcome, RunnerConfig};
-use std::fs;
+use std::{fs, process::Command};
 
 #[tokio::test]
 async fn runs_basic_spec_and_reports_pass_fail_skip() {
@@ -443,7 +443,397 @@ test("resolves workspace packages without dev-only refresh imports", () => {
         "project packages and TSX imports must run in Node: {:#?}",
         summary.reports
     );
+}
+
+#[tokio::test]
+async fn test_worker_resolves_tsconfig_path_aliases_in_emitted_esm_graph() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("src/alias-target.ts"),
+        "export const aliasValue: string = \"tsconfig-path-alias\";\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("tsconfig-path-alias.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { aliasValue } from "@/alias-target";
+
+test("resolves tsconfig paths aliases before Node loads the emitted graph", () => {
+  expect(aliasValue).toBe("tsconfig-path-alias");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "tsconfig path aliases must be rewritten before Node resolves the emitted graph: {:#?}",
+        summary.reports
+    );
     assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_handles_physical_esm_directory_imports_and_workspace_tsx_indexes() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let node_modules = tmp.path().join("node_modules");
+    let physical_esm = node_modules.join("physical-esm");
+    let workspace_source = node_modules.join("workspace-source");
+    let react = node_modules.join("react");
+    let exact_dot = tmp.path().join("exact-dot");
+    let exact_dotdot = tmp.path().join("exact-dotdot");
+
+    fs::create_dir_all(physical_esm.join("es/affix")).unwrap();
+    fs::create_dir_all(workspace_source.join("source")).unwrap();
+    fs::create_dir_all(&react).unwrap();
+    fs::create_dir_all(&exact_dot).unwrap();
+    fs::create_dir_all(exact_dotdot.join("nested")).unwrap();
+
+    fs::write(
+        physical_esm.join("package.json"),
+        r#"{"name":"physical-esm","type":"module","exports":{".":"./es/index.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        physical_esm.join("es/index.js"),
+        "export { affixValue } from \"./affix\";\n",
+    )
+    .unwrap();
+    fs::write(
+        physical_esm.join("es/affix/index.js"),
+        "export const affixValue = \"physical-directory-index\";\n",
+    )
+    .unwrap();
+
+    fs::write(
+        workspace_source.join("package.json"),
+        r#"{"name":"workspace-source","type":"module","main":"./source"}"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace_source.join("source/index.tsx"),
+        "export function WorkspacePanel() { return <section>workspace</section>; }\n",
+    )
+    .unwrap();
+    fs::write(
+        react.join("package.json"),
+        r#"{"name":"react","type":"module","exports":{"./jsx-runtime":"./jsx-runtime.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        react.join("jsx-runtime.js"),
+        r#"export const Fragment = Symbol.for("fragment");
+export const jsx = (tag, props) => ({ tag, props });
+export const jsxs = jsx;
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        tmp.path().join("package-resolution.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { affixValue } from "physical-esm";
+import { WorkspacePanel } from "workspace-source";
+
+test("loads physical ESM directory indexes and workspace TSX package indexes", () => {
+  expect(affixValue).toBe("physical-directory-index");
+  expect(typeof WorkspacePanel).toBe("function");
+});
+"#,
+    )
+    .unwrap();
+    fs::write(exact_dot.join("index.ts"), "export const exactDot = 7;\n").unwrap();
+    fs::write(
+        exact_dot.join("exact-dot.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { exactDot } from ".";
+
+test("treats an exact dot specifier as a relative directory import", () => {
+  expect(exactDot).toBe(7);
+});
+"#,
+    )
+    .unwrap();
+    fs::write(
+        exact_dotdot.join("index.ts"),
+        "export const exactDotDot = 11;\n",
+    )
+    .unwrap();
+    fs::write(
+        exact_dotdot.join("nested/exact-dotdot.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { exactDotDot } from "..";
+
+test("treats an exact dot-dot specifier as a relative directory import", () => {
+  expect(exactDotDot).toBe(11);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "physical ESM directory and workspace TSX package indexes must run in Node: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 3);
+}
+
+#[tokio::test]
+async fn test_worker_resolves_extensionless_legacy_subpaths_inside_physical_esm_packages() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let node_modules = tmp.path().join("node_modules");
+    let physical_esm = node_modules.join("physical-esm");
+    let legacy_cjs = node_modules.join("legacy-cjs");
+    fs::create_dir_all(&physical_esm).unwrap();
+    fs::create_dir_all(&legacy_cjs).unwrap();
+
+    fs::write(
+        physical_esm.join("package.json"),
+        r#"{"name":"physical-esm","type":"module","exports":{".":"./index.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        physical_esm.join("index.js"),
+        r#"import upperCase from "legacy-cjs/upperCase";
+export const normalized = upperCase("jet-loader");
+"#,
+    )
+    .unwrap();
+    fs::write(
+        legacy_cjs.join("package.json"),
+        r#"{"name":"legacy-cjs","main":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(
+        legacy_cjs.join("upperCase.js"),
+        "module.exports = value => String(value).toUpperCase();\n",
+    )
+    .unwrap();
+
+    let native_entry = tmp.path().join("native-esm-check.mjs");
+    fs::write(
+        &native_entry,
+        "import { normalized } from \"physical-esm\";\nconsole.log(normalized);\n",
+    )
+    .unwrap();
+    let native = Command::new("node")
+        .arg(&native_entry)
+        .current_dir(tmp.path())
+        .output()
+        .expect("Node must execute the native ESM control case");
+    assert!(
+        !native.status.success(),
+        "native Node ESM must reject the extensionless legacy subpath; stdout = {}, stderr = {}",
+        String::from_utf8_lossy(&native.stdout),
+        String::from_utf8_lossy(&native.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&native.stderr).contains("ERR_MODULE_NOT_FOUND"),
+        "native ESM failure must be Node's strict extension error: {}",
+        String::from_utf8_lossy(&native.stderr),
+    );
+
+    fs::write(
+        tmp.path().join("physical-esm-legacy-subpath.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { normalized } from "physical-esm";
+
+test("loads a physical ESM package's extensionless legacy package subpath", () => {
+  expect(normalized).toBe("JET-LOADER");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "Jet's Node loader must resolve the physical ESM package's legacy subpath: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_facades_static_named_imports_from_complex_commonjs_in_physical_esm() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let node_modules = tmp.path().join("node_modules");
+    let physical_esm = node_modules.join("physical-esm");
+    let complex_commonjs = node_modules.join("complex-commonjs");
+    fs::create_dir_all(&physical_esm).unwrap();
+    fs::create_dir_all(&complex_commonjs).unwrap();
+
+    fs::write(
+        physical_esm.join("package.json"),
+        r#"{"name":"physical-esm","type":"module","exports":{".":"./index.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        physical_esm.join("index.js"),
+        r#"
+import defaultValue, {
+  getter as commonJsGetter,
+  forEach as commonJsForEach,
+} from "complex-commonjs";
+
+const values = [];
+commonJsForEach(["jet", "facade"], (value) => values.push(`${commonJsGetter}:${value}`));
+export const rendered = values.join(",");
+export const defaultShape = `${defaultValue.getter}:${typeof defaultValue.forEach}`;
+export {
+  getter as reexportedGetter,
+  forEach,
+} from "complex-commonjs";
+"#,
+    )
+    .unwrap();
+    fs::write(
+        complex_commonjs.join("package.json"),
+        r#"{"name":"complex-commonjs","main":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(
+        complex_commonjs.join("index.js"),
+        r#"
+const api = {
+  get getter() {
+    return "getter";
+  },
+  forEach(values, callback) {
+    return values.forEach(callback);
+  },
+};
+module.exports = Object.assign({}, api);
+"#,
+    )
+    .unwrap();
+
+    let native_entry = tmp.path().join("native-commonjs-named-import.mjs");
+    fs::write(
+        &native_entry,
+        "import { rendered } from \"physical-esm\";\nconsole.log(rendered);\n",
+    )
+    .unwrap();
+    let native = Command::new("node")
+        .arg(&native_entry)
+        .current_dir(tmp.path())
+        .output()
+        .expect("Node 18 must execute the native ESM control case");
+    let native_stderr = String::from_utf8_lossy(&native.stderr);
+    assert!(
+        !native.status.success(),
+        "native Node ESM must reject named imports CJS detection misses; stdout = {}, stderr = {}",
+        String::from_utf8_lossy(&native.stdout),
+        native_stderr,
+    );
+    assert!(
+        native_stderr.contains("Named export 'getter' not found")
+            || native_stderr.contains("Named export 'forEach' not found"),
+        "native ESM failure must identify the unavailable CommonJS named export: {native_stderr}",
+    );
+
+    fs::write(
+        tmp.path().join("commonjs-named-import-facade.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import {
+  defaultShape,
+  forEach as reexportedForEach,
+  rendered,
+  reexportedGetter,
+} from "physical-esm";
+
+test("facades physical ESM mixed CommonJS imports and named re-exports", () => {
+  expect(rendered).toBe("getter:jet,getter:facade");
+  expect(defaultShape).toBe("getter:function");
+  expect(reexportedGetter).toBe("getter");
+  const reexportedValues = [];
+  reexportedForEach(["re-export"], (value) => reexportedValues.push(`${reexportedGetter}:${value}`));
+  expect(reexportedValues.join(",")).toBe("getter:re-export");
+});
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path()
+            .join("commonjs-named-import-facade-direct.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import defaultValue, {
+  getter as commonJsGetter,
+  forEach as commonJsForEach,
+} from "complex-commonjs";
+
+test("facades an emitted test module's rewritten CommonJS file URL", () => {
+  expect(defaultValue.getter).toBe("getter");
+  const values = [];
+  commonJsForEach(["emitted"], (value) => values.push(`${commonJsGetter}:${value}`));
+  expect(values.join(",")).toBe("getter:emitted");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "Jet's Node loader must facade the physical ESM package's CommonJS named import: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 2);
 }
 
 #[tokio::test]
@@ -608,7 +998,7 @@ expect.extend({
   },
 });
 
-test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", () => {
+test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", async () => {
   const subject = { multiply(value) { return value * 2; } };
   const spy = jest.spyOn(subject, "multiply");
   expect(subject.multiply(3)).toBe(6);
@@ -628,13 +1018,28 @@ test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", () 
   expect(secondActual.loads).toBe(firstActual.loads + 1);
   expect(jest.requireMock("./actual.cjs").token).toBe("mock");
 
+  const realDate = Date;
   jest.useFakeTimers();
+  const virtualStart = Date.UTC(2035, 4, 6, 7, 8, 9, 10);
+  jest.setSystemTime(virtualStart);
+  expect(Date).not.toBe(realDate);
+  expect(Date.now()).toBe(virtualStart);
+  expect(new Date().getTime()).toBe(virtualStart);
+
   const fired = jest.fn();
+  let asyncTimerSettled = false;
   const interval = setInterval(() => fired("interval"), 5);
   setTimeout(() => fired("timeout"), 10);
-  expect(jest.getTimerCount()).toBe(2);
-  jest.advanceTimersByTime(5);
+  setTimeout(async () => {
+    await Promise.resolve();
+    asyncTimerSettled = true;
+  }, 5);
+  expect(jest.getTimerCount()).toBe(3);
+  await jest.advanceTimersByTimeAsync(5);
   expect(fired.mock.calls).toHaveLength(1);
+  expect(asyncTimerSettled).toBeTruthy();
+  expect(Date.now()).toBe(virtualStart + 5);
+  expect(new Date().getTime()).toBe(virtualStart + 5);
   clearInterval(interval);
   jest.advanceTimersByTime(5);
   expect(fired.mock.calls).toHaveLength(2);
@@ -643,12 +1048,22 @@ test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", () 
   jest.runAllTimers();
   expect(fired.mock.calls).toHaveLength(2);
   jest.useRealTimers();
+  expect(Date).toBe(realDate);
 
   expect(12).toBeDivisibleBy(3);
   expect(12).not.toBeDivisibleBy(5);
   expect({ label: "jet native runner" }).toEqual({
     label: expect.stringContaining("native"),
   });
+  expect("jet native runner").toEqual(expect.stringMatching(/^jet .* runner$/));
+  expect({
+    label: "jet native runner",
+    nested: { timer: "virtual" },
+    extra: true,
+  }).toEqual(expect.objectContaining({
+    label: expect.stringMatching("native"),
+    nested: expect.objectContaining({ timer: "virtual" }),
+  }));
 });
 "#,
     )
@@ -782,6 +1197,62 @@ test("loads complex destructured parameter annotations", () => {
     assert_eq!(
         summary.failed, 0,
         "complex destructured parameter annotations must be fully stripped: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_emits_bare_workspace_tsx_package_with_destructured_defaults() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let form_editor = tmp.path().join("node_modules/form-editor");
+    fs::create_dir_all(&form_editor).unwrap();
+    fs::write(
+        form_editor.join("package.json"),
+        r#"{"name":"form-editor","type":"module","main":"./FormDraftEditor.tsx","exports":"./FormDraftEditor.tsx"}"#,
+    )
+    .unwrap();
+    fs::write(
+        form_editor.join("FormDraftEditor.tsx"),
+        r#"
+type DraftEditorFormatOptions = { isNullable?: boolean };
+type EditorState = { value: string; nullable: boolean };
+
+export const FormDraftEditor = {};
+FormDraftEditor.formatFromString = (
+  value: string,
+  { isNullable = true }: DraftEditorFormatOptions = {},
+): EditorState | null => value === "" ? null : { value, nullable: isNullable };
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("bare-workspace-tsx-package.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { FormDraftEditor } from "form-editor";
+
+test("emits a typed bare workspace TSX package entry before Node loads it", () => {
+  expect(FormDraftEditor.formatFromString("value")).toEqual({ value: "value", nullable: true });
+  expect(FormDraftEditor.formatFromString("value", { isNullable: false })).toEqual({ value: "value", nullable: false });
+  expect(FormDraftEditor.formatFromString("")).toBe(null);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "bare workspace TSX package entries must be emitted before Node loads them: {:#?}",
         summary.reports
     );
     assert_eq!(summary.passed, 1);
@@ -952,6 +1423,71 @@ test("loads raw static assets as deterministic URL strings", () => {
     assert_eq!(
         summary.failed, 0,
         "source assets and installed-package asset barrels must be test-safe: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_resolves_extensionless_physical_esm_asset_barrels() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let package = tmp
+        .path()
+        .join("node_modules")
+        .join("extensionless-assets-pkg");
+    fs::create_dir_all(package.join("barrel/images")).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"extensionless-assets-pkg","type":"module","exports":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(
+        package.join("index.js"),
+        "export { logo, avatar } from \"./barrel\";\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("barrel/index.js"),
+        "export { default as logo } from \"./images/logo.svg\";\nexport { default as avatar } from \"./images/avatar.jpeg\";\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("barrel/images/logo.svg"),
+        r#"<svg viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>"#,
+    )
+    .unwrap();
+    fs::write(package.join("barrel/images/avatar.jpeg"), b"jpeg-bytes").unwrap();
+
+    fs::write(
+        tmp.path().join("extensionless-package-assets.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { logo, avatar } from "extensionless-assets-pkg";
+
+test("resolves an extensionless physical ESM barrel before stubbing package assets", () => {
+  expect(typeof logo).toBe("string");
+  expect(typeof avatar).toBe("string");
+  expect(logo.startsWith("file:")).toBe(true);
+  expect(avatar.startsWith("file:")).toBe(true);
+  expect(logo.endsWith("barrel/images/logo.svg")).toBe(true);
+  expect(avatar.endsWith("barrel/images/avatar.jpeg")).toBe(true);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "extensionless physical ESM package barrels must resolve before their assets are stubbed: {:#?}",
         summary.reports
     );
     assert_eq!(summary.passed, 1);
