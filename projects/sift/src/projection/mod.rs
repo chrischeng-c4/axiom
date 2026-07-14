@@ -5,6 +5,7 @@ mod logging;
 mod lumen;
 mod metric;
 mod model;
+mod profile;
 mod runtime;
 mod trace;
 
@@ -24,6 +25,13 @@ pub use model::{
     ErrorLifecycleState, ErrorLifecycleV1, ProjectionCheckpoint, ProjectionDescriptor,
     ProjectionLag, ProjectionStateEnvelope, RebuildComparison, ReplayJob, ReplayState,
     SiftControlState, PROJECTION_STATE_FORMAT_VERSION, SIFT_COMMAND_FORMAT_VERSION,
+};
+pub use profile::{
+    ProfileFlamegraphEntryV1, ProfileFunctionV1, ProfileFunctionValueV1, ProfileLineV1,
+    ProfileLocationV1, ProfileMappingV1, ProfilePage, ProfileProjection, ProfileQuery,
+    ProfileRecordV1, ProfileStackSampleV1, ProfileView, DEFAULT_PROFILE_RETENTION_DAYS,
+    MAX_PROFILE_QUERY_LIMIT, MAX_PROFILE_TOP_LIMIT, PROFILE_RECORD_SCHEMA, PROFILE_SCHEMA_VERSION,
+    PROJECTION_PROFILE_STORE,
 };
 pub use runtime::{
     Projection, ProjectionRuntime, PROJECTION_BATCH_SIZE, PROJECTION_EVENT_INDEX,

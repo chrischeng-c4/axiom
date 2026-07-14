@@ -28,6 +28,7 @@ use super::{
         AuditLegalHoldV1, ProjectionCheckpoint, ProjectionDescriptor, ProjectionLag,
         ProjectionStateEnvelope, RebuildComparison, PROJECTION_STATE_FORMAT_VERSION,
     },
+    profile::{ProfilePage, ProfileProjection, ProfileQuery, PROJECTION_PROFILE_STORE},
     trace::{TraceProjection, TraceResultV1, PROJECTION_TRACE_STORE},
 };
 
@@ -74,6 +75,7 @@ impl ProjectionRuntime {
         })?;
 
         let mut slots = BTreeMap::new();
+        let profile_journal = journal.clone();
         for factory in [
             Arc::new(|| Ok(Arc::new(EmbeddedLumenProjection::new()?) as Arc<dyn Projection>))
                 as ProjectionFactory,
@@ -87,6 +89,10 @@ impl ProjectionRuntime {
                 as ProjectionFactory,
             Arc::new(|| Ok(Arc::new(AuditChangeProjection::new()) as Arc<dyn Projection>))
                 as ProjectionFactory,
+            Arc::new(move || {
+                Ok(Arc::new(ProfileProjection::new(profile_journal.clone()))
+                    as Arc<dyn Projection>)
+            }) as ProjectionFactory,
         ] {
             let (name, slot) = open_slot(&projection_root, factory)?;
             if slots.insert(name.clone(), slot).is_some() {
@@ -197,6 +203,21 @@ impl ProjectionRuntime {
             .downcast_ref::<AuditChangeProjection>()
             .context("audit-change-store projection registration has the wrong implementation")?;
         audit.query(query, holds, now)
+    }
+
+    pub fn query_profiles(
+        &self,
+        query: &ProfileQuery,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<ProfilePage> {
+        let slot = self.slot(PROJECTION_PROFILE_STORE)?;
+        let live = slot.live.lock().expect("projection state lock poisoned");
+        let profiles = live
+            .implementation
+            .as_any()
+            .downcast_ref::<ProfileProjection>()
+            .context("profile-store projection registration has the wrong implementation")?;
+        profiles.query(query, now)
     }
 
     pub fn catch_up(&self, name: &str) -> Result<u64> {

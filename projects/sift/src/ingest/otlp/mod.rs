@@ -565,6 +565,12 @@ fn decode_profiles_json(
     project: &str,
 ) -> Result<Vec<std::result::Result<OperationalEventV2, OtlpItemError>>> {
     let root: Value = serde_json::from_slice(body).context("decode OTLP profiles JSON")?;
+    let dictionary = root
+        .get("dictionary")
+        .or_else(|| root.get("profilesDictionary"))
+        .or_else(|| root.get("profiles_dictionary"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let mut output = Vec::new();
     for resource_profiles in array(&root, "resourceProfiles", "resource_profiles") {
         let resource = json_resource(resource_profiles.get("resource"));
@@ -582,7 +588,11 @@ fn decode_profiles_json(
                 }
             };
             for profile in profiles {
-                let start = nanos(profile, "startTimeUnixNano", "start_time_unix_nano");
+                let start = nanos(profile, "timeUnixNano", "time_unix_nano").max(nanos(
+                    profile,
+                    "startTimeUnixNano",
+                    "start_time_unix_nano",
+                ));
                 let profile_id = id_string(
                     profile
                         .get("profileId")
@@ -602,9 +612,16 @@ fn decode_profiles_json(
                     stable_id("profile", project, &profile_id),
                     start,
                     start,
-                    profile.clone(),
+                    json!({
+                        "profile": profile,
+                        "dictionary": dictionary.clone(),
+                    }),
                 );
                 event.instrumentation_scope = scope.clone();
+                if let Some((trace_id, span_id)) = json_profile_correlation(profile, &dictionary) {
+                    event.trace_id = Some(trace_id);
+                    event.span_id = Some(span_id);
+                }
                 output.push(Ok(event));
             }
         }
@@ -621,36 +638,136 @@ fn decode_profiles_proto(
     if request.resource_profiles.is_empty() {
         bail!("OTLP profiles protobuf contains no resource_profiles");
     }
-    let now = Utc::now().to_rfc3339();
-    Ok(request
-        .resource_profiles
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            let mut event = OperationalEventV2::for_project(
-                project,
-                "default",
-                stable_id(
-                    "profile-protobuf",
+    let dictionary = request.dictionary.unwrap_or_default();
+    let dictionary_json = proto_profile_dictionary_json(&dictionary);
+    let mut output = Vec::new();
+    for resource_profiles in request.resource_profiles {
+        let resource = proto_resource(resource_profiles.resource.as_ref());
+        for scope_profiles in resource_profiles.scope_profiles {
+            let scope = proto_scope(scope_profiles.scope.as_ref(), &scope_profiles.schema_url);
+            for profile_value in scope_profiles.profiles {
+                let profile_id = if profile_value.profile_id.is_empty() {
+                    stable_id(
+                        "profile-source",
+                        project,
+                        &serde_json::to_string(&proto_profile_json(&profile_value))
+                            .unwrap_or_default(),
+                    )
+                } else {
+                    hex::encode(&profile_value.profile_id)
+                };
+                let mut event = base_event(
+                    OtlpSignal::Profiles,
                     project,
-                    &format!("{}:{index}", hex::encode(body)),
-                ),
-                SignalKind::Profile,
-                json!({
-                    "encoding": "otlp-protobuf",
-                    "resourceIndex": index,
-                    "requestBytesBase64": BASE64.encode(body),
-                    "decodeStatus": "opaque-until-profile-store-v1",
-                }),
-            );
-            event.occurred_at = now.clone();
-            event.observed_at = now.clone();
-            event
-                .resource
-                .insert("service.name".into(), "unknown".into());
-            Ok(event)
-        })
-        .collect())
+                    &resource,
+                    stable_id("profile", project, &profile_id),
+                    profile_value.time_unix_nano,
+                    profile_value.time_unix_nano,
+                    json!({
+                        "profile": proto_profile_json(&profile_value),
+                        "dictionary": dictionary_json.clone(),
+                    }),
+                );
+                event.instrumentation_scope = scope.clone();
+                if let Some(link) = profile_value
+                    .samples
+                    .iter()
+                    .filter_map(|sample| usize::try_from(sample.link_index).ok())
+                    .find_map(|index| dictionary.link_table.get(index))
+                    .filter(|link| !link.trace_id.is_empty() && !link.span_id.is_empty())
+                {
+                    event.trace_id = Some(hex::encode(&link.trace_id));
+                    event.span_id = Some(hex::encode(&link.span_id));
+                }
+                output.push(Ok(event));
+            }
+        }
+    }
+    if output.is_empty() {
+        bail!("OTLP profiles protobuf contains no profiles");
+    }
+    Ok(output)
+}
+
+fn json_profile_correlation(profile: &Value, dictionary: &Value) -> Option<(String, String)> {
+    let sample = array(profile, "samples", "samples")
+        .iter()
+        .find(|sample| nanos(sample, "linkIndex", "link_index") > 0)?;
+    let index = usize::try_from(nanos(sample, "linkIndex", "link_index")).ok()?;
+    let link = array(dictionary, "linkTable", "link_table").get(index)?;
+    Some((
+        id_string(link.get("traceId").or_else(|| link.get("trace_id")))?,
+        id_string(link.get("spanId").or_else(|| link.get("span_id")))?,
+    ))
+}
+
+fn proto_profile_json(profile: &wire::Profile) -> Value {
+    json!({
+        "sampleType": profile.sample_type.as_ref().map(|value| json!({
+            "typeStrindex": value.type_strindex,
+            "unitStrindex": value.unit_strindex,
+        })),
+        "samples": profile.samples.iter().map(|sample| json!({
+            "stackIndex": sample.stack_index,
+            "attributeIndices": sample.attribute_indices,
+            "linkIndex": sample.link_index,
+            "values": sample.values,
+            "timestampsUnixNano": sample.timestamps_unix_nano.iter().map(u64::to_string).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "timeUnixNano": profile.time_unix_nano.to_string(),
+        "durationNano": profile.duration_nano.to_string(),
+        "periodType": profile.period_type.as_ref().map(|value| json!({
+            "typeStrindex": value.type_strindex,
+            "unitStrindex": value.unit_strindex,
+        })),
+        "period": profile.period,
+        "profileId": hex::encode(&profile.profile_id),
+        "droppedAttributesCount": profile.dropped_attributes_count,
+        "originalPayloadFormat": profile.original_payload_format,
+        "originalPayloadBase64": (!profile.original_payload.is_empty()).then(|| BASE64.encode(&profile.original_payload)),
+        "attributeIndices": profile.attribute_indices,
+    })
+}
+
+fn proto_profile_dictionary_json(dictionary: &wire::ProfilesDictionary) -> Value {
+    json!({
+        "mappingTable": dictionary.mapping_table.iter().map(|mapping| json!({
+            "memoryStart": mapping.memory_start.to_string(),
+            "memoryLimit": mapping.memory_limit.to_string(),
+            "fileOffset": mapping.file_offset.to_string(),
+            "filenameStrindex": mapping.filename_strindex,
+            "attributeIndices": mapping.attribute_indices,
+        })).collect::<Vec<_>>(),
+        "locationTable": dictionary.location_table.iter().map(|location| json!({
+            "mappingIndex": location.mapping_index,
+            "address": location.address.to_string(),
+            "lines": location.lines.iter().map(|line| json!({
+                "functionIndex": line.function_index,
+                "line": line.line,
+                "column": line.column,
+            })).collect::<Vec<_>>(),
+            "attributeIndices": location.attribute_indices,
+        })).collect::<Vec<_>>(),
+        "functionTable": dictionary.function_table.iter().map(|function| json!({
+            "nameStrindex": function.name_strindex,
+            "systemNameStrindex": function.system_name_strindex,
+            "filenameStrindex": function.filename_strindex,
+            "startLine": function.start_line,
+        })).collect::<Vec<_>>(),
+        "linkTable": dictionary.link_table.iter().map(|link| json!({
+            "traceId": hex::encode(&link.trace_id),
+            "spanId": hex::encode(&link.span_id),
+        })).collect::<Vec<_>>(),
+        "stringTable": dictionary.string_table,
+        "attributeTable": dictionary.attribute_table.iter().map(|attribute| json!({
+            "keyStrindex": attribute.key_strindex,
+            "value": attribute.value.as_ref().map(proto_any_json),
+            "unitStrindex": attribute.unit_strindex,
+        })).collect::<Vec<_>>(),
+        "stackTable": dictionary.stack_table.iter().map(|stack| json!({
+            "locationIndices": stack.location_indices,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 fn base_event(

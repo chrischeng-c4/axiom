@@ -10,7 +10,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::{ContentBlobRef, OperationalEventV2};
+use crate::{ContentBlobRef, OperationalEventV2, SignalKind};
 
 #[derive(Debug, Clone)]
 pub struct BlobStore {
@@ -63,6 +63,15 @@ impl BlobStore {
     pub fn externalize_event(&self, event: &mut OperationalEventV2) -> Result<()> {
         let mut refs = Vec::new();
         self.externalize_value(&mut event.payload, &mut refs)?;
+        if event.signal == SignalKind::Profile
+            && event.payload.get("profileBlob").is_none()
+            && serde_json::to_vec(&event.payload)?.len() >= self.externalize_bytes
+        {
+            let bytes = serde_json::to_vec(&event.payload)?;
+            let reference = self.put(&bytes, "application/json")?;
+            event.payload = json!({"profileBlob": reference.clone()});
+            refs.push(reference);
+        }
         let mut seen = event
             .blob_refs
             .iter()
@@ -71,6 +80,23 @@ impl BlobStore {
         for reference in refs {
             if seen.insert(reference.hash.clone()) {
                 event.blob_refs.push(reference);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_references(&self, references: &[ContentBlobRef]) -> Result<()> {
+        for reference in references {
+            let bytes = self
+                .read(&reference.hash)
+                .with_context(|| format!("read durable content reference {}", reference.hash))?;
+            if bytes.len() as u64 != reference.size {
+                bail!(
+                    "blob {} size mismatch: reference {}, durable {}",
+                    reference.hash,
+                    reference.size,
+                    bytes.len()
+                );
             }
         }
         Ok(())

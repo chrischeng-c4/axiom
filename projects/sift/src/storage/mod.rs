@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::{OperationalEventV2, StoredEvent};
+use crate::{ContentBlobRef, OperationalEventV2, StoredEvent};
 
 pub use blob::BlobStore;
 pub use segment::{AppendLocation, SegmentManifest, SegmentState};
@@ -61,7 +61,8 @@ impl RawStorage {
     }
 
     pub fn externalize_event(&self, event: &mut OperationalEventV2) -> Result<()> {
-        self.blobs.externalize_event(event)
+        self.blobs.externalize_event(event)?;
+        self.blobs.validate_references(&event.blob_refs)
     }
 
     pub fn append(&self, stored: &StoredEvent) -> Result<AppendLocation> {
@@ -107,6 +108,10 @@ impl RawStorage {
 
     pub fn read_blob(&self, hash: &str) -> Result<Vec<u8>> {
         self.blobs.read(hash)
+    }
+
+    pub fn validate_blob_refs(&self, references: &[ContentBlobRef]) -> Result<()> {
+        self.blobs.validate_references(references)
     }
 
     pub fn blob_paths(&self) -> Result<Vec<PathBuf>> {

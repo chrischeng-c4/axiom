@@ -843,6 +843,7 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/traces/{id}", get(get_trace))
         .route("/v1/errors:query", post(query_errors))
         .route("/v1/metrics:query", post(query_metrics))
+        .route("/v1/profiles:query", post(query_profiles))
         .route("/v1/audit:query", post(query_audit))
         .route("/v1/audit:export", post(export_audit))
         .route(
@@ -1409,6 +1410,46 @@ async fn query_metrics(
         .projections
         .query_metrics(&query)
         .map_err(|error| ApiError::bad_request("invalid_metric_query", error.to_string()))?;
+    page.projection_cursor = projection_cursor;
+    Ok(Json(page))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/profiles:query",
+    request_body = projection::ProfileQuery,
+    responses(
+        (status = 200, description = "profile list or deterministic analysis", body = projection::ProfilePage),
+        (status = 400, description = "invalid profile query", body = ErrorEnvelope),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn query_profiles(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    payload: Result<Json<projection::ProfileQuery>, JsonRejection>,
+) -> Result<Json<projection::ProfilePage>, ApiError> {
+    let Json(query) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    authorize_project_read(principal.as_ref().map(|value| &value.0), &query.project)?;
+    state
+        .projections
+        .catch_up(projection::PROJECTION_PROFILE_STORE)
+        .map_err(|error| ApiError::bad_request("invalid_profile_store", error.to_string()))?;
+    let projection_cursor = state
+        .projections
+        .wait_for_min_cursor(
+            projection::PROJECTION_PROFILE_STORE,
+            query.min_cursor.unwrap_or(0),
+            LOG_QUERY_PROJECTION_WAIT,
+        )
+        .await
+        .map_err(ApiError::projection_lag)?;
+    let mut page = state
+        .projections
+        .query_profiles(&query, Utc::now())
+        .map_err(|error| ApiError::bad_request("invalid_profile_query", error.to_string()))?;
     page.projection_cursor = projection_cursor;
     Ok(Json(page))
 }
@@ -1991,6 +2032,7 @@ async fn get_replay(
         get_trace,
         query_errors,
         query_metrics,
+        query_profiles,
         query_audit,
         upsert_audit_hold,
         release_audit_hold,
@@ -2041,6 +2083,17 @@ async fn get_replay(
         projection::MetricQuery,
         projection::MetricSeriesResultV1,
         projection::MetricPage,
+        projection::ProfileMappingV1,
+        projection::ProfileFunctionV1,
+        projection::ProfileLineV1,
+        projection::ProfileLocationV1,
+        projection::ProfileStackSampleV1,
+        projection::ProfileRecordV1,
+        projection::ProfileView,
+        projection::ProfileQuery,
+        projection::ProfileFlamegraphEntryV1,
+        projection::ProfileFunctionValueV1,
+        projection::ProfilePage,
         projection::AuditChangeRecordV1,
         projection::AuditQuery,
         projection::AuditPage,

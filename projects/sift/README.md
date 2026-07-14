@@ -70,12 +70,12 @@ first-class domain roots.
 | Shard-Aware Hot Storage | 1659 | implemented | partial | conformance | not_ready | 4096 buckets, future-only epochs, sealed segments, movement, recovery, and embedded rebuild index pass; retention remains |
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
 | Backup And Restore | 1659 | implemented | partial | conformance | not_ready | snapshot plus real Vat-backed GCS archive/cold restore pass; scheduled off-node and three-node proof remain #1676 |
-| Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy and fixed projection-index allowlist are verified; metric cardinality remains |
-| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | logging, trace, error, metric, and immutable audit/change stores pass; profile and GenAI stores remain #1669-#1670 |
-| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus authorized logging, trace, error, metric, and audit/change reads pass; unified cross-signal query and streaming tail remain #1671 |
+| Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy, fixed projection-index allowlist, metric cardinality, and profile blob reference validation are verified; GenAI/evaluation schemas remain |
+| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | logging, trace, error, metric, audit/change, and OTel profile stores pass; GenAI/evaluation remains #1670 |
+| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus authorized logging, trace, error, metric, audit/change, and profile analysis reads pass; unified cross-signal query and streaming tail remain #1671 |
 | GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
 | Security Audit And Governance | 1668 | implemented | verified | conformance | ready | immutable hash-chained audit/change projections, retention with legal hold, scoped reads, controlled hashed exports, and rebuild equality pass |
-| Profile Observability | 1669 | planned | planned | conformance | not_ready | OTel profiles, blob durability, flamegraphs, top functions, diffs, and trace correlation |
+| Profile Observability | 1669 | implemented | verified | conformance | not_ready | current OTel JSON/protobuf dictionary profiles, blob-before-ack, missing/corrupt rejection, flamegraphs, top functions, diffs, trace correlation, retention, and rebuild equality pass; multi-node cold-restore proof remains #1676 |
 | AI And Agent Observability | 1670 | planned | planned | conformance | not_ready | GenAI observations, sessions, token/cost views, and typed evaluation scores |
 | Alert Rules And Incident Lifecycle | 1672 | planned | planned | conformance | not_ready | durable typed rules, deduplicated incidents, and audited lifecycle transitions |
 | SLO And Error Budget | 1672 | planned | planned | conformance | not_ready | SLIs, objectives, error budgets, and multi-window burn-rate evaluation |
@@ -323,8 +323,8 @@ links/events, partial diagnostics, critical path, error fingerprint/group
 lifecycle, direct metric time-series/chunks/rollups, OTel temporality,
 histograms, exemplars, cardinality overflow, project authorization, and raw
 rebuild equality pass; immutable audit/change timeline, legal hold, controlled
-export, and integrity verification pass; profile analysis and GenAI views remain
-pending.
+export, integrity verification, OTel profile blob durability, deterministic
+analysis, correlation, retention, and rebuild pass; GenAI views remain pending.
 Required Verification: conformance, dogfood
 Promise:
 Expose logging, tracing, error reporting, metrics, audit/change, profiles, and
@@ -340,6 +340,7 @@ Gate Inventory:
 - implemented error grouping/lifecycle: projects/sift/tests/error_report_store.rs and projects/sift/tests/error_report_api.rs
 - implemented metric projection/query: projects/sift/tests/metric_store.rs and projects/sift/tests/metric_api.rs
 - implemented audit/change projection/governance: projects/sift/tests/audit_change_store.rs and projects/sift/tests/audit_change_api.rs
+- implemented profile projection/blob/query: projects/sift/tests/profile_store.rs and projects/sift/tests/profile_blob_durability.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -349,7 +350,7 @@ Gate Inventory:
 | error-report-store-grouping-lifecycle | change | 1666 | implemented | passing | conformance | versioned fingerprints, ordered occurrences, durable authorized lifecycle, deterministic reopen/mute expiry, audit/change evidence, restart, and raw rebuild equality |
 | metric-store-direct-points-and-exemplars | change | 1667 | implemented | passing | conformance | gauge/delta/cumulative reset semantics, explicit/exponential histograms, exemplars, late points, chunks, 60s/1h rollups, overflow diagnostics, auth, pagination, lag, snapshot, and raw rebuild equality |
 | audit-and-change-store-timeline | change | 1668 | implemented | passing | conformance | immutable per-project hash chain, normalized actor/action/change context, raw rebuild equality, retention, legal hold, scoped query, and controlled hashed export |
-| profile-store-and-analysis | change | 1669 | planned | planned | conformance | flamegraph, top-functions, diff, and trace-correlation gate |
+| profile-store-and-analysis | change | 1669 | implemented | passing | conformance | current OTel dictionary samples/functions/locations/mappings, JSON/protobuf normalization, content-addressed blobs, flamegraph/top/diff, trace/span filters, retention, scoped API, and raw rebuild equality |
 | genai-session-cost-evaluation-views | change | 1670 | planned | planned | conformance | observation, session, token/cost, and evaluation gate |
 | store-rebuild-from-raw-journal | change | #1660 | implemented | passing | dogfood | fresh raw replay compares canonical semantic digest before atomic install |
 
@@ -374,6 +375,7 @@ Gate Inventory:
 - implemented log-specific query/tail primitives: projects/sift/tests/logging_api.rs
 - implemented trace-specific retrieval and partial topology: projects/sift/tests/trace_api.rs
 - implemented audit/change query and controlled export: projects/sift/tests/audit_change_api.rs
+- implemented profile list/analysis and scoped reads: projects/sift/tests/profile_store.rs and projects/sift/tests/profile_blob_durability.rs
 - pending unified query: projects/sift/tests/event_query_api.rs
 - pending streaming tail: projects/sift/tests/tail_api.rs
 - implemented: projects/sift/tests/replay_api.rs
@@ -451,9 +453,10 @@ Status: confirmed
 Surfaces: HTTP: OTLP `/v1/profiles`, `POST /v1/profiles:query`; CLI: `sift
 query profiles`; Storage: content-addressed profile blobs and rebuildable
 profile projections.
-EC Dimensions: behavior: pending profile gate - OTel profile ingest,
-flamegraph, top-functions, diff, trace correlation, retention, and rebuild;
-stability: pending large-payload durability and cold-restore gate.
+EC Dimensions: behavior: current OTel JSON/protobuf dictionary ingest,
+flamegraph, top-functions, diff, trace correlation, retention, and raw rebuild
+equality pass; stability: blob-before-ack plus missing/deleted/digest-mismatch
+rejection pass, with multi-node cold-restore proof retained in #1676.
 Required Verification: conformance, dogfood
 Promise:
 Store OpenTelemetry profiles as first-class operational evidence. Large profile
@@ -461,14 +464,14 @@ payloads become durable content-addressed blobs before their bounded metadata
 event is acknowledged; agents can query flamegraphs, top functions, diffs, and
 trace correlations without a GUI.
 Gate Inventory:
-- pending: projects/sift/tests/profile_store.rs
-- pending: projects/sift/tests/profile_blob_durability.rs
+- implemented store/analysis/rebuild: projects/sift/tests/profile_store.rs
+- implemented blob durability/protobuf/auth: projects/sift/tests/profile_blob_durability.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| otel-profile-ingest-and-blob-durability | change | 1669 | planned | planned | conformance | OTLP profile and blob-before-ack gate |
-| flamegraph-top-functions-and-diff | change | 1669 | planned | planned | conformance | deterministic profile analysis gate |
-| profile-trace-correlation-and-rebuild | change | 1669 | planned | planned | dogfood | correlation, retention, and raw rebuild gate |
+| otel-profile-ingest-and-blob-durability | change | 1669 | implemented | passing | conformance | OTel JSON/protobuf dictionary normalization, original-payload and whole-profile externalization, bounded raw metadata, durable hash/size validation, and missing/deleted blob rejection |
+| flamegraph-top-functions-and-diff | change | 1669 | implemented | passing | conformance | deterministic root-to-leaf stack aggregation, inclusive/self totals, stable ordering, and baseline/comparison deltas |
+| profile-trace-correlation-and-rebuild | change | 1669 | implemented | passing | dogfood | sample/event trace/span correlation, project/time filters, hot retention, restart blob validation, and raw-plus-blob rebuild equality |
 
 ### AI And Agent Observability
 
