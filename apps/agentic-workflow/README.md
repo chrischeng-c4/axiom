@@ -65,6 +65,7 @@ AW uses canonical agent-facing command names for the main lifecycle:
 
 | CLI | Long name | Role |
 |---|---|---|
+| `aw meta` | META-doc control plane | Initialize repo/project skeletons, refresh only AW-owned marker blocks, and fail read-only checks with exact remediation. |
 | `aw capability` | Product capabilities | Define the project capability tree, claims, maturity, release scope, and required external contracts. |
 | `aw ec` | External Contracts | Define behavior, efficiency, security, and stability contracts; generate tests and tool configs. |
 | `aw td` | Tech Design + code artifacts | Describe implementation design and own generated-code verbs: `gen`, `gen-source`, `fill`, `code-check`, and `create --from-source`. TD output is a candidate implementation that iterates until EC and health gates pass. |
@@ -73,17 +74,18 @@ AW uses canonical agent-facing command names for the main lifecycle:
 The canonical flow for greenfield projects is:
 
 ```text
-aw capability report/next/migrate/check -> aw ec draft/fill -> aw ec gen -> aw td create/gen/fill/code-check/merge -> aw health
+aw meta init/check -> aw capability report/next/migrate/check -> aw ec draft/fill -> aw ec gen -> aw td create/gen/fill/code-check -> aw health
 ```
 
-Greenfield starts by defining capabilities and required external contracts. EC
+Greenfield starts by creating the repo/project META-doc control plane, then
+defining capabilities and required external contracts. EC
 contracts may begin red: `aw ec gen` materializes the tests, runner stubs, and
 tool manifests first, then TD/CB/code work drives those contracts green.
 
 The canonical flow for brownfield projects is:
 
 ```text
-aw capability check -> aw ec check/gen -> aw td claim/create --from-source/gen/fill -> aw health
+aw meta check -> aw capability check -> aw ec check/gen -> aw td claim/create --from-source/gen/fill/code-check -> aw health
 ```
 
 Brownfield starts by adding capabilities around existing behavior, then

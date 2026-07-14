@@ -65,6 +65,7 @@ not a lifecycle bypass.
 <!-- aw:cli-table:workflow:start -->
 | Verb | About |
 |------|-------|
+| `aw meta` | Initialize, synchronize, and check repository/project META-docs |
 | `aw wi` | Manage work-items — list/show/create/validate across local + GitHub backends |
 | `aw capability` | Product capability completion loop: report/next/run/check |
 | `aw td` | Tech-design and generated-code lifecycle |
@@ -158,6 +159,9 @@ deliberately separate commands.
 without writing; `aw conf sync` auto-discovers projects and refreshes that
 block. Other projected artifacts are owned by their own producer commands and
 should be routed through `aw health` once those health checks are wired.
+`aw meta init|sync|check` is the sole producer/checker for repo/project
+META-doc skeletons and AW-owned marker blocks; `check` is read-only and names
+the exact `sync` remediation when drift exists.
 `aw llm`, `aw upgrade`, and `aw issue` are the CLI-convention trio every
 ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 `upgrade`, `issue`" below for the full contract.

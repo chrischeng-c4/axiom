@@ -26,7 +26,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 ID: aw-core-client-model-workitem-first-artifact-lifecycle
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw wi` + `aw ec` + `aw td` + `aw wi run`/`aw capability run` - the single agent-first project-iteration surface.
+- CLI: `aw meta` + `aw wi` + `aw ec` + `aw td` + `aw wi run`/`aw capability run` - the single agent-first project-iteration surface.
 EC Dimensions:
 - behavior: WorkItem-first artifact admission, agent-first CLI ownership, strict validation/phase transitions, codegen, and evidence-backed rollup semantics.
 Root WI: #1496
@@ -43,6 +43,7 @@ Gate Inventory:
 | WorkItem artifact admission gate | change | #3895 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md |
 | Agent-first CLI product model | change | #1496 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md |
 | META-doc ownership matrix | change | #1497 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib meta_doc_ownership -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests root_doc_ -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-meta-doc-ownership-matrix.md; one serializable repo/project matrix drives placement, required headings, inheritance documentation, root allowlists, and actionable project-agent-doc diagnostics |
+| META-doc init/sync/check producers | change | #1498 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture`; `cargo test -p agentic-workflow --lib leaf_verb_paths_are_all_classified -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-meta-doc-producer.md; one producer registry owns skeleton creation, marker-only synchronization, read-only drift diagnostics, chainable output, and legacy `aw new` delegation |
 | Repo View command and desktop product removal | change | #1502 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-view-removal.md |
 | Cross-checkout chat command and shared-channel removal | change | #1503 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; `cargo test -p agentic-workflow --lib test_install_skills_prunes_aw_chat_listen -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-chat-removal.md |
 | Agent orientation surface | change | #178 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands`; apps/agentic-workflow/tech-design/logic/aw-llm-offline-agent-orientation-command.md |

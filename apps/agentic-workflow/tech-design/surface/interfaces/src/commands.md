@@ -43,6 +43,7 @@ use crate::cli::guard;
 use crate::cli::init;
 use crate::cli::issues;
 use crate::cli::llm;
+use crate::cli::meta;
 use crate::cli::project;
 use crate::cli::standard_cli;
 
@@ -70,6 +71,9 @@ pub enum Commands {
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
     Conf(conf::ConfArgs),
 
+    /// Initialize, synchronize, and check repository/project META-docs.
+    Meta(meta::MetaArgs),
+
     /// Manage work-items — list/show/create/validate across local + GitHub backends.
     // @spec apps/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
     #[command(name = "wi")]
@@ -91,7 +95,7 @@ pub enum Commands {
     /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
 
-    /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
+    /// External-contract lifecycle: draft/fill, independent semantic review, generate, and verify.
     Ec(ec::EcArgs),
 }
 
@@ -120,6 +124,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Conf(args) => {
             conf::run(args)?;
+        }
+        Commands::Meta(args) => {
+            meta::run(args)?;
         }
         Commands::Issues(args) => {
             issues::run(args).await?;

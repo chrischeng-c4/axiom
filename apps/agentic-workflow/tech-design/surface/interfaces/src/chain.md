@@ -547,6 +547,25 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
+    // -- meta (core: repository/project iteration control plane) -------
+    VerbLifecycle {
+        path: "meta.init",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "meta.sync",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "meta.check",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
     // -- wi (core loop: work-item inventory, linear authoring, run) -----
     VerbLifecycle {
         path: "wi.draft.init",

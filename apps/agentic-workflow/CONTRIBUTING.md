@@ -56,7 +56,7 @@ checks that prove the changed surface:
 Every registered `aw` CLI verb carries a lifecycle class in
 `src/cli/chain.rs`'s `VERB_LIFECYCLE_REGISTRY` (epic #1270 R4+R9):
 
-- `Core` — the `wi`/`td`/`ec`/`capability`/`health`/`conf` lifecycle and loop
+- `Core` — the `meta`/`wi`/`td`/`ec`/`capability`/`health`/`conf` lifecycle and loop
   surface: the verbs the LINEAR loop (`aw wi` -> `aw td create` -> `gen` ->
   `fill` -> `code-check`) and its sibling `ec`/`capability`/`health` loops
   actually dispatch through.

@@ -25,8 +25,8 @@ capability_refs:
 //!
 //! The matrix is the semantic source for placement, fact ownership,
 //! inheritance, required headings, the CONTRIBUTING projection, and the
-//! existing root-doc tests. Producer commands are intentionally separate:
-//! issue #1498 wraps this contract with `aw meta init|sync|check`.
+//! existing root-doc tests. The sibling `meta` module consumes this contract
+//! for the `aw meta init|sync|check` producer/checker surface.
 
 use serde::Serialize;
 #[cfg(test)]

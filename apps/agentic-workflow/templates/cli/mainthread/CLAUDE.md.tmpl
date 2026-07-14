@@ -36,6 +36,7 @@ not a lifecycle bypass.
 <!-- aw:cli-table:workflow:start -->
 | Verb | About |
 |------|-------|
+| `aw meta` | Initialize, synchronize, and check repository/project META-docs. |
 | `aw wi` | Manage work-items — list/show/create/validate across local + GitHub backends. |
 | `aw capability` | Product capability completion loop: report/next/run/check. |
 | `aw td` | Tech-design and generated-code lifecycle |
@@ -79,14 +80,14 @@ self-review is not accepted. `aw health` routes missing approval to `aw ec
 review` and accepted EC generation gaps to `aw ec gen --verify`.
 
 The former `aw standardize` namespace (including `audit check`/`audit
-record`) is retired. Existing-project takeover uses `aw td audit-record`
-to record a bounded preservation audit fixture and `aw health`'s
-`takeover-audit` axis to check it. Readiness layer metrics (`capability`,
-`managed`, `semantic`, `traceability`, `regenerable`) live entirely in
-`aw health`, whose `next.command` names the worker verb for the top gap
-(`aw td promote`, `aw td create --from-source`, `aw td gen`, `aw wi
-create`, ...). Capability remediation is `aw capability`;
-HANDWRITE→CODEGEN promotion is `aw td promote`.
+record`) is retired (#1278, epic #1270). Existing-project takeover uses
+`aw td audit-record` to record a bounded preservation audit fixture and
+`aw health`'s `takeover-audit` axis to check it. Readiness layer metrics
+(`capability`, `managed`, `semantic`, `traceability`, `regenerable`) live
+entirely in `aw health`, whose `next.command` names the worker verb for the
+top gap (`aw td promote`, `aw td create --from-source`, `aw td gen`, `aw wi
+create`, ...). Capability remediation is `aw capability`; HANDWRITE→CODEGEN
+promotion is `aw td promote`.
 
 `aw capability` is the product capability completion loop: `report`,
 `next`, `draft`, `apply-draft`, `init`, `migrate`, `run`, `check`, and
@@ -129,6 +130,9 @@ deliberately separate commands.
 without writing; `aw conf sync` auto-discovers projects and refreshes that
 block. Other projected artifacts are owned by their own producer commands and
 should be routed through `aw health` once those health checks are wired.
+`aw meta init|sync|check` is the sole producer/checker for repo/project
+META-doc skeletons and AW-owned marker blocks; `check` is read-only and names
+the exact `sync` remediation when drift exists.
 `aw llm`, `aw upgrade`, and `aw issue` are the CLI-convention trio every
 ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 `upgrade`, `issue`" below for the full contract.
@@ -204,7 +208,8 @@ CLI surface.
 ## SDD and Codegen Rules
 
 Specs are the source of truth. Consult `apps/agentic-workflow/tech-design/` first;
-fall back to source code only when needed, then consider `aw td create --from-source`.
+fall back to source code only when needed, then consider `aw td create
+--from-source`.
 
 New TD test taxonomy is artifact-oriented: use `unit-test` for generated unit
 test design and `e2e-test` for product journey / side-effect verification.

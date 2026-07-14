@@ -9,13 +9,14 @@ details.
 <!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
-| [agentic-workflow](apps/agentic-workflow/README.md) | Workflow protocol and CLI chain for capability-driven project takeover, work-item planning, TD/CB lifecycle execution, and production-readiness rollup. |
+| [agentic-workflow](apps/agentic-workflow/README.md) | Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding agents. |
 | [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
 | [vat](apps/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
+| [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI. |
 | [loom](apps/loom/README.md) | Loom is the workflow scheduler in the Axiom service stack. |
 | [preview](apps/preview/README.md) | `preview` manages MR-scoped UAT preview environments for GKE. |
 | [tape](apps/tape/README.md) | Tape is the topic replay journal in the Axiom service stack. |
-| [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed task dispatch service in the Axiom stack. |
+| [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed push-queue dispatch service in the Axiom stack. |
 | [cube](apps/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
 | [beam](apps/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
 | [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
@@ -27,9 +28,7 @@ details.
 | [pgpool](apps/pgpool/README.md) | Working-name Kubernetes-native PostgreSQL pooler built on the shared server substrate. |
 | [relay](apps/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
-| [cgdb](apps/cgdb/README.md) | Cgdb is a local graph database for agentic codebase understanding. |
 | [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
-| [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI behind a shared bearer token. |
 <!-- aw:projects-table:end -->
 
 ## Shared Libraries

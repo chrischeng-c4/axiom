@@ -853,7 +853,10 @@ section.
 Meta docs split by *layer*, not by topic. A fact belongs to exactly one layer.
 The machine-readable source is
 `apps/agentic-workflow/src/cli/meta_docs.rs`; its matrix drives placement and
-section validation as well as the projection below.
+section validation as well as the projection below. The sole writer/checker
+registry is `apps/agentic-workflow/src/cli/meta.rs`; use `aw meta init`,
+`aw meta sync`, and read-only `aw meta check` instead of maintaining a second
+META-doc projector.
 
 <!-- aw:meta-doc-matrix:start -->
 | Layer | Doc | Fact owner | Required headings | Inherits |
