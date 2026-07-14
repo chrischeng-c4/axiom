@@ -29,18 +29,25 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 | `readiness` | libs/service-http/src/lib.rs | module | pub | 79 | pub mod readiness; |
 | `signal` | libs/service-http/src/lib.rs | module | pub | 80 | pub mod signal; |
 | `transport` | libs/service-http/src/lib.rs | module | pub | 81 | pub mod transport; |
-| `HttpConfig` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat}; |
-| `LogFormat` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat}; |
+| `HttpConfig` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
+| `LogFormat` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
+| `ServiceIdentity` | libs/service-http/src/lib.rs | re-export | pub | 83 | pub use config::{HttpConfig, LogFormat, ServiceIdentity}; |
 | `ApiErr` | libs/service-http/src/lib.rs | re-export | pub | 84 | pub use error::{ApiErr, ErrorEnvelope}; |
 | `ErrorEnvelope` | libs/service-http/src/lib.rs | re-export | pub | 84 | pub use error::{ApiErr, ErrorEnvelope}; |
-| `init_tracing` | libs/service-http/src/lib.rs | re-export | pub | 85 | pub use logging::init_tracing; |
+| `extract_trace_context` | libs/service-http/src/lib.rs | re-export | pub | 86 | pub use logging::extract_trace_context; |
+| `init_tracing` | libs/service-http/src/lib.rs | re-export | pub | 87 | pub use logging::{init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode}; |
+| `init_tracing_with_identity` | libs/service-http/src/lib.rs | re-export | pub | 87 | pub use logging::{init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode}; |
+| `tracing_mode` | libs/service-http/src/lib.rs | re-export | pub | 87 | pub use logging::{init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode}; |
+| `OtelFallback` | libs/service-http/src/lib.rs | re-export | pub | 87 | pub use logging::{init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode}; |
+| `TracingMode` | libs/service-http/src/lib.rs | re-export | pub | 87 | pub use logging::{init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode}; |
 | `MetricsProvider` | libs/service-http/src/lib.rs | re-export | pub | 86 | pub use metrics::MetricsProvider; |
 | `standard_probe_routes` | libs/service-http/src/lib.rs | re-export | pub | 87 | pub use probes::standard_probe_routes; |
 | `ReadinessHook` | libs/service-http/src/lib.rs | re-export | pub | 88 | pub use readiness::ReadinessHook; |
 | `shutdown_with_drain` | libs/service-http/src/lib.rs | re-export | pub | 89 | pub use signal::{shutdown_with_drain, wait_shutdown_signal}; |
 | `wait_shutdown_signal` | libs/service-http/src/lib.rs | re-export | pub | 89 | pub use signal::{shutdown_with_drain, wait_shutdown_signal}; |
-| `serve` | libs/service-http/src/lib.rs | re-export | pub | 90 | pub use transport::{serve, trace_layer}; |
-| `trace_layer` | libs/service-http/src/lib.rs | re-export | pub | 90 | pub use transport::{serve, trace_layer}; |
+| `serve` | libs/service-http/src/lib.rs | re-export | pub | 92 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
+| `trace_layer` | libs/service-http/src/lib.rs | re-export | pub | 92 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
+| `PropagatingMakeSpan` | libs/service-http/src/lib.rs | re-export | pub | 92 | pub use transport::{serve, trace_layer, PropagatingMakeSpan}; |
 
 
 ## Source
@@ -102,8 +109,8 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! ## Scope
 //!
 //! Auth and backup are deliberately out of scope (separate follow-ups); a
-//! service keeps owning those on its data plane. OTLP trace export is a stubbed
-//! `// TODO(otlp)` in [`logging`] — the dep tree is deferred.
+//! service keeps owning those on its data plane. OTLP trace export is optional
+//! behind the `otlp` feature; a service supplies its own stable identity.
 //!
 //! [`error::ErrorEnvelope`]'s derived `utoipa::ToSchema` is named
 //! `ErrorEnvelope` in a service's generated OpenAPI document. A service that
@@ -129,14 +136,18 @@ pub mod readiness;
 pub mod signal;
 pub mod transport;
 
-pub use config::{HttpConfig, LogFormat};
+pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};
-pub use logging::init_tracing;
+#[cfg(feature = "otlp")]
+pub use logging::extract_trace_context;
+pub use logging::{
+    init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
+};
 pub use metrics::MetricsProvider;
 pub use probes::standard_probe_routes;
 pub use readiness::ReadinessHook;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
-pub use transport::{serve, trace_layer};
+pub use transport::{serve, trace_layer, PropagatingMakeSpan};
 ````
 
 ## Changes
@@ -150,5 +161,6 @@ changes:
     section: rust-source-unit
     impl_mode: codegen
     description: |
-      rust-source-unit (td_ast) source for `libs/service-http/src/lib.rs` captured during libs codegen standardization.
+      Re-exports the optional OTLP configuration, initialization and W3C span
+      propagation surfaces so Lumen and Tape consume one public contract.
 ```

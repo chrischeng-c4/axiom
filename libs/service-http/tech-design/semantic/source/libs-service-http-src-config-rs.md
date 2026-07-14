@@ -22,6 +22,10 @@ Public API manifest for `libs/service-http/src/config.rs` captured during libs c
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `LogFormat` | libs/service-http/src/config.rs | enum | pub | 11 | pub enum LogFormat { |
+| `ServiceIdentity` | libs/service-http/src/config.rs | struct | pub | 21 | pub struct ServiceIdentity { |
+| `new` | libs/service-http/src/config.rs | function | pub | 29 | pub fn new(name: impl Into<String>, version: impl Into<String>) -> anyhow::Result<Self> { |
+| `name` | libs/service-http/src/config.rs | function | pub | 43 | pub fn name(&self) -> &str { |
+| `version` | libs/service-http/src/config.rs | function | pub | 48 | pub fn version(&self) -> &str { |
 | `HttpConfig` | libs/service-http/src/config.rs | struct | pub | 23 | pub struct HttpConfig { |
 | `new` | libs/service-http/src/config.rs | function | pub | 48 | pub fn new( |
 | `bind_addr` | libs/service-http/src/config.rs | function | pub | 69 | pub fn bind_addr(&self) -> String { |
@@ -48,6 +52,39 @@ pub enum LogFormat {
     Json,
 }
 
+/// Stable resource identity attached to optional shared trace export.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceIdentity {
+    name: String,
+    version: String,
+}
+
+impl ServiceIdentity {
+    /// Create an identity for the `service.name` and `service.version`
+    /// resource attributes. Empty fields are rejected before startup.
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> anyhow::Result<Self> {
+        let name = name.into();
+        let version = version.into();
+        if name.trim().is_empty() {
+            anyhow::bail!("service tracing identity name must not be empty");
+        }
+        if version.trim().is_empty() {
+            anyhow::bail!("service tracing identity version must not be empty");
+        }
+        Ok(Self { name, version })
+    }
+
+    /// Stable service name supplied by the owning application.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Stable service version supplied by the owning application.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+}
+
 /// Resolved HTTP-service configuration.
 ///
 /// Built by a service binary from its flags/env and handed to the shared
@@ -69,8 +106,9 @@ pub struct HttpConfig {
     /// no body limit regardless.
     pub body_limit_bytes: usize,
     /// OTLP gRPC endpoint for trace export, e.g. `http://otel-collector:4317`.
-    /// Opt-in: when `None`, no OTLP wiring is attempted. See
-    /// [`crate::logging::init_tracing`] for the current stub status.
+    /// Opt-in: when `None`, no OTLP wiring is attempted. With the `otlp`
+    /// feature, `logging::init_tracing_with_identity` exports traces; invalid
+    /// configuration safely retains structured logging.
     pub otlp_endpoint: Option<String>,
 }
 
@@ -128,6 +166,19 @@ mod tests {
         assert_eq!(cfg.otlp_endpoint.as_deref(), Some("http://otel:4317"));
         assert_eq!(cfg.bind_addr(), "0.0.0.0:7373");
     }
+
+    #[test]
+    fn service_identity_rejects_blank_fields() {
+        assert!(ServiceIdentity::new("", "0.1.0").is_err());
+        assert!(ServiceIdentity::new("service", " ").is_err());
+        assert_eq!(
+            ServiceIdentity::new("service", "0.1.0").unwrap(),
+            ServiceIdentity {
+                name: "service".to_string(),
+                version: "0.1.0".to_string(),
+            }
+        );
+    }
 }
 ````
 
@@ -142,5 +193,6 @@ changes:
     section: rust-source-unit
     impl_mode: codegen
     description: |
-      rust-source-unit (td_ast) source for `libs/service-http/src/config.rs` captured during libs codegen standardization.
+      Adds the stable, non-empty service resource identity used by the optional
+      OTLP exporter while preserving the resolved HTTP configuration contract.
 ```

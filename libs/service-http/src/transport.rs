@@ -10,7 +10,30 @@
 
 use tokio::net::TcpListener;
 use tower_http::classify::{ServerErrorsAsFailures, SharedClassifier};
-use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tower_http::trace::{DefaultMakeSpan, MakeSpan, TraceLayer};
+
+/// Request span maker that preserves standard request fields and, in an
+/// OTLP-enabled build, attaches a valid propagated W3C parent context.
+#[derive(Debug, Clone, Copy)]
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
+pub struct PropagatingMakeSpan;
+
+impl<B> MakeSpan<B> for PropagatingMakeSpan {
+    fn make_span(&mut self, request: &axum::http::Request<B>) -> tracing::Span {
+        let mut default = DefaultMakeSpan::new().level(tracing::Level::INFO);
+        let span = default.make_span(request);
+        #[cfg(feature = "otlp")]
+        {
+            use opentelemetry::trace::TraceContextExt as _;
+            use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+            let parent = crate::logging::extract_trace_context(request.headers());
+            if parent.span().span_context().is_valid() {
+                span.set_parent(parent);
+            }
+        }
+        span
+    }
+}
 
 /// Serve `app` (HTTP/1.1 + h2c on one port) on `listener`, stopping when
 /// `shutdown` resolves (e.g. [`crate::signal::shutdown_with_drain`]).
@@ -46,7 +69,7 @@ pub async fn serve(
 /// different classifier/make-span, build `TraceLayer::new_for_http()` inline
 /// instead.
 /// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
-pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, DefaultMakeSpan> {
-    http_server::trace_layer()
+pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, PropagatingMakeSpan> {
+    TraceLayer::new_for_http().make_span_with(PropagatingMakeSpan)
 }
 // CODEGEN-END
