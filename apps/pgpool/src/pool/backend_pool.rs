@@ -10,13 +10,10 @@
 //! has already removed the id from `outstanding`).
 
 use std::collections::HashMap;
-use std::io::ErrorKind;
-use std::mem::MaybeUninit;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::BytesMut;
-use socket2::SockRef;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
@@ -403,7 +400,7 @@ impl BackendPool {
                 state.idle.pop()
             };
             let (id, stream, permit) = candidate?;
-            if liveness_check(&stream) {
+            if liveness_check(&stream).await {
                 let mut state = self.inner.state.lock().expect("pool state lock");
                 state.outstanding.insert(id, permit);
                 drop(state);
@@ -477,19 +474,19 @@ impl BackendPool {
     }
 }
 
-/// Non-consuming liveness peek (R1): one direct `MSG_PEEK` against Tokio's
-/// already-nonblocking descriptor. `WouldBlock` is the normal idle state;
-/// EOF and other read errors mark the socket dead. This deliberately avoids
-/// `timeout(Duration::ZERO, TcpStream::peek)`: allocating that timer on every
-/// idle reuse was measurable on the transaction-pooling hot path. A readable
-/// protocol byte remains queued for the normal relay because `MSG_PEEK` never
-/// consumes it.
-fn liveness_check(stream: &TcpStream) -> bool {
-    let mut probe = [MaybeUninit::<u8>::uninit()];
-    match SockRef::from(stream).peek(&mut probe) {
-        Ok(0) => false,
-        Ok(_) => true,
-        Err(error) => error.kind() == ErrorKind::WouldBlock,
+/// Non-consuming liveness peek (R1): an idle connection with no pending read
+/// readiness is presumed alive (the expected steady state for an idle,
+/// already-authenticated backend); a clean EOF or read error marks it dead
+/// so `acquire()` drops and retries (R1a/R1b). A readable protocol frame is
+/// deliberately left queued for the normal relay -- consuming even one byte
+/// here would desynchronize the PostgreSQL frame stream.
+async fn liveness_check(stream: &TcpStream) -> bool {
+    let mut probe = [0_u8; 1];
+    match tokio::time::timeout(Duration::from_millis(0), stream.peek(&mut probe)).await {
+        Err(_) => true,
+        Ok(Err(_)) => false,
+        Ok(Ok(0)) => false,
+        Ok(Ok(_)) => true,
     }
 }
 
