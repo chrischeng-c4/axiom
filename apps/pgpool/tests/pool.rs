@@ -609,64 +609,6 @@ async fn acquire_waits_for_release_when_saturated_then_succeeds() {
     );
 }
 
-/// verify: pool::fifo_capacity_handoff_admits_one_waiter_per_release (R1)
-#[tokio::test]
-async fn fifo_capacity_handoff_admits_one_waiter_per_release() {
-    let (port, _backend) = spawn_fake_backend_accept_and_hold().await;
-    let mut config = pool_config(port, 1);
-    config.acquire_timeout = Duration::from_secs(5);
-    let pool = BackendPool::new(config);
-    let held = pool.acquire_fresh().await.expect("initial lease succeeds");
-
-    let (order_tx, mut order_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut release_senders = Vec::new();
-    let mut waiters = Vec::new();
-    for expected in 0..3usize {
-        let waiter_pool = pool.clone();
-        let order_tx = order_tx.clone();
-        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-        release_senders.push(release_tx);
-        waiters.push(tokio::spawn(async move {
-            let lease = waiter_pool.acquire_fresh().await?;
-            order_tx
-                .send(expected)
-                .expect("test receiver remains available");
-            let _ = release_rx.await;
-            waiter_pool
-                .release(lease.id, lease.stream, LeaseDisposition::Close)
-                .await;
-            Ok::<(), PoolError>(())
-        }));
-        tokio::task::yield_now().await;
-    }
-    drop(order_tx);
-    tokio::time::sleep(Duration::from_millis(20)).await;
-
-    pool.release(held.id, held.stream, LeaseDisposition::Close)
-        .await;
-
-    for expected in 0..3usize {
-        let observed = tokio::time::timeout(Duration::from_secs(2), order_rx.recv())
-            .await
-            .expect("one waiter is admitted after a release")
-            .expect("all waiter senders remain live");
-        assert_eq!(
-            observed, expected,
-            "capacity handoff must preserve saturated waiter FIFO order"
-        );
-        release_senders
-            .remove(0)
-            .send(())
-            .expect("admitted waiter is waiting for controlled release");
-    }
-    for waiter in waiters {
-        waiter
-            .await
-            .expect("waiter task joins")
-            .expect("waiter acquire/release succeeds");
-    }
-}
-
 /// verify: pool::acquire_times_out_with_saturated_error_after_acquire_timeout (R3)
 #[tokio::test]
 async fn acquire_times_out_with_saturated_error_after_acquire_timeout() {

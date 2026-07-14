@@ -9,16 +9,15 @@
 //! first in the normal path (the guard's cleanup is a no-op once `release()`
 //! has already removed the id from `outstanding`).
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio::sync::{oneshot, Notify, OwnedSemaphorePermit, Semaphore};
-use tokio::time::{sleep_until, Instant};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::time::Instant;
 
 use crate::pool::types::{
     BackendConnectionId, BackendPoolStats, LeaseDisposition, PoolConfig, PoolError,
@@ -92,304 +91,8 @@ impl Drop for CapacityGuard {
             state.outstanding.remove(&self.id)
         };
         if removed.is_some() {
-            self.inner
-                .capacity_waiters
-                .capacity_available(CapacityAvailability::Physical);
+            self.inner.notify.notify_waiters();
         }
-    }
-}
-
-/// Pool-owned capacity admission. Frontends wait on a lightweight oneshot;
-/// one background driver owns the only Tokio timer for the queue's earliest
-/// deadline, avoiding a `Sleep` registration per saturated client.
-#[derive(Debug)]
-struct CapacityWaiters {
-    state: Mutex<CapacityWaiterState>,
-    changed: Arc<Notify>,
-    driver_started: AtomicBool,
-}
-
-#[derive(Debug, Default)]
-struct CapacityWaiterState {
-    queue: VecDeque<CapacityWaiter>,
-    in_flight_grants: HashMap<u64, CapacityAvailability>,
-    next_id: u64,
-}
-
-#[derive(Debug)]
-struct CapacityWaiter {
-    id: u64,
-    deadline: Instant,
-    needs_fresh: bool,
-    tx: oneshot::Sender<CapacityWaiterResult>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CapacityWaiterResult {
-    Granted(CapacityAvailability),
-    Expired,
-}
-
-/// A reset-clean idle stream satisfies a reusable acquisition, while only a
-/// dropped physical permit can satisfy a startup/session fresh connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CapacityAvailability {
-    Reusable,
-    Physical,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CapacityWaitError {
-    Expired,
-    Closed,
-}
-
-#[derive(Debug)]
-struct CapacityTicket {
-    waiters: Arc<CapacityWaiters>,
-    id: u64,
-    deadline: Instant,
-    rx: oneshot::Receiver<CapacityWaiterResult>,
-    armed: bool,
-}
-
-#[derive(Debug)]
-struct CapacityGrant {
-    waiters: Arc<CapacityWaiters>,
-    id: u64,
-    availability: CapacityAvailability,
-    active: bool,
-}
-
-impl CapacityWaiters {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            state: Mutex::new(CapacityWaiterState::default()),
-            changed: Arc::new(Notify::new()),
-            driver_started: AtomicBool::new(false),
-        })
-    }
-
-    /// New callers may use an immediately visible idle/backend permit only
-    /// while no FIFO handoff is queued or in progress.
-    fn may_try_immediate(&self) -> bool {
-        let state = self.state.lock().expect("capacity waiter lock");
-        state.queue.is_empty() && state.in_flight_grants.is_empty()
-    }
-
-    fn enqueue(self: &Arc<Self>, deadline: Instant, needs_fresh: bool) -> CapacityTicket {
-        self.ensure_driver();
-        let (tx, rx) = oneshot::channel();
-        let id = {
-            let mut state = self.state.lock().expect("capacity waiter lock");
-            let id = state.next_id;
-            state.next_id += 1;
-            state.queue.push_back(CapacityWaiter {
-                id,
-                deadline,
-                needs_fresh,
-                tx,
-            });
-            id
-        };
-        self.changed.notify_one();
-        CapacityTicket {
-            waiters: Arc::clone(self),
-            id,
-            deadline,
-            rx,
-            armed: true,
-        }
-    }
-
-    fn ensure_driver(self: &Arc<Self>) {
-        if self
-            .driver_started
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            let weak = Arc::downgrade(self);
-            tokio::spawn(async move {
-                Self::drive_deadlines(weak).await;
-            });
-        }
-    }
-
-    async fn drive_deadlines(weak: std::sync::Weak<Self>) {
-        loop {
-            let Some(waiters) = weak.upgrade() else {
-                return;
-            };
-            let changed = Arc::clone(&waiters.changed);
-            let notified = changed.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            let deadline = waiters.earliest_deadline();
-            drop(waiters);
-
-            match deadline {
-                Some(deadline) if deadline <= Instant::now() => {
-                    if let Some(waiters) = weak.upgrade() {
-                        waiters.expire_due();
-                    }
-                }
-                Some(deadline) => {
-                    tokio::select! {
-                        _ = sleep_until(deadline) => {
-                            if let Some(waiters) = weak.upgrade() {
-                                waiters.expire_due();
-                            }
-                        }
-                        _ = &mut notified => {}
-                    }
-                }
-                None => notified.await,
-            }
-        }
-    }
-
-    fn earliest_deadline(&self) -> Option<Instant> {
-        let state = self.state.lock().expect("capacity waiter lock");
-        state.queue.iter().map(|waiter| waiter.deadline).min()
-    }
-
-    fn expire_due(&self) {
-        let now = Instant::now();
-        let expired = {
-            let mut state = self.state.lock().expect("capacity waiter lock");
-            let mut expired = Vec::new();
-            while let Some(waiter) = state.queue.front() {
-                if waiter.deadline > now {
-                    break;
-                }
-                expired.push(state.queue.pop_front().expect("front exists"));
-            }
-            expired
-        };
-        for waiter in expired {
-            let _ = waiter.tx.send(CapacityWaiterResult::Expired);
-        }
-        self.changed.notify_one();
-    }
-
-    /// Returns true only when a resolved grant was abandoned before its
-    /// caller committed a backend, which leaves one capacity slot to hand on.
-    fn cancel(&self, id: u64) -> Option<CapacityAvailability> {
-        let abandoned_grant = {
-            let mut state = self.state.lock().expect("capacity waiter lock");
-            if let Some(index) = state.queue.iter().position(|waiter| waiter.id == id) {
-                state.queue.remove(index);
-                None
-            } else {
-                state.in_flight_grants.remove(&id)
-            }
-        };
-        self.changed.notify_one();
-        abandoned_grant
-    }
-
-    /// Call only after an idle stream has been parked or a physical permit has
-    /// been dropped. A failed receiver leaves the same slot available, so the
-    /// next live FIFO waiter is granted immediately instead.
-    fn capacity_available(&self, availability: CapacityAvailability) {
-        self.expire_due();
-        let grant = {
-            let mut state = self.state.lock().expect("capacity waiter lock");
-            let grant = state
-                .queue
-                .iter()
-                .position(|waiter| {
-                    availability == CapacityAvailability::Physical || !waiter.needs_fresh
-                })
-                .and_then(|index| state.queue.remove(index));
-            if let Some(waiter) = grant.as_ref() {
-                state.in_flight_grants.insert(waiter.id, availability);
-            }
-            grant
-        };
-        let Some(grant) = grant else {
-            self.changed.notify_one();
-            return;
-        };
-        if grant
-            .tx
-            .send(CapacityWaiterResult::Granted(availability))
-            .is_err()
-        {
-            self.finish_grant(grant.id, None);
-            self.capacity_available(availability);
-        }
-    }
-
-    fn finish_grant(&self, id: u64, handoff_capacity: Option<CapacityAvailability>) {
-        let removed = {
-            let mut state = self.state.lock().expect("capacity waiter lock");
-            state.in_flight_grants.remove(&id)
-        };
-        if removed.is_none() {
-            return;
-        }
-        if let Some(availability) = handoff_capacity {
-            self.capacity_available(availability);
-        } else {
-            self.changed.notify_one();
-        }
-    }
-}
-
-impl CapacityTicket {
-    async fn wait(&mut self) -> Result<CapacityGrant, CapacityWaitError> {
-        let result = (&mut self.rx).await;
-        self.armed = false;
-        match result {
-            Ok(CapacityWaiterResult::Granted(availability)) if Instant::now() < self.deadline => {
-                Ok(CapacityGrant {
-                    waiters: Arc::clone(&self.waiters),
-                    id: self.id,
-                    availability,
-                    active: true,
-                })
-            }
-            Ok(CapacityWaiterResult::Granted(availability)) => {
-                self.waiters.finish_grant(self.id, Some(availability));
-                Err(CapacityWaitError::Expired)
-            }
-            Ok(CapacityWaiterResult::Expired) => Err(CapacityWaitError::Expired),
-            Err(_) => Err(CapacityWaitError::Closed),
-        }
-    }
-}
-
-impl Drop for CapacityTicket {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        if let Some(availability) = self.waiters.cancel(self.id) {
-            self.waiters.capacity_available(availability);
-        }
-    }
-}
-
-impl CapacityGrant {
-    fn consume(&mut self) {
-        if self.active {
-            self.active = false;
-            self.waiters.finish_grant(self.id, None);
-        }
-    }
-
-    fn handoff_capacity(&mut self) {
-        if self.active {
-            self.active = false;
-            self.waiters.finish_grant(self.id, Some(self.availability));
-        }
-    }
-}
-
-impl Drop for CapacityGrant {
-    fn drop(&mut self) {
-        self.handoff_capacity();
     }
 }
 
@@ -404,9 +107,8 @@ struct PoolState {
 #[derive(Debug)]
 struct PoolInner {
     permits: Arc<Semaphore>,
-    capacity_waiters: Arc<CapacityWaiters>,
     state: Mutex<PoolState>,
-    replay_notify: Notify,
+    notify: Notify,
 }
 
 /// Shared backend-connection pool: idle-reuse-preferring acquire with a
@@ -427,14 +129,13 @@ impl BackendPool {
             config,
             inner: Arc::new(PoolInner {
                 permits: Arc::new(Semaphore::new(max)),
-                capacity_waiters: CapacityWaiters::new(),
                 state: Mutex::new(PoolState {
                     idle: Vec::new(),
                     outstanding: HashMap::new(),
                     startup_replays: Vec::new(),
                     next_id: 0,
                 }),
-                replay_notify: Notify::new(),
+                notify: Notify::new(),
             }),
         }
     }
@@ -460,9 +161,9 @@ impl BackendPool {
     /// @spec apps/pgpool/tech-design/logic/trust-startup-replay-for-capped-transaction-pooling.md#logic
     /// Admits a transaction client after its startup packet is known. Exact
     /// trust/no-challenge replies bypass a physical backend lease; otherwise
-    /// this waits for a fresh connection through the FIFO capacity scheduler
-    /// while observing the separate replay-cache broadcast so capped waiters
-    /// can consume a just-published reply without a physical lease.
+    /// this waits for a fresh connection while rechecking the cache after
+    /// every pool notification so capped waiters can observe a just-published
+    /// reply instead of timing out behind idle connections.
     pub async fn acquire_for_startup(
         &self,
         startup: &StartupMessage,
@@ -473,42 +174,23 @@ impl BackendPool {
                 return Ok(StartupAdmission::Replay(reply));
             }
 
-            if self.inner.capacity_waiters.may_try_immediate() {
-                if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
-                    return self
-                        .connect_fresh(permit)
-                        .await
-                        .map(StartupAdmission::Fresh);
-                }
+            if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
+                return self
+                    .connect_fresh(permit)
+                    .await
+                    .map(StartupAdmission::Fresh);
             }
 
-            if Instant::now() >= deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 return Err(self.saturated());
             }
 
-            let replay_notified = self.inner.replay_notify.notified();
-            tokio::pin!(replay_notified);
-            replay_notified.as_mut().enable();
-            if let Some(reply) = self.startup_replay(startup) {
-                return Ok(StartupAdmission::Replay(reply));
-            }
-
-            let mut ticket = self.inner.capacity_waiters.enqueue(deadline, true);
-            tokio::select! {
-                result = ticket.wait() => {
-                    let mut grant = result.map_err(|_| self.saturated())?;
-                    if let Some(reply) = self.startup_replay(startup) {
-                        grant.handoff_capacity();
-                        return Ok(StartupAdmission::Replay(reply));
-                    }
-                    if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
-                        let result = self.connect_fresh(permit).await;
-                        grant.consume();
-                        return result.map(StartupAdmission::Fresh);
-                    }
-                    grant.handoff_capacity();
-                }
-                _ = &mut replay_notified => {}
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return Err(self.saturated());
             }
         }
     }
@@ -524,36 +206,41 @@ impl BackendPool {
     ) -> Result<BackendLease, PoolError> {
         let deadline = Instant::now() + self.config.acquire_timeout;
         loop {
-            if self.inner.capacity_waiters.may_try_immediate() {
-                if let Some(lease) = self.try_take_idle().await {
-                    return Ok(lease);
-                }
-                if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
-                    return self.bootstrap_replayed_startup(permit, startup).await;
-                }
-            }
-
-            if Instant::now() >= deadline {
-                return Err(self.saturated());
-            }
-
-            let mut grant = self
-                .inner
-                .capacity_waiters
-                .enqueue(deadline, false)
-                .wait()
-                .await
-                .map_err(|_| self.saturated())?;
             if let Some(lease) = self.try_take_idle().await {
-                grant.consume();
                 return Ok(lease);
             }
+
             if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
-                let result = self.bootstrap_replayed_startup(permit, startup).await;
-                grant.consume();
-                return result;
+                let lease = self.connect_fresh(permit).await?;
+                return match bootstrap_no_challenge(
+                    lease,
+                    startup,
+                    &self.config.wire,
+                    self.config.backend_connect_timeout,
+                )
+                .await
+                {
+                    Ok(lease) => Ok(lease),
+                    Err(lease) => {
+                        drop(lease);
+                        self.inner.notify.notify_waiters();
+                        Err(PoolError::BackendUnreachable(
+                            "backend did not accept replayed trust startup".to_string(),
+                        ))
+                    }
+                };
             }
-            grant.handoff_capacity();
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(self.saturated());
+            }
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return Err(self.saturated());
+            }
         }
     }
 
@@ -584,72 +271,36 @@ impl BackendPool {
             }
         };
         if inserted {
-            self.inner.replay_notify.notify_waiters();
+            self.inner.notify.notify_waiters();
         }
     }
 
     async fn acquire_internal(&self, allow_idle_reuse: bool) -> Result<BackendLease, PoolError> {
         let deadline = Instant::now() + self.config.acquire_timeout;
         loop {
-            if self.inner.capacity_waiters.may_try_immediate() {
-                if allow_idle_reuse {
-                    if let Some(lease) = self.try_take_idle().await {
-                        return Ok(lease);
-                    }
-                }
-
-                if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
-                    return self.connect_fresh(permit).await;
-                }
-            }
-
-            if Instant::now() >= deadline {
-                return Err(self.saturated());
-            }
-
-            let mut grant = self
-                .inner
-                .capacity_waiters
-                .enqueue(deadline, !allow_idle_reuse)
-                .wait()
-                .await
-                .map_err(|_| self.saturated())?;
             if allow_idle_reuse {
                 if let Some(lease) = self.try_take_idle().await {
-                    grant.consume();
                     return Ok(lease);
                 }
             }
-            if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
-                let result = self.connect_fresh(permit).await;
-                grant.consume();
-                return result;
-            }
-            grant.handoff_capacity();
-        }
-    }
 
-    async fn bootstrap_replayed_startup(
-        &self,
-        permit: OwnedSemaphorePermit,
-        startup: &StartupMessage,
-    ) -> Result<BackendLease, PoolError> {
-        let lease = self.connect_fresh(permit).await?;
-        match bootstrap_no_challenge(
-            lease,
-            startup,
-            &self.config.wire,
-            self.config.backend_connect_timeout,
-        )
-        .await
-        {
-            Ok(lease) => Ok(lease),
-            Err(lease) => {
-                drop(lease);
-                Err(PoolError::BackendUnreachable(
-                    "backend did not accept replayed trust startup".to_string(),
-                ))
+            if let Ok(permit) = Arc::clone(&self.inner.permits).try_acquire_owned() {
+                return self.connect_fresh(permit).await;
             }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(self.saturated());
+            }
+
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return Err(self.saturated());
+            }
+            // Notified (or spuriously woken): loop back and recheck.
         }
     }
 
@@ -699,9 +350,7 @@ impl BackendPool {
                 let _ = stream.shutdown().await;
                 drop(stream);
                 drop(permit);
-                self.inner
-                    .capacity_waiters
-                    .capacity_available(CapacityAvailability::Physical);
+                self.inner.notify.notify_waiters();
             }
             LeaseDisposition::ReturnToIdle => {
                 match reset_connection(
@@ -715,17 +364,13 @@ impl BackendPool {
                         let mut state = self.inner.state.lock().expect("pool state lock");
                         state.idle.push((id, stream, permit));
                         drop(state);
-                        self.inner
-                            .capacity_waiters
-                            .capacity_available(CapacityAvailability::Reusable);
+                        self.inner.notify.notify_waiters();
                     }
                     Err(mut stream) => {
                         let _ = stream.shutdown().await;
                         drop(stream);
                         drop(permit);
-                        self.inner
-                            .capacity_waiters
-                            .capacity_available(CapacityAvailability::Physical);
+                        self.inner.notify.notify_waiters();
                     }
                 }
             }
@@ -773,6 +418,7 @@ impl BackendPool {
             // capacity slot for a future fresh-connect or waiter.
             drop(stream);
             drop(permit);
+            self.inner.notify.notify_waiters();
         }
     }
 
@@ -787,16 +433,12 @@ impl BackendPool {
             Ok(Ok(stream)) => stream,
             Ok(Err(error)) => {
                 drop(permit);
-                self.inner
-                    .capacity_waiters
-                    .capacity_available(CapacityAvailability::Physical);
+                self.inner.notify.notify_waiters();
                 return Err(PoolError::BackendUnreachable(error.to_string()));
             }
             Err(_) => {
                 drop(permit);
-                self.inner
-                    .capacity_waiters
-                    .capacity_available(CapacityAvailability::Physical);
+                self.inner.notify.notify_waiters();
                 return Err(PoolError::BackendUnreachable(format!(
                     "backend connect to {addr} timed out after {:?}",
                     self.config.backend_connect_timeout
@@ -807,9 +449,7 @@ impl BackendPool {
         if let Err(error) = stream.set_nodelay(true) {
             drop(stream);
             drop(permit);
-            self.inner
-                .capacity_waiters
-                .capacity_available(CapacityAvailability::Physical);
+            self.inner.notify.notify_waiters();
             return Err(PoolError::BackendUnreachable(format!(
                 "backend connect to {addr} could not enable TCP_NODELAY: {error}"
             )));
@@ -943,7 +583,7 @@ async fn reset_connection(
 mod tests {
     use bytes::BytesMut;
 
-    use super::{CapacityAvailability, CapacityWaiters, DISCARD_ALL_QUERY_FRAME};
+    use super::DISCARD_ALL_QUERY_FRAME;
     use crate::wire::{FrontendMessage, Query};
 
     #[test]
@@ -955,70 +595,6 @@ mod tests {
         .encode(&mut encoded);
 
         assert_eq!(DISCARD_ALL_QUERY_FRAME, encoded.as_ref());
-    }
-
-    #[tokio::test]
-    async fn capacity_waiters_grant_fifo_and_skip_cancelled_ticket() {
-        let waiters = CapacityWaiters::new();
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-        let mut first = waiters.enqueue(deadline, false);
-        let second = waiters.enqueue(deadline, false);
-        let mut third = waiters.enqueue(deadline, false);
-        drop(second);
-
-        waiters.capacity_available(CapacityAvailability::Physical);
-        let mut first_grant = first.wait().await.expect("first ticket is granted");
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(10), third.wait())
-                .await
-                .is_err(),
-            "one available slot must not grant a second waiter"
-        );
-
-        first_grant.consume();
-        waiters.capacity_available(CapacityAvailability::Physical);
-        let mut third_grant = third.wait().await.expect("cancelled ticket is skipped");
-        third_grant.consume();
-    }
-
-    #[tokio::test]
-    async fn expired_capacity_ticket_never_consumes_a_grant() {
-        let waiters = CapacityWaiters::new();
-        let mut ticket = waiters.enqueue(tokio::time::Instant::now(), false);
-        waiters.capacity_available(CapacityAvailability::Physical);
-        assert!(
-            ticket.wait().await.is_err(),
-            "an expired ticket must not receive the available slot"
-        );
-        assert!(waiters.may_try_immediate());
-    }
-
-    #[tokio::test]
-    async fn reusable_capacity_skips_fresh_waiter_until_physical_slot_frees() {
-        let waiters = CapacityWaiters::new();
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-        let mut fresh = waiters.enqueue(deadline, true);
-        let mut reusable = waiters.enqueue(deadline, false);
-
-        waiters.capacity_available(CapacityAvailability::Reusable);
-        let mut reusable_grant = reusable
-            .wait()
-            .await
-            .expect("idle backend must wake reusable acquisition");
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(10), fresh.wait())
-                .await
-                .is_err(),
-            "an idle backend cannot grant a fresh-only startup/session waiter"
-        );
-        reusable_grant.consume();
-
-        waiters.capacity_available(CapacityAvailability::Physical);
-        let mut fresh_grant = fresh
-            .wait()
-            .await
-            .expect("dropped physical permit wakes fresh waiter");
-        fresh_grant.consume();
     }
 }
 // </HANDWRITE>
