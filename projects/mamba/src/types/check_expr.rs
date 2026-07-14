@@ -4419,9 +4419,35 @@ impl TypeChecker {
             // compile-time wall would let bad-typed args leak through with
             // no error at all — regressing the `type/` dimension guard
             // fixtures for those classes (#1595).
-            let constructor_bypass = target.access == StdlibSpecAccess::Constructor
-                && target.module == "builtins"
-                && matches!(target.qualifier.as_str(), "ImportError" | "range" | "type");
+            //
+            // `functools.partial` joins the constructor allow-list for the
+            // same reason: `dispatch_partial` (functools_mod.rs) already
+            // raises the matching runtime `TypeError` for a missing/
+            // non-callable `func` (#1615, `partial_no_args_raises` /
+            // `partial_non_callable_raises`).
+            //
+            // `functools.reduce`/`lru_cache` extend the allow-list to
+            // `ModuleFn` calls (not just constructors) for the same defer-
+            // to-runtime reason: `reduce`'s real CPython contract only
+            // needs `iterable` to support the legacy `__getitem__` sequence
+            // protocol (not nominal `Iterable`) and short-circuits without
+            // ever calling `function` for a single-element/empty+initial
+            // iterable — both legal shapes typeshed's `Callable`/`Iterable`
+            // annotations reject at compile time (#1615,
+            // `reduce_iterates_getitem_sequence_protocol`,
+            // `reduce_fold_with_and_without_initial`). Where CPython does
+            // reject (non-iterable `iterable`, e.g. `reduce(f, 123)`),
+            // `mb_iter` raises the equivalent runtime `TypeError` (#1615,
+            // `reduce_non_iterable_raises`). `lru_cache(maxsize=...)`
+            // validates `maxsize` at runtime already (#1615,
+            // `lru_cache_bad_maxsize_raises`).
+            let constructor_bypass = (target.access == StdlibSpecAccess::Constructor
+                && ((target.module == "builtins"
+                    && matches!(target.qualifier.as_str(), "ImportError" | "range" | "type"))
+                    || (target.module == "functools" && target.qualifier == "partial")))
+                || (target.access == StdlibSpecAccess::ModuleFn
+                    && target.module == "functools"
+                    && matches!(target.name.as_str(), "reduce" | "lru_cache"));
             if !indeterminate && rejected.len() == candidates.len() && !constructor_bypass {
                 if let Some((span, message, _)) = rejected.into_iter().max_by(|left, right| {
                     left.2
@@ -5407,6 +5433,25 @@ impl TypeChecker {
             ExternalCallableAccess::BoundMember,
             Some(receiver),
         ))
+    }
+
+    /// True when `attr` is declared `@functools.cached_property` on
+    /// `object_ty`'s user class. `cached_property` is a non-data descriptor
+    /// (only `__get__`), so CPython lets `instance.attr = anything` freely
+    /// overwrite the instance `__dict__` entry regardless of the getter's
+    /// declared return type (#1615).
+    pub(crate) fn is_cached_property_attr(&mut self, object_ty: TypeId, attr: &str) -> bool {
+        match self.semantic_ty(object_ty) {
+            Ty::Class {
+                role: ClassRole::Instance,
+                user: Some(user),
+                ..
+            } => self
+                .class_cached_properties
+                .get(&user.symbol)
+                .is_some_and(|names| names.contains(attr)),
+            _ => false,
+        }
     }
 
     pub(crate) fn resolve_property_setter_type(
