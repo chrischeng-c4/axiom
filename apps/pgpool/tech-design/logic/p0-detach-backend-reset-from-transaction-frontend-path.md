@@ -67,7 +67,6 @@ changes:
     section: pgpool-detached-reset
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
