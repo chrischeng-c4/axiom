@@ -1,9 +1,10 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:5f79531a" tracker="pending-tracker" reason="Cover plain startup, identity stability, exporter construction fallback, and W3C parent propagation with local deterministic fixtures."
+use service_http::{tracing_mode, HttpConfig, LogFormat, ServiceIdentity, TracingMode};
+
+#[cfg(feature = "otlp")]
 use axum::http::{HeaderMap, HeaderValue};
-use service_http::{
-    extract_trace_context, tracing_mode, HttpConfig, LogFormat, OtelFallback, ServiceIdentity,
-    TracingMode,
-};
+#[cfg(feature = "otlp")]
+use service_http::{extract_trace_context, OtelFallback};
 
 fn config(endpoint: Option<&str>) -> HttpConfig {
     HttpConfig::new(
@@ -20,7 +21,10 @@ fn config(endpoint: Option<&str>) -> HttpConfig {
 #[test]
 fn logging_only_default_requires_no_exporter() {
     let identity = ServiceIdentity::new("service-http-test", "0.1.0").unwrap();
-    assert_eq!(tracing_mode(&config(None), &identity), TracingMode::LoggingOnly);
+    assert_eq!(
+        tracing_mode(&config(None), &identity),
+        TracingMode::LoggingOnly
+    );
 }
 
 #[cfg(feature = "otlp")]
@@ -30,7 +34,7 @@ fn otlp_identity_contract_is_stable() {
     let mode = tracing_mode(&config(Some("http://collector:4317")), &identity);
     assert_eq!(
         mode,
-        TracingMode::Otlp {
+        TracingMode::Otel {
             endpoint: "http://collector:4317".to_string(),
             identity,
         }
@@ -43,7 +47,7 @@ fn exporter_setup_failure_keeps_logging_available() {
     let identity = ServiceIdentity::new("tape", "0.4.5").unwrap();
     assert_eq!(
         tracing_mode(&config(Some("mailto:collector")), &identity),
-        TracingMode::OtlpUnavailable {
+        TracingMode::OtelUnavailable {
             endpoint: "mailto:collector".to_string(),
             reason: OtelFallback::InvalidEndpoint,
         }
