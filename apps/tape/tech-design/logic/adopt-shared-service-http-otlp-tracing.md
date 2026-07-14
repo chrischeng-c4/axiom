@@ -51,7 +51,7 @@ changes:
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Lock Tape's shared tracing wiring and feature propagation boundary.
+    description: Lock Tape shared tracing wiring and feature propagation.
   - path: apps/tape/README.md
     action: modify
     section: contract
@@ -63,7 +63,6 @@ changes:
     impl_mode: hand-written
     description: Capture the shared trace initializer and retained Tape domain boundary.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
