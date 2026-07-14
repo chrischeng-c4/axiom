@@ -1586,6 +1586,9 @@ mod tests {
     #[test]
     fn whole_worktree_walk_includes_apps_and_libs() {
         let tmp = tempfile::tempdir().unwrap();
+        let existing_crate = tmp.path().join("crates/existing/src/lib.rs");
+        std::fs::create_dir_all(existing_crate.parent().unwrap()).unwrap();
+        std::fs::write(existing_crate, "pub fn existing_crate() {}\n").unwrap();
         for path in ["apps/tape/src/push.rs", "libs/tape-core/src/lib.rs"] {
             let source = tmp.path().join(path);
             std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -1606,6 +1609,7 @@ mod tests {
             .collect();
         assert!(paths.contains("apps/tape/src/push.rs"));
         assert!(paths.contains("libs/tape-core/src/lib.rs"));
+        assert_eq!(count_worktree_handwrite_markers(tmp.path()), 2);
     }
 
     #[test]

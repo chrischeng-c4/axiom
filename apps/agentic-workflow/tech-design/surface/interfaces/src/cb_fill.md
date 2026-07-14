@@ -20,6 +20,12 @@ capability_refs:
     claim: project-qualified-terminal-td-resolution
     coverage: full
     rationale: "Marker fill uses the same issue-owned TD resolver as generation and terminal code-check, with global discovery restricted to no-issue utility mode."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: app-lib-handwrite-marker-discovery
+    claim: app-lib-handwrite-marker-discovery
+    coverage: full
+    rationale: "Whole-worktree marker counting treats apps, libs, and crates as independent roots, while active-TD fill enumerates exact app/lib Changes paths."
 ---
 
 # Standardized apps/agentic-workflow/src/cli/cb_fill.rs
@@ -39,6 +45,11 @@ not eligible to delay this work item's code-check.
 When the workflow issue exists, fill resolves its active spec from exact
 `implements` ownership or the configured project-qualified default. Legacy
 checkout discovery is limited to explicit no-issue utility operation.
+
+Whole-worktree marker counting always visits app and library roots even when a
+root crates tree exists, so the post-generation decision cannot report zero
+markers prematurely. Active-TD fill then enumerates the exact app/lib Changes
+paths and advances only after both queues are exhausted.
 
 ### Symbols
 
@@ -1647,6 +1658,9 @@ mod tests {
     #[test]
     fn whole_worktree_walk_includes_apps_and_libs() {
         let tmp = tempfile::tempdir().unwrap();
+        let existing_crate = tmp.path().join("crates/existing/src/lib.rs");
+        std::fs::create_dir_all(existing_crate.parent().unwrap()).unwrap();
+        std::fs::write(existing_crate, "pub fn existing_crate() {}\n").unwrap();
         for path in ["apps/tape/src/push.rs", "libs/tape-core/src/lib.rs"] {
             let source = tmp.path().join(path);
             std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -1667,6 +1681,7 @@ mod tests {
             .collect();
         assert!(paths.contains("apps/tape/src/push.rs"));
         assert!(paths.contains("libs/tape-core/src/lib.rs"));
+        assert_eq!(count_worktree_handwrite_markers(tmp.path()), 2);
     }
 
     #[test]
