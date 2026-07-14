@@ -363,6 +363,100 @@ async fn reset_between_owners_prevents_session_state_leak_across_transaction_lea
     stop_proxy(server, shutdown_tx).await;
 }
 
+/// A second transaction that is already waiting at a one-connection pool
+/// must only run after the first owner's `DISCARD ALL` completed. The
+/// focused in-memory pool test covers cancelled-waiter capacity safety; this
+/// real PostgreSQL test covers the contended transaction protocol boundary,
+/// reset isolation, and the one-backend capacity invariant together.
+///
+/// verify: pool_modes::transaction_mode_contended_waiter_preserves_reset_isolation_and_capacity (P0 #1691 no-go guard)
+#[tokio::test]
+async fn transaction_mode_contended_waiter_preserves_reset_isolation_and_capacity() {
+    let Some((backend_addr, user)) = real_backend_ready().await else {
+        eprintln!(
+            "skipping transaction_mode_contended_waiter_preserves_reset_isolation_and_capacity: \
+             no reachable local Postgres at 127.0.0.1:5432 for user {:?}",
+            backend_user()
+        );
+        return;
+    };
+
+    let backend_pool = BackendPool::new(pool_config(backend_addr, 1, Duration::from_secs(5)));
+    let (proxy_addr, server, shutdown_tx) =
+        spawn_transaction_proxy(backend_pool.clone(), ConnectionBudget::new(10)).await;
+    let dsn = proxy_dsn(proxy_addr, &user);
+
+    let (client_a, connection_a) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("client A admits");
+    let task_a = tokio::spawn(connection_a);
+    let (client_b, connection_b) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("client B admits from the startup replay");
+    let task_b = tokio::spawn(connection_b);
+
+    let owner = tokio::spawn(async move {
+        let result = client_a
+            .simple_query(
+                "CREATE TEMP TABLE contended_waiter_leak_check (n int); SELECT pg_sleep(0.3)",
+            )
+            .await;
+        (client_a, result)
+    });
+    for _ in 0..30 {
+        if backend_pool.stats().backend_active == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        backend_pool.stats().backend_active,
+        1,
+        "the first transaction owns the sole backend before the next client queues"
+    );
+
+    let waiter = tokio::spawn(async move {
+        let reset_clean = simple_query_i32(
+            &client_b,
+            "SELECT (to_regclass('contended_waiter_leak_check') IS NULL)::int AS reset_clean",
+            "reset_clean",
+        )
+        .await;
+        (client_b, reset_clean)
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !waiter.is_finished(),
+        "second transaction must wait while the only backend is still active"
+    );
+
+    let (client_a, owner_result) = owner.await.expect("first transaction task joins");
+    owner_result.expect("first transaction completes");
+    let (client_b, reset_clean) = waiter.await.expect("waiting transaction task joins");
+    assert_eq!(
+        reset_clean, 1,
+        "the waiting transaction must not observe session state from its predecessor"
+    );
+
+    let stats = backend_pool.stats();
+    assert!(
+        stats.backend_active + stats.backend_idle <= 1,
+        "a contended reusable acquire must retain the one-backend cap, observed {stats:?}"
+    );
+
+    drop(client_a);
+    drop(client_b);
+    task_a
+        .await
+        .expect("connection task A joins")
+        .expect("connection A ends cleanly");
+    task_b
+        .await
+        .expect("connection task B joins")
+        .expect("connection B ends cleanly");
+    stop_proxy(server, shutdown_tx).await;
+}
+
 /// verify: pool_modes::replayed_startup_admits_while_all_backends_are_active (R1)
 #[tokio::test]
 async fn replayed_startup_admits_while_all_backends_are_active() {

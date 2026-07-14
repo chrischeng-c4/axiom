@@ -491,6 +491,51 @@ async fn release_return_to_idle_closes_connection_when_reset_fails() {
     backend.await.expect("fake backend task joins");
 }
 
+/// Cancelling one saturated reusable acquire must not lose capacity. The next
+/// live waiter receives the reset-clean socket, and the sole permit remains
+/// accounted for exactly once.
+///
+/// verify: pool::cancelled_waiter_allows_next_acquire_without_permit_leak (P0 #1691 no-go guard)
+#[tokio::test]
+async fn cancelled_waiter_allows_next_acquire_without_permit_leak() {
+    let (port, _backend) = spawn_reusable_fake_backend().await;
+    let pool = BackendPool::new(pool_config(port, 1));
+
+    let first = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    let first_id = first.id;
+
+    let cancelled_pool = pool.clone();
+    let cancelled = tokio::spawn(async move { cancelled_pool.acquire().await });
+    tokio::task::yield_now().await;
+    cancelled.abort();
+    assert!(cancelled
+        .await
+        .expect_err("aborted waiter task")
+        .is_cancelled());
+
+    let next_pool = pool.clone();
+    let next = tokio::spawn(async move { next_pool.acquire().await });
+    tokio::task::yield_now().await;
+
+    pool.release(first.id, first.stream, LeaseDisposition::ReturnToIdle)
+        .await;
+
+    let handed = next
+        .await
+        .expect("next waiter task joins")
+        .expect("next reusable acquire succeeds");
+    assert_eq!(
+        handed.id, first_id,
+        "cancelled waiter cannot lose the socket"
+    );
+    assert_eq!(pool.stats().backend_active, 1, "permit remains outstanding");
+    assert_eq!(
+        pool.stats().backend_idle,
+        0,
+        "no duplicate idle tuple is created"
+    );
+}
+
 // ---------------------------------------------------------------------
 // R2: transaction-mode lease boundaries vs. session-mode's whole-session lease.
 // ---------------------------------------------------------------------
