@@ -379,6 +379,8 @@ void start(long argc, char **argv) {
 #include <sys/types.h>
 #include <unistd.h>
 
+#define CAP_AWK_DELIMITED_MIN_BYTES (1024 * 1024)
+
 static const char *cap_base(const char *s) {
   const char *p = strrchr(s, '/');
   return p ? p + 1 : s;
@@ -460,6 +462,33 @@ static int cap_cat(int argc, char **argv) {
     close(fd);
   }
   return exit_code;
+}
+
+static int cap_awk_small_delimited_fallback(int argc, char **argv) {
+  int path_index = 0;
+  if (argc == 5 && argv[2][0] == '-' && argv[2][1] == 'F' && argv[2][2] &&
+      argv[2][3] == 0) {
+    path_index = 4;
+  } else if (argc == 6 && !strcmp(argv[2], "-F") && argv[3][0] && argv[3][1] == 0) {
+    path_index = 5;
+  } else {
+    return unsupported();
+  }
+
+  int fd = open(argv[path_index], O_RDONLY);
+  if (fd < 0) return unsupported();
+  struct stat st;
+  int small = fstat(fd, &st) == 0 && S_ISREG(st.st_mode) &&
+              st.st_size < CAP_AWK_DELIMITED_MIN_BYTES;
+  close(fd);
+  if (!small) return unsupported();
+
+  char *original_argv[argc];
+  original_argv[0] = "awk";
+  for (int idx = 2; idx < argc; idx++) original_argv[idx - 1] = argv[idx];
+  original_argv[argc - 1] = NULL;
+  execv("/usr/bin/awk", original_argv);
+  return unsupported();
 }
 
 static int split_run_words(const char *command, char *buf, size_t buf_cap,
