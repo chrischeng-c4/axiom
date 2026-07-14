@@ -45,4 +45,4 @@ flowchart TD
     append -->|OTLP| partial([OTLP partial success])
 ```
 
-The transport boundary is deliberately bounded and synchronous: authentication, decompression, decoding, normalization, admission, validation, governance, and durable append all complete before an item is reported accepted. One invalid item does not reject valid siblings. Every accepted signal becomes `OperationalEventV2` before entering the shared `ServiceState::append` path, so the new routes cannot bypass Raft, privacy policy, idempotency, or raw-journal durability.
+The transport boundary is bounded and synchronous: authentication, decompression, decoding, normalization, admission, validation, governance, and durable append complete before an item is accepted. Invalid siblings do not block valid items. Every accepted signal becomes `OperationalEventV2` before the shared append path, so transport cannot bypass Raft, privacy policy, idempotency, or raw-journal durability.
