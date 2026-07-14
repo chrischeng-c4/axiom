@@ -44,3 +44,15 @@ flowchart LR
 
 - Any failed service behavior or first valid normal-baseline 30-second comparison that loses to PgBouncer reverts the scheduler-flavor change immediately.
 - Meter output may diagnose scheduler contention but cannot decide candidate retention.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    section: pgpool-current-thread-runtime-locality
+    impl_mode: hand-written
+    reason: Change only the Tokio scheduler flavor to current-thread while preserving all service and pool behavior.
+```
