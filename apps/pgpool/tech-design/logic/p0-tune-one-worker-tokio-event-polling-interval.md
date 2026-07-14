@@ -55,7 +55,6 @@ changes:
     impl_mode: hand-written
     reason: Replace only macro bootstrap with an equivalent explicit one-worker runtime builder that checks I/O and timers each scheduler tick.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
