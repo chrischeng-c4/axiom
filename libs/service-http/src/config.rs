@@ -18,6 +18,41 @@ pub enum LogFormat {
     Json,
 }
 
+/// Stable resource identity attached to optional shared trace export.
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
+pub struct ServiceIdentity {
+    name: String,
+    version: String,
+}
+
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
+impl ServiceIdentity {
+    /// Create an identity for the `service.name` and `service.version`
+    /// resource attributes. Empty fields are rejected before startup.
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> anyhow::Result<Self> {
+        let name = name.into();
+        let version = version.into();
+        if name.trim().is_empty() {
+            anyhow::bail!("service tracing identity name must not be empty");
+        }
+        if version.trim().is_empty() {
+            anyhow::bail!("service tracing identity version must not be empty");
+        }
+        Ok(Self { name, version })
+    }
+
+    /// Stable service name supplied by the owning application.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Stable service version supplied by the owning application.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+}
+
 /// Resolved HTTP-service configuration.
 ///
 /// Built by a service binary from its flags/env and handed to the shared
@@ -99,6 +134,19 @@ mod tests {
         assert_eq!(cfg.body_limit_bytes, 8 * 1024 * 1024);
         assert_eq!(cfg.otlp_endpoint.as_deref(), Some("http://otel:4317"));
         assert_eq!(cfg.bind_addr(), "0.0.0.0:7373");
+    }
+
+    #[test]
+    fn service_identity_rejects_blank_fields() {
+        assert!(ServiceIdentity::new("", "0.1.0").is_err());
+        assert!(ServiceIdentity::new("service", " ").is_err());
+        assert_eq!(
+            ServiceIdentity::new("service", "0.1.0").unwrap(),
+            ServiceIdentity {
+                name: "service".to_string(),
+                version: "0.1.0".to_string(),
+            }
+        );
     }
 }
 // CODEGEN-END
