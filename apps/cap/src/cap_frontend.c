@@ -20,6 +20,10 @@
 #define PATH_MAX 1024
 #endif
 
+#define CAP_AWK_DELIMITED_MIN_BYTES (1024 * 1024)
+
+extern char **environ;
+
 static long syscall1(long n, long a) {
   register long x0 asm("x0") = a;
   register long x16 asm("x16") = n;
@@ -169,6 +173,33 @@ static int cap_cat(long argc, char **argv) {
   return exit_code;
 }
 
+static int cap_awk_small_delimited_fallback(long argc, char **argv) {
+  long path_index = 0;
+  if (argc == 5 && argv[2][0] == '-' && argv[2][1] == 'F' && argv[2][2] &&
+      argv[2][3] == 0) {
+    path_index = 4;
+  } else if (argc == 6 && c_eq(argv[2], "-F") && argv[3][0] && argv[3][1] == 0) {
+    path_index = 5;
+  } else {
+    return 127;
+  }
+
+  long fd = syscall3(5, (long)argv[path_index], O_RDONLY, 0);
+  if (fd < 0) return 127;
+  struct stat st;
+  int small = syscall2(339, fd, (long)&st) == 0 && S_ISREG(st.st_mode) &&
+              st.st_size < CAP_AWK_DELIMITED_MIN_BYTES;
+  syscall1(6, fd);
+  if (!small) return 127;
+
+  char *original_argv[argc];
+  original_argv[0] = "awk";
+  for (long idx = 2; idx < argc; idx++) original_argv[idx - 1] = argv[idx];
+  original_argv[argc - 1] = 0;
+  syscall3(59, (long)"/usr/bin/awk", (long)original_argv, (long)environ);
+  return 127;
+}
+
 static int ascii_space(char c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
 }
@@ -283,6 +314,7 @@ static int cap_run_direct(long argc, char **argv) {
   long count = 0;
   if (argc != 3 || !c_eq(argv[1], "run")) return 127;
   if (!split_run_words(argv[2], buf, sizeof(buf), words, 128, &count)) return 127;
+  for (long idx = 0; idx < count; idx++) if (c_eq(words[idx], "|")) return 127;
   if (count < 2 || !c_eq(words[0], "cat")) return 127;
   rewritten[0] = argv[0];
   for (long idx = 0; idx < count; idx++) rewritten[idx + 1] = words[idx];
@@ -541,11 +573,15 @@ static int cap_run_direct(int argc, char **argv) {
   int count = 0;
   if (argc != 3 || strcmp(argv[1], "run")) return unsupported();
   if (!split_run_words(argv[2], buf, sizeof(buf), words, 128, &count)) return unsupported();
-  if (count < 2 || strcmp(words[0], "cat")) return unsupported();
+  for (int idx = 0; idx < count; idx++) if (!strcmp(words[idx], "|")) return unsupported();
+  if (count < 2 || (strcmp(words[0], "cat") && strcmp(words[0], "awk"))) {
+    return unsupported();
+  }
   rewritten[0] = argv[0];
   for (int idx = 0; idx < count; idx++) rewritten[idx + 1] = words[idx];
   rewritten[count + 1] = NULL;
-  return cap_cat(count + 1, rewritten);
+  if (!strcmp(words[0], "cat")) return cap_cat(count + 1, rewritten);
+  return cap_awk_small_delimited_fallback(count + 1, rewritten);
 }
 
 static int dispatch_tiny(int argc, char **argv) {
@@ -553,6 +589,7 @@ static int dispatch_tiny(int argc, char **argv) {
   const char *cmd = cap_base(argv[1]);
   if (!strcmp(cmd, "run")) return cap_run_direct(argc, argv);
   if (!strcmp(cmd, "cat")) return cap_cat(argc, argv);
+  if (!strcmp(cmd, "awk")) return cap_awk_small_delimited_fallback(argc, argv);
   return unsupported();
 }
 
