@@ -937,7 +937,7 @@ pub fn mb_take_uncaught_traceback() -> Option<String> {
 /// `traceback.format_exc()` and `sys.exc_info()` can report it after the
 /// except handler has consumed the pending slot.
 pub fn mb_catch_exception() -> MbValue {
-    CURRENT_EXCEPTION.with(|cell| match cell.borrow_mut().take() {
+    let result = CURRENT_EXCEPTION.with(|cell| match cell.borrow_mut().take() {
         Some(mut exc) => {
             exc.traceback =
                 super::stdlib::traceback_mod::trim_traceback_to_current_handler(&exc.traceback);
@@ -951,7 +951,12 @@ pub fn mb_catch_exception() -> MbValue {
             val
         }
         None => MbValue::none(),
-    })
+    });
+    // #1535: this exception is now handled — reset so a later, distinct
+    // exception unwinding through this same still-active frame fires its
+    // own 'exception' event.
+    super::stdlib::traceback_mod::mb_traceback_reset_current_frame_exception_notified();
+    result
 }
 
 /// Check if the current exception matches a given type.
@@ -1003,6 +1008,8 @@ pub fn mb_clear_exception() {
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = None;
     });
+    // #1535: see mb_catch_exception — reset the unwind-notification flag.
+    super::stdlib::traceback_mod::mb_traceback_reset_current_frame_exception_notified();
 }
 
 /// Set the current exception directly (for use by class.rs raise_instance).
@@ -1045,6 +1052,8 @@ pub fn clear_current_exception() {
             *cell.borrow_mut() = None;
         }
     });
+    // #1535: see mb_catch_exception — reset the unwind-notification flag.
+    super::stdlib::traceback_mod::mb_traceback_reset_current_frame_exception_notified();
 }
 
 /// Peek the pending exception's type name without clearing it. Returns `None`
@@ -1058,6 +1067,34 @@ pub fn current_exception_type() -> Option<String> {
 /// exists, not allocate its type name.
 pub fn has_current_exception() -> bool {
     CURRENT_EXCEPTION.with(|cell| cell.borrow().is_some())
+}
+
+/// #1535: temporarily hide the pending exception so a call can go through.
+/// `mb_call_spread_impl`'s post-bind check treats any pending exception as
+/// "this call's own argument binding just failed" and aborts the call
+/// (returns `None` without running the callee) — correct for that case, but
+/// it also blocks the one place Python calls into user code *despite* a
+/// genuinely pending exception: the `sys.settrace` local-trace-function
+/// invocation for the 'exception' event (and the 'return' event fired while
+/// unwinding). Pair with `restore_suspended_exception` around exactly that
+/// call so a normal, non-raising trace callback can run to completion and
+/// the original exception then keeps propagating.
+pub(crate) fn suspend_current_exception() -> Option<MbException> {
+    CURRENT_EXCEPTION.with(|cell| cell.borrow_mut().take())
+}
+
+/// Restore an exception saved by `suspend_current_exception`, unless the
+/// suspended call left a new exception pending itself (e.g. the trace
+/// callback raised) — in that case the new one takes precedence, matching
+/// CPython's "trace function raised" behavior of not silently reinstating
+/// the original.
+pub(crate) fn restore_suspended_exception(saved: Option<MbException>) {
+    CURRENT_EXCEPTION.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            *slot = saved;
+        }
+    });
 }
 
 /// Cheap type-name equality probe for hot paths that need to branch on one
