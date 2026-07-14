@@ -37,9 +37,6 @@ semantic_domain:
           - name: "tables"
             kind: "module"
             public: true
-          - name: "viewer"
-            kind: "module"
-            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"

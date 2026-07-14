@@ -145,6 +145,7 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw artifact",
     "aw validate-spec-structure",
     "aw check-alignment",
+    "aw view",
     "aw iss ",
     "aw issues",
     "aw chat agents",
@@ -10446,4 +10447,3 @@ changes:
       that need per-file HANDWRITE marker detail or a HITL decision that
       `aw health` cannot fabricate from a bare file path.
 ```
-

@@ -24,7 +24,6 @@ Public API manifest for `apps/agentic-workflow/src/ui/mod.rs` generated from AST
 | `colors` | apps/agentic-workflow/src/ui/mod.rs | module | pub | 3 |  |
 | `progress` | apps/agentic-workflow/src/ui/mod.rs | module | pub | 4 |  |
 | `tables` | apps/agentic-workflow/src/ui/mod.rs | module | pub | 5 |  |
-| `viewer` | apps/agentic-workflow/src/ui/mod.rs | module | pub | 8 |  |
 ## Source
 <!-- type: source lang: rust -->
 
@@ -32,9 +31,6 @@ Public API manifest for `apps/agentic-workflow/src/ui/mod.rs` generated from AST
 pub mod colors;
 pub mod progress;
 pub mod tables;
-
-#[cfg(feature = "ui")]
-pub mod viewer;
 
 pub use colors::ColorScheme;
 pub use progress::ProgressBar;

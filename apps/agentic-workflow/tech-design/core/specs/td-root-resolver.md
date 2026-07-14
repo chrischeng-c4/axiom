@@ -193,16 +193,6 @@ tests:
     name: r6a_accepts_spec_with_td_path_outside_global_base
     file: apps/agentic-workflow/src/validate/rules/r6a_loose_root_file.rs
     verifies: [R3, R7]
-  T9:
-    type: test
-    name: viewer_lists_project_with_td_path_outside_global_base
-    file: apps/agentic-workflow/src/ui/viewer/api.rs
-    verifies: [R6, R7]
-  T10:
-    type: test
-    name: viewer_open_resolves_through_per_project_td_path
-    file: apps/agentic-workflow/src/ui/viewer/api.rs
-    verifies: [R6, R7]
   T11:
     type: test
     name: hook_routing_longest_prefix_match_unchanged
@@ -228,8 +218,6 @@ requirementDiagram
     element T6 { type: test }
     element T7 { type: test }
     element T8 { type: test }
-    element T9 { type: test }
-    element T10 { type: test }
     element T11 { type: test }
     element T12 { type: test }
     element T13 { type: test }
@@ -247,10 +235,6 @@ requirementDiagram
     T7 - verifies -> R3
     T8 - verifies -> R3
     T8 - verifies -> R7
-    T9 - verifies -> R6
-    T9 - verifies -> R7
-    T10 - verifies -> R6
-    T10 - verifies -> R7
     T11 - verifies -> R4
     T12 - verifies -> R1
     T12 - verifies -> R5
@@ -328,28 +312,6 @@ changes:
       the project. Adjust the module docs to describe the new lookup, not
       the old needle. Hook routing in the repo-root `aw.toml` (longest-prefix
       on `td_path`) is unchanged. Wrap in HANDWRITE markers.
-  - path: apps/agentic-workflow/src/ui/viewer/api.rs
-    symbol: list_tech_designs, get_tech_design_metadata, get_tech_design
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    description: |
-      Functions that today derive crate name from
-      `workspace::tech_design_path(root)` must route through the registry:
-      for list/mount operations enumerate every project in
-      `ProjectRegistry` and call `resolve_td_root` per project; for
-      open/get operations resolve through the requested project's
-      `td_root`. Reference is by symbol, not line number. Wrap in
-      HANDWRITE markers.
-  - path: apps/agentic-workflow/src/ui/viewer/manager.rs
-    symbol: ViewerManager (path validation)
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    description: |
-      Update `ViewerManager` path validation to accept any path under any
-      project's resolved `td_root`, not only paths under the global base.
-      Wrap in HANDWRITE markers.
   - path: apps/agentic-workflow/src/shared/workspace.rs
     symbol: tech_design_path, tech_design_root
     action: modify
@@ -388,14 +350,6 @@ changes:
       `".aw/tech-design/crates/"` needle with a registry-driven
       longest-prefix lookup using `ProjectRegistry::resolve_td_root` per
       project. Cover specs whose td_path lives outside the global base.
-  - path: apps/agentic-workflow/tech-design/core/interfaces/ui/viewer/api.md
-    action: modify
-    section: schema
-    impl_mode: hand-written
-    description: |
-      Mount/list/open operations dispatch on resolved `td_root` per
-      project; viewer must succeed for projects whose TD sits outside the
-      global base.
   - path: apps/agentic-workflow/CHANGELOG.md
     action: skip
     section: logic
@@ -420,7 +374,7 @@ changes:
   `apps/agentic-workflow/src/services/project_registry.rs`,
   `apps/agentic-workflow/src/spec_store.rs` (FileSystemSpecStore::specs_base),
   `apps/agentic-workflow/src/shared/workspace.rs` (tech_design_path /
-  tech_design_root), plus the unchanged validate / viewer paths. All
+  tech_design_root), plus the unchanged validation paths. All
   symbol references replace the brittle line-number citations.
 - [schema] `TdRootInput` fields carry `x-config-source` annotations so
   the fillback/codegen adapter can wire the registry without inferring.

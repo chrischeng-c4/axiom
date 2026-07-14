@@ -40,8 +40,8 @@ fn legacy_top_level_commands_are_removed() {
         // folded into `aw health`'s takeover-audit axis, `audit record`
         // rehomed to `aw td audit-record`.
         "standardize",
-        // "view" was re-added by the repo-view desktop app capability
-        // (Commands::View in src/cli/commands.rs) — no longer removed.
+        // #1502: the Repo View desktop product has no replacement inside AW.
+        "view",
         "changes",
         "fillback",
         "sdd",
@@ -68,6 +68,7 @@ fn legacy_top_level_commands_are_removed() {
         "workflow",
         "revise-artifact",
         "artifact",
+        "view",
         "validate-spec-structure",
         "check-alignment",
         "iss",
@@ -191,6 +192,7 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw workflow",
         "aw revise-artifact",
         "aw artifact",
+        "aw view",
         "aw validate-spec-structure",
         "aw check-alignment",
         // Trailing space (like `standardize.rs`'s `DELETED_COMMAND_PATHS`

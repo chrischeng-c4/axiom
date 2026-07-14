@@ -4898,10 +4898,10 @@ changes:
     #[test]
     fn test_source_template_supports_typescript_targets() {
         for path in [
-            "apps/agentic-workflow/packages/@sdd/ui/src/App.tsx",
-            "apps/agentic-workflow/packages/@sdd/core/src/index.ts",
-            "apps/agentic-workflow/packages/@sdd/core/src/worker.mjs",
-            "apps/agentic-workflow/packages/@sdd/core/src/legacy.cjs",
+            "apps/demo/web/src/App.tsx",
+            "apps/demo/web/src/index.ts",
+            "apps/demo/web/src/worker.mjs",
+            "apps/demo/web/src/legacy.cjs",
         ] {
             assert_eq!(
                 target_language(std::path::Path::new(path), Some("source")),
@@ -4989,9 +4989,9 @@ rust_type: Option<Option<u16>>
 <!-- type: source lang: rust -->
 
 ```rust
-pub struct Viewer;
+pub struct Renderer;
 
-impl Viewer {
+impl Renderer {
     pub fn new() -> Self {
         Self
     }
@@ -5002,15 +5002,17 @@ pub fn render() {}
 "#;
         let source = generate_source_section_code(
             spec,
-            "apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md",
-            Some("apps/agentic-workflow/src/ui/viewer/render.rs"),
+            "apps/demo/tech-design/interfaces/render/renderer.md",
+            Some("apps/demo/src/render/renderer.rs"),
             std::path::Path::new("."),
         );
 
-        assert!(source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\npub struct Viewer;"));
-        assert!(source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\nimpl Viewer {"));
-        assert!(source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\npub fn render() {}"));
-        assert!(!source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\n    pub fn new()"));
+        assert!(source.contains("/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\npub struct Renderer;"));
+        assert!(source.contains(
+            "/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\nimpl Renderer {"
+        ));
+        assert!(source.contains("/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\npub fn render() {}"));
+        assert!(!source.contains("/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\n    pub fn new()"));
     }
 
     #[test]

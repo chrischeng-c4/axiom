@@ -122,7 +122,6 @@ deliberately separate commands.
 | `aw llm` | Offline agent orientation: outline + capability/td/ec pillars + loop. |
 | `aw upgrade` | Self-update this binary from a published GitHub release. |
 | `aw issue` | Search, view, or create Agentic Workflow issues. |
-| `aw view` | Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app. |
 <!-- aw:cli-table:support:end -->
 
 `aw conf check` verifies `aw.toml`'s generated project registry block
@@ -137,9 +136,7 @@ ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 `upgrade`, `issue`" below for the full contract.
 
 `aw guard` is the agent-runtime direct edit/create guard for Codex and
-Claude Code (live-denies out-of-lifecycle writes). `aw view` is the
-read-only repo reader: projects/libs catalog, README capabilities, EC, TD,
-and the native desktop app.
+Claude Code (live-denies out-of-lifecycle writes).
 
 When the user asks for `aw wi`, `sdd issues`, `sdd gh issue`, or similar
 wording after the merge, inspect Agentic Workflow-managed GitHub issues for the

@@ -4166,15 +4166,15 @@ changes:
     }
 
     #[test]
-    fn cb_gen_force_regen_treats_minified_viewer_assets_as_non_source() {
+    fn cb_gen_force_regen_treats_minified_web_assets_as_non_source() {
         assert!(is_minified_asset_file(std::path::Path::new(
-            "apps/agentic-workflow/src/ui/viewer/assets/mermaid.min.js"
+            "apps/demo/web/assets/diagram.min.js"
         )));
         assert!(!is_minified_asset_file(std::path::Path::new(
-            "apps/agentic-workflow/src/ui/viewer/app.js"
+            "apps/demo/web/app.js"
         )));
         assert!(!is_minified_asset_file(std::path::Path::new(
-            "apps/agentic-workflow/src/ui/viewer/mermaid.min.js"
+            "apps/demo/web/diagram.min.js"
         )));
     }
 

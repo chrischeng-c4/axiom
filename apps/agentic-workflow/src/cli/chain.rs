@@ -367,7 +367,7 @@ const EMIT_REGISTRY: &[EmitSite] = &[
 ///     loops actually dispatch through.
 ///   - `Utility`: support tooling that is not itself a lifecycle-loop step —
 ///     the CLI-convention trio (`llm`/`upgrade`/`issue`), `chat`/`guard`/
-///     `view`/`new`/`report-issue`/`generator`, and the read-only/debug `td`
+///     `new`/`report-issue`/`generator`, and the read-only/debug `td`
 ///     verbs (`ast`, `check`, `lock`, `promote`,
 ///     `audit-record` -- the former `standardize audit record`, rehomed by
 ///     #1278).
@@ -428,12 +428,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "new",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "view",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
@@ -1410,7 +1404,6 @@ mod tests {
             "wi.show",
             "wi.find",
             "health",
-            "view",
             "llm",
             "upgrade",
             "td.check",

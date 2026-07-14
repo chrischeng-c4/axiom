@@ -46,7 +46,6 @@ use crate::cli::issues;
 use crate::cli::llm;
 use crate::cli::project;
 use crate::cli::standard_cli;
-use crate::cli::view;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
@@ -68,9 +67,6 @@ pub enum Commands {
 
     /// Agent-runtime direct edit/create guard for Codex and Claude Code.
     Guard(guard::GuardArgs),
-
-    /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
-    View(view::ViewArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
     Conf(conf::ConfArgs),
@@ -126,9 +122,6 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Guard(args) => {
             guard::run(args).await?;
         }
-        Commands::View(args) => {
-            view::run(args).await?;
-        }
         Commands::Conf(args) => {
             conf::run(args)?;
         }
@@ -180,8 +173,8 @@ changes:
     impl_mode: codegen
     section: source
     description: |
-      Issue #848: whole-file resync — adds the Guard/View/Llm/Upgrade/Issue/
-      ReportIssue command_refs and their guard/view/llm/standard_cli module
+      Issue #848: whole-file resync — adds the Guard/Llm/Upgrade/Issue/
+      ReportIssue command_refs and their guard/llm/standard_cli module
       imports and run_command match arms that had drifted out of the mirror.
   - path: apps/agentic-workflow/src/cli/commands.rs
     action: modify

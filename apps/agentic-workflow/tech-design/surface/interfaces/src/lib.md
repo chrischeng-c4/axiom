@@ -60,7 +60,6 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 | `td_migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
 | `update` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
 | `validate_spec_structure` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
-| `view` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
 | `workflow_guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 45 |  |
 ## Source
 <!-- type: source lang: rust -->
@@ -113,7 +112,6 @@ pub mod td_lock;
 pub mod td_migrate;
 pub mod update;
 pub mod validate_spec_structure;
-pub mod view;
 pub mod workflow_guard;
 
 // Legacy modules kept for init.rs / update.rs dependencies
@@ -342,7 +340,7 @@ changes:
     description: |
       Issue #848: whole-file resync to the current module list (adds
       capability_type, chain, ec, guard, llm, loop_state, shell_env,
-      standard_cli, sync, td_lock, view; drops the removed cb_arbitrate,
+      standard_cli, sync, td_lock; drops the removed cb_arbitrate,
       cb_review, cb_revise modules) and current find_project_root body.
   - path: apps/agentic-workflow/src/cli/mod.rs
     action: modify

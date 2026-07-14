@@ -46,7 +46,7 @@ agentic-workflow = { path = "../../apps/agentic-workflow" }
 
 [features]
 default = []
-ui = ["agentic-workflow/ui", "open"]
+ui = ["open"]
 
 [dependencies.open]
 version = "5"
