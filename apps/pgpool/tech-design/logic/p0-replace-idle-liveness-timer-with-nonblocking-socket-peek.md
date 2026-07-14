@@ -49,21 +49,20 @@ coverage_kind: semantic
 changes:
   - path: apps/pgpool/Cargo.toml
     action: modify
-    section: pgpool-nonblocking-idle-liveness-peek
+    section: pgpool-nonblocking-idle-liveness-peek-contract
     impl_mode: hand-written
-    reason: Declare the direct socket abstraction used to issue a safe non-consuming nonblocking peek.
+    reason: Make the safe socket descriptor facade an explicit direct dependency.
   - path: apps/pgpool/src/pool/backend_pool.rs
     action: modify
-    section: pgpool-nonblocking-idle-liveness-peek
+    section: pgpool-nonblocking-idle-liveness-peek-contract
     impl_mode: hand-written
-    reason: Replace zero-timeout async liveness probing with socket-level MSG_PEEK classification while retaining idle ownership and retry semantics.
+    reason: Classify `MSG_PEEK` results into live, EOF, and error outcomes without a Tokio timer.
   - path: apps/pgpool/tests/pool.rs
     action: modify
-    section: pgpool-nonblocking-idle-liveness-peek
+    section: pgpool-nonblocking-idle-liveness-peek-contract
     impl_mode: hand-written
-    reason: Prove no-byte idle reuse, EOF discard-and-retry, and preservation of readable bytes across the liveness probe.
+    reason: Lock the byte-preservation and EOF contract at the pool boundary.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
