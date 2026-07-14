@@ -54,21 +54,20 @@ Deadline completion returns exactly `self.saturated()`. Connect, bootstrap, live
 changes:
   - path: apps/pgpool/src/pool/backend_pool.rs
     action: modify
-    section: pgpool-reused-acquire-deadline-timer
+    section: pgpool-reused-acquire-deadline-timer-contract
     impl_mode: hand-written
-    reason: Reuse one pinned deadline Sleep in each existing saturated acquisition loop without changing pool ownership or wake policy.
+    reason: Introduce a caller-owned pinned deadline timer and select helper while leaving existing capacity/replay checks and Notify policy intact.
   - path: apps/pgpool/tests/pool.rs
     action: modify
-    section: pgpool-reused-acquire-deadline-timer
+    section: pgpool-reused-acquire-deadline-timer-contract
     impl_mode: hand-written
-    reason: Verify repeated wakeups retain the acquisition deadline and a released backend remains safely reusable.
+    reason: Exercise wake/retry before one fixed deadline and saturation after the deadline.
   - path: apps/pgpool/tests/pool_modes.rs
     action: modify
-    section: pgpool-reused-acquire-deadline-timer
+    section: pgpool-reused-acquire-deadline-timer-contract
     impl_mode: hand-written
-    reason: Retain real transaction-mode contention, reset isolation, and capped startup replay coverage.
+    reason: Preserve real contended transaction isolation and capacity behavior under the revised wait timing.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
