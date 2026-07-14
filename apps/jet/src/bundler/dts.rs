@@ -547,7 +547,7 @@ fn infer_object_literal_type_from_text(text: &str) -> Option<String> {
     let mut members = Vec::new();
     let empty_param_types = HashMap::new();
     for raw_property in split_top_level(inner, ',') {
-        let property = raw_property.trim();
+        let property = strip_leading_object_member_comments(&raw_property)?.trim();
         if property.is_empty() {
             continue;
         }
@@ -580,6 +580,30 @@ fn infer_object_literal_type_from_text(text: &str) -> Option<String> {
         return Some("{}".to_string());
     }
     Some(format!("{{\n{}\n}}", members.join("\n")))
+}
+
+/// Object-member comments are trivia, not part of the following member key.
+///
+/// The declaration emitter reads this narrow object-literal shape from source
+/// text. A lint directive between members would otherwise become part of the
+/// next key and produce an isolatedDeclarations false positive (#1533).
+fn strip_leading_object_member_comments(mut text: &str) -> Option<&str> {
+    loop {
+        text = text.trim_start();
+        if let Some(after_line_comment) = text.strip_prefix("//") {
+            text = after_line_comment
+                .split_once('\n')
+                .map(|(_, after_comment)| after_comment)
+                .unwrap_or_default();
+            continue;
+        }
+        if let Some(after_block_comment) = text.strip_prefix("/*") {
+            let end = after_block_comment.find("*/")?;
+            text = &after_block_comment[end + 2..];
+            continue;
+        }
+        return Some(text);
+    }
 }
 
 fn is_supported_object_literal_key(key: &str) -> bool {
@@ -2341,27 +2365,30 @@ export const SpAlert = Alert as AlertInterface;
 
     #[test]
     fn infers_exported_const_arrow_body_typed_object_with_function_typed_parameter() {
-        // #1533: `srcHelper` returns an object whose first member accepts a
-        // callback function type. The inner `=>` must not hide the outer
-        // member arrow from the declaration emitter.
+        // #1533: the real `srcHelper` has a lint directive between typed
+        // object members. The comment is trivia, not part of `toOutsource`.
         let src = r#"export const srcHelper = (
     editorJson: SerializedEditorState<TSerializedLexicalNode>,
     replaceTypes: string[] = ['image', 'video'],
 ) => {
     return {
         fromOutsource: (
-            callback?: (value: string) => Promise<string | undefined> | string | undefined,
+            callback?: (
+                data?: TSerializedLexicalNode,
+            ) => Promise<string | undefined> | string | undefined,
         ): Promise<Record<string, unknown>> => Promise.resolve({}),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         toOutsource: (parent?: TSerializedLexicalNode): any => parent,
     };
 };
 "#;
         let dts = emit_declarations(src).unwrap();
+        let normalized_dts = dts.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            dts.contains("export declare const srcHelper: (editorJson: SerializedEditorState<TSerializedLexicalNode>, replaceTypes?: string[]) => {")
-                && dts.contains("fromOutsource: (callback?: (value: string) => Promise<string | undefined> | string | undefined) => Promise<Record<string, unknown>>;")
-                && dts.contains("toOutsource: (parent?: TSerializedLexicalNode) => any;"),
-            "function-typed callback member should remain inferable, got:\n{dts}"
+            normalized_dts.contains("export declare const srcHelper: (editorJson: SerializedEditorState<TSerializedLexicalNode>, replaceTypes?: string[]) => {")
+                && normalized_dts.contains("fromOutsource: (callback?: ( data?: TSerializedLexicalNode, ) => Promise<string | undefined> | string | undefined) => Promise<Record<string, unknown>>;")
+                && normalized_dts.contains("toOutsource: (parent?: TSerializedLexicalNode) => any;"),
+            "typed members after a lint comment should remain inferable, got:\n{dts}"
         );
     }
 
