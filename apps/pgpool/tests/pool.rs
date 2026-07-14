@@ -20,7 +20,7 @@ use pgpool::pool::{
 use pgpool::proxy::BackendEndpointConfig;
 use pgpool::wire::{
     AuthenticationOk, BackendMessage, CommandComplete, ErrorResponse, Frame, FrameReader,
-    FrontendMessage, Query, ReadyForQuery, Role, StartupMessage, TransactionStatus,
+    FrontendMessage, NoticeResponse, Query, ReadyForQuery, Role, StartupMessage, TransactionStatus,
     WireCodecConfig, WireMessage,
 };
 
@@ -449,6 +449,56 @@ async fn release_return_to_idle_sends_discard_all_before_reuse() {
         pool.stats().backend_idle,
         1,
         "reset succeeded, connection parked idle"
+    );
+    backend.await.expect("fake backend task joins");
+}
+
+/// PostgreSQL may emit a notice before reset's expected completion and
+/// readiness frames; that must not make an otherwise clean backend unusable.
+///
+/// verify: pool::release_return_to_idle_accepts_notice_before_ready (P0 #1716)
+#[tokio::test]
+async fn release_return_to_idle_accepts_notice_before_ready() {
+    let (port, backend) = spawn_fake_backend(|stream| async move {
+        let mut stream = stream;
+        let query = read_frontend_query(&mut stream).await;
+        assert_eq!(query.sql, "DISCARD ALL", "release must issue reset query");
+        write_backend(
+            &mut stream,
+            &BackendMessage::NoticeResponse(NoticeResponse {
+                fields: vec![
+                    (b'S', "NOTICE".to_string()),
+                    (b'M', "reset notice".to_string()),
+                ],
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "DISCARD ALL".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+    })
+    .await;
+
+    let pool = BackendPool::new(pool_config(port, 2));
+    let lease = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    pool.release(lease.id, lease.stream, LeaseDisposition::ReturnToIdle)
+        .await;
+
+    assert_eq!(
+        pool.stats().backend_idle,
+        1,
+        "a validated reset notice must not prevent idle reuse"
     );
     backend.await.expect("fake backend task joins");
 }
