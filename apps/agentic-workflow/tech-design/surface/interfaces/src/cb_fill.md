@@ -8,6 +8,12 @@ capability_refs:
     claim: cb-lifecycle-dispatch
     coverage: full
     rationale: "TD/CB CLI surface manifests cover lifecycle dispatch, review, fill, and merge command behavior."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: scoped-td-fill-marker-completion
+    claim: scoped-td-fill-marker-completion
+    coverage: full
+    rationale: "Brief and apply continuations enumerate only the active TD Changes paths, including the post-apply queue that selects code-check versus another marker."
 ---
 
 # Standardized apps/agentic-workflow/src/cli/cb_fill.rs

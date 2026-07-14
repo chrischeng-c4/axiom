@@ -396,11 +396,12 @@ fn test_collision_enumerate_returns_both_entries() {
 
 // ── e2e gates (require real worktree + payload + check pipeline) ────────
 
-/// AC1 (#1096): a real `aw td fill` brief + apply round trip writes and
+/// AC1 (#1096, #1717): a real `aw td fill` brief + apply round trip writes and
 /// reads the marker payload under `/tmp/aw/workspaces/<workspace>/payloads/`
 /// (never under the repo's `.aw/payloads/`), quoting the absolute path in
 /// the dispatch envelope, and the apply step actually reads that file back
-/// into the HANDWRITE block.
+/// into the HANDWRITE block. A foreign marker outside the active TD Changes
+/// paths remains untouched and cannot replace terminal code-check dispatch.
 #[tokio::test]
 async fn test_apply_marker_replaces_block() {
     use agentic_workflow::issues::types::{td_phase, IssueType};
@@ -463,6 +464,16 @@ async fn test_apply_marker_replaces_block() {
         &marker_path,
         "// HANDWRITE-BEGIN gap=\"demo-marker\" tracker=\"none\" reason=\"unfilled\"\n\
          // TODO: hand-write content for `src/demo.rs`.\n\
+         // HANDWRITE-END\n",
+    )
+    .unwrap();
+
+    let foreign_marker_rel = "src/foreign.rs";
+    let foreign_marker_path = root.join(foreign_marker_rel);
+    std::fs::write(
+        &foreign_marker_path,
+        "// HANDWRITE-BEGIN gap=\"foreign-marker\" tracker=\"none\" reason=\"unrelated\"\n\
+         // TODO: hand-write content for `src/foreign.rs`.\n\
          // HANDWRITE-END\n",
     )
     .unwrap();
@@ -564,6 +575,15 @@ async fn test_apply_marker_replaces_block() {
         .as_str()
         .expect("marker_list[0].id present")
         .to_string();
+    let marker_list = envelope["invoke"]["args"]["marker_list"]
+        .as_array()
+        .expect("marker_list is an array");
+    assert_eq!(
+        marker_list.len(),
+        1,
+        "brief queue must exclude foreign markers"
+    );
+    assert_eq!(marker_list[0]["source_path"], marker_rel);
 
     // The CLI already initialized the payload template at that absolute
     // path; overwrite it with the marker's real fill content, proving the
@@ -595,6 +615,11 @@ async fn test_apply_marker_replaces_block() {
         "last marker apply should dispatch to terminal code-check, got:\n{}",
         apply_stdout
     );
+    assert!(
+        !apply_stdout.contains("foreign-marker"),
+        "post-apply dispatch must not leak a foreign marker, got:\n{}",
+        apply_stdout
+    );
 
     let updated_source = std::fs::read_to_string(&marker_path).expect("read updated source");
     assert!(
@@ -606,6 +631,13 @@ async fn test_apply_marker_replaces_block() {
         !updated_source.contains("TODO: hand-write content"),
         "the unfilled stub text must be gone after apply, got:\n{}",
         updated_source
+    );
+    let foreign_source =
+        std::fs::read_to_string(&foreign_marker_path).expect("read foreign marker source");
+    assert!(
+        foreign_source.contains("TODO: hand-write content for `src/foreign.rs`"),
+        "foreign marker must remain untouched, got:\n{}",
+        foreign_source
     );
 
     // The payload directory itself must never have been created inside the
