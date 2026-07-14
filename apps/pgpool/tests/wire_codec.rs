@@ -464,6 +464,38 @@ fn transaction_relay_hot_frame_errors_match_typed_decode() {
     }
 }
 
+/// A malformed `ReadyForQuery` is never allowed to replace the reader's prior
+/// transaction status. This keeps the reset/reuse boundary fail-closed after
+/// the opaque-relay P0 was rejected on its first valid benchmark comparison.
+#[test]
+fn transaction_relay_rejects_malformed_ready_for_query_before_lease_state_change() {
+    let config = WireCodecConfig {
+        initial_transaction_status: TransactionStatus::InTransaction,
+        ..WireCodecConfig::default()
+    };
+
+    for bytes in [
+        &[b'Z', 0, 0, 0, 4][..],
+        &[b'Z', 0, 0, 0, 5, b'Q'][..],
+        &[b'Z', 0, 0, 0, 6, b'I', b'x'][..],
+    ] {
+        let mut reader = FrameReader::new(Role::Backend, &config);
+        reader.feed(bytes);
+        assert!(matches!(
+            reader.next_relay_frame_with_raw(),
+            Err(FrameError::Malformed {
+                tag: Some(b'Z'),
+                ..
+            })
+        ));
+        assert_eq!(
+            reader.transaction_status(),
+            TransactionStatus::InTransaction,
+            "a malformed ReadyForQuery cannot make the lease reusable"
+        );
+    }
+}
+
 // R4: Parse/Bind/Describe/Execute/Sync extended-query round trip.
 #[test]
 fn frontend_extended_query_round_trip() {
