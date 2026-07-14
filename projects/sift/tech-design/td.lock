@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T04:10:14.565780+00:00"
-digest = "sha256:d235cbd004df340bf1dbddfbaa383965ac33e0217de4af18bb639310f999a285"
-source_digest = "sha256:d235cbd004df340bf1dbddfbaa383965ac33e0217de4af18bb639310f999a285"
-ir_digest = "sha256:17d734812e003f06f71292f332caa2c26f773f9fb677f13f95140b4a002bfc02"
+generated_at = "2026-07-14T04:35:06.292860+00:00"
+digest = "sha256:7327de843a36ee076f08682a9b0a4dbc5be29a795a79e999190db5a8dff2ca99"
+source_digest = "sha256:7327de843a36ee076f08682a9b0a4dbc5be29a795a79e999190db5a8dff2ca99"
+ir_digest = "sha256:9154300fcfccedbddfff8dbaf1fc26d1c0f2b791d8c707bdb28ed7cb8555d658"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -42,6 +42,12 @@ path = "logic/add-operationaleventv2-and-pre-journal-governance.md"
 digest = "sha256:a286b0e8195d3d6293104b24bcf706bd0c2a8bd6779cb127a195250adf768dd5"
 ir_digest = "sha256:5c608cdd24c6aaf8bb69797aec7e59b6c9b27cafa7edfd8ceda20231acd75bb7"
 section_count = 4
+
+[[files]]
+path = "logic/add-otlp-and-gcp-bounded-batch-ingest.md"
+digest = "sha256:09d2be32dcac39f8e05c57a5cb2c7d7e5f28e57fc161e5f90ec93386a764aad7"
+ir_digest = "sha256:fbf179913c14c50b215c18d7fc929161b3114ce9369a3518db4bbbb4edd31118"
+section_count = 5
 
 [[files]]
 path = "logic/add-shared-ha-and-backup-lifecycle.md"
