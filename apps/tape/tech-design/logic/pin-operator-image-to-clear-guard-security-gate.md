@@ -55,11 +55,11 @@ changes:
 
 ```mermaid
 ---
-id: tape-operator-image-pin-verification
+id: tape-operator-image-pin-contract-verification
 requirements:
   pinned_operator_image:
     id: R1
-    text: "The checked-in operator Deployment and the rendered control-plane manifest use the concrete Tape release image rather than a mutable latest tag."
+    text: "The offline operator render emits tape:0.4.5 for its Deployment and never emits tape:latest for the operator control plane."
     kind: regression
     risk: high
     verify: render_verbs_emit_parseable_yaml_offline
