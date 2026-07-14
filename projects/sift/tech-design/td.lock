@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T09:12:11.562749+00:00"
-digest = "sha256:f67713893af0c2bae7d652ca69ec4ae347cb5b12913ddcd85cfb4fe78b09458b"
-source_digest = "sha256:f67713893af0c2bae7d652ca69ec4ae347cb5b12913ddcd85cfb4fe78b09458b"
-ir_digest = "sha256:7fb69ce986121bab6d3cae4eaaa9ad1a1c10cd004c23cade4e17592188c53e22"
+generated_at = "2026-07-14T09:34:55.132556+00:00"
+digest = "sha256:277bc4911ed5acf1196182bdbe7c75571738053df1b07ed73389b3fd9e28ed04"
+source_digest = "sha256:277bc4911ed5acf1196182bdbe7c75571738053df1b07ed73389b3fd9e28ed04"
+ir_digest = "sha256:82b7364a7b4f8fa1789f0ed4adf32442ff62e5dbac959445af4aab3524b2d5e0"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -78,6 +78,12 @@ path = "logic/add-operationaleventv2-and-pre-journal-governance.md"
 digest = "sha256:a286b0e8195d3d6293104b24bcf706bd0c2a8bd6779cb127a195250adf768dd5"
 ir_digest = "sha256:5c608cdd24c6aaf8bb69797aec7e59b6c9b27cafa7edfd8ceda20231acd75bb7"
 section_count = 4
+
+[[files]]
+path = "logic/add-otel-profile-observability-store.md"
+digest = "sha256:69efe69e9dcd9d148197b9e5c57866a9c0f8be4abb430d39d3787a788c5e2e10"
+ir_digest = "sha256:512e7427c7362979427415c1cfcdc6a5a36dc1c423ad76aab1a24a73b1708ab9"
+section_count = 5
 
 [[files]]
 path = "logic/add-otlp-and-gcp-bounded-batch-ingest.md"
