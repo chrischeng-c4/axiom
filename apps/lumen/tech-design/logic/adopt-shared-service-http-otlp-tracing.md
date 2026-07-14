@@ -40,6 +40,21 @@ flowchart TD
 
 ```yaml
 changes:
+  - path: apps/lumen/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Keep metrics OpenTelemetry dependencies while making the service-http OTLP tracing feature available and removing the trace-only direct layer dependency.
+  - path: apps/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Delegate Lumen trace initialization to service-http with stable Lumen identity while retaining Lumen-owned metrics export.
+  - path: apps/lumen/tests/shared_otlp_tracing.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Verify Lumen uses the shared OTLP trace initializer and does not own a duplicate tracer constructor.
   - path: apps/lumen/README.md
     action: modify
     section: contract
@@ -50,6 +65,11 @@ changes:
     section: contract
     impl_mode: hand-written
     description: State that the OTLP observability claim is satisfied by shared trace wiring plus retained Lumen metrics instrumentation.
+  - path: apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: Update the semantic source unit to distinguish shared tracing from Lumen-owned metrics export.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
