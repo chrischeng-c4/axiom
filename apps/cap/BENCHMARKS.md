@@ -419,8 +419,14 @@ These rows highlight the two intentional policy edges:
 
 - `takeover` rows are default same-name replacements without a CPU/RSS gate.
 - `cpu-win` `tr` rows are active replacements that must beat the original on CPU.
-- `dual-win` `xargs`, `awk`, and `pipe` rows are active replacements that must
-  beat the original on both CPU and RSS.
+- `dual-win` `xargs`, `awk`, and most `pipe` rows are active replacements that
+  must beat the original on both CPU and RSS. The count-only
+  `find | sort | uniq | wc -l` fusion is CPU-win because it removes pipeline
+  process work while carrying the frontend's fixed RSS floor.
+- CPU-win also covers the large fused path-list reducers (`grep`/`sort`/`awk`
+  feeding `xargs`) where the native single-process path cuts CPU materially
+  but the platform's fixed native RSS floor can be modestly higher than a
+  short-lived multi-process pipeline.
 
 Pipe rows are measured through the hook-string surface `cap run '<original>'`;
 matching shapes are fused inside cap instead of being delegated to `bash -c`.
@@ -736,25 +742,44 @@ Interpretation:
 - The listed pipe shapes are fused as whole command strings inside `cap run`;
   unsupported pipe shapes still fall back to `bash -c`.
 
-## Meter Probe
+## Meter Regression Inventory
 
-`meter profile` can attach to the focused benchmark outside the sandbox, but the
-current sample is not yet actionable at the source level:
+Every `Scenario` in `command_resources.rs` emits a Meter benchmark result named
+`cap-command-resource:<scenario-id>`. This is deliberately separate from
+Meter's outer `measure --bench` timing: that outer timing includes Cargo build
+time, while this inventory contains only the actual child `user + system` CPU
+samples for `cap <command>`.
+
+Capture the local all-shapes baseline (including candidate rows) after a known
+good change:
 
 ```bash
-CAP_BENCH_COMMANDS=echo,printf,seq,whoami,id,uname,mkdir,touch,cut,tr,awk,xargs,pipe \
-  target/debug/meter profile \
-  --exec target/release/deps/command_resources-58fec3a8ab7a9083 \
-  --duration 3 --hz 250
+CAP_BENCH_WRITE_METER_BASELINE=.meter/cap-command-resources.json \
+  cargo bench -p cap --bench command_resources
 ```
 
-Result: clean meter run, 596 samples via `macos-sample`, with the dominant
-hotspot reported as `???` at 99.8% self time. That means the current stripped
-C/native process shape is visible to the sampler but not symbolized enough to
-pin a useful function. For now, CPU/RSS admission still comes from the rusage
-benchmark. The next useful meter step is phase/probe instrumentation around
-cap's command dispatch and per-scenario measurement loop so meter can rank
-named phases instead of anonymous native frames.
+Check a later change with Meter. `meter bench` delegates the same cargo bench;
+the benchmark writes a serialized Meter regression report before Meter folds
+moderate and severe regressions into its normal exit status:
+
+```bash
+CAP_BENCH_METER_BASELINE=.meter/cap-command-resources.json \
+CAP_BENCH_METER_REPORT=.meter/cap-command-resources-regressions.json \
+  target/debug/meter bench --target apps/cap \
+  --baseline .meter/cap-command-resources-regressions.json
+```
+
+Both Meter modes automatically include all candidate scenarios, so a new native
+command cannot silently evade the inventory. The comparison also requires an
+exact scenario-id match; add a scenario, recapture the baseline. For a focused
+debugging run, set `CAP_BENCH_COMMANDS=<command>` on both baseline and compare
+runs; it remains a subset check, not an all-shapes admission run. Use
+`CAP_BENCH_SCENARIOS=<scenario-id,...>` when diagnosing one exact command
+shape (for example `pipe_find_sort_uniq_wc`); this takes precedence over the
+command filter and avoids accidentally running every shape in a broad family.
+For a broad sweep with a separately timed shape, use
+`CAP_BENCH_EXCLUDE_SCENARIOS=<scenario-id,...>` and record the excluded shape
+as a focused run rather than silently omitting it.
 
 ## Behavior Parity
 
@@ -924,7 +949,9 @@ error.
   `find`, `du`, `sort`, `sed`, stdin/single-file and recursive `grep`, `wc -l`, narrow `awk`, narrow `xargs`,
   and the listed fused pipe shapes.
 - CPU-win replacements in this baseline: narrow streaming `tr`, including exact
-  `[:lower:]`/`[:upper:]`/`[:digit:]` class translate/delete forms.
+  `[:lower:]`/`[:upper:]`/`[:digit:]` class translate/delete forms, plus the
+  count-only `find | sort | uniq | wc -l` fusion and the listed large
+  path-list reducer fusions.
 - RSS-fallback replacements in this baseline: none.
 - Default takeover rows in this baseline: `true`, `false`, `pwd`, `basename`,
   `dirname`, `echo`, narrow `printf`, narrow `seq`, `whoami`, narrow `id` including default summary and group lists,

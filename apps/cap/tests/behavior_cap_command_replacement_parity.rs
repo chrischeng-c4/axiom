@@ -16,6 +16,7 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
     fs::create_dir(&bin_dir)?;
     let cap = build_cap_frontend(&bin_dir)?;
     let fixture = Fixture::create(temp.path())?;
+    let sort_locale_pipe = format!("cat {} | sort", fixture.sort_locale_file());
     let quiet_missing = temp.path().join("quiet-missing").display().to_string();
     let hostname_output = run(Path::new("/bin/hostname"), &[])?;
     let hostname_text = String::from_utf8_lossy(&hostname_output.stdout);
@@ -176,6 +177,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             vec![fixture.uniq_file()],
         ),
         Case::new(
+            "uniq-count-small-fallback",
+            vec!["uniq", "-c", fixture.uniq_file()],
+            "/usr/bin/uniq",
+            vec!["-c", fixture.uniq_file()],
+        ),
+        Case::new(
             "find",
             vec!["find", fixture.find_root(), "-type", "f", "-name", "*.txt"],
             "/usr/bin/find",
@@ -194,6 +201,95 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             vec![fixture.sort_file()],
         ),
         Case::new(
+            "run-cat-sort-locale",
+            vec!["run", &sort_locale_pipe],
+            "/bin/bash",
+            vec!["-c", &sort_locale_pipe],
+        ),
+        Case::new(
+            "nl-all-small-fallback",
+            vec!["nl", "-ba", fixture.sed_file()],
+            "/usr/bin/nl",
+            vec!["-ba", fixture.sed_file()],
+        ),
+        Case::new(
+            "rev-small-fallback",
+            vec!["rev", fixture.sed_file()],
+            "/usr/bin/rev",
+            vec![fixture.sed_file()],
+        ),
+        Case::new(
+            "paste-small-fallback",
+            vec!["paste", fixture.sed_file(), fixture.cut_file()],
+            "/usr/bin/paste",
+            vec![fixture.sed_file(), fixture.cut_file()],
+        ),
+        Case::new(
+            "paste-delimited-small-fallback",
+            vec!["paste", "-d,", fixture.sed_file(), fixture.cut_file()],
+            "/usr/bin/paste",
+            vec!["-d,", fixture.sed_file(), fixture.cut_file()],
+        ),
+        Case::new(
+            "paste-three-small-fallback",
+            vec![
+                "paste",
+                fixture.sed_file(),
+                fixture.cut_file(),
+                fixture.cat_file(),
+            ],
+            "/usr/bin/paste",
+            vec![fixture.sed_file(), fixture.cut_file(), fixture.cat_file()],
+        ),
+        Case::new(
+            "paste-serial-small-fallback",
+            vec!["paste", "-s", "-d,", fixture.sed_file()],
+            "/usr/bin/paste",
+            vec!["-s", "-d,", fixture.sed_file()],
+        ),
+        Case::new(
+            "expand-small-fallback",
+            vec!["expand", fixture.sed_file()],
+            "/usr/bin/expand",
+            vec![fixture.sed_file()],
+        ),
+        Case::new(
+            "fold-small-fallback",
+            vec!["fold", "-w", "4", fixture.sed_file()],
+            "/usr/bin/fold",
+            vec!["-w", "4", fixture.sed_file()],
+        ),
+        Case::new(
+            "cut-chars-small-fallback",
+            vec!["cut", "-c", "1-4", fixture.sed_file()],
+            "/usr/bin/cut",
+            vec!["-c", "1-4", fixture.sed_file()],
+        ),
+        Case::new(
+            "cut-field-list-small-fallback",
+            vec!["cut", "-d,", "-f1,3", fixture.cut_file()],
+            "/usr/bin/cut",
+            vec!["-d,", "-f1,3", fixture.cut_file()],
+        ),
+        Case::new(
+            "cut-chars-large-prefix",
+            vec!["cut", "-c", "-20", fixture.cut_chars_file()],
+            "/usr/bin/cut",
+            vec!["-c", "-20", fixture.cut_chars_file()],
+        ),
+        Case::new(
+            "cut-chars-large-suffix",
+            vec!["cut", "-c", "17-", fixture.cut_chars_file()],
+            "/usr/bin/cut",
+            vec!["-c", "17-", fixture.cut_chars_file()],
+        ),
+        Case::new(
+            "unexpand-small-fallback",
+            vec!["unexpand", "-a", fixture.sed_file()],
+            "/usr/bin/unexpand",
+            vec!["-a", fixture.sed_file()],
+        ),
+        Case::new(
             "cut",
             vec!["cut", "-d", ",", "-f", "1", fixture.cut_file()],
             "/usr/bin/cut",
@@ -206,10 +302,22 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             vec!["-d,", "-f2", fixture.cut_file()],
         ),
         Case::new(
+            "cut-fields-small-fallback",
+            vec!["cut", "-d,", "-f1-2", fixture.cut_file()],
+            "/usr/bin/cut",
+            vec!["-d,", "-f1-2", fixture.cut_file()],
+        ),
+        Case::new(
             "sed",
             vec!["sed", "-n", "1,1024p", fixture.sed_file()],
             "/usr/bin/sed",
             vec!["-n", "1,1024p", fixture.sed_file()],
+        ),
+        Case::new(
+            "sed-literal-substitute-global",
+            vec!["sed", "s/line/row/g", fixture.sed_file()],
+            "/usr/bin/sed",
+            vec!["s/line/row/g", fixture.sed_file()],
         ),
         Case::new(
             "grep",
@@ -218,10 +326,52 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             vec!["-R", "NEEDLE", fixture.grep_root()],
         ),
         Case::new(
+            "grep-fixed-ignore-case-large-ascii",
+            vec!["grep", "-Fi", "needle", fixture.grep_ci_file()],
+            "/usr/bin/grep",
+            vec!["-Fi", "needle", fixture.grep_ci_file()],
+        ),
+        Case::new(
+            "grep-fixed-line-numbers-large",
+            vec!["grep", "-Fn", "Needle", fixture.grep_ci_file()],
+            "/usr/bin/grep",
+            vec!["-Fn", "Needle", fixture.grep_ci_file()],
+        ),
+        Case::new(
+            "grep-fixed-boundary-large",
+            vec!["grep", "-F", "CROSS-CHUNK-NEEDLE", fixture.grep_boundary_file()],
+            "/usr/bin/grep",
+            vec!["-F", "CROSS-CHUNK-NEEDLE", fixture.grep_boundary_file()],
+        ),
+        Case::new(
+            "grep-fixed-binary-large-fallback",
+            vec!["grep", "-F", "BINARY-NEEDLE", fixture.grep_binary_file()],
+            "/usr/bin/grep",
+            vec!["-F", "BINARY-NEEDLE", fixture.grep_binary_file()],
+        ),
+        Case::new(
+            "grep-fixed-invert-large",
+            vec!["grep", "-Fv", "Needle", fixture.grep_ci_file()],
+            "/usr/bin/grep",
+            vec!["-Fv", "Needle", fixture.grep_ci_file()],
+        ),
+        Case::new(
+            "grep-fixed-files-with-matches-large",
+            vec!["grep", "-Fl", "Needle", fixture.grep_ci_file()],
+            "/usr/bin/grep",
+            vec!["-Fl", "Needle", fixture.grep_ci_file()],
+        ),
+        Case::new(
             "grep-file",
             vec!["grep", "NEEDLE", fixture.grep_file()],
             "/usr/bin/grep",
             vec!["NEEDLE", fixture.grep_file()],
+        ),
+        Case::new(
+            "grep-fixed-string",
+            vec!["grep", "-F", "line.", fixture.sed_file()],
+            "/usr/bin/grep",
+            vec!["-F", "line.", fixture.sed_file()],
         ),
         Case::new(
             "awk",
@@ -232,6 +382,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             ],
             "/usr/bin/awk",
             vec!["/NEEDLE/ { c++ } END { print c }", fixture.sed_file()],
+        ),
+        Case::new(
+            "awk-record-count-small-fallback",
+            vec!["awk", "END { print NR }", fixture.sed_file()],
+            "/usr/bin/awk",
+            vec!["END { print NR }", fixture.sed_file()],
         ),
         Case::new(
             "awk-first-field",
@@ -246,6 +402,18 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             vec!["{ print $2 }", fixture.sed_file()],
         ),
         Case::new(
+            "awk-comma-second-field",
+            vec!["awk", "-F,", "{ print $2 }", fixture.cut_file()],
+            "/usr/bin/awk",
+            vec!["-F,", "{ print $2 }", fixture.cut_file()],
+        ),
+        Case::new(
+            "awk-comma-two-fields-small-fallback",
+            vec!["awk", "-F,", "{ print $1, $2 }", fixture.cut_file()],
+            "/usr/bin/awk",
+            vec!["-F,", "{ print $1, $2 }", fixture.cut_file()],
+        ),
+        Case::new(
             "awk-first-field-compact",
             vec!["awk", "{print$1}", fixture.sed_file()],
             "/usr/bin/awk",
@@ -256,6 +424,12 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             vec!["awk", "/NEEDLE/ { print $1 }", fixture.grep_file()],
             "/usr/bin/awk",
             vec!["/NEEDLE/ { print $1 }", fixture.grep_file()],
+        ),
+        Case::new(
+            "grep-whole-line-small-fallback",
+            vec!["grep", "-xF", "line 0001", fixture.sed_file()],
+            "/usr/bin/grep",
+            vec!["-xF", "line 0001", fixture.sed_file()],
         ),
         Case::new("which", vec!["which", "sh"], "/usr/bin/which", vec!["sh"]),
         Case::new(
@@ -283,6 +457,208 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
     for case in success_cases {
         assert_success_parity(&cap, &case)?;
     }
+    assert_success_parity_in_c_locale(
+        &cap,
+        "comm-common-large-c-locale",
+        &[
+            "comm",
+            "-12",
+            fixture.comm_left_file(),
+            fixture.comm_right_file(),
+        ],
+        "/usr/bin/comm",
+        &["-12", fixture.comm_left_file(), fixture.comm_right_file()],
+    )?;
+    let comm_run = format!(
+        "comm -12 {} {}",
+        fixture.comm_left_file(),
+        fixture.comm_right_file()
+    );
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-comm-common-large-c-locale",
+        &["run", &comm_run],
+        "/bin/bash",
+        &["-c", &comm_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "paste-delimited-large-c-locale",
+        &[
+            "paste",
+            "-d,",
+            fixture.comm_left_file(),
+            fixture.comm_right_file(),
+        ],
+        "/usr/bin/paste",
+        &["-d,", fixture.comm_left_file(), fixture.comm_right_file()],
+    )?;
+    let paste_run = format!(
+        "paste -d, {} {}",
+        fixture.comm_left_file(),
+        fixture.comm_right_file()
+    );
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-paste-delimited-large-c-locale",
+        &["run", &paste_run],
+        "/bin/bash",
+        &["-c", &paste_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "paste-three-delimited-large-c-locale",
+        &[
+            "paste",
+            "-d,",
+            fixture.join_left_file(),
+            fixture.join_right_file(),
+            fixture.comm_left_file(),
+        ],
+        "/usr/bin/paste",
+        &[
+            "-d,",
+            fixture.join_left_file(),
+            fixture.join_right_file(),
+            fixture.comm_left_file(),
+        ],
+    )?;
+    let paste_three_run = format!(
+        "paste -d, {} {} {}",
+        fixture.join_left_file(),
+        fixture.join_right_file(),
+        fixture.comm_left_file()
+    );
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-paste-three-delimited-large-c-locale",
+        &["run", &paste_three_run],
+        "/bin/bash",
+        &["-c", &paste_three_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "paste-serial-delimited-large-c-locale",
+        &["paste", "-s", "-d,", fixture.serial_paste_file()],
+        "/usr/bin/paste",
+        &["-s", "-d,", fixture.serial_paste_file()],
+    )?;
+    let paste_serial_run = format!("paste -s -d, {}", fixture.serial_paste_file());
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-paste-serial-delimited-large-c-locale",
+        &["run", &paste_serial_run],
+        "/bin/bash",
+        &["-c", &paste_serial_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "grep-whole-line-large-c-locale",
+        &[
+            "grep",
+            "-xF",
+            "key-000001,left-000001",
+            fixture.join_left_file(),
+        ],
+        "/usr/bin/grep",
+        &["-xF", "key-000001,left-000001", fixture.join_left_file()],
+    )?;
+    let grep_whole_line_run = format!(
+        "grep -xF key-000001,left-000001 {}",
+        fixture.join_left_file()
+    );
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-grep-whole-line-large-c-locale",
+        &["run", &grep_whole_line_run],
+        "/bin/bash",
+        &["-c", &grep_whole_line_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "join-delimited-large-c-locale",
+        &[
+            "join",
+            "-t,",
+            fixture.join_left_file(),
+            fixture.join_right_file(),
+        ],
+        "/usr/bin/join",
+        &["-t,", fixture.join_left_file(), fixture.join_right_file()],
+    )?;
+    let join_run = format!(
+        "join -t, {} {}",
+        fixture.join_left_file(),
+        fixture.join_right_file()
+    );
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-join-delimited-large-c-locale",
+        &["run", &join_run],
+        "/bin/bash",
+        &["-c", &join_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "cut-fields-large-c-locale",
+        &["cut", "-d,", "-f1-2", fixture.join_left_file()],
+        "/usr/bin/cut",
+        &["-d,", "-f1-2", fixture.join_left_file()],
+    )?;
+    let cut_fields_run = format!("cut -d, -f1-2 {}", fixture.join_left_file());
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-cut-fields-large-c-locale",
+        &["run", &cut_fields_run],
+        "/bin/bash",
+        &["-c", &cut_fields_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "cut-field-list-large-c-locale",
+        &["cut", "-d,", "-f1,3", fixture.join_left_file()],
+        "/usr/bin/cut",
+        &["-d,", "-f1,3", fixture.join_left_file()],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "cut-three-field-list-large-c-locale",
+        &["cut", "-d,", "-f1,2,3", fixture.join_left_file()],
+        "/usr/bin/cut",
+        &["-d,", "-f1,2,3", fixture.join_left_file()],
+    )?;
+    let cut_field_list_run = format!("cut -d, -f1,3 {}", fixture.join_left_file());
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-cut-field-list-large-c-locale",
+        &["run", &cut_field_list_run],
+        "/bin/bash",
+        &["-c", &cut_field_list_run],
+    )?;
+    let cut_three_field_list_run = format!("cut -d, -f1,2,3 {}", fixture.join_left_file());
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-cut-three-field-list-large-c-locale",
+        &["run", &cut_three_field_list_run],
+        "/bin/bash",
+        &["-c", &cut_three_field_list_run],
+    )?;
+    assert_success_parity_in_c_locale(
+        &cap,
+        "awk-comma-two-fields-large-c-locale",
+        &["awk", "-F,", "{ print $1, $2 }", fixture.join_left_file()],
+        "/usr/bin/awk",
+        &["-F,", "{ print $1, $2 }", fixture.join_left_file()],
+    )?;
+    let awk_two_fields_run = format!("awk -F, '{{ print $1, $2 }}' {}", fixture.join_left_file());
+    assert_success_parity_in_c_locale(
+        &cap,
+        "run-awk-comma-two-fields-large-c-locale",
+        &["run", &awk_two_fields_run],
+        "/bin/bash",
+        &["-c", &awk_two_fields_run],
+    )?;
+
     let mut wc_cap_args = vec!["wc", "-l"];
     wc_cap_args.extend(fixture.wc_files().iter().map(String::as_str));
     let mut wc_original_args = vec!["-l"];
@@ -461,6 +837,16 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         "/usr/bin/tr",
         &["-d", "[:digit:]"],
         b"a1b2c3\n",
+    )?;
+    let mut tr_squeeze_input = vec![b' '; 8193];
+    tr_squeeze_input.extend_from_slice(b"alpha   beta\n");
+    assert_stdin_success_parity(
+        &cap,
+        "tr-squeeze-cross-buffer",
+        &["tr", "-s", " "],
+        "/usr/bin/tr",
+        &["-s", " "],
+        &tr_squeeze_input,
     )?;
     let head_tail_input = b"one\nthree words\nfive six seven\nlast\n";
     assert_stdin_success_parity(
@@ -2146,10 +2532,22 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
             vec!["-d,", "-f1", fixture.cut_file()],
         ),
         (
+            "run awk comma second-field",
+            format!("awk -F, '{{ print $2 }}' {}", fixture.cut_file()),
+            "/usr/bin/awk",
+            vec!["-F,", "{ print $2 }", fixture.cut_file()],
+        ),
+        (
             "run sed",
             format!("sed -n 1,1024p {}", fixture.sed_file()),
             "/usr/bin/sed",
             vec!["-n", "1,1024p", fixture.sed_file()],
+        ),
+        (
+            "run sed literal substitute",
+            format!("sed s/line/row/g {}", fixture.sed_file()),
+            "/usr/bin/sed",
+            vec!["s/line/row/g", fixture.sed_file()],
         ),
         (
             "run grep",
@@ -6434,6 +6832,29 @@ fn assert_success_parity(cap: &Path, case: &Case<'_>) -> Result<()> {
     Ok(())
 }
 
+fn assert_success_parity_in_c_locale(
+    cap: &Path,
+    name: &str,
+    cap_args: &[&str],
+    original_program: &str,
+    original_args: &[&str],
+) -> Result<()> {
+    let cap_out = Command::new(cap)
+        .args(cap_args)
+        .env("LC_ALL", "C")
+        .output()
+        .with_context(|| format!("run {name} through cap"))?;
+    let original_out = Command::new(original_program)
+        .args(original_args)
+        .env("LC_ALL", "C")
+        .output()
+        .with_context(|| format!("run {name} through original"))?;
+    assert_eq!(exit_code(&cap_out), exit_code(&original_out), "{name} exit");
+    assert_eq!(cap_out.stdout, original_out.stdout, "{name} stdout");
+    assert_eq!(cap_out.stderr, original_out.stderr, "{name} stderr");
+    Ok(())
+}
+
 fn assert_error_parity(cap: &Path, case: &Case<'_>, missing: &str) -> Result<()> {
     let cap_out = run(cap, &case.cap_args)?;
     let original_out = run(Path::new(case.original_program), &case.original_args)?;
@@ -6699,10 +7120,20 @@ struct Fixture {
     find_root: String,
     du_root: String,
     sort_file: String,
+    sort_locale_file: String,
     cut_file: String,
+    cut_chars_file: String,
     sed_file: String,
     grep_root: String,
     grep_file: String,
+    grep_ci_file: String,
+    grep_boundary_file: String,
+    grep_binary_file: String,
+    comm_left_file: String,
+    comm_right_file: String,
+    join_left_file: String,
+    join_right_file: String,
+    serial_paste_file: String,
     wc_files: Vec<String>,
     xargs_wc_file: String,
     awk_xargs_wc_file: String,
@@ -6761,6 +7192,8 @@ impl Fixture {
         for idx in (0..120_000).rev() {
             writeln!(sort, "line-{idx:06}")?;
         }
+        let sort_locale_file = data.join("sort-locale.txt");
+        fs::write(&sort_locale_file, b"Z\na\nA\nz\n")?;
 
         let cut_file = data.join("cut.csv");
         let mut cut = fs::File::create(&cut_file)?;
@@ -6770,6 +7203,12 @@ impl Fixture {
             } else {
                 writeln!(cut, "field-{idx:04},value-{idx:04},tail-{idx:04}")?;
             }
+        }
+
+        let cut_chars_file = data.join("cut-chars.txt");
+        let mut cut_chars = fs::File::create(&cut_chars_file)?;
+        for _ in 0..30_000 {
+            writeln!(cut_chars, "abcdefghijklmnopqrstuvwxyz0123456789")?;
         }
 
         let sed_file = data.join("sed.txt");
@@ -6794,6 +7233,55 @@ impl Fixture {
             &grep_file,
             b"plain\nNEEDLE beta\nother\nNEEDLE alpha\nNEEDLE beta\n",
         )?;
+        let grep_ci_file = data.join("grep-ci.txt");
+        let mut grep_ci = fs::File::create(&grep_ci_file)?;
+        for idx in 0..30_000 {
+            let needle = if idx % 2 == 0 { "Needle" } else { "plain" };
+            writeln!(
+                grep_ci,
+                "{needle} ASCII payload {idx:05} repeated for fast fixed matching"
+            )?;
+        }
+        let grep_boundary_file = data.join("grep-boundary.txt");
+        let mut grep_boundary = fs::File::create(&grep_boundary_file)?;
+        grep_boundary.write_all(&vec![b'a'; 8190])?;
+        writeln!(grep_boundary, "CROSS-CHUNK-NEEDLE")?;
+        for idx in 0..30_000 {
+            writeln!(grep_boundary, "plain payload {idx:05} without the search term")?;
+        }
+        let grep_binary_file = data.join("grep-binary.bin");
+        let mut grep_binary = vec![b'A'; 1024 * 1024];
+        grep_binary[4096] = 0;
+        grep_binary[8192..8192 + b"BINARY-NEEDLE".len()].copy_from_slice(b"BINARY-NEEDLE");
+        fs::write(&grep_binary_file, grep_binary)?;
+        let comm_left_file = data.join("comm-left.txt");
+        let comm_right_file = data.join("comm-right.txt");
+        let mut comm_left = fs::File::create(&comm_left_file)?;
+        let mut comm_right = fs::File::create(&comm_right_file)?;
+        for idx in 0..80_000 {
+            writeln!(comm_left, "key-{idx:06}")?;
+            if idx % 2 == 0 {
+                writeln!(comm_right, "key-{idx:06}")?;
+            }
+        }
+        let join_left_file = data.join("join-left.csv");
+        let join_right_file = data.join("join-right.csv");
+        let mut join_left = fs::File::create(&join_left_file)?;
+        let mut join_right = fs::File::create(&join_right_file)?;
+        for idx in 0..80_000 {
+            writeln!(join_left, "key-{idx:06},left-{idx:06}")?;
+            if idx % 2 == 0 {
+                writeln!(join_right, "key-{idx:06},right-{idx:06}")?;
+            }
+        }
+        let serial_paste_file = data.join("paste-serial.txt");
+        let mut serial_paste = fs::File::create(&serial_paste_file)?;
+        writeln!(serial_paste, "first")?;
+        writeln!(serial_paste)?;
+        writeln!(serial_paste, "second")?;
+        for idx in 0..100_000 {
+            writeln!(serial_paste, "record-{idx:06}")?;
+        }
         let wc_root = data.join("wc");
         fs::create_dir(&wc_root)?;
         let mut wc_files = Vec::new();
@@ -6826,10 +7314,20 @@ impl Fixture {
             find_root: path_string(&find_root),
             du_root: path_string(&du_root),
             sort_file: path_string(&sort_file),
+            sort_locale_file: path_string(&sort_locale_file),
             cut_file: path_string(&cut_file),
+            cut_chars_file: path_string(&cut_chars_file),
             sed_file: path_string(&sed_file),
             grep_root: path_string(&grep_root),
             grep_file: path_string(&grep_file),
+            grep_ci_file: path_string(&grep_ci_file),
+            grep_boundary_file: path_string(&grep_boundary_file),
+            grep_binary_file: path_string(&grep_binary_file),
+            comm_left_file: path_string(&comm_left_file),
+            comm_right_file: path_string(&comm_right_file),
+            join_left_file: path_string(&join_left_file),
+            join_right_file: path_string(&join_right_file),
+            serial_paste_file: path_string(&serial_paste_file),
             wc_files,
             xargs_wc_file: path_string(&xargs_wc_file),
             awk_xargs_wc_file: path_string(&awk_xargs_wc_file),
@@ -6872,6 +7370,12 @@ impl Fixture {
     fn sort_file(&self) -> &str {
         &self.sort_file
     }
+    fn sort_locale_file(&self) -> &str {
+        &self.sort_locale_file
+    }
+    fn cut_chars_file(&self) -> &str {
+        &self.cut_chars_file
+    }
     fn cut_file(&self) -> &str {
         &self.cut_file
     }
@@ -6883,6 +7387,30 @@ impl Fixture {
     }
     fn grep_file(&self) -> &str {
         &self.grep_file
+    }
+    fn grep_ci_file(&self) -> &str {
+        &self.grep_ci_file
+    }
+    fn grep_boundary_file(&self) -> &str {
+        &self.grep_boundary_file
+    }
+    fn grep_binary_file(&self) -> &str {
+        &self.grep_binary_file
+    }
+    fn comm_left_file(&self) -> &str {
+        &self.comm_left_file
+    }
+    fn comm_right_file(&self) -> &str {
+        &self.comm_right_file
+    }
+    fn join_left_file(&self) -> &str {
+        &self.join_left_file
+    }
+    fn join_right_file(&self) -> &str {
+        &self.join_right_file
+    }
+    fn serial_paste_file(&self) -> &str {
+        &self.serial_paste_file
     }
     fn wc_files(&self) -> &[String] {
         &self.wc_files
