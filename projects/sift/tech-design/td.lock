@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T07:06:42.904533+00:00"
-digest = "sha256:0639a388c3e83466cecc80fad3974b562564d2cb78219d62dde3fc3f882ce12c"
-source_digest = "sha256:0639a388c3e83466cecc80fad3974b562564d2cb78219d62dde3fc3f882ce12c"
-ir_digest = "sha256:9a799a698febc5a1eb4eae7d40694c56bd65cb88421095a1138213c17cf07a86"
+generated_at = "2026-07-14T08:17:09.666478+00:00"
+digest = "sha256:b9b2f8aa732c76adf5f382fbe07caeff1a4273d6805a1b8aa6d32d63e2a0fa25"
+source_digest = "sha256:b9b2f8aa732c76adf5f382fbe07caeff1a4273d6805a1b8aa6d32d63e2a0fa25"
+ir_digest = "sha256:50df437c3bdceb9bb762381e74e7d86fbbd993c1f0ed915d44fa1ff9b25c49d6"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -72,6 +72,12 @@ path = "logic/add-shared-ha-and-backup-lifecycle.md"
 digest = "sha256:d0adc50ad77a0494a3f6bc644903260efef1519c0e0598b6fea53e0935219b8c"
 ir_digest = "sha256:43109e85d0b32ebc28dff78cd9b636189c556c79a91dc448023079ccd8702b76"
 section_count = 2
+
+[[files]]
+path = "logic/add-trace-topology-and-critical-path-store.md"
+digest = "sha256:bfdc0f8bbc4bbe1f9c41794d97226c9d4c7ed8e8fa961bc8cb0c0c5c3f887de0"
+ir_digest = "sha256:0a8d2bd413b712cffe7ef79a49fbfc181bc5cd5915eec9defd030d97a4740193"
+section_count = 5
 
 [[files]]
 path = "logic/adopted-td-code-claim-projects-sift.md"
