@@ -13,29 +13,28 @@ id: terminal-code-check-exact-spec-evidence-scope
 entry: code_check
 nodes:
   code_check: { kind: start, label: "aw td code-check <slug>" }
-  resolve: { kind: process, label: "resolve exact Issue.implements TD spec paths" }
-  target_evidence: { kind: process, label: "collect hand-written create/modify paths only from resolved specs" }
-  unrelated_spec: { kind: process, label: "unrelated project TD with incomplete paths" }
-  complete: { kind: decision, label: "every target path has a Td-Init-to-HEAD diff?" }
-  refuse: { kind: terminal, label: "error names only target paths" }
-  close: { kind: terminal, label: "complete terminal lifecycle" }
+  resolve: { kind: process, label: "use Issue.implements exact TD paths" }
+  promise: { kind: process, label: "extract only target hand-written create/modify entries" }
+  unrelated: { kind: process, label: "ignore unrelated project TD entries" }
+  evidence: { kind: decision, label: "target entries changed since target Td-Init?" }
+  error: { kind: terminal, label: "refuse with target-path diagnostics" }
+  done: { kind: terminal, label: "complete terminal code-check" }
 edges:
   - { from: code_check, to: resolve }
-  - { from: resolve, to: target_evidence }
-  - { from: unrelated_spec, to: target_evidence, label: "must not contribute" }
-  - { from: target_evidence, to: complete }
-  - { from: complete, to: refuse, label: "no" }
-  - { from: complete, to: close, label: "yes" }
+  - { from: resolve, to: promise }
+  - { from: unrelated, to: promise, label: "excluded" }
+  - { from: promise, to: evidence }
+  - { from: evidence, to: error, label: "no" }
+  - { from: evidence, to: done, label: "yes" }
 ---
 flowchart TD
-  code_check([aw td code-check]) --> resolve[resolve Issue.implements]
-  unrelated_spec[unrelated Mamba TD] -. ignored .-> target_evidence[target spec evidence only]
-  resolve --> target_evidence
-  target_evidence --> complete{every target diff present?}
-  complete -->|no| refuse([error: target paths only])
-  complete -->|yes| close([terminal lifecycle closes])
+  code_check([code-check slug]) --> resolve[exact Issue.implements paths]
+  unrelated[unrelated project TD] -. excluded .-> promise[target hand-written paths]
+  resolve --> promise
+  promise --> evidence{all target diffs exist?}
+  evidence -->|no| error([target-only refusal])
+  evidence -->|yes| done([complete lifecycle])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
