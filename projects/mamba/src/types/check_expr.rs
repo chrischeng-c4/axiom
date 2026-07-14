@@ -471,7 +471,22 @@ fn is_pep695_lazy_thunk_arg(
 /// Expression, operator, and pattern type checking.
 impl TypeChecker {
     pub(crate) fn check_expr(&mut self, expr: &Spanned<Expr>) -> TypeId {
-        match &expr.node {
+        // #1536: `cyclic.append(cyclic)` (list/set self-referential mutation)
+        // is legal, mutating Python -- CPython does not reject it, the
+        // container just becomes self-referential. The normal call-check
+        // pipeline pins the receiver's element type from its first
+        // assignment and rejects the self-typed argument as a scalar
+        // mismatch, so detect the shape up front (purely from the AST plus
+        // the symbol table's currently-recorded type, without evaluating
+        // the call), let the normal checks run below for their other side
+        // effects, then discard whatever mismatch error they raised and
+        // widen the receiver's recorded element type so later reads don't
+        // re-trigger the same false positive. Genuinely wrong-typed scalar
+        // arguments are unaffected -- this only fires when the argument
+        // expression aliases the receiver itself.
+        let self_ref_widen = self.self_referential_mutation_widen(&expr.node);
+        let self_ref_errors_mark = self_ref_widen.map(|_| self.errors_mark());
+        let ty = match &expr.node {
             Expr::IntLit(_) | Expr::BigIntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
             Expr::ComplexLit(_) => {
@@ -1534,6 +1549,71 @@ impl TypeChecker {
                 }
                 self.tcx.error()
             }
+        };
+        if let Some((symbol, widened_ty)) = self_ref_widen {
+            self.truncate_errors(self_ref_errors_mark.expect("mark taken alongside self_ref_widen"));
+            self.set_sym_type(symbol.0, widened_ty);
+        }
+        ty
+    }
+
+    /// #1536: detect `container.append(container)` / `.insert(i, container)`
+    /// / `.extend(container)` / `.add(container)` -- a mutation call whose
+    /// receiver is a bare name and whose "value" argument either is that same
+    /// bare name (self-aliasing) or, for `.extend`, is a list/tuple literal
+    /// that carries the receiver as one of its elements (`.extend([cyclic])`
+    /// iterates and appends `cyclic` just like `.extend(cyclic)` would) --
+    /// where the receiver's currently-recorded type is a builtin List/Set.
+    /// This is purely an AST + symbol-table check (it does not evaluate the
+    /// call), so it is safe to run before the normal call-check pipeline and
+    /// use as a signal for whether to discard that pipeline's mismatch error
+    /// afterward. Returns the receiver's symbol and its widened
+    /// (element -> Any) container type; `None` when the shape doesn't match
+    /// or the element type is already widened.
+    fn self_referential_mutation_widen(&mut self, node: &Expr) -> Option<(SymbolId, TypeId)> {
+        let Expr::Call { func, args } = node else {
+            return None;
+        };
+        let Expr::Attr { object, attr } = &func.node else {
+            return None;
+        };
+        let Expr::Ident(name) = &object.node else {
+            return None;
+        };
+        let value_arg = match attr.as_str() {
+            "append" | "extend" | "add" => args.first(),
+            "insert" => args.get(1),
+            _ => return None,
+        }?;
+        let CallArg::Positional(value) = value_arg else {
+            return None;
+        };
+        let is_self_ref = match &value.node {
+            Expr::Ident(value_name) => value_name == name,
+            // `.extend([cyclic])` / `.extend((cyclic,))` -- extend iterates
+            // its argument and appends each element individually, so a
+            // literal container that merely carries the receiver as one of
+            // its elements is just as self-referential as `.extend(cyclic)`
+            // itself.
+            Expr::ListLit(elems) | Expr::TupleLit(elems) if attr.as_str() == "extend" => {
+                elems.iter().any(|e| matches!(&e.node, Expr::Ident(n) if n == name))
+            }
+            _ => false,
+        };
+        if !is_self_ref {
+            return None;
+        }
+        let symbol = self.symbols.lookup(name)?;
+        let container_ty = self.get_sym_type(symbol.0);
+        let any = self.tcx.any();
+        match (attr.as_str(), self.tcx.get(container_ty).clone()) {
+            ("append" | "insert" | "extend", Ty::List(elem)) if elem != any => {
+                Some((symbol, self.tcx.intern(Ty::List(any))))
+            }
+            ("add", Ty::Set(elem)) if elem != any => {
+                Some((symbol, self.tcx.intern(Ty::Set(any))))
+            }
+            _ => None,
         }
     }
 
