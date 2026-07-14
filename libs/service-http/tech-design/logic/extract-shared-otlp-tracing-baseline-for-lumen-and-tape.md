@@ -161,36 +161,36 @@ changes:
 
 ```mermaid
 ---
-id: service-http-shared-otlp-tracing-verification
+id: service-http-shared-otlp-tracing-contract-verification
 requirements:
-  fallback:
-    id: R3
-    text: "Malformed or unreachable exporter setup does not abort service startup and falls back to structured logging without leaking endpoint secrets."
-    kind: negative
-    risk: high
-    verify: cargo test -p service-http --features otlp --test otlp_tracing exporter_setup_failure_keeps_logging_available -- --exact
-  identity_contract:
-    id: R2
-    text: "An OTLP-enabled service supplies stable non-empty service name and version resource attributes through the shared configuration API."
-    kind: functional
-    risk: high
-    verify: cargo test -p service-http --features otlp --test otlp_tracing otlp_identity_contract_is_stable -- --exact
-  logging_only_default:
+  backward_compatible_default:
     id: R1
-    text: "Without an OTLP endpoint or OTLP feature, shared service tracing remains logging-only and preserves the existing initialization contract."
+    text: "Existing callers without an endpoint or an OTLP feature retain logging-only initialization and unchanged request routing."
     kind: regression
     risk: high
     verify: cargo test -p service-http --test otlp_tracing logging_only_default_requires_no_exporter -- --exact
-  trace_context:
-    id: R4
-    text: "The shared HTTP trace layer accepts a valid W3C traceparent and makes the resulting request span a child of that propagated context."
+  non_fatal_exporter_setup:
+    id: R3
+    text: "A missing OTLP feature or malformed exporter configuration emits a redacted diagnostic and keeps structured logging available instead of failing service startup."
+    kind: negative
+    risk: high
+    verify: cargo test -p service-http --features otlp --test otlp_tracing exporter_setup_failure_keeps_logging_available -- --exact
+  stable_resource_identity:
+    id: R2
+    text: "OTLP-enabled initialization accepts only a stable non-empty service identity and attaches its name and version as tracer resource attributes."
     kind: contract
+    risk: high
+    verify: cargo test -p service-http --features otlp --test otlp_tracing otlp_identity_contract_is_stable -- --exact
+  w3c_parent_propagation:
+    id: R4
+    text: "A valid W3C traceparent is extracted by the shared middleware and becomes the request span parent; absent or invalid headers retain a safe root span."
+    kind: functional
     risk: medium
     verify: cargo test -p service-http --features otlp --test otlp_tracing trace_layer_propagates_w3c_parent_context -- --exact
 ---
 flowchart TD
-    r1[R1 logging only default] --> cargo_test_p_service_http_test_otlp_tracing_logging_only_default_requires_no_exporter_exact[cargo test -p service-http --test otlp_tracing logging_only_default_requires_no_exporter -- --exact]
-    r2[R2 identity contract] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_otlp_identity_contract_is_stable_exact[cargo test -p service-http --features otlp --test otlp_tracing otlp_identity_contract_is_stable -- --exact]
-    r3[R3 fallback] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_exporter_setup_failure_keeps_logging_available_exact[cargo test -p service-http --features otlp --test otlp_tracing exporter_setup_failure_keeps_logging_available -- --exact]
-    r4[R4 trace context] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_trace_layer_propagates_w3c_parent_context_exact[cargo test -p service-http --features otlp --test otlp_tracing trace_layer_propagates_w3c_parent_context -- --exact]
+    r1[R1 backward compatible default] --> cargo_test_p_service_http_test_otlp_tracing_logging_only_default_requires_no_exporter_exact[cargo test -p service-http --test otlp_tracing logging_only_default_requires_no_exporter -- --exact]
+    r2[R2 stable resource identity] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_otlp_identity_contract_is_stable_exact[cargo test -p service-http --features otlp --test otlp_tracing otlp_identity_contract_is_stable -- --exact]
+    r3[R3 non fatal exporter setup] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_exporter_setup_failure_keeps_logging_available_exact[cargo test -p service-http --features otlp --test otlp_tracing exporter_setup_failure_keeps_logging_available -- --exact]
+    r4[R4 w3c parent propagation] --> cargo_test_p_service_http_features_otlp_test_otlp_tracing_trace_layer_propagates_w3c_parent_context_exact[cargo test -p service-http --features otlp --test otlp_tracing trace_layer_propagates_w3c_parent_context -- --exact]
 ```
