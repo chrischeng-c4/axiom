@@ -68,22 +68,22 @@ changes:
 
 ```mermaid
 ---
-id: tape-adopt-shared-otlp-tracing-verification
+id: tape-shared-otlp-contract-verification
 requirements:
-  feature_fallback:
+  feature_propagation:
     id: R2
-    text: "Tape's optional otel feature enables the shared exporter while the default build remains logging-only and starts without an endpoint."
+    text: "Tape's otel feature enables shared service-http tracing and has no Tape-local trace pipeline."
     kind: regression
     risk: high
     verify: cargo test -p tape --features otel --test shared_otlp_tracing -- --exact
   shared_initializer:
     id: R1
-    text: "Tape maps TAPE_OTLP_ENDPOINT into service-http initialization with stable Tape identity before serving requests."
+    text: "Tape maps its optional endpoint through service-http initialization with stable Tape identity before the server accepts traffic."
     kind: contract
     risk: high
     verify: cargo test -p tape --test shared_otlp_tracing -- --exact
 ---
 flowchart TD
     r1[R1 shared initializer] --> cargo_test_p_tape_test_shared_otlp_tracing_exact[cargo test -p tape --test shared_otlp_tracing -- --exact]
-    r2[R2 feature fallback] --> cargo_test_p_tape_features_otel_test_shared_otlp_tracing_exact[cargo test -p tape --features otel --test shared_otlp_tracing -- --exact]
+    r2[R2 feature propagation] --> cargo_test_p_tape_features_otel_test_shared_otlp_tracing_exact[cargo test -p tape --features otel --test shared_otlp_tracing -- --exact]
 ```
