@@ -9,47 +9,38 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-nonblocking-idle-liveness-peek
-entry: acquire_idle
+id: pgpool-nonblocking-idle-liveness-peek-contract
+entry: idle_tuple
 nodes:
-  acquire_idle: { kind: start, label: "Acquire pops one reset-clean idle backend." }
-  socket_peek: { kind: process, label: "Perform one synchronous socket-level MSG_PEEK on the already nonblocking Tokio TCP socket; it never consumes a byte or creates a timer." }
-  result: { kind: decision, label: "Did the peek return WouldBlock, EOF, another error, or queued bytes?" }
-  live_pending: { kind: process, label: "WouldBlock means no pending bytes and the backend is live." }
-  live_queued: { kind: process, label: "Queued bytes remain in the socket because MSG_PEEK is non-consuming." }
-  lease: { kind: terminal, label: "Move the unchanged stream and its permit to outstanding and return a reused lease." }
-  discard: { kind: process, label: "EOF or an I/O error drops the stream and permit, notifies capacity waiters, and retries normal acquisition." }
+  idle_tuple: { kind: start, label: "A reset-clean idle tuple exclusively owns stream and capacity permit." }
+  peek: { kind: process, label: "SockRef::peek issues one OS MSG_PEEK against the stream's nonblocking descriptor." }
+  classify: { kind: decision, label: "Classify the OS result without consuming a byte." }
+  healthy: { kind: terminal, label: "WouldBlock or positive byte count returns the unchanged stream as an active reused lease." }
+  unhealthy: { kind: terminal, label: "Zero byte count or any non-WouldBlock error drops stream and permit then retries existing acquisition." }
 edges:
-  - { from: acquire_idle, to: socket_peek }
-  - { from: socket_peek, to: result }
-  - { from: result, to: live_pending, label: "WouldBlock" }
-  - { from: result, to: live_queued, label: "one or more bytes" }
-  - { from: live_pending, to: lease }
-  - { from: live_queued, to: lease }
-  - { from: result, to: discard, label: "EOF or other error" }
+  - { from: idle_tuple, to: peek }
+  - { from: peek, to: classify }
+  - { from: classify, to: healthy, label: "WouldBlock or bytes > 0" }
+  - { from: classify, to: unhealthy, label: "EOF or error" }
 ---
-flowchart LR
-    acquire_idle([pop idle backend]) --> socket_peek[nonblocking MSG_PEEK]
-    socket_peek --> result{result}
-    result -->|WouldBlock| live_pending[alive, no queued bytes]
-    result -->|bytes| live_queued[bytes remain queued]
-    live_pending --> lease([reuse unchanged stream])
-    live_queued --> lease
-    result -->|EOF or error| discard[drop, notify, retry]
+flowchart TD
+  idle_tuple([idle stream + permit]) --> peek[MSG_PEEK on nonblocking socket]
+  peek --> classify{result}
+  classify -->|WouldBlock / bytes| healthy([reuse unchanged])
+  classify -->|EOF / error| unhealthy([drop and retry])
 ```
 
 ### Contract invariants
 
-- The liveness probe runs only while the stream is exclusively owned by the idle tuple; normal relay never races this peek.
-- `WouldBlock` is the normal idle state and returns a live lease without scheduling or awaiting Tokio I/O.
-- A successful peek is `MSG_PEEK`: it reads no protocol byte, so the next relay read observes the same PostgreSQL frame boundary.
-- EOF and every read error retain the existing dead-idle disposition: stream and permit are dropped before the next acquisition attempt.
-- This changes neither `DISCARD ALL` before idle admission nor semaphore/permit ownership, capacity wakeups, or acquire deadlines.
+- The probe is synchronous and creates neither a `tokio::time::Sleep` nor a pending read future.
+- `WouldBlock` is success because an idle authenticated backend normally has no readable bytes.
+- A positive result is success only because `MSG_PEEK` guarantees those bytes remain for normal frame decoding.
+- `Ok(0)` is a peer EOF and every non-`WouldBlock` I/O error is unsafe for reuse.
+- The liveness result transfers no ownership: only the existing pool state transition moves the tuple's permit into `outstanding`.
 
-### Error handling
+### Compatibility
 
-A closed peer returns zero bytes and is discarded. A non-`WouldBlock` read error is likewise treated as unsafe for reuse. If no idle tuple remains after a discard, acquisition follows the existing fresh-connect or saturated-capacity path; the new probe creates no timer, wakeup, or alternate scheduling path.
-
+The implementation uses the safe `socket2::SockRef` facade over the Tokio stream's OS descriptor, so Unix deployment targets keep the descriptor's nonblocking mode. There is no public API or wire-protocol change. The prior zero-timer future-poll no-go is not reused: this contract performs one complete kernel-level readiness/EOF inspection with explicit `WouldBlock` semantics.
 ## Changes
 <!-- type: changes lang: yaml -->
 
