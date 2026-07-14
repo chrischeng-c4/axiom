@@ -270,16 +270,30 @@ impl LoggingProjection {
         push_string("severity", record.severity.as_deref().unwrap_or_default());
         push_string(
             "resource_type",
-            record.resource.get(RESOURCE_TYPE).map(String::as_str).unwrap_or_default(),
+            record
+                .resource
+                .get(RESOURCE_TYPE)
+                .map(String::as_str)
+                .unwrap_or_default(),
         );
         push_string(
             "service_name",
-            record.resource.get(SERVICE_NAME).map(String::as_str).unwrap_or_default(),
+            record
+                .resource
+                .get(SERVICE_NAME)
+                .map(String::as_str)
+                .unwrap_or_default(),
         );
         push_string("trace_id", record.trace_id.as_deref().unwrap_or_default());
         push_string("span_id", record.span_id.as_deref().unwrap_or_default());
-        push_string("request_id", record.request_id.as_deref().unwrap_or_default());
-        push_string("session_id", record.session_id.as_deref().unwrap_or_default());
+        push_string(
+            "request_id",
+            record.request_id.as_deref().unwrap_or_default(),
+        );
+        push_string(
+            "session_id",
+            record.session_id.as_deref().unwrap_or_default(),
+        );
         push_string("occurred_at", &record.occurred_at);
         push_string("coexistence_key", &record.coexistence_key);
         items.push(IndexItem {
@@ -454,9 +468,10 @@ fn record_matches(
                 .as_deref()
                 .is_some_and(|severity| severity.eq_ignore_ascii_case(value))
         })
-        || query.resource_type.as_ref().is_some_and(|value| {
-            record.resource.get(RESOURCE_TYPE) != Some(value)
-        })
+        || query
+            .resource_type
+            .as_ref()
+            .is_some_and(|value| record.resource.get(RESOURCE_TYPE) != Some(value))
         || query
             .service_name
             .as_ref()
@@ -482,7 +497,9 @@ fn record_matches(
 }
 
 fn matches_optional(actual: &Option<String>, expected: &Option<String>) -> bool {
-    expected.as_ref().is_none_or(|value| actual.as_ref() == Some(value))
+    expected
+        .as_ref()
+        .is_none_or(|value| actual.as_ref() == Some(value))
 }
 
 fn parse_optional_time(name: &str, value: Option<&str>) -> Result<Option<DateTime<Utc>>> {
@@ -541,5 +558,4 @@ fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(&value).map_err(Into::into)
 }
 
-<!-- marker: sift-logging-projection path: projects/sift/src/projection/logging.rs reason: Define the log record/query/page schema, fixed-field embedded Lumen index, retention, snapshot, restore, and typed query behavior. -->
 // HANDWRITE-END

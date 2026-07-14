@@ -1,5 +1,5 @@
 // HANDWRITE-BEGIN gap="sift-embedded-lumen-adapter" tracker="1660" reason="Wrap lumen Engine and RdbSnapshot for fixed-field indexing/search without a second service or durable log."
-use std::{collections::BTreeMap, sync::RwLock};
+use std::{any::Any, collections::BTreeMap, sync::RwLock};
 
 use anyhow::{bail, Context, Result};
 use lumen::{
@@ -231,6 +231,10 @@ impl Projection for EmbeddedLumenProjection {
         Ok(hex::encode(Sha256::digest(serde_json::to_vec(
             &*documents,
         )?)))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

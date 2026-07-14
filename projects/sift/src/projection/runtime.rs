@@ -1,5 +1,6 @@
 // HANDWRITE-BEGIN gap="sift-projection-runtime" tracker="1660" reason="Register factories, restore atomic states, catch up asynchronously, wait for cursors, and rebuild from raw."
 use std::{
+    any::Any,
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
@@ -16,6 +17,7 @@ use tokio::sync::Notify;
 use crate::{DurableJournal, EventQuery, StoredEvent};
 
 use super::{
+    logging::{LogPage, LogQuery, LoggingProjection, PROJECTION_LOGGING_STORE},
     lumen::EmbeddedLumenProjection,
     model::{
         ProjectionCheckpoint, ProjectionDescriptor, ProjectionLag, ProjectionStateEnvelope,
@@ -32,6 +34,7 @@ pub trait Projection: Send + Sync {
     fn apply_idempotent(&self, event: &StoredEvent) -> Result<()>;
     fn snapshot(&self) -> Result<Vec<u8>>;
     fn restore(&self, state: &[u8]) -> Result<()>;
+    fn as_any(&self) -> &dyn Any;
 
     fn semantic_digest(&self) -> Result<String> {
         Ok(sha256(&self.snapshot()?))
@@ -65,44 +68,17 @@ impl ProjectionRuntime {
         })?;
 
         let mut slots = BTreeMap::new();
-        let factory: ProjectionFactory =
-            Arc::new(|| Ok(Arc::new(EmbeddedLumenProjection::new()?) as Arc<dyn Projection>));
-        let implementation = factory()?;
-        let descriptor = implementation.descriptor();
-        let state_path = projection_root.join(&descriptor.name).join("state.json");
-        let checkpoint = if state_path.exists() {
-            let envelope: ProjectionStateEnvelope = serde_json::from_slice(
-                &fs::read(&state_path)
-                    .with_context(|| format!("read projection state {}", state_path.display()))?,
-            )
-            .with_context(|| format!("decode projection state {}", state_path.display()))?;
-            validate_envelope(&descriptor, &envelope)?;
-            let state = BASE64
-                .decode(&envelope.state_base64)
-                .context("decode projection state_base64")?;
-            if sha256(&state) != envelope.checkpoint.state_sha256 {
-                bail!(
-                    "projection {} state checksum does not match its checkpoint",
-                    descriptor.name
-                );
+        for factory in [
+            Arc::new(|| Ok(Arc::new(EmbeddedLumenProjection::new()?) as Arc<dyn Projection>))
+                as ProjectionFactory,
+            Arc::new(|| Ok(Arc::new(LoggingProjection::new()?) as Arc<dyn Projection>))
+                as ProjectionFactory,
+        ] {
+            let (name, slot) = open_slot(&projection_root, factory)?;
+            if slots.insert(name.clone(), slot).is_some() {
+                bail!("projection {name} is registered more than once");
             }
-            implementation.restore(&state)?;
-            envelope.checkpoint
-        } else {
-            ProjectionCheckpoint::empty(&descriptor)
-        };
-        slots.insert(
-            descriptor.name.clone(),
-            Arc::new(ProjectionSlot {
-                factory,
-                state_path,
-                live: Mutex::new(LiveProjection {
-                    implementation,
-                    checkpoint,
-                }),
-                published: Notify::new(),
-            }),
-        );
+        }
 
         Ok(Self { journal, slots })
     }
@@ -132,6 +108,17 @@ impl ProjectionRuntime {
             .expect("projection state lock poisoned")
             .implementation
             .semantic_digest()
+    }
+
+    pub fn query_logs(&self, query: &LogQuery) -> Result<LogPage> {
+        let slot = self.slot(PROJECTION_LOGGING_STORE)?;
+        let live = slot.live.lock().expect("projection state lock poisoned");
+        let logging = live
+            .implementation
+            .as_any()
+            .downcast_ref::<LoggingProjection>()
+            .context("logging-store projection registration has the wrong implementation")?;
+        logging.query(query)
     }
 
     pub fn catch_up(&self, name: &str) -> Result<u64> {
@@ -290,6 +277,48 @@ impl ProjectionRuntime {
             .get(name)
             .with_context(|| format!("unknown projection {name}"))
     }
+}
+
+fn open_slot(
+    projection_root: &Path,
+    factory: ProjectionFactory,
+) -> Result<(String, Arc<ProjectionSlot>)> {
+    let implementation = factory()?;
+    let descriptor = implementation.descriptor();
+    let state_path = projection_root.join(&descriptor.name).join("state.json");
+    let checkpoint = if state_path.exists() {
+        let envelope: ProjectionStateEnvelope = serde_json::from_slice(
+            &fs::read(&state_path)
+                .with_context(|| format!("read projection state {}", state_path.display()))?,
+        )
+        .with_context(|| format!("decode projection state {}", state_path.display()))?;
+        validate_envelope(&descriptor, &envelope)?;
+        let state = BASE64
+            .decode(&envelope.state_base64)
+            .context("decode projection state_base64")?;
+        if sha256(&state) != envelope.checkpoint.state_sha256 {
+            bail!(
+                "projection {} state checksum does not match its checkpoint",
+                descriptor.name
+            );
+        }
+        implementation.restore(&state)?;
+        envelope.checkpoint
+    } else {
+        ProjectionCheckpoint::empty(&descriptor)
+    };
+    Ok((
+        descriptor.name,
+        Arc::new(ProjectionSlot {
+            factory,
+            state_path,
+            live: Mutex::new(LiveProjection {
+                implementation,
+                checkpoint,
+            }),
+            published: Notify::new(),
+        }),
+    ))
 }
 
 fn checkpoint(

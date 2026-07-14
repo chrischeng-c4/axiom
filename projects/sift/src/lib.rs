@@ -573,7 +573,10 @@ impl ServiceState {
                     _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                         let runtime = projections.clone();
                         match tokio::task::spawn_blocking(move || {
-                            runtime.catch_up(projection::PROJECTION_EVENT_INDEX)
+                            for name in runtime.projection_names() {
+                                runtime.catch_up(&name)?;
+                            }
+                            anyhow::Ok(())
                         }).await {
                             Ok(Ok(_)) => {}
                             Ok(Err(error)) => tracing::warn!(%error, "projection worker catch-up failed"),
@@ -614,8 +617,10 @@ impl ServiceState {
             .context("state-machine commit completed without applying the Sift event")?;
         let projections = self.projections.clone();
         tokio::task::spawn_blocking(move || {
-            if let Err(error) = projections.catch_up(projection::PROJECTION_EVENT_INDEX) {
-                tracing::warn!(%error, "asynchronous event-index projection failed");
+            for name in projections.projection_names() {
+                if let Err(error) = projections.catch_up(&name) {
+                    tracing::warn!(projection = name, %error, "asynchronous projection failed");
+                }
             }
         });
         Ok(result)
@@ -672,6 +677,14 @@ struct ErrorEnvelope {
     error: String,
     message: String,
     retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    projection: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required_cursor: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_cursor: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after_seconds: Option<u64>,
 }
 
 struct ApiError {
@@ -680,6 +693,7 @@ struct ApiError {
     message: String,
     retryable: bool,
     retry_after_secs: Option<u64>,
+    projection_lag: Option<projection::ProjectionLag>,
 }
 
 impl ApiError {
@@ -690,6 +704,7 @@ impl ApiError {
             message: message.into(),
             retryable: false,
             retry_after_secs: None,
+            projection_lag: None,
         }
     }
 
@@ -700,6 +715,7 @@ impl ApiError {
             message: message.into(),
             retryable: true,
             retry_after_secs: Some(1),
+            projection_lag: None,
         }
     }
 
@@ -710,6 +726,7 @@ impl ApiError {
             message: message.into(),
             retryable: false,
             retry_after_secs: None,
+            projection_lag: None,
         }
     }
 
@@ -720,6 +737,7 @@ impl ApiError {
             message: message.into(),
             retryable: false,
             retry_after_secs: None,
+            projection_lag: None,
         }
     }
 
@@ -730,6 +748,7 @@ impl ApiError {
             message: message.into(),
             retryable: true,
             retry_after_secs: Some(1),
+            projection_lag: None,
         }
     }
 
@@ -740,6 +759,21 @@ impl ApiError {
             message: error.message,
             retryable: error.retryable,
             retry_after_secs: error.retry_after_secs,
+            projection_lag: None,
+        }
+    }
+
+    fn projection_lag(lag: projection::ProjectionLag) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            error: "projection_lag",
+            message: format!(
+                "projection `{}` is at cursor {}, below required cursor {}",
+                lag.projection, lag.current_cursor, lag.required_cursor
+            ),
+            retryable: true,
+            retry_after_secs: Some(lag.retry_after_seconds),
+            projection_lag: Some(lag),
         }
     }
 }
@@ -747,6 +781,7 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let retry_after_secs = self.retry_after_secs;
+        let lag = self.projection_lag;
         let mut response = (
             self.status,
             Json(ErrorEnvelope {
@@ -757,6 +792,10 @@ impl IntoResponse for ApiError {
                     self.message
                 },
                 retryable: self.retryable,
+                projection: lag.as_ref().map(|lag| lag.projection.clone()),
+                required_cursor: lag.as_ref().map(|lag| lag.required_cursor),
+                current_cursor: lag.as_ref().map(|lag| lag.current_cursor),
+                retry_after_seconds: lag.as_ref().map(|lag| lag.retry_after_seconds),
             }),
         )
             .into_response();
@@ -779,6 +818,8 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/traces", post(ingest_traces))
         .route("/v1/metrics", post(ingest_metrics))
         .route("/v1/profiles", post(ingest_profiles))
+        .route("/v1/logs:query", post(query_logs))
+        .route("/v1/logs:tail", get(tail_logs))
         .route("/v1/replay", get(replay_events))
         .route("/v1/replays", post(start_replay))
         .route("/v1/replays/{id}", get(get_replay))
@@ -1079,15 +1120,105 @@ fn project_header(headers: &HeaderMap) -> Result<&str, ApiError> {
 }
 
 fn authorize_project(principal: Option<&RoleMapPrincipal>, project: &str) -> Result<(), ApiError> {
+    authorize_project_role(principal, project, Role::Write)
+}
+
+fn authorize_project_read(
+    principal: Option<&RoleMapPrincipal>,
+    project: &str,
+) -> Result<(), ApiError> {
+    authorize_project_role(principal, project, Role::Read)
+}
+
+fn authorize_project_role(
+    principal: Option<&RoleMapPrincipal>,
+    project: &str,
+    role: Role,
+) -> Result<(), ApiError> {
     match principal {
         None | Some(RoleMapPrincipal::Open) => Ok(()),
-        Some(principal) => principal.ensure(project, Role::Write).map_err(|denied| {
+        Some(principal) => principal.ensure(project, role).map_err(|denied| {
             ApiError::forbidden(format!(
-                "subject `{}` lacks write access to project `{}`",
-                denied.subject, denied.resource
+                "subject `{}` lacks {:?} access to project `{}`",
+                denied.subject, denied.needed, denied.resource
             ))
         }),
     }
+}
+
+const LOG_QUERY_PROJECTION_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+
+#[utoipa::path(
+    post,
+    path = "/v1/logs:query",
+    request_body = projection::LogQuery,
+    responses(
+        (status = 200, description = "stable typed log page", body = projection::LogPage),
+        (status = 400, description = "invalid log query", body = ErrorEnvelope),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn query_logs(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    payload: Result<Json<projection::LogQuery>, JsonRejection>,
+) -> Result<Json<projection::LogPage>, ApiError> {
+    let Json(query) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    query_logs_page(state, principal.as_ref().map(|value| &value.0), query).await
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/logs:tail",
+    params(
+        ("project" = String, Query, description = "authorized project"),
+        ("after_cursor" = Option<u64>, Query, description = "exclusive raw cursor"),
+        ("min_cursor" = Option<u64>, Query, description = "read-your-write projection cursor"),
+        ("limit" = Option<usize>, Query, description = "bounded page size, maximum 1000")
+    ),
+    responses(
+        (status = 200, description = "bounded cursor-resumable log page", body = projection::LogPage),
+        (status = 400, description = "invalid tail query", body = ErrorEnvelope),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn tail_logs(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    Query(query): Query<projection::LogQuery>,
+) -> Result<Json<projection::LogPage>, ApiError> {
+    query_logs_page(state, principal.as_ref().map(|value| &value.0), query).await
+}
+
+async fn query_logs_page(
+    state: Arc<ServiceState>,
+    principal: Option<&RoleMapPrincipal>,
+    query: projection::LogQuery,
+) -> Result<Json<projection::LogPage>, ApiError> {
+    authorize_project_read(principal, &query.project)?;
+    state
+        .projections
+        .catch_up(projection::PROJECTION_LOGGING_STORE)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let required = query.min_cursor.unwrap_or(0);
+    let projection_cursor = state
+        .projections
+        .wait_for_min_cursor(
+            projection::PROJECTION_LOGGING_STORE,
+            required,
+            LOG_QUERY_PROJECTION_WAIT,
+        )
+        .await
+        .map_err(ApiError::projection_lag)?;
+    let mut page = state
+        .projections
+        .query_logs(&query)
+        .map_err(|error| ApiError::bad_request("invalid_log_query", error.to_string()))?;
+    page.projection_cursor = projection_cursor;
+    Ok(Json(page))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1261,6 +1392,8 @@ async fn get_replay(
         ingest_traces,
         ingest_metrics,
         ingest_profiles,
+        query_logs,
+        tail_logs,
         query_events,
         replay_events,
         start_replay,
@@ -1282,6 +1415,9 @@ async fn get_replay(
         ingest::BatchOutcome,
         ingest::IngestErrorDetail,
         projection::ProjectionLag,
+        projection::LogRecordV1,
+        projection::LogQuery,
+        projection::LogPage,
         projection::ReplayJob,
         projection::ReplayState,
         StartReplayRequest,

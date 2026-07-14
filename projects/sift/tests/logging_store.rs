@@ -3,8 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use sift::{
     projection::{
-        LogQuery, LoggingProjection, Projection, ProjectionRuntime,
-        PROJECTION_LOGGING_STORE,
+        LogQuery, LoggingProjection, Projection, ProjectionRuntime, PROJECTION_LOGGING_STORE,
     },
     AttributeValue, DurableJournal, EventEnvelope, SignalKind, StoredEvent,
 };
@@ -40,9 +39,10 @@ fn gcp_log(cursor: u64, id: &str, message: &str) -> StoredEvent {
         ("k8s.container.name".into(), "app".into()),
         ("service.name".into(), "checkout".into()),
     ]);
-    event
-        .attributes
-        .insert("deployment.version".into(), AttributeValue::String("v2".into()));
+    event.attributes.insert(
+        "deployment.version".into(),
+        AttributeValue::String("v2".into()),
+    );
     stored(cursor, event)
 }
 
@@ -63,7 +63,8 @@ fn gcp_and_otel_golden_records_preserve_structure_correlation_and_search() {
         serde_json::json!({"body": "checkout recovered", "attempt": 2}),
     );
     otel.severity = Some("INFO".into());
-    otel.resource.insert("service.name".into(), "checkout".into());
+    otel.resource
+        .insert("service.name".into(), "checkout".into());
     Projection::apply_idempotent(&projection, &stored(2, otel)).unwrap();
 
     let ignored = EventEnvelope::for_project(
@@ -117,7 +118,10 @@ fn retention_snapshot_and_restore_are_deterministic() {
         .query(&LogQuery::for_project("project-a"))
         .unwrap();
     assert_eq!(
-        page.records.iter().map(|row| row.cursor).collect::<Vec<_>>(),
+        page.records
+            .iter()
+            .map(|row| row.cursor)
+            .collect::<Vec<_>>(),
         vec![2, 3]
     );
 
