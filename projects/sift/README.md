@@ -978,4 +978,5 @@ Gate Inventory:
 | jsonpayload-style-body-compatibility | change | 1658 | implemented | passing | conformance | projects/sift/tests/otlp_gcp_ingest.rs |
 | k8s-container-resource-labels | change | 1658 | implemented | passing | conformance | monitored-resource label normalization gate |
 | severity-and-trace-context-normalization | change | 1658 | implemented | passing | conformance | severity/trace/span/request normalization gate |
+| logging-view-query-compatibility | change | 1664 | planned | planned | conformance | dedicated log record, typed query, full-text, cursor, tail-resume, retention, and rebuild gate |
 | cloud-logging-coexistence-dedupe | change | 1675 | planned | planned | dogfood | collector coexistence identity gate |
