@@ -3553,7 +3553,19 @@ impl TypeChecker {
                             user: Some(user),
                             ..
                         } if !self.class_inheritance_open.contains(&user.symbol)
+                            && self.user_bare_class_symbols.contains(&user.symbol)
                     ) {
+                        // A genuinely bare closed-inheritance user class (no
+                        // base, no methods — see `user_bare_classes` in
+                        // check.rs) can satisfy neither a protocol nor a
+                        // nominal external class, so it's a safe hard reject.
+                        // A class that defines ANY method (like a hand-rolled
+                        // `HeapqMergeDocTestFinder` implementing just `find()`
+                        // to duck-type as a `doctest.DocTestFinder`) is a
+                        // legitimate, commonly-used CPython idiom that a
+                        // strict nominal check would wrongly hard-wall;
+                        // leave it skip-when-unsure like any other
+                        // structurally-unproven case.
                         StrictRelation::Incompatible
                     } else {
                         StrictRelation::Indeterminate
