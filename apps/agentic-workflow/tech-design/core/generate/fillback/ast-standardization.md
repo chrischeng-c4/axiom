@@ -17,6 +17,12 @@ capability_refs:
 
 Public API manifest for `apps/agentic-workflow/src/fillback/ast.rs` generated from AST during Score force-regeneration standardization.
 
+For explicit source adoption, `AstAnalyzer` exposes two conservative internal
+queries: deterministic top-level end-byte boundaries for partition planning,
+and rows occupied by standalone single-line comment nodes for marker ownership.
+Incomplete parse trees reject both queries so the importer can use bounded
+lossless partition fallback while requiring HITL for ambiguous ownership.
+
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
@@ -199,15 +205,18 @@ inventory:
       symbol: "impl AstAnalyzer"
       action: wrap-handwrite
       gap_blocker: >
-        AstAnalyzer's methods (new, parse_file, analyze_directory, etc.) involve
-        tree-sitter parser setup and file I/O. These cannot be expressed in schema,
-        logic flowchart, or any current section type. Gap closes when a service-impl
-        section type is introduced that can model parser initialization and async
-        file walks.
+        AstAnalyzer's methods (new, parse_file, analyze_directory,
+        top_level_byte_boundaries, comment_line_numbers, etc.) involve tree-sitter
+        parser setup, syntax-tree traversal, and file I/O. These cannot be
+        expressed in schema, logic flowchart, or any current section type. Gap
+        closes when a service-impl section type is introduced that can model
+        parser initialization, deterministic partition boundaries, comment-node
+        classification, and async file walks.
       gap_reason: >
         The impl block is the primary algorithmic body of the AST analysis pipeline.
-        It spans ~1200 lines of imperative Rust touching tree-sitter, std::fs, and
-        regex. No current section type covers this surface.
+        It includes conservative complete-tree checks, top-level byte boundaries,
+        standalone single-line comment-row collection, language extractors, and
+        directory analysis. No current section type covers this surface.
       spec_ref: "sdd/generate/fillback/ast.md#changes"
 
     - region_id: impl-default-ast-analyzer
@@ -256,8 +265,9 @@ changes:
       - "<handwrite-gap:fillback-ast-runtime-and-tests>"
     description: >
       Source template owns SupportedLanguage helpers, enum Display,
-      AnalysisContext helpers, tree-sitter analyzer algorithms, language
-      extractors, fixture tests, and analyzer Default.
+      AnalysisContext helpers, tree-sitter analyzer algorithms, deterministic
+      explicit-source partition boundaries, language-aware comment ownership,
+      language extractors, fixture tests, and analyzer Default.
   - action: annotate
     section: schema
     impl_mode: hand-written

@@ -33,6 +33,28 @@ Public API manifest for `apps/agentic-workflow/src/fillback/code.rs` generated f
 | `print_parse_errors` | apps/agentic-workflow/src/fillback/code.rs | function | pub | 800 | print_parse_errors(&self, errors: &[ParseError]) |
 | `run_clarification` | apps/agentic-workflow/src/fillback/code.rs | function | pub | 261 | run_clarification(&self, context: &AnalysisContext) -> Result<HashMap<String, String>> |
 | `with_config` | apps/agentic-workflow/src/fillback/code.rs | function | pub | 72 | with_config(config: CodeStrategyConfig) -> Self |
+
+### Explicit-file adoption contract
+
+An explicitly selected supported source file is a bounded user selection: the
+strategy analyzes only that file, never its siblings, and does not apply the
+directory discovery scanner's 100 KB ceiling. Rust, Python, JavaScript
+(`.js`/`.jsx`/`.mjs`/`.cjs`), TypeScript (`.ts`/`.tsx`), and Go are accepted.
+Rust uses the structured `rust-source-unit` Item/Trivia IR; the other languages use a typed
+`text-source-unit` with an explicit `source_lang`. Large or sentinel-sensitive
+payloads are split into ordered, bounded, base64-encoded partitions using
+complete top-level AST boundaries where possible and a deterministic byte/
+newline fallback otherwise. Per-partition and whole-source SHA-256 digests make
+the representation lossless and corruption-detectable.
+
+A unique existing whole-file CODEGEN owner may be refreshed in place while
+preserving metadata and capability references. Before mutation, the importer
+checks target, section type, action, absence of `replaces`, canonical typed
+Source annotation/fence, decoded replay equality, and the original owner
+snapshot. New owners use no-clobber creation. Partial, external, syntactically
+ambiguous, concurrently changed, or multiply-owned targets return a HITL
+outcome with no mutation. Directory discovery retains its existing file-count
+and size ceilings.
 ## Schema
 <!-- type: schema lang: yaml -->
 
@@ -46,7 +68,7 @@ definitions:
       path:
         type: string
         x-rust-type: "Option<String>"
-        description: "Path to analyze (defaults to current directory)."
+        description: "Directory or explicit source file to analyze (defaults to current directory)."
       module:
         type: string
         x-rust-type: "Option<String>"
@@ -104,7 +126,10 @@ changes:
       - "<handwrite-gap:fillback-code-strategy-runtime>"
     description: |
       Source template owns code strategy defaults, AST scanning, clarification
-      prompts, spec emission, strategy integration, helpers, and tests.
+      prompts, multi-language explicit-file lossless source-unit adoption,
+      AST/fallback partition planning, strict safe-owner refresh/no-clobber
+      persistence, HITL routing, spec emission, strategy integration, helpers,
+      and corruption/race/marker-fixture tests.
 ```
 
 # Reviews

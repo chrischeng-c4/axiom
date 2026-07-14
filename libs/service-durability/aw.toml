@@ -1,7 +1,7 @@
 [project]
 name = "service-durability"
 cap_path = "README.md"
-label = "project:service-durability"
+label = "lib:service-durability"
 
 [[workspaces]]
 name = "service-durability"

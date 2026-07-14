@@ -8,6 +8,30 @@ capability_refs:
     claim: managed-and-semantic-production-gates
     coverage: full
     rationale: "Standardization TDs support brownfield takeover, semantic coverage, traceability, and production readiness gates."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: committed-td-skeleton-lifecycle
+    claim: committed-td-skeleton-lifecycle
+    coverage: full
+    rationale: "Real CLI tests prove committed skeleton ownership, exact legacy recovery, rebased lifecycle compatibility, idempotence, and strict negative boundaries."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The real CLI proves invalid merged candidates preserve spec, payload, projection, phase, and HEAD, while a valid signature/loop LogicSpec replaces stale disk content and advances to Changes."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: generated-td-lock-commit-handoff
+    claim: generated-td-lock-commit-handoff
+    coverage: full
+    rationale: "The default-target real CLI proves generated TD locks receive one exact-path lifecycle commit, check/show stay read-only, and generation runs without a dirty-lock handoff."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "The real CLI snapshots HEAD, branch, index, status, issue, TD ref, spec, and target blobs to prove ambiguous Schema ownership fails before lifecycle mutation."
 ---
 
 # Standardized apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs
@@ -15,7 +39,24 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization.
+Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization. The TD create replay fixture asserts the default `logic` to `changes` to `unit-test` queue, and the #1598 fixture applies both passes through the real CLI before proving `aw td gen` consumes the explicit Changes target plan, creates the named Logic target, and preserves the hand-written Unit Test target. Issue #1587 makes the intervening real `aw td lock` create one exact-path commit, prove its stable subject/trailers and clean checkout, and keep `--check`/`--show` read-only. The #1602 fixtures prove rewritten lifecycle history gets one safe reset and fresh init/projection, while an exact reachable init resumes with no reset or duplicate init and ordinary phase `created` still provisions. The #1580 fixtures prove fresh and recovered skeletons are committed exactly once while authored, non-exact status, sibling-dirty, post-gen, and terminal states remain immutable.
+
+The #1586 fixture starts from stale plain Mermaid on disk. It proves a malformed
+Mermaid Plus candidate fails the complete registry without changing spec,
+payload, phase, projection, or HEAD, then proves a valid LogicSpec with a
+signature and loop is written, consumes its payload, and advances to Changes.
+
+The #1633 fixture invokes the public binary from `main` while an existing TD
+branch contains a valid earlier Logic target followed by two Schema CODEGEN
+targets. One structured ambiguity envelope names sorted targets and an
+executable next command; exact snapshots prove that branch activation, issue
+hydration, index/HEAD mutation, lifecycle commits, and target writes never
+occur.
+
+Its AC4 companion runs on a persistent project branch with a no-Changes Schema
+TD and one existing managed exact spec ref. A real TD lock and `aw td gen`
+prove caller admission and executor inference choose the same target, replace
+the stale symbol with generated `Widget`, and advance the issue to `cb_genned`.
 
 ### Symbols
 
@@ -136,6 +177,50 @@ fn write_issue_fixture(root: &std::path::Path, slug: &str, body: impl AsRef<str>
 
 fn read_issue_fixture(root: &std::path::Path, slug: &str) -> String {
     std::fs::read_to_string(issue_path(root, slug)).unwrap()
+}
+
+fn commit_all_with_message(git: &std::path::Path, root: &std::path::Path, message: &str) {
+    assert!(Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "--allow-empty", "-m", message])
+        .status()
+        .unwrap()
+        .success());
+}
+
+fn git_stdout_bytes(git: &std::path::Path, root: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    let output = Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("git {args:?}: {error}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    output.stdout
+}
+
+fn git_log_messages(git: &std::path::Path, root: &std::path::Path) -> String {
+    let output = Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(["log", "--format=%B%x1e", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 /// `td init` in InPlace mode should switch the host repo from `main` to branch
@@ -282,6 +367,7 @@ path = "."
          state: open\n\
          type: enhancement\n\
          labels: [\"app:agentic-workflow\"]\n\
+         phase: created\n\
          review_count: 1\n\
          flagged_sections: [scope]\n\
          fill_retry_count: 1\n\
@@ -341,6 +427,744 @@ path = "."
             && !updated_issue.contains("fill_retry_count:"),
         "td create should clear inherited issue review state:\n{updated_issue}"
     );
+}
+
+/// Issue #1602: after history rewriting removes the exact Td-Init commit,
+/// `aw td create` clears the stale phase/projection and re-provisions a fresh
+/// baseline without touching existing spec or source bytes.
+#[test]
+fn td_create_rebased_lifecycle_reprovisions_unreachable_exact_td_init() {
+    use agentic_workflow::cli::workflow_guard::{
+        parse_projection, upsert_projection, WorkflowProjection,
+    };
+
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
+
+    let slug = "1602-rebased-recovery";
+    let spec_path = "tech-design/logic/rebase-recovery.md";
+    let spec_bytes = "---\nid: rebase-recovery\nfill_sections: [logic]\n---\n\n# Rebase recovery\n";
+    let source_bytes = "pub fn preserved_by_td_recovery() {}\n";
+    std::fs::create_dir_all(root.join("tech-design/logic")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join(spec_path), spec_bytes).unwrap();
+    std::fs::write(root.join("src/preserved.rs"), source_bytes).unwrap();
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: {slug}\ntitle: rebased TD recovery\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\n---\n\n# Body\n"
+        ),
+    );
+    commit_all_with_message(&git, root, "bootstrap #1602 fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let stale_projection = WorkflowProjection {
+        version: 1,
+        issue_id: slug.to_string(),
+        locked: true,
+        owner: Some("td".to_string()),
+        active_phase: Some("td_contract_created".to_string()),
+        active_branch: Some("app/fixture".to_string()),
+        expected_payload: Some("/tmp/aw/stale/contract/unit-test.json".to_string()),
+        expected_command: Some("aw td create stale --apply".to_string()),
+        current_section: Some("unit-test".to_string()),
+        remaining_sections: Vec::new(),
+        dirty_paths: vec!["stale/spec.md".to_string()],
+        blocker_summary: None,
+        updated_at: None,
+    };
+    let stale_body = upsert_projection("# Body\n", &stale_projection).unwrap();
+    let active_issue = format!(
+        "---\nslug: {slug}\ntitle: rebased TD recovery\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\", \"score:locked\", \"score:lock:td\"]\nphase: td_created\nbranch: app/fixture\n---\n\n{stale_body}"
+    );
+    write_issue_fixture(root, slug, &active_issue);
+    commit_all_with_message(
+        &git,
+        root,
+        &format!("initial lifecycle\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+    );
+
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["reset", "--hard", "HEAD^"])
+        .status()
+        .unwrap()
+        .success());
+    write_issue_fixture(root, slug, &active_issue);
+    commit_all_with_message(
+        &git,
+        root,
+        &format!(
+            "rebased remote phase projection\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Queue-Start"
+        ),
+    );
+
+    let output = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("recover rebased TD lifecycle");
+    assert!(
+        output.status.success(),
+        "recovery should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let recovered_issue = read_issue_fixture(root, slug);
+    let projection = parse_projection(&recovered_issue).expect("fresh workflow projection");
+    assert!(projection.locked);
+    assert_eq!(projection.current_section.as_deref(), Some("logic"));
+    assert!(projection
+        .expected_payload
+        .as_deref()
+        .is_some_and(|path| path.ends_with("/applicability/logic.json")));
+    assert!(projection
+        .expected_command
+        .as_deref()
+        .is_some_and(|command| command.contains(slug) && command.contains(spec_path)));
+    assert!(!recovered_issue.contains("aw td create stale --apply"));
+    assert!(recovered_issue.contains("phase: td_inited"));
+    assert!(recovered_issue.contains("branch: app/fixture"));
+    assert_eq!(
+        std::fs::read_to_string(root.join(spec_path)).unwrap(),
+        spec_bytes
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/preserved.rs")).unwrap(),
+        source_bytes
+    );
+
+    let log = git_log_messages(&git, root);
+    assert!(log.contains("Lifecycle-Stage: Td-Reset"));
+    assert!(log.contains("Reset-Reason: unreachable-td-init"));
+    assert!(log.contains("Reset-History-State: slug-history-without-init"));
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Init").count(), 1);
+}
+
+/// Issue #1602 negative: an active lifecycle with an exact reachable Td-Init
+/// is an ordinary resume, with neither Td-Reset nor a second Td-Init.
+#[test]
+fn td_create_rebased_lifecycle_preserves_reachable_exact_td_init() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
+    let slug = "1602-valid-resume";
+    let spec_path = "tech-design/logic/valid-resume.md";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: {slug}\ntitle: valid TD resume\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\n---\n\n# Body\n"
+        ),
+    );
+    commit_all_with_message(&git, root, "bootstrap valid #1602 resume");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: {slug}\ntitle: valid TD resume\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\nphase: td_inited\nbranch: app/fixture\n---\n\n# Body\n"
+        ),
+    );
+    commit_all_with_message(
+        &git,
+        root,
+        &format!("valid init\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+    );
+
+    let output = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("resume reachable TD lifecycle");
+    assert!(
+        output.status.success(),
+        "reachable resume should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = git_log_messages(&git, root);
+    assert!(!log.contains("Lifecycle-Stage: Td-Reset"));
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Init").count(), 1);
+    assert!(read_issue_fixture(root, slug).contains("phase: td_inited"));
+}
+
+/// Issue #1580: the first queue-start commit owns the numeric-id skeleton it
+/// creates, leaves a clean checkout, and a repeated brief is history-idempotent.
+#[test]
+fn td_create_commits_fresh_numeric_skeleton_once() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
+    let slug = "1580";
+    let spec_path = "tech-design/logic/1580.md";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: \"{slug}\"\ntitle: commit TD skeleton\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\n---\n\n# Body\n"
+        ),
+    );
+    commit_all_with_message(&git, root, "bootstrap #1580 fresh fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let first = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("create fresh numeric TD");
+    assert!(
+        first.status.success(),
+        "fresh create should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(git_status(&git, root).is_empty());
+    let skeleton = std::fs::read_to_string(root.join(spec_path)).unwrap();
+    let frontmatter = skeleton.splitn(3, "---").nth(1).unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(frontmatter).unwrap();
+    assert_eq!(
+        parsed.get("id").and_then(|value| value.as_str()),
+        Some(slug)
+    );
+    assert!(skeleton.contains("fill_sections: [logic, changes, unit-test]"));
+
+    let show = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--format=", "--name-only", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    assert_eq!(String::from_utf8_lossy(&show.stdout).trim(), spec_path);
+    let first_head = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let first_head = String::from_utf8_lossy(&first_head.stdout)
+        .trim()
+        .to_string();
+
+    let second = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("repeat fresh numeric TD brief");
+    assert!(
+        second.status.success(),
+        "repeat brief should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_eq!(
+        current_branch(&git, root),
+        "app/fixture",
+        "project branch must remain active"
+    );
+    assert_eq!(
+        Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap(),
+        first_head,
+        "repeat brief must not create a second queue-start commit"
+    );
+    assert!(git_status(&git, root).is_empty());
+}
+
+/// Issue #1580: a reachable old lock may carry the exact pre-#1521 untracked
+/// skeleton through activation, canonicalize it, and add one recovery
+/// queue-start commit that stages only that file.
+#[test]
+fn td_create_recovers_reachable_locked_legacy_skeleton_once() {
+    use agentic_workflow::cli::workflow_guard::{upsert_projection, WorkflowProjection};
+
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap #1580 locked fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let slug = "1580";
+    let spec_path = "tech-design/logic/1580.md";
+    let projection = WorkflowProjection {
+        version: 1,
+        issue_id: slug.to_string(),
+        locked: true,
+        owner: Some("td".to_string()),
+        active_phase: Some("td_applicability_in_progress".to_string()),
+        active_branch: Some("app/fixture".to_string()),
+        expected_payload: Some("/tmp/aw/1580/applicability/logic.json".to_string()),
+        expected_command: Some(format!(
+            "aw td create {slug} --apply --phase applicability --section logic --spec-path {spec_path}"
+        )),
+        current_section: Some("logic".to_string()),
+        remaining_sections: vec!["changes".to_string(), "unit-test".to_string()],
+        dirty_paths: vec![spec_path.to_string()],
+        blocker_summary: None,
+        updated_at: None,
+    };
+    let body = upsert_projection("# Body\n", &projection).unwrap();
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: \"{slug}\"\ntitle: recover locked skeleton\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\", \"score:locked\", \"score:lock:td\"]\nphase: td_inited\nbranch: app/fixture\n---\n\n{body}"
+        ),
+    );
+    commit_all_with_message(
+        &git,
+        root,
+        &format!("valid init\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+    );
+    std::fs::create_dir_all(root.join("tech-design/logic")).unwrap();
+    let legacy = format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n");
+    std::fs::write(root.join(spec_path), &legacy).unwrap();
+
+    let output = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("recover reachable locked skeleton");
+    assert!(
+        output.status.success(),
+        "locked recovery should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(git_status(&git, root).is_empty());
+    let recovered = std::fs::read_to_string(root.join(spec_path)).unwrap();
+    assert!(recovered.contains("id: '1580'"), "{recovered}");
+    assert!(recovered.contains("fill_sections: [logic, changes, unit-test]"));
+    let show = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--format=", "--name-only", "HEAD"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&show.stdout).trim(), spec_path);
+    let log = git_log_messages(&git, root);
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Queue-Start").count(), 1);
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Init").count(), 1);
+    assert!(!log.contains("Lifecycle-Stage: Td-Reset"));
+    let recovered_head = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap();
+
+    let repeat = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("repeat locked recovery");
+    assert!(repeat.status.success());
+    assert_eq!(
+        Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap(),
+        recovered_head
+    );
+    assert!(git_status(&git, root).is_empty());
+}
+
+/// Combined #1602/#1580 regression: an unreachable old lifecycle may carry
+/// only the exact untracked legacy skeleton across Reset and fresh Init; the
+/// fresh Queue-Start then owns the canonicalized file.
+#[test]
+fn td_create_rebased_lifecycle_reprovisions_untracked_legacy_skeleton() {
+    use agentic_workflow::cli::workflow_guard::{
+        parse_projection, upsert_projection, WorkflowProjection,
+    };
+
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap combined recovery fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let slug = "1580-rebased";
+    let spec_path = "tech-design/logic/1580-rebased.md";
+    let stale_projection = WorkflowProjection {
+        version: 1,
+        issue_id: slug.to_string(),
+        locked: true,
+        owner: Some("td".to_string()),
+        active_phase: Some("td_contract_created".to_string()),
+        active_branch: Some("app/fixture".to_string()),
+        expected_payload: Some("/tmp/aw/stale/unit-test.json".to_string()),
+        expected_command: Some("aw td create stale --apply".to_string()),
+        current_section: Some("unit-test".to_string()),
+        remaining_sections: Vec::new(),
+        dirty_paths: vec!["stale/spec.md".to_string()],
+        blocker_summary: None,
+        updated_at: None,
+    };
+    let stale_body = upsert_projection("# Body\n", &stale_projection).unwrap();
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\nslug: {slug}\ntitle: combined lifecycle recovery\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\", \"score:locked\", \"score:lock:td\"]\nphase: td_created\nbranch: app/fixture\n---\n\n{stale_body}"
+        ),
+    );
+    commit_all_with_message(
+        &git,
+        root,
+        &format!("old init\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+    );
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["reset", "--hard", "HEAD^"])
+        .status()
+        .unwrap()
+        .success());
+    commit_all_with_message(
+        &git,
+        root,
+        &format!("rebased queue\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Queue-Start"),
+    );
+    std::fs::create_dir_all(root.join("tech-design/logic")).unwrap();
+    let legacy = format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n");
+    std::fs::write(root.join(spec_path), &legacy).unwrap();
+
+    let output = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("run combined lifecycle recovery");
+    assert!(
+        output.status.success(),
+        "combined recovery should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(git_status(&git, root).is_empty());
+    let recovered = std::fs::read_to_string(root.join(spec_path)).unwrap();
+    assert!(recovered.contains("fill_sections: [logic, changes, unit-test]"));
+    let issue = read_issue_fixture(root, slug);
+    let projection = parse_projection(&issue).expect("fresh queue projection");
+    assert!(projection.locked);
+    assert_eq!(projection.current_section.as_deref(), Some("logic"));
+    assert!(!issue.contains("aw td create stale --apply"));
+    let log = git_log_messages(&git, root);
+    assert!(log.contains("Lifecycle-Stage: Td-Reset"));
+    assert!(log.contains("Reset-Reason: unreachable-td-init"));
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Init").count(), 1);
+    assert_eq!(log.matches("Lifecycle-Stage: Td-Queue-Start").count(), 2);
+    let head_message = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "-s", "--format=%B", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&head_message.stdout).contains("Lifecycle-Stage: Td-Queue-Start")
+    );
+    let changed = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--format=", "--name-only", "HEAD"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&changed.stdout).trim(), spec_path);
+}
+
+/// Real CLI fail-closed matrix for the status classes #1580 must never absorb.
+/// Each fixture has a reachable Td-Init, so failure comes from skeleton
+/// admission rather than stale-history reset.
+#[test]
+fn td_create_rejects_authored_tracked_staged_and_sibling_skeleton_states() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    for case in [
+        "authored",
+        "tracked",
+        "staged",
+        "sibling",
+        "sibling-tracked",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        bootstrap_repo(&git, root);
+        std::fs::write(
+            root.join("aw.toml"),
+            "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        )
+        .unwrap();
+        commit_all_with_message(&git, root, "bootstrap negative #1580 fixture");
+        assert!(Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["switch", "-c", "app/fixture"])
+            .status()
+            .unwrap()
+            .success());
+
+        let slug = format!("1580-{case}");
+        let spec_path = format!("tech-design/logic/{slug}.md");
+        let spec_abs = root.join(&spec_path);
+        std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+        if case == "tracked" {
+            std::fs::write(&spec_abs, "authored tracked TD\n").unwrap();
+        }
+        if case == "sibling-tracked" {
+            std::fs::write(root.join("unrelated.txt"), "tracked base\n").unwrap();
+        }
+        write_issue_fixture(
+            root,
+            &slug,
+            format!(
+                "---\nslug: {slug}\ntitle: negative skeleton state\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\nphase: td_inited\nbranch: app/fixture\n---\n\n# Body\n"
+            ),
+        );
+        commit_all_with_message(
+            &git,
+            root,
+            &format!("valid init\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+        );
+
+        let canonical = format!(
+            "---\nid: {slug}\nsummary: (fill)\nfill_sections: [logic, changes, unit-test]\n---\n"
+        );
+        let expected_target = match case {
+            "authored" => format!("{canonical}\n## Logic\nauthored\n"),
+            _ => canonical.clone(),
+        };
+        std::fs::write(&spec_abs, &expected_target).unwrap();
+        if case == "staged" {
+            assert!(Command::new(&git)
+                .arg("-C")
+                .arg(root)
+                .args(["add", &spec_path])
+                .status()
+                .unwrap()
+                .success());
+        }
+        if case == "sibling" {
+            std::fs::write(root.join("unrelated.txt"), "unrelated\n").unwrap();
+        }
+        if case == "sibling-tracked" {
+            std::fs::write(root.join("unrelated.txt"), "tracked modified\n").unwrap();
+        }
+        let before = Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap();
+
+        let output = Command::new(&bin)
+            .args(["td", "create", &slug, "--spec-path", &spec_path])
+            .current_dir(root)
+            .output()
+            .expect("run negative skeleton state");
+        assert!(
+            !output.status.success(),
+            "{case} state must fail closed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(std::fs::read_to_string(&spec_abs).unwrap(), expected_target);
+        assert_eq!(
+            Command::new(&git)
+                .arg("-C")
+                .arg(root)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .unwrap(),
+            before,
+            "{case} state must not create recovery history"
+        );
+        assert!(read_issue_fixture(root, &slug).contains("phase: td_inited"));
+    }
+}
+
+/// #1580 must not mutate a reachable pre-queue `td_created` issue or turn
+/// post-gen/terminal retries into skeleton recovery. Every rejected phase
+/// preserves both history and the exact untracked bytes.
+#[test]
+fn td_create_post_gen_and_terminal_phases_reject_untracked_skeleton() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    for phase in [
+        "td_created",
+        "cb_genned",
+        "cb_filled",
+        "td_gen_coded",
+        "td_merged",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        bootstrap_repo(&git, root);
+        std::fs::write(
+            root.join("aw.toml"),
+            "[[projects]]\nname = \"agentic-workflow\"\npath = \".\"\n",
+        )
+        .unwrap();
+        commit_all_with_message(&git, root, "bootstrap strict phase fixture");
+        assert!(Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["switch", "-c", "app/fixture"])
+            .status()
+            .unwrap()
+            .success());
+        let slug = format!("1580-{phase}");
+        let spec_path = format!("tech-design/logic/{slug}.md");
+        write_issue_fixture(
+            root,
+            &slug,
+            format!(
+                "---\nslug: {slug}\ntitle: strict phase\nstate: open\ntype: bug\nlabels: [\"app:agentic-workflow\"]\nphase: {phase}\nbranch: app/fixture\n---\n\n# Body\n"
+            ),
+        );
+        commit_all_with_message(
+            &git,
+            root,
+            &format!("reachable init\n\nLifecycle-Slug: {slug}\nLifecycle-Stage: Td-Init"),
+        );
+        std::fs::create_dir_all(root.join("tech-design/logic")).unwrap();
+        let bytes = if phase == "td_created" {
+            format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n")
+        } else {
+            format!(
+                "---\nid: {slug}\nsummary: (fill)\nfill_sections: [logic, changes, unit-test]\n---\n"
+            )
+        };
+        std::fs::write(root.join(&spec_path), &bytes).unwrap();
+        let before = Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap();
+
+        let output = Command::new(&bin)
+            .args(["td", "create", &slug, "--spec-path", &spec_path])
+            .current_dir(root)
+            .output()
+            .expect("run strict post-gen phase");
+        assert!(
+            !output.status.success(),
+            "phase {phase} must reject recovery:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(&spec_path)).unwrap(),
+            bytes
+        );
+        assert_eq!(
+            Command::new(&git)
+                .arg("-C")
+                .arg(root)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .unwrap(),
+            before
+        );
+        assert!(read_issue_fixture(root, &slug).contains(&format!("phase: {phase}")));
+    }
 }
 
 #[test]
@@ -744,6 +1568,503 @@ fn extract_json_string_field(stdout: &str, field: &str) -> Option<String> {
     Some(stdout[start..end].replace("\\/", "/"))
 }
 
+fn td_dispatch_envelope(output: &std::process::Output, context: &str) -> serde_json::Value {
+    assert!(
+        output.status.success(),
+        "{context} should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{context} should emit one JSON envelope: {error}"))
+}
+
+fn run_td_section_apply(
+    bin: &str,
+    root: &std::path::Path,
+    slug: &str,
+    pass: &str,
+    section: &str,
+    spec_path: &str,
+) -> serde_json::Value {
+    let output = Command::new(bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            pass,
+            "--section",
+            section,
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|error| panic!("run {pass} {section} apply: {error}"));
+    td_dispatch_envelope(&output, &format!("{pass} {section} apply"))
+}
+
+fn dispatched_payload_path(envelope: &serde_json::Value) -> std::path::PathBuf {
+    std::path::PathBuf::from(
+        envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .unwrap_or_else(|| panic!("dispatch is missing payload_path: {envelope}")),
+    )
+}
+
+fn assert_td_projection(
+    root: &std::path::Path,
+    slug: &str,
+    pass: &str,
+    section: &str,
+    payload_suffix: &str,
+    remaining: &[&str],
+) {
+    let issue = read_issue_fixture(root, slug);
+    let projection = agentic_workflow::cli::workflow_guard::parse_projection(&issue)
+        .unwrap_or_else(|| panic!("{pass} {section} dispatch must project a workflow lock"));
+    assert!(
+        projection.locked,
+        "projection should be locked: {projection:?}"
+    );
+    assert_eq!(projection.owner.as_deref(), Some("td"));
+    assert_eq!(projection.current_section.as_deref(), Some(section));
+    let active_phase = format!("td_{pass}_in_progress");
+    assert_eq!(
+        projection.active_phase.as_deref(),
+        Some(active_phase.as_str())
+    );
+    assert!(
+        projection
+            .expected_payload
+            .as_deref()
+            .is_some_and(|path| path.ends_with(payload_suffix)),
+        "projection must expose the editable {pass} {section} payload: {projection:?}"
+    );
+    assert!(
+        projection
+            .expected_command
+            .as_deref()
+            .is_some_and(|command| command.contains(&format!(
+                "--phase {pass} --section {section}"
+            ))),
+        "projection must expose the exact apply command: {projection:?}"
+    );
+    assert_eq!(
+        projection.remaining_sections,
+        remaining
+            .iter()
+            .map(|section| section.to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn td_1598_logic_payload(id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "body": format!(
+            "```mermaid\n---\nid: {id}\nentry: start\nnodes:\n  start: {{ kind: start }}\n  done: {{ kind: terminal }}\nedges:\n  - {{ from: start, to: done }}\n---\nflowchart TD\n  start --> done\n```\n"
+        )
+    })
+}
+
+fn td_1598_changes_payload(target: &str, test_target: &str) -> serde_json::Value {
+    serde_json::json!({
+        "body": format!(
+            "```yaml\nchanges:\n  - path: {target}\n    action: create\n    section: logic\n    impl_mode: codegen\n  - path: {test_target}\n    action: modify\n    section: unit-test\n    impl_mode: hand-written\n```\n"
+        )
+    })
+}
+
+fn td_1598_unit_test_payload(id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": format!("{id}-verification"),
+        "requirements": {
+            "explicit_target": {
+                "id": "R1",
+                "text": "The default Changes payload supplies a concrete codegen target.",
+                "kind": "regression",
+                "risk": "high",
+                "verify": "td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target"
+            }
+        }
+    })
+}
+
+fn td_1598_changes_skeleton_body(path: &std::path::Path) -> String {
+    let payload: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read Changes skeleton {}: {error}", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("parse Changes skeleton {}: {error}", path.display()));
+    payload["body"]
+        .as_str()
+        .unwrap_or_else(|| panic!("Changes skeleton {} is missing JSON body", path.display()))
+        .to_string()
+}
+
+/// Issue #1598: a fresh TD must author a concrete Changes target plan between
+/// Logic and Unit Test in both passes. This real-binary lifecycle edits the
+/// initialized Changes skeleton through `aw td create --apply`, proves every
+/// transition is represented by the projection lock (including the first
+/// contract section), and finally runs `aw td gen` to create a brand-new target
+/// that target inference could never discover.
+#[test]
+fn td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    let hand_written_test_target = "// hand-written fixture test target\n";
+    std::fs::write(
+        root.join("tests/default_target_plan_test.rs"),
+        hand_written_test_target,
+    )
+    .unwrap();
+
+    let slug = "1598-default-target-plan";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: default TD target plan\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             ---\n\n# Body\n"
+        ),
+    );
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap #1598 fixture"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap();
+
+    let spec_path = "tech-design/logic/default-target-plan.md";
+    let target_path = "src/generated_1598.rs";
+    let test_target_path = "tests/default_target_plan_test.rs";
+
+    let brief = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("initialize fresh TD lifecycle");
+    let mut envelope = td_dispatch_envelope(&brief, "fresh TD brief");
+    assert_eq!(envelope["invoke"]["args"]["section"], "logic");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "logic",
+        "/applicability/logic.json",
+        &["changes", "unit-test"],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_logic_payload("default_target_applicability").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "applicability", "logic", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "changes");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "changes",
+        "/applicability/changes.json",
+        &["unit-test"],
+    );
+
+    let applicability_changes = dispatched_payload_path(&envelope);
+    let changes_skeleton = td_1598_changes_skeleton_body(&applicability_changes);
+    assert!(changes_skeleton.contains("repo-relative target path"));
+    assert!(changes_skeleton.contains("action: \"(fill: create|modify)\""));
+    assert!(changes_skeleton.contains("artifact-driving section id"));
+    std::fs::write(
+        &applicability_changes,
+        td_1598_changes_payload(target_path, test_target_path).to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "applicability", "changes", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "unit-test");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "unit-test",
+        "/applicability/unit-test.json",
+        &[],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_unit_test_payload("default-target-applicability").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "applicability", "unit-test", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["phase"], "contract");
+    assert_eq!(envelope["invoke"]["args"]["section"], "logic");
+    assert_td_projection(
+        root,
+        slug,
+        "contract",
+        "logic",
+        "/contract/logic.json",
+        &["changes", "unit-test"],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_logic_payload("default_target_contract").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "contract", "logic", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "changes");
+    assert_td_projection(
+        root,
+        slug,
+        "contract",
+        "changes",
+        "/contract/changes.json",
+        &["unit-test"],
+    );
+
+    let contract_changes = dispatched_payload_path(&envelope);
+    assert!(
+        td_1598_changes_skeleton_body(&contract_changes).contains("repo-relative target path"),
+        "contract Changes must receive its own editable initialized skeleton"
+    );
+    std::fs::write(
+        &contract_changes,
+        td_1598_changes_payload(target_path, test_target_path).to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "contract", "changes", spec_path);
+    assert_eq!(envelope["invoke"]["args"]["section"], "unit-test");
+    assert_td_projection(
+        root,
+        slug,
+        "contract",
+        "unit-test",
+        "/contract/unit-test.json",
+        &[],
+    );
+
+    std::fs::write(
+        dispatched_payload_path(&envelope),
+        td_1598_unit_test_payload("default-target-contract").to_string(),
+    )
+    .unwrap();
+    envelope = run_td_section_apply(&bin, root, slug, "contract", "unit-test", spec_path);
+    assert_eq!(envelope["invoke"]["command"], "aw td gen");
+    let projection =
+        agentic_workflow::cli::workflow_guard::parse_projection(&read_issue_fixture(root, slug))
+            .expect("terminal contract apply should retain an unlocked projection record");
+    assert!(
+        !projection.locked,
+        "contract completion must unlock: {projection:?}"
+    );
+
+    let spec = std::fs::read_to_string(root.join(spec_path)).unwrap();
+    assert!(spec.contains("fill_sections: [logic, changes, unit-test]"));
+    assert!(spec.contains(&format!("path: {target_path}")));
+    assert_eq!(spec.matches("<!-- type: changes lang: yaml -->").count(), 1);
+
+    let final_check = Command::new(&bin)
+        .args(["td", "check", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("check fully authored #1598 TD");
+    assert!(
+        final_check.status.success(),
+        "both-pass target plan must produce a valid TD before lock/gen:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&final_check.stdout),
+        String::from_utf8_lossy(&final_check.stderr),
+    );
+
+    let pre_lock_head = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read pre-lock HEAD");
+    assert!(pre_lock_head.status.success());
+    let pre_lock_head = String::from_utf8_lossy(&pre_lock_head.stdout)
+        .trim()
+        .to_string();
+    let lock = Command::new(&bin)
+        .args(["td", "lock", "--project", "agentic-workflow"])
+        .current_dir(root)
+        .output()
+        .expect("write fixture TD IR lock");
+    assert!(
+        lock.status.success(),
+        "fixture TD lock should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&lock.stdout),
+        String::from_utf8_lossy(&lock.stderr),
+    );
+    let lock_head = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read lock HEAD");
+    assert!(lock_head.status.success());
+    let lock_head = String::from_utf8_lossy(&lock_head.stdout)
+        .trim()
+        .to_string();
+    assert_ne!(lock_head, pre_lock_head, "aw td lock must create a commit");
+    let lock_commit_count = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args([
+            "rev-list",
+            "--count",
+            &format!("{pre_lock_head}..{lock_head}"),
+        ])
+        .output()
+        .expect("count lock commits");
+    assert!(lock_commit_count.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&lock_commit_count.stdout).trim(),
+        "1",
+        "aw td lock must add exactly one lifecycle commit"
+    );
+    let lock_commit_paths = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--format=", "--name-only", "HEAD"])
+        .output()
+        .expect("read lock commit paths");
+    assert!(lock_commit_paths.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&lock_commit_paths.stdout)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>(),
+        vec!["tech-design/td.lock"],
+        "generated lock commit must contain only the configured lock path"
+    );
+    let lock_commit_message = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["log", "-1", "--format=%B"])
+        .output()
+        .expect("read lock commit message");
+    assert!(lock_commit_message.status.success());
+    let lock_commit_message = String::from_utf8_lossy(&lock_commit_message.stdout);
+    assert!(lock_commit_message.starts_with("td-lock(agentic-workflow) — update TD IR snapshot\n"));
+    assert!(lock_commit_message.contains("TD-Lock-Project: agentic-workflow"));
+    assert!(lock_commit_message.contains("TD-Lock-Path: tech-design/td.lock"));
+    assert_eq!(
+        git_status(&git, root),
+        "",
+        "aw td lock must leave its generated lock committed and clean"
+    );
+
+    for read_only_flag in ["--check", "--show"] {
+        let read_only = Command::new(&bin)
+            .args([
+                "td",
+                "lock",
+                "--project",
+                "agentic-workflow",
+                read_only_flag,
+            ])
+            .current_dir(root)
+            .output()
+            .unwrap_or_else(|error| panic!("run td lock {read_only_flag}: {error}"));
+        assert!(
+            read_only.status.success(),
+            "td lock {read_only_flag} must stay read-only:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&read_only.stdout),
+            String::from_utf8_lossy(&read_only.stderr)
+        );
+        let after_read_only = Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("read post-check HEAD");
+        assert!(after_read_only.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&after_read_only.stdout).trim(),
+            lock_head,
+            "td lock {read_only_flag} must not commit"
+        );
+        assert_eq!(git_status(&git, root), "");
+    }
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("run emitted aw td gen");
+    let gen_stdout = String::from_utf8_lossy(&gen.stdout);
+    let gen_stderr = String::from_utf8_lossy(&gen.stderr);
+    assert!(
+        gen.status.success(),
+        "td gen should consume the explicit Changes target:\nstdout={gen_stdout}\nstderr={gen_stderr}"
+    );
+    assert!(!gen_stdout.contains("No target files inferred"));
+    assert!(!gen_stderr.contains("No target files inferred"));
+    assert_eq!(
+        std::fs::read_to_string(root.join(test_target_path)).unwrap(),
+        hand_written_test_target,
+        "td gen must preserve the explicit hand-written Unit Test target",
+    );
+    let generated = std::fs::read_to_string(root.join(target_path))
+        .expect("explicit Changes target should be created");
+    assert!(
+        generated.contains(&format!("SPEC-MANAGED: {spec_path}#logic")),
+        "generated target must be owned by the authored Logic section:\n{generated}"
+    );
+    assert!(
+        generated.contains(&format!(
+            "SPEC-REF: {spec_path}#default_target_contract-body"
+        )),
+        "generated block must trace to the final contract Logic payload:\n{generated}"
+    );
+    assert!(
+        read_issue_fixture(root, slug).contains("phase: cb_genned"),
+        "successful generation must advance the lifecycle"
+    );
+}
+
 /// Issue #813 (incident #799): a replayed `aw td create --apply` must never
 /// clobber an already-authored TD section with a missing or still-`(fill)`
 /// placeholder payload. Exercises the exact wedge scenario — a completed
@@ -867,9 +2188,29 @@ path = "."
         String::from_utf8_lossy(&apply_logic.stdout),
         String::from_utf8_lossy(&apply_logic.stderr),
     );
+    let apply_envelope: serde_json::Value = serde_json::from_slice(&apply_logic.stdout)
+        .expect("logic applicability apply should emit one JSON dispatch envelope");
+    assert_eq!(
+        apply_envelope["invoke"]["args"]["phase"], "applicability",
+        "the default queue must finish applicability before contract authoring: {apply_envelope}"
+    );
+    assert_eq!(
+        apply_envelope["invoke"]["args"]["section"], "changes",
+        "logic applicability must dispatch the target-owning Changes section next: {apply_envelope}"
+    );
+    assert!(
+        apply_envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/applicability/changes.json")),
+        "the next payload must remain in the applicability pass: {apply_envelope}"
+    );
 
     let spec_abs = root.join(spec_path);
     let spec_after_authoring = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(
+        spec_after_authoring.contains("fill_sections: [logic, changes, unit-test]"),
+        "the first merge must retain the complete default queue:\n{spec_after_authoring}"
+    );
     assert!(
         spec_after_authoring.contains("real-logic-813"),
         "spec should carry the authored logic content:\n{spec_after_authoring}"
@@ -945,6 +2286,1006 @@ path = "."
     );
 }
 
+/// Issue #1562 / pgpool #1561: an already-valid TD may be re-authored through
+/// the initialized per-section payload using a generic JSON `body` that holds
+/// only the Mermaid fence. Applying that payload must preserve/restore the
+/// requested typed wrapper, then advance to the structured Unit Test payload.
+/// Malformed body-only input must fail before changing one byte of the spec.
+#[test]
+fn td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+"#,
+    )
+    .unwrap();
+
+    let project_root = root.join("apps/agentic-workflow");
+    std::fs::create_dir_all(project_root.join("tech-design/semantic")).unwrap();
+    std::fs::write(
+        project_root.join("README.md"),
+        r#"# Agentic Workflow Fixture
+
+## Brief
+
+Fixture for TD section apply parity.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| TD Apply Parity | #1562 | implemented | verified | smoke | ready | typed section payload parity |
+
+### TD Apply Parity
+
+ID: td-apply-parity
+Type: DeveloperTool
+Surfaces:
+- CLI: `aw td create --apply` - applies exactly one initialized TD section payload.
+Root WI: #1562
+Status: verified
+Required Verification: smoke
+Promise:
+Valid typed TD sections can be re-authored through initialized payload paths without losing their wrapper.
+Gate Inventory:
+- real CLI fixture
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Body-only Logic apply parity | change | #1562 | implemented | verified | smoke | real CLI fixture |
+"#,
+    )
+    .unwrap();
+
+    let slug = "1562";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: '{slug}'\n\
+             title: td apply section lookup parity\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let spec_path = "apps/agentic-workflow/tech-design/semantic/td-apply-section-lookup-parity.md";
+    let spec_abs = root.join(spec_path);
+    std::fs::write(
+        &spec_abs,
+        r#"---
+id: '1562'
+summary: Keep mutating TD section lookup aligned with valid typed TD files.
+fill_sections: [logic, unit-test]
+capability_refs:
+  - id: td-apply-parity
+    role: primary
+    claim: body-only-logic-apply-parity
+    coverage: full
+    rationale: "Proves initialized payload apply preserves typed section lookup."
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: td_apply_parity_before
+entry: start
+nodes:
+  start: { kind: start }
+  done: { kind: terminal }
+edges:
+  - { from: start, to: done }
+---
+flowchart TD
+  start --> done
+```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: td-apply-parity-before-verification
+requirements:
+  parity:
+    id: R1
+    text: "The initial spec passes the read-only checker."
+    kind: regression
+    risk: high
+    verify: initial_td_check
+---
+flowchart TD
+  r1[R1 parity] --> initial_td_check[initial_td_check]
+```
+"#,
+    )
+    .unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap #1562 fixture"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap();
+
+    let check = Command::new(&bin)
+        .args(["td", "check", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("run preflight aw td check");
+    assert!(
+        check.status.success(),
+        "the #1561-shaped file must pass read-only TD check:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&check.stderr).contains("0 findings"),
+        "preflight should prove read-only checker parity: {}",
+        String::from_utf8_lossy(&check.stderr),
+    );
+
+    let brief = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("initialize Logic payload");
+    assert!(
+        brief.status.success(),
+        "td create brief should initialize Logic:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&brief.stdout),
+        String::from_utf8_lossy(&brief.stderr),
+    );
+    let brief_envelope: serde_json::Value = serde_json::from_slice(&brief.stdout).unwrap();
+    assert_eq!(brief_envelope["invoke"]["args"]["section"], "logic");
+    let logic_payload = std::path::PathBuf::from(
+        brief_envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .expect("initialized Logic payload path"),
+    );
+    assert!(logic_payload.exists());
+
+    // A missing initialized payload is actionable and must not mutate the
+    // already-valid spec. The replay guard reseeds it from the existing Logic
+    // wrapper so the caller can continue safely.
+    std::fs::remove_file(&logic_payload).unwrap();
+    let before_missing = std::fs::read(&spec_abs).unwrap();
+    let missing = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("run missing Logic payload apply");
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stdout).contains("seeded from the existing section"),
+        "missing payload should fail actionably: {}",
+        String::from_utf8_lossy(&missing.stdout),
+    );
+    assert_eq!(std::fs::read(&spec_abs).unwrap(), before_missing);
+
+    // The exact malformed body-only class must fail in the real CLI before
+    // the spec write, not merely in the pure normalization helper.
+    std::fs::write(
+        &logic_payload,
+        serde_json::json!({ "body": "```yaml\nkind: wrong-language\n```\n" }).to_string(),
+    )
+    .unwrap();
+    let before_malformed = std::fs::read(&spec_abs).unwrap();
+    let malformed = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("run malformed body-only Logic apply");
+    assert!(!malformed.status.success());
+    let malformed_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&malformed.stdout),
+        String::from_utf8_lossy(&malformed.stderr),
+    );
+    assert!(
+        malformed_output.contains("matching-lang fenced block"),
+        "malformed payload should name its fence mismatch: {malformed_output}"
+    );
+    assert_eq!(
+        std::fs::read(&spec_abs).unwrap(),
+        before_malformed,
+        "malformed payload must not mutate the spec"
+    );
+
+    let body_only_logic = concat!(
+        "```mermaid\n",
+        "---\n",
+        "id: td_apply_parity_after\n",
+        "entry: start\n",
+        "nodes:\n",
+        "  start: { kind: start }\n",
+        "  normalized: { kind: process }\n",
+        "  done: { kind: terminal }\n",
+        "edges:\n",
+        "  - { from: start, to: normalized }\n",
+        "  - { from: normalized, to: done }\n",
+        "---\n",
+        "flowchart TD\n",
+        "  start --> normalized --> done\n",
+        "```\n",
+    );
+    std::fs::write(
+        &logic_payload,
+        serde_json::json!({ "body": body_only_logic }).to_string(),
+    )
+    .unwrap();
+    let apply_logic = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("apply body-only Logic payload");
+    assert!(
+        apply_logic.status.success(),
+        "body-only Logic should apply:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&apply_logic.stdout),
+        String::from_utf8_lossy(&apply_logic.stderr),
+    );
+    let logic_envelope: serde_json::Value = serde_json::from_slice(&apply_logic.stdout).unwrap();
+    assert_eq!(logic_envelope["invoke"]["args"]["phase"], "applicability");
+    assert_eq!(logic_envelope["invoke"]["args"]["section"], "unit-test");
+    let unit_payload = std::path::PathBuf::from(
+        logic_envelope["invoke"]["args"]["payload_path"]
+            .as_str()
+            .expect("initialized Unit Test payload path"),
+    );
+    assert!(unit_payload.ends_with("applicability/unit-test.json"));
+    assert!(unit_payload.exists());
+
+    let after_logic = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(after_logic.contains("## Logic\n<!-- type: logic lang: mermaid -->"));
+    assert!(after_logic.contains("id: td_apply_parity_after"));
+    assert_eq!(
+        after_logic
+            .matches("<!-- type: logic lang: mermaid -->")
+            .count(),
+        1,
+        "the body-only merge must preserve exactly one Logic wrapper"
+    );
+    assert!(after_logic.contains("## Unit Test"));
+
+    std::fs::write(
+        &unit_payload,
+        serde_json::json!({
+            "id": "td-apply-parity-after-verification",
+            "requirements": {
+                "body_only_parity": {
+                    "id": "R1",
+                    "text": "Body-only Logic remains typed before Unit Test advances.",
+                    "kind": "regression",
+                    "risk": "high",
+                    "verify": "td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let apply_unit = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "unit-test",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("apply structured Unit Test payload");
+    assert!(
+        apply_unit.status.success(),
+        "structured Unit Test should apply:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&apply_unit.stdout),
+        String::from_utf8_lossy(&apply_unit.stderr),
+    );
+    let unit_envelope: serde_json::Value = serde_json::from_slice(&apply_unit.stdout).unwrap();
+    assert_eq!(unit_envelope["invoke"]["args"]["phase"], "contract");
+    assert_eq!(unit_envelope["invoke"]["args"]["section"], "logic");
+    let final_spec = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(final_spec.contains("id: td-apply-parity-after-verification"));
+    assert!(final_spec.contains("## Logic\n<!-- type: logic lang: mermaid -->"));
+    assert!(final_spec.contains("## Unit Test\n<!-- type: unit-test lang: mermaid -->"));
+}
+
+/// Issue #1586: section apply must run the complete validator registry against
+/// the merged in-memory candidate. A stale plain-Mermaid on-disk Logic section
+/// must not shadow a valid Mermaid Plus replacement, while an invalid candidate
+/// must preserve the spec, payload, phase, projection, and git history.
+#[test]
+fn td_create_apply_validates_merged_candidate_in_memory_before_write() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "apps/agentic-workflow"
+"#,
+    )
+    .unwrap();
+
+    let project_root = root.join("apps/agentic-workflow");
+    std::fs::create_dir_all(project_root.join("tech-design/semantic")).unwrap();
+    std::fs::write(
+        project_root.join("README.md"),
+        r#"# Agentic Workflow Fixture
+
+## Brief
+
+Fixture for merged TD candidate validation.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| TD Candidate Validation | #1586 | implemented | verified | smoke | ready | pre-write full-registry validation |
+
+### TD Candidate Validation
+
+ID: td-candidate-validation
+Type: DeveloperTool
+Surfaces:
+- CLI: `aw td create --apply` - validates one merged section candidate before writing.
+Root WI: #1586
+Status: verified
+Required Verification: smoke
+Promise:
+Merged TD section candidates pass the same registry as completed files before mutation.
+Gate Inventory:
+- real CLI fixture
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| TD merged candidate in memory validation | change | #1586 | implemented | verified | smoke | real CLI fixture |
+"#,
+    )
+    .unwrap();
+
+    let slug = "1586";
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: '{slug}'\n\
+             title: validate merged TD candidates in memory\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let spec_path = "apps/agentic-workflow/tech-design/semantic/td-merged-candidate-validation.md";
+    let spec_abs = root.join(spec_path);
+    let stale_spec = r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: td-candidate-validation
+    role: primary
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The real CLI validates the merged candidate before mutation."
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  stale --> disk
+```
+"#;
+    std::fs::write(&spec_abs, stale_spec).unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "bootstrap #1586 fixture"])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap();
+
+    let brief = Command::new(&bin)
+        .args(["td", "create", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("initialize #1586 Logic payload");
+    let brief_envelope = td_dispatch_envelope(&brief, "#1586 TD create brief");
+    assert_eq!(brief_envelope["invoke"]["args"]["section"], "logic");
+    let logic_payload = dispatched_payload_path(&brief_envelope);
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "logic",
+        "applicability/logic.json",
+        &["changes", "unit-test"],
+    );
+
+    let invalid_body = concat!(
+        "```mermaid\n",
+        "---\n",
+        "id: invalid-candidate\n",
+        "entry: start\n",
+        "nodes: not-a-node-map\n",
+        "edges: []\n",
+        "---\n",
+        "flowchart TD\n",
+        "  start --> done\n",
+        "```\n",
+    );
+    let invalid_payload = serde_json::json!({ "body": invalid_body }).to_string();
+    std::fs::write(&logic_payload, &invalid_payload).unwrap();
+    let spec_before_invalid = std::fs::read(&spec_abs).unwrap();
+    let issue_before_invalid = std::fs::read(issue_path(root, slug)).unwrap();
+    let head_before_invalid = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+
+    let invalid = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("reject invalid #1586 candidate");
+    assert!(!invalid.status.success());
+    let invalid_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&invalid.stdout),
+        String::from_utf8_lossy(&invalid.stderr),
+    );
+    assert!(
+        invalid_output.contains("frontmatter invalid for LogicContent"),
+        "invalid candidate should fail the complete codegen-ready registry: {invalid_output}"
+    );
+    assert_eq!(std::fs::read(&spec_abs).unwrap(), spec_before_invalid);
+    assert_eq!(
+        std::fs::read_to_string(&logic_payload).unwrap(),
+        invalid_payload,
+        "failed validation must preserve the editable payload"
+    );
+    assert_eq!(
+        std::fs::read(issue_path(root, slug)).unwrap(),
+        issue_before_invalid,
+        "failed validation must preserve phase and projection bytes"
+    );
+    let head_after_invalid = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    assert_eq!(head_after_invalid, head_before_invalid);
+
+    let valid_logic_spec = concat!(
+        "```mermaid\n",
+        "---\n",
+        "id: td_merged_candidate_after\n",
+        "signature: \"pub fn merge_candidates(items: &[String]) -> Vec<String>\"\n",
+        "entry: init\n",
+        "nodes:\n",
+        "  init:\n",
+        "    kind: process\n",
+        "    code: \"let mut out = Vec::new();\"\n",
+        "  item_loop:\n",
+        "    kind: loop\n",
+        "    over: items\n",
+        "    as: item\n",
+        "  push_item:\n",
+        "    kind: process\n",
+        "    code: \"out.push(item.clone());\"\n",
+        "  done:\n",
+        "    kind: terminal\n",
+        "    value: out\n",
+        "edges:\n",
+        "  - { from: init, to: item_loop, kind: next }\n",
+        "  - { from: item_loop, to: push_item, kind: body }\n",
+        "  - { from: item_loop, to: done, kind: after }\n",
+        "---\n",
+        "flowchart TD\n",
+        "  init --> item_loop\n",
+        "  item_loop --> push_item\n",
+        "  item_loop --> done\n",
+        "```\n",
+    );
+    std::fs::write(
+        &logic_payload,
+        serde_json::json!({ "body": valid_logic_spec }).to_string(),
+    )
+    .unwrap();
+
+    let applied = Command::new(&bin)
+        .args([
+            "td",
+            "create",
+            slug,
+            "--apply",
+            "--phase",
+            "applicability",
+            "--section",
+            "logic",
+            "--spec-path",
+            spec_path,
+        ])
+        .current_dir(root)
+        .output()
+        .expect("apply valid #1586 candidate");
+    let applied_envelope = td_dispatch_envelope(&applied, "valid #1586 candidate apply");
+    assert_eq!(applied_envelope["invoke"]["args"]["section"], "changes");
+    assert_td_projection(
+        root,
+        slug,
+        "applicability",
+        "changes",
+        "applicability/changes.json",
+        &["unit-test"],
+    );
+    assert!(
+        !logic_payload.exists(),
+        "successful apply should consume the Logic payload"
+    );
+    let final_spec = std::fs::read_to_string(&spec_abs).unwrap();
+    assert!(final_spec.contains("id: td_merged_candidate_after"));
+    assert!(final_spec.contains("kind: loop"));
+    assert!(final_spec.contains("signature: \"pub fn merge_candidates"));
+    assert!(!final_spec.contains("stale --> disk"));
+}
+
+/// Issue #1633: `aw td gen` must prepare the complete shared-section target
+/// plan before activating an existing `td-<slug>` branch. A valid earlier
+/// Logic target followed by two Schema CODEGEN targets returns one structured,
+/// actionable envelope while preserving every lifecycle and repository byte.
+#[test]
+fn td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap #1633 fixture");
+
+    let slug = "1633-plan-preflight";
+    let td_branch = format!("td-{slug}");
+    let spec_path = "tech-design/semantic/1633-plan-preflight.md";
+    let target_paths = ["src/earlier.rs", "src/schema_z.rs", "src/schema_a.rs"];
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", &td_branch])
+        .status()
+        .unwrap()
+        .success());
+    std::fs::create_dir_all(root.join("tech-design/semantic")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join(spec_path),
+        r#"---
+id: 1633-plan-preflight
+fill_sections: [logic, schema, changes]
+---
+
+# Ambiguous generation plan fixture
+
+## Logic
+<!-- type: logic lang: mermaid-plus -->
+
+```mermaid
+---
+kind: LogicSpec
+id: earlier_logic
+functions:
+  earlier:
+    signature: "pub fn earlier()"
+    returns: "()"
+    entry: done
+    nodes:
+      done: { kind: terminal, value: "()" }
+---
+flowchart TD
+  done
+```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+entities:
+  Widget:
+    fields:
+      id: String
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/earlier.rs
+    action: modify
+    section: logic
+    impl_mode: codegen
+  - path: src/schema_z.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: src/schema_a.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+```
+"#,
+    )
+    .unwrap();
+    for (path, sentinel) in [
+        (target_paths[0], "// earlier sentinel\n"),
+        (target_paths[1], "// schema z sentinel\n"),
+        (target_paths[2], "// schema a sentinel\n"),
+    ] {
+        std::fs::write(root.join(path), sentinel).unwrap();
+    }
+    commit_all_with_message(&git, root, "add ambiguous #1633 TD plan");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "main"])
+        .status()
+        .unwrap()
+        .success());
+
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: fail closed before ambiguous generation\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             phase: td_created\n\
+             branch: {td_branch}\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let td_ref = format!("refs/heads/{td_branch}");
+    let spec_object = format!("{td_ref}:{spec_path}");
+    let target_objects: Vec<(String, Vec<u8>)> = target_paths
+        .iter()
+        .map(|path| {
+            let object = format!("{td_ref}:{path}");
+            (
+                (*path).to_string(),
+                git_stdout_bytes(&git, root, &["cat-file", "blob", &object]),
+            )
+        })
+        .collect();
+    let head_before = git_stdout_bytes(&git, root, &["rev-parse", "HEAD"]);
+    let branch_before =
+        git_stdout_bytes(&git, root, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let index_before = git_stdout_bytes(&git, root, &["write-tree"]);
+    let status_before = git_stdout_bytes(
+        &git,
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    );
+    let issue_before = std::fs::read(issue_path(root, slug)).unwrap();
+    let td_ref_before = git_stdout_bytes(&git, root, &["rev-parse", &td_ref]);
+    let spec_before = git_stdout_bytes(&git, root, &["cat-file", "blob", &spec_object]);
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("run ambiguous-plan aw td gen");
+    let envelope = td_dispatch_envelope(&gen, "ambiguous-plan td gen");
+    assert_eq!(envelope["action"], "error");
+    assert_eq!(envelope["error_kind"], "ambiguous_generation_plan");
+    assert_eq!(envelope["section"], "schema");
+    assert_eq!(
+        envelope["targets"],
+        serde_json::json!(["src/schema_a.rs", "src/schema_z.rs"]),
+    );
+    assert_eq!(
+        envelope["next"]["command"],
+        format!("aw td gen {slug} --spec-path {spec_path}"),
+    );
+    assert_eq!(envelope["completion"]["workflow_complete"], false);
+    assert!(
+        String::from_utf8_lossy(&gen.stderr).trim().is_empty(),
+        "plan rejection must not emit a second stderr error: {}",
+        String::from_utf8_lossy(&gen.stderr),
+    );
+
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["rev-parse", "HEAD"]),
+        head_before,
+        "HEAD must not move or gain a lifecycle commit",
+    );
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["symbolic-ref", "--quiet", "--short", "HEAD"]),
+        branch_before,
+        "preflight must not activate the TD branch",
+    );
+    assert_eq!(git_stdout_bytes(&git, root, &["write-tree"]), index_before);
+    assert_eq!(
+        git_stdout_bytes(
+            &git,
+            root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ),
+        status_before,
+    );
+    assert_eq!(std::fs::read(issue_path(root, slug)).unwrap(), issue_before);
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["rev-parse", &td_ref]),
+        td_ref_before,
+    );
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["cat-file", "blob", &spec_object]),
+        spec_before,
+    );
+    for (path, before) in target_objects {
+        let object = format!("{td_ref}:{path}");
+        assert_eq!(
+            git_stdout_bytes(&git, root, &["cat-file", "blob", &object]),
+            before,
+            "target blob `{path}` must remain byte-identical",
+        );
+    }
+}
+
+/// AC4 regression for #1633: a no-Changes Schema TD with one existing exact
+/// managed target must pass caller admission, use executor inference, and
+/// complete generation on a persistent project branch.
+#[test]
+fn td_gen_no_changes_single_inferred_schema_target_remains_compatible() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap inferred #1633 fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let slug = "1633-inferred-single";
+    let spec_path = "tech-design/schema/inferred-single.md";
+    let spec_ref = format!("{spec_path}#schema");
+    std::fs::create_dir_all(root.join("tech-design/schema")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join(spec_path),
+        r#"---
+id: 1633-inferred-single
+fill_sections: [schema]
+capability_refs:
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "Compatibility fixture for one inferred Schema target."
+---
+
+# Inferred single Schema target
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Widget:
+    type: object
+    properties:
+      name: { type: string }
+```
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/inferred_schema.rs"),
+        format!(
+            "// SPEC-MANAGED: {spec_ref}\n// CODEGEN-BEGIN\n// SPEC-REF: {spec_ref}\npub struct StaleWidget;\n// CODEGEN-END\n"
+        ),
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "add inferred Schema fixture");
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: preserve inferred Schema target\n\
+             state: open\n\
+             type: bug\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             phase: td_created\n\
+             branch: app/fixture\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let lock = Command::new(&bin)
+        .args(["td", "lock", "--project", "agentic-workflow"])
+        .current_dir(root)
+        .output()
+        .expect("lock inferred Schema TD");
+    assert!(
+        lock.status.success(),
+        "TD lock should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&lock.stdout),
+        String::from_utf8_lossy(&lock.stderr),
+    );
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("generate one inferred Schema target");
+    let envelope = td_dispatch_envelope(&gen, "single inferred Schema td gen");
+    assert_ne!(envelope["action"], "error", "{envelope:#}");
+    let generated = std::fs::read_to_string(root.join("src/inferred_schema.rs")).unwrap();
+    assert!(generated.contains("pub struct Widget"), "{generated}");
+    assert!(!generated.contains("StaleWidget"), "{generated}");
+    assert!(
+        read_issue_fixture(root, slug).contains("phase: cb_genned"),
+        "successful inferred generation must advance lifecycle",
+    );
+}
+
 // CODEGEN-END
 ````
 
@@ -960,5 +3301,47 @@ changes:
     description: |
       Existing source claimed by `aw standardize managed run`. The code is
       wrapped in a tracked HANDWRITE block until deterministic generator
-      coverage can replace it with CODEGEN.
+      coverage can replace it with CODEGEN. Issue #1556 adds a real-CLI
+      regression assertion that the default queue cannot skip unit-test.
+      Issue #1562 adds the valid annotated Logic/Unit Test parity fixture:
+      missing or malformed generic payloads leave the spec byte-identical,
+      body-only Logic is normalized into one requested typed wrapper, and the
+      initialized applicability queue advances through structured Unit Test
+      before contract Logic.
+      Issue #1598 applies Logic, Changes, and Unit Test through applicability
+      and contract with projection-lock assertions at every step, validates the
+      editable Changes scaffold, and runs final `aw td check`. Issue #1587
+      proves real `aw td lock` adds one exact configured-path commit with
+      stable project/path trailers, leaves the checkout clean, keeps `--check`
+      and `--show` read-only, then lets `aw td gen` create a new Logic target
+      while preserving the explicit hand-written Unit Test target without
+      no-target inference.
+      Issue #1602 rewrites away an exact Td-Init while retaining a later
+      same-slug lifecycle commit and stale lock. Real `aw td create` clears
+      that projection, emits one reset plus one fresh init, installs a fresh
+      applicability Logic projection, and preserves existing spec/source
+      bytes. A reachable exact init emits neither reset nor duplicate init;
+      the persistent-branch fixture covers fresh WI phase `created`.
+      Issue #1580 proves a fresh numeric skeleton is staged in queue start and
+      repeat briefs leave HEAD unchanged; a reachable locked legacy skeleton
+      receives one spec-only recovery commit; an unreachable lifecycle carries
+      the admitted candidate across reset/init. Authored, tracked, staged,
+      untracked/tracked sibling-dirty, reachable `td_created`, canonical/legacy
+      post-gen, filled, and terminal fixtures all preserve target bytes, issue
+      phase, and git history on rejection.
+      Issue #1586 drives a stale plain-Mermaid Logic section through real
+      section apply. An invalid Mermaid Plus candidate leaves the spec,
+      initialized payload, entire issue projection/body/phase, and HEAD
+      byte-identical; a valid signature/loop LogicSpec replaces the stale
+      section, consumes the payload, and dispatches applicability Changes.
+      Issue #1633 starts from main with an existing TD branch whose complete
+      plan contains an earlier valid Logic target and two later Schema CODEGEN
+      targets. The real binary emits exactly one typed stdout error with sorted
+      targets and an executable next command while HEAD, symbolic branch,
+      index tree, porcelain-z status, issue bytes, TD ref, spec blob, and every
+      target blob remain exact.
+      The AC4 companion locks a no-Changes Schema TD on a persistent project
+      branch, infers its sole existing exact managed target in both caller and
+      executor, generates `Widget`, removes the stale symbol, and advances the
+      lifecycle to `cb_genned`.
 ```

@@ -8,6 +8,12 @@ capability_refs:
     claim: client-boundary-model
     coverage: full
     rationale: "Issue backend interfaces implement the AW Core client boundary for projecting workflow state to configured issue platforms."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: partial
+    rationale: "Explicit WI label removal must retire stale project labels without deleting unrelated user labels or bypassing managed lifecycle reconciliation."
 ---
 
 # Standardized apps/agentic-workflow/src/issues/labels.rs
@@ -16,6 +22,10 @@ capability_refs:
 <!-- type: overview lang: markdown -->
 
 Public API manifest for `apps/agentic-workflow/src/issues/labels.rs` generated from AST during Score force-regeneration standardization.
+
+The conservative full-write diff removes only AW-managed labels. Patch-backed
+updates extend it with an explicit removal set, limited to labels that are
+present remotely and absent from the desired/re-added state.
 
 ### Symbols
 
@@ -34,6 +44,7 @@ Public API manifest for `apps/agentic-workflow/src/issues/labels.rs` generated f
 | `WORKFLOW_LOCK_OWNER_PREFIX` | apps/agentic-workflow/src/issues/labels.rs | constant | pub | 41 |  |
 | `decode_labels` | apps/agentic-workflow/src/issues/labels.rs | function | pub | 127 | decode_labels(labels: &[String]) -> DecodedCrrr |
 | `diff_labels` | apps/agentic-workflow/src/issues/labels.rs | function | pub | 171 | diff_labels(current: &[String], desired: &[String]) -> (Vec<String>, Vec<String>) |
+| `diff_labels_with_explicit_removals` | apps/agentic-workflow/src/issues/labels.rs | function | pub(crate) | 198 | diff_labels_with_explicit_removals(current: &[String], desired: &[String], requested_removals: &[String]) -> (Vec<String>, Vec<String>) |
 | `encode_labels` | apps/agentic-workflow/src/issues/labels.rs | function | pub | 76 | encode_labels(issue: &Issue) -> Vec<String> |
 | `is_managed` | apps/agentic-workflow/src/issues/labels.rs | function | pub | 63 | is_managed(label: &str) -> bool |
 ## Source
@@ -63,6 +74,8 @@ Public API manifest for `apps/agentic-workflow/src/issues/labels.rs` generated f
 //! | `ship:`         | `Issue.ship_status`         | 0..=1       |
 //! | `ship-commit:`  | `Issue.ship_commit` (sha7)  | 0..=1       |
 //! | `flagged:`      | `Issue.flagged_sections[i]` | 0..=N       |
+//! | `score:locked`  | workflow transition lock    | 0..=1       |
+//! | `score:lock:*`  | workflow lock owner         | 0..=1       |
 //! | `slug:`         | legacy/display alias        | unmanaged  |
 //!
 //! Remote tracker numbers/iids are the canonical issue identity. `slug:` is
@@ -77,6 +90,8 @@ pub const RETRY_PREFIX: &str = "retry:";
 pub const SHIP_PREFIX: &str = "ship:";
 pub const SHIP_COMMIT_PREFIX: &str = "ship-commit:";
 pub const FLAGGED_PREFIX: &str = "flagged:";
+pub const WORKFLOW_LOCK_LABEL: &str = "score:locked";
+pub const WORKFLOW_LOCK_OWNER_PREFIX: &str = "score:lock:";
 pub const SLUG_PREFIX: &str = "slug:";
 
 /// All managed prefixes — used by the diff helper to know which existing
@@ -93,12 +108,13 @@ pub const MANAGED_PREFIXES: &[&str] = &[
     SHIP_PREFIX,
     SHIP_COMMIT_PREFIX,
     FLAGGED_PREFIX,
+    WORKFLOW_LOCK_OWNER_PREFIX,
 ];
 
 /// True if `label` carries score-managed CRRR state (one of `MANAGED_PREFIXES`).
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/issues/labels.md#source
 pub fn is_managed(label: &str) -> bool {
-    MANAGED_PREFIXES.iter().any(|p| label.starts_with(p))
+    label == WORKFLOW_LOCK_LABEL || MANAGED_PREFIXES.iter().any(|p| label.starts_with(p))
 }
 
 /// Build the full set of labels for `issue` — user labels (preserved) plus
@@ -225,6 +241,34 @@ pub fn diff_labels(current: &[String], desired: &[String]) -> (Vec<String>, Vec<
     (to_add, to_remove)
 }
 
+/// Extend the conservative managed-label diff with caller-authorized removals.
+///
+/// Ordinary full writes pass an empty `requested_removals` slice and therefore
+/// continue to preserve remote user labels that are absent from `desired`.
+/// Patch updates may name unmanaged labels explicitly; those labels are added
+/// to the removal set only when they still exist remotely and were not kept or
+/// re-added by the desired state.
+pub(crate) fn diff_labels_with_explicit_removals(
+    current: &[String],
+    desired: &[String],
+    requested_removals: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let (to_add, mut to_remove) = diff_labels(current, desired);
+    let current_set: HashSet<&str> = current.iter().map(String::as_str).collect();
+    let desired_set: HashSet<&str> = desired.iter().map(String::as_str).collect();
+
+    for label in requested_removals {
+        if current_set.contains(label.as_str())
+            && !desired_set.contains(label.as_str())
+            && !to_remove.contains(label)
+        {
+            to_remove.push(label.clone());
+        }
+    }
+
+    (to_add, to_remove)
+}
+
 fn ship_status_str(s: ShipStatus) -> &'static str {
     match s {
         ShipStatus::NotStarted => "not_started",
@@ -259,7 +303,7 @@ mod tests {
             gitlab_id: None,
             url: None,
             author: None,
-            labels: vec!["crate:sdd".into(), "priority:p2".into()],
+            labels: vec!["crate:agentic-workflow".into(), "priority:p2".into()],
             created_at: None,
             updated_at: None,
             slug: "demo".into(),
@@ -295,7 +339,7 @@ mod tests {
         i.review_count = Some(1);
         i.flagged_sections = Some(vec![IssueSection::Requirements, IssueSection::Scope]);
         let labels = encode_labels(&i);
-        assert!(labels.contains(&"crate:sdd".to_string()));
+        assert!(labels.contains(&"crate:agentic-workflow".to_string()));
         assert!(labels.contains(&"priority:p2".to_string()));
         assert!(labels.contains(&"phase:td_reviewed".to_string()));
         assert!(labels.contains(&"review:1".to_string()));
@@ -317,9 +361,19 @@ mod tests {
     }
 
     #[test]
+    fn encode_strips_workflow_lock_labels_from_input() {
+        let mut i = base_issue();
+        i.labels.push(WORKFLOW_LOCK_LABEL.into());
+        i.labels.push(format!("{}td", WORKFLOW_LOCK_OWNER_PREFIX));
+        let labels = encode_labels(&i);
+        assert!(!labels.contains(&WORKFLOW_LOCK_LABEL.to_string()));
+        assert!(!labels.contains(&format!("{}td", WORKFLOW_LOCK_OWNER_PREFIX)));
+    }
+
+    #[test]
     fn decode_round_trips_phase_and_review() {
         let labels = vec![
-            "crate:sdd".into(),
+            "crate:agentic-workflow".into(),
             "phase:td_reviewed".into(),
             "review:2".into(),
             "retry:1".into(),
@@ -337,15 +391,82 @@ mod tests {
     #[test]
     fn diff_only_removes_managed_labels() {
         let current = vec![
-            "crate:sdd".into(),         // user — must NOT be removed
-            "phase:td_inited".into(),   // managed, stale — should be removed
-            "slug:legacy-alias".into(), // legacy alias — must NOT be removed
-            "manual-label".into(),      // user-added between writes — keep
+            "crate:agentic-workflow".into(), // user — must NOT be removed
+            "phase:td_inited".into(),        // managed, stale — should be removed
+            "slug:legacy-alias".into(),      // legacy alias — must NOT be removed
+            "manual-label".into(),           // user-added between writes — keep
         ];
-        let desired = vec!["crate:sdd".into(), "phase:td_reviewed".into()];
+        let desired = vec!["crate:agentic-workflow".into(), "phase:td_reviewed".into()];
         let (add, remove) = diff_labels(&current, &desired);
         assert_eq!(add, vec!["phase:td_reviewed".to_string()]);
         assert_eq!(remove, vec!["phase:td_inited".to_string()]);
+    }
+
+    #[test]
+    fn diff_removes_stale_workflow_lock_labels() {
+        let current = vec![
+            "type:bug".into(),
+            WORKFLOW_LOCK_LABEL.into(),
+            format!("{}td", WORKFLOW_LOCK_OWNER_PREFIX),
+            "score:operator-note".into(),
+        ];
+        let desired = vec!["type:bug".into()];
+        let (add, remove) = diff_labels(&current, &desired);
+        assert!(add.is_empty());
+        assert_eq!(
+            remove,
+            vec![
+                WORKFLOW_LOCK_LABEL.to_string(),
+                format!("{}td", WORKFLOW_LOCK_OWNER_PREFIX),
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_diff_removes_requested_unmanaged_label() {
+        let current = vec!["lib:service-backup".into(), "project:service-backup".into()];
+        let desired = vec!["lib:service-backup".into()];
+        let requested = vec!["project:service-backup".into()];
+
+        let (add, remove) = diff_labels_with_explicit_removals(&current, &desired, &requested);
+
+        assert!(add.is_empty());
+        assert_eq!(remove, vec!["project:service-backup"]);
+    }
+
+    #[test]
+    fn explicit_diff_preserves_unrelated_user_labels() {
+        let current = vec![
+            "manual:operator-note".into(),
+            "project:service-backup".into(),
+            "type:bug".into(),
+        ];
+        let desired = vec!["type:bug".into()];
+        let requested = vec!["project:service-backup".into(), "missing".into()];
+
+        let (_, remove) = diff_labels_with_explicit_removals(&current, &desired, &requested);
+
+        assert_eq!(remove, vec!["project:service-backup"]);
+        assert!(!remove.contains(&"manual:operator-note".to_string()));
+    }
+
+    #[test]
+    fn explicit_diff_retains_managed_reconciliation_and_desired_labels() {
+        let current = vec!["phase:td_inited".into(), "type:bug".into()];
+        let desired = vec![
+            "phase:td_applicability_in_progress".into(),
+            "type:bug".into(),
+        ];
+        let requested = vec![
+            "phase:td_inited".into(),
+            "phase:td_applicability_in_progress".into(),
+            "type:bug".into(),
+        ];
+
+        let (add, remove) = diff_labels_with_explicit_removals(&current, &desired, &requested);
+
+        assert_eq!(add, vec!["phase:td_applicability_in_progress"]);
+        assert_eq!(remove, vec!["phase:td_inited"]);
     }
 
     #[test]
@@ -370,5 +491,6 @@ changes:
     replaces:
       - "<handwrite-gap:standardize:claim-code>"
     description: |
-      Source template owns the full issue label encoding module.
+      Source template owns the full issue label encoding module, including
+      conservative full-write preservation and authoritative patch removals.
 ```

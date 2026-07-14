@@ -198,6 +198,9 @@ semantic_domain:
           - name: "td_no_merge_test"
             kind: "module"
             public: false
+          - name: "wi_close_remote_test"
+            kind: "module"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -756,6 +759,13 @@ changes:
       alphabetically between `chain_liveness_test` and
       `in_place_lifecycle_test` in `tests/cli_tests.rs`'s own registration
       order.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/tests/cli_tests.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1551 registers `wi_close_remote_test`, the isolated real-CLI
+      regression suite for configured-backend numeric close rehydration.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/codegen_full_test.rs"
     action: modify

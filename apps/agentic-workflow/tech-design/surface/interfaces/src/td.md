@@ -7,13 +7,37 @@ capability_refs:
     gap: td-lifecycle-dispatch
     claim: td-lifecycle-dispatch
     coverage: full
-    rationale: "TD CLI surface manifests cover tech-design artifact authoring, validation, merge, and generated-code iteration behavior."
+    rationale: "TD CLI surface manifests cover tech-design artifact authoring, validation, and linear generated-code iteration behavior."
   - id: td-cb-lifecycle-automation
     role: primary
     gap: cb-lifecycle-dispatch
     claim: cb-lifecycle-dispatch
     coverage: full
-    rationale: "TD CLI surface manifests cover lifecycle dispatch, generation, fill, code-check, and merge command behavior."
+    rationale: "TD CLI surface manifests cover lifecycle dispatch, generation, fill, and terminal code-check behavior."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: full
+    rationale: "The TD default-path boundary consumes canonical app/lib labels produced from registered rows while continuing to reject raw retired project labels."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: committed-td-skeleton-lifecycle
+    claim: committed-td-skeleton-lifecycle
+    coverage: full
+    rationale: "The TD CLI admits only its exact sole untracked known-empty skeleton and commits canonical bytes at queue start without weakening authored or post-gen boundaries."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "TD section apply runs legacy partial checks, forbidden-section checks, and the complete shared rule registry over the merged candidate before writing, while completed specs retain file-backed validation."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "TD generation reads and validates exact plan bytes before issue hydration or branch activation, then emits one structured actionable error for ambiguous Schema/CLI ownership."
 command_refs:
   - command: aw td
   - command: aw td ast
@@ -21,9 +45,10 @@ command_refs:
   - command: aw td claim
   - command: aw td create
   - command: aw td code-check
+  - command: aw td gen
+  - command: aw td gen-source
+  - command: aw td fill
   - command: aw td promote
-  - command: aw td review
-  - command: aw td revise
 ---
 
 # Standardized apps/agentic-workflow/src/cli/td.rs
@@ -32,6 +57,56 @@ command_refs:
 <!-- type: overview lang: markdown -->
 
 Public API manifest for `apps/agentic-workflow/src/cli/td.rs` generated from AST during Score force-regeneration standardization.
+
+The LINEAR TD surface mounts `gen-source` as the forward-generation verb for
+one explicit source-unit TD and exact target. It delegates to the CB-owned
+implementation and participates in the same single-envelope, strict-preflight
+contract. The shared `td check` validation path also runs the strict partition
+decoder so missing, reordered, duplicated, oversized, or digest-mismatched
+chunks fail before generation. Retired review/revise/merge verbs are not public
+lifecycle steps.
+
+TD skeleton initialization serializes the slug as a YAML string scalar, so a
+numeric GitHub WI id such as `1487` remains validator-compatible when the first
+applicability section is applied. Existing skeletons remain byte-preserved on
+repeated initialization.
+
+Fresh skeletons persist the complete minimal section queue (`logic`, `changes`,
+then `unit-test`) before applicability starts. Empty legacy skeleton queues
+expand to that same default on their first default-section merge, while
+non-empty custom queues remain authoritative and order-preserving in both
+applicability and contract. Changes keeps the generic JSON-body transport while
+its initialized body is an editable target-plan scaffold, and the applicability
+to contract boundary rebuilds the projection lock for the first contract
+section. Human-facing suggestions place Changes before Unit Test without
+changing the canonical global fill order.
+
+For active pre-terminal authoring phases, `aw td create` activates an existing
+TD branch before checking the shared exact reachable Td-Init baseline. A valid
+baseline resumes without mutation; rewritten history clears stale phase,
+branch, projection, and lock labels, records a distinct Td-Reset, and then
+reuses normal provisioning. Post-gen and terminal retry phases are excluded.
+
+TD default-path routing remains intentionally strict: the WI producer must
+canonicalize registered labels first, and TD itself recognizes only the
+current `crate:`, `app:`, and `lib:` families. The #1519 regression drives both
+library and app rows through the real producer label vector into the configured
+project-local TD root while preserving the raw retired-label rejection.
+
+Merged section candidates are validated in memory before the write boundary.
+The candidate path reuses the full shared validator registry, so a valid
+Mermaid Plus LogicSpec may replace stale plain Mermaid without inheriting the
+old file's finding, while invalid candidate content preserves the spec and
+payload. Whole-file/completed validation continues to read the on-disk file.
+
+Generation plan admission now precedes every mutating TD lifecycle helper. On
+`main`, `aw td gen` reads an existing `td-<slug>` spec from Git objects without
+checkout, resolves absent Changes through read-only exact spec-ref inference,
+and rejects either zero knowable targets or multiple shared CODEGEN
+destinations through one structured stdout envelope. Explicit single-target,
+one inferred target, and CODEGEN-plus-HANDWRITE plans remain compatible. Exact
+prepared bytes are revalidated after activation before generation; #1634
+remains responsible for canonical multi-target `generates:` unit partitioning.
 
 ### Symbols
 
@@ -448,6 +523,14 @@ fn td_branch_name(slug: &str) -> String {
     format!("td-{}", slug)
 }
 
+fn is_recoverable_td_authoring_phase(phase: &str) -> bool {
+    use crate::issues::types::td_phase;
+
+    phase.starts_with("td_")
+        && !td_phase::is_post_gen(phase)
+        && !td_phase::is_terminal_code_check_retry(phase)
+}
+
 fn activate_td_workspace_for_lifecycle(
     project_root: &std::path::Path,
     workflow_slug: &str,
@@ -576,6 +659,47 @@ pub(crate) fn td_activate_inplace_allowing_dirty_spec_path(
     Ok(())
 }
 
+/// Activate an existing TD workspace while carrying exactly one CLI-owned
+/// untracked empty skeleton. Unlike the general dirty-spec helper this never
+/// permits tracked/staged content or a second dirty path, and it revalidates
+/// both status and bytes after a branch switch.
+fn activate_td_workspace_with_recoverable_skeleton(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_path: &str,
+    provision_if_missing: bool,
+) -> Result<String> {
+    if !recoverable_untracked_td_skeleton(project_root, spec_path, slug)? {
+        anyhow::bail!(
+            "in-place td skeleton recovery requires the sole exact untracked known-empty file '{}'",
+            spec_path
+        );
+    }
+    let current = crate::branch_switch::current_branch(project_root)?;
+    let mut active = current.clone();
+    if should_use_td_branch(&current) {
+        let branch = td_branch_name(slug);
+        let branch_exists =
+            crate::branch_switch::branch_exists_local(project_root, &branch).unwrap_or(false);
+        if !branch_exists && !provision_if_missing {
+            anyhow::bail!(
+                "workspace not found: branch '{}' does not exist (run `aw td create {}` first to provision)",
+                branch,
+                slug,
+            );
+        }
+        crate::branch_switch::switch_or_create_branch(project_root, &branch, &current)?;
+        active = branch;
+    }
+    if !recoverable_untracked_td_skeleton(project_root, spec_path, slug)? {
+        anyhow::bail!(
+            "TD skeleton '{}' changed status or bytes during workspace activation",
+            spec_path
+        );
+    }
+    Ok(active)
+}
+
 /// The retired checkout `.aw/issues` tree is no longer a lifecycle dirty-path
 /// exception. Issue working copies now live under the temp-backed
 /// [`LocalBackend`] store, outside git status.
@@ -606,7 +730,7 @@ fn ensure_clean_or_only_dirty_paths(
 ) -> Result<()> {
     let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
     let output = std::process::Command::new(&git)
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
         .current_dir(project_root)
         .output()
         .with_context(|| format!("running git status in {}", project_root.display()))?;
@@ -650,6 +774,61 @@ fn ensure_clean_or_only_dirty_paths(
     )
 }
 
+/// Return whether the checkout contains exactly one status record and that
+/// record is the untracked `path`. `--untracked-files=all` keeps an untracked
+/// directory from collapsing to `?? dir/`, while `-z` makes the byte shape
+/// unambiguous for spaces, quotes, and rename records.
+///
+/// This is intentionally stricter than the lifecycle dirty-path helpers: a
+/// tracked modification, staged addition, rename destination, or unrelated
+/// sibling must never enter TD skeleton recovery.
+fn checkout_has_only_exact_untracked_path(
+    project_root: &std::path::Path,
+    path: &str,
+) -> Result<bool> {
+    let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
+    let normalized = normalize_checkout_rel_path(path);
+    if normalized.is_empty() || std::path::Path::new(&normalized).is_absolute() {
+        return Ok(false);
+    }
+    let expected = format!("?? {normalized}\0").into_bytes();
+
+    let status = |pathspec: Option<&str>| -> Result<std::process::Output> {
+        let mut command = std::process::Command::new(&git);
+        command
+            .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+            .current_dir(project_root);
+        if let Some(pathspec) = pathspec {
+            command.arg("--").arg(pathspec);
+        }
+        command
+            .output()
+            .with_context(|| format!("running git status in {}", project_root.display()))
+    };
+
+    let targeted = status(Some(&normalized))?;
+    if !targeted.status.success() {
+        anyhow::bail!(
+            "git status failed in {}: {}",
+            project_root.display(),
+            String::from_utf8_lossy(&targeted.stderr).trim()
+        );
+    }
+    if targeted.stdout != expected {
+        return Ok(false);
+    }
+
+    let whole_tree = status(None)?;
+    if !whole_tree.status.success() {
+        anyhow::bail!(
+            "git status failed in {}: {}",
+            project_root.display(),
+            String::from_utf8_lossy(&whole_tree.stderr).trim()
+        );
+    }
+    Ok(whole_tree.stdout == expected)
+}
+
 fn porcelain_path(line: &str) -> Option<&str> {
     let path = line.get(3..)?.trim();
     if path.is_empty() {
@@ -677,6 +856,7 @@ async fn provision_td_workspace(
     issue_ref: &str,
     workflow_slug: &str,
     branch: &str,
+    recoverable_spec_path: Option<&str>,
 ) -> Result<()> {
     use crate::issues::IssueBackend;
 
@@ -705,6 +885,13 @@ async fn provision_td_workspace(
     // issue claims an active phase but neither workspace nor branch exist.
     if let Some(phase) = issue.phase.clone() {
         if phase.starts_with("td_") {
+            if !is_recoverable_td_authoring_phase(&phase) {
+                anyhow::bail!(
+                    "issue '{}' already has active tech-design (phase: {})",
+                    issue_ref,
+                    phase
+                );
+            }
             let worktree_abs = td_workspace_path(project_root, workflow_slug);
             let branch_present =
                 crate::branch_switch::branch_exists_local(project_root, branch).unwrap_or(false);
@@ -739,7 +926,15 @@ async fn provision_td_workspace(
 
     // Provision: only split to `td-<slug>` when starting from `main`.
     // Project branches stay as the active TD workspace.
-    let active_branch = activate_td_workspace_for_lifecycle(project_root, workflow_slug)?;
+    let active_branch = match recoverable_spec_path {
+        Some(spec_path) => activate_td_workspace_with_recoverable_skeleton(
+            project_root,
+            workflow_slug,
+            spec_path,
+            true,
+        )?,
+        None => activate_td_workspace_for_lifecycle(project_root, workflow_slug)?,
+    };
 
     // Set phase + branch on the issue, on the workspace.
     let wt_backend = LocalBackend::from_project_root(project_root);
@@ -763,6 +958,70 @@ async fn provision_td_workspace(
         &[issue_path_s.as_str()],
     )?;
 
+    Ok(())
+}
+
+/// Clear an active tracker phase whose exact `Td-Init` baseline is no longer
+/// reachable, then record the recovery before normal provisioning starts.
+/// The stale workflow projection and lock labels must be cleared with the
+/// phase/branch; otherwise the fresh authoring queue can inherit a lock that
+/// still points at the rewritten lifecycle.
+async fn reset_unreachable_td_init(
+    project_root: &std::path::Path,
+    issue_ref: &str,
+    workflow_slug: &str,
+    history_state: &str,
+    recoverable_spec_path: Option<&str>,
+) -> Result<()> {
+    use crate::issues::IssueBackend;
+
+    match recoverable_spec_path {
+        Some(spec_path) => {
+            if !recoverable_untracked_td_skeleton(project_root, spec_path, workflow_slug)? {
+                anyhow::bail!(
+                    "TD lifecycle recovery requires the sole exact untracked known-empty skeleton '{}'",
+                    spec_path
+                );
+            }
+        }
+        None => crate::branch_switch::ensure_branch_clean(project_root)
+            .map_err(|e| anyhow::anyhow!("TD lifecycle recovery requires a clean tree: {e}"))?,
+    }
+    let backend = LocalBackend::from_project_root(project_root);
+    let mut issue = backend
+        .get(issue_ref)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in workspace", issue_ref))?;
+    let from_phase = issue.phase.clone().unwrap_or_default();
+    issue.phase = None;
+    issue.branch = None;
+    issue.labels.retain(|label| {
+        label != super::workflow_guard::LOCK_LABEL
+            && label != super::workflow_guard::TD_LOCK_LABEL
+            && label != super::workflow_guard::CB_LOCK_LABEL
+    });
+    if let Some(body) =
+        super::workflow_guard::unlock_projection_for_closed_issue(&issue.body, workflow_slug)?
+    {
+        issue.body = body;
+    }
+    backend.write(&issue).await?;
+
+    let issue_path = backend.issue_path(&issue);
+    let issue_path_s = issue_path.to_string_lossy().into_owned();
+    maybe_push_remote(project_root, &issue_path, workflow_slug).await?;
+    commit_lifecycle_with_extra(
+        project_root,
+        workflow_slug,
+        &issue.title,
+        "Td-Reset",
+        &[issue_path_s.as_str()],
+        &[
+            ("Reset-Reason", "unreachable-td-init"),
+            ("Reset-History-State", history_state),
+            ("Reset-From-Phase", from_phase.as_str()),
+        ],
+    )?;
     Ok(())
 }
 
@@ -1290,6 +1549,174 @@ fn merge_spec_section(base_body: &str, section_type: &str, payload_body: &str) -
     Ok(ensure_fill_sections_has_section(&merged, section_type))
 }
 
+/// Normalize one generic JSON payload's `body` into the complete typed TD
+/// section fragment consumed by `merge_spec_section`.
+///
+/// The initialized payload template contains the complete H2 + annotation
+/// wrapper, but agents can reasonably replace only the body inside the JSON
+/// field (the exact #1561/#1562 incident shape). Treat that body-only form as
+/// shorthand and restore the requested section's canonical wrapper. A payload
+/// that attempts to provide its own wrapper is held to a stricter boundary:
+/// exactly one top-level H2, one immediately-bound annotation, the requested
+/// type, and its expected language. That keeps a body payload from smuggling a
+/// second typed section into a single-section merge.
+fn normalize_generic_td_section_payload(
+    section: &str,
+    payload_body: &str,
+    spec_path: &std::path::Path,
+) -> Result<String> {
+    let section_type = section
+        .parse::<crate::models::spec_rules::SectionType>()
+        .map_err(|error| anyhow::anyhow!(error))?;
+    if !is_supported_td_payload_section_type(section_type) {
+        anyhow::bail!("section '{section}' is not supported for new TD payloads");
+    }
+
+    if payload_body.trim().is_empty() {
+        anyhow::bail!("section '{section}' payload body must not be empty");
+    }
+    if td_section_content_is_placeholder(payload_body) {
+        anyhow::bail!(
+            "section '{section}' payload body is still a `(fill)` placeholder; fill the initialized payload before applying it"
+        );
+    }
+
+    let shape = td_payload_top_level_shape(payload_body);
+    if let Some(open) = &shape.unclosed_fence {
+        anyhow::bail!(
+            "section '{section}' payload has an unclosed fenced block opened with '{open}'"
+        );
+    }
+    let normalized = match shape.headings.len() {
+        0 => {
+            if !shape.annotation_candidates.is_empty() {
+                anyhow::bail!(
+                    "section '{section}' payload has a type/lang annotation without its top-level H2 wrapper"
+                );
+            }
+            let trimmed = payload_body.trim_end_matches('\n');
+            format!(
+                "## {}\n<!-- type: {} lang: {} -->\n\n{}\n",
+                td_section_title(section_type.as_str()),
+                section_type.as_str(),
+                section_type.default_lang(),
+                trimmed,
+            )
+        }
+        1 => {
+            let sections = extract_sections(payload_body);
+            if sections.len() != 1 || shape.annotation_candidates.len() != 1 {
+                anyhow::bail!(
+                    "section '{section}' payload's top-level H2 must be immediately followed by one complete type annotation"
+                );
+            }
+            let (heading, annotation, content) = &sections[0];
+            if annotation.section_type != section_type.as_str() {
+                anyhow::bail!(
+                    "requested section '{section}' cannot apply payload wrapper type '{}'",
+                    annotation.section_type,
+                );
+            }
+            if annotation.lang != section_type.default_lang() {
+                anyhow::bail!(
+                    "section '{section}' payload wrapper declares lang '{}' but expected '{}'",
+                    annotation.lang,
+                    section_type.default_lang(),
+                );
+            }
+            if let Some(heading_type) = crate::models::spec_rules::SectionType::all_in_fill_order()
+                .into_iter()
+                .find(|candidate| {
+                    td_section_title(candidate.as_str()).eq_ignore_ascii_case(heading.trim())
+                })
+            {
+                if heading_type != section_type {
+                    anyhow::bail!(
+                        "requested section '{section}' cannot apply payload heading '{}' for type '{}'",
+                        heading,
+                        heading_type.as_str(),
+                    );
+                }
+            }
+            if content.trim().is_empty() {
+                anyhow::bail!("section '{section}' payload body must not be empty");
+            }
+            payload_body.to_string()
+        }
+        count => {
+            anyhow::bail!(
+                "section '{section}' payload must contain at most one complete section; found {count} top-level H2 wrappers (expected exactly one top-level H2 wrapper or a body-only fragment)"
+            );
+        }
+    };
+
+    // #1562 deliberately validates just the generic payload's structural
+    // wrapper/fence in memory. The full registry still reads completed files;
+    // switching all candidate rule checks to content is tracked separately by
+    // #1586.
+    let findings = crate::validate::rules::section_format::check_section_format(
+        spec_path,
+        &normalized,
+        crate::validate::rules::section_format::DEFAULT_LOOKAHEAD,
+    );
+    let errors: Vec<String> = findings
+        .into_iter()
+        .filter(|finding| finding.severity == crate::validate::Severity::Error)
+        .map(|finding| finding.message)
+        .collect();
+    if !errors.is_empty() {
+        anyhow::bail!(
+            "section '{section}' payload is malformed: {}",
+            errors.join("; ")
+        );
+    }
+
+    Ok(normalized)
+}
+
+struct TdPayloadTopLevelShape {
+    headings: Vec<String>,
+    annotation_candidates: Vec<String>,
+    unclosed_fence: Option<String>,
+}
+
+/// Fence-aware scan of payload-level structure. H2-looking lines and
+/// annotation examples inside Mermaid/YAML fences are content, not wrappers.
+fn td_payload_top_level_shape(payload_body: &str) -> TdPayloadTopLevelShape {
+    let mut headings = Vec::new();
+    let mut annotation_candidates = Vec::new();
+    let mut fence_open: Option<String> = None;
+
+    for line in payload_body.lines() {
+        if let Some(open) = &fence_open {
+            if markdown_fence_closes(line, open) {
+                fence_open = None;
+            }
+            continue;
+        }
+        if let Some(open) = markdown_fence_open_marker(line) {
+            fence_open = Some(open);
+            continue;
+        }
+        if let Some(heading) = line.strip_prefix("## ") {
+            headings.push(heading.trim().to_string());
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("<!--")
+            && trimmed.ends_with("-->")
+            && (trimmed.contains("type:") || trimmed.contains("lang:"))
+        {
+            annotation_candidates.push(trimmed.to_string());
+        }
+    }
+
+    TdPayloadTopLevelShape {
+        headings,
+        annotation_candidates,
+        unclosed_fence: fence_open,
+    }
+}
+
 fn ensure_fill_sections_has_section(content: &str, section_type: &str) -> String {
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     if lines.first().map(|line| line.trim()) != Some("---") {
@@ -1319,8 +1746,25 @@ fn ensure_fill_sections_has_section(content: &str, section_type: &str) -> String
                 .filter(|item| !item.is_empty())
                 .map(ToOwned::to_owned)
                 .collect();
+            let mut changed = false;
+            // An empty generated queue means "use the minimal default", not
+            // "the first applied section is the entire queue". Preserve the
+            // full default before recording the first applicability payload,
+            // otherwise `logic` mutates `[]` into `[logic]` and silently
+            // skips the required `unit-test` section (#1556). A non-empty
+            // list is explicitly authored and remains authoritative.
+            if sections.is_empty() {
+                let default_queue = td_section_queue("applicability");
+                if default_queue.iter().any(|section| section == section_type) {
+                    sections = default_queue;
+                    changed = true;
+                }
+            }
             if !sections.iter().any(|section| section == section_type) {
                 sections.push(section_type.to_string());
+                changed = true;
+            }
+            if changed {
                 lines[idx] = format!("{indent}fill_sections: [{}]", sections.join(", "));
             }
             return finish_lines(lines, content.ends_with('\n'));
@@ -1398,13 +1842,22 @@ fn validate_td_content_file(
 ) -> Result<crate::validate::RuleReport> {
     let content = std::fs::read_to_string(spec_path)
         .with_context(|| format!("failed to read spec file: {}", spec_path.display()))?;
-    validate_td_content(spec_path, &content, scope)
+    validate_td_content(spec_path, &content, scope, TdRuleValidationInput::File)
+}
+
+#[derive(Clone, Copy)]
+enum TdRuleValidationInput {
+    /// Completed on-disk specs keep the established file-backed registry path.
+    File,
+    /// Pre-write section merges validate exactly the caller-owned candidate.
+    Candidate,
 }
 
 fn validate_td_content(
     spec_path: &std::path::Path,
     content: &str,
     scope: TdContentValidationScope<'_>,
+    rule_input: TdRuleValidationInput,
 ) -> Result<crate::validate::RuleReport> {
     let mut report = crate::validate::RuleReport::new();
 
@@ -1445,7 +1898,16 @@ fn validate_td_content(
         ));
     }
 
-    report.extend(crate::validate::run_rules(&[spec_path.to_path_buf()]));
+    match rule_input {
+        TdRuleValidationInput::File => {
+            report.extend(crate::validate::run_rules(&[spec_path.to_path_buf()]));
+        }
+        TdRuleValidationInput::Candidate => {
+            report.extend(crate::validate::runner::run_rules_on_content(
+                spec_path, content,
+            ));
+        }
+    }
     Ok(report)
 }
 
@@ -1454,7 +1916,16 @@ fn validate_new_td_authoring_content(
     content: &str,
     scope: TdContentValidationScope<'_>,
 ) -> Result<crate::validate::RuleReport> {
-    let mut report = validate_td_content(spec_path, content, scope)?;
+    validate_new_td_authoring(spec_path, content, scope, TdRuleValidationInput::Candidate)
+}
+
+fn validate_new_td_authoring(
+    spec_path: &std::path::Path,
+    content: &str,
+    scope: TdContentValidationScope<'_>,
+    rule_input: TdRuleValidationInput,
+) -> Result<crate::validate::RuleReport> {
+    let mut report = validate_td_content(spec_path, content, scope, rule_input)?;
     for error in new_td_forbidden_section_errors(content) {
         report.push(crate::validate::Finding::error(
             crate::validate::RuleId::SectionFormat,
@@ -1471,7 +1942,7 @@ fn validate_new_td_authoring_file(
 ) -> Result<crate::validate::RuleReport> {
     let content = std::fs::read_to_string(spec_path)
         .with_context(|| format!("failed to read spec file: {}", spec_path.display()))?;
-    validate_new_td_authoring_content(spec_path, &content, scope)
+    validate_new_td_authoring(spec_path, &content, scope, TdRuleValidationInput::File)
 }
 
 fn new_td_forbidden_section_errors(spec_content: &str) -> Vec<String> {
@@ -1695,6 +2166,15 @@ fn validate_spec_inner(
         if !seen.insert(*t) {
             errors.push(format!("duplicate section type: '{}'", t));
         }
+    }
+
+    // #1506: partitioned large-source artifacts use one typed H2 Source
+    // section plus untyped H3 payload partitions. Validate the manifest with
+    // the same strict decoder production gen-source uses, so missing,
+    // duplicate, reordered, oversized, or digest-mismatched chunks fail
+    // `aw td check` before any target can be generated.
+    if let Err(error) = crate::generate::apply::decode_partitioned_source(spec_content) {
+        errors.push(format!("invalid source partition manifest: {error}"));
     }
 
     for (heading, ann, content) in &sections {
@@ -2048,10 +2528,8 @@ fn is_deprecated_td_section_type(st: crate::models::spec_rules::SectionType) -> 
 }
 
 fn is_active_td_authoring_section_type(st: crate::models::spec_rules::SectionType) -> bool {
-    use crate::models::spec_rules::SectionType;
     !is_deprecated_td_section_type(st)
         && !crate::generate::generators::primitive_registry::is_prose_section(st)
-        && st != SectionType::Changes
 }
 
 fn is_supported_td_payload_section_type(st: crate::models::spec_rules::SectionType) -> bool {
@@ -2064,6 +2542,29 @@ fn active_td_section_types() -> Vec<crate::models::spec_rules::SectionType> {
         .into_iter()
         .filter(|st| is_active_td_authoring_section_type(*st))
         .collect()
+}
+
+/// Human-facing artifact order. `SectionType::fill_order()` remains the
+/// global registry order, but fresh TD authoring needs the target-owning
+/// Changes artifact before Unit Test so `aw td gen` never has to infer a
+/// brand-new path (#1598).
+fn suggested_td_authoring_section_types() -> Vec<crate::models::spec_rules::SectionType> {
+    use crate::models::spec_rules::SectionType;
+
+    let mut types = active_td_section_types();
+    let Some(changes_index) = types
+        .iter()
+        .position(|section| *section == SectionType::Changes)
+    else {
+        return types;
+    };
+    let changes = types.remove(changes_index);
+    let unit_test_index = types
+        .iter()
+        .position(|section| *section == SectionType::UnitTest)
+        .unwrap_or(types.len());
+    types.insert(unit_test_index, changes);
+    types
 }
 
 /// The `projects/<name>/...` → `apps/<name>/...` source-root move (#1211)
@@ -2262,7 +2763,11 @@ fn td_authoring_pass(raw: Option<&str>) -> &str {
 }
 
 fn td_section_queue(_pass: &str) -> Vec<String> {
-    vec!["logic".to_string(), "unit-test".to_string()]
+    vec![
+        "logic".to_string(),
+        "changes".to_string(),
+        "unit-test".to_string(),
+    ]
 }
 
 fn td_fill_sections_from_content(content: &str) -> Option<Vec<String>> {
@@ -2440,8 +2945,9 @@ fn initialize_td_payload_file(payload_path: &str, content: &str) -> Result<bool>
     Ok(true)
 }
 
-/// Write the initial TD skeleton (frontmatter with `id`/`summary`/
-/// `fill_sections`, no sections yet) for a spec that does not exist on disk.
+/// Write the initial TD skeleton (frontmatter with `id`/`summary` and the
+/// complete minimal default `fill_sections` queue, but no section bodies yet)
+/// for a spec that does not exist on disk.
 /// Idempotent — a no-op when the file already exists, so this never
 /// clobbers authored content on a repeat `aw td create` call. Returns
 /// whether a file was written.
@@ -2459,10 +2965,111 @@ fn initialize_td_spec_skeleton(spec_abs: &std::path::Path, slug: &str) -> Result
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create spec directory {}", parent.display()))?;
     }
-    let skeleton = format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n");
+    let skeleton = td_spec_skeleton(slug)?;
     std::fs::write(spec_abs, skeleton)
         .with_context(|| format!("failed to write TD skeleton {}", spec_abs.display()))?;
     Ok(true)
+}
+
+/// Render the one canonical empty TD skeleton. The id always passes through
+/// serde_yaml so an all-numeric tracker id remains a YAML string, while the
+/// queue comes from the active applicability registry rather than a second
+/// hard-coded source of truth.
+fn td_spec_skeleton(slug: &str) -> Result<String> {
+    let yaml_id = serde_yaml::to_string(slug)
+        .context("failed to serialize TD skeleton id")?
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    let default_sections = td_section_queue("applicability").join(", ");
+    Ok(format!(
+        "---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: [{default_sections}]\n---\n"
+    ))
+}
+
+/// Exact historical empty skeleton byte shapes that may be recovered after a
+/// prior `aw td create` was interrupted before staging its CLI-owned file.
+/// No parser-based or whitespace-tolerant matching is allowed: comments,
+/// authored content, wrong ids, and even an extra newline are immutable.
+fn known_empty_td_spec_skeletons(slug: &str) -> Result<Vec<String>> {
+    let yaml_id = serde_yaml::to_string(slug)
+        .context("failed to serialize TD skeleton id")?
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    let candidates = [
+        td_spec_skeleton(slug)?,
+        format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: [logic, unit-test]\n---\n"),
+        format!("---\nid: {yaml_id}\nsummary: (fill)\nfill_sections: []\n---\n"),
+        format!("---\nid: {slug:?}\nsummary: (fill)\nfill_sections: []\n---\n"),
+        format!("---\nid: {slug}\nsummary: (fill)\nfill_sections: []\n---\n"),
+    ];
+    let mut unique = Vec::new();
+    for candidate in candidates {
+        if !unique.contains(&candidate) {
+            unique.push(candidate);
+        }
+    }
+    Ok(unique)
+}
+
+fn is_known_empty_td_spec_skeleton(spec_abs: &std::path::Path, slug: &str) -> Result<bool> {
+    let metadata = match std::fs::symlink_metadata(spec_abs) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect TD skeleton {}", spec_abs.display()))
+        }
+    };
+    if !metadata.file_type().is_file() {
+        return Ok(false);
+    }
+    let content = match std::fs::read_to_string(spec_abs) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read TD skeleton {}", spec_abs.display()))
+        }
+    };
+    Ok(known_empty_td_spec_skeletons(slug)?
+        .iter()
+        .any(|candidate| candidate == &content))
+}
+
+fn recoverable_untracked_td_skeleton(
+    project_root: &std::path::Path,
+    spec_path: &str,
+    slug: &str,
+) -> Result<bool> {
+    if !checkout_has_only_exact_untracked_path(project_root, spec_path)? {
+        return Ok(false);
+    }
+    is_known_empty_td_spec_skeleton(&project_root.join(spec_path), slug)
+}
+
+/// Canonicalize only after the caller has classified the file as the sole
+/// exact untracked lifecycle-owned skeleton. Re-check the byte allow-list at
+/// the write boundary so branch activation or recovery cannot widen it.
+fn canonicalize_recoverable_td_skeleton(
+    project_root: &std::path::Path,
+    spec_path: &str,
+    slug: &str,
+) -> Result<()> {
+    if !recoverable_untracked_td_skeleton(project_root, spec_path, slug)? {
+        anyhow::bail!(
+            "TD skeleton recovery refused '{}': expected the sole exact untracked known-empty skeleton for '{}'",
+            spec_path,
+            slug
+        );
+    }
+    let spec_abs = project_root.join(spec_path);
+    let canonical = td_spec_skeleton(slug)?;
+    if std::fs::read_to_string(&spec_abs)? != canonical {
+        std::fs::write(&spec_abs, canonical).with_context(|| {
+            format!("failed to canonicalize TD skeleton {}", spec_abs.display())
+        })?;
+    }
+    Ok(())
 }
 
 fn td_section_payload_template(section: &str) -> Result<String> {
@@ -2472,17 +3079,32 @@ fn td_section_payload_template(section: &str) -> Result<String> {
         anyhow::bail!("section '{}' is not supported for new TD payloads", section);
     }
     let lang = st.default_lang();
-    let body = match lang {
-        "markdown" => "(fill)\n".to_string(),
-        other => format!("```{}\n(fill)\n```\n", other),
+    let section_body = if st == crate::models::spec_rules::SectionType::Changes {
+        concat!(
+            "## Changes\n",
+            "<!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes:\n",
+            "  - path: \"(fill: repo-relative target path)\"\n",
+            "    action: \"(fill: create|modify)\"\n",
+            "    section: \"(fill: artifact-driving section id)\"\n",
+            "    impl_mode: \"(fill: codegen|hand-written)\"\n",
+            "```\n",
+        )
+        .to_string()
+    } else {
+        let body = match lang {
+            "markdown" => "(fill)\n".to_string(),
+            other => format!("```{}\n(fill)\n```\n", other),
+        };
+        format!(
+            "## {}\n<!-- type: {} lang: {} -->\n\n{}",
+            td_section_title(st.as_str()),
+            st.as_str(),
+            lang,
+            body
+        )
     };
-    let section_body = format!(
-        "## {}\n<!-- type: {} lang: {} -->\n\n{}",
-        td_section_title(st.as_str()),
-        st.as_str(),
-        lang,
-        body
-    );
     td_json_payload_template(section, section_body)
 }
 
@@ -2535,6 +3157,11 @@ pub(crate) struct TdBodySectionPayload {
 /// for JSON-payload sections — agents need the shape inline, not a pointer.
 fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
     match section {
+        "changes" => Some(concat!(
+            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n```\n"}"#,
+            " — edit the initialized JSON payload and name every concrete target ",
+            "before applying it; `aw td gen` consumes this target plan directly."
+        )),
         "unit-test" => Some(concat!(
             r#"{"id":"<spec-id>-verification","requirements":{"#,
             r#""<requirement_key>":{"id":"R1","text":"<requirement text>","#,
@@ -3053,14 +3680,110 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     let bootstrap_issue = bootstrap_td_issue(&project_root, issue_ref).await?;
     let slug = workflow_slug_for_issue(&bootstrap_issue, issue_ref);
     let branch = td_branch_name(&slug);
-    if bootstrap_issue
-        .phase
-        .as_deref()
-        .is_some_and(|phase| phase.starts_with("td_"))
-    {
+    let bootstrap_phase = bootstrap_issue.phase.as_deref().unwrap_or_default();
+    let spec_path = match args.spec_path.clone() {
+        Some(explicit) => explicit,
+        None => {
+            match default_spec_path_for_issue_in_project(&project_root, &bootstrap_issue, &slug) {
+                Ok(derived) => derived,
+                Err(e) => return td_error(&slug, e.to_string()),
+            }
+        }
+    };
+    // Only pre-gen authoring (or a not-yet-provisioned WI phase) may carry an
+    // interrupted CLI-owned skeleton through activation. Post-gen and terminal
+    // phases deliberately do not even request the exception.
+    let phase_allows_skeleton_recovery = is_recoverable_td_authoring_phase(bootstrap_phase)
+        || !(bootstrap_phase.starts_with("td_") || bootstrap_phase.starts_with("cb_"));
+    let recoverable_skeleton = phase_allows_skeleton_recovery
+        && recoverable_untracked_td_skeleton(&project_root, &spec_path, &slug)?;
+    let recoverable_spec_path = recoverable_skeleton.then_some(spec_path.as_str());
+    if is_recoverable_td_authoring_phase(bootstrap_phase) {
+        // A valid lifecycle may live on td-<slug> while create is invoked
+        // from main. Activate that existing branch before inspecting HEAD or
+        // its reachable Td-Init would be misclassified as stale after rebase.
+        let current = crate::branch_switch::current_branch(&project_root)?;
+        let resume_workspace_present = !should_use_td_branch(&current)
+            || crate::branch_switch::branch_exists_local(&project_root, &branch).unwrap_or(false);
+        if resume_workspace_present {
+            if let Some(spec_path) = recoverable_spec_path {
+                activate_td_workspace_with_recoverable_skeleton(
+                    &project_root,
+                    &slug,
+                    spec_path,
+                    false,
+                )?;
+            } else {
+                td_activate_inplace_if_present(&project_root, &slug)?;
+            }
+        }
+
+        match super::cb::reachable_td_init_from_head(&project_root, &slug)? {
+            super::cb::TdInitReachability::Found(_) => {
+                if !resume_workspace_present {
+                    if let Some(spec_path) = recoverable_spec_path {
+                        activate_td_workspace_with_recoverable_skeleton(
+                            &project_root,
+                            &slug,
+                            spec_path,
+                            false,
+                        )?;
+                    } else {
+                        td_activate_inplace_if_present(&project_root, &slug)?;
+                    }
+                }
+            }
+            super::cb::TdInitReachability::NoSlugHistory => {
+                reset_unreachable_td_init(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    "no-slug-history",
+                    recoverable_spec_path,
+                )
+                .await?;
+                provision_td_workspace(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    &branch,
+                    recoverable_spec_path,
+                )
+                .await?;
+            }
+            super::cb::TdInitReachability::SlugHistoryWithoutInit => {
+                reset_unreachable_td_init(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    "slug-history-without-init",
+                    recoverable_spec_path,
+                )
+                .await?;
+                provision_td_workspace(
+                    &project_root,
+                    issue_ref,
+                    &slug,
+                    &branch,
+                    recoverable_spec_path,
+                )
+                .await?;
+            }
+        }
+    } else if bootstrap_phase.starts_with("td_") || bootstrap_phase.starts_with("cb_") {
+        // Post-gen and terminal retry phases are never stale-authoring reset
+        // candidates. Activate their existing workspace and let the phase
+        // guard below route/reject without rewriting lifecycle history.
         td_activate_inplace_if_present(&project_root, &slug)?;
     } else {
-        provision_td_workspace(&project_root, issue_ref, &slug, &branch).await?;
+        provision_td_workspace(
+            &project_root,
+            issue_ref,
+            &slug,
+            &branch,
+            recoverable_spec_path,
+        )
+        .await?;
     }
     let active_branch = crate::branch_switch::current_branch(&project_root)?;
 
@@ -3080,14 +3803,15 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         );
     }
 
+    // Rewriting a historical empty shape is itself a lifecycle mutation. Do
+    // it only after the refreshed issue proves this invocation is admitted to
+    // the td_inited authoring queue. In particular, a reachable td_created
+    // issue must fail without changing the candidate bytes.
+    if recoverable_skeleton {
+        canonicalize_recoverable_td_skeleton(&project_root, &spec_path, &slug)?;
+    }
+
     let pass = td_authoring_pass(args.phase.as_deref());
-    let spec_path = match args.spec_path.clone() {
-        Some(explicit) => explicit,
-        None => match default_spec_path_for_issue_in_project(&project_root, &issue, &slug) {
-            Ok(derived) => derived,
-            Err(e) => return td_error(&slug, e.to_string()),
-        },
-    };
 
     // #1246/#1403: write the initial TD skeleton ourselves (idempotent, never
     // overwrites an already-authored file) so the `apply` command this brief
@@ -3110,7 +3834,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         backend.write(&issue_with_implements).await?;
     }
 
-    let queue = td_section_queue(pass);
+    // The generated skeleton carries the full minimal default queue. If an
+    // existing spec explicitly declares a non-empty custom queue, preserve
+    // that exact membership and order from the first dispatch onward (#1556).
+    let queue = td_section_queue_for_spec(&project_root, &spec_path, pass);
     let mut first_payload_created = None;
     if let Some(first_section) = queue.first() {
         let expected_payload = section_payload_path(&project_root, &slug, pass, first_section);
@@ -3144,7 +3871,26 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
                 &slug,
                 &format!("{pass} queue started"),
                 "Td-Queue-Start",
-                &[issue_path_s.as_str()],
+                &[spec_path.as_str(), issue_path_s.as_str()],
+                &[
+                    ("Lifecycle-Phase", phase_trailer.as_str()),
+                    ("Lifecycle-Pass", pass),
+                    ("TD-Section", first_section.as_str()),
+                    ("Next-Command", "see WI workflow projection"),
+                ],
+            )?;
+        } else if recoverable_skeleton {
+            // A pre-fix locked run may already have its queue projection but
+            // have omitted the exact CLI-owned skeleton from the queue-start
+            // commit. Canonicalize and stage only that skeleton once; after
+            // this commit the next invocation is clean and cannot re-enter.
+            let phase_trailer = lifecycle_pass_phase(pass);
+            commit_lifecycle_with_extra(
+                &project_root,
+                &slug,
+                &format!("{pass} queue skeleton recovered"),
+                "Td-Queue-Start",
+                &[spec_path.as_str()],
                 &[
                     ("Lifecycle-Phase", phase_trailer.as_str()),
                     ("Lifecycle-Pass", pass),
@@ -3174,6 +3920,16 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         } else {
             next_none("TD create has no remaining section payload")
         };
+        let invoke_args = attach_json_payload_schema_hint(
+            serde_json::json!({
+                "slug": slug,
+                "phase": pass,
+                "section": first_section,
+                "spec_path": spec_path,
+                "payload_path": payload_path,
+            }),
+            first_section.as_deref().unwrap_or_default(),
+        );
         let env = serde_json::json!({
             "action": "dispatch",
             "agent": null,
@@ -3188,13 +3944,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
             },
             "invoke": {
                 "command": "aw td create",
-                "args": {
-                    "slug": slug,
-                    "phase": pass,
-                    "section": first_section,
-                    "spec_path": spec_path,
-                    "payload_path": payload_path,
-                },
+                "args": invoke_args,
             },
         });
         print_json_value(&env, args.pretty)?;
@@ -3232,7 +3982,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!("---");
     println!("```");
     println!();
-    println!("Example: `fill_sections: [logic, unit-test]`.");
+    println!("Example: `fill_sections: [logic, changes, unit-test]`.");
     println!();
     println!("Each section uses an H2 heading with type annotation:");
     println!();
@@ -3262,17 +4012,28 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!();
     println!(
         "{}",
-        active_td_section_types()
+        suggested_td_authoring_section_types()
             .iter()
             .map(|t| t.as_str())
             .collect::<Vec<_>>()
             .join(" → "),
     );
     println!();
-    println!("Only sections listed in `fill_sections` are required. Before the skeleton exists, the workflow seeds `logic` then `unit-test` as the minimal default.");
+    println!("Only sections listed in `fill_sections` are required. A fresh skeleton records `logic`, `changes`, then `unit-test` so codegen has an explicit target plan; an existing non-empty custom queue keeps its declared members and order.");
     println!();
     println!(
         "Use frontmatter `summary:` for overview text; requirements stay in the WI body. Do not add legacy prose sections such as `scenarios` unless migrating an older TD."
+    );
+    println!();
+    println!("## Changes (JSON payload with explicit target plan)");
+    println!();
+    println!(
+        "Section type `changes` uses the initialized JSON `body` skeleton below. Replace every `(fill: ...)` value with a concrete repo-relative target plan before applying it:"
+    );
+    println!();
+    println!(
+        "{}",
+        td_json_payload_schema_hint("changes").unwrap_or_default()
     );
     println!();
     println!("## Mermaid Plus (CODEGEN-READY — required for state-machine, logic, interaction)");
@@ -3455,6 +4216,20 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
                 slug
             );
             return td_error(slug, msg);
+        };
+
+        // Generic JSON payloads accept either the initialized complete
+        // section fragment or a body-only fragment. Normalize the latter
+        // before the single-section splice so replacing an existing section
+        // never discards its typed H2/annotation wrapper (#1562). Structured
+        // payloads such as unit-test already render a complete wrapper.
+        let payload_body = if section == "unit-test" {
+            payload_body
+        } else {
+            match normalize_generic_td_section_payload(section, &payload_body, &spec_abs) {
+                Ok(normalized) => normalized,
+                Err(error) => return td_error(slug, error.to_string()),
+            }
         };
 
         let merged = match merge_spec_section(&base_body, section, &payload_body) {
@@ -3645,16 +4420,29 @@ async fn complete_section_apply(
         maybe_push_remote(&worktree_abs, &issue_path, slug).await?;
         // Linear lifecycle (no review): start the contract pass at its first
         // section, or go straight to gen when there are no contract sections.
-        match td_section_queue_for_spec(&worktree_abs, spec_path, "contract")
-            .into_iter()
-            .next()
-        {
-            Some(first) => {
-                let expected_payload = section_payload_path(project_root, slug, "contract", &first);
+        let contract_queue = td_section_queue_for_spec(&worktree_abs, spec_path, "contract");
+        match contract_queue.split_first() {
+            Some((first, remaining_contract)) => {
+                let expected_payload = section_payload_path(project_root, slug, "contract", first);
                 initialize_td_payload_file(
                     &expected_payload,
-                    &td_section_payload_template(&first)?,
+                    &td_section_payload_template(first)?,
                 )?;
+                let expected_command = format!(
+                    "aw td create {} --apply --phase contract --section {} --spec-path {}",
+                    slug, first, spec_path
+                );
+                super::workflow_guard::create_issue_lock(
+                    &worktree_abs,
+                    &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
+                        .with_expected_payload(expected_payload.clone())
+                        .with_active_phase(lifecycle_pass_phase("contract"))
+                        .with_active_branch(active_branch)
+                        .with_current_section(first.clone())
+                        .with_remaining_sections(remaining_contract.iter().cloned())
+                        .with_dirty_paths([spec_path.to_string()]),
+                )
+                .await?;
                 Some((
                     "Td-Applicability-Complete",
                     active_phase,
@@ -3668,7 +4456,7 @@ async fn complete_section_apply(
                             "spec_path": spec_path,
                             "payload_path": expected_payload,
                         }),
-                        &first,
+                        first,
                     ),
                 ))
             }
@@ -3796,6 +4584,174 @@ fn run_validate_readonly(shape: crate::validate::PathShape, json: bool) -> Resul
 
 // ── td gen ─────────────────────────────────────────────────────────
 
+struct PreparedTdGeneration {
+    spec_path: String,
+    spec_content: String,
+}
+
+fn shell_quote_td_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateError) -> Result<()> {
+    let (error_kind, section, targets, spec_path, remediation, next_command) = match error {
+        crate::generate::GenerateError::AmbiguousGenerationPlan {
+            section,
+            targets,
+            remediation,
+            next_command,
+        } => (
+            "ambiguous_generation_plan",
+            Some(section.as_str()),
+            targets.as_slice(),
+            None,
+            remediation.as_str(),
+            next_command.as_str(),
+        ),
+        crate::generate::GenerateError::GenerationPlanUnavailable {
+            spec_path,
+            remediation,
+            next_command,
+        } => (
+            "generation_plan_unavailable",
+            None,
+            &[][..],
+            Some(spec_path.as_str()),
+            remediation.as_str(),
+            next_command.as_str(),
+        ),
+        _ => return Ok(()),
+    };
+    print_json_value(
+        &serde_json::json!({
+            "action": "error",
+            "slug": slug,
+            "error_kind": error_kind,
+            "section": section,
+            "targets": targets,
+            "spec_path": spec_path,
+            "message": error.to_string(),
+            "remediation": remediation,
+            "next": {
+                "kind": "remediation",
+                "command": next_command,
+                "reason": remediation,
+                "requires_hitl": false,
+                "payload_path": null,
+            },
+            "completion": {
+                "root_complete": false,
+                "workflow_complete": false,
+                "requires_hitl": false,
+                "criteria": [],
+                "missing": ["unambiguous complete TD generation plan"],
+            },
+        }),
+        true,
+    )
+}
+
+/// Resolve and validate the TD generation input without hydrating an issue,
+/// switching branches, touching the index, or writing lifecycle state. When
+/// invoked from `main`, read the already-existing `td-<slug>` branch through
+/// Git's object database instead of checking it out.
+/// @spec apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#logic
+async fn prepare_td_generation_before_lifecycle(
+    project_root: &std::path::Path,
+    requested_slug: &str,
+    explicit_spec_path: Option<&str>,
+) -> Result<PreparedTdGeneration> {
+    let local = LocalBackend::from_project_root(project_root);
+    let local_issue = local.get(requested_slug).await?;
+    let workflow_slug = local_issue
+        .as_ref()
+        .map(|issue| workflow_slug_for_issue(issue, requested_slug))
+        .unwrap_or_else(|| requested_slug.to_string());
+
+    let spec_path = if let Some(explicit) = explicit_spec_path {
+        explicit.to_string()
+    } else if let Some(discovered) = discover_worktree_spec(project_root) {
+        discovered
+    } else if let Some(issue) = local_issue.as_ref() {
+        default_spec_path_for_issue_in_project(project_root, issue, &workflow_slug).map_err(
+            |error| {
+                anyhow::anyhow!(
+                    "td gen must resolve its spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+                )
+            },
+        )?
+    } else {
+        anyhow::bail!(
+            "td gen cannot discover a unique spec before issue hydration or branch activation; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+        );
+    };
+
+    let spec_rel = std::path::Path::new(&spec_path);
+    if spec_rel.is_absolute()
+        || spec_rel.as_os_str().is_empty()
+        || spec_rel
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        anyhow::bail!(
+            "td gen --spec-path must be a normalized repository-relative path before lifecycle mutation: `{spec_path}`"
+        );
+    }
+
+    let current_branch = crate::branch_switch::current_branch(project_root)?;
+    let target_branch = td_branch_name(&workflow_slug);
+    let spec_content = if should_use_td_branch(&current_branch)
+        && crate::branch_switch::branch_exists_local(project_root, &target_branch).unwrap_or(false)
+    {
+        let git = crate::git::find_git_bin().context("git binary not found on PATH")?;
+        let object = format!("refs/heads/{target_branch}:{spec_path}");
+        let output = std::process::Command::new(git)
+            .arg("-C")
+            .arg(project_root)
+            .args(["cat-file", "blob", &object])
+            .output()
+            .with_context(|| format!("reading TD spec `{spec_path}` from `{target_branch}`"))?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "td gen could not read `{spec_path}` from existing branch `{target_branch}` before activation: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        String::from_utf8(output.stdout)
+            .with_context(|| format!("TD spec `{spec_path}` on `{target_branch}` is not UTF-8"))?
+    } else {
+        std::fs::read_to_string(project_root.join(&spec_path)).with_context(|| {
+            format!(
+                "td gen could not read `{spec_path}` before issue hydration or branch activation; rerun with an existing `--spec-path`"
+            )
+        })?
+    };
+
+    let rerun_command = format!(
+        "aw td gen {} --spec-path {}",
+        shell_quote_td_arg(requested_slug),
+        shell_quote_td_arg(&spec_path),
+    );
+    crate::generate::apply::preflight_generation_plan(
+        &spec_content,
+        std::path::Path::new(&spec_path),
+        project_root,
+        &rerun_command,
+    )?;
+    Ok(PreparedTdGeneration {
+        spec_path,
+        spec_content,
+    })
+}
+
 /// Implementation of `aw td gen` — generates code from an approved TD spec.
 /// Writes canonical phase `cb_genned` and trailer `Cb-Gen`.
 ///
@@ -3803,6 +4759,25 @@ fn run_validate_readonly(shape: crate::validate::PathShape, json: bool) -> Resul
 pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let requested_slug = &args.slug;
+
+    // The generation plan is an admission gate. Resolve/read it before the
+    // helpers below can hydrate a remote issue or activate `td-<slug>`.
+    let prepared = match prepare_td_generation_before_lifecycle(
+        &project_root,
+        requested_slug,
+        args.spec_path.as_deref(),
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            if let Some(plan_error) = error.downcast_ref::<crate::generate::GenerateError>() {
+                print_generation_plan_error(requested_slug, plan_error)?;
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
 
     let bootstrapped_issue = bootstrap_td_issue(&project_root, requested_slug).await?;
     let slug = workflow_slug_for_issue(&bootstrapped_issue, requested_slug);
@@ -3838,18 +4813,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
         return Ok(());
     }
 
-    let spec_path_owned: String = match args.spec_path.as_deref() {
-        Some(p) => p.to_string(),
-        None => match discover_worktree_spec(&worktree_abs) {
-            Some(p) => p,
-            None => {
-                anyhow::bail!(
-                    "--spec-path is required for td gen (auto-discovery found no \
-                     unique spec under .aw/tech-design/ in the current checkout)"
-                );
-            }
-        },
-    };
+    let spec_path_owned = prepared.spec_path;
     let spec_path = spec_path_owned.as_str();
     let spec_abs = worktree_abs.join(spec_path);
     if !spec_abs.exists() {
@@ -3859,6 +4823,13 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             message: &msg,
         })?;
         return Ok(());
+    }
+    let execution_spec_content = std::fs::read_to_string(&spec_abs)
+        .with_context(|| format!("re-reading prepared TD spec {}", spec_abs.display()))?;
+    if execution_spec_content != prepared.spec_content {
+        anyhow::bail!(
+            "td gen spec `{spec_path}` changed after read-only plan preparation; rerun the same `aw td gen` command"
+        );
     }
     let td_lock =
         match super::td_lock::check_project_td_lock_for_spec_at_root(&worktree_abs, &spec_abs) {
@@ -4725,6 +5696,21 @@ mod tests {
         assert!(!should_use_td_branch("td-existing"));
     }
 
+    #[test]
+    fn rebased_td_lifecycle_recovery_excludes_post_gen_and_terminal_phases() {
+        use crate::issues::types::td_phase;
+
+        assert!(is_recoverable_td_authoring_phase(td_phase::TD_INITED));
+        assert!(is_recoverable_td_authoring_phase(td_phase::TD_CREATED));
+        assert!(!is_recoverable_td_authoring_phase(
+            td_phase::LEGACY_TD_GEN_CODED
+        ));
+        assert!(!is_recoverable_td_authoring_phase(td_phase::CB_GENNED));
+        assert!(!is_recoverable_td_authoring_phase(td_phase::CB_FILLED));
+        assert!(!is_recoverable_td_authoring_phase(td_phase::TD_MERGED));
+        assert!(!is_recoverable_td_authoring_phase("created"));
+    }
+
     fn issue_with_title(title: &str) -> Issue {
         Issue {
             issue_type: crate::issues::IssueType::Enhancement,
@@ -4788,6 +5774,75 @@ label = "app:agentic-workflow"
             default_spec_path_for_issue_in_project(tmp.path(), &issue, "4162").unwrap(),
             "apps/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
         );
+    }
+
+    #[test]
+    fn project_label_canonicalization_bridges_producer_to_default_td_resolver() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("libs/service-backup")).unwrap();
+        std::fs::write(
+            tmp.path().join("aw.toml"),
+            r#"
+[agentic_workflow.projects]
+discover = ["libs/*/aw.toml"]
+
+[[projects]]
+name = "service-backup"
+path = "libs/service-backup"
+
+[[projects]]
+name = "jet"
+path = "apps/jet"
+label = "project:jet"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("libs/service-backup/aw.toml"),
+            r#"
+[project]
+name = "service-backup"
+label = "project:service-backup"
+"#,
+        )
+        .unwrap();
+
+        for (project, expected_label, expected_path) in [
+            (
+                "service-backup",
+                "lib:service-backup",
+                "libs/service-backup/tech-design/logic/library-backup-routing.md",
+            ),
+            (
+                "jet",
+                "app:jet",
+                "apps/jet/tech-design/logic/app-routing.md",
+            ),
+        ] {
+            let produced = crate::cli::issues::resolve_project_label(tmp.path(), project)
+                .unwrap_or_else(|e| panic!("{project} producer must resolve: {e:?}"));
+            assert_eq!(produced, expected_label);
+            let produced_labels = crate::cli::issues::build_create_label_vec(
+                "type:enhancement",
+                std::slice::from_ref(&produced),
+                None,
+                None,
+            );
+            assert_eq!(produced_labels, vec!["type:enhancement", expected_label]);
+
+            let title = match project {
+                "service-backup" => "Library backup routing",
+                "jet" => "App routing",
+                _ => unreachable!(),
+            };
+            let mut issue = issue_with_title(title);
+            issue.labels = produced_labels;
+            assert_eq!(
+                default_spec_path_for_issue_in_project(tmp.path(), &issue, "1519")
+                    .unwrap_or_else(|e| panic!("{project} TD path must resolve: {e}")),
+                expected_path
+            );
+        }
     }
 
     // #1403 AC2: an issue whose labels use no recognized project-label
@@ -5057,6 +6112,52 @@ label = "lib:pg"
 
         assert!(merged.contains("fill_sections: [logic, changes]"));
         assert!(merged.contains("## Changes"));
+    }
+
+    #[test]
+    fn merge_spec_section_preserves_complete_default_queue_from_empty_skeleton() {
+        let base = "---\nid: default-queue\nfill_sections: []\n---\n";
+        let payload = concat!(
+            "## Logic\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: default_queue\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+
+        let merged = merge_spec_section(base, "logic", payload).unwrap();
+
+        assert!(merged.contains("fill_sections: [logic, changes, unit-test]"));
+        assert_eq!(
+            remaining_after_section_in_content(&merged, "applicability", "logic"),
+            vec!["changes".to_string(), "unit-test".to_string()]
+        );
+    }
+
+    #[test]
+    fn merge_spec_section_preserves_explicit_custom_queue_order() {
+        let base = "---\nid: custom-queue\nfill_sections: [unit-test, logic]\n---\n";
+        let payload = "## Logic\n<!-- type: logic lang: mermaid -->\n\n```mermaid\ncustom\n```\n";
+
+        let merged = merge_spec_section(base, "logic", payload).unwrap();
+
+        assert!(merged.contains("fill_sections: [unit-test, logic]"));
+        assert_eq!(
+            td_section_queue_for_content(&merged, "applicability"),
+            vec!["unit-test".to_string(), "logic".to_string()]
+        );
+        assert_eq!(
+            td_section_queue_for_content(&merged, "contract"),
+            vec!["unit-test".to_string(), "logic".to_string()],
+            "a non-empty custom queue must remain authoritative in both passes"
+        );
     }
 
     #[test]
@@ -5393,16 +6494,28 @@ label = "lib:pg"
     }
 
     #[test]
-    fn td_section_queue_excludes_deprecated_and_legacy_metadata_types() {
+    fn td_section_queue_includes_target_plan_and_excludes_deprecated_types() {
         let queue = td_section_queue("applicability");
-        assert_eq!(queue, vec!["logic".to_string(), "unit-test".to_string()]);
+        assert_eq!(
+            queue,
+            vec![
+                "logic".to_string(),
+                "changes".to_string(),
+                "unit-test".to_string(),
+            ]
+        );
         assert!(!queue.contains(&"overview".to_string()));
         assert!(!queue.contains(&"requirements".to_string()));
         assert!(!queue.contains(&"doc".to_string()));
         assert!(!queue.contains(&"scenarios".to_string()));
-        assert!(!queue.contains(&"changes".to_string()));
+        assert!(queue.contains(&"changes".to_string()));
         assert!(queue.contains(&"unit-test".to_string()));
         assert!(queue.contains(&"logic".to_string()));
+        assert_eq!(
+            td_section_queue("contract"),
+            queue,
+            "fresh applicability and contract passes must use the same target-owning queue"
+        );
         for section in &queue {
             let section_type = section
                 .parse::<crate::models::spec_rules::SectionType>()
@@ -5415,6 +6528,31 @@ label = "lib:pg"
     }
 
     #[test]
+    fn target_plan_active_td_authoring_types_include_changes_before_unit_test_in_suggested_order() {
+        use crate::models::spec_rules::SectionType;
+
+        let active = active_td_section_types();
+        assert!(active.contains(&SectionType::Changes));
+        assert!(!active.contains(&SectionType::Overview));
+        assert!(!active.contains(&SectionType::Requirements));
+        assert!(!active.contains(&SectionType::Doc));
+
+        let suggested = suggested_td_authoring_section_types();
+        let changes = suggested
+            .iter()
+            .position(|section| *section == SectionType::Changes)
+            .unwrap();
+        let unit_test = suggested
+            .iter()
+            .position(|section| *section == SectionType::UnitTest)
+            .unwrap();
+        assert!(
+            changes < unit_test,
+            "human guidance must place Changes before Unit Test: {suggested:?}"
+        );
+    }
+
+    #[test]
     fn td_section_payload_template_scaffolds_typed_section() {
         let template = td_section_payload_template("logic").unwrap();
         let value: TdBodySectionPayload =
@@ -5423,6 +6561,26 @@ label = "lib:pg"
         assert!(value.body.contains("<!-- type: logic lang: mermaid -->"));
         assert!(value.body.contains("```mermaid"));
         assert!(value.body.contains("(fill)"));
+    }
+
+    #[test]
+    fn td_section_payload_template_changes_scaffolds_editable_target_plan() {
+        let template = td_section_payload_template("changes").unwrap();
+        let value: TdBodySectionPayload =
+            serde_json::from_str(&template).expect("Changes payload template must be JSON");
+        assert!(value.body.contains("## Changes"));
+        assert!(value.body.contains("<!-- type: changes lang: yaml -->"));
+        assert!(value.body.contains("changes:\n"));
+        assert!(value
+            .body
+            .contains("path: \"(fill: repo-relative target path)\""));
+        assert!(value.body.contains("action: \"(fill: create|modify)\""));
+        assert!(value
+            .body
+            .contains("section: \"(fill: artifact-driving section id)\""));
+        assert!(value
+            .body
+            .contains("impl_mode: \"(fill: codegen|hand-written)\""));
     }
 
     #[test]
@@ -5618,6 +6776,217 @@ label = "lib:pg"
     }
 
     #[test]
+    fn target_plan_legacy_generic_changes_wrapper_stays_accepted() {
+        let body = concat!(
+            "## Target Plan\n",
+            "<!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes:\n",
+            "  - file: src/lib.rs\n",
+            "    action: modify\n",
+            "    section: logic\n",
+            "    replaces: [LegacySymbol]\n",
+            "    impl_mode: codegen\n",
+            "```\n",
+        );
+        let raw = serde_json::json!({ "body": body }).to_string();
+
+        let rendered = render_td_json_section_payload("changes", &raw).unwrap();
+        let normalized = normalize_generic_td_section_payload(
+            "changes",
+            &rendered,
+            std::path::Path::new("tech-design/logic/legacy-changes.md"),
+        )
+        .unwrap();
+
+        assert_eq!(normalized, body);
+        assert_eq!(
+            crate::generate::apply::extract_change_entries_count(&normalized),
+            1
+        );
+    }
+
+    // #1562: generic payloads may contain only the requested section body.
+    // The apply path must restore the typed H2 wrapper before replacing the
+    // on-disk section, otherwise the subsequent RequireThrough lookup reports
+    // the valid section as missing.
+    #[test]
+    fn normalize_generic_td_section_payload_wraps_body_only_logic() {
+        let body = concat!(
+            "```mermaid\n",
+            "---\n",
+            "id: body_only_logic\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+
+        let normalized = normalize_generic_td_section_payload(
+            "logic",
+            body,
+            std::path::Path::new("tech-design/semantic/body-only.md"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            normalized,
+            format!("## Logic\n<!-- type: logic lang: mermaid -->\n\n{body}")
+        );
+        let spec =
+            format!("---\nid: body-only\nfill_sections: [logic, unit-test]\n---\n\n{normalized}");
+        assert!(
+            validate_spec_for_section_apply(&spec, "logic").is_empty(),
+            "normalized body-only payload must remain discoverable as Logic: {spec}"
+        );
+    }
+
+    #[test]
+    fn normalize_generic_td_section_payload_preserves_complete_custom_heading() {
+        let wrapped = concat!(
+            "## Logic: validate\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: wrapped_logic\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+
+        let normalized = normalize_generic_td_section_payload(
+            "logic",
+            wrapped,
+            std::path::Path::new("tech-design/semantic/wrapped.md"),
+        )
+        .unwrap();
+
+        assert_eq!(normalized, wrapped);
+    }
+
+    #[test]
+    fn normalize_generic_td_section_payload_rejects_mismatched_wrapper_type_and_lang() {
+        let wrong_type = concat!(
+            "## Interaction\n",
+            "<!-- type: interaction lang: mermaid -->\n\n",
+            "```mermaid\n---\nid: wrong\nactors: []\nmessages: []\n---\nsequenceDiagram\n```\n",
+        );
+        let type_error = normalize_generic_td_section_payload(
+            "logic",
+            wrong_type,
+            std::path::Path::new("tech-design/semantic/wrong-type.md"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            type_error.contains("requested section 'logic'"),
+            "{type_error}"
+        );
+        assert!(type_error.contains("type 'interaction'"), "{type_error}");
+
+        let wrong_heading = concat!(
+            "## Unit Test\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n---\nid: wrong_heading\nentry: start\nnodes:\n  start: { kind: start }\nedges: []\n---\nflowchart TD\n```\n",
+        );
+        let heading_error = normalize_generic_td_section_payload(
+            "logic",
+            wrong_heading,
+            std::path::Path::new("tech-design/semantic/wrong-heading.md"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            heading_error.contains("payload heading 'Unit Test' for type 'unit-test'"),
+            "{heading_error}"
+        );
+
+        let wrong_lang = concat!(
+            "## Logic\n",
+            "<!-- type: logic lang: yaml -->\n\n",
+            "```yaml\nkind: wrong\n```\n",
+        );
+        let lang_error = normalize_generic_td_section_payload(
+            "logic",
+            wrong_lang,
+            std::path::Path::new("tech-design/semantic/wrong-lang.md"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(lang_error.contains("declares lang 'yaml'"), "{lang_error}");
+        assert!(lang_error.contains("expected 'mermaid'"), "{lang_error}");
+    }
+
+    #[test]
+    fn normalize_generic_td_section_payload_rejects_empty_wrong_fence_and_broken_wrappers() {
+        let path = std::path::Path::new("tech-design/semantic/malformed.md");
+
+        let empty = normalize_generic_td_section_payload("logic", "  \n", path)
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("must not be empty"), "{empty}");
+
+        let wrong_fence =
+            normalize_generic_td_section_payload("logic", "```yaml\nkind: wrong\n```\n", path)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            wrong_fence.contains("matching-lang fenced block"),
+            "{wrong_fence}"
+        );
+
+        let unclosed_fence = normalize_generic_td_section_payload(
+            "logic",
+            "```mermaid\n---\nid: unclosed\nentry: start\nnodes:\n  start: { kind: start }\nedges: []\n---\nflowchart TD\n",
+            path,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            unclosed_fence.contains("unclosed fenced block"),
+            "{unclosed_fence}"
+        );
+
+        let missing_annotation = normalize_generic_td_section_payload(
+            "logic",
+            "## Logic\n\n```mermaid\n---\nid: broken\n---\nflowchart TD\n```\n",
+            path,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            missing_annotation.contains("immediately followed by one complete type annotation"),
+            "{missing_annotation}"
+        );
+
+        let multiple = normalize_generic_td_section_payload(
+            "logic",
+            concat!(
+                "## Logic\n",
+                "<!-- type: logic lang: mermaid -->\n\n",
+                "```mermaid\n---\nid: one\nentry: start\nnodes:\n  start: { kind: start }\nedges: []\n---\nflowchart TD\n```\n\n",
+                "## Interaction\n",
+                "<!-- type: interaction lang: mermaid -->\n\n",
+                "```mermaid\n---\nid: forged\nactors: []\nmessages: []\n---\nsequenceDiagram\n```\n",
+            ),
+            path,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            multiple.contains("exactly one top-level H2 wrapper"),
+            "{multiple}"
+        );
+    }
+
+    #[test]
     fn remaining_after_section_uses_spec_fill_sections_when_present() {
         let spec = concat!(
             "---\n",
@@ -5676,7 +7045,10 @@ label = "lib:pg"
         let content = std::fs::read_to_string(&spec_abs).unwrap();
         assert!(content.starts_with("---\n"), "content: {content}");
         assert!(content.contains("id: some-slug"), "content: {content}");
-        assert!(content.contains("fill_sections: []"), "content: {content}");
+        assert!(
+            content.contains("fill_sections: [logic, changes, unit-test]"),
+            "content: {content}"
+        );
 
         // Idempotent: a second call on an already-authored file must not
         // clobber it (a repeat `aw td create` brief call between section
@@ -5691,6 +7063,189 @@ label = "lib:pg"
             std::fs::read_to_string(&spec_abs).unwrap(),
             "---\nid: some-slug\nfill_sections: [logic]\n---\nauthored\n"
         );
+    }
+
+    #[test]
+    fn initialize_td_spec_skeleton_numeric_id_accepts_first_section_apply() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spec_abs = tmp.path().join("tech-design/logic/1487.md");
+
+        assert!(initialize_td_spec_skeleton(&spec_abs, "1487").unwrap());
+        let skeleton = std::fs::read_to_string(&spec_abs).unwrap();
+        assert!(
+            !skeleton.lines().any(|line| line == "id: 1487"),
+            "numeric id must not be emitted as a bare YAML number: {skeleton}"
+        );
+        let logic = concat!(
+            "## Logic\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: numeric_1487\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+        let merged = merge_spec_section(&skeleton, "logic", logic).unwrap();
+        let errors = validate_spec_for_section_apply(&merged, "logic");
+        assert!(
+            errors.is_empty(),
+            "numeric skeleton must accept its first applicability section: {errors:?}\n{merged}"
+        );
+        assert_eq!(
+            remaining_after_section_in_content(&merged, "applicability", "logic"),
+            vec!["changes".to_string(), "unit-test".to_string()],
+            "numeric TDs must preserve the target plan and test sections after logic"
+        );
+
+        let (frontmatter, _) = split_frontmatter(&skeleton).expect("skeleton frontmatter");
+        let parsed: serde_yaml::Value = serde_yaml::from_str(frontmatter).unwrap();
+        assert_eq!(
+            parsed.get("id").and_then(|value| value.as_str()),
+            Some("1487")
+        );
+    }
+
+    #[test]
+    fn td_skeleton_recovery_accepts_only_exact_historical_empty_bytes() {
+        if !git_available() {
+            return;
+        }
+        let slug = "1580";
+        let canonical = td_spec_skeleton(slug).unwrap();
+        let accepted = known_empty_td_spec_skeletons(slug).unwrap();
+        assert!(accepted.len() >= 4, "historical shapes: {accepted:?}");
+
+        for (index, bytes) in accepted.iter().enumerate() {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            init_git_repo(root);
+            let spec_rel = format!("tech-design/logic/{slug}-{index}.md");
+            let spec_abs = root.join(&spec_rel);
+            std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+            std::fs::write(&spec_abs, bytes).unwrap();
+
+            assert!(
+                recoverable_untracked_td_skeleton(root, &spec_rel, slug).unwrap(),
+                "exact historical skeleton {index} must be recoverable:\n{bytes}"
+            );
+            canonicalize_recoverable_td_skeleton(root, &spec_rel, slug).unwrap();
+            assert_eq!(std::fs::read_to_string(&spec_abs).unwrap(), canonical);
+        }
+
+        for (name, bytes) in [
+            ("authored", format!("{canonical}\n## Logic\nauthored\n")),
+            ("extra-newline", format!("{canonical}\n")),
+            ("comment", format!("{canonical}<!-- interrupted -->\n")),
+            (
+                "wrong-slug",
+                td_spec_skeleton("1581").expect("wrong-slug skeleton"),
+            ),
+            (
+                "near-match",
+                canonical.replace("summary: (fill)", "summary: fill"),
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            init_git_repo(root);
+            let spec_rel = format!("tech-design/logic/{name}.md");
+            let spec_abs = root.join(&spec_rel);
+            std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+            std::fs::write(&spec_abs, &bytes).unwrap();
+
+            assert!(checkout_has_only_exact_untracked_path(root, &spec_rel).unwrap());
+            assert!(
+                !recoverable_untracked_td_skeleton(root, &spec_rel, slug).unwrap(),
+                "{name} must not be recoverable"
+            );
+            assert!(canonicalize_recoverable_td_skeleton(root, &spec_rel, slug).is_err());
+            assert_eq!(
+                std::fs::read_to_string(&spec_abs).unwrap(),
+                bytes,
+                "{name} bytes must remain immutable"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn td_skeleton_recovery_rejects_untracked_symlink() {
+        use std::os::unix::fs::symlink;
+
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), td_spec_skeleton("1580").unwrap()).unwrap();
+        let spec_rel = "tech-design/logic/1580.md";
+        let spec_abs = root.join(spec_rel);
+        std::fs::create_dir_all(spec_abs.parent().unwrap()).unwrap();
+        symlink(outside.path(), &spec_abs).unwrap();
+
+        assert!(checkout_has_only_exact_untracked_path(root, spec_rel).unwrap());
+        assert!(!recoverable_untracked_td_skeleton(root, spec_rel, "1580").unwrap());
+    }
+
+    #[test]
+    fn td_skeleton_recovery_requires_exact_untracked_status_and_clean_siblings() {
+        if !git_available() {
+            return;
+        }
+        let slug = "1580";
+        let canonical = td_spec_skeleton(slug).unwrap();
+        let spec_rel = "tech-design/logic/1580.md";
+
+        // Sole exact `?? target` is the only accepted checkout shape.
+        let exact = tempfile::tempdir().unwrap();
+        init_git_repo(exact.path());
+        std::fs::create_dir_all(exact.path().join("tech-design/logic")).unwrap();
+        std::fs::write(exact.path().join(spec_rel), &canonical).unwrap();
+        assert!(recoverable_untracked_td_skeleton(exact.path(), spec_rel, slug).unwrap());
+
+        // A tracked target modified to the same empty bytes is authored state.
+        let modified = tempfile::tempdir().unwrap();
+        init_git_repo(modified.path());
+        std::fs::create_dir_all(modified.path().join("tech-design/logic")).unwrap();
+        std::fs::write(modified.path().join(spec_rel), "tracked authored bytes\n").unwrap();
+        git_stdout(modified.path(), &["add", spec_rel]);
+        git_stdout(modified.path(), &["commit", "-m", "track spec"]);
+        std::fs::write(modified.path().join(spec_rel), &canonical).unwrap();
+        assert!(!recoverable_untracked_td_skeleton(modified.path(), spec_rel, slug).unwrap());
+
+        // A staged addition is not an interrupted unstaged CLI write.
+        let staged = tempfile::tempdir().unwrap();
+        init_git_repo(staged.path());
+        std::fs::create_dir_all(staged.path().join("tech-design/logic")).unwrap();
+        std::fs::write(staged.path().join(spec_rel), &canonical).unwrap();
+        git_stdout(staged.path(), &["add", spec_rel]);
+        assert!(!recoverable_untracked_td_skeleton(staged.path(), spec_rel, slug).unwrap());
+
+        // A rename destination with matching bytes is still tracked history.
+        let renamed = tempfile::tempdir().unwrap();
+        init_git_repo(renamed.path());
+        std::fs::create_dir_all(renamed.path().join("tech-design/logic")).unwrap();
+        let source_rel = "tech-design/logic/source.md";
+        std::fs::write(renamed.path().join(source_rel), &canonical).unwrap();
+        git_stdout(renamed.path(), &["add", source_rel]);
+        git_stdout(renamed.path(), &["commit", "-m", "track source"]);
+        git_stdout(renamed.path(), &["mv", source_rel, spec_rel]);
+        assert!(!recoverable_untracked_td_skeleton(renamed.path(), spec_rel, slug).unwrap());
+
+        // Even an exact target is rejected when any other checkout path is dirty.
+        let sibling = tempfile::tempdir().unwrap();
+        init_git_repo(sibling.path());
+        std::fs::create_dir_all(sibling.path().join("tech-design/logic")).unwrap();
+        std::fs::write(sibling.path().join(spec_rel), &canonical).unwrap();
+        std::fs::write(sibling.path().join("unrelated.txt"), "unrelated\n").unwrap();
+        assert!(!recoverable_untracked_td_skeleton(sibling.path(), spec_rel, slug).unwrap());
     }
 
     #[test]
@@ -5876,6 +7431,143 @@ label = "lib:pg"
                 .contains("new TDs must not include legacy prose section type 'scenarios'")),
             "new TD authoring should reject scenarios: {errors:?}"
         );
+    }
+
+    fn stale_plain_mermaid_td() -> &'static str {
+        r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  stale --> disk
+```
+"#
+    }
+
+    fn valid_signature_logic_candidate() -> &'static str {
+        r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: merged-candidate
+signature: "pub fn merge_candidates(items: &[String]) -> Vec<String>"
+entry: init
+nodes:
+  init:
+    kind: process
+    code: "let mut out = Vec::new();"
+  item_loop:
+    kind: loop
+    over: items
+    as: item
+  push_item:
+    kind: process
+    code: "out.push(item.clone());"
+  done:
+    kind: terminal
+    value: out
+edges:
+  - { from: init, to: item_loop, kind: next }
+  - { from: item_loop, to: push_item, kind: body }
+  - { from: item_loop, to: done, kind: after }
+---
+flowchart TD
+  init --> item_loop
+  item_loop --> push_item
+  item_loop --> done
+```
+"#
+    }
+
+    #[test]
+    fn merged_td_candidate_validation_accepts_logic_spec_over_stale_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("merged-candidate.md");
+        std::fs::write(&spec_path, stale_plain_mermaid_td()).unwrap();
+
+        let report = validate_new_td_authoring_content(
+            &spec_path,
+            valid_signature_logic_candidate(),
+            TdContentValidationScope::RequireThrough("logic"),
+        )
+        .unwrap();
+
+        assert!(
+            !report.has_errors(),
+            "a valid LogicSpec signature/loop candidate must replace stale plain Mermaid: {:?}",
+            report.findings
+        );
+        assert_eq!(
+            std::fs::read_to_string(&spec_path).unwrap(),
+            stale_plain_mermaid_td(),
+            "candidate validation must stay pure until the caller writes"
+        );
+    }
+
+    #[test]
+    fn merged_td_candidate_validation_rejects_invalid_mermaid_before_write() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("invalid-candidate.md");
+        std::fs::write(&spec_path, valid_signature_logic_candidate()).unwrap();
+        let invalid_candidate = r#"---
+id: '1586'
+summary: Validate the merged TD section candidate before writing it.
+fill_sections: [logic]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  missing --> frontmatter
+```
+"#;
+
+        let report = validate_new_td_authoring_content(
+            &spec_path,
+            invalid_candidate,
+            TdContentValidationScope::RequireThrough("logic"),
+        )
+        .unwrap();
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.rule == crate::validate::RuleId::CodegenReady
+                && finding.message.contains("requires a Mermaid Plus block")
+        }));
+        assert_eq!(
+            std::fs::read_to_string(&spec_path).unwrap(),
+            valid_signature_logic_candidate(),
+            "an invalid candidate must be rejected before the write boundary"
+        );
+    }
+
+    #[test]
+    fn merged_td_candidate_validation_keeps_completed_specs_file_backed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("completed-on-disk.md");
+        std::fs::write(&spec_path, stale_plain_mermaid_td()).unwrap();
+
+        let report =
+            validate_new_td_authoring_file(&spec_path, TdContentValidationScope::Complete).unwrap();
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.rule == crate::validate::RuleId::CodegenReady
+                && finding.message.contains("requires a Mermaid Plus block")
+        }));
     }
 
     #[test]
@@ -6770,4 +8462,95 @@ changes:
       YAML frontmatter and a generated `flowchart TD` diagram from that data,
       and rejects hand-written mermaid/YAML payloads for JSON-payload sections
       with a schema-pointing error.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1506 mounts `aw td gen-source` in the LINEAR TD dispatcher and
+      delegates it to the CB exact single-target replay implementation. The TD
+      check path validates partition manifests with the same strict decoder
+      used by generation.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1562 normalizes body-only generic section payloads into the
+      requested typed H2/annotation wrapper before the existing single-section
+      merge. Complete custom-heading wrappers remain compatible, while empty,
+      placeholder, wrong-language, unclosed-fence, mismatched, broken, or
+      multiple-wrapper payloads fail before any spec write. The existing
+      candidate RequireThrough check and dirty-spec allowance remain intact;
+      candidate-wide registry validation stays scoped to #1586.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1598 makes Changes part of every fresh default TD queue in both
+      applicability and contract. The CLI initializes a generic JSON-body
+      payload with an editable path/action/section/impl_mode target-plan
+      scaffold, preserves non-empty custom queues, rebuilds TransitionLock for
+      the first contract section, and keeps the human Changes suggestion ahead
+      of Unit Test without changing the global fill order.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1602 repairs active authoring state after rebased history loses
+      its exact Td-Init. Existing TD branches are activated before lookup;
+      reachable init resumes unchanged, while missing init clears the stale
+      projection and lock labels, emits an unreachable-td-init Td-Reset, and
+      routes through normal provisioning. Fresh phase `created`, post-gen, and
+      terminal retry boundaries retain their prior behavior.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1633 resolves and validates the exact generation plan before
+      remote issue hydration, TD branch activation, index/source writes, or
+      lifecycle commits. Existing TD branch specs are read through Git objects
+      while the caller and executor share read-only exact spec-ref inference
+      and one Schema/CLI target-ownership predicate. A single inferred target
+      remains admissible; none receives explicit Changes remediation and more
+      than one receives sorted ambiguity. Typed failures emit one stdout
+      envelope with stable kind, section, targets, shell-safe remediation
+      command, and incomplete completion; execution revalidates prepared bytes
+      after activation.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1519 adds the producer-to-default-TD-path regression for stale
+      registered library and app labels, including a discovered project-local
+      stale override of a label-free root row. Canonical `lib:` and `app:`
+      outputs use the registered name and resolve to their configured
+      project-local roots; TD still rejects a raw retired `project:` label.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1580 admits only the sole exact `??` target whose regular-file
+      bytes match a finite known-empty skeleton set. That candidate is
+      revalidated through activation and #1602 reset/provision, canonicalized
+      with the serde-YAML id renderer only after the refreshed `td_inited`
+      guard, and staged in one fresh or recovery Td-Queue-Start commit.
+      Authored, tracked, staged, renamed, symlink, sibling-dirty, reachable
+      `td_created`, post-gen, and terminal states remain fail-closed.
+  - path: apps/agentic-workflow/src/cli/td.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1586 makes the validation source explicit: section-merge
+      candidates run legacy partial rules, forbidden-section rules, and the
+      complete shared registry over candidate bytes before the write; completed
+      on-disk specs keep the file-backed registry path. Valid signature/loop
+      LogicSpec payloads replace stale plain Mermaid, and invalid Mermaid Plus
+      candidates leave the spec and payload unchanged.
 ```

@@ -1,7 +1,7 @@
 [project]
 name = "service-metrics"
 cap_path = "README.md"
-label = "project:service-metrics"
+label = "lib:service-metrics"
 
 [[workspaces]]
 name = "service-metrics"

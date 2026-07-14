@@ -8,6 +8,12 @@ capability_refs:
     claim: "core-concept-model-and-invariants"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `apps/agentic-workflow/src/cli`."
+  - id: "aw-core-client-model-workitem-first-artifact-lifecycle"
+    role: primary
+    gap: "aw-epic-project-label-dispatch"
+    claim: "aw-epic-project-label-dispatch"
+    coverage: full
+    rationale: "The CLI semantic domain owns run.rs project-label resolution, epic atomize dispatch, and the unresolved-label HITL envelope."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: ec-evidence-documentation
@@ -20,6 +26,60 @@ capability_refs:
     claim: ec-external-contract-source
     coverage: partial
     rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated aw.toml EC inventory behavior in src/cli/ec.rs."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-label-producer-td-routing
+    claim: project-label-producer-td-routing
+    coverage: full
+    rationale: "The WI --project producer receives path-canonical app/lib labels from registered rows before the default TD resolver accepts them; a raw retired project label remains invalid at the TD boundary."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-apply-section-lookup-parity
+    claim: td-apply-section-lookup-parity
+    coverage: full
+    rationale: "The CLI semantic domain owns generic TD payload normalization, typed single-section merge boundaries, and pre-write applicability validation in src/cli/td.rs."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: td-merged-candidate-in-memory-validation
+    claim: td-merged-candidate-in-memory-validation
+    coverage: full
+    rationale: "The CLI semantic domain explicitly selects candidate-backed full-registry validation before section writes and file-backed validation for completed on-disk specs."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: default-td-target-plan-queue
+    claim: default-td-target-plan-queue
+    coverage: full
+    rationale: "Fresh applicability and contract authoring queues initialize and projection-lock an editable Changes target plan between Logic and Unit Test, preserving explicit custom queues and supplying aw td gen with authoritative targets."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: rebased-td-lifecycle-recovery
+    claim: rebased-td-lifecycle-recovery
+    coverage: full
+    rationale: "TD create shares CB's exact reachable Td-Init lookup, safely resets stale authoring state and projection after rewritten history, and preserves valid resume plus fail-closed implementation evidence."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: committed-td-skeleton-lifecycle
+    claim: committed-td-skeleton-lifecycle
+    coverage: full
+    rationale: "TD create admits only its sole exact untracked known-empty skeleton, preserves that candidate through activation and rebased reset/provision, and stages the canonical skeleton in exactly one queue-start commit."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: generated-td-lock-commit-handoff
+    claim: generated-td-lock-commit-handoff
+    coverage: full
+    rationale: "TD lock preflights lexical and canonical repository containment before any write, then fresh writes and legacy uncommitted-lock recovery create one lock-path-only lifecycle commit while preserving unrelated index and worktree state; read-only lock modes never commit."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: ambiguous-multi-target-generation-preflight
+    claim: ambiguous-multi-target-generation-preflight
+    coverage: full
+    rationale: "The CLI semantic domain owns read-only exact-spec preparation before TD lifecycle mutation, stable plan-error envelopes, and prepared-byte revalidation in src/cli/td.rs."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-ec-process-liveness
+    claim: terminal-ec-process-liveness
+    coverage: full
+    rationale: "The CLI semantic domain owns bounded terminal EC process-group cleanup, cross-process single-flight, typed failure results, and exact code-check retry envelopes in src/cli/ec.rs and src/cli/cb.rs."
 fill_sections: [schema, changes]
 ---
 
@@ -342,6 +402,24 @@ semantic_domain:
           - name: "EC_CATEGORIES"
             kind: "constant"
             public: false
+          - name: "EC_COMMAND_TIMEOUT_ENV"
+            kind: "constant"
+            public: false
+          - name: "DEFAULT_EC_COMMAND_TIMEOUT_SECS"
+            kind: "constant"
+            public: false
+          - name: "EC_PROCESS_TERM_GRACE"
+            kind: "constant"
+            public: false
+          - name: "EC_PROCESS_KILL_GRACE"
+            kind: "constant"
+            public: false
+          - name: "EC_OUTPUT_CLOSE_GRACE"
+            kind: "constant"
+            public: false
+          - name: "TERMINAL_EC_GATE_PATHS"
+            kind: "constant"
+            public: false
           - name: "ec_categories"
             kind: "function"
             public: true
@@ -411,6 +489,24 @@ semantic_domain:
           - name: "EcVerifyCommandResult"
             kind: "struct"
             public: true
+          - name: "EcVerifyFailureKind"
+            kind: "enum"
+            public: true
+          - name: "EcCommandOutput"
+            kind: "struct"
+            public: false
+          - name: "EcCommandTimeoutError"
+            kind: "struct"
+            public: false
+          - name: "TerminalEcGateLock"
+            kind: "struct"
+            public: false
+          - name: "TerminalEcGateSession"
+            kind: "struct"
+            public: true
+          - name: "TerminalEcGateAcquisition"
+            kind: "enum"
+            public: true
           - name: "EcProjectContext"
             kind: "struct"
             public: true
@@ -419,6 +515,69 @@ semantic_domain:
             public: false
           - name: "E2eYamlCase"
             kind: "struct"
+            public: false
+          - name: "evaluate"
+            kind: "function"
+            public: true
+          - name: "acquire_terminal_ec_gate"
+            kind: "function"
+            public: true
+          - name: "terminal_ec_gate_blocked_summary"
+            kind: "function"
+            public: false
+          - name: "try_acquire_terminal_ec_gate_lock"
+            kind: "function"
+            public: false
+          - name: "release_terminal_ec_gate_path"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_gate_lock_path"
+            kind: "function"
+            public: false
+          - name: "run_ec_verify_command_with_timeout"
+            kind: "function"
+            public: false
+          - name: "ec_command_timeout"
+            kind: "function"
+            public: false
+          - name: "run_ec_command_with_timeout"
+            kind: "function"
+            public: false
+          - name: "spawn_ec_output_reader"
+            kind: "function"
+            public: false
+          - name: "join_ec_output_reader_until"
+            kind: "function"
+            public: false
+          - name: "configure_ec_command_process_group"
+            kind: "function"
+            public: false
+          - name: "terminate_ec_command"
+            kind: "function"
+            public: false
+          - name: "terminate_residual_ec_process_group"
+            kind: "function"
+            public: false
+          - name: "signal_ec_process_group"
+            kind: "function"
+            public: false
+          - name: "ec_process_group_is_alive"
+            kind: "function"
+            public: false
+          - name: "reap_ec_child_in_background"
+            kind: "function"
+            public: false
+          - name: "ec_verify_bounds_a_wrapper_after_its_child_exits"
+            kind: "function"
+            public: false
+          - name: "ec_verify_kills_surviving_group_member_after_leader_exits_on_sigterm"
+            kind: "function"
+            public: false
+          - name: "ec_verify_rejects_natural_leader_success_with_live_descendant"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_gate_rejects_a_duplicate_inflight_inventory"
+            kind: "function"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -437,6 +596,21 @@ semantic_domain:
           - name: "run"
             kind: "function"
             public: true
+          - name: "terminal_ec_failure_envelope"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_test_barrier"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_test_barrier_after_initial_issue_read"
+            kind: "function"
+            public: false
+          - name: "terminal_ec_test_barrier_after_phase_update"
+            kind: "function"
+            public: false
+          - name: "run_check_lifecycle_terminal"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -486,6 +660,15 @@ semantic_domain:
           - name: "CbCheckArgs"
             kind: "struct"
             public: true
+          - name: "TdInitReachability"
+            kind: "enum"
+            public: false
+          - name: "reachable_td_init_from_head"
+            kind: "function"
+            public: false
+          - name: "committed_paths_since_td_init"
+            kind: "function"
+            public: false
           - name: "run"
             kind: "function"
             public: true
@@ -888,6 +1071,12 @@ semantic_domain:
           - name: "normalize_known_draft_sections"
             kind: "function"
             public: false
+          - name: "resolve_project_label"
+            kind: "function"
+            public: true
+          - name: "build_create_label_vec"
+            kind: "function"
+            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1183,6 +1372,15 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "write_goal_payload"
+            kind: "function"
+            public: false
+          - name: "wi_envelope"
+            kind: "function"
+            public: false
+          - name: "open_epic_envelope"
+            kind: "function"
+            public: false
+          - name: "project_from_labels"
             kind: "function"
             public: false
         source_evidence_node:
@@ -1640,7 +1838,49 @@ semantic_domain:
           - name: "next_none"
             kind: "function"
             public: false
+          - name: "is_active_td_authoring_section_type"
+            kind: "function"
+            public: false
+          - name: "suggested_td_authoring_section_types"
+            kind: "function"
+            public: false
+          - name: "td_section_queue"
+            kind: "function"
+            public: false
+          - name: "td_section_queue_for_content"
+            kind: "function"
+            public: false
+          - name: "td_section_queue_for_spec"
+            kind: "function"
+            public: false
+          - name: "project_label_for_issue"
+            kind: "function"
+            public: false
+          - name: "default_spec_path_for_issue_in_project"
+            kind: "function"
+            public: true
+          - name: "td_section_payload_template"
+            kind: "function"
+            public: false
+          - name: "td_json_payload_schema_hint"
+            kind: "function"
+            public: false
+          - name: "complete_section_apply"
+            kind: "function"
+            public: false
           - name: "td_error"
+            kind: "function"
+            public: false
+          - name: "PreparedTdGeneration"
+            kind: "struct"
+            public: false
+          - name: "shell_quote_td_arg"
+            kind: "function"
+            public: false
+          - name: "print_generation_plan_error"
+            kind: "function"
+            public: false
+          - name: "prepare_td_generation_before_lifecycle"
             kind: "function"
             public: false
           - name: "td_workspace_path"
@@ -1655,6 +1895,9 @@ semantic_domain:
           - name: "td_branch_name"
             kind: "function"
             public: false
+          - name: "is_recoverable_td_authoring_phase"
+            kind: "function"
+            public: false
           - name: "activate_td_workspace_for_lifecycle"
             kind: "function"
             public: false
@@ -1667,6 +1910,9 @@ semantic_domain:
           - name: "td_activate_inplace_allowing_dirty_spec_path"
             kind: "function"
             public: true
+          - name: "activate_td_workspace_with_recoverable_skeleton"
+            kind: "function"
+            public: false
           - name: "canonical_issue_path_for_slug"
             kind: "function"
             public: false
@@ -1674,6 +1920,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "ensure_clean_or_only_dirty_paths"
+            kind: "function"
+            public: false
+          - name: "checkout_has_only_exact_untracked_path"
             kind: "function"
             public: false
           - name: "porcelain_path"
@@ -1685,7 +1934,28 @@ semantic_domain:
           - name: "provision_td_workspace"
             kind: "function"
             public: false
+          - name: "reset_unreachable_td_init"
+            kind: "function"
+            public: false
           - name: "bootstrap_td_issue"
+            kind: "function"
+            public: false
+          - name: "run_create_brief"
+            kind: "function"
+            public: false
+          - name: "td_spec_skeleton"
+            kind: "function"
+            public: false
+          - name: "known_empty_td_spec_skeletons"
+            kind: "function"
+            public: false
+          - name: "is_known_empty_td_spec_skeleton"
+            kind: "function"
+            public: false
+          - name: "recoverable_untracked_td_skeleton"
+            kind: "function"
+            public: false
+          - name: "canonicalize_recoverable_td_skeleton"
             kind: "function"
             public: false
           - name: "discover_worktree_spec"
@@ -1704,6 +1974,15 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "run_promote_at"
+            kind: "function"
+            public: false
+          - name: "normalize_generic_td_section_payload"
+            kind: "function"
+            public: false
+          - name: "TdPayloadTopLevelShape"
+            kind: "struct"
+            public: false
+          - name: "td_payload_top_level_shape"
             kind: "function"
             public: false
         source_evidence_node:
@@ -1869,6 +2148,12 @@ semantic_domain:
           - name: "TdLockTarget"
             kind: "struct"
             public: false
+          - name: "TdLockWriteAction"
+            kind: "enum"
+            public: false
+          - name: "TdLockWriteResult"
+            kind: "struct"
+            public: false
           - name: "TdLockConfig"
             kind: "struct"
             public: false
@@ -1885,6 +2170,21 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "write_project_td_lock"
+            kind: "function"
+            public: false
+          - name: "write_project_td_lock_at_root"
+            kind: "function"
+            public: false
+          - name: "write_project_td_lock_file_at_root"
+            kind: "function"
+            public: false
+          - name: "commit_td_lock_update"
+            kind: "function"
+            public: false
+          - name: "preflight_repo_relative_td_lock_path"
+            kind: "function"
+            public: false
+          - name: "git_diff_has_changes"
             kind: "function"
             public: false
           - name: "check_project_td_lock_at_root"
@@ -3517,7 +3817,7 @@ changes:
       `EcVerifyCommandResult.results` (`stderr_tail: "skipped (advisory)"`)
       so the demotion stays auditable — and `command_count`/`passed_count`/
       `failed_count` (and therefore `clean`) only count executed entries.
-      `terminal_ec_gate_summary` (the #858 per-close terminal EC gate) now
+      `TerminalEcGateSession::evaluate` (the #858 per-close terminal EC gate)
       calls `verify_ec_context(&ctx, true)`; `EcVerifyArgs` gained a
       `required_only` flag (`aw ec verify --required-only`) that threads the
       same `true` into `run_verify`, while the bare `aw ec verify` default
@@ -3525,7 +3825,20 @@ changes:
       Tool-manifest commands have no `required_for_production` concept and
       always run regardless of the filter. See this file's `cb.rs` entry
       below for the terminal-gate envelope's `cases` list rendering of
-      skipped entries.
+      skipped entries. #1579 assigns each EC command its own process group and
+      bounds it with `AW_EC_COMMAND_TIMEOUT_SECS`; the 30-minute default keeps
+      legitimate long Cargo/VAT evaluations viable while tests and operators
+      can select a shorter deadline. On timeout, AW sends TERM to the group,
+      preserves the full grace even when the leader exits first, KILLs any
+      surviving descendants, probes ESRCH safely, bounds leader reaping and
+      output-pipe joins. A normal leader exit with live same-group descendants
+      is cleaned but rejected as `RunnerError`; it can never preserve an exit-0
+      false green. Results classify command failure, timeout, runner error, and
+      single-flight separately. `acquire_terminal_ec_gate` returns a lease
+      before evaluation; `cb.rs` re-reads the WI under that lease, skips EC when
+      a stale fresh phase has already become `td_merged`, and keeps the lease
+      through the full terminal transition. Thus both overlapping callers and
+      late-acquiring stale readers execute one VAT/Cargo inventory.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -3544,15 +3857,33 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-      #1469: the `terminal_ec_gate_summary` success-envelope branch (issue
-      #858's per-close EC gate, `run_check_lifecycle_terminal`) renders each
+      #1469: the terminal session success-envelope branch (issue #858's
+      per-close EC gate, `run_check_lifecycle_terminal`) renders each
       `EcVerifyCommandResult` whose `status` is `"skipped"` as
       `"<case_id> (skipped (advisory))"` in the `ec_gate.cases` list instead
       of the bare case id, so a `required_for_production: false` case the
       gate's `verify_ec_context(&ctx, true)` filter skipped stays auditable
       in the envelope; `ec_gate.commands_consulted` is unchanged
       (`summary.command_count`, which `ec.rs` already restricts to executed
-      cases). See `ec.rs`'s entry above for the filter implementation.
+      cases). #1579 includes each failed result's stderr tail, emits distinct
+      `terminal_ec_failure`, `terminal_ec_timeout`,
+      `terminal_ec_runner_error`, or `terminal_ec_single_flight` error kinds,
+      and always returns the exact runnable retry
+      `next.command = aw td code-check <slug>`. The refusal happens before
+      issue phase, close state, or terminal commit mutation. The function now
+      acquires the EC lease before evaluation, re-reads the WI under the lease,
+      routes a stale `td_merged` observation through terminal retry without EC,
+      and holds the lease until remote closure, landing, terminal commit, and
+      workflow unlock finish. Configured-inventory retry entries acquire that
+      same lease while continuing to skip EC, so they cannot race an owner's
+      post-phase terminal steps. Narrowly named bounded debug-only barriers
+      expose the post-initial-read/pre-acquire and post-phase-update seams for
+      deterministic process coverage. See `ec.rs` above for runner and lease.
+      Issue #1602 extracts the exact HEAD-reachable slug plus Td-Init lookup
+      into `TdInitReachability`. The hand-written implementation gate retains
+      its prior distinction: no slug history stays legacy-compatible, while
+      same-slug lifecycle history without an exact Td-Init remains a hard
+      verification error rather than becoming implementation evidence.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chat_members.rs"
     action: modify
@@ -3571,6 +3902,12 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1519 keeps `resolve_project_label` as the WI `--project` producer
+      boundary: registry rows canonicalize the retired `project:` family before
+      `build_create_label_vec` persists an issue label, so current commands emit
+      only path-correct `app:` or `lib:` identities using the registered row
+      name. The regression includes a project-local stale-label override of a
+      label-free root row.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/conf.rs"
     action: modify
@@ -3650,6 +3987,28 @@ changes:
       merge lifecycle" after the merge step was removed (#842-#860), to
       "WI -> TD -> CB -> code-check lifecycle".
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1518 extends the centralized project-label resolver with the
+      canonical `project:<name>` prefix while preserving `app:` and `lib:`.
+      Open epic routing now uses `open_epic_envelope`: a resolved identity
+      emits an exact `aw wi atomize --project <name>` command, while missing,
+      empty, or whitespace-only identity labels return a blocked/HITL
+      envelope with `aw wi show <id>` remediation instead of the retired
+      `PROJECT` placeholder. Focused tests cover the historical #1511 pgpool
+      label shape, app/lib compatibility, invalid values, and real-CLI chain
+      parsing.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/chain.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1518 registers `run.rs:open_epic_envelope` in EMIT_REGISTRY with
+      `aw wi atomize --project pgpool`, so the exact epic handoff is parsed
+      against the real clap tree by the chain-conformance suite.
+    impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/production.rs"
     action: modify
     section: schema
@@ -3691,6 +4050,63 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1562 accepts a body-only generic section payload by restoring the
+      requested typed H2/annotation wrapper before the existing exact
+      single-section merge. A fence-aware boundary rejects empty or placeholder
+      bodies, unclosed or wrong-language fences, mismatched annotations, broken
+      wrappers, and multiple top-level H2 sections before any spec write. A
+      complete matching wrapper, including a custom heading, is preserved; the
+      existing RequireThrough(candidate) validation and dirty-spec allowance
+      remain unchanged. Issue #1586 sends the normalized merged candidate
+      through the full shared registry before the write boundary, while
+      completed specs keep the file-backed registry path. A valid signature /
+      loop LogicSpec can replace stale plain Mermaid without inheriting the
+      old file's finding; an invalid candidate leaves spec and payload intact.
+      Issue #1598 makes the fresh default queue `logic`, `changes`, then
+      `unit-test`: Changes is the
+      explicit target plan required before codegen infers implementation paths,
+      while an already non-empty custom queue keeps its declared membership and
+      order. The initialized generic JSON payload carries an editable YAML
+      `changes[]` skeleton without narrowing legacy/custom Changes fields. Each
+      Changes transition is exposed through the issue projection lock in both
+      passes, including the first contract section after applicability unlock;
+      the real CLI regression applies both target plans, passes `aw td check`,
+      writes the fixture TD IR lock, and proves `aw td gen` creates the named
+      new target instead of falling back to impossible new-path inference.
+      Issue #1633 makes the complete generation plan a caller-side admission
+      gate. The CLI reads exact spec bytes without issue hydration or checkout,
+      including an existing TD branch through Git objects, invokes the shared
+      read-only exact spec-ref inference and Schema/CLI ownership predicate,
+      and emits one structured stdout error carrying stable kind, section,
+      sorted targets, remediation, shell-safe next command, and incomplete
+      completion. One inferred existing target remains compatible; none is
+      unavailable and multiple are ambiguous. Only an admitted plan may enter
+      lifecycle mutation, and its bytes are compared exactly again after
+      activation before execution.
+      Issue #1602 activates an existing TD branch before inspecting reachable
+      history. An exact slug plus Td-Init resumes normally; missing or
+      same-slug-without-init history clears the stale authoring phase, branch,
+      projection, and lock labels, records an unreachable-td-init Td-Reset,
+      then reuses normal provisioning for a fresh baseline and Logic queue.
+      Post-gen and terminal retry phases are excluded from recovery, and
+      ordinary WI phase `created` remains a fresh provisioning entry.
+      Issue #1580 makes the CLI-owned empty TD skeleton part of lifecycle
+      history. Recovery requires whole-tree porcelain-v1 bytes to be exactly
+      one untracked target and its regular-file bytes to match a finite set of
+      historical empty skeletons. Tracked, staged, renamed, authored, symlink,
+      or sibling-dirty state remains immutable and fails the ordinary clean
+      gate. The admitted candidate is revalidated across branch activation and
+      #1602 reset/provision, canonicalized through the serde-YAML id renderer,
+      only after the refreshed issue passes the `td_inited` phase guard, then
+      staged by the fresh queue-start commit. An already locked old run receives
+      one spec-only recovery queue-start commit; reruns are clean and
+      history-idempotent. Reachable `td_created`, post-gen, and terminal phases
+      never mutate or commit the candidate.
+      Issue #1519 adds a producer-to-resolver regression that sends stale
+      registered library and app labels through `resolve_project_label`, the
+      create label vector, and `default_spec_path_for_issue_in_project`.
+      Libraries resolve under `libs/<name>/tech-design`, apps retain their
+      existing root, and a raw `project:` issue label still fails loudly.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/project.rs"
     action: modify
@@ -3703,6 +4119,20 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1587 makes the mutating lock writer a root-aware transaction. A
+      fresh or stale lock is serialized, staged with a literal exact path, and
+      committed with `git commit --only`; a semantically clean lock left by an
+      older CLI is recovered through the same path. Git diff exit 0, 1, and
+      error statuses remain distinct, the configured lock must resolve to a
+      regular file inside the repository, and the command fails closed when a
+      changed lock cannot be committed. Unrelated staged, unstaged, and
+      untracked paths retain their exact state. An already committed lock is a
+      no-op, while `--check` and `--show` return before any commit path. Before
+      snapshot or write, lexical path components and the canonical TD parent
+      must both remain real directories inside the repository; an existing
+      lock must be a non-symlink regular file at that exact canonical leaf.
+      External TD-directory and lock-leaf symlink regressions prove external
+      bytes, HEAD, and repository status remain unchanged on rejection.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/validate_proposal.rs"
     action: modify
