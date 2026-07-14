@@ -68,3 +68,28 @@ changes:
     section: source
     impl_mode: codegen
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: project-td-before-legacy-fallback-verification
+requirements:
+  legacy_fallback_last_resort:
+    id: R2
+    text: "Legacy worktree discovery is used only when project-qualified derivation cannot resolve a TD."
+    kind: functional
+    risk: medium
+    verify: test_code_check_prefers_project_td_when_implements_cache_is_absent
+  missing_implements_prefers_project_td:
+    id: R1
+    text: "An app:lumen work item without implements resolves its project TD before a foreign Mamba legacy candidate."
+    kind: regression
+    risk: high
+    verify: test_code_check_prefers_project_td_when_implements_cache_is_absent
+---
+flowchart TD
+    r1[R1 missing implements prefers project td] --> test_code_check_prefers_project_td_when_implements_cache_is_absent[test_code_check_prefers_project_td_when_implements_cache_is_absent]
+    r2[R2 legacy fallback last resort] --> test_code_check_prefers_project_td_when_implements_cache_is_absent
+```
