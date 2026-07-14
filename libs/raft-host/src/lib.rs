@@ -17,6 +17,7 @@ mod config;
 mod host;
 pub mod llm;
 mod outcome_window;
+pub mod peer_tls;
 mod read_consistency;
 mod state_machine;
 mod store;
@@ -26,6 +27,7 @@ pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims,
 pub use config::{HostConfig, SnapshotPolicy};
 pub use host::RaftHost;
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
+pub use peer_tls::PeerTlsConfig;
 pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};
