@@ -84,3 +84,21 @@ flowchart TD
 - `ReadyForQuery` is the sole backend control frame for transaction ownership. Its payload must be exactly one valid status byte before `TransactionStatus` changes or the idle/reset path can run.
 - Any other bounded backend frame is opaque to the transaction relay. Its payload cannot select a lease state, bypass `DISCARD ALL`, or cause a connection to re-enter the idle pool.
 - Frontend validation, pipelined-query staging, client-visible frame order, and the existing error/EOF close path do not change.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/wire/reader.rs
+    action: modify
+    section: pgpool-opaque-backend-transaction-relay
+    impl_mode: hand-written
+    reason: Keep bounded frame extraction and strict ReadyForQuery state classification while making other established backend relay payloads opaque.
+  - path: apps/pgpool/tests/wire_codec.rs
+    action: modify
+    section: pgpool-opaque-backend-transaction-relay
+    impl_mode: hand-written
+    reason: Prove non-control backend payloads relay byte-for-byte without structural parsing and that malformed ReadyForQuery still rejects.
+```
