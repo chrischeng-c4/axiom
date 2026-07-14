@@ -31,6 +31,18 @@ const GREP_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
 // @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 const WC_NATIVE_MIN_FILES: usize = 64;
 const WC_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const AWK_DELIMITED_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const UNIQ_COUNT_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const NL_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const REV_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const PASTE_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const EXPAND_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const FOLD_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const CUT_CHARS_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const CUT_FIELDS_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const UNEXPAND_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const COMM_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
+const JOIN_NATIVE_MIN_BYTES: u64 = 1024 * 1024;
 
 /// @spec apps/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,8 +105,19 @@ pub enum NativeCommand {
     Dirname(DirnamePlan),
     Ls(LsPlan),
     Sort(SortPlan),
+    Nl(NlPlan),
+    Rev(RevPlan),
+    Paste(PastePlan),
+    Comm(CommPlan),
+    Join(JoinPlan),
+    Expand(ExpandPlan),
+    Fold(FoldPlan),
+    Unexpand(UnexpandPlan),
     Uniq(UniqPlan),
     Cut(CutPlan),
+    CutChars(CutCharsPlan),
+    CutFields(CutFieldsPlan),
+    CutFieldList(CutFieldListPlan),
     Tr(TrPlan),
     Cat(CatPlan),
     Head(HeadTailPlan),
@@ -113,7 +136,9 @@ pub enum NativeCommand {
     Touch(TouchPlan),
     GrepFile(GrepFilePlan),
     AwkNeedleCount(AwkNeedleCountPlan),
+    AwkRecordCount(AwkRecordCountPlan),
     AwkFirstField(AwkFirstFieldPlan),
+    AwkTwoFields(AwkTwoFieldsPlan),
     XargsEcho(XargsEchoPlan),
     XargsWcLines(XargsWcLinesPlan),
     PipeXargsEchoProducer(PipeXargsEchoProducerPlan),
@@ -265,6 +290,7 @@ pub enum NativeCommand {
     PipeFindSortTail(PipeFindSortTailPlan),
     Find(FindPlan),
     SedPrint(SedPrintPlan),
+    SedSubstitute(SedSubstitutePlan),
     WcAll(WcAllPlan),
     WcLines(WcLinesPlan),
     /// Wraps any existing native command with a per-invocation effective cwd
@@ -590,11 +616,26 @@ pub struct AwkNeedleCountPlan {
 
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwkRecordCountPlan {
+    pub file: String,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AwkFirstFieldPlan {
     pub file: String,
     pub stdin: bool,
     pub pattern: Option<String>,
     pub field: usize,
+    pub separator: Option<u8>,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwkTwoFieldsPlan {
+    pub file: String,
+    pub fields: [usize; 2],
+    pub separator: u8,
 }
 
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
@@ -1785,9 +1826,65 @@ pub struct SortPlan {
 
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NlPlan {
+    pub file: String,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevPlan {
+    pub file: String,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PastePlan {
+    pub files: Vec<String>,
+    pub delimiter: u8,
+    pub serial: bool,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommPlan {
+    pub left: String,
+    pub right: String,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinPlan {
+    pub left: String,
+    pub right: String,
+    pub delimiter: u8,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpandPlan {
+    pub file: String,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldPlan {
+    pub file: String,
+    pub width: usize,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnexpandPlan {
+    pub file: String,
+    pub all: bool,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UniqPlan {
     pub file: String,
     pub stdin: bool,
+    pub count: bool,
 }
 
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
@@ -1801,6 +1898,31 @@ pub struct CutPlan {
 
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CutCharsPlan {
+    pub file: String,
+    pub start: usize,
+    pub end: Option<usize>,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CutFieldsPlan {
+    pub file: String,
+    pub delimiter: u8,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CutFieldListPlan {
+    pub file: String,
+    pub delimiter: u8,
+    pub fields: Vec<usize>,
+}
+
+/// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrPlan {
     pub mode: TrMode,
 }
@@ -1810,6 +1932,7 @@ pub struct TrPlan {
 pub enum TrMode {
     Translate { from: Vec<u8>, to: Vec<u8> },
     Delete { set: Vec<u8> },
+    Squeeze { set: Vec<u8> },
 }
 
 /// @spec apps/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#changes
@@ -1841,6 +1964,14 @@ pub struct SedPrintPlan {
     pub end_line: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SedSubstitutePlan {
+    pub file: String,
+    pub search: String,
+    pub replacement: String,
+    pub global: bool,
+}
+
 /// @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrepFilePlan {
@@ -1855,6 +1986,7 @@ pub struct GrepFilePlan {
     pub count: bool,
     pub files_with_matches: bool,
     pub only_matching: bool,
+    pub whole_line: bool,
     pub context_before: usize,
     pub context_after: usize,
 }
@@ -1925,8 +2057,19 @@ impl CommandPlan {
                     NativeCommand::Dirname(_) => "cap-native dirname",
                     NativeCommand::Ls(_) => "cap-native ls",
                     NativeCommand::Sort(_) => "cap-native sort",
+                    NativeCommand::Nl(_) => "cap-native nl",
+                    NativeCommand::Rev(_) => "cap-native rev",
+                    NativeCommand::Paste(_) => "cap-native paste",
+                    NativeCommand::Comm(_) => "cap-native comm",
+                    NativeCommand::Join(_) => "cap-native join",
+                    NativeCommand::Expand(_) => "cap-native expand",
+                    NativeCommand::Fold(_) => "cap-native fold",
+                    NativeCommand::Unexpand(_) => "cap-native unexpand",
                     NativeCommand::Uniq(_) => "cap-native uniq",
                     NativeCommand::Cut(_) => "cap-native cut",
+                    NativeCommand::CutChars(_) => "cap-native cut characters",
+                    NativeCommand::CutFields(_) => "cap-native cut fields",
+                    NativeCommand::CutFieldList(_) => "cap-native cut field list",
                     NativeCommand::Tr(_) => "cap-native tr",
                     NativeCommand::Cat(_) => "cap-native cat",
                     NativeCommand::Head(_) => "cap-native head",
@@ -1947,7 +2090,9 @@ impl CommandPlan {
                     NativeCommand::Touch(_) => "cap-native touch",
                     NativeCommand::GrepFile(_) => "cap-native grep file",
                     NativeCommand::AwkNeedleCount(_) => "cap-native awk count",
+                    NativeCommand::AwkRecordCount(_) => "cap-native awk record-count",
                     NativeCommand::AwkFirstField(_) => "cap-native awk first-field",
+                    NativeCommand::AwkTwoFields(_) => "cap-native awk two-fields",
                     NativeCommand::XargsEcho(_) => "cap-native xargs echo",
                     NativeCommand::XargsWcLines(_) => "cap-native xargs wc -l",
                     NativeCommand::PipeXargsEchoProducer(_) => {
@@ -2192,6 +2337,7 @@ impl CommandPlan {
                     NativeCommand::PipeFindSortTail(_) => "cap-native pipe find|sort|tail",
                     NativeCommand::Find(_) => "cap-native find",
                     NativeCommand::SedPrint(_) => "cap-native sed -n",
+                    NativeCommand::SedSubstitute(_) => "cap-native sed literal substitution",
                     NativeCommand::WcAll(_) => "cap-native wc",
                     NativeCommand::WcLines(plan) => match plan.mode {
                         WcCountMode::Lines => "cap-native wc -l",
@@ -2224,8 +2370,7 @@ pub fn plan(command: &[String], label: Option<String>) -> CommandPlan {
 pub fn plan_shell(command: &str, label: Option<String>) -> CommandPlan {
     let original = command.trim().to_string();
     let planned_label = label.or_else(|| Some(original.clone()));
-    if let Some(mut words) = split_simple_shell_words(&original) {
-        translate_leading_rg_pipe_segment(&mut words);
+    if let Some(words) = split_simple_shell_words(&original) {
         if words.iter().any(|word| word == "|") {
             if let Some(plan) = plan_pipe_words(&words, planned_label.clone(), &original) {
                 return CommandPlan::Native(plan);
@@ -2373,7 +2518,7 @@ fn plan_cd_prefix(command: &str, label: Option<String>) -> Option<NativePlan> {
 fn plan_with_tool_resolver(
     command: &[String],
     label: Option<String>,
-    tool_available: impl Fn(&str) -> bool,
+    _tool_available: impl Fn(&str) -> bool,
 ) -> CommandPlan {
     let original = render_argv(command);
     let planned_label = label.or_else(|| Some(original.clone()));
@@ -2381,12 +2526,6 @@ fn plan_with_tool_resolver(
     if let Some(plan) = plan_native(command, planned_label.clone(), &original) {
         return CommandPlan::Native(plan);
     }
-    if let Some(plan) = plan_grep_replacement(command, planned_label.clone(), &original, |tool| {
-        tool_available(tool)
-    }) {
-        return CommandPlan::External(plan);
-    }
-
     CommandPlan::External(ExternalPlan {
         program: command[0].clone(),
         args: command[1..].to_vec(),
@@ -2438,12 +2577,19 @@ fn plan_native(command: &[String], label: Option<String>, original: &str) -> Opt
         "printenv" => plan_printenv(&command[1..], label, original),
         "find" => plan_find(&command[1..], label, original),
         "sort" => plan_sort(&command[1..], label, original),
+        "nl" => plan_nl(&command[1..], label, original),
+        "rev" => plan_rev(&command[1..], label, original),
+        "paste" => plan_paste(&command[1..], label, original),
+        "comm" => plan_comm(&command[1..], label, original),
+        "join" => plan_join(&command[1..], label, original),
+        "expand" => plan_expand(&command[1..], label, original),
+        "fold" => plan_fold(&command[1..], label, original),
+        "unexpand" => plan_unexpand(&command[1..], label, original),
         "uniq" => plan_uniq(&command[1..], label, original),
         "cut" => plan_cut(&command[1..], label, original),
         "tr" => plan_tr(&command[1..], label, original),
         "sed" => plan_sed(&command[1..], label, original),
         "grep" => plan_grep_file(&command[1..], label, original),
-        "rg" => plan_rg_alias(&command[1..], label, original),
         "wc" => plan_wc(&command[1..], label, original),
         _ => None,
     }
@@ -2792,6 +2938,9 @@ fn plan_ls(args: &[String], label: Option<String>, original: &str) -> Option<Nat
 }
 
 fn plan_sort(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    if !locale_uses_bytewise_collation() {
+        return None;
+    }
     let plan = match args {
         [] => SortPlan {
             file: String::new(),
@@ -2811,7 +2960,7 @@ fn plan_sort(args: &[String], label: Option<String>, original: &str) -> Option<N
     };
 
     let reason = if plan.stdin {
-        "stdin sort can use cap's buffered in-process sorter"
+        "stdin sort can use cap's buffered in-process bytewise sorter"
     } else {
         "single-file sort can use cap's buffered in-process sorter"
     };
@@ -2822,6 +2971,315 @@ fn plan_sort(args: &[String], label: Option<String>, original: &str) -> Option<N
         original: original.to_string(),
         reason: reason.to_string(),
     })
+}
+
+fn plan_nl(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    let [flag, file] = args else {
+        return None;
+    };
+    if flag != "-ba" {
+        return None;
+    }
+    let metadata = fs::metadata(file).ok()?;
+    if !metadata.is_file() || metadata.len() < NL_NATIVE_MIN_BYTES {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Nl(NlPlan { file: file.clone() }),
+        label,
+        original: original.to_string(),
+        reason: "large nl -ba can number every input record in-process".to_string(),
+    })
+}
+
+fn plan_rev(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    let [file] = args else {
+        return None;
+    };
+    let metadata = fs::metadata(file).ok()?;
+    if !metadata.is_file() || metadata.len() < REV_NATIVE_MIN_BYTES || !locale_uses_utf8() {
+        return None;
+    }
+    if !file_is_valid_utf8(file).ok()? {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Rev(RevPlan { file: file.clone() }),
+        label,
+        original: original.to_string(),
+        reason: "large UTF-8 rev can reverse each input record in-process".to_string(),
+    })
+}
+
+fn plan_paste(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    let (delimiter, files, serial) = match args {
+        [serial_flag, file] if serial_flag == "-s" => (b'\t', vec![file.clone()], true),
+        [serial_flag, flag, file] if serial_flag == "-s" && flag.starts_with("-d") => (
+            parse_paste_delimiter(flag.strip_prefix("-d")?)?,
+            vec![file.clone()],
+            true,
+        ),
+        [serial_flag, flag, delimiter, file] if serial_flag == "-s" && flag == "-d" => {
+            (parse_paste_delimiter(delimiter)?, vec![file.clone()], true)
+        }
+        [first, second] | [first, second, ..] if !first.starts_with('-') => {
+            (b'\t', args.to_vec(), false)
+        }
+        [flag, first, second, ..] if flag.starts_with("-d") => (
+            parse_paste_delimiter(flag.strip_prefix("-d")?)?,
+            args[1..].to_vec(),
+            false,
+        ),
+        [flag, delimiter, first, second, ..] if flag == "-d" => {
+            (parse_paste_delimiter(delimiter)?, args[2..].to_vec(), false)
+        }
+        _ => return None,
+    };
+    if (!serial && !(2..=3).contains(&files.len())) || (serial && files.len() != 1) {
+        return None;
+    }
+    let total_bytes = files.iter().try_fold(0_u64, |total, file| {
+        let metadata = fs::metadata(file).ok()?;
+        metadata
+            .is_file()
+            .then(|| total.saturating_add(metadata.len()))
+    })?;
+    if total_bytes < PASTE_NATIVE_MIN_BYTES {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Paste(PastePlan {
+            files,
+            delimiter,
+            serial,
+        }),
+        label,
+        original: original.to_string(),
+        reason: if serial {
+            "large one-file serial paste can join records in-process".to_string()
+        } else {
+            "large two- or three-file paste can join corresponding records in-process".to_string()
+        },
+    })
+}
+
+fn parse_paste_delimiter(value: &str) -> Option<u8> {
+    match value.as_bytes() {
+        [delimiter] => Some(*delimiter),
+        _ => None,
+    }
+}
+
+fn plan_comm(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    if !locale_uses_bytewise_collation() {
+        return None;
+    }
+    let [flag, left, right] = args else {
+        return None;
+    };
+    if flag != "-12" {
+        return None;
+    }
+    let left_metadata = fs::metadata(left).ok()?;
+    let right_metadata = fs::metadata(right).ok()?;
+    if !left_metadata.is_file()
+        || !right_metadata.is_file()
+        || left_metadata.len().saturating_add(right_metadata.len()) < COMM_NATIVE_MIN_BYTES
+    {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Comm(CommPlan {
+            left: left.clone(),
+            right: right.clone(),
+        }),
+        label,
+        original: original.to_string(),
+        reason: "large C/POSIX comm -12 can merge sorted records in-process".to_string(),
+    })
+}
+
+fn plan_join(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    if !locale_uses_bytewise_collation() {
+        return None;
+    }
+    let (delimiter, left, right) = match args {
+        [flag, left, right] if flag.starts_with("-t") => (flag.strip_prefix("-t")?, left, right),
+        [flag, delimiter, left, right] if flag == "-t" => (delimiter.as_str(), left, right),
+        _ => return None,
+    };
+    let &[delimiter] = delimiter.as_bytes() else {
+        return None;
+    };
+    if !delimiter.is_ascii() || delimiter == b'\n' {
+        return None;
+    }
+    let left_metadata = fs::metadata(left).ok()?;
+    let right_metadata = fs::metadata(right).ok()?;
+    if !left_metadata.is_file()
+        || !right_metadata.is_file()
+        || left_metadata.len().saturating_add(right_metadata.len()) < JOIN_NATIVE_MIN_BYTES
+    {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Join(JoinPlan {
+            left: left.clone(),
+            right: right.clone(),
+            delimiter,
+        }),
+        label,
+        original: original.to_string(),
+        reason: "large C/POSIX single-delimiter join can merge matching record groups in-process"
+            .to_string(),
+    })
+}
+
+fn plan_expand(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    let [file] = args else {
+        return None;
+    };
+    let metadata = fs::metadata(file).ok()?;
+    if !metadata.is_file()
+        || metadata.len() < EXPAND_NATIVE_MIN_BYTES
+        || !file_is_ascii(file).ok()?
+    {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Expand(ExpandPlan { file: file.clone() }),
+        label,
+        original: original.to_string(),
+        reason: "large ASCII expand can replace default tab stops in-process".to_string(),
+    })
+}
+
+fn plan_fold(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    let (width, file) = match args {
+        [file] => (80, file),
+        [flag, file] => (flag.strip_prefix("-w")?.parse().ok()?, file),
+        [flag, width, file] if flag == "-w" => (width.parse().ok()?, file),
+        _ => return None,
+    };
+    if width == 0 {
+        return None;
+    }
+    let metadata = fs::metadata(file).ok()?;
+    if !metadata.is_file()
+        || metadata.len() < FOLD_NATIVE_MIN_BYTES
+        || !file_is_printable_ascii_lines(file).ok()?
+    {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Fold(FoldPlan {
+            file: file.clone(),
+            width,
+        }),
+        label,
+        original: original.to_string(),
+        reason: "large printable-ASCII fold can wrap fixed byte columns in-process".to_string(),
+    })
+}
+
+fn plan_unexpand(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    let (all, file) = match args {
+        [file] => (false, file),
+        [flag, file] if flag == "-a" => (true, file),
+        _ => return None,
+    };
+    let metadata = fs::metadata(file).ok()?;
+    if !metadata.is_file()
+        || metadata.len() < UNEXPAND_NATIVE_MIN_BYTES
+        || !file_is_printable_ascii_lines(file).ok()?
+    {
+        return None;
+    }
+    Some(NativePlan {
+        command: NativeCommand::Unexpand(UnexpandPlan {
+            file: file.clone(),
+            all,
+        }),
+        label,
+        original: original.to_string(),
+        reason: "large printable-ASCII unexpand can replace default tab stops in-process"
+            .to_string(),
+    })
+}
+
+fn file_is_ascii(file: &str) -> io::Result<bool> {
+    let mut file = fs::File::open(file)?;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(true);
+        }
+        if buffer[..read].iter().any(|byte| *byte > 0x7f) {
+            return Ok(false);
+        }
+    }
+}
+
+fn file_is_printable_ascii_lines(file: &str) -> io::Result<bool> {
+    let mut file = fs::File::open(file)?;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(true);
+        }
+        if buffer[..read]
+            .iter()
+            .any(|byte| *byte != b'\n' && !(*byte >= b' ' && *byte <= b'~'))
+        {
+            return Ok(false);
+        }
+    }
+}
+
+fn locale_uses_utf8() -> bool {
+    let locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .into_iter()
+        .filter_map(|key| env::var_os(key))
+        .map(|value| value.to_string_lossy().into_owned())
+        .find(|value| !value.is_empty());
+    locale.is_some_and(|value| {
+        let value = value.to_ascii_lowercase();
+        value.contains("utf-8") || value.contains("utf8")
+    })
+}
+
+fn locale_uses_bytewise_collation() -> bool {
+    let locale = ["LC_ALL", "LC_COLLATE", "LANG"]
+        .into_iter()
+        .filter_map(|key| env::var_os(key))
+        .map(|value| value.to_string_lossy().into_owned())
+        .find(|value| !value.is_empty());
+    locale.is_none_or(|value| matches!(value.as_str(), "C" | "POSIX"))
+}
+
+fn file_is_valid_utf8(file: &str) -> io::Result<bool> {
+    let mut reader = BufReader::new(fs::File::open(file)?);
+    let mut buffer = [0_u8; 8192];
+    let mut carry = Vec::new();
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(carry.is_empty());
+        }
+        carry.extend_from_slice(&buffer[..read]);
+        match std::str::from_utf8(&carry) {
+            Ok(_) => carry.clear(),
+            Err(error) if error.error_len().is_some() => return Ok(false),
+            Err(error) => {
+                carry.drain(..error.valid_up_to());
+                if carry.len() > 3 {
+                    return Ok(false);
+                }
+            }
+        }
+    }
 }
 
 fn sorted_reader_lines<R: Read>(mut reader: R) -> Result<SortedLines> {
@@ -2860,11 +3318,27 @@ fn plan_uniq(args: &[String], label: Option<String>, original: &str) -> Option<N
         [] => UniqPlan {
             file: String::new(),
             stdin: true,
+            count: false,
         },
         [file] => UniqPlan {
             file: file.clone(),
             stdin: false,
+            count: false,
         },
+        [flag, file] if flag == "-c" => {
+            let metadata = fs::metadata(file).ok()?;
+            if !metadata.is_file()
+                || metadata.len() < UNIQ_COUNT_NATIVE_MIN_BYTES
+                || file_contains_nul(file).ok()?
+            {
+                return None;
+            }
+            UniqPlan {
+                file: file.clone(),
+                stdin: false,
+                count: true,
+            }
+        }
         _ => return None,
     };
     Some(NativePlan {
@@ -2875,7 +3349,60 @@ fn plan_uniq(args: &[String], label: Option<String>, original: &str) -> Option<N
     })
 }
 
+fn file_contains_nul(path: &str) -> Result<bool> {
+    let mut file = fs::File::open(path)?;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(false);
+        }
+        if buffer[..read].contains(&0) {
+            return Ok(true);
+        }
+    }
+}
+
 fn plan_cut(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    if let Some(plan) = parse_cut_chars_args(args) {
+        let metadata = fs::metadata(&plan.file).ok()?;
+        if !metadata.is_file()
+            || metadata.len() < CUT_CHARS_NATIVE_MIN_BYTES
+            || !file_is_ascii(&plan.file).ok()?
+        {
+            return None;
+        }
+        return Some(NativePlan {
+            command: NativeCommand::CutChars(plan),
+            label,
+            original: original.to_string(),
+            reason: "large ASCII fixed character-range cut can stream in-process".to_string(),
+        });
+    }
+    if let Some(plan) = parse_cut_fields_args(args) {
+        let metadata = fs::metadata(&plan.file).ok()?;
+        if !metadata.is_file() || metadata.len() < CUT_FIELDS_NATIVE_MIN_BYTES {
+            return None;
+        }
+        return Some(NativePlan {
+            command: NativeCommand::CutFields(plan),
+            label,
+            original: original.to_string(),
+            reason: "large contiguous field-range cut can stream in-process".to_string(),
+        });
+    }
+    if let Some(plan) = parse_cut_field_list_args(args) {
+        let metadata = fs::metadata(&plan.file).ok()?;
+        if !metadata.is_file() || metadata.len() < CUT_FIELDS_NATIVE_MIN_BYTES {
+            return None;
+        }
+        return Some(NativePlan {
+            command: NativeCommand::CutFieldList(plan),
+            label,
+            original: original.to_string(),
+            reason: "large selected field-list cut can stream in-process".to_string(),
+        });
+    }
     let plan = parse_cut_args(args)?;
     if !plan.stdin && !Path::new(&plan.file).is_file() {
         return None;
@@ -2890,6 +3417,103 @@ fn plan_cut(args: &[String], label: Option<String>, original: &str) -> Option<Na
         label,
         original: original.to_string(),
         reason: format!("single-field cut over {source} can run in-process"),
+    })
+}
+
+fn parse_cut_chars_args(args: &[String]) -> Option<CutCharsPlan> {
+    let (range, file) = match args {
+        [flag, file] => (flag.strip_prefix("-c")?, file),
+        [flag, range, file] if flag == "-c" => (range.as_str(), file),
+        _ => return None,
+    };
+    let (start, end) = range.split_once('-')?;
+    if (start.is_empty() && end.is_empty())
+        || (!start.is_empty() && !start.bytes().all(|byte| byte.is_ascii_digit()))
+        || (!end.is_empty() && !end.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+    let start = if start.is_empty() {
+        1
+    } else {
+        start.parse().ok()?
+    };
+    let end = if end.is_empty() {
+        None
+    } else {
+        Some(end.parse().ok()?)
+    };
+    if start == 0 || end.is_some_and(|end| end < start) {
+        return None;
+    }
+    Some(CutCharsPlan {
+        file: file.clone(),
+        start,
+        end,
+    })
+}
+
+fn parse_cut_fields_args(args: &[String]) -> Option<CutFieldsPlan> {
+    let mut delimiter = b'\t';
+    let mut range = None;
+    let mut file = None;
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
+        if arg == "--" {
+            return None;
+        } else if arg == "-d" {
+            idx += 1;
+            delimiter = parse_cut_delimiter(args.get(idx)?)?;
+        } else if let Some(value) = arg.strip_prefix("-d") {
+            delimiter = parse_cut_delimiter(value)?;
+        } else if arg == "-f" {
+            idx += 1;
+            range = Some(parse_cut_field_range(args.get(idx)?)?);
+        } else if let Some(value) = arg.strip_prefix("-f") {
+            range = Some(parse_cut_field_range(value)?);
+        } else if arg.starts_with('-') || file.replace(arg.clone()).is_some() {
+            return None;
+        }
+        idx += 1;
+    }
+    let (start, end) = range?;
+    Some(CutFieldsPlan {
+        file: file?,
+        delimiter,
+        start,
+        end,
+    })
+}
+
+fn parse_cut_field_list_args(args: &[String]) -> Option<CutFieldListPlan> {
+    let mut delimiter = b'\t';
+    let mut fields = None;
+    let mut file = None;
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
+        if arg == "--" {
+            return None;
+        } else if arg == "-d" {
+            idx += 1;
+            delimiter = parse_cut_delimiter(args.get(idx)?)?;
+        } else if let Some(value) = arg.strip_prefix("-d") {
+            delimiter = parse_cut_delimiter(value)?;
+        } else if arg == "-f" {
+            idx += 1;
+            fields = Some(parse_cut_field_list(args.get(idx)?)?);
+        } else if let Some(value) = arg.strip_prefix("-f") {
+            fields = Some(parse_cut_field_list(value)?);
+        } else if arg.starts_with('-') || file.replace(arg.clone()).is_some() {
+            return None;
+        }
+        idx += 1;
+    }
+    Some(CutFieldListPlan {
+        file: file?,
+        delimiter,
+        fields: fields?,
     })
 }
 
@@ -2993,13 +3617,45 @@ fn parse_cut_field(value: &str) -> Option<usize> {
     }
 }
 
+fn parse_cut_field_range(value: &str) -> Option<(usize, usize)> {
+    let (start, end) = value.split_once('-')?;
+    if start.is_empty() || end.is_empty() || end.contains('-') {
+        return None;
+    }
+    let start = parse_cut_field(start)?;
+    let end = parse_cut_field(end)?;
+    (end >= start).then_some((start, end))
+}
+
+fn parse_cut_field_list(value: &str) -> Option<Vec<usize>> {
+    let fields = value
+        .split(',')
+        .map(parse_cut_field)
+        .collect::<Option<Vec<_>>>()?;
+    (matches!(fields.len(), 2..=32) && fields.windows(2).all(|pair| pair[0] < pair[1]))
+        .then_some(fields)
+}
+
 fn plan_tr(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
     Some(NativePlan {
-        command: NativeCommand::Tr(parse_tr_args(args)?),
+        command: NativeCommand::Tr(parse_tr_direct_args(args)?),
         label,
         original: original.to_string(),
         reason: "narrow byte-level tr sets can transform stdin in-process".to_string(),
     })
+}
+
+fn parse_tr_direct_args(args: &[String]) -> Option<TrPlan> {
+    if let [flag, set] = args {
+        if flag == "-s" {
+            return Some(TrPlan {
+                mode: TrMode::Squeeze {
+                    set: expand_tr_set(set)?,
+                },
+            });
+        }
+    }
+    parse_tr_args(args)
 }
 
 fn parse_tr_args(args: &[String]) -> Option<TrPlan> {
@@ -3155,11 +3811,71 @@ fn plan_touch(args: &[String], label: Option<String>, original: &str) -> Option<
 }
 
 fn plan_awk(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
-    let (script, file, stdin) = match args {
-        [script] => (script, String::new(), true),
-        [script, file] if Path::new(file).is_file() => (script, file.clone(), false),
+    let (script, file, stdin, separator) = match args {
+        [script] => (script, String::new(), true, None),
+        [script, file] if Path::new(file).is_file() => (script, file.clone(), false, None),
+        [flag, script] if flag.starts_with("-F") => (
+            script,
+            String::new(),
+            true,
+            Some(parse_awk_separator(&flag[2..])?),
+        ),
+        [flag, script, file] if flag.starts_with("-F") && Path::new(file).is_file() => (
+            script,
+            file.clone(),
+            false,
+            Some(parse_awk_separator(&flag[2..])?),
+        ),
+        [flag, separator, script] if flag == "-F" => (
+            script,
+            String::new(),
+            true,
+            Some(parse_awk_separator(separator)?),
+        ),
+        [flag, separator, script, file] if flag == "-F" && Path::new(file).is_file() => (
+            script,
+            file.clone(),
+            false,
+            Some(parse_awk_separator(separator)?),
+        ),
         _ => return None,
     };
+    if separator.is_some()
+        && (stdin
+            || fs::metadata(&file)
+                .ok()
+                .is_none_or(|metadata| metadata.len() < AWK_DELIMITED_NATIVE_MIN_BYTES))
+    {
+        return None;
+    }
+    if let (Some(separator), Some(fields)) = (separator, parse_awk_print_two_fields_action(script))
+    {
+        return Some(NativePlan {
+            command: NativeCommand::AwkTwoFields(AwkTwoFieldsPlan {
+                file,
+                fields,
+                separator,
+            }),
+            label,
+            original: original.to_string(),
+            reason: "narrow awk two-field extraction can scan a large delimited file in-process"
+                .to_string(),
+        });
+    }
+    if separator.is_none()
+        && is_awk_record_count_script(script)
+        && !stdin
+        && fs::metadata(&file).ok().is_some_and(|metadata| {
+            metadata.is_file() && metadata.len() >= AWK_DELIMITED_NATIVE_MIN_BYTES
+        })
+    {
+        return Some(NativePlan {
+            command: NativeCommand::AwkRecordCount(AwkRecordCountPlan { file }),
+            label,
+            original: original.to_string(),
+            reason: "narrow awk NR record count can scan a large file in-process".to_string(),
+        });
+    }
     if let Some((pattern, field)) = parse_awk_print_field_script(script) {
         return Some(NativePlan {
             command: NativeCommand::AwkFirstField(AwkFirstFieldPlan {
@@ -3167,6 +3883,7 @@ fn plan_awk(args: &[String], label: Option<String>, original: &str) -> Option<Na
                 stdin,
                 pattern,
                 field,
+                separator,
             }),
             label,
             original: original.to_string(),
@@ -3183,6 +3900,17 @@ fn plan_awk(args: &[String], label: Option<String>, original: &str) -> Option<Na
         original: original.to_string(),
         reason: "narrow awk NEEDLE count can scan stdin or the file in-process".to_string(),
     })
+}
+
+fn is_awk_record_count_script(script: &str) -> bool {
+    matches!(script, "END { print NR }" | "END{print NR}")
+}
+
+fn parse_awk_separator(value: &str) -> Option<u8> {
+    let [separator] = value.as_bytes() else {
+        return None;
+    };
+    (!separator.is_ascii_whitespace()).then_some(*separator)
 }
 
 fn plan_xargs(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
@@ -4087,6 +4815,24 @@ fn parse_awk_print_field_action(action: &str) -> Option<usize> {
     }
     let field = field.parse().ok()?;
     (field > 0).then_some(field)
+}
+
+fn parse_awk_print_two_fields_action(action: &str) -> Option<[usize; 2]> {
+    let compact = action
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let fields = compact.strip_prefix("{print$")?.strip_suffix('}')?;
+    let (first, second) = fields.split_once(",$")?;
+    if first.is_empty()
+        || second.is_empty()
+        || !first.chars().all(|ch| ch.is_ascii_digit())
+        || !second.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    let fields = [first.parse().ok()?, second.parse().ok()?];
+    (fields[0] > 0 && fields[1] > 0).then_some(fields)
 }
 
 fn plan_xargs_wc_line_producer_mode(
@@ -5421,6 +6167,9 @@ fn parse_du_pipe_source(left: &[String]) -> Option<DuSkPlan> {
 }
 
 fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
+    if !locale_uses_bytewise_collation() && words.iter().any(|word| basename(word) == "sort") {
+        return None;
+    }
     if let Some(plan) = plan_grep_file_cut_pipe(words, label.clone(), original) {
         return Some(plan);
     }
@@ -9358,26 +10107,74 @@ fn plan_find(args: &[String], label: Option<String>, original: &str) -> Option<N
 }
 
 fn plan_sed(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
-    if args.len() != 3 || args[0] != "-n" {
-        return None;
+    if let [flag, script, file] = args {
+        if flag != "-n" {
+            return None;
+        }
+        let (start_line, end_line) = parse_sed_print_script(script)?;
+        let path = Path::new(file);
+        let meta = fs::metadata(path).ok()?;
+        if !meta.is_file() {
+            return None;
+        }
+
+        return Some(NativePlan {
+            command: NativeCommand::SedPrint(SedPrintPlan {
+                file: file.clone(),
+                start_line,
+                end_line,
+            }),
+            label,
+            original: original.to_string(),
+            reason: "sed -n line print can be served as an in-process ranged read".to_string(),
+        });
     }
-    let (start_line, end_line) = parse_sed_print_script(&args[1])?;
-    let path = Path::new(&args[2]);
-    let meta = fs::metadata(path).ok()?;
+
+    let [script, file] = args else {
+        return None;
+    };
+    let (search, replacement, global) = parse_sed_literal_substitution(script)?;
+    let meta = fs::metadata(file).ok()?;
     if !meta.is_file() {
         return None;
     }
 
     Some(NativePlan {
-        command: NativeCommand::SedPrint(SedPrintPlan {
-            file: args[2].clone(),
-            start_line,
-            end_line,
+        command: NativeCommand::SedSubstitute(SedSubstitutePlan {
+            file: file.clone(),
+            search,
+            replacement,
+            global,
         }),
         label,
         original: original.to_string(),
-        reason: "sed -n line print can be served as an in-process ranged read".to_string(),
+        reason: "one-file literal sed substitution can run in-process".to_string(),
     })
+}
+
+fn parse_sed_literal_substitution(script: &str) -> Option<(String, String, bool)> {
+    let mut chars = script.char_indices();
+    if chars.next()?.1 != 's' {
+        return None;
+    }
+    let (delimiter_offset, delimiter) = chars.next()?;
+    if delimiter.is_ascii_alphanumeric() || delimiter.is_whitespace() || delimiter == '\\' {
+        return None;
+    }
+
+    let remainder = &script[delimiter_offset + delimiter.len_utf8()..];
+    let (search, replacement_and_flags) = remainder.split_once(delimiter)?;
+    let (replacement, flags) = replacement_and_flags.split_once(delimiter)?;
+    if !matches!(flags, "" | "g")
+        || !is_plain_literal_pattern(search)
+        || replacement
+            .chars()
+            .any(|ch| matches!(ch, '&' | '\\' | '\n' | '\r'))
+    {
+        return None;
+    }
+
+    Some((search.to_string(), replacement.to_string(), flags == "g"))
 }
 
 fn plan_grep_file(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
@@ -9393,6 +10190,7 @@ fn plan_grep_file(args: &[String], label: Option<String>, original: &str) -> Opt
                     count: false,
                     files_with_matches: false,
                     only_matching: false,
+                    whole_line: false,
                     context_before: 0,
                     context_after: 0,
                 }),
@@ -9417,6 +10215,7 @@ fn plan_grep_file(args: &[String], label: Option<String>, original: &str) -> Opt
                     count: false,
                     files_with_matches: false,
                     only_matching: false,
+                    whole_line: false,
                     context_before: 0,
                     context_after: 0,
                 }),
@@ -9431,7 +10230,7 @@ fn plan_grep_file(args: &[String], label: Option<String>, original: &str) -> Opt
 
 /// Flag-aware native grep recognition, activated only when neither of the
 /// two zero-flag branches above matches: `-n`/`--line-number`,
-/// `-i`/`--ignore-case`, `-v`/`--invert-match`, `-c`/`--count`,
+/// `-F`/`--fixed-strings`, `-i`/`--ignore-case`, `-v`/`--invert-match`, `-c`/`--count`,
 /// `-l`/`--files-with-matches`, `-o`/`--only-matching` (combinable in one
 /// clustered short-flag token, e.g. `-ni`), and `-A`/`-B`/`-C` context
 /// (accepted only as a standalone token immediately followed by a numeric
@@ -9461,6 +10260,8 @@ fn plan_grep_file_flags(
     let mut count = false;
     let mut files_with_matches = false;
     let mut only_matching = false;
+    let mut whole_line = false;
+    let mut fixed_strings = false;
     let mut context_before = 0usize;
     let mut context_after = 0usize;
     let mut e_patterns: Vec<String> = Vec::new();
@@ -9475,6 +10276,11 @@ fn plan_grep_file_flags(
             i += 1;
             continue;
         }
+        if word == "-F" {
+            fixed_strings = true;
+            i += 1;
+            continue;
+        }
         if let Some(rest) = word.strip_prefix("--") {
             match rest {
                 "line-number" => line_numbers = true,
@@ -9483,6 +10289,7 @@ fn plan_grep_file_flags(
                 "count" => count = true,
                 "files-with-matches" => files_with_matches = true,
                 "only-matching" => only_matching = true,
+                "line-regexp" => whole_line = true,
                 _ => return None,
             }
             i += 1;
@@ -9531,12 +10338,14 @@ fn plan_grep_file_flags(
         if word.starts_with('-') && word.len() > 1 {
             for flag in word[1..].chars() {
                 match flag {
+                    'F' => fixed_strings = true,
                     'n' => line_numbers = true,
                     'i' => ignore_case = true,
                     'v' => invert = true,
                     'c' => count = true,
                     'l' => files_with_matches = true,
                     'o' => only_matching = true,
+                    'x' => whole_line = true,
                     _ => return None,
                 }
             }
@@ -9555,13 +10364,38 @@ fn plan_grep_file_flags(
         }
         vec![positional.remove(0)]
     };
-    if patterns
-        .iter()
-        .any(|pattern| !is_plain_literal_pattern(pattern))
+    if patterns.is_empty()
+        || patterns.iter().any(|pattern| pattern.is_empty())
+        || (!fixed_strings
+            && patterns
+                .iter()
+                .any(|pattern| !is_plain_literal_pattern(pattern)))
     {
         return None;
     }
 
+    // The public C frontend only accelerates these exact `-xF` spellings.
+    // Keep cap-full on that same narrow surface rather than taking over a
+    // shape which the C launcher would return to grep unchanged.
+    let c_fast_whole_line = match args {
+        [flag, pattern, file] => {
+            (flag == "-xF" || flag == "-Fx")
+                && !pattern.is_empty()
+                && !pattern.starts_with('-')
+                && !file.starts_with('-')
+        }
+        [first_flag, second_flag, pattern, file] => {
+            ((first_flag == "-x" && second_flag == "-F")
+                || (first_flag == "-F" && second_flag == "-x"))
+                && !pattern.is_empty()
+                && !pattern.starts_with('-')
+                && !file.starts_with('-')
+        }
+        _ => false,
+    };
+    if whole_line && !c_fast_whole_line {
+        return None;
+    }
     let file = match positional.len() {
         0 => String::new(),
         1 => {
@@ -9573,6 +10407,18 @@ fn plan_grep_file_flags(
         }
         _ => return None,
     };
+    if fixed_strings
+        && (file.is_empty()
+            || fs::metadata(&file)
+                .ok()
+                .is_none_or(|metadata| metadata.len() < GREP_NATIVE_MIN_BYTES)
+            || file_contains_nul(&file).ok()?
+            || (ignore_case
+                && (!patterns.iter().all(|pattern| pattern.is_ascii())
+                    || !file_is_ascii(&file).ok()?)))
+    {
+        return None;
+    }
 
     Some(NativePlan {
         command: NativeCommand::GrepFile(GrepFilePlan {
@@ -9584,6 +10430,7 @@ fn plan_grep_file_flags(
             count,
             files_with_matches,
             only_matching,
+            whole_line,
             context_before,
             context_after,
         }),
@@ -9591,79 +10438,6 @@ fn plan_grep_file_flags(
         original: original.to_string(),
         reason: "flag-aware literal grep can scan in-process".to_string(),
     })
-}
-
-/// `rg` alias entry point: normalizes rg's argv onto the same accepted
-/// grep flag vocabulary `plan_grep_file`/`plan_grep_file_flags` understand
-/// and feeds it through the same native path, so rg gets the identical
-/// in-process recognition grep does with no separate flag-mapping table.
-/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#logic
-fn plan_rg_alias(args: &[String], label: Option<String>, original: &str) -> Option<NativePlan> {
-    let translated = normalize_rg_args(args)?;
-    let mut plan = plan_grep_file(&translated, label, original)?;
-    plan.reason = format!(
-        "{} (rg alias normalized onto grep-compatible flags)",
-        plan.reason
-    );
-    Some(plan)
-}
-
-/// Normalize an `rg` invocation's argv onto the vocabulary
-/// `plan_grep_file_flags` accepts (rg's own documentation states
-/// `-n -i -v -c -l -o -A -B -C -e` already mean the same thing as grep's,
-/// so no separate semantic mapping table is needed). A small allowlist of
-/// cosmetic rg-only flags is consumed harmlessly, since they never change
-/// match semantics: `--no-heading`, `--heading`, and any `--color=<mode>`
-/// token. Every other token (including any rg-specific flag outside the
-/// shared vocabulary) is passed through unchanged so the shared flag
-/// parser applies its own vocabulary check and disqualifies (`None`) if
-/// it isn't accepted.
-/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#logic
-fn normalize_rg_args(args: &[String]) -> Option<Vec<String>> {
-    let mut out = Vec::with_capacity(args.len());
-    for word in args {
-        if word == "--no-heading" || word == "--heading" || word.starts_with("--color=") {
-            continue;
-        }
-        out.push(word.clone());
-    }
-    Some(out)
-}
-
-/// If the leading pipe-segment's first word is the literal `rg` token and
-/// the remainder of that segment is exactly the already-accepted
-/// zero-flag shape (`[pattern]` or `[pattern, file]`, no leading `-` on
-/// either token, `is_plain_literal_pattern(pattern)`), rewrite that first
-/// word to the literal `grep` token in place — so the existing
-/// `cmd == "grep"`-keyed pipe-fusion match-arm family
-/// (`plan_head_grep_producer_mode` and siblings) fuses it unmodified, with
-/// zero duplicated match arms. Any other shape (a non-grep/rg segment, a
-/// flag-bearing rg/grep segment, or no pipe at all) is left untouched:
-/// flag-bearing rg combined with pipe-fusion is an explicit, documented
-/// out-of-scope boundary for this recognizer, not a regression.
-/// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#logic
-fn translate_leading_rg_pipe_segment(words: &mut [String]) {
-    if words.first().map(String::as_str) != Some("rg") {
-        return;
-    }
-    let end = words
-        .iter()
-        .position(|word| word == "|")
-        .unwrap_or(words.len());
-    let segment = &words[1..end];
-    let qualifies = match segment {
-        [pattern] => !pattern.starts_with('-') && is_plain_literal_pattern(pattern),
-        [pattern, file] => {
-            !pattern.starts_with('-')
-                && is_plain_literal_pattern(pattern)
-                && !file.starts_with('-')
-                && Path::new(file).is_file()
-        }
-        _ => false,
-    };
-    if qualifies {
-        words[0] = "grep".to_string();
-    }
 }
 
 // @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
@@ -9743,86 +10517,6 @@ fn plan_wc(args: &[String], label: Option<String>, original: &str) -> Option<Nat
         } else {
             "wc regular-file line/word/byte aggregate can count in-process".to_string()
         },
-    })
-}
-
-fn plan_grep_replacement(
-    command: &[String],
-    label: Option<String>,
-    original: &str,
-    tool_available: impl Fn(&str) -> bool,
-) -> Option<ExternalPlan> {
-    if !tool_available("rg") || command.first().map(|w| basename(w)) != Some("grep") {
-        return None;
-    }
-
-    let mut recursive = false;
-    let mut rg_args = vec!["--hidden".to_string(), "--no-ignore".to_string()];
-    let mut positional = Vec::new();
-    let mut flags_done = false;
-
-    for word in command.iter().skip(1) {
-        if !flags_done && word == "--" {
-            flags_done = true;
-            continue;
-        }
-        if !flags_done && word.starts_with("--") {
-            match word.as_str() {
-                "--recursive" | "--dereference-recursive" => recursive = true,
-                "--line-number" => rg_args.push("--line-number".to_string()),
-                "--ignore-case" => rg_args.push("--ignore-case".to_string()),
-                "--fixed-strings" => rg_args.push("--fixed-strings".to_string()),
-                "--word-regexp" => rg_args.push("--word-regexp".to_string()),
-                _ => return None,
-            }
-            continue;
-        }
-        if !flags_done && word.starts_with('-') && word.len() > 1 {
-            for flag in word[1..].chars() {
-                match flag {
-                    'R' | 'r' => recursive = true,
-                    'n' => rg_args.push("-n".to_string()),
-                    'i' => rg_args.push("-i".to_string()),
-                    'F' => rg_args.push("-F".to_string()),
-                    'w' => rg_args.push("-w".to_string()),
-                    'H' => rg_args.push("-H".to_string()),
-                    'l' => rg_args.push("-l".to_string()),
-                    'q' => rg_args.push("-q".to_string()),
-                    _ => return None,
-                }
-            }
-            continue;
-        }
-        positional.push(word.clone());
-    }
-
-    if !recursive || positional.len() < 2 {
-        return None;
-    }
-    if positional
-        .iter()
-        .any(|arg| arg.is_empty() || arg.contains(['*', '?', '[', ']']))
-    {
-        return None;
-    }
-    if positional.iter().skip(1).any(|path| path.starts_with('-')) {
-        return None;
-    }
-    rg_args.push("--".to_string());
-    rg_args.extend(positional);
-
-    let optimized = render_command("rg", &rg_args);
-    let fallback = render_argv(command);
-    let script = format!("{optimized} || {fallback}");
-
-    Some(ExternalPlan {
-        program: "bash".to_string(),
-        args: vec!["-c".to_string(), script],
-        label,
-        original: original.to_string(),
-        implementation: ExternalImplementation::Replacement,
-        reason: "recursive grep safe subset can use rg with original-command fallback".to_string(),
-        fallback: Some(fallback),
     })
 }
 
@@ -9981,8 +10675,19 @@ fn run_native_command(
         NativeCommand::Dirname(dir) => run_dirname(dir, stdout),
         NativeCommand::Ls(ls) => run_ls(ls, stdout, stderr),
         NativeCommand::Sort(sort) => run_sort(sort, stdout),
+        NativeCommand::Nl(nl) => run_nl(nl, stdout, stderr),
+        NativeCommand::Rev(rev) => run_rev(rev, stdout, stderr),
+        NativeCommand::Paste(paste) => run_paste(paste, stdout, stderr),
+        NativeCommand::Comm(comm) => run_comm(comm, stdout, stderr),
+        NativeCommand::Join(join) => run_join(join, stdout, stderr),
+        NativeCommand::Expand(expand) => run_expand(expand, stdout, stderr),
+        NativeCommand::Fold(fold) => run_fold(fold, stdout, stderr),
+        NativeCommand::Unexpand(unexpand) => run_unexpand(unexpand, stdout, stderr),
         NativeCommand::Uniq(uniq) => run_uniq(uniq, stdout, stderr),
         NativeCommand::Cut(cut) => run_cut(cut, stdout, stderr),
+        NativeCommand::CutChars(cut) => run_cut_chars(cut, stdout, stderr),
+        NativeCommand::CutFields(cut) => run_cut_fields(cut, stdout, stderr),
+        NativeCommand::CutFieldList(cut) => run_cut_field_list(cut, stdout, stderr),
         NativeCommand::Tr(tr) => run_tr(tr, stdout),
         NativeCommand::Cat(cat) => run_cat(cat, stdout, stderr),
         NativeCommand::Head(head) => run_head(head, stdout, stderr),
@@ -10011,7 +10716,9 @@ fn run_native_command(
         NativeCommand::Touch(touch) => run_touch(touch, stderr),
         NativeCommand::GrepFile(grep) => run_grep_file(grep, stdout, stderr),
         NativeCommand::AwkNeedleCount(awk) => run_awk_needle_count(awk, stdout, stderr),
+        NativeCommand::AwkRecordCount(awk) => run_awk_record_count(awk, stdout, stderr),
         NativeCommand::AwkFirstField(awk) => run_awk_first_field(awk, stdout, stderr),
+        NativeCommand::AwkTwoFields(awk) => run_awk_two_fields(awk, stdout, stderr),
         NativeCommand::XargsEcho(xargs) => run_xargs_echo(xargs, stdout, stderr),
         NativeCommand::XargsWcLines(xargs) => run_xargs_wc_lines(xargs, stdout, stderr),
         NativeCommand::PipeXargsEchoProducer(pipe) => {
@@ -10295,6 +11002,7 @@ fn run_native_command(
         NativeCommand::PipeFindSortTail(pipe) => run_pipe_find_sort_tail(pipe, stdout, stderr),
         NativeCommand::Find(find) => run_find(find, stdout, stderr),
         NativeCommand::SedPrint(sed) => run_sed_print(sed, stdout, stderr),
+        NativeCommand::SedSubstitute(sed) => run_sed_substitute(sed, stdout),
         NativeCommand::WcAll(wc) => run_wc_all(wc, stdout, stderr),
         NativeCommand::WcLines(wc) => run_wc_lines(wc, stdout, stderr),
         NativeCommand::WithCwd(inner, dir) => {
@@ -10987,6 +11695,508 @@ fn run_sort(plan: &SortPlan, stdout: &mut dyn Write) -> Result<i32> {
     Ok(0)
 }
 
+fn run_nl(plan: &NlPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "nl: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    let mut number = 0_u64;
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(0);
+        }
+        number += 1;
+        write!(stdout, "{number:6}\t")?;
+        stdout.write_all(&line)?;
+    }
+}
+
+fn run_rev(plan: &RevPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let bytes = match fs::read(&plan.file) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            writeln!(stderr, "rev: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    let input = match std::str::from_utf8(&bytes) {
+        Ok(input) => input,
+        Err(_) => {
+            writeln!(stderr, "rev: {}: Illegal byte sequence", plan.file)?;
+            return Ok(1);
+        }
+    };
+    for record in input.split_inclusive('\n') {
+        let (content, newline) = record
+            .strip_suffix('\n')
+            .map_or((record, false), |content| (content, true));
+        for character in content.chars().rev() {
+            write!(stdout, "{character}")?;
+        }
+        if newline {
+            stdout.write_all(b"\n")?;
+        }
+    }
+    Ok(0)
+}
+
+fn run_paste(plan: &PastePlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    if plan.serial {
+        let bytes = match fs::read(&plan.files[0]) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                writeln!(stderr, "paste: {}: {error}", plan.files[0])?;
+                return Ok(1);
+            }
+        };
+        let mut pending = false;
+        for byte in bytes {
+            if byte == b'\n' {
+                if pending {
+                    stdout.write_all(&[plan.delimiter])?;
+                }
+                pending = true;
+                continue;
+            }
+            if pending {
+                stdout.write_all(&[plan.delimiter])?;
+                pending = false;
+            }
+            stdout.write_all(&[byte])?;
+        }
+        if pending {
+            stdout.write_all(b"\n")?;
+        }
+        return Ok(0);
+    }
+    let mut readers = Vec::with_capacity(plan.files.len());
+    for path in &plan.files {
+        match fs::File::open(path) {
+            Ok(file) => readers.push(BufReader::new(file)),
+            Err(error) => {
+                writeln!(stderr, "paste: {path}: {error}")?;
+                return Ok(1);
+            }
+        }
+    }
+    run_paste_buffered_readers(&mut readers, plan.delimiter, stdout)
+}
+
+fn run_paste_readers<L: Read, R: Read>(
+    left: L,
+    right: R,
+    delimiter: u8,
+    stdout: &mut dyn Write,
+) -> Result<i32> {
+    let mut left = BufReader::new(left);
+    let mut right = BufReader::new(right);
+    let mut left_record = Vec::new();
+    let mut right_record = Vec::new();
+    loop {
+        left_record.clear();
+        right_record.clear();
+        let left_read = left.read_until(b'\n', &mut left_record)?;
+        let right_read = right.read_until(b'\n', &mut right_record)?;
+        if left_read == 0 && right_read == 0 {
+            return Ok(0);
+        }
+        stdout.write_all(left_record.strip_suffix(b"\n").unwrap_or(&left_record))?;
+        stdout.write_all(&[delimiter])?;
+        stdout.write_all(right_record.strip_suffix(b"\n").unwrap_or(&right_record))?;
+        stdout.write_all(b"\n")?;
+    }
+}
+
+fn run_paste_buffered_readers<R: BufRead>(
+    readers: &mut [R],
+    delimiter: u8,
+    stdout: &mut dyn Write,
+) -> Result<i32> {
+    let mut records = vec![Vec::new(); readers.len()];
+    loop {
+        let mut saw_record = false;
+        for (reader, record) in readers.iter_mut().zip(records.iter_mut()) {
+            record.clear();
+            saw_record |= reader.read_until(b'\n', record)? != 0;
+        }
+        if !saw_record {
+            return Ok(0);
+        }
+        for (index, record) in records.iter().enumerate() {
+            if index > 0 {
+                stdout.write_all(&[delimiter])?;
+            }
+            stdout.write_all(record.strip_suffix(b"\n").unwrap_or(record))?;
+        }
+        stdout.write_all(b"\n")?;
+    }
+}
+
+fn run_comm(plan: &CommPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let left = match fs::File::open(&plan.left) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "comm: {}: {error}", plan.left)?;
+            return Ok(1);
+        }
+    };
+    let right = match fs::File::open(&plan.right) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "comm: {}: {error}", plan.right)?;
+            return Ok(1);
+        }
+    };
+    run_comm_readers(left, right, stdout)
+}
+
+fn run_comm_readers<L: Read, R: Read>(left: L, right: R, stdout: &mut dyn Write) -> Result<i32> {
+    let mut left = BufReader::new(left);
+    let mut right = BufReader::new(right);
+    let mut left_record = Vec::new();
+    let mut right_record = Vec::new();
+    let mut left_ready = false;
+    let mut right_ready = false;
+
+    loop {
+        if !left_ready {
+            left_record.clear();
+            if left.read_until(b'\n', &mut left_record)? == 0 {
+                return Ok(0);
+            }
+            left_ready = true;
+        }
+        if !right_ready {
+            right_record.clear();
+            if right.read_until(b'\n', &mut right_record)? == 0 {
+                return Ok(0);
+            }
+            right_ready = true;
+        }
+
+        match left_record
+            .strip_suffix(b"\n")
+            .unwrap_or(&left_record)
+            .cmp(right_record.strip_suffix(b"\n").unwrap_or(&right_record))
+        {
+            std::cmp::Ordering::Less => left_ready = false,
+            std::cmp::Ordering::Greater => right_ready = false,
+            std::cmp::Ordering::Equal => {
+                stdout.write_all(&left_record)?;
+                if !left_record.ends_with(b"\n") {
+                    stdout.write_all(b"\n")?;
+                }
+                left_ready = false;
+                right_ready = false;
+            }
+        }
+    }
+}
+
+fn run_join(plan: &JoinPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let left = match fs::File::open(&plan.left) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "join: {}: {error}", plan.left)?;
+            return Ok(1);
+        }
+    };
+    let right = match fs::File::open(&plan.right) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "join: {}: {error}", plan.right)?;
+            return Ok(1);
+        }
+    };
+    run_join_readers(left, right, plan.delimiter, stdout)
+}
+
+fn read_join_record(reader: &mut dyn BufRead, record: &mut Vec<u8>) -> Result<bool> {
+    record.clear();
+    Ok(reader.read_until(b'\n', record)? != 0)
+}
+
+fn join_key(record: &[u8], delimiter: u8) -> &[u8] {
+    let record = record.strip_suffix(b"\n").unwrap_or(record);
+    record
+        .split(|byte| *byte == delimiter)
+        .next()
+        .unwrap_or_default()
+}
+
+fn join_rest(record: &[u8], delimiter: u8) -> Option<&[u8]> {
+    let record = record.strip_suffix(b"\n").unwrap_or(record);
+    record
+        .iter()
+        .position(|byte| *byte == delimiter)
+        .map(|index| &record[index + 1..])
+}
+
+fn write_join_record(
+    key: &[u8],
+    left: &[u8],
+    right: &[u8],
+    delimiter: u8,
+    stdout: &mut dyn Write,
+) -> Result<()> {
+    stdout.write_all(key)?;
+    if let Some(rest) = join_rest(left, delimiter) {
+        stdout.write_all(&[delimiter])?;
+        stdout.write_all(rest)?;
+    }
+    if let Some(rest) = join_rest(right, delimiter) {
+        stdout.write_all(&[delimiter])?;
+        stdout.write_all(rest)?;
+    }
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
+fn run_join_readers<L: Read, R: Read>(
+    left: L,
+    right: R,
+    delimiter: u8,
+    stdout: &mut dyn Write,
+) -> Result<i32> {
+    let mut left = BufReader::new(left);
+    let mut right = BufReader::new(right);
+    let mut left_record = Vec::new();
+    let mut right_record = Vec::new();
+    let mut left_ready = false;
+    let mut right_ready = false;
+
+    loop {
+        if !left_ready {
+            if !read_join_record(&mut left, &mut left_record)? {
+                return Ok(0);
+            }
+            left_ready = true;
+        }
+        if !right_ready {
+            if !read_join_record(&mut right, &mut right_record)? {
+                return Ok(0);
+            }
+            right_ready = true;
+        }
+        match join_key(&left_record, delimiter).cmp(join_key(&right_record, delimiter)) {
+            std::cmp::Ordering::Less => left_ready = false,
+            std::cmp::Ordering::Greater => right_ready = false,
+            std::cmp::Ordering::Equal => {
+                let key = join_key(&left_record, delimiter).to_vec();
+                let mut left_group = vec![left_record.clone()];
+                loop {
+                    if !read_join_record(&mut left, &mut left_record)? {
+                        left_ready = false;
+                        break;
+                    }
+                    if join_key(&left_record, delimiter) != key {
+                        left_ready = true;
+                        break;
+                    }
+                    left_group.push(left_record.clone());
+                }
+                let mut right_group = vec![right_record.clone()];
+                loop {
+                    if !read_join_record(&mut right, &mut right_record)? {
+                        right_ready = false;
+                        break;
+                    }
+                    if join_key(&right_record, delimiter) != key {
+                        right_ready = true;
+                        break;
+                    }
+                    right_group.push(right_record.clone());
+                }
+                for left in &left_group {
+                    for right in &right_group {
+                        write_join_record(&key, left, right, delimiter, stdout)?;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn run_expand(plan: &ExpandPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "expand: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    run_expand_reader(file, stdout)?;
+    Ok(0)
+}
+
+fn run_expand_reader<R: Read>(mut reader: R, stdout: &mut dyn Write) -> Result<()> {
+    let mut buffer = [0_u8; 8192];
+    let mut column = 0_usize;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        for byte in buffer[..read].iter().copied() {
+            match byte {
+                b'\t' => {
+                    let spaces = 8 - column % 8;
+                    for _ in 0..spaces {
+                        stdout.write_all(b" ")?;
+                    }
+                    column += spaces;
+                }
+                b'\n' => {
+                    stdout.write_all(b"\n")?;
+                    column = 0;
+                }
+                b'\x08' => {
+                    stdout.write_all(&[byte])?;
+                    column = column.saturating_sub(1);
+                }
+                _ => {
+                    stdout.write_all(&[byte])?;
+                    column += 1;
+                }
+            }
+        }
+    }
+}
+
+fn run_fold(plan: &FoldPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "fold: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    run_fold_reader(file, stdout, plan.width)?;
+    Ok(0)
+}
+
+fn run_fold_reader<R: Read>(mut reader: R, stdout: &mut dyn Write, width: usize) -> Result<()> {
+    let mut buffer = [0_u8; 8192];
+    let mut column = 0_usize;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        for byte in buffer[..read].iter().copied() {
+            if byte == b'\n' {
+                stdout.write_all(b"\n")?;
+                column = 0;
+            } else {
+                if column == width {
+                    stdout.write_all(b"\n")?;
+                    column = 0;
+                }
+                stdout.write_all(&[byte])?;
+                column += 1;
+            }
+        }
+    }
+}
+
+fn run_unexpand(
+    plan: &UnexpandPlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "unexpand: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    run_unexpand_reader(file, stdout, plan.all)?;
+    Ok(0)
+}
+
+fn run_unexpand_reader<R: Read>(mut reader: R, stdout: &mut dyn Write, all: bool) -> Result<()> {
+    let mut buffer = [0_u8; 8192];
+    let mut column = 0_usize;
+    let mut pending_spaces = 0_usize;
+    let mut leading = true;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            write_unexpand_spaces(stdout, &mut column, pending_spaces, all || leading, true)?;
+            return Ok(());
+        }
+        for byte in buffer[..read].iter().copied() {
+            if byte == b' ' {
+                pending_spaces += 1;
+                continue;
+            }
+            write_unexpand_spaces(stdout, &mut column, pending_spaces, all || leading, false)?;
+            pending_spaces = 0;
+            stdout.write_all(&[byte])?;
+            if byte == b'\n' {
+                column = 0;
+                leading = true;
+            } else {
+                column += 1;
+                leading = false;
+            }
+        }
+    }
+}
+
+fn write_unexpand_spaces(
+    stdout: &mut dyn Write,
+    column: &mut usize,
+    spaces: usize,
+    transform: bool,
+    at_eof: bool,
+) -> Result<()> {
+    if spaces == 0 {
+        return Ok(());
+    }
+    let mut remaining = spaces;
+    let mut simulated_column = *column;
+    let mut can_emit_tab = false;
+    if transform && spaces >= 2 {
+        while remaining > 0 {
+            let to_tab_stop = 8 - simulated_column % 8;
+            if remaining >= to_tab_stop {
+                can_emit_tab = true;
+                break;
+            }
+            simulated_column += remaining;
+            remaining = 0;
+        }
+    }
+    if at_eof && can_emit_tab {
+        *column += spaces;
+        return Ok(());
+    }
+    remaining = spaces;
+    while remaining > 0 {
+        let to_tab_stop = 8 - *column % 8;
+        if can_emit_tab && remaining >= to_tab_stop {
+            stdout.write_all(b"\t")?;
+            *column += to_tab_stop;
+            remaining -= to_tab_stop;
+        } else {
+            for _ in 0..remaining {
+                stdout.write_all(b" ")?;
+            }
+            *column += remaining;
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 struct SortedLines {
     data: Vec<u8>,
     lines: Vec<(usize, usize)>,
@@ -11000,7 +12210,7 @@ fn sorted_file_lines(file: &str) -> Result<SortedLines> {
 fn run_uniq(plan: &UniqPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
     if plan.stdin {
         let stdin = io::stdin();
-        run_uniq_reader(stdin.lock(), stdout)?;
+        run_uniq_reader(stdin.lock(), stdout, plan.count)?;
         return Ok(0);
     }
     let file = match fs::File::open(&plan.file) {
@@ -11010,14 +12220,15 @@ fn run_uniq(plan: &UniqPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> 
             return Ok(1);
         }
     };
-    run_uniq_reader(file, stdout)?;
+    run_uniq_reader(file, stdout, plan.count)?;
     Ok(0)
 }
 
-fn run_uniq_reader<R: Read>(reader: R, stdout: &mut dyn Write) -> Result<()> {
+fn run_uniq_reader<R: Read>(reader: R, stdout: &mut dyn Write, count: bool) -> Result<()> {
     let mut reader = BufReader::new(reader);
     let mut previous: Option<Vec<u8>> = None;
     let mut line = Vec::new();
+    let mut runs = 0_u64;
     loop {
         line.clear();
         let read = reader.read_until(b'\n', &mut line)?;
@@ -11025,8 +12236,24 @@ fn run_uniq_reader<R: Read>(reader: R, stdout: &mut dyn Write) -> Result<()> {
             break;
         }
         if previous.as_deref() != Some(line.as_slice()) {
-            stdout.write_all(&line)?;
+            if count {
+                if let Some(previous) = previous.as_deref() {
+                    write!(stdout, "{runs:4} ")?;
+                    stdout.write_all(previous)?;
+                }
+            } else {
+                stdout.write_all(&line)?;
+            }
             previous = Some(line.clone());
+            runs = 1;
+        } else {
+            runs += 1;
+        }
+    }
+    if count {
+        if let Some(previous) = previous.as_deref() {
+            write!(stdout, "{runs:4} ")?;
+            stdout.write_all(previous)?;
         }
     }
     Ok(())
@@ -11542,6 +12769,164 @@ fn run_cut(plan: &CutPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Re
     )
 }
 
+fn run_cut_chars(
+    plan: &CutCharsPlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "cut: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    run_cut_chars_reader(file, stdout, plan.start, plan.end)?;
+    Ok(0)
+}
+
+fn run_cut_chars_reader<R: Read>(
+    mut reader: R,
+    stdout: &mut dyn Write,
+    start: usize,
+    end: Option<usize>,
+) -> Result<()> {
+    let mut buffer = [0_u8; 8192];
+    let mut column = 1_usize;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        for byte in buffer[..read].iter().copied() {
+            if byte == b'\n' {
+                stdout.write_all(b"\n")?;
+                column = 1;
+            } else {
+                if column >= start && end.is_none_or(|end| column <= end) {
+                    stdout.write_all(&[byte])?;
+                }
+                column += 1;
+            }
+        }
+    }
+}
+
+fn run_cut_fields(
+    plan: &CutFieldsPlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "cut: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(0);
+        }
+        write_cut_fields_line(&line, plan.delimiter, plan.start, plan.end, stdout)?;
+    }
+}
+
+fn run_cut_field_list(
+    plan: &CutFieldListPlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "cut: {}: {error}", plan.file)?;
+            return Ok(1);
+        }
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(0);
+        }
+        write_cut_field_list_line(&line, plan.delimiter, &plan.fields, stdout)?;
+    }
+}
+
+fn write_cut_fields_line(
+    line: &[u8],
+    delimiter: u8,
+    start: usize,
+    end: usize,
+    stdout: &mut dyn Write,
+) -> Result<()> {
+    let content = line.strip_suffix(b"\n").unwrap_or(line);
+    if !content.contains(&delimiter) {
+        stdout.write_all(content)?;
+        stdout.write_all(b"\n")?;
+        return Ok(());
+    }
+    let mut field_start = 0usize;
+    for _ in 1..start {
+        let Some(offset) = content[field_start..]
+            .iter()
+            .position(|byte| *byte == delimiter)
+        else {
+            stdout.write_all(b"\n")?;
+            return Ok(());
+        };
+        field_start += offset + 1;
+    }
+    let mut field_end = content.len();
+    let mut current = start;
+    for (offset, byte) in content[field_start..].iter().enumerate() {
+        if *byte != delimiter {
+            continue;
+        }
+        if current == end {
+            field_end = field_start + offset;
+            break;
+        }
+        current += 1;
+    }
+    stdout.write_all(&content[field_start..field_end])?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
+fn write_cut_field_list_line(
+    line: &[u8],
+    delimiter: u8,
+    fields: &[usize],
+    stdout: &mut dyn Write,
+) -> Result<()> {
+    let content = line.strip_suffix(b"\n").unwrap_or(line);
+    if !content.contains(&delimiter) {
+        stdout.write_all(content)?;
+        stdout.write_all(b"\n")?;
+        return Ok(());
+    }
+    let mut emitted = false;
+    for (index, field) in content.split(|byte| *byte == delimiter).enumerate() {
+        let field_number = index + 1;
+        if !fields.contains(&field_number) {
+            continue;
+        }
+        if emitted {
+            stdout.write_all(&[delimiter])?;
+        }
+        stdout.write_all(field)?;
+        emitted = true;
+    }
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
 fn run_pipe_cat_cut(
     plan: &PipeCatCutPlan,
     stdout: &mut dyn Write,
@@ -11647,6 +13032,26 @@ fn run_pipe_cat_tr(
 }
 
 fn transform_reader(input: &mut dyn Read, mode: &TrMode, stdout: &mut dyn Write) -> Result<()> {
+    if let TrMode::Squeeze { set } = mode {
+        let mut squeeze = [false; 256];
+        for byte in set {
+            squeeze[usize::from(*byte)] = true;
+        }
+        let mut previous = None;
+        let mut buf = [0u8; 8192];
+        loop {
+            let read = input.read(&mut buf)?;
+            if read == 0 {
+                return Ok(());
+            }
+            for byte in buf[..read].iter().copied() {
+                if !squeeze[usize::from(byte)] || previous != Some(byte) {
+                    stdout.write_all(&[byte])?;
+                }
+                previous = Some(byte);
+            }
+        }
+    }
     let mut buf = [0u8; 8192];
     loop {
         let read = input.read(&mut buf)?;
@@ -11689,6 +13094,22 @@ fn transform_bytes_to_vec(input: &[u8], mode: &TrMode) -> Vec<u8> {
                     .filter(|byte| !delete[usize::from(*byte)]),
             );
             out
+        }
+        TrMode::Squeeze { set } => {
+            let mut squeeze = [false; 256];
+            for byte in set {
+                squeeze[usize::from(*byte)] = true;
+            }
+            let mut previous = None;
+            input
+                .iter()
+                .copied()
+                .filter(|byte| {
+                    let emit = !squeeze[usize::from(*byte)] || previous != Some(*byte);
+                    previous = Some(*byte);
+                    emit
+                })
+                .collect()
         }
     }
 }
@@ -13058,6 +14479,40 @@ fn run_awk_needle_count_reader<R: Read>(reader: R, stdout: &mut dyn Write) -> Re
         writeln!(stdout)?;
     }
     Ok(())
+}
+
+fn run_awk_record_count(
+    plan: &AwkRecordCountPlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    match fs::File::open(&plan.file) {
+        Ok(file) => {
+            let count = awk_record_count_reader(file)?;
+            writeln!(stdout, "{count}")?;
+            Ok(0)
+        }
+        Err(e) => {
+            writeln!(stderr, "awk: {}: {e}", plan.file)?;
+            Ok(2)
+        }
+    }
+}
+
+fn awk_record_count_reader<R: Read>(mut reader: R) -> Result<u64> {
+    let mut buffer = [0_u8; 8192];
+    let mut records = 0_u64;
+    let mut saw_bytes = false;
+    let mut last_was_newline = false;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(records + u64::from(saw_bytes && !last_was_newline));
+        }
+        saw_bytes = true;
+        records += buffer[..read].iter().filter(|&&byte| byte == b'\n').count() as u64;
+        last_was_newline = buffer[read - 1] == b'\n';
+    }
 }
 
 fn run_xargs_echo(
@@ -14513,7 +15968,7 @@ fn read_all_grep_lines_reader<R: BufRead>(
 /// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#unit-test
 fn find_literal_occurrences(
     content: &[u8],
-    needles: &[Vec<u8>],
+    needles: &[LiteralNeedle],
     ignore_case: bool,
 ) -> Vec<(usize, usize)> {
     let folded;
@@ -14525,14 +15980,14 @@ fn find_literal_occurrences(
     };
     let mut occurrences = Vec::new();
     for needle in needles {
-        if needle.is_empty() {
+        if needle.bytes.is_empty() {
             continue;
         }
         let mut start = 0;
-        while start + needle.len() <= haystack.len() {
-            if &haystack[start..start + needle.len()] == needle.as_slice() {
-                occurrences.push((start, start + needle.len()));
-                start += needle.len();
+        while start + needle.bytes.len() <= haystack.len() {
+            if haystack[start..start + needle.bytes.len()] == needle.bytes {
+                occurrences.push((start, start + needle.bytes.len()));
+                start += needle.bytes.len();
             } else {
                 start += 1;
             }
@@ -14552,6 +16007,37 @@ fn grep_exit_code(matched_indices: &[usize], had_error: bool) -> i32 {
     }
 }
 
+struct LiteralNeedle {
+    bytes: Vec<u8>,
+    shift: [usize; 256],
+}
+
+impl LiteralNeedle {
+    fn new(bytes: Vec<u8>) -> Self {
+        let mut shift = [bytes.len(); 256];
+        for (idx, byte) in bytes.iter().copied().enumerate().take(bytes.len().saturating_sub(1)) {
+            shift[byte as usize] = bytes.len() - idx - 1;
+        }
+        Self { bytes, shift }
+    }
+
+    fn contains(&self, haystack: &[u8]) -> bool {
+        if self.bytes.is_empty() || haystack.len() < self.bytes.len() {
+            return false;
+        }
+        let last = self.bytes.len() - 1;
+        let mut offset = 0;
+        while offset <= haystack.len() - self.bytes.len() {
+            let tail = haystack[offset + last];
+            if tail == self.bytes[last] && haystack[offset..offset + self.bytes.len()] == self.bytes {
+                return true;
+            }
+            offset += self.shift[tail as usize];
+        }
+        false
+    }
+}
+
 /// @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#unit-test
 fn run_grep_file(
     plan: &GrepFilePlan,
@@ -14560,14 +16046,14 @@ fn run_grep_file(
 ) -> Result<i32> {
     let (all_lines, had_error) = read_all_grep_lines(&plan.file, stderr)?;
 
-    let needles: Vec<Vec<u8>> = plan
+    let needles: Vec<LiteralNeedle> = plan
         .patterns
         .iter()
         .map(|pattern| {
             if plan.ignore_case {
-                pattern.to_ascii_lowercase().into_bytes()
+                LiteralNeedle::new(pattern.to_ascii_lowercase().into_bytes())
             } else {
-                pattern.clone().into_bytes()
+                LiteralNeedle::new(pattern.clone().into_bytes())
             }
         })
         .collect();
@@ -14580,11 +16066,11 @@ fn run_grep_file(
         } else {
             content
         };
-        needles.iter().any(|needle| {
-            haystack
-                .windows(needle.len())
-                .any(|window| window == needle.as_slice())
-        })
+        if plan.whole_line {
+            needles.iter().any(|needle| haystack == needle.bytes)
+        } else {
+            needles.iter().any(|needle| needle.contains(haystack))
+        }
     };
 
     let mut matched_indices: Vec<usize> = Vec::new();
@@ -15207,9 +16693,24 @@ fn awk_first_field_lines(
     field: usize,
     stderr: &mut dyn Write,
 ) -> Result<Vec<Vec<u8>>> {
+    awk_first_field_lines_with_separator(file, pattern, field, None, stderr)
+}
+
+fn awk_first_field_lines_with_separator(
+    file: &str,
+    pattern: Option<&str>,
+    field: usize,
+    separator: Option<u8>,
+    stderr: &mut dyn Write,
+) -> Result<Vec<Vec<u8>>> {
     if file.is_empty() {
         let stdin = io::stdin();
-        return awk_first_field_lines_reader(stdin.lock(), pattern, field);
+        return awk_first_field_lines_reader_with_separator(
+            stdin.lock(),
+            pattern,
+            field,
+            separator,
+        );
     }
 
     let file_handle = match fs::File::open(file) {
@@ -15219,7 +16720,12 @@ fn awk_first_field_lines(
             return Ok(Vec::new());
         }
     };
-    awk_first_field_lines_reader(BufReader::new(file_handle), pattern, field)
+    awk_first_field_lines_reader_with_separator(
+        BufReader::new(file_handle),
+        pattern,
+        field,
+        separator,
+    )
 }
 
 fn awk_first_field_lines_reader<R: BufRead>(
@@ -15227,14 +16733,29 @@ fn awk_first_field_lines_reader<R: BufRead>(
     pattern: Option<&str>,
     field: usize,
 ) -> Result<Vec<Vec<u8>>> {
+    awk_first_field_lines_reader_with_separator(reader, pattern, field, None)
+}
+
+fn awk_first_field_lines_reader_with_separator<R: BufRead>(
+    reader: R,
+    pattern: Option<&str>,
+    field: usize,
+    separator: Option<u8>,
+) -> Result<Vec<Vec<u8>>> {
     let mut lines = Vec::new();
     for line in reader.lines() {
         let line = line?;
         if pattern.map_or(true, |pattern| line.contains(pattern)) {
-            let token = line
-                .split_whitespace()
-                .nth(field.saturating_sub(1))
-                .unwrap_or("");
+            let token = match separator {
+                Some(separator) => line
+                    .split(separator as char)
+                    .nth(field.saturating_sub(1))
+                    .unwrap_or(""),
+                None => line
+                    .split_whitespace()
+                    .nth(field.saturating_sub(1))
+                    .unwrap_or(""),
+            };
             let mut out = token.as_bytes().to_vec();
             out.push(b'\n');
             lines.push(out);
@@ -15263,12 +16784,51 @@ fn run_awk_first_field(
 ) -> Result<i32> {
     let lines = if plan.stdin {
         let stdin = io::stdin();
-        awk_first_field_lines_reader(stdin.lock(), plan.pattern.as_deref(), plan.field)?
+        awk_first_field_lines_reader_with_separator(
+            stdin.lock(),
+            plan.pattern.as_deref(),
+            plan.field,
+            plan.separator,
+        )?
     } else {
-        awk_first_field_lines(&plan.file, plan.pattern.as_deref(), plan.field, stderr)?
+        awk_first_field_lines_with_separator(
+            &plan.file,
+            plan.pattern.as_deref(),
+            plan.field,
+            plan.separator,
+            stderr,
+        )?
     };
     for line in lines {
         stdout.write_all(&line)?;
+    }
+    Ok(0)
+}
+
+fn run_awk_two_fields(
+    plan: &AwkTwoFieldsPlan,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
+    let file = match fs::File::open(&plan.file) {
+        Ok(file) => file,
+        Err(error) => {
+            writeln!(stderr, "awk: {}: {error}", plan.file)?;
+            return Ok(2);
+        }
+    };
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        let mut fields = line.split(plan.separator as char);
+        let first = fields.nth(plan.fields[0].saturating_sub(1)).unwrap_or("");
+        let second = line
+            .split(plan.separator as char)
+            .nth(plan.fields[1].saturating_sub(1))
+            .unwrap_or("");
+        stdout.write_all(first.as_bytes())?;
+        stdout.write_all(b" ")?;
+        stdout.write_all(second.as_bytes())?;
+        stdout.write_all(b"\n")?;
     }
     Ok(0)
 }
@@ -16827,6 +18387,54 @@ fn run_sed_print(
     Ok(0)
 }
 
+fn run_sed_substitute(plan: &SedSubstitutePlan, stdout: &mut dyn Write) -> Result<i32> {
+    let file = fs::File::open(&plan.file).with_context(|| format!("reading {}", plan.file))?;
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader
+            .read_until(b'\n', &mut line)
+            .with_context(|| format!("reading {}", plan.file))?
+            == 0
+        {
+            break;
+        }
+        write_sed_substituted_line(
+            &line,
+            plan.search.as_bytes(),
+            plan.replacement.as_bytes(),
+            plan.global,
+            stdout,
+        )?;
+    }
+    Ok(0)
+}
+
+fn write_sed_substituted_line(
+    line: &[u8],
+    search: &[u8],
+    replacement: &[u8],
+    global: bool,
+    stdout: &mut dyn Write,
+) -> Result<()> {
+    let mut cursor = 0;
+    while let Some(relative_match) = line[cursor..]
+        .windows(search.len())
+        .position(|window| window == search)
+    {
+        let matched_at = cursor + relative_match;
+        stdout.write_all(&line[cursor..matched_at])?;
+        stdout.write_all(replacement)?;
+        cursor = matched_at + search.len();
+        if !global {
+            break;
+        }
+    }
+    stdout.write_all(&line[cursor..])?;
+    Ok(())
+}
+
 // @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 fn run_wc_all(plan: &WcAllPlan, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
     if plan.files.is_empty() {
@@ -17370,6 +18978,386 @@ mod tests {
             plan.reason,
             "shell command string requires bash semantics; running under bash -c"
         );
+    }
+
+    #[test]
+    fn uniq_count_reader_matches_bsd_spacing_and_final_newline() {
+        let mut output = Vec::new();
+        run_uniq_reader(&b"same\nsame\nnext\nnext\nsame"[..], &mut output, true).unwrap();
+        assert_eq!(output, b"   2 same\n   2 next\n   1 same");
+    }
+
+    #[test]
+    fn awk_record_count_includes_final_unterminated_record() {
+        assert_eq!(awk_record_count_reader(&b"one\ntwo\nthree"[..]).unwrap(), 3);
+        assert_eq!(
+            awk_record_count_reader(&b"one\ntwo\nthree\n"[..]).unwrap(),
+            3
+        );
+        assert_eq!(awk_record_count_reader(&b""[..]).unwrap(), 0);
+    }
+
+    #[test]
+    fn awk_two_fields_preserves_empty_and_missing_delimited_fields() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("rows.csv");
+        fs::write(&file, b"first,second,third\nsingle\n,leading,\ntrailing,\n").unwrap();
+        let mut output = Vec::new();
+        assert_eq!(
+            run_awk_two_fields(
+                &AwkTwoFieldsPlan {
+                    file: file.to_string_lossy().into_owned(),
+                    fields: [1, 3],
+                    separator: b',',
+                },
+                &mut output,
+                &mut Vec::new(),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(output, b"first third\nsingle \n \ntrailing \n");
+    }
+
+    #[test]
+    fn nl_all_lines_preserves_blank_and_unterminated_records() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("nl.txt");
+        fs::write(&file, b"alpha\n\nbeta").unwrap();
+        let mut output = Vec::new();
+        assert_eq!(
+            run_nl(
+                &NlPlan {
+                    file: file.to_string_lossy().into_owned(),
+                },
+                &mut output,
+                &mut Vec::new(),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(output, b"     1\talpha\n     2\t\n     3\tbeta");
+    }
+
+    #[test]
+    fn rev_reverses_unicode_records_and_preserves_record_endings() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("rev.txt");
+        fs::write(&file, "aéb\r\nxy\nlast").unwrap();
+        let mut output = Vec::new();
+        assert_eq!(
+            run_rev(
+                &RevPlan {
+                    file: file.to_string_lossy().into_owned(),
+                },
+                &mut output,
+                &mut Vec::new(),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(output, "\rb\u{e9}a\nyx\ntsal".as_bytes());
+    }
+
+    #[test]
+    fn paste_two_readers_preserves_unterminated_and_missing_records() {
+        let mut output = Vec::new();
+        assert_eq!(
+            run_paste_readers(
+                &b"alpha\nbeta"[..],
+                &b"one\ntwo\nthree\n"[..],
+                b'\t',
+                &mut output,
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(output, b"alpha\tone\nbeta\ttwo\n\tthree\n");
+
+        output.clear();
+        assert_eq!(
+            run_paste_readers(&b"alpha\n"[..], &b"one\n"[..], b',', &mut output).unwrap(),
+            0
+        );
+        assert_eq!(output, b"alpha,one\n");
+    }
+
+    #[test]
+    fn comm_common_reader_emits_shared_records_with_final_newlines() {
+        let mut output = Vec::new();
+        assert_eq!(
+            run_comm_readers(
+                &b"alpha\nbeta\nbeta\ngamma"[..],
+                &b"beta\nbeta\ndelta"[..],
+                &mut output
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(output, b"beta\nbeta\n");
+    }
+
+    #[test]
+    fn join_delimited_readers_preserve_empty_fields_and_duplicate_cross_products() {
+        let mut output = Vec::new();
+        assert_eq!(
+            run_join_readers(
+                &b"alpha,one\nbeta,left\nbeta,other\ngamma,,tail\n"[..],
+                &b"beta,red\nbeta,blue\ngamma,mid,\n"[..],
+                b',',
+                &mut output,
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            output,
+            b"beta,left,red\nbeta,left,blue\nbeta,other,red\nbeta,other,blue\ngamma,,tail,mid,\n"
+        );
+    }
+
+    #[test]
+    fn paste_three_readers_preserves_unterminated_and_missing_records() {
+        let mut readers = [
+            BufReader::new(&b"alpha\nbeta"[..]),
+            BufReader::new(&b"one\n"[..]),
+            BufReader::new(&b"first\nsecond\nthird\n"[..]),
+        ];
+        let mut output = Vec::new();
+        assert_eq!(
+            run_paste_buffered_readers(&mut readers, b',', &mut output).unwrap(),
+            0
+        );
+        assert_eq!(output, b"alpha,one,first\nbeta,,second\n,,third\n");
+    }
+
+    #[test]
+    fn comm_common_large_files_follow_bytewise_locale_gate() {
+        let tmp = tempdir().unwrap();
+        let left = tmp.path().join("comm-left.txt");
+        let right = tmp.path().join("comm-right.txt");
+        fs::write(&left, b"left\n".repeat(160_000)).unwrap();
+        fs::write(&right, b"left\n".repeat(160_000)).unwrap();
+        let plan = plan_without_tools(&[
+            "comm",
+            "-12",
+            left.to_str().unwrap(),
+            right.to_str().unwrap(),
+        ]);
+        if locale_uses_bytewise_collation() {
+            assert!(matches!(
+                plan,
+                CommandPlan::Native(NativePlan {
+                    command: NativeCommand::Comm(_),
+                    ..
+                })
+            ));
+        } else {
+            assert!(matches!(
+                plan,
+                CommandPlan::External(ExternalPlan {
+                    implementation: ExternalImplementation::Original,
+                    ..
+                })
+            ));
+        }
+        assert!(matches!(
+            plan_without_tools(&[
+                "comm",
+                "-21",
+                left.to_str().unwrap(),
+                right.to_str().unwrap(),
+            ]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn join_delimited_large_files_follow_bytewise_locale_gate() {
+        let tmp = tempdir().unwrap();
+        let left = tmp.path().join("join-left.csv");
+        let right = tmp.path().join("join-right.csv");
+        fs::write(&left, b"key,left\n".repeat(160_000)).unwrap();
+        fs::write(&right, b"key,right\n".repeat(160_000)).unwrap();
+        let plan = plan_without_tools(&[
+            "join",
+            "-t,",
+            left.to_str().unwrap(),
+            right.to_str().unwrap(),
+        ]);
+        if locale_uses_bytewise_collation() {
+            assert!(matches!(
+                plan,
+                CommandPlan::Native(NativePlan {
+                    command: NativeCommand::Join(_),
+                    ..
+                })
+            ));
+        } else {
+            assert!(matches!(
+                plan,
+                CommandPlan::External(ExternalPlan {
+                    implementation: ExternalImplementation::Original,
+                    ..
+                })
+            ));
+        }
+        assert!(matches!(
+            plan_without_tools(&["join", left.to_str().unwrap(), right.to_str().unwrap(),]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn expand_reader_uses_default_tab_stops_and_backspace_columns() {
+        let mut output = Vec::new();
+        run_expand_reader(&b"a\tb\nabc\x08\td\na\r\tb\nlast\t"[..], &mut output).unwrap();
+        assert_eq!(output, b"a       b\nabc\x08      d\na\r      b\nlast    ");
+    }
+
+    #[test]
+    fn fold_reader_wraps_printable_records_without_trailing_newlines() {
+        let mut output = Vec::new();
+        run_fold_reader(&b"abcd\nefghij\nlast"[..], &mut output, 4).unwrap();
+        assert_eq!(output, b"abcd\nefgh\nij\nlast");
+    }
+
+    #[test]
+    fn cut_chars_reader_preserves_record_endings_and_short_records() {
+        let mut output = Vec::new();
+        run_cut_chars_reader(&b"abcde\nxy\nlast"[..], &mut output, 2, Some(4)).unwrap();
+        assert_eq!(output, b"bcd\ny\nast");
+
+        output.clear();
+        run_cut_chars_reader(&b"abcde\nxy\nlast"[..], &mut output, 1, Some(3)).unwrap();
+        assert_eq!(output, b"abc\nxy\nlas");
+
+        output.clear();
+        run_cut_chars_reader(&b"abcde\nxy\nlast"[..], &mut output, 2, None).unwrap();
+        assert_eq!(output, b"bcde\ny\nast");
+    }
+
+    #[test]
+    fn cut_field_range_preserves_delimiters_and_unselected_record_rules() {
+        let mut output = Vec::new();
+        for line in [b"a,b,c,d\n".as_slice(), b"plain\n", b"x,y\n"] {
+            write_cut_fields_line(line, b',', 2, 3, &mut output).unwrap();
+        }
+        assert_eq!(output, b"b,c\nplain\ny\n");
+
+        output.clear();
+        write_cut_fields_line(b"a,b\n", b',', 3, 4, &mut output).unwrap();
+        assert_eq!(output, b"\n");
+    }
+
+    #[test]
+    fn cut_field_list_preserves_selected_delimiters_and_missing_fields() {
+        let mut output = Vec::new();
+        for line in [b"a,b,c,d\n".as_slice(), b"plain\n", b"a,b\n", b"a,,c\n"] {
+            write_cut_field_list_line(line, b',', &[1, 3], &mut output).unwrap();
+        }
+        assert_eq!(output, b"a,c\nplain\na\na,c\n");
+    }
+
+    #[test]
+    fn serial_paste_preserves_empty_records() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("serial.txt");
+        fs::write(&file, b"first\n\nsecond\n\n").unwrap();
+        let plan = PastePlan {
+            files: vec![file.to_string_lossy().to_string()],
+            delimiter: b',',
+            serial: true,
+        };
+        let mut output = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(run_paste(&plan, &mut output, &mut stderr).unwrap(), 0);
+        assert_eq!(output, b"first,,second,\n");
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn cut_field_range_requires_large_regular_file() {
+        let tmp = tempdir().unwrap();
+        let large = tmp.path().join("fields.csv");
+        let small = tmp.path().join("small.csv");
+        fs::write(&large, b"key,value,tail\n".repeat(80_000)).unwrap();
+        fs::write(&small, b"key,value,tail\n").unwrap();
+        assert!(matches!(
+            plan_without_tools(&["cut", "-d,", "-f1-2", large.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::CutFields(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["cut", "-d,", "-f1-2", small.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["cut", "-d,", "-f1,3", large.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::CutFieldList(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["cut", "-d,", "-f1,3", small.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        let over_limit = (1..=33)
+            .map(|field| field.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(matches!(
+            plan_without_tools(&[
+                "cut",
+                "-d,",
+                &format!("-f{over_limit}"),
+                large.to_str().unwrap()
+            ]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn cut_chars_parser_accepts_open_ended_ranges() {
+        let prefix = parse_cut_chars_args(&["-c".into(), "-20".into(), "input".into()]).unwrap();
+        assert_eq!(prefix.start, 1);
+        assert_eq!(prefix.end, Some(20));
+
+        let suffix = parse_cut_chars_args(&["-c5-".into(), "input".into()]).unwrap();
+        assert_eq!(suffix.start, 5);
+        assert_eq!(suffix.end, None);
+
+        assert!(parse_cut_chars_args(&["-c-".into(), "input".into()]).is_none());
+        assert!(parse_cut_chars_args(&["-c20-5".into(), "input".into()]).is_none());
+    }
+
+    #[test]
+    fn unexpand_reader_matches_default_and_all_space_modes() {
+        let input = b"        a       b\n    c    \n                \nlast    ";
+        let mut default_output = Vec::new();
+        run_unexpand_reader(&input[..], &mut default_output, false).unwrap();
+        assert_eq!(default_output, b"\ta       b\n    c    \n\t\t\nlast    ");
+        let mut all_output = Vec::new();
+        run_unexpand_reader(&input[..], &mut all_output, true).unwrap();
+        assert_eq!(all_output, b"\ta\tb\n    c\t \n\t\t\nlast");
     }
 
     #[test]
@@ -19236,24 +21224,21 @@ mod tests {
                 find_root.display()
             ),
         ] {
-            assert!(
-                matches!(plan_shell(&command, None), CommandPlan::Native(_)),
-                "expected native pipe plan for {command}"
-            );
+            let plan = plan_shell(&command, None);
+            let contains_sort = split_simple_shell_words(&command)
+                .is_some_and(|words| words.iter().any(|word| basename(word) == "sort"));
+            if !locale_uses_bytewise_collation() && contains_sort {
+                assert!(matches!(
+                    plan,
+                    CommandPlan::External(ExternalPlan {
+                        implementation: ExternalImplementation::Original,
+                        ..
+                    })
+                ));
+            } else {
+                assert!(matches!(plan, CommandPlan::Native(_)), "expected native pipe plan for {command}");
+            }
         }
-    }
-
-    #[test]
-    fn grep_uses_rg_replacement_when_rg_exists() {
-        let tmp = tempdir().unwrap();
-        let CommandPlan::External(plan) = plan_with_tool_resolver(
-            &s(&["grep", "-R", "TODO", tmp.path().to_str().unwrap()]),
-            None,
-            |tool| tool == "rg",
-        ) else {
-            panic!("expected replacement plan");
-        };
-        assert_eq!(plan.implementation, ExternalImplementation::Replacement);
     }
 
     #[test]
@@ -19276,6 +21261,32 @@ mod tests {
         fs::write(&cut_tab_file, "alpha\tbeta\nplain\ngamma\tdelta\n").unwrap();
         let sed_file = tmp.path().join("sed.txt");
         fs::write(&sed_file, "one\ntwo\nthree\n").unwrap();
+        let awk_delimited_file = tmp.path().join("awk-delimited.csv");
+        fs::write(
+            &awk_delimited_file,
+            vec![b'x'; AWK_DELIMITED_NATIVE_MIN_BYTES as usize],
+        )
+        .unwrap();
+        let uniq_count_file = tmp.path().join("uniq-count.txt");
+        fs::write(
+            &uniq_count_file,
+            vec![b'x'; UNIQ_COUNT_NATIVE_MIN_BYTES as usize],
+        )
+        .unwrap();
+        let uniq_count_binary = tmp.path().join("uniq-count.bin");
+        fs::write(
+            &uniq_count_binary,
+            vec![0_u8; UNIQ_COUNT_NATIVE_MIN_BYTES as usize],
+        )
+        .unwrap();
+        let awk_record_count_file = tmp.path().join("awk-record-count.txt");
+        fs::write(&awk_record_count_file, b"record\n".repeat(200_000)).unwrap();
+        let nl_file = tmp.path().join("nl.txt");
+        fs::write(&nl_file, b"line\n".repeat(300_000)).unwrap();
+        let rev_file = tmp.path().join("rev.txt");
+        fs::write(&rev_file, "éabc\n".repeat(300_000)).unwrap();
+        let fold_file = tmp.path().join("fold.txt");
+        fs::write(&fold_file, b"printable line\n".repeat(100_000)).unwrap();
         let wc_dir = tmp.path().join("wc");
         fs::create_dir(&wc_dir).unwrap();
         let mut wc_files = Vec::new();
@@ -19293,10 +21304,154 @@ mod tests {
             })
         ));
 
+        let sort_plan = plan_without_tools(&["sort", sort_file.to_str().unwrap()]);
+        if locale_uses_bytewise_collation() {
+            assert!(matches!(
+                sort_plan,
+                CommandPlan::Native(NativePlan {
+                    command: NativeCommand::Sort(_),
+                    ..
+                })
+            ));
+        } else {
+            assert!(matches!(
+                sort_plan,
+                CommandPlan::External(ExternalPlan {
+                    implementation: ExternalImplementation::Original,
+                    ..
+                })
+            ));
+        }
         assert!(matches!(
-            plan_without_tools(&["sort", sort_file.to_str().unwrap()]),
+            plan_without_tools(&["nl", "-ba", nl_file.to_str().unwrap()]),
             CommandPlan::Native(NativePlan {
-                command: NativeCommand::Sort(_),
+                command: NativeCommand::Nl(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["nl", "-ba", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+
+        assert!(matches!(
+            plan_without_tools(&["rev", rev_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Rev(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["rev", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&[
+                "paste",
+                nl_file.to_str().unwrap(),
+                rev_file.to_str().unwrap()
+            ]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Paste(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&[
+                "paste",
+                "-d,",
+                nl_file.to_str().unwrap(),
+                rev_file.to_str().unwrap(),
+                awk_delimited_file.to_str().unwrap(),
+            ]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Paste(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["expand", nl_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Expand(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["fold", fold_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Fold(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["fold", "-w4", fold_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Fold(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["fold", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["cut", "-c1-2", nl_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::CutChars(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["cut", "-c", "1-2", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["unexpand", "-a", fold_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Unexpand(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["unexpand", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&[
+                "paste",
+                sed_file.to_str().unwrap(),
+                sed_file.to_str().unwrap()
+            ]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&[
+                "paste",
+                nl_file.to_str().unwrap(),
+                rev_file.to_str().unwrap(),
+                awk_delimited_file.to_str().unwrap(),
+                fold_file.to_str().unwrap(),
+            ]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
                 ..
             })
         ));
@@ -19323,9 +21478,51 @@ mod tests {
             })
         ));
         assert!(matches!(
+            plan_without_tools(&["sed", "s/one/two/g", sed_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::SedSubstitute(_),
+                ..
+            })
+        ));
+        assert!(matches!(
             plan_without_tools(&["grep", "two", file.to_str().unwrap()]),
             CommandPlan::Native(NativePlan {
                 command: NativeCommand::GrepFile(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["grep", "-F", "line.", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["grep", "-F", "line.", awk_delimited_file.to_str().unwrap(),]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::GrepFile(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["uniq", "-c", uniq_count_file.to_str().unwrap()]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::Uniq(UniqPlan { count: true, .. }),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["uniq", "-c", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["uniq", "-c", uniq_count_binary.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
                 ..
             })
         ));
@@ -19340,6 +21537,69 @@ mod tests {
             plan_without_tools(&["awk", "{ print $2 }", sed_file.to_str().unwrap()]),
             CommandPlan::Native(NativePlan {
                 command: NativeCommand::AwkFirstField(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["awk", "-F,", "{ print $2 }", sed_file.to_str().unwrap()]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["awk", "-F,", "{ print $1, $2 }", sed_file.to_str().unwrap(),]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        match plan_without_tools(&[
+            "awk",
+            "-F,",
+            "{ print $2 }",
+            awk_delimited_file.to_str().unwrap(),
+        ]) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::AwkFirstField(plan),
+                ..
+            }) => assert_eq!(plan.separator, Some(b',')),
+            other => panic!("expected comma-delimited awk plan, got {other:?}"),
+        }
+        match plan_without_tools(&[
+            "awk",
+            "-F,",
+            "{ print $1, $2 }",
+            awk_delimited_file.to_str().unwrap(),
+        ]) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::AwkTwoFields(plan),
+                ..
+            }) => assert_eq!(plan.fields, [1, 2]),
+            other => panic!("expected comma-delimited two-field awk plan, got {other:?}"),
+        }
+        assert!(matches!(
+            plan_without_tools(&[
+                "awk",
+                "END { print NR }",
+                awk_record_count_file.to_str().unwrap(),
+            ]),
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::AwkRecordCount(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["awk", "END { print NR }", sed_file.to_str().unwrap(),]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
+                ..
+            })
+        ));
+        assert!(matches!(
+            plan_without_tools(&["awk", "-F::", "{ print $2 }", sed_file.to_str().unwrap(),]),
+            CommandPlan::External(ExternalPlan {
+                implementation: ExternalImplementation::Original,
                 ..
             })
         ));
@@ -19392,7 +21652,6 @@ mod tests {
             vec!["tail", "-n", "1"],
             vec!["tail", "-c", "3"],
             vec!["tail", "-c", "3", file.to_str().unwrap()],
-            vec!["sort"],
             vec!["uniq"],
             vec!["cut", "-d,", "-f1"],
             vec!["cut", "-d,", "-f1", cut_file.to_str().unwrap()],
@@ -19430,6 +21689,18 @@ mod tests {
             );
         }
 
+        let sort_plan = plan_without_tools(&["sort"]);
+        if locale_uses_bytewise_collation() {
+            assert!(matches!(sort_plan, CommandPlan::Native(_)));
+        } else {
+            assert!(matches!(
+                sort_plan,
+                CommandPlan::External(ExternalPlan {
+                    implementation: ExternalImplementation::Original,
+                    ..
+                })
+            ));
+        }
         let mut wc_args = vec!["wc".to_string(), "-l".to_string()];
         wc_args.extend(
             wc_files
@@ -19487,7 +21758,6 @@ mod tests {
             vec!["cut", "-d,", "-f1,2", wc_file.to_str().unwrap()],
             vec!["tr", "[:space:]", " "],
             vec!["tr", "a-z", "A"],
-            vec!["tr", "-s", "a"],
             vec!["which", "-s", "sh"],
             vec!["command", "-p", "-v", "sh"],
             vec!["command", "-v"],
@@ -19585,7 +21855,14 @@ mod tests {
             ),
             None,
         );
-        assert!(matches!(plan, CommandPlan::Native(_)));
+        if locale_uses_bytewise_collation() {
+            assert!(matches!(plan, CommandPlan::Native(_)));
+        } else {
+            let CommandPlan::External(plan) = plan else {
+                panic!("expected locale-sensitive find|sort|uniq fallback");
+            };
+            assert_eq!(plan.program, "bash");
+        }
 
         let CommandPlan::External(plan) = plan_shell(
             &format!(
@@ -19615,18 +21892,16 @@ mod tests {
     }
 
     #[test]
-    fn recursive_grep_can_use_replacement_when_rg_exists() {
+    fn recursive_grep_keeps_the_original_command() {
         let tmp = tempdir().unwrap();
         fs::write(tmp.path().join("file.txt"), "TODO\n").unwrap();
 
-        let CommandPlan::External(plan) = plan_with_tool_resolver(
-            &s(&["grep", "-R", "TODO", tmp.path().to_str().unwrap()]),
-            None,
-            |tool| tool == "rg",
-        ) else {
-            panic!("expected grep replacement");
+        let CommandPlan::External(plan) =
+            plan_without_tools(&["grep", "-R", "TODO", tmp.path().to_str().unwrap()])
+        else {
+            panic!("expected original grep plan");
         };
-        assert_eq!(plan.implementation, ExternalImplementation::Replacement);
+        assert_eq!(plan.implementation, ExternalImplementation::Original);
     }
 
     // @spec apps/cap/tech-design/logic/recognize-cd-dir-native-command-prefix-in-command-planner.md#unit-test
@@ -19735,6 +22010,54 @@ mod tests {
     }
 
     #[test]
+    fn sed_literal_substitution_preserves_bytes_and_global_mode() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("sed.txt");
+        fs::write(&file, b"old\0old\nold old\nold").unwrap();
+
+        let global = match plan_without_tools(&["sed", "s/old/new/g", file.to_str().unwrap()]) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::SedSubstitute(plan),
+                ..
+            }) => plan,
+            other => panic!("expected literal sed substitution plan, got {other:?}"),
+        };
+        assert_eq!(global.search, "old");
+        assert_eq!(global.replacement, "new");
+        assert!(global.global);
+        let mut stdout = Vec::new();
+        run_sed_substitute(&global, &mut stdout).unwrap();
+        assert_eq!(stdout, b"new\0new\nnew new\nnew");
+
+        let first_only = match plan_without_tools(&["sed", "s/old/new/", file.to_str().unwrap()]) {
+            CommandPlan::Native(NativePlan {
+                command: NativeCommand::SedSubstitute(plan),
+                ..
+            }) => plan,
+            other => panic!("expected literal sed substitution plan, got {other:?}"),
+        };
+        assert!(!first_only.global);
+        let mut stdout = Vec::new();
+        run_sed_substitute(&first_only, &mut stdout).unwrap();
+        assert_eq!(stdout, b"new\0old\nnew old\nnew");
+    }
+
+    #[test]
+    fn sed_nonliteral_substitution_forms_fall_back() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("sed.txt");
+        fs::write(&file, "old\n").unwrap();
+        for script in ["s/o.d/new/", "s/old/&/", "s/old/new/i", "s/old\\/new/x/"] {
+            match plan_without_tools(&["sed", script, file.to_str().unwrap()]) {
+                CommandPlan::External(plan) => {
+                    assert_eq!(plan.implementation, ExternalImplementation::Original);
+                }
+                other => panic!("expected original sed fallback for {script}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn cd_prefix_wc_replans_native() {
         let tmp = tempdir().unwrap();
         let file = tmp.path().join("wc.txt");
@@ -19839,7 +22162,7 @@ mod tests {
         assert_cd_prefix_bash_fallback_unchanged("cd /tmp extra && ls");
     }
 
-    // --- #1392: native grep flag support + rg alias tests ---
+    // --- #1392: native grep flag support ---
     // @spec apps/cap/tech-design/logic/extend-native-grep-flag-support-and-recognize-rg-as-native-plann.md#unit-test
 
     fn expect_native_grep_plan(args: &[&str]) -> GrepFilePlan {
@@ -19973,6 +22296,60 @@ mod tests {
     }
 
     #[test]
+    fn grep_fixed_ignore_case_requires_large_ascii_input() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, vec![b'N'; GREP_NATIVE_MIN_BYTES as usize]).unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-Fi", "needle", file.to_str().unwrap()]);
+        assert!(plan.ignore_case);
+        expect_grep_bash_fallback(&["grep", "-Fi", "nëedle", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_fixed_binary_large_file_falls_back_to_original() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.bin");
+        let mut bytes = vec![b'N'; GREP_NATIVE_MIN_BYTES as usize];
+        bytes[4096] = 0;
+        fs::write(&file, bytes).unwrap();
+        expect_grep_bash_fallback(&["grep", "-F", "needle", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn grep_fixed_empty_pattern_falls_back_to_original() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, vec![b'N'; GREP_NATIVE_MIN_BYTES as usize]).unwrap();
+        expect_grep_bash_fallback(&["grep", "-F", "", file.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn literal_needle_finds_a_match_crossing_the_old_read_buffer_boundary() {
+        let needle = LiteralNeedle::new(b"CROSS-CHUNK-NEEDLE".to_vec());
+        let mut line = vec![b'a'; 8190];
+        line.extend_from_slice(&needle.bytes);
+        assert!(needle.contains(&line));
+        assert!(!needle.contains(b"plain record without a match"));
+    }
+
+    #[test]
+    fn grep_whole_line_is_limited_to_c_fast_frontend_shapes() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("grep.txt");
+        fs::write(&file, vec![b'N'; GREP_NATIVE_MIN_BYTES as usize]).unwrap();
+        let plan = expect_native_grep_plan(&["grep", "-xF", "needle", file.to_str().unwrap()]);
+        assert!(plan.whole_line);
+        expect_grep_bash_fallback(&["grep", "-x", "needle", file.to_str().unwrap()]);
+        expect_grep_bash_fallback(&[
+            "grep",
+            "--line-regexp",
+            "-F",
+            "needle",
+            file.to_str().unwrap(),
+        ]);
+    }
+
+    #[test]
     fn grep_invert_match_flag_recognized() {
         let tmp = tempdir().unwrap();
         let file = tmp.path().join("grep.txt");
@@ -20070,75 +22447,6 @@ mod tests {
     }
 
     #[test]
-    fn rg_context_after_numeric_alias_recognized() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "NEEDLE\nb\nc\nd\n").unwrap();
-        let plan = expect_native_grep_plan(&["rg", "-A", "3", "NEEDLE", file.to_str().unwrap()]);
-        assert_eq!(plan.context_after, 3);
-    }
-
-    #[test]
-    fn rg_count_alias_recognized() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "NEEDLE\nNEEDLE\n").unwrap();
-        let plan = expect_native_grep_plan(&["rg", "-c", "NEEDLE", file.to_str().unwrap()]);
-        assert!(plan.count);
-    }
-
-    #[test]
-    fn rg_line_number_alias_recognized() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "NEEDLE\n").unwrap();
-        let plan = expect_native_grep_plan(&["rg", "-n", "NEEDLE", file.to_str().unwrap()]);
-        assert!(plan.line_numbers);
-    }
-
-    #[test]
-    fn rg_no_heading_cosmetic_flag_consumed_harmlessly() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "NEEDLE\n").unwrap();
-        let plan = expect_native_grep_plan(&[
-            "rg",
-            "--no-heading",
-            "-n",
-            "NEEDLE",
-            file.to_str().unwrap(),
-        ]);
-        assert!(plan.line_numbers);
-        assert_eq!(plan.patterns, vec!["NEEDLE".to_string()]);
-    }
-
-    #[test]
-    fn rg_repeated_e_multi_pattern_alias_recognized() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "one\ntwo\n").unwrap();
-        let plan = expect_native_grep_plan(&[
-            "rg",
-            "-n",
-            "-e",
-            "one",
-            "-e",
-            "two",
-            file.to_str().unwrap(),
-        ]);
-        assert!(plan.line_numbers);
-        assert_eq!(plan.patterns, vec!["one".to_string(), "two".to_string()]);
-    }
-
-    #[test]
-    fn rg_unsupported_specific_flag_falls_back() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "NEEDLE\n").unwrap();
-        expect_grep_bash_fallback(&["rg", "--json", "NEEDLE", file.to_str().unwrap()]);
-    }
-
-    #[test]
     fn zero_flag_grep_pipe_fusion_unaffected() {
         let tmp = tempdir().unwrap();
         let file = tmp.path().join("grep.txt");
@@ -20156,39 +22464,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn zero_flag_rg_pipe_fusion_translates_to_grep() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "NEEDLE\nother\n").unwrap();
-        let command = format!("rg NEEDLE {} | wc -l", file.display());
-        match plan_shell(&command, None) {
-            CommandPlan::Native(NativePlan {
-                command: NativeCommand::PipeGrepFile(plan),
-                ..
-            }) => {
-                assert_eq!(plan.pattern, "NEEDLE");
-                assert_eq!(plan.mode, GrepFilePipeMode::WcLines);
-            }
-            other => {
-                panic!("expected PipeGrepFile native plan (rg translated to grep), got {other:?}")
-            }
-        }
-    }
-
-    #[test]
-    fn flag_bearing_rg_in_pipe_falls_back_to_bash() {
-        let tmp = tempdir().unwrap();
-        let file = tmp.path().join("grep.txt");
-        fs::write(&file, "NEEDLE\nother\n").unwrap();
-        let command = format!("rg -n NEEDLE {} | wc -l", file.display());
-        match plan_shell(&command, None) {
-            CommandPlan::External(plan) => {
-                assert_eq!(plan.program, "bash");
-                assert_eq!(plan.args, vec!["-c".to_string(), command.clone()]);
-            }
-            other => panic!("expected bash fallback for flag-bearing rg pipe, got {other:?}"),
-        }
-    }
 }
 // CODEGEN-END

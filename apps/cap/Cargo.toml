@@ -1,6 +1,6 @@
 [package]
 name = "cap"
-version = "0.3.63"
+version = "0.4.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -36,6 +36,7 @@ cli-std = { path = "../../libs/cli-std", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
+meter = { path = "../meter", default-features = false, features = ["embed"] }
 # `test-util` enables `tokio::time::pause`, `tokio::time::advance`, and
 # the `start_paused` attribute used by Slice 4 grace-period tests.
 tokio = { workspace = true, features = ["full", "test-util"] }

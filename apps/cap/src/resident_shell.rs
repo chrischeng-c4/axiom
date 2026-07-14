@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn resident_light_shell_fallback_preserves_exact_bash_command() -> Result<()> {
-        let command = "printf 'one\\ntwo\\n' | wc -l";
+        let command = "printf 'one\\ntwo\\n' | wc -l; true";
         let session = ResidentLightShellSession::capture();
         let plan = match session.plan_command_string(command, None) {
             ResidentLightShellPlan::Native(native) => {

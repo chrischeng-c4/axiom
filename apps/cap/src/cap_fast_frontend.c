@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -33,6 +34,18 @@
 // @spec apps/cap/tech-design/logic/expand-high-volume-native-command-coverage.md#changes
 #define CAP_WC_MIN_FILES 64
 #define CAP_WC_MIN_BYTES (1024 * 1024)
+#define CAP_AWK_DELIMITED_MIN_BYTES (1024 * 1024)
+#define CAP_UNIQ_COUNT_MIN_BYTES (1024 * 1024)
+#define CAP_NL_MIN_BYTES (1024 * 1024)
+#define CAP_REV_MIN_BYTES (1024 * 1024)
+#define CAP_PASTE_MIN_BYTES (1024 * 1024)
+#define CAP_EXPAND_MIN_BYTES (1024 * 1024)
+#define CAP_FOLD_MIN_BYTES (1024 * 1024)
+#define CAP_CUT_CHARS_MIN_BYTES (1024 * 1024)
+#define CAP_CUT_FIELDS_MIN_BYTES (1024 * 1024)
+#define CAP_UNEXPAND_MIN_BYTES (1024 * 1024)
+#define CAP_COMM_MIN_BYTES (1024 * 1024)
+#define CAP_JOIN_MIN_BYTES (1024 * 1024)
 
 extern char **environ;
 
@@ -42,6 +55,155 @@ static const char *cap_base(const char *s) {
 }
 
 static int unsupported(void) { return 127; }
+
+static int is_large_text_regular_file(const char *path, off_t minimum_size) {
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < minimum_size) return 0;
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) return 0;
+  char buffer[8192];
+  int text = 1;
+  for (;;) {
+    ssize_t read_len = read(fd, buffer, sizeof(buffer));
+    if (read_len == 0) break;
+    if (read_len < 0) {
+      text = 0;
+      break;
+    }
+    if (memchr(buffer, '\0', (size_t)read_len)) {
+      text = 0;
+      break;
+    }
+  }
+  close(fd);
+  return text;
+}
+
+static int locale_uses_utf8(void) {
+  const char *locale = getenv("LC_ALL");
+  if (!locale || !*locale) locale = getenv("LC_CTYPE");
+  if (!locale || !*locale) locale = getenv("LANG");
+  if (!locale) return 0;
+  for (const char *p = locale; *p; p++) {
+    if ((p[0] == 'u' || p[0] == 'U') &&
+        (p[1] == 't' || p[1] == 'T') &&
+        (p[2] == 'f' || p[2] == 'F') &&
+        (p[3] == '8' || (p[3] == '-' && p[4] == '8'))) return 1;
+  }
+  return 0;
+}
+
+static int locale_uses_bytewise_collation(void) {
+  const char *locale = getenv("LC_ALL");
+  if (!locale || !*locale) locale = getenv("LC_COLLATE");
+  if (!locale || !*locale) locale = getenv("LANG");
+  return !locale || !*locale || !strcmp(locale, "C") || !strcmp(locale, "POSIX");
+}
+
+static int file_is_valid_utf8(const char *path) {
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) return 0;
+  unsigned char buffer[8192];
+  uint32_t codepoint = 0;
+  uint32_t minimum = 0;
+  int remaining = 0;
+  int valid = 1;
+  for (;;) {
+    ssize_t read_len = read(fd, buffer, sizeof(buffer));
+    if (read_len == 0) break;
+    if (read_len < 0) {
+      valid = 0;
+      break;
+    }
+    for (ssize_t idx = 0; idx < read_len; idx++) {
+      unsigned char byte = buffer[idx];
+      if (remaining == 0) {
+        if (byte <= 0x7f) continue;
+        if (byte >= 0xc2 && byte <= 0xdf) {
+          codepoint = byte & 0x1f;
+          minimum = 0x80;
+          remaining = 1;
+        } else if (byte >= 0xe0 && byte <= 0xef) {
+          codepoint = byte & 0x0f;
+          minimum = 0x800;
+          remaining = 2;
+        } else if (byte >= 0xf0 && byte <= 0xf4) {
+          codepoint = byte & 0x07;
+          minimum = 0x10000;
+          remaining = 3;
+        } else {
+          valid = 0;
+          break;
+        }
+      } else if (byte < 0x80 || byte > 0xbf) {
+        valid = 0;
+        break;
+      } else {
+        codepoint = (codepoint << 6) | (byte & 0x3f);
+        if (--remaining == 0 &&
+            (codepoint < minimum || codepoint > 0x10ffff ||
+             (codepoint >= 0xd800 && codepoint <= 0xdfff))) {
+          valid = 0;
+          break;
+        }
+      }
+    }
+    if (!valid) break;
+  }
+  close(fd);
+  return valid && remaining == 0;
+}
+
+static int file_is_ascii(const char *path) {
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) return 0;
+  unsigned char buffer[8192];
+  int ascii = 1;
+  for (;;) {
+    ssize_t read_len = read(fd, buffer, sizeof(buffer));
+    if (read_len == 0) break;
+    if (read_len < 0) { ascii = 0; break; }
+    for (ssize_t idx = 0; idx < read_len; idx++) if (buffer[idx] > 0x7f) { ascii = 0; break; }
+    if (!ascii) break;
+  }
+  close(fd);
+  return ascii;
+}
+
+static int file_is_printable_ascii_lines(const char *path) {
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) return 0;
+  unsigned char buffer[8192];
+  int printable = 1;
+  for (;;) {
+    ssize_t read_len = read(fd, buffer, sizeof(buffer));
+    if (read_len == 0) break;
+    if (read_len < 0) { printable = 0; break; }
+    for (ssize_t idx = 0; idx < read_len; idx++) {
+      unsigned char byte = buffer[idx];
+      if (byte != '\n' && (byte < ' ' || byte > '~')) { printable = 0; break; }
+    }
+    if (!printable) break;
+  }
+  close(fd);
+  return printable;
+}
+
+static int exec_original_command(int argc, char **argv) {
+  if (argc < 2) return unsupported();
+  char *original_argv[argc];
+  original_argv[0] = argv[1];
+  for (int idx = 2; idx < argc; idx++) original_argv[idx - 1] = argv[idx];
+  original_argv[argc - 1] = NULL;
+  execvp(argv[1], original_argv);
+  return unsupported();
+}
+
+static int exec_shell_command(const char *command) {
+  char *shell_argv[] = {"/bin/bash", "-c", (char *)command, NULL};
+  execv(shell_argv[0], shell_argv);
+  return unsupported();
+}
 
 static int stdout_is_dev_null(void);
 
@@ -1317,11 +1479,18 @@ static int cap_touch(int argc, char **argv) {
 
 static int cap_uniq(int argc, char **argv) {
   int stdin_mode = 0;
+  int count = 0;
   const char *path = NULL;
   if (argc == 2) {
     stdin_mode = 1;
   } else if (argc == 3) {
     path = argv[2];
+  } else if (argc == 4 && !strcmp(argv[2], "-c")) {
+    if (!is_large_text_regular_file(argv[3], CAP_UNIQ_COUNT_MIN_BYTES)) {
+      return exec_original_command(argc, argv);
+    }
+    path = argv[3];
+    count = 1;
   } else {
     return unsupported();
   }
@@ -1342,13 +1511,25 @@ static int cap_uniq(int argc, char **argv) {
   size_t line_cap = 0;
   size_t previous_len = 0;
   ssize_t line_len = 0;
+  unsigned long long runs = 0;
   int rc = 0;
 
   while ((line_len = getline(&line, &line_cap, file)) >= 0) {
     size_t current_len = (size_t)line_len;
     if (!previous || previous_len != current_len ||
         memcmp(previous, line, current_len) != 0) {
-      write_bytes(line, current_len);
+      if (count && previous) {
+        char prefix[32];
+        int prefix_len = snprintf(prefix, sizeof(prefix), "%4llu ", runs);
+        if (prefix_len < 0 || (size_t)prefix_len >= sizeof(prefix)) {
+          rc = 1;
+          break;
+        }
+        write_bytes(prefix, (size_t)prefix_len);
+        write_bytes(previous, previous_len);
+      } else if (!count) {
+        write_bytes(line, current_len);
+      }
       char *next = realloc(previous, current_len ? current_len : 1);
       if (!next) {
         rc = 1;
@@ -1357,15 +1538,484 @@ static int cap_uniq(int argc, char **argv) {
       previous = next;
       memcpy(previous, line, current_len);
       previous_len = current_len;
+      runs = 1;
+    } else {
+      runs += 1;
     }
   }
   if (ferror(file)) {
     write_err_path("uniq", path, errno);
     rc = 1;
   }
+  if (!rc && count && previous) {
+    char prefix[32];
+    int prefix_len = snprintf(prefix, sizeof(prefix), "%4llu ", runs);
+    if (prefix_len < 0 || (size_t)prefix_len >= sizeof(prefix)) {
+      rc = 1;
+    } else {
+      write_bytes(prefix, (size_t)prefix_len);
+      write_bytes(previous, previous_len);
+    }
+  }
   free(previous);
   free(line);
   if (!stdin_mode) fclose(file);
+  return rc;
+}
+
+static int cap_nl(int argc, char **argv) {
+  if (argc != 4 || strcmp(argv[2], "-ba")) return unsupported();
+  struct stat st;
+  if (stat(argv[3], &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < CAP_NL_MIN_BYTES) {
+    return exec_original_command(argc, argv);
+  }
+  FILE *file = fopen(argv[3], "r");
+  if (!file) {
+    write_err_path("nl", argv[3], errno);
+    return 1;
+  }
+  char *line = NULL;
+  size_t line_cap = 0;
+  ssize_t line_len = 0;
+  unsigned long long number = 0;
+  int rc = 0;
+  while ((line_len = getline(&line, &line_cap, file)) >= 0) {
+    char prefix[32];
+    int prefix_len = snprintf(prefix, sizeof(prefix), "%6llu\t", ++number);
+    if (prefix_len < 0 || (size_t)prefix_len >= sizeof(prefix)) {
+      rc = 1;
+      break;
+    }
+    write_bytes(prefix, (size_t)prefix_len);
+    write_bytes(line, (size_t)line_len);
+  }
+  if (ferror(file)) {
+    write_err_path("nl", argv[3], errno);
+    rc = 1;
+  }
+  free(line);
+  fclose(file);
+  return rc;
+}
+
+static int cap_rev(int argc, char **argv) {
+  if (argc != 3) return unsupported();
+  struct stat st;
+  if (!locale_uses_utf8() || stat(argv[2], &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_size < CAP_REV_MIN_BYTES || !file_is_valid_utf8(argv[2])) {
+    return exec_original_command(argc, argv);
+  }
+  if (output_discarded()) return 0;
+  FILE *file = fopen(argv[2], "r");
+  if (!file) {
+    write_err_path("rev", argv[2], errno);
+    return 1;
+  }
+  char *line = NULL;
+  size_t line_cap = 0;
+  ssize_t line_len = 0;
+  int rc = 0;
+  while ((line_len = getline(&line, &line_cap, file)) >= 0) {
+    size_t end = (size_t)line_len;
+    int newline = end > 0 && line[end - 1] == '\n';
+    if (newline) end--;
+    while (end > 0) {
+      size_t start = end - 1;
+      while (start > 0 && (((unsigned char)line[start] & 0xc0) == 0x80)) start--;
+      write_bytes(line + start, end - start);
+      end = start;
+    }
+    if (newline) write_bytes("\n", 1);
+  }
+  if (ferror(file)) {
+    write_err_path("rev", argv[2], errno);
+    rc = 1;
+  }
+  free(line);
+  fclose(file);
+  return rc;
+}
+
+static int cap_paste_serial(const char *path, unsigned char delimiter) {
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < CAP_PASTE_MIN_BYTES) {
+    return 127;
+  }
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) { write_err_path("paste", path, errno); return 1; }
+  char input[8192];
+  char output[8192];
+  size_t output_len = 0;
+  int pending_newline = 0;
+  int rc = 0;
+  for (;;) {
+    ssize_t read_len = read(fd, input, sizeof(input));
+    if (read_len == 0) break;
+    if (read_len < 0) { write_err_path("paste", path, errno); rc = 1; break; }
+    for (ssize_t idx = 0; idx < read_len; idx++) {
+      unsigned char byte = (unsigned char)input[idx];
+      if (byte == '\n') {
+        if (pending_newline) output[output_len++] = (char)delimiter;
+        pending_newline = 1;
+        if (output_len >= sizeof(output) - 1) {
+          write_bytes(output, output_len);
+          output_len = 0;
+        }
+        continue;
+      }
+      if (pending_newline) output[output_len++] = (char)delimiter;
+      output[output_len++] = (char)byte;
+      pending_newline = 0;
+      if (output_len >= sizeof(output) - 1) {
+        write_bytes(output, output_len);
+        output_len = 0;
+      }
+    }
+  }
+  if (!rc && pending_newline) output[output_len++] = '\n';
+  if (output_len) write_bytes(output, output_len);
+  close(fd);
+  return rc;
+}
+
+static int cap_paste(int argc, char **argv) {
+  unsigned char delimiter = '\t';
+  if (argc >= 4 && !strcmp(argv[2], "-s")) {
+    const char *path = NULL;
+    if (argc == 4) {
+      path = argv[3];
+    } else if (argc == 5 && !strncmp(argv[3], "-d", 2) && argv[3][2] && !argv[3][3]) {
+      delimiter = (unsigned char)argv[3][2]; path = argv[4];
+    } else if (argc == 6 && !strcmp(argv[3], "-d") && argv[4][0] && !argv[4][1]) {
+      delimiter = (unsigned char)argv[4][0]; path = argv[5];
+    } else {
+      return unsupported();
+    }
+    if (delimiter >= 0x80) return unsupported();
+    int rc = cap_paste_serial(path, delimiter);
+    return rc == 127 ? exec_original_command(argc, argv) : rc;
+  }
+  const char *paths[3] = {NULL, NULL, NULL};
+  int files = 0;
+  if ((argc == 4 || argc == 5) && argv[2][0] != '-') {
+    files = argc - 2;
+    for (int idx = 0; idx < files; idx++) paths[idx] = argv[idx + 2];
+  } else if ((argc == 5 || argc == 6) && !strncmp(argv[2], "-d", 2) && argv[2][2] &&
+             !argv[2][3]) {
+    delimiter = (unsigned char)argv[2][2];
+    files = argc - 3;
+    for (int idx = 0; idx < files; idx++) paths[idx] = argv[idx + 3];
+  } else if ((argc == 6 || argc == 7) && !strcmp(argv[2], "-d") && argv[3][0] && !argv[3][1]) {
+    delimiter = (unsigned char)argv[3][0];
+    files = argc - 4;
+    for (int idx = 0; idx < files; idx++) paths[idx] = argv[idx + 4];
+  } else {
+    return unsupported();
+  }
+  if (delimiter >= 0x80) return unsupported();
+  off_t total_bytes = 0;
+  FILE *input[3] = {NULL, NULL, NULL};
+  for (int idx = 0; idx < files; idx++) {
+    struct stat st;
+    if (stat(paths[idx], &st) != 0 || !S_ISREG(st.st_mode)) {
+      return exec_original_command(argc, argv);
+    }
+    total_bytes += st.st_size;
+  }
+  if (total_bytes < CAP_PASTE_MIN_BYTES) return exec_original_command(argc, argv);
+  for (int idx = 0; idx < files; idx++) {
+    input[idx] = fopen(paths[idx], "r");
+    if (!input[idx]) {
+      write_err_path("paste", paths[idx], errno);
+      for (int prior = 0; prior < idx; prior++) fclose(input[prior]);
+      return 1;
+    }
+  }
+  char *lines[3] = {NULL, NULL, NULL};
+  size_t caps[3] = {0, 0, 0};
+  int rc = 0;
+  for (;;) {
+    ssize_t lengths[3] = {-1, -1, -1};
+    int saw_record = 0;
+    for (int idx = 0; idx < files; idx++) {
+      lengths[idx] = getline(&lines[idx], &caps[idx], input[idx]);
+      if (lengths[idx] < 0 && ferror(input[idx])) {
+        write_err_path("paste", paths[idx], errno);
+        rc = 1;
+        break;
+      }
+      if (lengths[idx] >= 0) saw_record = 1;
+    }
+    if (rc || !saw_record) break;
+    for (int idx = 0; idx < files; idx++) {
+      size_t len = lengths[idx] > 0 ? (size_t)lengths[idx] : 0;
+      if (len && lines[idx][len - 1] == '\n') len--;
+      if (idx) write_bytes((const char *)&delimiter, 1);
+      if (len) write_bytes(lines[idx], len);
+    }
+    write_bytes("\n", 1);
+  }
+  for (int idx = 0; idx < files; idx++) { free(lines[idx]); fclose(input[idx]); }
+  return rc;
+}
+
+static size_t comm_line_len_without_newline(const char *line, size_t len) {
+  return len > 0 && line[len - 1] == '\n' ? len - 1 : len;
+}
+
+static int compare_comm_lines(const char *left, size_t left_len,
+                              const char *right, size_t right_len) {
+  left_len = comm_line_len_without_newline(left, left_len);
+  right_len = comm_line_len_without_newline(right, right_len);
+  size_t len = left_len < right_len ? left_len : right_len;
+  int cmp = len ? memcmp(left, right, len) : 0;
+  if (cmp) return cmp;
+  return (left_len > right_len) - (left_len < right_len);
+}
+
+static int cap_comm(int argc, char **argv) {
+  if (argc != 5 || strcmp(argv[2], "-12")) return unsupported();
+  if (!locale_uses_bytewise_collation()) return exec_original_command(argc, argv);
+  struct stat left_st;
+  struct stat right_st;
+  if (stat(argv[3], &left_st) != 0 || stat(argv[4], &right_st) != 0 ||
+      !S_ISREG(left_st.st_mode) || !S_ISREG(right_st.st_mode) ||
+      (uintmax_t)left_st.st_size + (uintmax_t)right_st.st_size < CAP_COMM_MIN_BYTES) {
+    return exec_original_command(argc, argv);
+  }
+  FILE *left = fopen(argv[3], "r");
+  if (!left) {
+    write_err_path("comm", argv[3], errno);
+    return 1;
+  }
+  FILE *right = fopen(argv[4], "r");
+  if (!right) {
+    write_err_path("comm", argv[4], errno);
+    fclose(left);
+    return 1;
+  }
+  char *left_line = NULL;
+  char *right_line = NULL;
+  size_t left_cap = 0;
+  size_t right_cap = 0;
+  ssize_t left_len = 0;
+  ssize_t right_len = 0;
+  int left_ready = 0;
+  int right_ready = 0;
+  int rc = 0;
+  for (;;) {
+    if (!left_ready) {
+      left_len = getline(&left_line, &left_cap, left);
+      if (left_len < 0) {
+        if (ferror(left)) {
+          write_err_path("comm", argv[3], errno);
+          rc = 1;
+        }
+        break;
+      }
+      left_ready = 1;
+    }
+    if (!right_ready) {
+      right_len = getline(&right_line, &right_cap, right);
+      if (right_len < 0) {
+        if (ferror(right)) {
+          write_err_path("comm", argv[4], errno);
+          rc = 1;
+        }
+        break;
+      }
+      right_ready = 1;
+    }
+    int cmp = compare_comm_lines(left_line, (size_t)left_len,
+                                 right_line, (size_t)right_len);
+    if (cmp < 0) {
+      left_ready = 0;
+    } else if (cmp > 0) {
+      right_ready = 0;
+    } else {
+      write_bytes(left_line, (size_t)left_len);
+      if (left_len == 0 || left_line[left_len - 1] != '\n') write_bytes("\n", 1);
+      left_ready = 0;
+      right_ready = 0;
+    }
+  }
+  free(left_line);
+  free(right_line);
+  fclose(left);
+  fclose(right);
+  return rc;
+}
+
+static int cap_expand(int argc, char **argv) {
+  if (argc != 3) return unsupported();
+  struct stat st;
+  if (stat(argv[2], &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_size < CAP_EXPAND_MIN_BYTES || !file_is_ascii(argv[2])) return exec_original_command(argc, argv);
+  FILE *file = fopen(argv[2], "r");
+  if (!file) { write_err_path("expand", argv[2], errno); return 1; }
+  unsigned char buffer[8192];
+  size_t column = 0;
+  int rc = 0;
+  for (;;) {
+    size_t read_len = fread(buffer, 1, sizeof(buffer), file);
+    for (size_t idx = 0; idx < read_len; idx++) {
+      unsigned char byte = buffer[idx];
+      if (byte == '\t') {
+        size_t spaces = 8 - column % 8;
+        for (size_t space = 0; space < spaces; space++) write_bytes(" ", 1);
+        column += spaces;
+      } else {
+        write_bytes((const char *)&byte, 1);
+        if (byte == '\n') column = 0;
+        else if (byte == '\b') { if (column) column--; }
+        else column++;
+      }
+    }
+    if (read_len < sizeof(buffer)) break;
+  }
+  if (ferror(file)) { write_err_path("expand", argv[2], errno); rc = 1; }
+  fclose(file);
+  return rc;
+}
+
+static int parse_positive_width(const char *text, size_t *width) {
+  char *end = NULL;
+  errno = 0;
+  unsigned long long value = strtoull(text, &end, 10);
+  if (errno || !*text || *end || value == 0 || value > SIZE_MAX) return 0;
+  *width = (size_t)value;
+  return 1;
+}
+
+static int cap_fold(int argc, char **argv) {
+  const char *path = NULL;
+  size_t width = 80;
+  if (argc == 3) {
+    path = argv[2];
+  } else if (argc == 4 && !strncmp(argv[2], "-w", 2) && argv[2][2]) {
+    if (!parse_positive_width(argv[2] + 2, &width)) return unsupported();
+    path = argv[3];
+  } else if (argc == 5 && !strcmp(argv[2], "-w")) {
+    if (!parse_positive_width(argv[3], &width)) return unsupported();
+    path = argv[4];
+  } else {
+    return unsupported();
+  }
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_size < CAP_FOLD_MIN_BYTES || !file_is_printable_ascii_lines(path)) {
+    return exec_original_command(argc, argv);
+  }
+  FILE *file = fopen(path, "r");
+  if (!file) { write_err_path("fold", path, errno); return 1; }
+  unsigned char buffer[8192];
+  size_t column = 0;
+  int rc = 0;
+  for (;;) {
+    size_t read_len = fread(buffer, 1, sizeof(buffer), file);
+    for (size_t idx = 0; idx < read_len; idx++) {
+      unsigned char byte = buffer[idx];
+      if (byte == '\n') {
+        write_bytes("\n", 1);
+        column = 0;
+      } else {
+        if (column == width) {
+          write_bytes("\n", 1);
+          column = 0;
+        }
+        write_bytes((const char *)&byte, 1);
+        column++;
+      }
+    }
+    if (read_len < sizeof(buffer)) break;
+  }
+  if (ferror(file)) { write_err_path("fold", path, errno); rc = 1; }
+  fclose(file);
+  return rc;
+}
+
+static void unexpand_flush_spaces(size_t *column, size_t spaces, int transform, int at_eof) {
+  if (spaces == 0) return;
+  size_t remaining = spaces;
+  size_t simulated_column = *column;
+  int can_emit_tab = 0;
+  if (transform && spaces >= 2) {
+    while (remaining > 0) {
+      size_t to_tab_stop = 8 - simulated_column % 8;
+      if (remaining >= to_tab_stop) {
+        can_emit_tab = 1;
+        break;
+      }
+      simulated_column += remaining;
+      remaining = 0;
+    }
+  }
+  if (at_eof && can_emit_tab) {
+    *column += spaces;
+    return;
+  }
+  remaining = spaces;
+  while (remaining > 0) {
+    size_t to_tab_stop = 8 - *column % 8;
+    if (can_emit_tab && remaining >= to_tab_stop) {
+      write_bytes("\t", 1);
+      *column += to_tab_stop;
+      remaining -= to_tab_stop;
+    } else {
+      for (size_t space = 0; space < remaining; space++) write_bytes(" ", 1);
+      *column += remaining;
+      return;
+    }
+  }
+}
+
+static int cap_unexpand(int argc, char **argv) {
+  const char *path = NULL;
+  int all = 0;
+  if (argc == 3) {
+    path = argv[2];
+  } else if (argc == 4 && !strcmp(argv[2], "-a")) {
+    all = 1;
+    path = argv[3];
+  } else {
+    return unsupported();
+  }
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_size < CAP_UNEXPAND_MIN_BYTES || !file_is_printable_ascii_lines(path)) {
+    return exec_original_command(argc, argv);
+  }
+  FILE *file = fopen(path, "r");
+  if (!file) { write_err_path("unexpand", path, errno); return 1; }
+  unsigned char buffer[8192];
+  size_t column = 0;
+  size_t pending_spaces = 0;
+  int leading = 1;
+  int rc = 0;
+  for (;;) {
+    size_t read_len = fread(buffer, 1, sizeof(buffer), file);
+    for (size_t idx = 0; idx < read_len; idx++) {
+      unsigned char byte = buffer[idx];
+      if (byte == ' ') {
+        pending_spaces++;
+        continue;
+      }
+      unexpand_flush_spaces(&column, pending_spaces, all || leading, 0);
+      pending_spaces = 0;
+      write_bytes((const char *)&byte, 1);
+      if (byte == '\n') {
+        column = 0;
+        leading = 1;
+      } else {
+        column++;
+        leading = 0;
+      }
+    }
+    if (read_len < sizeof(buffer)) break;
+  }
+  unexpand_flush_spaces(&column, pending_spaces, all || leading, 1);
+  if (ferror(file)) { write_err_path("unexpand", path, errno); rc = 1; }
+  fclose(file);
   return rc;
 }
 
@@ -1623,6 +2273,7 @@ static int cmp_line_span(const void *left, const void *right) {
 }
 
 static int cap_sort(int argc, char **argv) {
+  if (!locale_uses_bytewise_collation()) return exec_original_command(argc, argv);
   int stdin_mode = 0;
   const char *path = NULL;
   if (argc == 2) {
@@ -1732,6 +2383,215 @@ static void write_cut_segment(const char *line, size_t len,
   write_bytes("\n", 1);
 }
 
+static int parse_cut_field_range(const char *value, unsigned long long *start,
+                                 unsigned long long *end) {
+  const char *dash = strchr(value, '-');
+  if (!dash || dash == value || !dash[1] || strchr(dash + 1, '-')) return 0;
+  char *parsed = NULL;
+  errno = 0;
+  *start = strtoull(value, &parsed, 10);
+  if (errno || !parsed || parsed != dash || *start == 0) return 0;
+  errno = 0;
+  *end = strtoull(dash + 1, &parsed, 10);
+  return !errno && parsed && !*parsed && *end >= *start;
+}
+
+static int parse_cut_field_list(const char *value, unsigned long long fields[32],
+                                size_t *count) {
+  *count = 0;
+  while (*value) {
+    if (*count == 32) return 0;
+    char *parsed = NULL;
+    errno = 0;
+    unsigned long long field = strtoull(value, &parsed, 10);
+    if (errno || !parsed || parsed == value || field == 0 ||
+        (*parsed && *parsed != ',') || (*count && field <= fields[*count - 1])) {
+      return 0;
+    }
+    fields[(*count)++] = field;
+    if (!*parsed) break;
+    value = parsed + 1;
+  }
+  return *count >= 2;
+}
+
+static int parse_cut_field_range_args(int argc, char **argv,
+                                      const char **path, unsigned char *delimiter,
+                                      unsigned long long *start,
+                                      unsigned long long *end) {
+  const char *range = NULL;
+  *path = NULL;
+  *delimiter = '\t';
+  for (int idx = 2; idx < argc; idx++) {
+    const char *word = argv[idx];
+    if (!strcmp(word, "--")) return 0;
+    if (!strcmp(word, "-d")) {
+      if (++idx >= argc || !parse_cut_delimiter(argv[idx], delimiter)) return 0;
+    } else if (!strncmp(word, "-d", 2) && word[2]) {
+      if (!parse_cut_delimiter(word + 2, delimiter)) return 0;
+    } else if (!strcmp(word, "-f")) {
+      if (++idx >= argc || range) return 0;
+      range = argv[idx];
+    } else if (!strncmp(word, "-f", 2) && word[2]) {
+      if (range) return 0;
+      range = word + 2;
+    } else if (word[0] == '-' || *path) {
+      return 0;
+    } else {
+      *path = word;
+    }
+  }
+  return range && *path && parse_cut_field_range(range, start, end);
+}
+
+static int parse_cut_field_list_args(int argc, char **argv,
+                                     const char **path, unsigned char *delimiter,
+                                     unsigned long long fields[32], size_t *count) {
+  const char *list = NULL;
+  *path = NULL;
+  *delimiter = '\t';
+  for (int idx = 2; idx < argc; idx++) {
+    const char *word = argv[idx];
+    if (!strcmp(word, "--")) return 0;
+    if (!strcmp(word, "-d")) {
+      if (++idx >= argc || !parse_cut_delimiter(argv[idx], delimiter)) return 0;
+    } else if (!strncmp(word, "-d", 2) && word[2]) {
+      if (!parse_cut_delimiter(word + 2, delimiter)) return 0;
+    } else if (!strcmp(word, "-f")) {
+      if (++idx >= argc || list) return 0;
+      list = argv[idx];
+    } else if (!strncmp(word, "-f", 2) && word[2]) {
+      if (list) return 0;
+      list = word + 2;
+    } else if (word[0] == '-' || *path) {
+      return 0;
+    } else {
+      *path = word;
+    }
+  }
+  return list && *path && parse_cut_field_list(list, fields, count);
+}
+
+static void write_cut_field_range_segment(const char *line, size_t len,
+                                          unsigned char delimiter,
+                                          unsigned long long start,
+                                          unsigned long long end) {
+  int has_delimiter = 0;
+  for (size_t idx = 0; idx < len; idx++) {
+    if ((unsigned char)line[idx] == delimiter) { has_delimiter = 1; break; }
+  }
+  if (!has_delimiter) {
+    write_bytes(line, len);
+    write_bytes("\n", 1);
+    return;
+  }
+  unsigned long long field = 1;
+  size_t field_start = 0;
+  while (field < start) {
+    while (field_start < len && (unsigned char)line[field_start] != delimiter) field_start++;
+    if (field_start == len) { write_bytes("\n", 1); return; }
+    field_start++;
+    field++;
+  }
+  size_t field_end = len;
+  for (size_t idx = field_start; idx < len; idx++) {
+    if ((unsigned char)line[idx] != delimiter) continue;
+    if (field == end) { field_end = idx; break; }
+    field++;
+  }
+  write_bytes(line + field_start, field_end - field_start);
+  write_bytes("\n", 1);
+}
+
+static void write_cut_field_list_segment(const char *line, size_t len,
+                                         unsigned char delimiter,
+                                         const unsigned long long *fields, size_t count) {
+  int has_delimiter = 0;
+  for (size_t idx = 0; idx < len; idx++) {
+    if ((unsigned char)line[idx] == delimiter) { has_delimiter = 1; break; }
+  }
+  if (!has_delimiter) {
+    write_bytes(line, len);
+    write_bytes("\n", 1);
+    return;
+  }
+  int emitted = 0;
+  unsigned long long field = 1;
+  size_t start = 0;
+  for (size_t idx = 0; idx <= len; idx++) {
+    if (idx != len && (unsigned char)line[idx] != delimiter) continue;
+    size_t selected = 0;
+    while (selected < count && fields[selected] < field) selected++;
+    if (selected < count && fields[selected] == field) {
+      if (emitted) write_bytes((const char *)&delimiter, 1);
+      write_bytes(line + start, idx - start);
+      emitted = 1;
+    }
+    if (idx == len) break;
+    start = idx + 1;
+    field++;
+  }
+  write_bytes("\n", 1);
+}
+
+static int cap_cut_field_range(int argc, char **argv) {
+  const char *path = NULL;
+  unsigned char delimiter = '\t';
+  unsigned long long start = 0;
+  unsigned long long end = 0;
+  if (!parse_cut_field_range_args(argc, argv, &path, &delimiter, &start, &end)) return 127;
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_size < CAP_CUT_FIELDS_MIN_BYTES) {
+    return exec_original_command(argc, argv);
+  }
+  FILE *file = fopen(path, "r");
+  if (!file) { write_err_path("cut", path, errno); return 1; }
+  char *line = NULL;
+  size_t cap = 0;
+  ssize_t line_len = 0;
+  int rc = 0;
+  while ((line_len = getline(&line, &cap, file)) >= 0) {
+    size_t len = (size_t)line_len;
+    if (len > 0 && line[len - 1] == '\n') len--;
+    write_cut_field_range_segment(line, len, delimiter, start, end);
+  }
+  if (ferror(file)) { write_err_path("cut", path, errno); rc = 1; }
+  free(line);
+  fclose(file);
+  return rc;
+}
+
+static int cap_cut_field_list(int argc, char **argv) {
+  const char *path = NULL;
+  unsigned char delimiter = '\t';
+  unsigned long long fields[32];
+  size_t count = 0;
+  if (!parse_cut_field_list_args(argc, argv, &path, &delimiter, fields, &count)) {
+    return 127;
+  }
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_size < CAP_CUT_FIELDS_MIN_BYTES) {
+    return exec_original_command(argc, argv);
+  }
+  FILE *file = fopen(path, "r");
+  if (!file) { write_err_path("cut", path, errno); return 1; }
+  char *line = NULL;
+  size_t cap = 0;
+  ssize_t line_len = 0;
+  int rc = 0;
+  while ((line_len = getline(&line, &cap, file)) >= 0) {
+    size_t len = (size_t)line_len;
+    if (len > 0 && line[len - 1] == '\n') len--;
+    write_cut_field_list_segment(line, len, delimiter, fields, count);
+  }
+  if (ferror(file)) { write_err_path("cut", path, errno); rc = 1; }
+  free(line);
+  fclose(file);
+  return rc;
+}
+
 static int cut_file(const struct cut_plan *plan, const char *err_cmd) {
   FILE *file = plan->stdin_mode ? stdin : fopen(plan->file, "r");
   if (!file) {
@@ -1757,6 +2617,77 @@ static int cut_file(const struct cut_plan *plan, const char *err_cmd) {
 }
 
 static int cap_cut(int argc, char **argv) {
+  const char *path = NULL;
+  const char *range = NULL;
+  if (argc == 4 && !strncmp(argv[2], "-c", 2) && argv[2][2]) {
+    range = argv[2] + 2;
+    path = argv[3];
+  } else if (argc == 5 && !strcmp(argv[2], "-c")) {
+    range = argv[3];
+    path = argv[4];
+  }
+  if (range) {
+    for (const char *cursor = range; *cursor; cursor++) {
+      if (*cursor != '-' && !isdigit((unsigned char)*cursor)) return unsupported();
+    }
+    const char *dash = strchr(range, '-');
+    if (!dash || strchr(dash + 1, '-') || (dash == range && !dash[1])) return unsupported();
+    unsigned long long start = 1;
+    unsigned long long end = 0;
+    if (dash != range) {
+      char *parsed_end = NULL;
+      errno = 0;
+      start = strtoull(range, &parsed_end, 10);
+      if (errno || start == 0 || parsed_end != dash) return unsupported();
+    }
+    if (dash[1]) {
+      char *trailing = NULL;
+      errno = 0;
+      end = strtoull(dash + 1, &trailing, 10);
+      if (errno || end < start || !trailing || *trailing) return unsupported();
+    }
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_size < CAP_CUT_CHARS_MIN_BYTES || !file_is_ascii(path)) {
+      return exec_original_command(argc, argv);
+    }
+    FILE *file = fopen(path, "r");
+    if (!file) { write_err_path("cut", path, errno); return 1; }
+    unsigned char buffer[8192];
+    unsigned char output[8192];
+    size_t output_len = 0;
+    unsigned long long column = 1;
+    int rc = 0;
+    for (;;) {
+      size_t read_len = fread(buffer, 1, sizeof(buffer), file);
+      for (size_t idx = 0; idx < read_len; idx++) {
+        unsigned char byte = buffer[idx];
+        if (byte == '\n') {
+          output[output_len++] = byte;
+          column = 1;
+        } else {
+          if (column >= start && (!end || column <= end)) output[output_len++] = byte;
+          column++;
+        }
+        if (output_len == sizeof(output)) {
+          write_bytes((const char *)output, output_len);
+          output_len = 0;
+        }
+      }
+      if (output_len) {
+        write_bytes((const char *)output, output_len);
+        output_len = 0;
+      }
+      if (read_len < sizeof(buffer)) break;
+    }
+    if (ferror(file)) { write_err_path("cut", path, errno); rc = 1; }
+    fclose(file);
+    return rc;
+  }
+  int field_list = cap_cut_field_list(argc, argv);
+  if (field_list != 127) return field_list;
+  int fields = cap_cut_field_range(argc, argv);
+  if (fields != 127) return fields;
   struct cut_plan plan;
   if (!parse_cut_words(argv, 2, argc, NULL, &plan)) return unsupported();
   return cut_file(&plan, "cut");
@@ -1801,7 +2732,37 @@ static int tr_fd(int fd, const struct tr_plan *plan, const char *err_cmd,
   }
 }
 
+static int tr_squeeze_fd(int fd, const unsigned char *set, size_t set_len,
+                         const char *err_cmd, const char *err_path) {
+  unsigned char squeeze[256] = {0};
+  for (size_t idx = 0; idx < set_len; idx++) squeeze[set[idx]] = 1;
+  int previous = -1;
+  char input[8192];
+  char output[8192];
+  for (;;) {
+    ssize_t read_len = read(fd, input, sizeof(input));
+    if (read_len == 0) return 0;
+    if (read_len < 0) {
+      write_err_path(err_cmd, err_path, errno);
+      return 1;
+    }
+    size_t output_len = 0;
+    for (ssize_t idx = 0; idx < read_len; idx++) {
+      unsigned char byte = (unsigned char)input[idx];
+      if (!squeeze[byte] || previous != byte) output[output_len++] = (char)byte;
+      previous = byte;
+    }
+    if (output_len) write_bytes(output, output_len);
+  }
+}
+
 static int cap_tr(int argc, char **argv) {
+  if (argc == 4 && !strcmp(argv[2], "-s")) {
+    unsigned char set[256];
+    size_t set_len = 0;
+    if (!expand_tr_set(argv[3], set, &set_len)) return unsupported();
+    return tr_squeeze_fd(STDIN_FILENO, set, set_len, "tr", NULL);
+  }
   struct tr_plan plan;
   if (!parse_tr_words(argv, 2, argc, &plan)) return unsupported();
   return tr_fd(0, &plan, "tr", NULL);
@@ -1978,11 +2939,144 @@ static int parse_sed_range(const char *script, long *start, long *end) {
   return endp && *endp == 'p' && *start > 0 && *end >= *start;
 }
 
+static int is_plain_literal_span(const char *pattern, size_t len) {
+  if (len == 0) return 0;
+  for (size_t idx = 0; idx < len; idx++) {
+    switch (pattern[idx]) {
+      case '.':
+      case '[':
+      case ']':
+      case '\\':
+      case '*':
+      case '^':
+      case '$':
+      case '+':
+      case '?':
+      case '{':
+      case '}':
+      case '(':
+      case ')':
+      case '|':
+        return 0;
+      default:
+        break;
+    }
+  }
+  return 1;
+}
+
+static int parse_sed_literal_substitution(const char *script, const char **search,
+                                          size_t *search_len, const char **replacement,
+                                          size_t *replacement_len, int *global) {
+  if (!script || script[0] != 's' || !script[1]) return 0;
+  const char delimiter = script[1];
+  if (isalnum((unsigned char)delimiter) || isspace((unsigned char)delimiter) ||
+      delimiter == '\\') {
+    return 0;
+  }
+  const char *search_start = script + 2;
+  const char *search_end = strchr(search_start, delimiter);
+  if (!search_end) return 0;
+  const char *replacement_start = search_end + 1;
+  const char *replacement_end = strchr(replacement_start, delimiter);
+  if (!replacement_end) return 0;
+  const char *flags = replacement_end + 1;
+  if (*flags && strcmp(flags, "g")) return 0;
+
+  *search = search_start;
+  *search_len = (size_t)(search_end - search_start);
+  *replacement = replacement_start;
+  *replacement_len = (size_t)(replacement_end - replacement_start);
+  if (!is_plain_literal_span(*search, *search_len)) return 0;
+  for (size_t idx = 0; idx < *replacement_len; idx++) {
+    if ((*replacement)[idx] == '&' || (*replacement)[idx] == '\\' ||
+        (*replacement)[idx] == '\n' || (*replacement)[idx] == '\r') {
+      return 0;
+    }
+  }
+  *global = !strcmp(flags, "g");
+  return 1;
+}
+
+static void write_sed_substituted_line(const char *line, size_t line_len,
+                                       const char *search, size_t search_len,
+                                       const char *replacement, size_t replacement_len,
+                                       int global) {
+  size_t cursor = 0;
+  while (cursor + search_len <= line_len) {
+    size_t match = cursor;
+    while (match + search_len <= line_len &&
+           memcmp(line + match, search, search_len) != 0) {
+      match++;
+    }
+    if (match + search_len > line_len) break;
+    write_bytes(line + cursor, match - cursor);
+    write_bytes(replacement, replacement_len);
+    cursor = match + search_len;
+    if (!global) break;
+  }
+  write_bytes(line + cursor, line_len - cursor);
+}
+
+static int cap_sed_substitute(const char *path, const char *search, size_t search_len,
+                              const char *replacement, size_t replacement_len, int global) {
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) {
+    write_err_path("sed", path, errno);
+    return 1;
+  }
+  struct stat st;
+  if (fstat(fd, &st) != 0) {
+    write_err_path("sed", path, errno);
+    close(fd);
+    return 1;
+  }
+  if (!S_ISREG(st.st_mode)) {
+    close(fd);
+    return unsupported();
+  }
+  FILE *file = fdopen(fd, "r");
+  if (!file) {
+    write_err_path("sed", path, errno);
+    close(fd);
+    return 1;
+  }
+  char *line = NULL;
+  size_t line_cap = 0;
+  ssize_t line_len;
+  while ((line_len = getline(&line, &line_cap, file)) >= 0) {
+    write_sed_substituted_line(line, (size_t)line_len, search, search_len,
+                               replacement, replacement_len, global);
+  }
+  int read_error = ferror(file);
+  int saved_errno = errno;
+  free(line);
+  fclose(file);
+  if (read_error) {
+    write_err_path("sed", path, saved_errno);
+    return 1;
+  }
+  return 0;
+}
+
 static int cap_sed(int argc, char **argv) {
   char buf[8192];
   long start_line = 0;
   long end_line = 0;
   long line = 1;
+  if (argc == 4) {
+    const char *search = NULL;
+    const char *replacement = NULL;
+    size_t search_len = 0;
+    size_t replacement_len = 0;
+    int global = 0;
+    if (!parse_sed_literal_substitution(argv[2], &search, &search_len, &replacement,
+                                        &replacement_len, &global)) {
+      return unsupported();
+    }
+    return cap_sed_substitute(argv[3], search, search_len, replacement, replacement_len,
+                              global);
+  }
   if (argc != 5 || strcmp(argv[2], "-n") != 0) return unsupported();
   if (!parse_sed_range(argv[3], &start_line, &end_line)) return unsupported();
   int fd = open(argv[4], O_RDONLY);
@@ -2036,6 +3130,115 @@ static int contains_bytes(const char *buf, ssize_t n, const char *pat, size_t m)
     if (memcmp(buf + idx, pat, m) == 0) return 1;
   }
   return 0;
+}
+
+// A prepared Boyer-Moore-Horspool literal searcher.  The public grep fast path
+// prepares this once per file, so a no-match scan can skip most bytes instead
+// of restarting a scalar memcmp at every position in every line.
+struct literal_search {
+  const unsigned char *pattern;
+  size_t length;
+  size_t shift[UCHAR_MAX + 1];
+};
+
+static void literal_search_init(struct literal_search *search, const char *pattern,
+                                size_t length) {
+  search->pattern = (const unsigned char *)pattern;
+  search->length = length;
+  for (size_t idx = 0; idx <= UCHAR_MAX; idx++) search->shift[idx] = length;
+  for (size_t idx = 0; idx + 1 < length; idx++) {
+    search->shift[search->pattern[idx]] = length - idx - 1;
+  }
+}
+
+static int literal_search_contains(const struct literal_search *search,
+                                   const unsigned char *haystack, size_t length) {
+  if (search->length == 0 || length < search->length) return 0;
+  size_t offset = 0;
+  size_t last = search->length - 1;
+  while (offset <= length - search->length) {
+    unsigned char tail = haystack[offset + last];
+    if (tail == search->pattern[last] &&
+        !memcmp(haystack + offset, search->pattern, search->length)) {
+      return 1;
+    }
+    offset += search->shift[tail];
+  }
+  return 0;
+}
+
+// mmap keeps the file's bytes in place and lets memchr use the platform libc's
+// vectorized implementation for line boundaries.  If mapping is unavailable,
+// or the file is binary, the caller executes the original grep unchanged.
+static int grep_fast_literal_file(const char *path, const char *pattern, size_t pattern_len,
+                                  int line_numbers, int invert, int whole_line,
+                                  int stop_after_first, int emit_lines, int *matched) {
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < CAP_GREP_MIN_BYTES)
+    return unsupported();
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) { write_err_path("grep", path, errno); return 2; }
+  size_t file_len = (size_t)st.st_size;
+  const unsigned char *data = mmap(NULL, file_len, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (data == MAP_FAILED) { close(fd); return unsupported(); }
+  if (memchr(data, '\0', file_len)) {
+    munmap((void *)data, file_len);
+    close(fd);
+    return unsupported();
+  }
+
+  struct literal_search search;
+  literal_search_init(&search, pattern, pattern_len);
+  const unsigned char *line = data;
+  const unsigned char *end = data + file_len;
+  unsigned long long line_number = 1;
+  while (line < end) {
+    const unsigned char *newline = memchr(line, '\n', (size_t)(end - line));
+    const unsigned char *line_end = newline ? newline : end;
+    size_t line_len = (size_t)(line_end - line);
+    int line_matches = whole_line
+                           ? (line_len == pattern_len && !memcmp(line, pattern, pattern_len))
+                           : literal_search_contains(&search, line, line_len);
+    if (line_matches != invert) {
+      *matched = 1;
+      if (emit_lines) {
+        if (line_numbers) {
+          write_u64(line_number);
+          write_bytes(":", 1);
+        }
+        write_bytes((const char *)line, line_len + (newline ? 1 : 0));
+      }
+      if (stop_after_first) break;
+    }
+    if (!newline) break;
+    line = newline + 1;
+    line_number++;
+  }
+  munmap((void *)data, file_len);
+  close(fd);
+  return 0;
+}
+
+static int contains_bytes_ascii_casefold(const char *buf, ssize_t n, const char *pat,
+                                         size_t m) {
+  if (m == 0 || (size_t)n < m) return 0;
+  for (ssize_t idx = 0; idx <= n - (ssize_t)m; idx++) {
+    size_t pat_idx = 0;
+    while (pat_idx < m &&
+           tolower((unsigned char)buf[idx + (ssize_t)pat_idx]) ==
+               tolower((unsigned char)pat[pat_idx])) {
+      pat_idx++;
+    }
+    if (pat_idx == m) return 1;
+  }
+  return 0;
+}
+
+static int is_ascii_string(const char *value) {
+  for (; *value; value++) {
+    if ((unsigned char)*value >= 0x80) return 0;
+  }
+  return 1;
 }
 
 static int is_plain_literal_pattern(const char *pattern) {
@@ -2135,7 +3338,8 @@ static int grep_file(const char *path, const char *pat, size_t pat_len, int *mat
   return 0;
 }
 
-static int grep_plain_file(const char *path, const char *pat, size_t pat_len, int *matched) {
+static int grep_plain_file(const char *path, const char *pat, size_t pat_len, int ignore_case,
+                           int line_numbers, int invert, int *matched) {
   char buf[8192];
   char line[8192];
   size_t used = 0;
@@ -2146,6 +3350,7 @@ static int grep_plain_file(const char *path, const char *pat, size_t pat_len, in
     write_err_path("grep", path, errno);
     return 2;
   }
+  unsigned long long line_number = 1;
   for (;;) {
     ssize_t read_len = read(fd, buf, sizeof(buf));
     if (read_len == 0) break;
@@ -2157,16 +3362,31 @@ static int grep_plain_file(const char *path, const char *pat, size_t pat_len, in
     for (ssize_t idx = 0; idx < read_len; idx++) {
       if (used < sizeof(line)) line[used++] = buf[idx];
       if (buf[idx] == '\n' || used == sizeof(line)) {
-        if (contains_bytes(line, (ssize_t)used, pat, pat_len)) {
+        int line_matches = ignore_case
+                               ? contains_bytes_ascii_casefold(line, (ssize_t)used, pat, pat_len)
+                               : contains_bytes(line, (ssize_t)used, pat, pat_len);
+        if (line_matches != invert) {
           *matched = 1;
+          if (line_numbers) {
+            write_u64(line_number);
+            write_bytes(":", 1);
+          }
           write_bytes(line, used);
         }
+        line_number++;
         used = 0;
       }
     }
   }
-  if (used && contains_bytes(line, (ssize_t)used, pat, pat_len)) {
+  int final_matches = ignore_case
+                          ? contains_bytes_ascii_casefold(line, (ssize_t)used, pat, pat_len)
+                          : contains_bytes(line, (ssize_t)used, pat, pat_len);
+  if (used && final_matches != invert) {
     *matched = 1;
+    if (line_numbers) {
+      write_u64(line_number);
+      write_bytes(":", 1);
+    }
     write_bytes(line, used);
     write_bytes("\n", 1);
   }
@@ -2367,9 +3587,19 @@ static int grep_walk_count(char *path, size_t cap, const char *pat, size_t pat_l
 
 static int parse_awk_print_field_script(const char *script, const char **filter,
                                         unsigned long long *field);
+static int parse_awk_print_two_field_script(const char *script,
+                                            unsigned long long *first,
+                                            unsigned long long *second);
 static void awk_field_bounds(const char *data, size_t len,
                              unsigned long long field, size_t *start,
                              size_t *end);
+static void awk_delimited_field_bounds(const char *data, size_t len,
+                                       unsigned long long field,
+                                       unsigned char separator,
+                                       size_t *start, size_t *end);
+static void write_awk_print_fields(const char *data, size_t len, int separator,
+                                   unsigned long long first,
+                                   unsigned long long second, int two_fields);
 
 static int cap_awk(int argc, char **argv) {
   char buf[8192];
@@ -2381,14 +3611,46 @@ static int cap_awk(int argc, char **argv) {
   size_t pat_len = strlen(pat);
   const char *print_field_filter = NULL;
   unsigned long long print_field = 1;
-  if ((argc == 3 || argc == 4) &&
-      parse_awk_print_field_script(argv[2], &print_field_filter, &print_field)) {
-    int stdin_mode = argc == 3;
-    const char *path = stdin_mode ? NULL : argv[3];
+  unsigned long long print_field_second = 2;
+  int print_script_index = 2;
+  int field_separator = -1;
+  if (!strncmp(argv[2], "-F", 2)) {
+    const char *separator = argv[2] + 2;
+    print_script_index = 3;
+    if (!*separator) {
+      if (argc < 4) return unsupported();
+      separator = argv[3];
+      print_script_index = 4;
+    }
+    if (separator[0] == 0 || separator[1] != 0 ||
+        isspace((unsigned char)separator[0])) {
+      return unsupported();
+    }
+    field_separator = (unsigned char)separator[0];
+  }
+  int two_fields = parse_awk_print_two_field_script(
+      argv[print_script_index], &print_field, &print_field_second);
+  int one_field = parse_awk_print_field_script(argv[print_script_index],
+                                                &print_field_filter, &print_field);
+  if ((argc == print_script_index + 1 || argc == print_script_index + 2) &&
+      (one_field || two_fields)) {
+    int stdin_mode = argc == print_script_index + 1;
+    const char *path = stdin_mode ? NULL : argv[print_script_index + 1];
     int fd = stdin_mode ? STDIN_FILENO : open(path, O_RDONLY);
     if (fd < 0) {
       write_err_path("awk", path, errno);
       return 2;
+    }
+    if (field_separator >= 0) {
+      struct stat st;
+      if (stdin_mode || fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+          st.st_size < CAP_AWK_DELIMITED_MIN_BYTES) {
+        if (!stdin_mode) close(fd);
+        return exec_original_command(argc, argv);
+      }
+    } else if (two_fields) {
+      if (!stdin_mode) close(fd);
+      return exec_original_command(argc, argv);
     }
     size_t filter_len = print_field_filter ? strlen(print_field_filter) : 0;
     for (;;) {
@@ -2404,11 +3666,8 @@ static int cap_awk(int argc, char **argv) {
         if (buf[idx] == '\n' || used == sizeof(line)) {
           if (!print_field_filter ||
               contains_bytes(line, (ssize_t)used, print_field_filter, filter_len)) {
-            size_t start = 0;
-            size_t end = 0;
-            awk_field_bounds(line, used, print_field, &start, &end);
-            write_bytes(line + start, end - start);
-            write_bytes("\n", 1);
+            write_awk_print_fields(line, used, field_separator, print_field,
+                                   print_field_second, two_fields);
           }
           used = 0;
         }
@@ -2417,13 +3676,46 @@ static int cap_awk(int argc, char **argv) {
     if (used &&
         (!print_field_filter ||
          contains_bytes(line, (ssize_t)used, print_field_filter, filter_len))) {
-      size_t start = 0;
-      size_t end = 0;
-      awk_field_bounds(line, used, print_field, &start, &end);
-      write_bytes(line + start, end - start);
-      write_bytes("\n", 1);
+      write_awk_print_fields(line, used, field_separator, print_field,
+                             print_field_second, two_fields);
     }
     if (!stdin_mode) close(fd);
+    return 0;
+  }
+  if (argc == 4 &&
+      (!strcmp(argv[2], "END { print NR }") || !strcmp(argv[2], "END{print NR}"))) {
+    const char *path = argv[3];
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_size < CAP_AWK_DELIMITED_MIN_BYTES) {
+      return exec_original_command(argc, argv);
+    }
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+      write_err_path("awk", path, errno);
+      return 2;
+    }
+    unsigned long long records = 0;
+    int saw_bytes = 0;
+    int last_was_newline = 0;
+    for (;;) {
+      ssize_t read_len = read(fd, buf, sizeof(buf));
+      if (read_len == 0) break;
+      if (read_len < 0) {
+        write_err_path("awk", path, errno);
+        close(fd);
+        return 2;
+      }
+      saw_bytes = 1;
+      for (ssize_t idx = 0; idx < read_len; idx++) {
+        if (buf[idx] == '\n') records += 1;
+      }
+      last_was_newline = buf[read_len - 1] == '\n';
+    }
+    close(fd);
+    if (saw_bytes && !last_was_newline) records += 1;
+    write_u64(records);
+    write_bytes("\n", 1);
     return 0;
   }
   if ((argc != 3 && argc != 4) || strcmp(argv[2], script)) return unsupported();
@@ -2862,6 +4154,13 @@ static int cap_wc(int argc, char **argv) {
 
   for (int idx = file_start; idx < argc; idx++) {
     if (argv[idx][0] == '-') return unsupported();
+    // With stdout redirected to /dev/null, no per-file count is observable.
+    // Avoid a separate metadata walk before the open/close pass: the resource
+    // benchmark and real discarded-output callers then pay one syscall per
+    // regular file instead of stat + open. Normal output retains the strict
+    // all-regular preflight so a later unsupported path can still fall back
+    // before producing partial output.
+    if (discard) continue;
     struct stat st;
     if (stat(argv[idx], &st) != 0) continue;
     if (!S_ISREG(st.st_mode)) return unsupported();
@@ -5453,6 +6752,159 @@ static void byte_line_list_sort_unique(struct byte_line_list *list) {
   list->len = write;
 }
 
+static size_t join_record_len(const char *line, size_t len) {
+  return len > 0 && line[len - 1] == '\n' ? len - 1 : len;
+}
+
+static size_t join_key_len(const char *line, size_t len, unsigned char delimiter) {
+  len = join_record_len(line, len);
+  for (size_t idx = 0; idx < len; idx++) {
+    if ((unsigned char)line[idx] == delimiter) return idx;
+  }
+  return len;
+}
+
+static int join_key_cmp(const char *left, size_t left_len,
+                        const char *right, size_t right_len,
+                        unsigned char delimiter) {
+  left_len = join_key_len(left, left_len, delimiter);
+  right_len = join_key_len(right, right_len, delimiter);
+  size_t len = left_len < right_len ? left_len : right_len;
+  int cmp = len ? memcmp(left, right, len) : 0;
+  if (cmp) return cmp;
+  return (left_len > right_len) - (left_len < right_len);
+}
+
+static void write_join_pair(const char *key, size_t key_len,
+                            const struct byte_line_item *left,
+                            const struct byte_line_item *right,
+                            unsigned char delimiter) {
+  write_bytes(key, key_len);
+  const struct byte_line_item *items[] = {left, right};
+  for (size_t item_idx = 0; item_idx < 2; item_idx++) {
+    const char *line = items[item_idx]->data;
+    size_t len = join_record_len(line, items[item_idx]->len);
+    size_t key_end = join_key_len(line, len, delimiter);
+    if (key_end == len) continue;
+    write_bytes((const char *)&delimiter, 1);
+    write_bytes(line + key_end + 1, len - key_end - 1);
+  }
+  write_bytes("\n", 1);
+}
+
+static int collect_join_group(FILE *file, char **line, size_t *line_cap,
+                              ssize_t *line_len, int *ready,
+                              const char *key, size_t key_len,
+                              unsigned char delimiter,
+                              struct byte_line_list *group) {
+  if (!byte_line_list_push(group, *line, (size_t)*line_len)) return 0;
+  for (;;) {
+    *line_len = getline(line, line_cap, file);
+    if (*line_len < 0) {
+      if (ferror(file)) return -1;
+      *ready = 0;
+      return 1;
+    }
+    size_t next_key_len = join_key_len(*line, (size_t)*line_len, delimiter);
+    if (next_key_len != key_len ||
+        (key_len && memcmp(*line, key, key_len) != 0)) {
+      *ready = 1;
+      return 1;
+    }
+    if (!byte_line_list_push(group, *line, (size_t)*line_len)) return 0;
+  }
+}
+
+static int cap_join(int argc, char **argv) {
+  const char *delimiter_arg = NULL;
+  const char *left_path = NULL;
+  const char *right_path = NULL;
+  if (argc == 5 && !strncmp(argv[2], "-t", 2) && argv[2][2]) {
+    delimiter_arg = argv[2] + 2;
+    left_path = argv[3];
+    right_path = argv[4];
+  } else if (argc == 6 && !strcmp(argv[2], "-t")) {
+    delimiter_arg = argv[3];
+    left_path = argv[4];
+    right_path = argv[5];
+  } else {
+    return unsupported();
+  }
+  if (!delimiter_arg[0] || delimiter_arg[1] ||
+      (unsigned char)delimiter_arg[0] >= 0x80 || delimiter_arg[0] == '\n') {
+    return unsupported();
+  }
+  if (!locale_uses_bytewise_collation()) return exec_original_command(argc, argv);
+  struct stat left_st;
+  struct stat right_st;
+  if (stat(left_path, &left_st) != 0 || stat(right_path, &right_st) != 0 ||
+      !S_ISREG(left_st.st_mode) || !S_ISREG(right_st.st_mode) ||
+      (uintmax_t)left_st.st_size + (uintmax_t)right_st.st_size < CAP_JOIN_MIN_BYTES) {
+    return exec_original_command(argc, argv);
+  }
+  FILE *left = fopen(left_path, "r");
+  if (!left) { write_err_path("join", left_path, errno); return 1; }
+  FILE *right = fopen(right_path, "r");
+  if (!right) { write_err_path("join", right_path, errno); fclose(left); return 1; }
+  char *left_line = NULL;
+  char *right_line = NULL;
+  size_t left_cap = 0;
+  size_t right_cap = 0;
+  ssize_t left_len = 0;
+  ssize_t right_len = 0;
+  int left_ready = 0;
+  int right_ready = 0;
+  unsigned char delimiter = (unsigned char)delimiter_arg[0];
+  int rc = 0;
+  for (;;) {
+    if (!left_ready) {
+      left_len = getline(&left_line, &left_cap, left);
+      if (left_len < 0) { if (ferror(left)) { write_err_path("join", left_path, errno); rc = 1; } break; }
+      left_ready = 1;
+    }
+    if (!right_ready) {
+      right_len = getline(&right_line, &right_cap, right);
+      if (right_len < 0) { if (ferror(right)) { write_err_path("join", right_path, errno); rc = 1; } break; }
+      right_ready = 1;
+    }
+    int cmp = join_key_cmp(left_line, (size_t)left_len, right_line, (size_t)right_len, delimiter);
+    if (cmp < 0) { left_ready = 0; continue; }
+    if (cmp > 0) { right_ready = 0; continue; }
+    size_t key_len = join_key_len(left_line, (size_t)left_len, delimiter);
+    char *key = (char *)malloc(key_len ? key_len : 1);
+    if (!key) { rc = 1; break; }
+    if (key_len) memcpy(key, left_line, key_len);
+    struct byte_line_list left_group = {0};
+    struct byte_line_list right_group = {0};
+    int left_result = collect_join_group(left, &left_line, &left_cap, &left_len, &left_ready,
+                                         key, key_len, delimiter, &left_group);
+    int right_result = left_result > 0 ? collect_join_group(right, &right_line, &right_cap,
+                                                              &right_len, &right_ready,
+                                                              key, key_len, delimiter,
+                                                              &right_group) : 0;
+    if (left_result < 0) { write_err_path("join", left_path, errno); rc = 1; }
+    else if (right_result < 0) { write_err_path("join", right_path, errno); rc = 1; }
+    else if (!left_result || !right_result) rc = 1;
+    if (!rc) {
+      for (size_t left_idx = 0; left_idx < left_group.len; left_idx++) {
+        for (size_t right_idx = 0; right_idx < right_group.len; right_idx++) {
+          write_join_pair(key, key_len, &left_group.items[left_idx],
+                          &right_group.items[right_idx], delimiter);
+        }
+      }
+    }
+    byte_line_list_free(&left_group);
+    byte_line_list_free(&right_group);
+    free(key);
+    if (rc) break;
+  }
+  free(left_line);
+  free(right_line);
+  fclose(left);
+  fclose(right);
+  return rc;
+}
+
 static int emit_head_line_list_mode(char **words, int start, int count,
                                     struct byte_line_list *list,
                                     int wc_counts_newlines);
@@ -5540,6 +6992,98 @@ static int grep_plain_collect_file(const char *path, const char *pat, size_t pat
 static int cap_grep(int argc, char **argv) {
   char path[PATH_MAX];
   int matched = 0;
+  const char *exact_pattern = NULL;
+  const char *exact_path = NULL;
+  if (argc == 6 && ((!strcmp(argv[2], "-F") && !strcmp(argv[3], "-x")) ||
+                    (!strcmp(argv[2], "-x") && !strcmp(argv[3], "-F")))) {
+    exact_pattern = argv[4]; exact_path = argv[5];
+  } else if (argc == 5 && (!strcmp(argv[2], "-Fx") || !strcmp(argv[2], "-xF"))) {
+    exact_pattern = argv[3]; exact_path = argv[4];
+  }
+  if (exact_pattern && exact_pattern[0] && exact_pattern[0] != '-' && exact_path[0] != '-') {
+    int rc = grep_fast_literal_file(exact_path, exact_pattern, strlen(exact_pattern),
+                                    0, 0, 1, 0, 1, &matched);
+    if (rc == 127) return exec_original_command(argc, argv);
+    return matched ? 0 : (rc ? rc : 1);
+  }
+  if (argc == 5 && !strcmp(argv[2], "-F") && argv[3][0] && argv[3][0] != '-' &&
+      argv[4][0] != '-') {
+    int rc = grep_fast_literal_file(argv[4], argv[3], strlen(argv[3]),
+                                    0, 0, 0, 0, 1, &matched);
+    if (rc == 127) return exec_original_command(argc, argv);
+    return matched ? 0 : (rc ? rc : 1);
+  }
+  const char *number_pattern = NULL;
+  const char *number_path = NULL;
+  if (argc == 6 && ((!strcmp(argv[2], "-F") && !strcmp(argv[3], "-n")) ||
+                    (!strcmp(argv[2], "-n") && !strcmp(argv[3], "-F")))) {
+    number_pattern = argv[4];
+    number_path = argv[5];
+  } else if (argc == 5 && (!strcmp(argv[2], "-Fn") || !strcmp(argv[2], "-nF"))) {
+    number_pattern = argv[3];
+    number_path = argv[4];
+  }
+  if (number_pattern && number_pattern[0] && number_pattern[0] != '-' &&
+      number_path[0] != '-') {
+    int rc = grep_fast_literal_file(number_path, number_pattern, strlen(number_pattern),
+                                    1, 0, 0, 0, 1, &matched);
+    if (rc == 127) return exec_original_command(argc, argv);
+    return matched ? 0 : (rc ? rc : 1);
+  }
+  const char *files_pattern = NULL;
+  const char *files_path = NULL;
+  if (argc == 6 && ((!strcmp(argv[2], "-F") && !strcmp(argv[3], "-l")) ||
+                    (!strcmp(argv[2], "-l") && !strcmp(argv[3], "-F")))) {
+    files_pattern = argv[4]; files_path = argv[5];
+  } else if (argc == 5 && (!strcmp(argv[2], "-Fl") || !strcmp(argv[2], "-lF"))) {
+    files_pattern = argv[3]; files_path = argv[4];
+  }
+  if (files_pattern && files_pattern[0] && files_pattern[0] != '-' && files_path[0] != '-') {
+    int rc = grep_fast_literal_file(files_path, files_pattern, strlen(files_pattern),
+                                    0, 0, 0, 1, 0, &matched);
+    if (rc == 127) return exec_original_command(argc, argv);
+    if (matched) { write_cstr(files_path); write_bytes("\n", 1); }
+    return matched ? 0 : (rc ? rc : 1);
+  }
+  const char *invert_pattern = NULL;
+  const char *invert_path = NULL;
+  if (argc == 6 && ((!strcmp(argv[2], "-F") && !strcmp(argv[3], "-v")) ||
+                    (!strcmp(argv[2], "-v") && !strcmp(argv[3], "-F")))) {
+    invert_pattern = argv[4];
+    invert_path = argv[5];
+  } else if (argc == 5 && (!strcmp(argv[2], "-Fv") || !strcmp(argv[2], "-vF"))) {
+    invert_pattern = argv[3];
+    invert_path = argv[4];
+  }
+  if (invert_pattern && invert_pattern[0] && invert_pattern[0] != '-' &&
+      invert_path[0] != '-') {
+    int rc = grep_fast_literal_file(invert_path, invert_pattern, strlen(invert_pattern),
+                                    0, 1, 0, 0, 1, &matched);
+    if (rc == 127) return exec_original_command(argc, argv);
+    return matched ? 0 : (rc ? rc : 1);
+  }
+  const char *ignore_case_pattern = NULL;
+  const char *ignore_case_path = NULL;
+  if (argc == 6 && ((!strcmp(argv[2], "-F") && !strcmp(argv[3], "-i")) ||
+                    (!strcmp(argv[2], "-i") && !strcmp(argv[3], "-F")))) {
+    ignore_case_pattern = argv[4];
+    ignore_case_path = argv[5];
+  } else if (argc == 5 && (!strcmp(argv[2], "-Fi") || !strcmp(argv[2], "-iF"))) {
+    ignore_case_pattern = argv[3];
+    ignore_case_path = argv[4];
+  }
+  if (ignore_case_pattern && ignore_case_pattern[0] && ignore_case_pattern[0] != '-' &&
+      ignore_case_path[0] != '-' && is_ascii_string(ignore_case_pattern)) {
+    struct stat st;
+    if (stat(ignore_case_path, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_size < CAP_GREP_MIN_BYTES || !file_is_ascii(ignore_case_path)) {
+      return exec_original_command(argc, argv);
+    }
+    int rc = grep_plain_file(ignore_case_path, ignore_case_pattern,
+                             strlen(ignore_case_pattern), 1, 0, 0, &matched);
+    if (rc == 127) return unsupported();
+    return matched ? 0 : (rc ? rc : 1);
+  }
   if (argc == 3 && argv[2][0] != '-' && is_plain_literal_pattern(argv[2])) {
     struct byte_line_list list = {0};
     int rc = grep_plain_collect_file(NULL, argv[2], strlen(argv[2]), &list);
@@ -5553,7 +7097,7 @@ static int cap_grep(int argc, char **argv) {
   }
   if (argc == 4 && argv[2][0] != '-' && argv[3][0] != '-' &&
       is_plain_literal_pattern(argv[2])) {
-    int rc = grep_plain_file(argv[3], argv[2], strlen(argv[2]), &matched);
+    int rc = grep_plain_file(argv[3], argv[2], strlen(argv[2]), 0, 0, 0, &matched);
     if (rc == 127) return unsupported();
     return matched ? 0 : (rc ? rc : 1);
   }
@@ -9367,6 +10911,44 @@ static int parse_awk_print_field_script(const char *script, const char **filter,
   return 0;
 }
 
+static int parse_awk_print_two_field_script(const char *script,
+                                            unsigned long long *first,
+                                            unsigned long long *second) {
+  unsigned long long first_value = 0;
+  unsigned long long second_value = 0;
+  script = skip_ascii_space(script);
+  if (*script != '{') return 0;
+  script = skip_ascii_space(script + 1);
+  if (strncmp(script, "print", 5)) return 0;
+  script = skip_ascii_space(script + 5);
+  if (*script != '$') return 0;
+  script = skip_ascii_space(script + 1);
+  if (!isdigit((unsigned char)*script)) return 0;
+  while (isdigit((unsigned char)*script)) {
+    first_value = first_value * 10 + (unsigned long long)(*script - '0');
+    script++;
+  }
+  script = skip_ascii_space(script);
+  if (*script != ',') return 0;
+  script = skip_ascii_space(script + 1);
+  if (*script != '$') return 0;
+  script = skip_ascii_space(script + 1);
+  if (!isdigit((unsigned char)*script)) return 0;
+  while (isdigit((unsigned char)*script)) {
+    second_value = second_value * 10 + (unsigned long long)(*script - '0');
+    script++;
+  }
+  script = skip_ascii_space(script);
+  if (*script != '}') return 0;
+  if (*skip_ascii_space(script + 1) != 0 || first_value == 0 ||
+      second_value == 0) {
+    return 0;
+  }
+  *first = first_value;
+  *second = second_value;
+  return 1;
+}
+
 static void awk_field_bounds(const char *data, size_t len,
                              unsigned long long field, size_t *start,
                              size_t *end) {
@@ -9387,6 +10969,56 @@ static void awk_field_bounds(const char *data, size_t len,
     current++;
     if (current == field) return;
   }
+}
+
+static void awk_delimited_field_bounds(const char *data, size_t len,
+                                       unsigned long long field,
+                                       unsigned char separator,
+                                       size_t *start, size_t *end) {
+  size_t pos = 0;
+  unsigned long long current = 1;
+  *start = len;
+  *end = len;
+  for (;;) {
+    size_t field_start = pos;
+    while (pos < len && (unsigned char)data[pos] != separator &&
+           data[pos] != '\n' && data[pos] != '\r') {
+      pos++;
+    }
+    if (current == field) {
+      *start = field_start;
+      *end = pos;
+      return;
+    }
+    if (pos == len || data[pos] == '\n' || data[pos] == '\r') return;
+    pos++;
+    current++;
+  }
+}
+
+static void write_awk_print_fields(const char *data, size_t len, int separator,
+                                   unsigned long long first,
+                                   unsigned long long second, int two_fields) {
+  size_t start = 0;
+  size_t end = 0;
+  if (separator >= 0) {
+    awk_delimited_field_bounds(data, len, first, (unsigned char)separator,
+                               &start, &end);
+  } else {
+    awk_field_bounds(data, len, first, &start, &end);
+  }
+  write_bytes(data + start, end - start);
+  if (two_fields) {
+    if (separator >= 0) {
+      awk_delimited_field_bounds(data, len, second, (unsigned char)separator,
+                                 &start, &end);
+    } else {
+      awk_field_bounds(data, len, second, &start, &end);
+    }
+    write_bytes(" ", 1);
+    write_bytes(data + start, end - start);
+  }
+  write_bytes("\n", 1);
 }
 
 static int awk_field_to_list(struct byte_line_list *list, const char *data,
@@ -12437,7 +14069,6 @@ static int pipe_find_sort_uniq(char **words, int count) {
 
 static int pipe_find_sort_uniq_wc(char **words, int count) {
   char path[PATH_MAX];
-  struct path_list list = {0};
   struct find_pipe_prefix prefix;
   if (!parse_find_pipe_prefix(words, count, &prefix) || count != prefix.pipe + 7 ||
       strcmp(words[prefix.pipe + 1], "sort") || strcmp(words[prefix.pipe + 2], "|") ||
@@ -12446,16 +14077,16 @@ static int pipe_find_sort_uniq_wc(char **words, int count) {
     return unsupported();
   }
   if (!copy_cstr(path, sizeof(path), prefix.root)) return unsupported();
-  int rc = find_collect_named_path(path, sizeof(path), prefix.name_glob,
-                                   prefix.max_depth, 0, &list);
-  if (rc != 0) {
-    path_list_free(&list);
-    return rc;
-  }
-  qsort(list.items, list.len, sizeof(char *), cmp_string_ptr);
-  write_padded_u64(count_unique_path_list(&list));
+  // `find` emits each selected path at most once. Because this exact fused
+  // shape only observes the final count, `sort | uniq` cannot change it.
+  // Count during traversal instead of retaining one heap allocation per path;
+  // this preserves the result while keeping large-tree RSS competitive.
+  unsigned long long matches = 0;
+  int rc = find_count_walk_path(path, sizeof(path), prefix.name_glob,
+                                prefix.max_depth, 0, &matches);
+  if (rc != 0) return rc;
+  write_padded_u64(matches);
   write_bytes("\n", 1);
-  path_list_free(&list);
   return 0;
 }
 
@@ -13157,7 +14788,13 @@ static int is_fast_command(const char *word) {
          !strcmp(cmd, "uname") || !strcmp(cmd, "hostname") || !strcmp(cmd, "test") ||
          !strcmp(cmd, "[") ||
          !strcmp(cmd, "ls") || !strcmp(cmd, "cat") ||
-         !strcmp(cmd, "uniq") || !strcmp(cmd, "sort") ||
+         !strcmp(cmd, "uniq") || !strcmp(cmd, "sort") || !strcmp(cmd, "nl") ||
+         !strcmp(cmd, "rev") || !strcmp(cmd, "paste") ||
+         !strcmp(cmd, "comm") ||
+         !strcmp(cmd, "join") ||
+         !strcmp(cmd, "expand") ||
+         !strcmp(cmd, "fold") ||
+         !strcmp(cmd, "unexpand") ||
          !strcmp(cmd, "cut") || !strcmp(cmd, "tr") || !strcmp(cmd, "sed") ||
          !strcmp(cmd, "grep") || !strcmp(cmd, "find") || !strcmp(cmd, "du") ||
          !strcmp(cmd, "wc") || !strcmp(cmd, "head") ||
@@ -13328,6 +14965,14 @@ static int dispatch_run_string(int argc, char **argv) {
   if (!split_simple_shell_words(command, &words, &word_count)) return unsupported();
   for (int idx = 0; idx < word_count; idx++) {
     if (!strcmp(words[idx], "|")) {
+      if (!locale_uses_bytewise_collation()) {
+        for (int word_idx = 0; word_idx < word_count; word_idx++) {
+          if (!strcmp(cap_base(words[word_idx]), "sort")) {
+            free_words(words, word_count);
+            return exec_shell_command(command);
+          }
+        }
+      }
       int code = dispatch_pipe_words(words, word_count);
       free_words(words, word_count);
       return code;
@@ -13384,6 +15029,14 @@ static int dispatch_frontend(int argc, char **argv) {
   if (!strcmp(cmd, "touch")) return cap_touch(argc, argv);
   if (!strcmp(cmd, "uniq")) return cap_uniq(argc, argv);
   if (!strcmp(cmd, "sort")) return cap_sort(argc, argv);
+  if (!strcmp(cmd, "nl")) return cap_nl(argc, argv);
+  if (!strcmp(cmd, "rev")) return cap_rev(argc, argv);
+  if (!strcmp(cmd, "paste")) return cap_paste(argc, argv);
+  if (!strcmp(cmd, "comm")) return cap_comm(argc, argv);
+  if (!strcmp(cmd, "join")) return cap_join(argc, argv);
+  if (!strcmp(cmd, "expand")) return cap_expand(argc, argv);
+  if (!strcmp(cmd, "fold")) return cap_fold(argc, argv);
+  if (!strcmp(cmd, "unexpand")) return cap_unexpand(argc, argv);
   if (!strcmp(cmd, "cut")) return cap_cut(argc, argv);
   if (!strcmp(cmd, "tr")) return cap_tr(argc, argv);
   if (!strcmp(cmd, "sed")) return cap_sed(argc, argv);

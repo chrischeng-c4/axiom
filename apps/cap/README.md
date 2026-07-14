@@ -100,7 +100,7 @@ Gate Inventory:
 | Memory and CPU pressure sampling | epic | - | implemented | verified | smoke | `cargo test -p cap sampler` |
 | Absolute and idle wall-clock timeouts | epic | #1323 | implemented | verified | smoke | `cargo test -p cap throttle` |
 | Command planner cd-prefix native recognition | change | #1378 | implemented | verified | smoke | `cargo test -p cap command_planner` |
-| Command planner grep flag/rg alias native recognition | change | #1392 | implemented | verified | smoke | `cargo test -p cap command_planner` |
+| Command planner grep flag native recognition | change | #1392 | implemented | verified | smoke | `cargo test -p cap command_planner` |
 
 ### Daemon Lifecycle and Status
 
@@ -239,16 +239,24 @@ Active same-name replacements are conservative native fast paths:
 | `tail` | default lines, `-n <n>`, or `-c <n>` over one file or stdin with no file operand | Simple line/byte windows, including zero-count success. |
 | `mkdir` | plain paths or `mkdir -p <path...>` | Simple directory creation. |
 | `touch` | plain paths without flags | Create/update path timestamps. |
-| `uniq` | one input file or stdin with no file operand | Adjacent duplicate filtering. |
+| `uniq` | one input file or stdin with no file operand; exact `uniq -c <large NUL-free regular file>` | Adjacent duplicate filtering; counted mode keeps small, binary, and stdin inputs on the original command. |
 | `find` | simple root plus optional `-type f|d` and `-name <glob>` | Simple name/type walks. |
 | `du` | `du -sk <root>` | Includes stdout-discard fast path; missing-root errors are parity-tested. |
-| `sort` | one regular file or stdin with no file operand | Buffered in-process line sorting. |
-| `cut` | one regular file or stdin with no file operand, using single `-f <field>` and optional single-byte `-d <char>` delimiter | Single-field extractor; byte/char/range/list/suppress forms stay original. |
-| `tr` | ASCII byte translate sets such as `a-z A-Z`, exact `[:lower:]`/`[:upper:]`/`[:digit:]` sets, or `tr -d <set>` | Streaming stdin transformer; other classes, escapes, complement, squeeze, and padded sets stay original. |
-| `sed` | `sed -n <start>,<end>p <file>` | Ranged line printing. |
-| `grep` | literal `grep <pattern>` over stdin, literal `grep <pattern> <file>` over one regular file, and recursive literal `grep -R <pattern> <root>` subset | Stdin/single-file grep emits matching lines without path prefixes; recursive grep preserves path-prefixed output. No-match and missing-root behavior are parity-tested. |
+| `sort` | one regular file or stdin with no file operand in a `C`/`POSIX` collation locale | Buffered bytewise line sorting; locale-aware sort invocations stay original. |
+| `nl` | exact `nl -ba <large regular file>` | Numbers every input record with BSD default width and tab separator; small files and other options stay original. |
+| `rev` | exact `rev <large valid-UTF-8 regular file>` in a UTF-8 locale | Reverses Unicode characters within each record; non-UTF-8 locales, invalid UTF-8, small files, stdin, and options stay original. |
+| `paste` | exact `paste <two or three regular files totaling at least 1 MiB>`, `paste -d<one ASCII delimiter> <two or three regular files totaling at least 1 MiB>`, or serial `paste -s [-d<one ASCII delimiter>] <one regular file of at least 1 MiB>` | Joins corresponding records or serializes one file with the default tab or one explicit delimiter; small inputs, stdin, four or more parallel inputs, multi-file serial mode, delimiter lists, and other options stay original. |
+| `comm` | exact `comm -12 <two sorted regular files totaling at least 1 MiB>` in a `C`/`POSIX` collation locale | Streams the common sorted records (including duplicates) with standard final-newline output; other column selections, options, locales, small inputs, and stdin stay original. |
+| `join` | exact `join -t<one ASCII delimiter> <two sorted regular files totaling at least 1 MiB>` (or `-t <delimiter>`) in a `C`/`POSIX` collation locale | Streams matching record groups, preserving duplicate-key cross products and empty fields; the default whitespace grammar, custom key fields/output lists, options, other locales, small inputs, and stdin stay original. |
+| `expand` | exact `expand <large 7-bit-ASCII regular file>` | Expands default 8-column tab stops; options, small files, stdin, and high-bit bytes stay original. |
+| `fold` | exact `fold <large printable-ASCII regular file>`, `fold -w <positive> <large printable-ASCII regular file>`, or `fold -w<positive> <large printable-ASCII regular file>` | Wraps fixed byte columns (default 80); small files, whitespace folding, controls, non-ASCII, stdin, and other options stay original. |
+| `unexpand` | exact `unexpand <large printable-ASCII regular file>` or `unexpand -a <large printable-ASCII regular file>` | Contracts default 8-column tab stops, at line starts or across all spaces with `-a`; tabs, controls, non-ASCII, small files, stdin, and other options stay original. |
+| `cut` | one regular file or stdin with no file operand, using single `-f <field>` and optional single-byte `-d <char>` delimiter; exact contiguous `-f<start>-<end>` or an ascending comma-separated list of 2–32 fields over a large regular file; exact `-c <start>-<end>`, `-c <start>-`, or `-c -<end>` (including attached forms) over a large ASCII regular file | Single-field extractor plus selected field and character ranges; field ranges/lists on small files, descending/repeated or over-32 field lists, character ranges on small/non-ASCII inputs, and byte/char/suppress forms stay original. |
+| `tr` | ASCII byte translate sets such as `a-z A-Z`, exact `[:lower:]`/`[:upper:]`/`[:digit:]` sets, `tr -d <set>`, or direct `tr -s <set>` | Streaming stdin transformer; squeeze preserves repeat state across input buffers. Other classes, escapes, complement, combined flags, and padded sets stay original. |
+| `sed` | `sed -n <start>,<end>p <file>` or `sed s/<literal>/<replacement>/[g] <file>` | Ranged line printing and one-file literal substitution; regex, escaped, capture, and other flag forms stay original. |
+| `grep` | literal `grep <pattern>` over stdin, literal `grep <pattern> <file>` over one regular file, `grep -F <pattern> <large-file>`, `grep -Fx` / `grep -xF <non-empty pattern> <large-file>`, `grep -Fn` / `grep -nF <pattern> <large-file>`, `grep -Fv` / `grep -vF <pattern> <large-file>`, `grep -Fl` / `grep -lF <pattern> <large-file>`, ASCII-only `grep -Fi` / `grep -iF <pattern> <large-file>`, and recursive literal `grep -R <pattern> <root>` subset | Large fixed-string scans use cap's in-tree BMH search over a mapped regular text file; small, NUL-bearing, or unmappable inputs execute the original grep. Case-insensitive fixed-string mode requires an ASCII pattern and file so locale semantics remain exact. Stdin/single-file grep emits matching lines without path prefixes; recursive grep preserves path-prefixed output. No-match and missing-root behavior are parity-tested. |
 | `wc` | default line/word/byte counts or `wc -l/-c/-w`, over stdin or regular files | Unsupported options and non-file operands stay original. |
-| `awk` | exact `/NEEDLE/ { c++ } END { print c }` plus whitespace variants of `{ print $<field> }` and `/NEEDLE/ { print $<field> }`, where `<field>` is a positive decimal field number, over one file or stdin with no file operand | Narrow counted-match and fixed-field scanners; general awk language stays original. |
+| `awk` | exact `/NEEDLE/ { c++ } END { print c }`; exact `END { print NR }` / `END{print NR}` over a large regular file; whitespace variants of `{ print $<field> }` and `/NEEDLE/ { print $<field> }`; `-F<one non-whitespace byte>` fixed-field extraction over a large regular file; and `-F<one non-whitespace byte> '{ print $<field>, $<field> }'` over a large regular file | Narrow counted-match, record-count, and fixed-field scanners; small files/stdin, regex/multi-byte separators, custom output separators, and general awk language stay original. |
 | `xargs` | exact `xargs`, `xargs echo`, `xargs -n <positive> [echo]` / `xargs -n<positive> [echo]`, and `xargs wc -l` | Batches stdin tokens, emits fixed-size token batches, or batches stdin path lists in-process; other xargs options stay original. |
 | `which` | one or more command names, optionally with `-a` | PATH executable lookup matching Bash `/usr/bin/which` stdout and quiet misses; `-a` scans all PATH matches. |
 | `command` | exact `command -v <name...>` | Bash-style shell word and PATH lookup; other `command` forms stay original. |
@@ -256,6 +264,8 @@ Active same-name replacements are conservative native fast paths:
 | `printenv` | no args or one non-option name | Prints the inherited environment or a single value; flags and multi-name platform-specific forms stay original. |
 
 Active fused pipeline replacements:
+
+Pipelines containing `sort` use the native path only in a `C`/`POSIX` collation locale; other locales keep the original shell pipeline.
 
 | Command string | Replacement behavior |
 |---|---|

@@ -14,6 +14,10 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use meter::{
+    baseline::{BaselineSnapshot, RegressionDetector, RegressionThresholds},
+    benchmark::{BenchmarkEnvironment, BenchmarkResult, BenchmarkStats},
+};
 use serde::Serialize;
 
 const DEFAULT_ROUNDS: usize = 7;
@@ -84,6 +88,15 @@ struct Measurement {
     peak_rss_bytes: u64,
 }
 
+/// The raw measured samples alongside the median used by cap's admission gate.
+/// Meter consumes the CPU samples to detect cap-on-cap regressions; the existing
+/// report continues to compare the median against the system command.
+#[derive(Clone, Debug)]
+struct MeasurementSeries {
+    median: Measurement,
+    cpu_samples_ms: Vec<f64>,
+}
+
 #[derive(Debug, Serialize)]
 struct ScenarioReport {
     id: String,
@@ -107,9 +120,18 @@ struct BenchReport {
 }
 
 fn main() -> Result<()> {
-    let rounds = env_usize("CAP_BENCH_ROUNDS", DEFAULT_ROUNDS);
+    let rounds = env_positive_usize("CAP_BENCH_ROUNDS", DEFAULT_ROUNDS);
     let warmups = env_usize("CAP_BENCH_WARMUPS", DEFAULT_WARMUPS);
-    let include_candidates = env_bool("CAP_BENCH_INCLUDE_CANDIDATES");
+    let meter_baseline_write = env_path("CAP_BENCH_WRITE_METER_BASELINE");
+    let meter_baseline_compare = env_path("CAP_BENCH_METER_BASELINE");
+    // A Meter capture is an inventory baseline, so it must cover candidate
+    // shapes too. The ordinary resource bench keeps its historical default.
+    let include_candidates = env_bool("CAP_BENCH_INCLUDE_CANDIDATES")
+        || env_bool("CAP_BENCH_ALL")
+        || meter_baseline_write.is_some()
+        || meter_baseline_compare.is_some();
+    let scenario_filter = env_filter("CAP_BENCH_SCENARIOS");
+    let excluded_scenarios = env_filter("CAP_BENCH_EXCLUDE_SCENARIOS");
     let command_filter = env_command_filter("CAP_BENCH_COMMANDS");
     let cap = cap_binary()?;
     let fixture = Fixture::create()?;
@@ -117,6 +139,15 @@ fn main() -> Result<()> {
         .scenarios()
         .into_iter()
         .filter(|scenario| {
+            if excluded_scenarios
+                .as_ref()
+                .is_some_and(|ids| ids.iter().any(|id| id == scenario.id))
+            {
+                return false;
+            }
+            if let Some(scenarios) = scenario_filter.as_ref() {
+                return scenarios.iter().any(|id| id == scenario.id);
+            }
             command_filter
                 .as_ref()
                 .map(|commands| commands.iter().any(|command| command == scenario.command))
@@ -134,9 +165,10 @@ fn main() -> Result<()> {
     println!("|---|---:|---|---:|---:|---:|---:|---:|---:|");
 
     let mut reports = Vec::new();
+    let mut meter_results = Vec::new();
     let mut failing_gated = Vec::new();
     for scenario in scenarios {
-        let cap_measurement = measure_median(
+        let cap_measurements = measure_median(
             &cap,
             &scenario.cap_args,
             scenario.stdin_file.as_deref(),
@@ -144,7 +176,7 @@ fn main() -> Result<()> {
             rounds,
         )
         .with_context(|| format!("measuring cap {}", scenario.id))?;
-        let original_measurement = measure_median(
+        let original_measurements = measure_median(
             Path::new(&scenario.original_program),
             &scenario.original_args,
             scenario.stdin_file.as_deref(),
@@ -152,6 +184,8 @@ fn main() -> Result<()> {
             rounds,
         )
         .with_context(|| format!("measuring original {}", scenario.id))?;
+        let cap_measurement = cap_measurements.median;
+        let original_measurement = original_measurements.median;
 
         if cap_measurement.exit_code != scenario.expected_exit_code
             || original_measurement.exit_code != scenario.expected_exit_code
@@ -207,6 +241,15 @@ fn main() -> Result<()> {
             cpu_ratio_cap_over_original: cpu_ratio,
             peak_rss_ratio_cap_over_original: rss_ratio,
         });
+        meter_results.push(BenchmarkResult::success(
+            format!("cap-command-resource:{}", scenario.id),
+            BenchmarkStats::from_times(
+                cap_measurements.cpu_samples_ms,
+                1,
+                rounds as u32,
+                warmups as u32,
+            ),
+        ));
     }
 
     let report = BenchReport {
@@ -216,6 +259,11 @@ fn main() -> Result<()> {
         scenarios: reports,
     };
     write_reports(&report)?;
+    write_meter_artifacts(
+        &meter_results,
+        meter_baseline_write.as_deref(),
+        meter_baseline_compare.as_deref(),
+    )?;
     if !failing_gated.is_empty() {
         bail!(
             "gated cap replacements must satisfy their resource policy; failing: {}",
@@ -229,8 +277,16 @@ fn env_usize(name: &str, default: usize) -> usize {
     env::var(name)
         .ok()
         .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
         .unwrap_or(default)
+}
+
+fn env_positive_usize(name: &str, default: usize) -> usize {
+    let value = env_usize(name, default);
+    if value > 0 {
+        value
+    } else {
+        default
+    }
 }
 
 fn env_bool(name: &str) -> bool {
@@ -239,7 +295,17 @@ fn env_bool(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn env_path(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 fn env_command_filter(name: &str) -> Option<Vec<String>> {
+    env_filter(name)
+}
+
+fn env_filter(name: &str) -> Option<Vec<String>> {
     let value = env::var(name).ok()?;
     let commands = value
         .split(',')
@@ -389,11 +455,14 @@ fn measure_median(
     stdin_file: Option<&Path>,
     warmups: usize,
     rounds: usize,
-) -> Result<Measurement> {
+) -> Result<MeasurementSeries> {
     for _ in 0..warmups {
         let measurement = measure_once(program, args, stdin_file)?;
         if measurement.exit_code != 0 {
-            return Ok(measurement);
+            return Ok(MeasurementSeries {
+                cpu_samples_ms: vec![us_to_ms(measurement.total_cpu_us)],
+                median: measurement,
+            });
         }
     }
 
@@ -401,8 +470,15 @@ fn measure_median(
     for _ in 0..rounds {
         measurements.push(measure_once(program, args, stdin_file)?);
     }
+    let cpu_samples_ms = measurements
+        .iter()
+        .map(|measurement| us_to_ms(measurement.total_cpu_us))
+        .collect();
     measurements.sort_by(compare_measurement);
-    Ok(measurements[measurements.len() / 2].clone())
+    Ok(MeasurementSeries {
+        median: measurements[measurements.len() / 2].clone(),
+        cpu_samples_ms,
+    })
 }
 
 fn compare_measurement(left: &Measurement, right: &Measurement) -> Ordering {
@@ -484,6 +560,93 @@ fn write_reports(report: &BenchReport) -> Result<()> {
     println!("\nwrote {}", json_path.display());
     println!("wrote {}", md_path.display());
     Ok(())
+}
+
+fn write_meter_artifacts(
+    results: &[BenchmarkResult],
+    baseline_write: Option<&Path>,
+    baseline_compare: Option<&Path>,
+) -> Result<()> {
+    if let Some(path) = baseline_write {
+        write_json(
+            path,
+            &BaselineSnapshot::from_benchmarks(results.to_vec(), &BenchmarkEnvironment::default()),
+        )?;
+        println!("wrote Meter baseline {}", path.display());
+    }
+
+    if let Some(path) = baseline_compare {
+        let baseline: BaselineSnapshot = serde_json::from_slice(
+            &fs::read(path)
+                .with_context(|| format!("reading Meter baseline {}", path.display()))?,
+        )
+        .with_context(|| format!("parsing Meter baseline {}", path.display()))?;
+        ensure_meter_inventory_matches(&baseline, results, path)?;
+        let regression = RegressionDetector::detect_regressions(
+            &baseline,
+            results,
+            &RegressionThresholds::default(),
+        );
+        let report_path = env_path("CAP_BENCH_METER_REPORT")
+            .unwrap_or_else(|| PathBuf::from("target/cap-command-resource-meter-regressions.json"));
+        write_json(&report_path, &regression)?;
+        println!(
+            "wrote Meter regression report {} ({} regressions, {} improvements, {} unchanged)",
+            report_path.display(),
+            regression.summary.regressions_found,
+            regression.summary.improvements_found,
+            regression.summary.unchanged,
+        );
+    }
+
+    Ok(())
+}
+
+fn ensure_meter_inventory_matches(
+    baseline: &BaselineSnapshot,
+    current: &[BenchmarkResult],
+    baseline_path: &Path,
+) -> Result<()> {
+    let baseline = baseline
+        .benchmarks()
+        .context("Meter baseline is not a benchmark snapshot")?;
+    let baseline_names = baseline
+        .iter()
+        .map(|result| result.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let current_names = current
+        .iter()
+        .map(|result| result.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if baseline_names != current_names {
+        let missing_from_current = baseline_names
+            .difference(&current_names)
+            .copied()
+            .collect::<Vec<_>>();
+        let missing_from_baseline = current_names
+            .difference(&baseline_names)
+            .copied()
+            .collect::<Vec<_>>();
+        bail!(
+            "Meter scenario inventory differs from {}: missing from current [{}]; missing from baseline [{}]. Re-capture an all-scenarios baseline with CAP_BENCH_WRITE_METER_BASELINE={}",
+            baseline_path.display(),
+            missing_from_current.join(", "),
+            missing_from_baseline.join(", "),
+            baseline_path.display(),
+        );
+    }
+    Ok(())
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    fs::write(path, serde_json::to_string_pretty(value)?)
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 fn report_markdown(report: &BenchReport) -> String {
@@ -589,6 +752,12 @@ impl Fixture {
         let small_sed_file = root.join("sed-small.txt");
         fs::write(&small_sed_file, "one\ntwo\nthree\nfour\n")?;
 
+        let rev_file = root.join("rev-utf8-lines.txt");
+        let mut rev = fs::File::create(&rev_file)?;
+        for idx in 1..=120_000 {
+            writeln!(rev, "row {idx:06} é😀")?;
+        }
+
         let sort_file = root.join("sort-lines.txt");
         let mut sort = fs::File::create(&sort_file)?;
         for idx in (0..500_000).rev() {
@@ -606,6 +775,8 @@ impl Fixture {
                 writeln!(cut, "field-{idx:06},value-{idx:06},tail-{idx:06}")?;
             }
         }
+        let small_cut_file = root.join("cut-small.csv");
+        fs::write(&small_cut_file, "alpha,beta,gamma\none,two,three\n")?;
 
         let find_root = root.join("find-tree");
         for dir_idx in 0..80 {
@@ -675,6 +846,14 @@ impl Fixture {
         for idx in 0..20_000 {
             writeln!(xargs, "item-{idx:05}")?;
         }
+        // `xargs -n 1` intentionally measures one process per token. Keep a
+        // large enough dedicated sample to show that amplification without
+        // turning one resource row into half a million process launches.
+        let xargs_n1_input = root.join("xargs-n1-input.txt");
+        let mut xargs_n1 = fs::File::create(&xargs_n1_input)?;
+        for idx in 0..1_000 {
+            writeln!(xargs_n1, "item-{idx:05}")?;
+        }
         let xargs_pipe_file = root.join("xargs-pipe-lines.txt");
         let mut xargs_pipe = fs::File::create(&xargs_pipe_file)?;
         for idx in (0..5_000).rev() {
@@ -694,9 +873,11 @@ impl Fixture {
         let byte_window_file = self.root.join("byte-window.bin");
         let sed_file = self.root.join("sed-lines.txt");
         let small_sed_file = self.root.join("sed-small.txt");
+        let rev_file = self.root.join("rev-utf8-lines.txt");
         let sort_file = self.root.join("sort-lines.txt");
         let small_sort_file = self.root.join("sort-small.txt");
         let cut_file = self.root.join("cut-lines.csv");
+        let small_cut_file = self.root.join("cut-small.csv");
         let find_root = self.root.join("find-tree");
         let small_find_root = self.root.join("find-small");
         let grep_root = self.root.join("grep-tree");
@@ -712,6 +893,7 @@ impl Fixture {
             })
             .collect::<Vec<_>>();
         let xargs_input = self.root.join("xargs-input.txt");
+        let xargs_n1_input = self.root.join("xargs-n1-input.txt");
         let xargs_wc_input = self.root.join("xargs-wc-input.txt");
         let xargs_pipe_file = self.root.join("xargs-pipe-lines.txt");
         let long_basename_suffix = "suffix".repeat(78);
@@ -1706,13 +1888,24 @@ impl Fixture {
         let run_ls = format!("ls -1 {}", path_string(&list_dir));
         let run_cat = format!("cat {}", path_string(&cat_file));
         let run_uniq = format!("uniq {}", path_string(&byte_window_file));
+        let run_uniq_count = format!("uniq -c {}", path_string(&sed_file));
         let run_find = format!("find {} -type f -name '*.txt'", path_string(&find_root));
         let run_du = format!("du -sk {}", path_string(&find_root));
         let run_sort = format!("sort {}", path_string(&sort_file));
+        let run_nl = format!("nl -ba {}", path_string(&sed_file));
+        let run_rev = format!("rev {}", path_string(&rev_file));
+        let run_paste = format!(
+            "paste {} {}",
+            path_string(&sed_file),
+            path_string(&cut_file)
+        );
         let run_cut = format!("cut -d, -f1 {}", path_string(&cut_file));
+        let run_awk_delimited = format!("awk -F, '{{ print $2 }}' {}", path_string(&cut_file));
+        let run_awk_record_count = format!("awk 'END {{ print NR }}' {}", path_string(&sed_file));
         let cut_stdin_wc_pipe = "cut -d, -f1 | wc -l".to_string();
         let run_tr = "tr a-z A-Z".to_string();
         let run_sed = format!("sed -n 2500,7500p {}", path_string(&sed_file));
+        let run_sed_substitute = format!("sed s/line/row/g {}", path_string(&sed_file));
         let cat_sed_pipe = format!("cat {} | sed -n 2500,7500p", path_string(&sed_file));
         let cat_sed_wc_pipe = format!("cat {} | sed -n 2500,7500p | wc -l", path_string(&sed_file));
         let cat_sed_head_pipe = format!(
@@ -1733,6 +1926,7 @@ impl Fixture {
         );
         let run_grep = format!("grep -R NEEDLE {}", path_string(&grep_root));
         let run_grep_file = format!("grep NEEDLE {}", path_string(&sed_file));
+        let run_grep_fixed = format!("grep -F 'line.' {}", path_string(&sed_file));
         let mut wc_cap_args = strings(["wc", "-l"]);
         wc_cap_args.extend(wc_files.iter().cloned());
         let mut wc_original_args = strings(["-l"]);
@@ -2275,6 +2469,28 @@ impl Fixture {
                 stdin_file: None,
             },
             Scenario {
+                id: "uniq_count_large_file",
+                command: "uniq",
+                description: "count adjacent runs in a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["uniq", "-c", &path_string(&sed_file)]),
+                original_program: "/usr/bin/uniq".to_string(),
+                original_args: strings(["-c", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "run_string_uniq_count_large_file",
+                command: "uniq",
+                description: "hook string: count adjacent runs in a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["run", &run_uniq_count]),
+                original_program: "/usr/bin/uniq".to_string(),
+                original_args: strings(["-c", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
                 id: "uniq_stdin_long_line",
                 command: "uniq",
                 description: "stdin adjacent duplicate filtering over 64 MiB single-line input",
@@ -2295,6 +2511,39 @@ impl Fixture {
                 original_program: "/usr/bin/sort".to_string(),
                 original_args: Vec::new(),
                 stdin_file: Some(sort_file.clone()),
+            },
+            Scenario {
+                id: "nl_all_lines",
+                command: "nl",
+                description: "number every record in a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["nl", "-ba", &path_string(&sed_file)]),
+                original_program: "/usr/bin/nl".to_string(),
+                original_args: strings(["-ba", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "rev_utf8_lines",
+                command: "rev",
+                description: "reverse Unicode characters in every record of a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["rev", &path_string(&rev_file)]),
+                original_program: "/usr/bin/rev".to_string(),
+                original_args: strings([&path_string(&rev_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "paste_two_large_files",
+                command: "paste",
+                description: "join corresponding records from two large files",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["paste", &path_string(&sed_file), &path_string(&cut_file)]),
+                original_program: "/usr/bin/paste".to_string(),
+                original_args: strings([&path_string(&sed_file), &path_string(&cut_file)]),
+                stdin_file: None,
             },
             Scenario {
                 id: "find_name_type",
@@ -2405,6 +2654,39 @@ impl Fixture {
                 stdin_file: None,
             },
             Scenario {
+                id: "run_string_nl_all_lines",
+                command: "nl",
+                description: "hook string: number every record in a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["run", &run_nl]),
+                original_program: "/usr/bin/nl".to_string(),
+                original_args: strings(["-ba", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "run_string_rev_utf8_lines",
+                command: "rev",
+                description: "hook string: reverse Unicode characters in every record of a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["run", &run_rev]),
+                original_program: "/usr/bin/rev".to_string(),
+                original_args: strings([&path_string(&rev_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "run_string_paste_two_large_files",
+                command: "paste",
+                description: "hook string: join corresponding records from two large files",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["run", &run_paste]),
+                original_program: "/usr/bin/paste".to_string(),
+                original_args: strings([&path_string(&sed_file), &path_string(&cut_file)]),
+                stdin_file: None,
+            },
+            Scenario {
                 id: "cut_field_csv",
                 command: "cut",
                 description: "first CSV field from 200,000-line file",
@@ -2504,6 +2786,17 @@ impl Fixture {
                 stdin_file: None,
             },
             Scenario {
+                id: "sed_literal_substitute",
+                command: "sed",
+                description: "replace a literal in 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["sed", "s/line/row/g", &path_string(&sed_file)]),
+                original_program: "/usr/bin/sed".to_string(),
+                original_args: strings(["s/line/row/g", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
                 id: "sed_small_takeover",
                 command: "sed",
                 description: "small sed -n takeover path",
@@ -2523,6 +2816,17 @@ impl Fixture {
                 cap_args: strings(["run", &run_sed]),
                 original_program: "/usr/bin/sed".to_string(),
                 original_args: strings(["-n", "2500,7500p", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "run_string_sed_literal_substitute",
+                command: "run",
+                description: "hook string: replace a literal in 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["run", &run_sed_substitute]),
+                original_program: "/usr/bin/sed".to_string(),
+                original_args: strings(["s/line/row/g", &path_string(&sed_file)]),
                 stdin_file: None,
             },
             Scenario {
@@ -2608,6 +2912,66 @@ impl Fixture {
                     "/NEEDLE/ { c++ } END { print c }",
                     &path_string(&sed_file),
                 ]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "awk_comma_second_field",
+                command: "awk",
+                description: "second comma-delimited field from 200,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["awk", "-F,", "{ print $2 }", &path_string(&cut_file)]),
+                original_program: "/usr/bin/awk".to_string(),
+                original_args: strings(["-F,", "{ print $2 }", &path_string(&cut_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "awk_record_count",
+                command: "awk",
+                description: "record count in a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["awk", "END { print NR }", &path_string(&sed_file)]),
+                original_program: "/usr/bin/awk".to_string(),
+                original_args: strings(["END { print NR }", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "awk_comma_second_field_small_candidate",
+                command: "awk",
+                description: "small comma-delimited file fallback observation",
+                gate: Gate::Candidate,
+                expected_exit_code: 0,
+                cap_args: strings([
+                    "awk",
+                    "-F,",
+                    "{ print $2 }",
+                    &path_string(&small_cut_file),
+                ]),
+                original_program: "/usr/bin/awk".to_string(),
+                original_args: strings(["-F,", "{ print $2 }", &path_string(&small_cut_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "run_string_awk_comma_second_field",
+                command: "awk",
+                description: "hook string: second comma-delimited field from 200,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["run", &run_awk_delimited]),
+                original_program: "/usr/bin/awk".to_string(),
+                original_args: strings(["-F,", "{ print $2 }", &path_string(&cut_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "run_string_awk_record_count",
+                command: "awk",
+                description: "hook string: record count in a 120,000-line file",
+                gate: Gate::DualWin,
+                expected_exit_code: 0,
+                cap_args: strings(["run", &run_awk_record_count]),
+                original_program: "/usr/bin/awk".to_string(),
+                original_args: strings(["END { print NR }", &path_string(&sed_file)]),
                 stdin_file: None,
             },
             Scenario {
@@ -2822,13 +3186,13 @@ impl Fixture {
             Scenario {
                 id: "pipe_xargs_n1_stdin_wc",
                 command: "pipe",
-                description: "xargs -n 1 echo stdin output piped to wc -l",
+                description: "xargs -n 1 echo over 1,000 input tokens piped to wc -l",
                 gate: Gate::DualWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &xargs_n1_stdin_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
                 original_args: strings(["-c", &xargs_n1_stdin_wc_pipe]),
-                stdin_file: Some(sort_file.clone()),
+                stdin_file: Some(xargs_n1_input.clone()),
             },
             Scenario {
                 id: "pipe_xargs_stdin_grep_wc",
@@ -4511,7 +4875,7 @@ impl Fixture {
                 id: "pipe_sort_grep_xargs_wc",
                 command: "pipe",
                 description: "sort path-list output piped through literal grep to xargs wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &sort_grep_xargs_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -5539,7 +5903,7 @@ impl Fixture {
                 id: "pipe_uniq_grep_xargs_wc",
                 command: "pipe",
                 description: "uniq path-list output piped through literal grep to xargs wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &uniq_grep_xargs_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -5605,7 +5969,7 @@ impl Fixture {
                 id: "pipe_cat_sort_grep_xargs_wc",
                 command: "pipe",
                 description: "cat path-list output piped through sort and literal grep to xargs wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &cat_sort_grep_xargs_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6537,7 +6901,7 @@ impl Fixture {
                 id: "pipe_cat_awk_xargs_wc",
                 command: "pipe",
                 description: "cat output piped to awk and xargs wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &cat_awk_xargs_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6560,7 +6924,7 @@ impl Fixture {
                 command: "pipe",
                 description:
                     "cat path-list file piped through awk first-field, literal grep, sort, and xargs wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &cat_awk_first_grep_sort_xargs_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6593,7 +6957,7 @@ impl Fixture {
                 id: "pipe_find_all_xargs_sort",
                 command: "pipe",
                 description: "find all regular files piped to xargs wc -l and sorted",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_all_xargs_sort_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6769,7 +7133,7 @@ impl Fixture {
                 id: "pipe_find_grep_xargs_echo",
                 command: "pipe",
                 description: "find results piped through literal grep to xargs echo",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_grep_xargs_echo_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6780,7 +7144,7 @@ impl Fixture {
                 id: "pipe_find_grep_xargs_wc",
                 command: "pipe",
                 description: "find results piped through literal grep to xargs wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_grep_xargs_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6791,7 +7155,7 @@ impl Fixture {
                 id: "pipe_find_grep_wc",
                 command: "pipe",
                 description: "find results piped through literal grep to wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_grep_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6835,7 +7199,7 @@ impl Fixture {
                 id: "pipe_find_grep_sort_xargs_wc",
                 command: "pipe",
                 description: "find results piped through literal grep and sort to xargs wc -l",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_grep_sort_xargs_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6847,7 +7211,7 @@ impl Fixture {
                 command: "pipe",
                 description:
                     "find results piped through literal grep, sort, xargs wc -l, and sort",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_grep_sort_xargs_sort_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6913,7 +7277,11 @@ impl Fixture {
                 id: "pipe_find_sort_uniq_wc",
                 command: "pipe",
                 description: "find results piped through sort and uniq to wc -l",
-                gate: Gate::DualWin,
+                // This count-only fusion removes the sort/uniq process work
+                // decisively, but its native frontend has a slightly higher
+                // fixed RSS floor on Darwin. Keep it admitted on CPU rather
+                // than pretending a 3,200-path workload can dual-win.
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_sort_uniq_wc_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -6957,7 +7325,7 @@ impl Fixture {
                 id: "pipe_find_sort_xargs_wc_sort_tail",
                 command: "pipe",
                 description: "find results piped through sort, xargs wc -l, sort, and tail",
-                gate: Gate::DualWin,
+                gate: Gate::CpuWin,
                 expected_exit_code: 0,
                 cap_args: strings(["run", &find_sort_xargs_sort_tail_pipe]),
                 original_program: "/bin/bash".to_string(),
@@ -7020,6 +7388,17 @@ impl Fixture {
                 stdin_file: None,
             },
             Scenario {
+                id: "grep_file_fixed_string",
+                command: "grep",
+                description: "fixed-string metacharacter search in one large text file",
+                gate: Gate::DualWin,
+                expected_exit_code: 1,
+                cap_args: strings(["grep", "-F", "line.", &path_string(&sed_file)]),
+                original_program: "/usr/bin/grep".to_string(),
+                original_args: strings(["-F", "line.", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
                 id: "run_string_grep_recursive",
                 command: "run",
                 description: "hook string: grep 800 text files, recursive literal search",
@@ -7039,6 +7418,17 @@ impl Fixture {
                 cap_args: strings(["run", &run_grep_file]),
                 original_program: "/usr/bin/grep".to_string(),
                 original_args: strings(["NEEDLE", &path_string(&sed_file)]),
+                stdin_file: None,
+            },
+            Scenario {
+                id: "run_string_grep_fixed_string",
+                command: "grep",
+                description: "hook string: fixed-string metacharacter search in one large text file",
+                gate: Gate::DualWin,
+                expected_exit_code: 1,
+                cap_args: strings(["run", &run_grep_fixed]),
+                original_program: "/usr/bin/grep".to_string(),
+                original_args: strings(["-F", "line.", &path_string(&sed_file)]),
                 stdin_file: None,
             },
         ]
