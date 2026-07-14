@@ -57,6 +57,14 @@ struct TraceFrame {
     locals: Option<MbValue>,
     local_trace_hook: Option<MbValue>,
     trace_line_events_enabled: bool,
+    // #1535: has the 'exception' trace event already fired for this frame
+    // for the currently-pending exception? Set by `mb_traceback_capture_raise`
+    // (origin frame) and by `mb_traceback_notify_unwind_exception` (frames the
+    // exception unwinds through); reset when the pending exception is cleared
+    // (see `mb_traceback_reset_current_frame_exception_notified`) so a later,
+    // distinct exception unwinding through the same still-active frame fires
+    // again.
+    exception_notified: bool,
 }
 
 thread_local! {
@@ -1022,6 +1030,7 @@ pub fn mb_traceback_push_frame(filename: MbValue, lineno: MbValue, name: MbValue
             locals: None,
             local_trace_hook: None,
             trace_line_events_enabled: false,
+            exception_notified: false,
         });
     });
     super::threading_mod::mb_threading_emit_call_event();
@@ -1104,10 +1113,65 @@ pub fn mb_traceback_pop_frame() {
 pub fn mb_traceback_pop_frame_with_return(return_value: MbValue) {
     // #878: matching call-exit hook (see mb_traceback_push_frame above).
     super::cprofile_mod::on_call_exit();
+    // #1535: 'exception' must fire in every frame the exception unwinds
+    // through, not only at the raise site — every function exit is a place
+    // an in-flight exception can be leaving a frame for good, so check here
+    // before the 'return' event and the pop below.
+    mb_traceback_notify_unwind_exception();
     super::threading_mod::mb_threading_emit_return_event(return_value);
     TRACE_FRAME_STACK.with(|stack| {
         if let Some(frame) = stack.borrow_mut().pop() {
             release_trace_frame(frame);
+        }
+    });
+}
+
+/// #1535: fire the 'exception' trace event for the current top frame if an
+/// exception is pending and this frame hasn't already been credited for it
+/// (either as the origin frame via `mb_traceback_capture_raise`, or by a
+/// previous call here while this same exception was unwinding). Cheap no-op
+/// on the common no-exception path; `mb_threading_emit_exception_event`
+/// itself further gates on the frame's local trace hook being set.
+fn mb_traceback_notify_unwind_exception() {
+    if !super::super::exception::has_current_exception() {
+        return;
+    }
+    let already_notified = TRACE_FRAME_STACK.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        match stack.last_mut() {
+            Some(frame) if frame.exception_notified => true,
+            Some(frame) => {
+                frame.exception_notified = true;
+                false
+            }
+            None => true,
+        }
+    });
+    if already_notified {
+        return;
+    }
+    let tb = match super::super::class::peek_last_raised_instance() {
+        Some(instance) => {
+            let tb = instance_field(instance, "__traceback__").unwrap_or_else(MbValue::none);
+            unsafe {
+                super::super::rc::release_if_ptr(instance);
+            }
+            tb
+        }
+        None => MbValue::none(),
+    };
+    super::threading_mod::mb_threading_emit_exception_event(tb);
+}
+
+/// #1535: reset the current top frame's unwind-notification flag when the
+/// pending exception is cleared (caught, or otherwise dropped), so that a
+/// later, distinct exception unwinding through this same still-active frame
+/// fires its own 'exception' event instead of being skipped due to a stale
+/// flag left over from the earlier, already-handled exception.
+pub(crate) fn mb_traceback_reset_current_frame_exception_notified() {
+    TRACE_FRAME_STACK.with(|stack| {
+        if let Some(frame) = stack.borrow_mut().last_mut() {
+            frame.exception_notified = false;
         }
     });
 }
@@ -1118,6 +1182,9 @@ pub fn mb_traceback_capture_raise(lineno: MbValue) {
         let mut stack = stack.borrow_mut();
         if let Some(last) = stack.last_mut() {
             last.lineno = raise_lineno;
+            // #1535: this frame is the raise origin — it's about to get the
+            // 'exception' event below, so don't fire it again on unwind exit.
+            last.exception_notified = true;
         }
         let mut frames = stack.clone();
         if frames.is_empty() {
@@ -1128,6 +1195,7 @@ pub fn mb_traceback_capture_raise(lineno: MbValue) {
                 locals: None,
                 local_trace_hook: None,
                 trace_line_events_enabled: false,
+                exception_notified: true,
             });
         }
         if let Some(last) = frames.last_mut() {

@@ -1400,7 +1400,14 @@ fn call_trace_profile_hook(hook: MbValue, event: &str, arg: MbValue) -> MbValue 
         MbValue::from_ptr(MbObject::new_str(event.to_string())),
         arg,
     ]));
-    super::super::builtins::mb_call_spread(hook, call_args)
+    // #1535: the 'exception' event (and 'return' fired mid-unwind) call this
+    // while an exception is genuinely pending; the generic call path aborts
+    // calls made under a pending exception (see suspend_current_exception),
+    // so hide it for the duration of the trace callback itself.
+    let saved_exc = super::super::exception::suspend_current_exception();
+    let r = super::super::builtins::mb_call_spread(hook, call_args);
+    super::super::exception::restore_suspended_exception(saved_exc);
+    r
 }
 
 pub(crate) fn mb_threading_emit_call_event() {
