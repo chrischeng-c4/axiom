@@ -4,8 +4,9 @@ use anyhow::Result;
 use tree_sitter::{Node, Parser};
 
 use super::type_strip::{
-    has_inline_type_specifiers, is_type_only_export, is_type_only_import,
-    strip_unused_named_imports, transform_import_with_inline_types, transform_satisfies_expression,
+    has_inline_type_export_specifiers, has_inline_type_specifiers, is_type_only_export,
+    is_type_only_import, strip_unused_named_imports, transform_export_with_inline_types,
+    transform_import_with_inline_types, transform_satisfies_expression,
 };
 use super::{TransformOptions, TransformResult};
 
@@ -248,6 +249,19 @@ pub(super) fn transform_node(
                 last_pos = child.end_byte();
                 continue;
             }
+        }
+
+        // Handle named exports that mix runtime values with inline `type`
+        // specifiers before testing whether the whole export is type-only.
+        if child.kind() == "export_statement" && has_inline_type_export_specifiers(&child) {
+            if last_pos < child.start_byte() {
+                result.push_str(&source[last_pos..child.start_byte()]);
+            }
+            if let Some(transformed) = transform_export_with_inline_types(source, &child)? {
+                result.push_str(&transformed);
+            }
+            last_pos = child.end_byte();
+            continue;
         }
 
         // Handle export_statement that exports only type-level constructs

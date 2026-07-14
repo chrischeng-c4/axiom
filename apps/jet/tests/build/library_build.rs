@@ -14,6 +14,7 @@ use jet::bundler::types::OutputFormat;
 use jet::bundler::types::SourceMapOption;
 use jet::bundler::{build_library, BundleOptions, Bundler, LibBuildOptions};
 use std::collections::HashSet;
+use std::process::Command;
 use tempfile::tempdir;
 
 /// Write a file, creating parent dirs as needed.
@@ -47,6 +48,28 @@ fn run_lib_build(
         sourcemap: SourceMapOption::None,
     };
     build_library(options).expect("library build must succeed")
+}
+
+fn node_available() -> bool {
+    Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn assert_node_script(root: &std::path::Path, script: &str, label: &str) {
+    let output = Command::new("node")
+        .arg(script)
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|error| panic!("run {label} with node: {error}"));
+    assert!(
+        output.status.success(),
+        "{label} failed (status={}):\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -330,6 +353,225 @@ export function go(a) { return merge({}, { a }); }
         "CJS output → index.cjs, got {:?}",
         cjs.path
     );
+}
+
+/// #1690: imports collected from separate inlined modules can overlap on one
+/// local binding. The emitted ESM must declare it once, and both published
+/// formats must remain executable against the external package.
+#[test]
+fn lib_coalesces_external_named_imports_and_loads_esm_and_cjs() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "dedup-runtime-lib",
+            "version": "1.0.0",
+            "type": "module",
+            "module": "./src/index.js",
+            "dependencies": { "fixture-react": "1.0.0" }
+        }"#,
+    );
+    // Deliberately CJS: Node's ESM bridge must load the same real package that
+    // the CJS library artifact later reaches with require().
+    write_file(
+        root,
+        "node_modules/fixture-react/package.json",
+        r#"{ "name": "fixture-react", "version": "1.0.0", "main": "./index.js" }"#,
+    );
+    write_file(
+        root,
+        "node_modules/fixture-react/index.js",
+        r#"exports.forwardRef = value => `forward:${value}`;
+exports.useMemo = value => `memo:${value}`;
+exports.useRef = value => `ref:${value}`;
+"#,
+    );
+    write_file(
+        root,
+        "src/index.js",
+        r#"import { forwardRef as render, useMemo } from "fixture-react";
+import { child } from "./child.js";
+
+export function compose() { return render(useMemo(child())); }
+"#,
+    );
+    write_file(
+        root,
+        "src/child.js",
+        r#"import { forwardRef as render, useRef } from "fixture-react";
+
+export function child() { return render(useRef("ok")); }
+"#,
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let esm = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Esm)
+        .expect("ESM output present");
+    let cjs = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Cjs)
+        .expect("CJS output present");
+
+    let fixture_imports = esm
+        .code
+        .lines()
+        .filter(|line| line.contains("from \"fixture-react\""))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fixture_imports.len(),
+        1,
+        "overlapping named imports must merge into one ESM declaration, got:\n{}",
+        esm.code
+    );
+    assert!(
+        fixture_imports[0].contains("forwardRef")
+            && fixture_imports[0].contains("useMemo")
+            && fixture_imports[0].contains("useRef"),
+        "merged declaration must retain every binding, got:\n{}",
+        esm.code
+    );
+    assert!(
+        fixture_imports[0].contains("forwardRef as render"),
+        "merged ESM declaration must preserve its local alias, got:\n{}",
+        esm.code
+    );
+    assert!(
+        !cjs.code.contains("import "),
+        "CJS artifact must not leak ESM imports, got:\n{}",
+        cjs.code
+    );
+
+    if !node_available() {
+        eprintln!(
+            "[library_build] skipping Node runtime portion of #1690 regression: node unavailable"
+        );
+        return;
+    }
+    write_file(
+        root,
+        "verify-esm.mjs",
+        r#"const { compose } = await import("./dist/index.js");
+if (compose() !== "forward:memo:forward:ref:ok") process.exit(1);
+"#,
+    );
+    write_file(
+        root,
+        "verify-cjs.cjs",
+        r#"const { compose } = require("./dist/index.cjs");
+if (compose() !== "forward:memo:forward:ref:ok") process.exit(1);
+"#,
+    );
+    assert_node_script(root, "verify-esm.mjs", "#1690 ESM dynamic import");
+    assert_node_script(root, "verify-cjs.cjs", "#1690 CJS require");
+}
+
+/// #1692: extensionless deep imports of exports-less packages work in CJS but
+/// Node ESM does not probe `.js`. Canonicalize only the proven legacy subpath
+/// so both published formats load the same file.
+#[test]
+fn lib_rewrites_legacy_external_deep_import_for_esm_and_cjs() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    write_file(
+        root,
+        "package.json",
+        r#"{
+            "name": "legacy-deep-import-lib",
+            "version": "1.0.0",
+            "type": "module",
+            "module": "./src/index.js",
+            "dependencies": { "legacy-cjs": "1.0.0" }
+        }"#,
+    );
+    write_file(
+        root,
+        "node_modules/legacy-cjs/package.json",
+        r#"{ "name": "legacy-cjs", "version": "1.0.0", "main": "./index.js" }"#,
+    );
+    write_file(
+        root,
+        "node_modules/legacy-cjs/chunk.js",
+        "module.exports = value => `chunk:${value}`;\n",
+    );
+    write_file(
+        root,
+        "node_modules/legacy-cjs/chunk.min.js",
+        "module.exports = value => `chunk-min:${value}`;\n",
+    );
+    write_file(
+        root,
+        "src/index.js",
+        r#"import chunk from "legacy-cjs/chunk";
+import chunkMin from "legacy-cjs/chunk.min";
+export function apply(value) { return chunk(value); }
+export function applyMin(value) { return chunkMin(value); }
+"#,
+    );
+
+    let result = run_lib_build(root, vec![OutputFormat::Esm, OutputFormat::Cjs]);
+    let esm = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Esm)
+        .expect("ESM output present");
+    let cjs = result
+        .entries
+        .iter()
+        .find(|entry| entry.format == OutputFormat::Cjs)
+        .expect("CJS output present");
+    assert!(
+        esm.code.contains("from \"legacy-cjs/chunk.js\""),
+        "ESM must name the concrete legacy package file, got:\n{}",
+        esm.code
+    );
+    assert!(
+        esm.code.contains("from \"legacy-cjs/chunk.min.js\""),
+        "a dotted-but-extensionless legacy subpath must also be canonicalized, got:\n{}",
+        esm.code
+    );
+    assert!(
+        cjs.code.contains("require(\"legacy-cjs/chunk.js\")"),
+        "CJS must retain the same canonical deep-import path, got:\n{}",
+        cjs.code
+    );
+    assert!(
+        cjs.code.contains("require(\"legacy-cjs/chunk.min.js\")"),
+        "CJS must canonicalize dotted legacy subpaths too, got:\n{}",
+        cjs.code
+    );
+
+    if !node_available() {
+        eprintln!(
+            "[library_build] skipping Node runtime portion of #1692 regression: node unavailable"
+        );
+        return;
+    }
+    write_file(
+        root,
+        "verify-esm.mjs",
+        r#"const { apply, applyMin } = await import("./dist/index.js");
+if (apply("ok") !== "chunk:ok") process.exit(1);
+if (applyMin("ok") !== "chunk-min:ok") process.exit(1);
+"#,
+    );
+    write_file(
+        root,
+        "verify-cjs.cjs",
+        r#"const { apply, applyMin } = require("./dist/index.cjs");
+if (apply("ok") !== "chunk:ok") process.exit(1);
+if (applyMin("ok") !== "chunk-min:ok") process.exit(1);
+"#,
+    );
+    assert_node_script(root, "verify-esm.mjs", "#1692 ESM dynamic import");
+    assert_node_script(root, "verify-cjs.cjs", "#1692 CJS require");
 }
 
 #[test]

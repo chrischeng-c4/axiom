@@ -4904,11 +4904,11 @@ fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
 /// is unit-testable without spawning the binary.
 ///
 /// @spec apps/jet/docs/check-exits-non-zero-while-unimplemented.md#interface
-/// @issue #1316
+/// @issue #1648
 fn check_not_implemented_error() -> anyhow::Error {
     anyhow::anyhow!(
         "`jet check` is not yet implemented (TypeScript type checking is on \
-         the roadmap — tracked by #1316). Until it lands, run `tsc --noEmit` \
+         the roadmap). Until it lands, run `tsc --noEmit` \
          directly. Exiting non-zero so this stub does not silently mask \
          frontend validation failures in CI."
     )
@@ -5115,7 +5115,7 @@ mod build_index_html_tests {
 
 #[cfg(test)]
 mod check_handler_tests {
-    //! Regression for #1316: `jet check` must surface a non-zero
+    //! Regression for #1648: `jet check` must surface a non-zero
     //! "not yet implemented" diagnostic instead of printing
     //! "under development" and exiting 0.
     //!
@@ -5123,7 +5123,7 @@ mod check_handler_tests {
     use super::*;
 
     #[test]
-    fn check_not_implemented_error_mentions_issue_link() {
+    fn check_not_implemented_error_does_not_cite_an_unrelated_issue() {
         let err = check_not_implemented_error();
         let msg = format!("{err}");
         assert!(
@@ -5131,8 +5131,8 @@ mod check_handler_tests {
             "diagnostic must say `not yet implemented`, got: {msg}"
         );
         assert!(
-            msg.contains("#1316"),
-            "diagnostic must mention tracking issue #1316, got: {msg}"
+            msg.contains("tsc --noEmit") && !msg.contains("#1316"),
+            "diagnostic must give the direct fallback without citing an unrelated issue: {msg}"
         );
     }
 
