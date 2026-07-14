@@ -68,15 +68,15 @@ changes:
 
 ```mermaid
 ---
-id: td-gen-configured-root-isolation-verification
+id: td-gen-foreign-legacy-contract-verification
 requirements:
-  foreign_legacy_isolation:
+  configured_root_only:
     id: R1
-    text: "td gen for a configured active project ignores a foreign unconfigured legacy TD candidate and proceeds to its active spec lock."
+    text: "An unconfigured foreign legacy TD cannot be selected or lock-checked while generating an active configured work-item TD."
     kind: functional
     risk: medium
     verify: cargo test -p agentic-workflow --test cli_tests test_td_gen_ignores_foreign_unconfigured_legacy_spec -- --nocapture
 ---
 flowchart TD
-    r1[R1 foreign legacy isolation] --> cargo_test_p_agentic_workflow_test_cli_tests_test_td_gen_ignores_foreign_unconfigured_legacy_spec_nocapture[cargo test -p agentic-workflow --test cli_tests test_td_gen_ignores_foreign_unconfigured_legacy_spec -- --nocapture]
+    r1[R1 configured root only] --> cargo_test_p_agentic_workflow_test_cli_tests_test_td_gen_ignores_foreign_unconfigured_legacy_spec_nocapture[cargo test -p agentic-workflow --test cli_tests test_td_gen_ignores_foreign_unconfigured_legacy_spec -- --nocapture]
 ```
