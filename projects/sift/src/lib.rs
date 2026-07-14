@@ -9,6 +9,7 @@ pub mod backup;
 pub mod deploy;
 pub mod durability;
 pub mod event;
+pub mod ingest;
 pub mod operator;
 
 pub use event::{
@@ -30,14 +31,16 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use axum::{
-    extract::{rejection::JsonRejection, Query, State},
-    http::StatusCode,
+    body::{Body, Bytes},
+    extract::{rejection::JsonRejection, Extension, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use chrono::Utc;
 use serde::{Deserialize, Deserializer, Serialize};
+use service_auth::{Role, RoleMapPrincipal};
 use service_metrics::{Counter, Sample};
 use utoipa::{OpenApi, ToSchema};
 
@@ -383,10 +386,18 @@ pub struct ServiceState {
     journal: Arc<DurableJournal>,
     draining: Arc<AtomicBool>,
     raft: Option<Arc<raft_host::RaftHost>>,
+    admission: Arc<ingest::AdmissionController>,
 }
 
 impl ServiceState {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_ingest_limits(data_dir, ingest::IngestLimits::from_env()?)
+    }
+
+    pub fn open_with_ingest_limits(
+        data_dir: impl AsRef<Path>,
+        limits: ingest::IngestLimits,
+    ) -> Result<Self> {
         let data_dir = data_dir.as_ref();
         let journal = Arc::new(DurableJournal::open(data_dir)?);
         let raft = if raft_host::replica_mode() {
@@ -416,11 +427,20 @@ impl ServiceState {
             journal,
             draining: Arc::new(AtomicBool::new(false)),
             raft,
+            admission: Arc::new(ingest::AdmissionController::new(limits)?),
         })
     }
 
     pub fn start_drain(&self) {
         self.draining.store(true, Ordering::Release);
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::Acquire)
+    }
+
+    pub fn journal(&self) -> &DurableJournal {
+        &self.journal
     }
 
     async fn append(&self, event: EventEnvelope) -> Result<AppendResult> {
@@ -464,12 +484,15 @@ impl service_http::MetricsProvider for ServiceState {
 struct ErrorEnvelope {
     error: String,
     message: String,
+    retryable: bool,
 }
 
 struct ApiError {
     status: StatusCode,
     error: &'static str,
     message: String,
+    retryable: bool,
+    retry_after_secs: Option<u64>,
 }
 
 impl ApiError {
@@ -478,6 +501,8 @@ impl ApiError {
             status: StatusCode::BAD_REQUEST,
             error,
             message: message.into(),
+            retryable: false,
+            retry_after_secs: None,
         }
     }
 
@@ -486,20 +511,54 @@ impl ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             error: "journal_failure",
             message: message.into(),
+            retryable: true,
+            retry_after_secs: Some(1),
+        }
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            error: "project_forbidden",
+            message: message.into(),
+            retryable: false,
+            retry_after_secs: None,
+        }
+    }
+
+    fn from_admission(error: ingest::AdmissionError) -> Self {
+        Self {
+            status: error.status,
+            error: error.code,
+            message: error.message,
+            retryable: error.retryable,
+            retry_after_secs: error.retry_after_secs,
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
+        let retry_after_secs = self.retry_after_secs;
+        let mut response = (
             self.status,
             Json(ErrorEnvelope {
                 error: self.error.to_string(),
-                message: self.message,
+                message: if self.retryable {
+                    format!("{} (retryable)", self.message)
+                } else {
+                    self.message
+                },
+                retryable: self.retryable,
             }),
         )
-            .into_response()
+            .into_response();
+        if let Some(seconds) = retry_after_secs {
+            if let Ok(value) = HeaderValue::from_str(&seconds.to_string()) {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+        }
+        response
     }
 }
 
@@ -508,6 +567,11 @@ impl IntoResponse for ApiError {
 pub fn router(state: Arc<ServiceState>) -> Router {
     Router::new()
         .route("/v1/events", post(ingest).get(query_events))
+        .route("/v1/events:write", post(write_events))
+        .route("/v1/logs", post(ingest_logs))
+        .route("/v1/traces", post(ingest_traces))
+        .route("/v1/metrics", post(ingest_metrics))
+        .route("/v1/profiles", post(ingest_profiles))
         .route("/v1/replay", get(replay_events))
         .with_state(state)
 }
@@ -535,12 +599,15 @@ pub fn protected_router(state: Arc<ServiceState>, verifier: Arc<auth::SiftVerifi
 )]
 async fn ingest(
     State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
     payload: Result<Json<IncomingEvent>, JsonRejection>,
 ) -> Result<(StatusCode, Json<AppendResult>), ApiError> {
     let Json(event) =
         payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    let event = event.into_inner();
+    authorize_project(principal.as_ref().map(|value| &value.0), &event.project)?;
     let result = state
-        .append(event.into_inner())
+        .append(event)
         .await
         .map_err(|error| ApiError::bad_request("invalid_event", error.to_string()))?;
     let status = if result.duplicate {
@@ -554,6 +621,264 @@ async fn ingest(
         "raw event acknowledged"
     );
     Ok((status, Json(result)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/events:write",
+    request_body = ingest::EventWriteRequest,
+    responses(
+        (status = 200, description = "ordered per-item durable outcomes", body = ingest::EventWriteResponse),
+        (status = 400, description = "invalid batch", body = ErrorEnvelope),
+        (status = 413, description = "bounded body or batch exceeded", body = ErrorEnvelope),
+        (status = 429, description = "project admission quota exceeded", body = ErrorEnvelope),
+        (status = 503, description = "service draining or overloaded", body = ErrorEnvelope)
+    )
+)]
+async fn write_events(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<ingest::EventWriteResponse>, ApiError> {
+    let project = project_header(&headers)?;
+    authorize_project(principal.as_ref().map(|value| &value.0), project)?;
+    let decoded = state
+        .admission
+        .decode_body(&headers, body)
+        .map_err(ApiError::from_admission)?;
+    let request: ingest::EventWriteRequest = serde_json::from_slice(&decoded)
+        .map_err(|error| ApiError::bad_request("invalid_json", error.to_string()))?;
+    let _permit = state
+        .admission
+        .acquire(project, request.events.len(), state.is_draining())
+        .map_err(ApiError::from_admission)?;
+    let mut results = Vec::with_capacity(request.events.len());
+    for (index, value) in request.events.into_iter().enumerate() {
+        let event_id = ingest::batch::event_id_hint(&value);
+        let item_bytes = serde_json::to_vec(&value)
+            .map(|value| value.len())
+            .unwrap_or(usize::MAX);
+        if let Err(error) = state.admission.validate_event_bytes(item_bytes) {
+            results.push(ingest::BatchItemResult::rejected(
+                index,
+                event_id,
+                error.code,
+                error.message,
+                error.retryable,
+            ));
+            continue;
+        }
+        let event = match ingest::batch::decode_item(value, project) {
+            Ok(event) => event,
+            Err(error) => {
+                results.push(ingest::BatchItemResult::rejected(
+                    index,
+                    event_id,
+                    "invalid_event",
+                    error.to_string(),
+                    false,
+                ));
+                continue;
+            }
+        };
+        if event.project != project {
+            results.push(ingest::BatchItemResult::rejected(
+                index,
+                Some(event.event_id),
+                "project_mismatch",
+                format!(
+                    "event project `{}` does not match admitted project `{project}`",
+                    event.project
+                ),
+                false,
+            ));
+            continue;
+        }
+        match state.append(event).await {
+            Ok(result) => results.push(ingest::BatchItemResult::accepted(
+                index,
+                result.event_id,
+                result.cursor,
+                result.duplicate,
+            )),
+            Err(error) => results.push(ingest::BatchItemResult::rejected(
+                index,
+                event_id,
+                "append_failed",
+                error.to_string(),
+                true,
+            )),
+        }
+    }
+    Ok(Json(ingest::EventWriteResponse::from_results(results)))
+}
+
+#[utoipa::path(post, path = "/v1/logs", responses((status = 200, description = "OTLP logs export response")))]
+async fn ingest_logs(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    ingest_otlp(
+        state,
+        principal,
+        headers,
+        body,
+        ingest::otlp::OtlpSignal::Logs,
+    )
+    .await
+}
+
+#[utoipa::path(post, path = "/v1/traces", responses((status = 200, description = "OTLP traces export response")))]
+async fn ingest_traces(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    ingest_otlp(
+        state,
+        principal,
+        headers,
+        body,
+        ingest::otlp::OtlpSignal::Traces,
+    )
+    .await
+}
+
+#[utoipa::path(post, path = "/v1/metrics", responses((status = 200, description = "OTLP metrics export response")))]
+async fn ingest_metrics(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    ingest_otlp(
+        state,
+        principal,
+        headers,
+        body,
+        ingest::otlp::OtlpSignal::Metrics,
+    )
+    .await
+}
+
+#[utoipa::path(post, path = "/v1/profiles", responses((status = 200, description = "OTLP profiles export response")))]
+async fn ingest_profiles(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    ingest_otlp(
+        state,
+        principal,
+        headers,
+        body,
+        ingest::otlp::OtlpSignal::Profiles,
+    )
+    .await
+}
+
+async fn ingest_otlp(
+    state: Arc<ServiceState>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    headers: HeaderMap,
+    body: Bytes,
+    signal: ingest::otlp::OtlpSignal,
+) -> Result<Response, ApiError> {
+    let project = project_header(&headers)?;
+    authorize_project(principal.as_ref().map(|value| &value.0), project)?;
+    let media = ingest::otlp::OtlpMediaType::parse(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+    )
+    .map_err(|error| ApiError::bad_request("unsupported_content_type", error.to_string()))?;
+    let decoded_body = state
+        .admission
+        .decode_body(&headers, body)
+        .map_err(ApiError::from_admission)?;
+    let decoded = ingest::otlp::decode(signal, media, &decoded_body, project)
+        .map_err(|error| ApiError::bad_request("invalid_otlp", error.to_string()))?;
+    let _permit = state
+        .admission
+        .acquire(project, decoded.item_count(), state.is_draining())
+        .map_err(ApiError::from_admission)?;
+    let mut rejected = 0usize;
+    let mut messages = Vec::new();
+    for item in decoded.items {
+        let event = match item {
+            Ok(event) => event,
+            Err(error) => {
+                rejected += 1;
+                if messages.len() < 8 {
+                    messages.push(error.message);
+                }
+                continue;
+            }
+        };
+        if event.project != project {
+            rejected += 1;
+            if messages.len() < 8 {
+                messages.push(format!(
+                    "event project `{}` does not match admitted project `{project}`",
+                    event.project
+                ));
+            }
+            continue;
+        }
+        let event_bytes = serde_json::to_vec(&event)
+            .map(|value| value.len())
+            .unwrap_or(usize::MAX);
+        if let Err(error) = state.admission.validate_event_bytes(event_bytes) {
+            rejected += 1;
+            if messages.len() < 8 {
+                messages.push(error.message);
+            }
+            continue;
+        }
+        if let Err(error) = state.append(event).await {
+            rejected += 1;
+            if messages.len() < 8 {
+                messages.push(format!("durable append failed: {error}"));
+            }
+        }
+    }
+    let encoded = ingest::otlp::encode_response(signal, media, rejected, &messages)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, encoded.content_type)
+        .body(Body::from(encoded.body))
+        .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+fn project_header(headers: &HeaderMap) -> Result<&str, ApiError> {
+    headers
+        .get("x-sift-project")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "missing_project",
+                "x-sift-project is required for bounded ingest",
+            )
+        })
+}
+
+fn authorize_project(principal: Option<&RoleMapPrincipal>, project: &str) -> Result<(), ApiError> {
+    match principal {
+        None | Some(RoleMapPrincipal::Open) => Ok(()),
+        Some(principal) => principal.ensure(project, Role::Write).map_err(|denied| {
+            ApiError::forbidden(format!(
+                "subject `{}` lacks write access to project `{}`",
+                denied.subject, denied.resource
+            ))
+        }),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -607,7 +932,16 @@ async fn replay_events(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(ingest, query_events, replay_events),
+    paths(
+        ingest,
+        write_events,
+        ingest_logs,
+        ingest_traces,
+        ingest_metrics,
+        ingest_profiles,
+        query_events,
+        replay_events
+    ),
     components(schemas(
         OperationalEventV2,
         AttributeValue,
@@ -618,6 +952,11 @@ async fn replay_events(
         MetricExemplar,
         StoredEvent,
         AppendResult,
+        ingest::EventWriteRequest,
+        ingest::EventWriteResponse,
+        ingest::BatchItemResult,
+        ingest::BatchOutcome,
+        ingest::IngestErrorDetail,
         ErrorEnvelope
     )),
     tags((name = "events", description = "Versioned operational-event ingestion and durable replay"))

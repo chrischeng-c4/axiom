@@ -64,7 +64,7 @@ first-class domain roots.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Operational Event Ingest | 1658 | planned | planned | conformance | not_ready | structured GCP/GKE and OTLP ingest with bounded batches, idempotency, and normalized resource/context |
+| Operational Event Ingest | 1658 | implemented | verified | conformance | ready | bounded JSON and OTLP JSON/protobuf/gzip ingest with ordered outcomes, project admission, and normalized resource/context |
 | Raw Event Journal And Archive | 1659 | planned | planned | conformance | not_ready | canonical append-only journal, replay, and GCS archive manifest |
 | Durability And Acknowledgment | 1659 | planned | planned | conformance | not_ready | an accepted mutation is durable before its success response |
 | Shard-Aware Hot Storage | 1659 | planned | planned | conformance | not_ready | 4096 virtual buckets, epochs, sealed segments, and movable history |
@@ -81,7 +81,7 @@ first-class domain roots.
 | SLO And Error Budget | 1672 | planned | planned | conformance | not_ready | SLIs, objectives, error budgets, and multi-window burn-rate evaluation |
 | Uptime Synthetic And RUM | 1674 | planned | planned | conformance | not_ready | native HTTP/TCP uptime, Jet journey results, and OTel/Web-Vitals RUM backend |
 | Agent Diagnosis Evidence | 1673 | planned | planned | conformance | not_ready | deterministic `sift.diagnosis.v1` facts, correlations, gaps, refs, and next queries |
-| HTTP2 API List | 1604 | implemented | partial | conformance | not_ready | h2c/OpenAPI baseline is verified; Domain v1 route and generated-client expansion remains |
+| HTTP2 API List | 1604 | implemented | partial | conformance | not_ready | h2c/OpenAPI and Domain v1 ingest routes are verified; query/operations and generated-client expansion remain |
 | Standard Operational Endpoints | 1576 | implemented | verified | conformance | ready | auth-exempt `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs` on the service port |
 | Kubernetes-Native Deployment | 1606 | implemented | verified | conformance | ready | Dockerfile, CRD/operator/instance, StatefulSet, PVC, probes, and backup schedule |
 | CLI Interface | 1576 | implemented | partial | conformance | not_ready | baseline service/deploy commands exist; Domain v1 query/ops commands remain under #1671-#1674 |
@@ -93,19 +93,20 @@ first-class domain roots.
 | Security Hardening | 1616 | implemented | partial | conformance | not_ready | shared auth and deployment hardening exist; content governance and audit controls remain |
 | Competitor Feature Parity | 1676 | planned | planned | conformance | not_ready | explicit GCP Observability, OTel, and agent-observability comparison boundaries |
 | Competitor Performance | 1676 | planned | planned | conformance | not_ready | retained performance floors for ingest, query, tail, replay, rules, and rebuild |
-| GCP Cloud Logging Compatibility | 1664 | planned | planned | conformance | not_ready | GCP/GKE-first structured log compatibility without claiming every Cloud Logging feature |
+| GCP Cloud Logging Compatibility | 1664 | implemented | partial | conformance | not_ready | structured ingest normalization is verified; logging-store query compatibility and coexistence dedupe remain |
 
 ### Operational Event Ingest
 
 ID: operational-event-ingest
 Type: Service
 Root WI: 1658
-Status: confirmed
+Status: verified
 Surfaces: HTTP: `POST /v1/events:write` and OTLP signal ingest; CLI: event
 write/import paths; OpenAPI: offline event schema and error contract.
-EC Dimensions: behavior: pending ingest API gate - batch validation,
-compression, idempotency, backpressure, quota errors, and signal-specific
-schema rejection.
+EC Dimensions: behavior: `cargo test -p sift --test otlp_gcp_ingest` - bounded
+batch validation, compression, idempotency, project authorization,
+backpressure/quota errors, GCP normalization, and signal-specific partial
+success.
 Required Verification: conformance
 Promise:
 Accept bounded batches of structured GCP/GKE and OpenTelemetry operational
@@ -115,15 +116,15 @@ and make write pressure explicit before the storage path is overrun.
 Gate Inventory:
 - implemented V2/upcast/privacy: projects/sift/tests/event_v2_governance.rs
 - implemented eight-signal validation: projects/sift/tests/ingest_api.rs
-- pending OTLP/GCP transport: 1658
+- implemented OTLP/GCP transport: projects/sift/tests/otlp_gcp_ingest.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | operational-event-v2-and-policy | change | 1657 | implemented | passing | conformance | projects/sift/tests/event_v2_governance.rs |
-| h2c-openapi-event-write-route | change | 1658 | planned | planned | conformance | bounded JSON batch and OpenAPI contract gate |
-| gcp-gke-event-envelope-validation | change | 1658 | planned | planned | conformance | structured GCP/GKE normalization gate |
-| otlp-log-span-metric-profile-normalization | change | 1658 | planned | planned | conformance | OTLP JSON/protobuf/gzip partial-success gate |
-| quota-backpressure-and-idempotency | change | 1658 | planned | planned | conformance | overload, quota, duplicate, and body-limit gate |
+| h2c-openapi-event-write-route | change | 1658 | implemented | passing | conformance | projects/sift/tests/otlp_gcp_ingest.rs |
+| gcp-gke-event-envelope-validation | change | 1658 | implemented | passing | conformance | projects/sift/tests/otlp_gcp_ingest.rs |
+| otlp-log-span-metric-profile-normalization | change | 1658 | implemented | passing | conformance | JSON/protobuf/gzip and partial-success integration gate |
+| quota-backpressure-and-idempotency | change | 1658 | implemented | passing | conformance | project auth, overload, quota, duplicate, and body-limit gate |
 
 ### Raw Event Journal And Archive
 
@@ -952,20 +953,22 @@ Status: confirmed
 Surfaces: Schema: GCP-style `jsonPayload` compatibility, `k8s_container`
 resource labels, severity mapping, trace/span/request correlation, and
 structured-only log payload handling.
-EC Dimensions: behavior: pending compatibility gate - representative GCP/GKE
-structured log fixtures, severity normalization, resource label normalization,
-and trace context preservation.
+EC Dimensions: behavior: `cargo test -p sift --test otlp_gcp_ingest
+bounded_batch_preserves_outcomes_and_normalizes_gcp_structured_logs -- --exact`
+- representative GCP/GKE structured payload, severity, monitored-resource
+labels, and trace/span/request context are normalized before durability.
 Required Verification: conformance
 Promise:
 Make the first Sift log producer and log view comfortable for teams familiar
 with GCP Cloud Logging's structured `jsonPayload` model, while keeping Sift's
 source of truth at the broader operational event layer.
 Gate Inventory:
-- pending: projects/sift/tests/gcp_structured_logs.rs
+- implemented ingest compatibility: projects/sift/tests/otlp_gcp_ingest.rs
+- pending logging projection/query compatibility: 1664
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| jsonpayload-style-body-compatibility | change | 1664 | planned | planned | conformance | jsonPayload compatibility gate |
-| k8s-container-resource-labels | change | 1664 | planned | planned | conformance | GKE resource label gate |
-| severity-and-trace-context-normalization | change | 1664 | planned | planned | conformance | severity/trace/request normalization gate |
+| jsonpayload-style-body-compatibility | change | 1658 | implemented | passing | conformance | projects/sift/tests/otlp_gcp_ingest.rs |
+| k8s-container-resource-labels | change | 1658 | implemented | passing | conformance | monitored-resource label normalization gate |
+| severity-and-trace-context-normalization | change | 1658 | implemented | passing | conformance | severity/trace/span/request normalization gate |
 | cloud-logging-coexistence-dedupe | change | 1675 | planned | planned | dogfood | collector coexistence identity gate |

@@ -105,9 +105,7 @@ pub fn decode(
         (OtlpSignal::Metrics, OtlpMediaType::Json) => decode_metrics_json(body, project)?,
         (OtlpSignal::Metrics, OtlpMediaType::Protobuf) => decode_metrics_proto(body, project)?,
         (OtlpSignal::Profiles, OtlpMediaType::Json) => decode_profiles_json(body, project)?,
-        (OtlpSignal::Profiles, OtlpMediaType::Protobuf) => {
-            decode_profiles_proto(body, project)?
-        }
+        (OtlpSignal::Profiles, OtlpMediaType::Protobuf) => decode_profiles_proto(body, project)?,
     };
     if items.is_empty() {
         bail!("OTLP request contains no signal items");
@@ -159,7 +157,10 @@ fn decode_logs_json(
     for resource_logs in array(&root, "resourceLogs", "resource_logs") {
         let resource = json_resource(resource_logs.get("resource"));
         for scope_logs in array(resource_logs, "scopeLogs", "scope_logs") {
-            let scope = json_scope(scope_logs.get("scope"), string(scope_logs, "schemaUrl", "schema_url"));
+            let scope = json_scope(
+                scope_logs.get("scope"),
+                string(scope_logs, "schemaUrl", "schema_url"),
+            );
             for record in array(scope_logs, "logRecords", "log_records") {
                 output.push(json_log_event(record, project, &resource, scope.clone()));
             }
@@ -174,7 +175,11 @@ fn json_log_event(
     resource: &BTreeMap<String, String>,
     scope: Option<InstrumentationScope>,
 ) -> std::result::Result<OperationalEventV2, OtlpItemError> {
-    let body = record.get("body").and_then(json_any_value);
+    let body = record
+        .get("body")
+        .filter(|value| !value.is_null())
+        .and_then(json_any_value)
+        .filter(|value| !value.is_null());
     if body.is_none() {
         return Err(item_error(None, "log record body is required"));
     }
@@ -183,10 +188,11 @@ fn json_log_event(
     let trace_id = id_string(record.get("traceId").or_else(|| record.get("trace_id")));
     let span_id = id_string(record.get("spanId").or_else(|| record.get("span_id")));
     let identity = format!(
-        "{}:{}:{}",
+        "{}:{}:{}:{}",
         trace_id.as_deref().unwrap_or(""),
         span_id.as_deref().unwrap_or(""),
-        occurred_nanos
+        occurred_nanos,
+        serde_json::to_string(record).unwrap_or_default()
     );
     let mut event = base_event(
         OtlpSignal::Logs,
@@ -202,9 +208,9 @@ fn json_log_event(
     event.trace_id = trace_id;
     event.span_id = span_id;
     event.severity = string(record, "severityText", "severity_text").map(str::to_string);
-    event
-        .attributes
-        .insert("otel.log.body".into(), json_to_attribute(body.unwrap()));
+    if let Some(body) = record.get("body").and_then(json_attribute_value) {
+        event.attributes.insert("otel.log.body".into(), body);
+    }
     Ok(event)
 }
 
@@ -212,7 +218,8 @@ fn decode_logs_proto(
     body: &[u8],
     project: &str,
 ) -> Result<Vec<std::result::Result<OperationalEventV2, OtlpItemError>>> {
-    let request = wire::ExportLogsServiceRequest::decode(body).context("decode OTLP logs protobuf")?;
+    let request =
+        wire::ExportLogsServiceRequest::decode(body).context("decode OTLP logs protobuf")?;
     let mut output = Vec::new();
     for resource_logs in request.resource_logs {
         let resource = proto_resource(resource_logs.resource.as_ref());
@@ -224,10 +231,11 @@ fn decode_logs_proto(
                     continue;
                 }
                 let identity = format!(
-                    "{}:{}:{}",
+                    "{}:{}:{}:{}",
                     hex::encode(&record.trace_id),
                     hex::encode(&record.span_id),
-                    record.time_unix_nano
+                    record.time_unix_nano,
+                    hex::encode(record.encode_to_vec())
                 );
                 let mut event = base_event(
                     OtlpSignal::Logs,
@@ -265,13 +273,19 @@ fn decode_traces_json(
     for resource_spans in array(&root, "resourceSpans", "resource_spans") {
         let resource = json_resource(resource_spans.get("resource"));
         for scope_spans in array(resource_spans, "scopeSpans", "scope_spans") {
-            let scope = json_scope(scope_spans.get("scope"), string(scope_spans, "schemaUrl", "schema_url"));
+            let scope = json_scope(
+                scope_spans.get("scope"),
+                string(scope_spans, "schemaUrl", "schema_url"),
+            );
             for span in array(scope_spans, "spans", "spans") {
                 let trace_id = id_string(span.get("traceId").or_else(|| span.get("trace_id")));
                 let span_id = id_string(span.get("spanId").or_else(|| span.get("span_id")));
                 let name = string(span, "name", "name").unwrap_or("");
                 if trace_id.is_none() || span_id.is_none() || name.is_empty() {
-                    output.push(Err(item_error(span_id, "span requires traceId, spanId, and name")));
+                    output.push(Err(item_error(
+                        span_id,
+                        "span requires traceId, spanId, and name",
+                    )));
                     continue;
                 }
                 let start = nanos(span, "startTimeUnixNano", "start_time_unix_nano");
@@ -280,7 +294,15 @@ fn decode_traces_json(
                     OtlpSignal::Traces,
                     project,
                     &resource,
-                    stable_id("span", project, span_id.as_deref().unwrap_or(name)),
+                    stable_id(
+                        "span",
+                        project,
+                        &format!(
+                            "{}:{}",
+                            trace_id.as_deref().unwrap_or(""),
+                            span_id.as_deref().unwrap_or(name)
+                        ),
+                    ),
                     start,
                     end,
                     span.clone(),
@@ -300,7 +322,8 @@ fn decode_traces_proto(
     body: &[u8],
     project: &str,
 ) -> Result<Vec<std::result::Result<OperationalEventV2, OtlpItemError>>> {
-    let request = wire::ExportTraceServiceRequest::decode(body).context("decode OTLP traces protobuf")?;
+    let request =
+        wire::ExportTraceServiceRequest::decode(body).context("decode OTLP traces protobuf")?;
     let mut output = Vec::new();
     for resource_spans in request.resource_spans {
         let resource = proto_resource(resource_spans.resource.as_ref());
@@ -310,14 +333,25 @@ fn decode_traces_proto(
                 let trace_id = valid_proto_id(&span.trace_id, 16);
                 let span_id = valid_proto_id(&span.span_id, 8);
                 if trace_id.is_none() || span_id.is_none() || span.name.is_empty() {
-                    output.push(Err(item_error(span_id, "span requires valid trace_id, span_id, and name")));
+                    output.push(Err(item_error(
+                        span_id,
+                        "span requires valid trace_id, span_id, and name",
+                    )));
                     continue;
                 }
                 let mut event = base_event(
                     OtlpSignal::Traces,
                     project,
                     &resource,
-                    stable_id("span", project, span_id.as_deref().unwrap_or(&span.name)),
+                    stable_id(
+                        "span",
+                        project,
+                        &format!(
+                            "{}:{}",
+                            trace_id.as_deref().unwrap_or(""),
+                            span_id.as_deref().unwrap_or(&span.name)
+                        ),
+                    ),
                     span.start_time_unix_nano,
                     span.end_time_unix_nano,
                     json!({
@@ -349,7 +383,10 @@ fn decode_metrics_json(
     for resource_metrics in array(&root, "resourceMetrics", "resource_metrics") {
         let resource = json_resource(resource_metrics.get("resource"));
         for scope_metrics in array(resource_metrics, "scopeMetrics", "scope_metrics") {
-            let scope = json_scope(scope_metrics.get("scope"), string(scope_metrics, "schemaUrl", "schema_url"));
+            let scope = json_scope(
+                scope_metrics.get("scope"),
+                string(scope_metrics, "schemaUrl", "schema_url"),
+            );
             for metric in array(scope_metrics, "metrics", "metrics") {
                 let name = string(metric, "name", "name").unwrap_or("");
                 let unit = string(metric, "unit", "unit").map(str::to_string);
@@ -360,17 +397,27 @@ fn decode_metrics_json(
                 } else if let Some(histogram) = metric.get("histogram") {
                     (histogram, json_temporality(histogram))
                 } else {
-                    output.push(Err(item_error(None, format!("metric `{name}` has unsupported data"))));
+                    output.push(Err(item_error(
+                        None,
+                        format!("metric `{name}` has unsupported data"),
+                    )));
                     continue;
                 };
                 for point in array(data, "dataPoints", "data_points") {
-                    let value = json_number(point).or_else(|| point.get("sum").and_then(Value::as_f64));
+                    let value =
+                        json_number(point).or_else(|| point.get("sum").and_then(Value::as_f64));
                     let Some(value) = value else {
-                        output.push(Err(item_error(None, format!("metric `{name}` point has no numeric value"))));
+                        output.push(Err(item_error(
+                            None,
+                            format!("metric `{name}` point has no numeric value"),
+                        )));
                         continue;
                     };
                     let time = nanos(point, "timeUnixNano", "time_unix_nano");
-                    let identity = format!("{name}:{time}:{}", serde_json::to_string(point).unwrap_or_default());
+                    let identity = format!(
+                        "{name}:{time}:{}",
+                        serde_json::to_string(point).unwrap_or_default()
+                    );
                     let mut event = base_event(
                         OtlpSignal::Metrics,
                         project,
@@ -401,7 +448,8 @@ fn decode_metrics_proto(
     body: &[u8],
     project: &str,
 ) -> Result<Vec<std::result::Result<OperationalEventV2, OtlpItemError>>> {
-    let request = wire::ExportMetricsServiceRequest::decode(body).context("decode OTLP metrics protobuf")?;
+    let request =
+        wire::ExportMetricsServiceRequest::decode(body).context("decode OTLP metrics protobuf")?;
     let mut output = Vec::new();
     for resource_metrics in request.resource_metrics {
         let resource = proto_resource(resource_metrics.resource.as_ref());
@@ -411,16 +459,23 @@ fn decode_metrics_proto(
                 let name = metric.name.clone();
                 let unit = (!metric.unit.is_empty()).then_some(metric.unit.clone());
                 let Some(data) = metric.data else {
-                    output.push(Err(item_error(None, format!("metric `{name}` has no data"))));
+                    output.push(Err(item_error(
+                        None,
+                        format!("metric `{name}` has no data"),
+                    )));
                     continue;
                 };
-                let (points, temporality): (Vec<wire::NumberDataPoint>, MetricTemporality) = match data {
-                    metric::Data::Gauge(gauge) => (gauge.data_points, MetricTemporality::Gauge),
-                    metric::Data::Sum(sum) => (sum.data_points, proto_temporality(sum.aggregation_temporality)),
-                    metric::Data::Histogram(histogram) => {
-                        for point in histogram.data_points {
-                            let value = point.sum.unwrap_or(point.count as f64);
-                            output.push(Ok(proto_metric_event(
+                let (points, temporality): (Vec<wire::NumberDataPoint>, MetricTemporality) =
+                    match data {
+                        metric::Data::Gauge(gauge) => (gauge.data_points, MetricTemporality::Gauge),
+                        metric::Data::Sum(sum) => (
+                            sum.data_points,
+                            proto_temporality(sum.aggregation_temporality),
+                        ),
+                        metric::Data::Histogram(histogram) => {
+                            for point in histogram.data_points {
+                                let value = point.sum.unwrap_or(point.count as f64);
+                                output.push(Ok(proto_metric_event(
                                 project,
                                 &resource,
                                 scope.clone(),
@@ -433,13 +488,16 @@ fn decode_metrics_proto(
                                 proto_exemplars(&point.exemplars),
                                 json!({"count": point.count, "sum": point.sum, "bucketCounts": point.bucket_counts, "explicitBounds": point.explicit_bounds}),
                             )));
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                };
+                    };
                 for point in points {
                     let Some(value) = point.value.and_then(proto_number) else {
-                        output.push(Err(item_error(None, format!("metric `{name}` point has no value"))));
+                        output.push(Err(item_error(
+                            None,
+                            format!("metric `{name}` point has no value"),
+                        )));
                         continue;
                     };
                     output.push(Ok(proto_metric_event(
@@ -476,7 +534,11 @@ fn proto_metric_event(
     exemplars: Vec<MetricExemplar>,
     payload: Value,
 ) -> OperationalEventV2 {
-    let identity = format!("{name}:{time}:{value}");
+    let identity = format!(
+        "{name}:{time}:{value}:{}:{}",
+        serde_json::to_string(&attributes).unwrap_or_default(),
+        serde_json::to_string(&payload).unwrap_or_default()
+    );
     let mut event = base_event(
         OtlpSignal::Metrics,
         project,
@@ -507,7 +569,10 @@ fn decode_profiles_json(
     for resource_profiles in array(&root, "resourceProfiles", "resource_profiles") {
         let resource = json_resource(resource_profiles.get("resource"));
         for scope_profiles in array(resource_profiles, "scopeProfiles", "scope_profiles") {
-            let scope = json_scope(scope_profiles.get("scope"), string(scope_profiles, "schemaUrl", "schema_url"));
+            let scope = json_scope(
+                scope_profiles.get("scope"),
+                string(scope_profiles, "schemaUrl", "schema_url"),
+            );
             let profiles = {
                 let direct = array(scope_profiles, "profiles", "profiles");
                 if direct.is_empty() {
@@ -518,8 +583,18 @@ fn decode_profiles_json(
             };
             for profile in profiles {
                 let start = nanos(profile, "startTimeUnixNano", "start_time_unix_nano");
-                let profile_id = id_string(profile.get("profileId").or_else(|| profile.get("profile_id")))
-                    .unwrap_or_else(|| stable_id("profile-source", project, &serde_json::to_string(profile).unwrap_or_default()));
+                let profile_id = id_string(
+                    profile
+                        .get("profileId")
+                        .or_else(|| profile.get("profile_id")),
+                )
+                .unwrap_or_else(|| {
+                    stable_id(
+                        "profile-source",
+                        project,
+                        &serde_json::to_string(profile).unwrap_or_default(),
+                    )
+                });
                 let mut event = base_event(
                     OtlpSignal::Profiles,
                     project,
@@ -555,7 +630,11 @@ fn decode_profiles_proto(
             let mut event = OperationalEventV2::for_project(
                 project,
                 "default",
-                stable_id("profile-protobuf", project, &format!("{}:{index}", hex::encode(body))),
+                stable_id(
+                    "profile-protobuf",
+                    project,
+                    &format!("{}:{index}", hex::encode(body)),
+                ),
                 SignalKind::Profile,
                 json!({
                     "encoding": "otlp-protobuf",
@@ -566,7 +645,9 @@ fn decode_profiles_proto(
             );
             event.occurred_at = now.clone();
             event.observed_at = now.clone();
-            event.resource.insert("service.name".into(), "unknown".into());
+            event
+                .resource
+                .insert("service.name".into(), "unknown".into());
             Ok(event)
         })
         .collect())
@@ -609,7 +690,9 @@ fn base_event(
     event.observed_at = observed_at;
     event.resource = resource.clone();
     if event.resource.is_empty() {
-        event.resource.insert("service.name".into(), "unknown".into());
+        event
+            .resource
+            .insert("service.name".into(), "unknown".into());
     }
     event
 }
@@ -628,9 +711,12 @@ fn nanos_to_rfc3339(value: u64) -> String {
     if value == 0 {
         return Utc::now().to_rfc3339();
     }
-    DateTime::<Utc>::from_timestamp((value / 1_000_000_000) as i64, (value % 1_000_000_000) as u32)
-        .unwrap_or_else(Utc::now)
-        .to_rfc3339()
+    DateTime::<Utc>::from_timestamp(
+        (value / 1_000_000_000) as i64,
+        (value % 1_000_000_000) as u32,
+    )
+    .unwrap_or_else(Utc::now)
+    .to_rfc3339()
 }
 
 fn array<'a>(value: &'a Value, camel: &str, snake: &str) -> &'a [Value] {
@@ -665,7 +751,11 @@ fn id_string(value: Option<&Value>) -> Option<String> {
     if source.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Some(source.to_ascii_lowercase());
     }
-    BASE64.decode(source).ok().map(hex::encode).or_else(|| Some(source.to_string()))
+    BASE64
+        .decode(source)
+        .ok()
+        .map(hex::encode)
+        .or_else(|| Some(source.to_string()))
 }
 
 fn json_resource(resource: Option<&Value>) -> BTreeMap<String, String> {
@@ -686,10 +776,14 @@ fn json_resource(resource: Option<&Value>) -> BTreeMap<String, String> {
 fn json_scope(scope: Option<&Value>, schema_url: Option<&str>) -> Option<InstrumentationScope> {
     let scope = scope?;
     Some(InstrumentationScope {
-        name: string(scope, "name", "name").unwrap_or("unknown").to_string(),
+        name: string(scope, "name", "name")
+            .unwrap_or("unknown")
+            .to_string(),
         version: string(scope, "version", "version").map(str::to_string),
         attributes: json_attributes(scope.get("attributes")),
-        schema_url: schema_url.filter(|value| !value.is_empty()).map(str::to_string),
+        schema_url: schema_url
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
     })
 }
 
@@ -707,10 +801,66 @@ fn json_key_values(value: Option<&Value>) -> Vec<(String, Value)> {
 }
 
 fn json_attributes(value: Option<&Value>) -> BTreeMap<String, AttributeValue> {
-    json_key_values(value)
+    value
+        .and_then(Value::as_array)
         .into_iter()
-        .map(|(key, value)| (key, json_to_attribute(value)))
+        .flatten()
+        .filter_map(|entry| {
+            Some((
+                entry.get("key")?.as_str()?.to_string(),
+                json_attribute_value(entry.get("value")?)?,
+            ))
+        })
         .collect()
+}
+
+fn json_attribute_value(value: &Value) -> Option<AttributeValue> {
+    if let Some(value) = value.get("stringValue").and_then(Value::as_str) {
+        return Some(AttributeValue::String(value.to_string()));
+    }
+    if let Some(value) = value.get("boolValue").and_then(Value::as_bool) {
+        return Some(AttributeValue::Bool(value));
+    }
+    if let Some(value) = value.get("intValue") {
+        return value
+            .as_i64()
+            .or_else(|| value.as_str()?.parse().ok())
+            .map(AttributeValue::Int);
+    }
+    if let Some(value) = value.get("doubleValue") {
+        return value
+            .as_f64()
+            .or_else(|| value.as_str()?.parse().ok())
+            .map(AttributeValue::Double);
+    }
+    if let Some(value) = value.get("bytesValue").and_then(Value::as_str) {
+        return Some(AttributeValue::Bytes(value.to_string()));
+    }
+    if let Some(value) = value.get("arrayValue") {
+        return Some(AttributeValue::Array(
+            array(value, "values", "values")
+                .iter()
+                .filter_map(json_attribute_value)
+                .collect(),
+        ));
+    }
+    if let Some(value) = value.get("kvlistValue") {
+        return Some(AttributeValue::Map(
+            value
+                .get("values")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| {
+                    Some((
+                        entry.get("key")?.as_str()?.to_string(),
+                        json_attribute_value(entry.get("value")?)?,
+                    ))
+                })
+                .collect(),
+        ));
+    }
+    (!value.is_null()).then(|| json_to_attribute(value.clone()))
 }
 
 fn json_any_value(value: &Value) -> Option<Value> {
@@ -725,9 +875,9 @@ fn json_any_value(value: &Value) -> Option<Value> {
     if let Some(bytes) = value.get("bytesValue").and_then(Value::as_str) {
         return Some(json!({"bytesBase64": bytes}));
     }
-    if let Some(array) = value.get("arrayValue") {
+    if let Some(array_value) = value.get("arrayValue") {
         return Some(Value::Array(
-            array(array, "values", "values")
+            array(array_value, "values", "values")
                 .iter()
                 .filter_map(json_any_value)
                 .collect(),
@@ -735,9 +885,7 @@ fn json_any_value(value: &Value) -> Option<Value> {
     }
     if let Some(map) = value.get("kvlistValue") {
         return Some(Value::Object(
-            json_key_values(map.get("values"))
-                .into_iter()
-                .collect(),
+            json_key_values(map.get("values")).into_iter().collect(),
         ));
     }
     Some(value.clone())
@@ -751,9 +899,9 @@ fn json_to_attribute(value: Value) -> AttributeValue {
             .as_i64()
             .map(AttributeValue::Int)
             .unwrap_or_else(|| AttributeValue::Double(value.as_f64().unwrap_or_default())),
-        Value::Array(values) => AttributeValue::Array(
-            values.into_iter().map(json_to_attribute).collect(),
-        ),
+        Value::Array(values) => {
+            AttributeValue::Array(values.into_iter().map(json_to_attribute).collect())
+        }
         Value::Object(values) => AttributeValue::Map(
             values
                 .into_iter()
@@ -782,7 +930,12 @@ fn json_number(point: &Value) -> Option<f64> {
             point
                 .get("asInt")
                 .or_else(|| point.get("as_int"))
-                .and_then(|value| value.as_i64().map(|value| value as f64).or_else(|| value.as_str()?.parse().ok()))
+                .and_then(|value| {
+                    value
+                        .as_i64()
+                        .map(|value| value as f64)
+                        .or_else(|| value.as_str()?.parse().ok())
+                })
         })
 }
 
@@ -813,7 +966,7 @@ fn json_exemplars(value: Option<&Value>) -> Vec<MetricExemplar> {
 }
 
 fn proto_resource(resource: Option<&wire::Resource>) -> BTreeMap<String, String> {
-    let mut output = resource
+    let mut output: BTreeMap<String, String> = resource
         .map(|resource| {
             resource
                 .attributes
@@ -831,10 +984,17 @@ fn proto_resource(resource: Option<&wire::Resource>) -> BTreeMap<String, String>
     output
 }
 
-fn proto_scope(scope: Option<&wire::InstrumentationScope>, schema_url: &str) -> Option<InstrumentationScope> {
+fn proto_scope(
+    scope: Option<&wire::InstrumentationScope>,
+    schema_url: &str,
+) -> Option<InstrumentationScope> {
     let scope = scope?;
     Some(InstrumentationScope {
-        name: if scope.name.is_empty() { "unknown".into() } else { scope.name.clone() },
+        name: if scope.name.is_empty() {
+            "unknown".into()
+        } else {
+            scope.name.clone()
+        },
         version: (!scope.version.is_empty()).then(|| scope.version.clone()),
         attributes: proto_attributes(&scope.attributes),
         schema_url: (!schema_url.is_empty()).then(|| schema_url.to_string()),
@@ -867,7 +1027,9 @@ fn proto_any_json(value: &AnyValue) -> Value {
             value
                 .values
                 .iter()
-                .filter_map(|entry| Some((entry.key.clone(), proto_any_json(entry.value.as_ref()?))))
+                .filter_map(|entry| {
+                    Some((entry.key.clone(), proto_any_json(entry.value.as_ref()?)))
+                })
                 .collect(),
         ),
         None => Value::Null,

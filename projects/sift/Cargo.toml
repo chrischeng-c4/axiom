@@ -18,12 +18,17 @@ path = "src/bin/sift.rs"
 anyhow.workspace = true
 axiom-operator = { package = "operator", path = "../../libs/operator" }
 axum.workspace = true
+base64 = "0.22"
+bytes.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false, features = ["online", "k8s"] }
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
+flate2 = "1"
+hex = "0.4"
 k8s-openapi = { version = "0.24", features = ["v1_32"] }
 kube = { version = "0.98", features = ["runtime", "derive", "client"] }
+prost = "0.13"
 serde.workspace = true
 serde_json.workspace = true
 service-auth = { path = "../../libs/service-auth" }
@@ -34,6 +39,7 @@ service-metrics = { path = "../../libs/service-metrics" }
 raft-core = { path = "../../libs/raft-core" }
 raft-host = { path = "../../libs/raft-host" }
 schemars = "0.8"
+sha2 = "0.10"
 tokio.workspace = true
 tower.workspace = true
 tracing.workspace = true

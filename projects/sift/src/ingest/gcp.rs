@@ -9,11 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::{AttributeValue, OperationalEventV2, SignalKind};
 
 pub fn looks_like_structured_log(value: &Value) -> bool {
-    value.get("jsonPayload").is_some()
-        && value
-            .get("resource")
-            .and_then(Value::as_object)
-            .is_some()
+    value.get("jsonPayload").is_some() && value.get("resource").and_then(Value::as_object).is_some()
 }
 
 pub fn normalize_structured_log(value: Value, project_hint: &str) -> Result<OperationalEventV2> {
@@ -46,17 +42,17 @@ pub fn normalize_structured_log(value: Value, project_hint: &str) -> Result<Oper
     if project.trim().is_empty() {
         bail!("GCP structured log requires project_id or x-sift-project");
     }
-    let timestamp = timestamp(object.get("timestamp"), "timestamp")?;
+    let occurred_at = parse_timestamp(object.get("timestamp"), "timestamp")?;
     let observed = match object.get("receiveTimestamp") {
-        Some(value) => timestamp(Some(value), "receiveTimestamp")?,
-        None => timestamp.clone(),
+        Some(value) => parse_timestamp(Some(value), "receiveTimestamp")?,
+        None => occurred_at.clone(),
     };
     let event_id = object
         .get("insertId")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| stable_id(project, resource_type, &timestamp, json_payload));
+        .unwrap_or_else(|| stable_id(project, resource_type, &occurred_at, json_payload));
     let environment = labels
         .get("environment")
         .or_else(|| labels.get("namespace_name"))
@@ -69,7 +65,7 @@ pub fn normalize_structured_log(value: Value, project_hint: &str) -> Result<Oper
         SignalKind::Log,
         json!({"jsonPayload": json_payload}),
     );
-    event.occurred_at = timestamp;
+    event.occurred_at = occurred_at;
     event.observed_at = observed;
     event.resource = normalize_resource(resource_type, &labels);
     event.severity = object
@@ -93,7 +89,7 @@ pub fn normalize_structured_log(value: Value, project_hint: &str) -> Result<Oper
     Ok(event)
 }
 
-fn timestamp(value: Option<&Value>, name: &str) -> Result<String> {
+fn parse_timestamp(value: Option<&Value>, name: &str) -> Result<String> {
     let Some(value) = value else {
         return Ok(Utc::now().to_rfc3339());
     };
@@ -106,10 +102,7 @@ fn timestamp(value: Option<&Value>, name: &str) -> Result<String> {
         .get("seconds")
         .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
         .context("GCP timestamp seconds must be an integer")?;
-    let nanos = value
-        .get("nanos")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as u32;
+    let nanos = value.get("nanos").and_then(Value::as_u64).unwrap_or(0) as u32;
     DateTime::<Utc>::from_timestamp(seconds, nanos)
         .context("GCP timestamp is outside the supported range")
         .map(|value| value.to_rfc3339())
@@ -119,10 +112,7 @@ fn normalize_resource(
     resource_type: &str,
     labels: &serde_json::Map<String, Value>,
 ) -> BTreeMap<String, String> {
-    let mut output = BTreeMap::from([(
-        "gcp.resource.type".to_string(),
-        resource_type.to_string(),
-    )]);
+    let mut output = BTreeMap::from([("gcp.resource.type".to_string(), resource_type.to_string())]);
     for (key, value) in labels {
         let Some(value) = scalar(value) else {
             continue;
@@ -185,15 +175,20 @@ fn normalize_attributes(
     attributes
 }
 
-fn request_id(
-    object: &serde_json::Map<String, Value>,
-    json_payload: &Value,
-) -> Option<String> {
+fn request_id(object: &serde_json::Map<String, Value>, json_payload: &Value) -> Option<String> {
     object
         .get("httpRequest")
         .and_then(|value| value.get("requestId").or_else(|| value.get("request_id")))
-        .or_else(|| object.get("labels").and_then(|value| value.get("logging.googleapis.com/request_id")))
-        .or_else(|| json_payload.get("request_id").or_else(|| json_payload.get("requestId")))
+        .or_else(|| {
+            object
+                .get("labels")
+                .and_then(|value| value.get("logging.googleapis.com/request_id"))
+        })
+        .or_else(|| {
+            json_payload
+                .get("request_id")
+                .or_else(|| json_payload.get("requestId"))
+        })
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string)

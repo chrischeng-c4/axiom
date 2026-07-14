@@ -28,7 +28,7 @@ struct Cli {
 enum Command {
     /// Run the unified h2c/HTTP1 operational-event service.
     Serve(ServeArgs),
-    /// Append one versioned event from a JSON file to the local raw journal.
+    /// Write or import versioned events into the local raw journal.
     Event(EventArgs),
     /// Query durable raw events without starting a server.
     Query(QueryArgs),
@@ -84,8 +84,32 @@ enum LogFormat {
 
 #[derive(Args)]
 struct EventArgs {
+    #[command(subcommand)]
+    command: EventCommand,
+}
+
+#[derive(Subcommand)]
+enum EventCommand {
+    /// Append one OperationalEventV2 JSON document.
+    Write(EventFileArgs),
+    /// Import a bounded JSON array or `{ "events": [...] }` batch.
+    Import(EventImportArgs),
+}
+
+#[derive(Args)]
+struct EventFileArgs {
     /// JSON file containing one EventEnvelope.
     file: PathBuf,
+    #[arg(long, env = "SIFT_DATA_DIR", default_value = "sift-data")]
+    data_dir: PathBuf,
+}
+
+#[derive(Args)]
+struct EventImportArgs {
+    /// JSON file containing an event array or EventWriteRequest.
+    file: PathBuf,
+    #[arg(long, default_value = "default")]
+    project: String,
     #[arg(long, env = "SIFT_DATA_DIR", default_value = "sift-data")]
     data_dir: PathBuf,
 }
@@ -429,12 +453,12 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
     cli_std::llm::Topic {
         id: "ingest",
         summary: "versioned six-signal ingest and the fsync acknowledgement boundary",
-        body: "# Sift ingest\n\nPOST a versioned `EventEnvelope` to `/v1/events`. Success means the canonical raw journal append has completed `sync_data`; retry the same `event_id` safely. `metric` events must carry direct points and exemplars.",
+        body: "# Sift ingest\n\nUse `sift event write <file>` for one canonical envelope or `sift event import <file>` for a bounded batch. HTTP collectors use `/v1/events:write` or OTLP `/v1/logs`, `/v1/traces`, `/v1/metrics`, and `/v1/profiles`; accepted items have completed the shared durable append path.",
     },
     cli_std::llm::Topic {
         id: "operations",
         summary: "h2c serving, probe routes, query, replay, and local CLI use",
-        body: "# Sift operations\n\nRun `sift serve --data-dir ./sift-data`. The process serves HTTP/1.1 and h2c on one port plus `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs`. Use `sift event`, `sift query`, and `sift replay` for local durable-journal inspection.",
+        body: "# Sift operations\n\nRun `sift serve --data-dir ./sift-data`. The process serves HTTP/1.1 and h2c on one port plus `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, and `/docs`. Use `sift event write|import`, `sift query`, and `sift replay` for local durable-journal inspection.",
     },
 ];
 
@@ -535,11 +559,54 @@ async fn serve(args: ServeArgs) -> Result<()> {
 }
 
 fn append_event(args: EventArgs) -> Result<()> {
-    let source = std::fs::read_to_string(&args.file)
-        .with_context(|| format!("read event file {}", args.file.display()))?;
-    let event = decode_event_json(source.as_bytes()).context("parse operational event JSON")?;
-    let result = DurableJournal::open(&args.data_dir)?.append(event)?;
-    print_json_terminal(result)
+    match args.command {
+        EventCommand::Write(args) => {
+            let source = std::fs::read_to_string(&args.file)
+                .with_context(|| format!("read event file {}", args.file.display()))?;
+            let event =
+                decode_event_json(source.as_bytes()).context("parse operational event JSON")?;
+            let result = DurableJournal::open(&args.data_dir)?.append(event)?;
+            print_json_terminal(result)
+        }
+        EventCommand::Import(args) => import_events(args),
+    }
+}
+
+fn import_events(args: EventImportArgs) -> Result<()> {
+    let source = std::fs::read(&args.file)
+        .with_context(|| format!("read event batch {}", args.file.display()))?;
+    let value: Value = serde_json::from_slice(&source).context("parse event batch JSON")?;
+    let values = match value {
+        Value::Array(values) => values,
+        Value::Object(mut object) => object
+            .remove("events")
+            .and_then(|value| value.as_array().cloned())
+            .context("event import object must contain an events array")?,
+        _ => anyhow::bail!("event import expects a JSON array or object with events"),
+    };
+    let journal = DurableJournal::open(&args.data_dir)?;
+    let mut results = Vec::with_capacity(values.len());
+    for (index, value) in values.into_iter().enumerate() {
+        let event_id = sift::ingest::batch::event_id_hint(&value);
+        match sift::ingest::batch::decode_item(value, &args.project)
+            .and_then(|event| journal.append(event))
+        {
+            Ok(result) => results.push(sift::ingest::BatchItemResult::accepted(
+                index,
+                result.event_id,
+                result.cursor,
+                result.duplicate,
+            )),
+            Err(error) => results.push(sift::ingest::BatchItemResult::rejected(
+                index,
+                event_id,
+                "invalid_event",
+                error.to_string(),
+                false,
+            )),
+        }
+    }
+    print_json_terminal(sift::ingest::EventWriteResponse::from_results(results))
 }
 
 fn query(args: QueryArgs) -> Result<()> {

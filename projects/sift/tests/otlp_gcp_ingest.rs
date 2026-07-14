@@ -17,7 +17,7 @@ use sift::{
         },
         IngestLimits,
     },
-    protected_router, router, EventEnvelope, ServiceState, SignalKind,
+    protected_router, router, AttributeValue, EventEnvelope, ServiceState, SignalKind,
 };
 use tower::ServiceExt;
 
@@ -47,6 +47,8 @@ async fn bounded_batch_preserves_outcomes_and_normalizes_gcp_structured_logs() {
     let temp = tempfile::tempdir().unwrap();
     let state = Arc::new(ServiceState::open(temp.path()).unwrap());
     let app = router(state.clone());
+    let mut oversized = event("oversized", "project-a");
+    oversized.payload = serde_json::json!({"message": "x".repeat(270_000)});
     let request = serde_json::json!({
         "events": [
             event("json-1", "project-a"),
@@ -70,7 +72,8 @@ async fn bounded_batch_preserves_outcomes_and_normalizes_gcp_structured_logs() {
                 "trace": "projects/project-a/traces/0af7651916cd43dd8448eb211c80319c",
                 "spanId": "b7ad6b7169203331",
                 "httpRequest": {"requestId": "req-1"}
-            }
+            },
+            oversized
         ]
     });
     let response = app
@@ -89,7 +92,7 @@ async fn bounded_batch_preserves_outcomes_and_normalizes_gcp_structured_logs() {
     let body = json_body(response).await;
     assert_eq!(body["accepted"], 2);
     assert_eq!(body["duplicates"], 1);
-    assert_eq!(body["rejected"], 1);
+    assert_eq!(body["rejected"], 2);
     assert_eq!(body["results"][0]["outcome"], "accepted");
     assert_eq!(body["results"][1]["outcome"], "duplicate");
     assert_eq!(body["results"][2]["outcome"], "rejected");
@@ -102,7 +105,10 @@ async fn bounded_batch_preserves_outcomes_and_normalizes_gcp_structured_logs() {
     assert_eq!(gcp.event.resource["gcp.resource.type"], "k8s_container");
     assert_eq!(gcp.event.resource["k8s.pod.name"], "checkout-1");
     assert_eq!(gcp.event.severity.as_deref(), Some("ERROR"));
-    assert_eq!(gcp.event.trace_id.as_deref(), Some("0af7651916cd43dd8448eb211c80319c"));
+    assert_eq!(
+        gcp.event.trace_id.as_deref(),
+        Some("0af7651916cd43dd8448eb211c80319c")
+    );
     assert_eq!(gcp.event.payload["jsonPayload"]["attempt"], 3);
 }
 
@@ -114,7 +120,7 @@ async fn otlp_json_endpoints_accept_all_signals_and_report_partial_success() {
     let fixtures = [
         (
             "/v1/logs",
-            serde_json::json!({"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeLogs":[{"scope":{"name":"test.logs"},"logRecords":[{"timeUnixNano":"1783987200000000000","severityText":"INFO","body":{"stringValue":"ok"}},{"body":null}]}]}]}),
+            serde_json::json!({"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeLogs":[{"scope":{"name":"test.logs"},"logRecords":[{"timeUnixNano":"1783987200000000000","severityText":"INFO","body":{"stringValue":"ok"},"attributes":[{"key":"attempt","value":{"intValue":"7"}},{"key":"fingerprint","value":{"bytesValue":"AQI="}}]},{"body":null}]}]}]}),
         ),
         (
             "/v1/traces",
@@ -154,8 +160,21 @@ async fn otlp_json_endpoints_accept_all_signals_and_report_partial_success() {
     let rows = state.journal().query(Default::default()).unwrap();
     assert!(rows.iter().any(|row| row.event.signal == SignalKind::Log));
     assert!(rows.iter().any(|row| row.event.signal == SignalKind::Span));
-    assert!(rows.iter().any(|row| row.event.signal == SignalKind::Metric));
-    assert!(rows.iter().any(|row| row.event.signal == SignalKind::Profile));
+    assert!(rows
+        .iter()
+        .any(|row| row.event.signal == SignalKind::Metric));
+    assert!(rows
+        .iter()
+        .any(|row| row.event.signal == SignalKind::Profile));
+    let log = rows
+        .iter()
+        .find(|row| row.event.signal == SignalKind::Log)
+        .expect("OTLP JSON log");
+    assert_eq!(log.event.attributes["attempt"], AttributeValue::Int(7));
+    assert_eq!(
+        log.event.attributes["fingerprint"],
+        AttributeValue::Bytes("AQI=".into())
+    );
 }
 
 #[tokio::test]
@@ -233,6 +252,22 @@ async fn project_auth_limits_quota_and_draining_return_explicit_errors() {
     }));
     let app = protected_router(state.clone(), verifier);
 
+    let too_large = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events:write")
+                .header("authorization", "Bearer project-a-token")
+                .header("content-type", "application/json")
+                .header("x-sift-project", "project-a")
+                .body(Body::from(vec![b'x'; 1_025]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(too_large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
     let forbidden = app
         .clone()
         .oneshot(
@@ -252,10 +287,25 @@ async fn project_auth_limits_quota_and_draining_return_explicit_errors() {
         .unwrap();
     assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
 
-    let accepted_body = serde_json::to_vec(
-        &serde_json::json!({"events":[event("a-1", "project-a")]}),
-    )
-    .unwrap();
+    let legacy_forbidden = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events")
+                .header("authorization", "Bearer project-a-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&event("legacy-b", "project-b")).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy_forbidden.status(), StatusCode::FORBIDDEN);
+
+    let accepted_body =
+        serde_json::to_vec(&serde_json::json!({"events":[event("a-1", "project-a")]})).unwrap();
     let accepted = app
         .clone()
         .oneshot(
@@ -297,9 +347,9 @@ async fn project_auth_limits_quota_and_draining_return_explicit_errors() {
                 .uri("/v1/events:write")
                 .header("authorization", "Bearer project-a-token")
                 .header("content-type", "application/json")
-                .header("x-sift-project", "project-c")
+                .header("x-sift-project", "project-a")
                 .body(Body::from(
-                    serde_json::to_vec(&serde_json::json!({"events":[event("c", "project-c")]}))
+                    serde_json::to_vec(&serde_json::json!({"events":[event("c", "project-a")]}))
                         .unwrap(),
                 ))
                 .unwrap(),

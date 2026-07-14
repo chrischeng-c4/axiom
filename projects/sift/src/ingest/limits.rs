@@ -158,11 +158,7 @@ impl AdmissionController {
         &self.limits
     }
 
-    pub fn decode_body(
-        &self,
-        headers: &HeaderMap,
-        body: Bytes,
-    ) -> Result<Vec<u8>, AdmissionError> {
+    pub fn decode_body(&self, headers: &HeaderMap, body: Bytes) -> Result<Vec<u8>, AdmissionError> {
         if body.len() > self.limits.max_compressed_body_bytes {
             return Err(AdmissionError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -190,9 +186,7 @@ impl AdmissionController {
                     .by_ref()
                     .take(self.limits.max_decoded_body_bytes as u64 + 1)
                     .read_to_end(&mut decoded)
-                    .map_err(|error| {
-                        AdmissionError::invalid("invalid_gzip", error.to_string())
-                    })?;
+                    .map_err(|error| AdmissionError::invalid("invalid_gzip", error.to_string()))?;
                 decoded
             }
             _ => {
@@ -283,11 +277,13 @@ impl AdmissionController {
         let now = Instant::now();
         let window = Duration::from_secs(self.limits.quota_window_secs);
         let mut projects = self.projects.lock().expect("admission lock poisoned");
-        let state = projects.entry(project.to_string()).or_insert(ProjectAdmission {
-            in_flight: 0,
-            used_items: 0,
-            window_started: now,
-        });
+        let state = projects
+            .entry(project.to_string())
+            .or_insert(ProjectAdmission {
+                in_flight: 0,
+                used_items: 0,
+                window_started: now,
+            });
         if now.duration_since(state.window_started) >= window {
             state.used_items = 0;
             state.window_started = now;
@@ -301,9 +297,7 @@ impl AdmissionController {
                 Some(1),
             ));
         }
-        if state.used_items.saturating_add(item_count)
-            > self.limits.max_items_per_project_window
-        {
+        if state.used_items.saturating_add(item_count) > self.limits.max_items_per_project_window {
             let elapsed = now.duration_since(state.window_started).as_secs();
             return Err(AdmissionError::new(
                 StatusCode::TOO_MANY_REQUESTS,
