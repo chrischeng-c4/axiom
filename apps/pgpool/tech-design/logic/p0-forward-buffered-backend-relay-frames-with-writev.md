@@ -35,3 +35,22 @@ flowchart LR
   writev -->|no Ready| wait([await next frame])
   drain -->|malformed suffix| prefix[forward valid prefix then end]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/proxy/relay.rs
+    action: modify
+    section: pgpool-vectored-buffered-relay
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: pgpool-vectored-buffered-relay
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: pgpool-vectored-buffered-relay
+    impl_mode: hand-written
+```
