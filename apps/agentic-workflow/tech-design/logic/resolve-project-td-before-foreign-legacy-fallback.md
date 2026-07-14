@@ -45,3 +45,26 @@ flowchart TD
   legacy --> scoped
   scoped --> verify([verify scoped evidence])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/agentic-workflow/tech-design/surface/interfaces/src/cb.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+  - path: apps/agentic-workflow/src/cli/cb.rs
+    action: modify
+    section: source
+    impl_mode: codegen
+  - path: apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+  - path: apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs
+    action: modify
+    section: source
+    impl_mode: codegen
+```
