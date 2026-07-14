@@ -55,3 +55,35 @@ changes:
     section: pgpool-detached-reset
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-detached-reset-verification
+requirements:
+  capacity_isolation:
+    id: R2
+    text: "A resetting backend retains its permit, is never idle or reusable before successful reset, and reset error or task cancellation releases capacity exactly once."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes
+  end_to_end:
+    id: R3
+    text: "Transaction mode preserves reset isolation, cap, and no client errors in the immutable benchmark."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+  frontend_progress:
+    id: R1
+    text: "Returning a transaction backend schedules its reset and returns before a deliberately delayed DISCARD ALL response, so the frontend path is not reset-bound."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool detached_reset_returns_before_backend_reset_completes
+---
+flowchart TD
+    r1[R1 frontend progress] --> cargo_test_p_pgpool_test_pool_detached_reset_returns_before_backend_reset_completes[cargo test -p pgpool --test pool detached_reset_returns_before_backend_reset_completes]
+    r2[R2 capacity isolation] --> cargo_test_p_pgpool_test_pool_test_pool_modes[cargo test -p pgpool --test pool --test pool_modes]
+    r3[R3 end to end] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh]
+```
