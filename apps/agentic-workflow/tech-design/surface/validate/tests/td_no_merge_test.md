@@ -2467,6 +2467,118 @@ async fn test_code_check_ignores_unrelated_hand_written_evidence_outside_wi_spec
     assert_eq!(count_cb_code_check_trailer_commits(&git, root), 1);
 }
 
+/// #1696: the local issue cache is ephemeral and may lose `implements` on a
+/// terminal retry. A project-qualified default TD must then win over the
+/// worktree's sole foreign legacy `.aw/tech-design` candidate; otherwise an
+/// `app:lumen` WI inherits Mamba's hand-written evidence denominator.
+#[tokio::test]
+async fn test_code_check_prefers_project_td_when_implements_cache_is_absent() {
+    use agentic_workflow::issues::types::{td_phase, IssueType};
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        "[[projects]]\nname = \"lumen\"\npath = \"apps/lumen\"\ntd_path = \"apps/lumen/tech-design\"\nlabel = \"app:lumen\"\n\n[[projects.workspaces]]\nname = \"lumen\"\npaths = [\"apps/lumen/**\"]\ntarget = \"rust\"\n",
+    )
+    .unwrap();
+
+    let lumen_target = "apps/lumen/src/server.rs";
+    let lumen_spec = "apps/lumen/tech-design/logic/preserve-fallback-scope.md";
+    let foreign_target = "projects/mamba/src/pkgmanage/add.rs";
+    let foreign_legacy_spec =
+        ".aw/tech-design/projects/mamba/logic/foreign-legacy-fallback.md";
+    let lumen_target_abs = root.join(lumen_target);
+    std::fs::create_dir_all(lumen_target_abs.parent().unwrap()).unwrap();
+    std::fs::write(&lumen_target_abs, "pub fn server() { /* before */ }\n").unwrap();
+    write_1679_changes_spec(root, lumen_spec, lumen_target);
+    write_1679_changes_spec(root, foreign_legacy_spec, foreign_target);
+
+    let slug = "missing-implements-lumen-scope";
+    commit_td_init(&git, root, slug);
+    std::fs::write(&lumen_target_abs, "pub fn server() { /* implemented */ }\n").unwrap();
+    commit_all(&git, root);
+
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: "lumen: preserve fallback scope".to_string(),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![
+            format!("phase:{}", td_phase::CB_FILLED),
+            "app:lumen".to_string(),
+        ],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: Vec::new(),
+        phase: Some(td_phase::CB_FILLED.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed cache-loss issue");
+
+    let output = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .expect("run aw td code-check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("\"action\":\"done\""),
+        "missing implements must still select the Lumen TD, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains(foreign_target),
+        "foreign legacy Mamba target must not leak into Lumen completion, got:\n{stdout}"
+    );
+    assert_eq!(
+        LocalBackend::from_project_root(root)
+            .get(slug)
+            .await
+            .expect("read issue")
+            .expect("issue remains")
+            .phase
+            .as_deref(),
+        Some(td_phase::TD_MERGED)
+    );
+}
+
 /// (b) An unfilled HANDWRITE marker in a file the WI's own Changes section
 /// names must still block completion, naming the file in the refusal.
 #[tokio::test]
