@@ -2,10 +2,16 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-07T15:58:25.583739+00:00"
-digest = "sha256:732748481daf8083bf82ab6650aca7245fba5da66b7e902b981b74dcfe6a1521"
-source_digest = "sha256:732748481daf8083bf82ab6650aca7245fba5da66b7e902b981b74dcfe6a1521"
-ir_digest = "sha256:858a6951a92674aeffa3a5f6f88b7016467e86493fd684293071f85aa2e91a89"
+generated_at = "2026-07-14T03:21:26.010491+00:00"
+digest = "sha256:65c53a3f17186e7b95349081b335bdd05d76c162c8191223207c7b2ec61475cb"
+source_digest = "sha256:65c53a3f17186e7b95349081b335bdd05d76c162c8191223207c7b2ec61475cb"
+ir_digest = "sha256:8b54936de994743ce64efd6477f3cd97ed6d01a7171825bfa5398cd4667c3027"
+
+[[files]]
+path = "logic/extract-shared-otlp-tracing-baseline-for-lumen-and-tape.md"
+digest = "sha256:c231c1bcc5670a16070fe6580355b4246bdaf25c7b024f7f885cf284ff708813"
+ir_digest = "sha256:2625bf18f8ef2697409e08e24575be41167394d7899ebec77677d78f20fa1160"
+section_count = 3
 
 [[files]]
 path = "semantic/service-http-libs-service-http.md"
