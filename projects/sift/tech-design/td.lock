@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T08:17:09.666478+00:00"
-digest = "sha256:b9b2f8aa732c76adf5f382fbe07caeff1a4273d6805a1b8aa6d32d63e2a0fa25"
-source_digest = "sha256:b9b2f8aa732c76adf5f382fbe07caeff1a4273d6805a1b8aa6d32d63e2a0fa25"
-ir_digest = "sha256:50df437c3bdceb9bb762381e74e7d86fbbd993c1f0ed915d44fa1ff9b25c49d6"
+generated_at = "2026-07-14T08:33:57.768766+00:00"
+digest = "sha256:2f81cf07e3da05bf7dc2797e1656e41e8f4a9867187ecd635ee6ee13c8b66ba7"
+source_digest = "sha256:2f81cf07e3da05bf7dc2797e1656e41e8f4a9867187ecd635ee6ee13c8b66ba7"
+ir_digest = "sha256:838bfb6b42fc3c9b8eaa549f0df58e658991bcb9d21c79c4a539ae34fc5bdbf7"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -36,6 +36,12 @@ path = "logic/add-epoch-sharded-journal-blobs-and-gcs-archive.md"
 digest = "sha256:9f287a5b8f307ffa883604caf737e40b555214c1ba6e6df0f8aa4c669763a806"
 ir_digest = "sha256:317cdb56e94d19743e5bab2b28e781c129633d94895e3d0dd72b96c41254cf43"
 section_count = 4
+
+[[files]]
+path = "logic/add-error-grouping-and-lifecycle-store.md"
+digest = "sha256:2480ed9d6cea60b35d5cb0371d13e52f9123ca505378c0d9db16c2502307ed44"
+ir_digest = "sha256:da06eb2a500e19ede47548a04aeaec4cd9cec777afd9087e8e07e8f0be777373"
+section_count = 5
 
 [[files]]
 path = "logic/add-gcp-compatible-logging-store.md"
