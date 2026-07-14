@@ -23,6 +23,7 @@ Public API manifest for `libs/raft-host/src/lib.rs` captured during libs codegen
 |------|--------|------|------------|------|-----------|
 | `cluster` | libs/raft-host/src/lib.rs | module | pub | 13 | pub mod cluster; |
 | `llm` | libs/raft-host/src/lib.rs | module | pub | 16 | pub mod llm; |
+| `peer_tls` | libs/raft-host/src/lib.rs | module | pub | 20 | pub mod peer_tls; |
 | `parse_peer_overrides` | libs/raft-host/src/lib.rs | re-export | pub | 23 | pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims, ClusterTopology}; |
 | `peer_ordinal` | libs/raft-host/src/lib.rs | re-export | pub | 23 | pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims, ClusterTopology}; |
 | `replica_mode` | libs/raft-host/src/lib.rs | re-export | pub | 23 | pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims, ClusterTopology}; |
@@ -31,6 +32,7 @@ Public API manifest for `libs/raft-host/src/lib.rs` captured during libs codegen
 | `HostConfig` | libs/raft-host/src/lib.rs | re-export | pub | 24 | pub use config::{HostConfig, SnapshotPolicy}; |
 | `SnapshotPolicy` | libs/raft-host/src/lib.rs | re-export | pub | 24 | pub use config::{HostConfig, SnapshotPolicy}; |
 | `RaftHost` | libs/raft-host/src/lib.rs | re-export | pub | 25 | pub use host::RaftHost; |
+| `PeerTlsConfig` | libs/raft-host/src/lib.rs | re-export | pub | 30 | pub use peer_tls::PeerTlsConfig; |
 | `OutcomeWindow` | libs/raft-host/src/lib.rs | re-export | pub | 26 | pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY}; |
 | `OUTCOME_WINDOW_DEFAULT_CAPACITY` | libs/raft-host/src/lib.rs | re-export | pub | 26 | pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY}; |
 | `ReadConsistency` | libs/raft-host/src/lib.rs | re-export | pub | 27 | pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER}; |
@@ -70,6 +72,7 @@ mod config;
 mod host;
 pub mod llm;
 mod outcome_window;
+pub mod peer_tls;
 mod read_consistency;
 mod state_machine;
 mod store;
@@ -79,6 +82,7 @@ pub use cluster::{parse_peer_overrides, peer_ordinal, replica_mode, ClusterDims,
 pub use config::{HostConfig, SnapshotPolicy};
 pub use host::RaftHost;
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
+pub use peer_tls::PeerTlsConfig;
 pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};
