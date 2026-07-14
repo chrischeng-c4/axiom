@@ -67,7 +67,6 @@ changes:
     section: source
     impl_mode: codegen
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
