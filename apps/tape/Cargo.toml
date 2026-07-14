@@ -101,4 +101,7 @@ operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:operator"]
 # always works. The endpoint itself is always served — this gates only the
 # CLI verb's HTTP fetch path.
 backup = ["dep:reqwest", "service-backup/s3"]
+# Optional shared OTLP trace export. No Tape-local exporter exists: this
+# enables service-http's stable identity, fallback, and W3C propagation path.
+otel = ["service-http/otlp"]
 # </HANDWRITE>

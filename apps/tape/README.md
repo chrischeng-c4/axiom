@@ -341,6 +341,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | crate-smoke-gate | epic | #768 | partial | passing | smoke | cargo test -p tape |
 | tape-vat-meter-guard-ec-gates-observability | change | #1330 | implemented | passing | smoke | apps/tape/vat.toml, apps/tape/meter-tape-performance.toml, apps/tape/guard-tape-security.toml |
+| shared-otlp-trace-export | change | #1662 | implemented | passing | conformance | `TAPE_OTLP_ENDPOINT` through `libs/service-http` |
 
 ### Kubernetes-Native Deployment
 
