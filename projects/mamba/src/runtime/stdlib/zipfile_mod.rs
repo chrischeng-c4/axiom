@@ -1320,6 +1320,16 @@ pub fn register() {
         d_zipfile_new as *const () as usize as u64,
         ZIPFILE_CLASS.to_string(),
     );
+    // Register the hierarchy so `except Exception:`/`except zipfile.BadZipFile:`
+    // matcher validation sees a real `Exception` subclass, matching CPython
+    // (`class BadZipFile(Exception): ...`). Without this, `mb_exception_matches`
+    // rejects the except-clause with "catching classes that do not inherit
+    // from BaseException is not allowed" (#1615).
+    super::super::class::mb_class_register(
+        "zipfile.BadZipFile",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
 
     super::register_module("zipfile", attrs);
 

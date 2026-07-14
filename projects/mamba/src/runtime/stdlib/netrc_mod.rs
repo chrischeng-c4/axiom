@@ -479,6 +479,16 @@ pub fn register() {
         "NetrcParseError".into(),
         MbValue::from_ptr(MbObject::new_str("NetrcParseError".to_string())),
     );
+    // Register the hierarchy so `except Exception:`/`except netrc.NetrcParseError:`
+    // matcher validation sees a real `Exception` subclass, matching CPython
+    // (`class NetrcParseError(Exception): ...`). Without this,
+    // `mb_exception_matches` rejects the except-clause with "catching classes
+    // that do not inherit from BaseException is not allowed" (#1615).
+    super::super::class::mb_class_register(
+        "NetrcParseError",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
 
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
