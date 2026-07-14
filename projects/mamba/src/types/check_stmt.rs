@@ -342,6 +342,24 @@ impl TypeChecker {
                 }
                 if let Expr::Attr { object, attr } = &target.node {
                     let object_ty = self.check_expr(object);
+                    // Module namespaces are fully dynamic in CPython: any name
+                    // in a module's `__dict__` can be rebound to any value at
+                    // any time (the common `monkeypatch`/test-mock idiom, e.g.
+                    // `fileinput.FileInput = MockFileInput` or
+                    // `urllib.request.ftpwrapper = FakeFtpWrapper`). The
+                    // typeshed-declared type of a module attribute is a
+                    // reader hint, not a runtime-enforced contract, so treat
+                    // this like the bare-identifier rebind case below: type-
+                    // check the value on its own merits but never hard-reject
+                    // the assignment because it disagrees with the module's
+                    // static stub type.
+                    if matches!(
+                        self.tcx.get(object_ty),
+                        Ty::External(super::ty::ExternalValue::Module { .. })
+                    ) {
+                        self.check_expr(value);
+                        return;
+                    }
                     if let Some(expected_ty) = self.resolve_property_setter_type(object_ty, attr) {
                         let value_ty = self.check_expr(value);
                         if !self.types_compatible(expected_ty, value_ty) {
