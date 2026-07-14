@@ -8,6 +8,12 @@ capability_refs:
     claim: "core-concept-model-and-invariants"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `apps/agentic-workflow/src/cli`."
+  - id: existing-project-standardization
+    role: primary
+    gap: force-regeneration-project-root-llms-projection
+    claim: force-regeneration-project-root-llms-projection
+    coverage: full
+    rationale: "The public force-regeneration command uses the shared TD-first runner and project_root_llms emitter after source application, so one canonical CODEGEN context replaces generic fallback output while HANDWRITE siblings remain untouched."
   - id: "aw-core-client-model-workitem-first-artifact-lifecycle"
     role: primary
     gap: "aw-epic-project-label-dispatch"
@@ -3912,7 +3918,14 @@ changes:
       emits `aw td gen <slug>` on drift. In a terminal phase that command
       preflights and regenerates only the selected target-file scopes without
       project-wide post-passes, commits those paths, preserves WI phase, and
-      returns the exact code-check retry.
+      returns the exact code-check retry. Issue #1591 routes the public
+      force-regeneration entry point through the same shared spec runner used
+      by replay and cold verification. Source application still honors
+      hand-written skips, then `project_root_llms` targets are deterministically
+      replaced by the TD-first project context emitter before formatting and
+      lifecycle commit; a real Git fixture proves the output is one canonical
+      CODEGEN document with no generic TODO and preserves a HANDWRITE sibling
+      byte-for-byte.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chat_members.rs"
     action: modify

@@ -562,8 +562,6 @@ fn run_force_regen(
     workspace: Option<&str>,
     sync_public_api: bool,
 ) -> Result<()> {
-    use crate::generate::apply::run_apply_scoped_targets;
-
     let cwd = std::env::current_dir().context("failed to get current directory")?;
     let scope = resolve_project_force_regen_scope(&cwd, project, workspace)?;
     if !scope.td_root.exists() {
@@ -587,42 +585,14 @@ fn run_force_regen(
         return Ok(());
     }
 
-    let mut updated_files = 0usize;
-    let mut created_files = 0usize;
-    let mut blocks_updated = 0usize;
-    let mut changed_paths = Vec::new();
-
-    for spec in &specs {
-        let report = run_apply_scoped_targets(spec, &cwd, dry_run, &scope.source_roots)
-            .map_err(|e| anyhow::anyhow!("regeneration failed for {}: {}", spec.display(), e))?;
-        updated_files += report.files.iter().filter(|f| f.updated).count();
-        created_files += report.files_created();
-        blocks_updated += report.total_blocks_updated();
-        if !dry_run {
-            changed_paths.extend(
-                report
-                    .files
-                    .iter()
-                    .filter(|file| file.updated || file.created)
-                    .map(|file| cwd.join(&file.path)),
-            );
-        }
-        if dry_run {
-            println!(
-                "(dry-run) {}: {} block(s) would be updated",
-                spec.display(),
-                report.total_blocks_updated()
-            );
-        } else {
-            println!(
-                "Regenerated {}: {} file(s) updated ({} created, {} CODEGEN blocks)",
-                spec.display(),
-                report.files.len(),
-                report.files_created(),
-                report.total_blocks_updated(),
-            );
-        }
-    }
+    // Keep the public mutating path on the same TD-first runner used by
+    // replay and cold verification. In particular this applies source
+    // changes first, then replaces project_root_llms targets with their
+    // deterministic project-context document instead of leaving the generic
+    // marker fallback behind.
+    // @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+    let (updated_files, created_files, blocks_updated, mut changed_paths) =
+        run_force_regen_specs(&cwd, &scope, &specs, dry_run, false)?;
     if !dry_run {
         changed_paths.extend(public_api_update_paths);
         changed_paths.sort();
@@ -1107,13 +1077,33 @@ fn run_force_regen_specs(
             run_apply_scoped_targets(&spec_path, root, dry_run, &scope.source_roots)
         }
         .map_err(|e| anyhow::anyhow!("regeneration failed for {}: {}", spec_path.display(), e))?;
+        let source_file_count = report.files.len();
+        let source_created = report.files_created();
+        let source_blocks = report.total_blocks_updated();
         updated_files += report.files.iter().filter(|f| f.updated).count();
-        created_files += report.files_created();
-        blocks_updated += report.total_blocks_updated();
+        created_files += source_created;
+        blocks_updated += source_blocks;
         let (llms_updated, llms_created, llms_paths) =
-            write_project_root_llms_targets(root, root, &[spec_path], dry_run)?;
+            write_project_root_llms_targets(root, root, std::slice::from_ref(&spec_path), dry_run)?;
         updated_files += llms_updated;
         created_files += llms_created;
+        if !quiet {
+            if dry_run {
+                println!(
+                    "(dry-run) {}: {} block(s) would be updated",
+                    spec_path.display(),
+                    source_blocks,
+                );
+            } else {
+                println!(
+                    "Regenerated {}: {} file(s) updated ({} created, {} CODEGEN blocks)",
+                    spec_path.display(),
+                    source_file_count + llms_updated + llms_created,
+                    source_created + llms_created,
+                    source_blocks,
+                );
+            }
+        }
         if !dry_run {
             changed_paths.extend(
                 report
@@ -3137,13 +3127,13 @@ mod tests {
         extract_spec_managed_ref, extract_spec_managed_refs, fillback_dispatch_next,
         fillback_hitl_next, format_rust_files, has_handwrite_ownership_marker,
         is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
-        run_force_regen_specs, sample_count, sample_semantic_review_units,
+        run_force_regen, run_force_regen_specs, sample_count, sample_semantic_review_units,
         spec_declares_source_section, td_public_symbol_semantic_coverage,
         upsert_public_api_overview, upsert_public_api_overview_targets,
         verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
-        CbCommand, CbGenArgs, ClaimIssueRef, ForceRegenConformanceReport, ForceRegenScope,
-        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
-        SemanticReviewUnit,
+        CbCommand, CbGenArgs, ClaimIssueRef, CwdGuard, ForceRegenConformanceReport,
+        ForceRegenScope, PublicApiManifestSymbol, PublicApiManifestTarget,
+        PublicSymbolSemanticCoverage, SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -3920,6 +3910,129 @@ changes:
         assert!(generated.contains("<!-- CODEGEN-BEGIN -->"));
         assert!(generated.contains("## Tech Design"));
         assert!(generated.contains("`cargo test -p tool`"));
+    }
+
+    /// #1591: the public force-regeneration path must finish with the same
+    /// TD-first project context emitter as replay/cold verification. The
+    /// generic source fallback may run first, but it can never survive the
+    /// command or widen into a HANDWRITE sibling.
+    #[test]
+    fn cb_gen_force_regen_public_path_emits_td_first_project_root_llms() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        std::fs::write(
+            root.join("aw.toml"),
+            r#"
+[[projects]]
+name = "tool"
+path = "apps/tool"
+td_path = "apps/tool/tech-design"
+cap_path = "apps/tool/README.md"
+label = "app:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["apps/tool/**"]
+target = "rust"
+test_cmd = "cargo test -p tool"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("apps/tool/src")).unwrap();
+        std::fs::create_dir_all(root.join("apps/tool/tech-design/semantic")).unwrap();
+        std::fs::write(
+            root.join("apps/tool/Cargo.toml"),
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("apps/tool/README.md"), "# Tool\n").unwrap();
+        let manual = "pub fn authored() { println!(\"keep spacing\"); }\n";
+        std::fs::write(root.join("apps/tool/src/manual.rs"), manual).unwrap();
+        let spec_rel = "apps/tool/tech-design/semantic/tool-apps-tool.md";
+        std::fs::write(
+            root.join(spec_rel),
+            r#"---
+id: tool-apps-tool
+fill_sections: [schema, changes]
+---
+
+# Tool semantic domain
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+semantic_domain:
+  evidence:
+    source_units:
+      - path: apps/tool/llms.txt
+        generator_primitives: [project_root_llms]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tool/llms.txt
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: apps/tool/src/manual.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+```
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("apps/tool/llms.txt"),
+            format!(
+                "<!-- SPEC-MANAGED: {spec_rel}#schema -->\n<!-- CODEGEN-BEGIN -->\nTODO: generic project context placeholder\n<!-- CODEGEN-END -->\n"
+            ),
+        )
+        .unwrap();
+        for args in [&["add", "."][..], &["commit", "-q", "-m", "fixture"][..]] {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+
+        {
+            let _cwd = CwdGuard::enter(root).unwrap();
+            run_force_regen(false, "tool", None, false).unwrap();
+        }
+
+        let generated = std::fs::read_to_string(root.join("apps/tool/llms.txt")).unwrap();
+        assert_eq!(generated.matches("<!-- CODEGEN-BEGIN -->").count(), 1);
+        assert_eq!(generated.matches("<!-- CODEGEN-END -->").count(), 1);
+        assert!(generated.contains("# tool Agent Context"), "{generated}");
+        assert!(generated.contains("## Tech Design"), "{generated}");
+        assert!(generated.contains("## Capability Map"), "{generated}");
+        assert!(
+            generated.find("## Tech Design") < generated.find("## Capability Map"),
+            "{generated}",
+        );
+        assert!(!generated.contains("TODO"), "{generated}");
+        assert_eq!(
+            std::fs::read_to_string(root.join("apps/tool/src/manual.rs")).unwrap(),
+            manual,
+        );
+        assert!(git_stdout(root, &["status", "--porcelain"]).is_empty());
+        assert!(git_stdout(root, &["log", "-1", "--pretty=%B"])
+            .contains("Lifecycle-Stage: Cb-Force-Regen"));
     }
 
     #[test]
