@@ -58,20 +58,11 @@ changes:
     action: modify
     section: logic
     impl_mode: codegen
-  - path: apps/agentic-workflow/src/cli/td.rs
-    action: modify
-    section: logic
-    impl_mode: codegen
   - path: apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md
     action: modify
     section: unit-test
     impl_mode: codegen
-  - path: apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs
-    action: modify
-    section: unit-test
-    impl_mode: codegen
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
