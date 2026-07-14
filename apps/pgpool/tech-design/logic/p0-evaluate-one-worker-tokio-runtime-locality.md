@@ -44,7 +44,6 @@ flowchart LR
 
 - Any failed service behavior or first valid clean 30-second comparison that loses to PgBouncer reverts the runtime-worker change immediately.
 - Meter output may diagnose worker lock contention but cannot decide candidate retention.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
