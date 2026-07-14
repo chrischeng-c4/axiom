@@ -63,7 +63,6 @@ changes:
     section: pgpool-lease-owned-capacity
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
