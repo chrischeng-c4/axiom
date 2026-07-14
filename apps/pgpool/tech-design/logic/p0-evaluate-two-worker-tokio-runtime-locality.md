@@ -55,7 +55,6 @@ changes:
     impl_mode: hand-written
     reason: Configure exactly two workers on the existing Tokio multi-thread runtime while leaving all service and pool semantics intact.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
