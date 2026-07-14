@@ -82,8 +82,8 @@ runner will print and retain its otherwise-temporary logs and configuration.
 
 ## Meter diagnostic
 
-To attribute pgpool CPU time before making a performance change, build meter
-and ask the runner to use it for the pgpool leg only:
+To attribute either pooler's CPU time before making a performance change, build
+meter and select the sampled target. The default is pgpool:
 
 ```bash
 cargo build -p meter-cli --bin meter
@@ -91,14 +91,22 @@ apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
   --meter-bin target/debug/meter
 ```
 
-Meter starts the pgpool process and uses its opaque driver to run one matching
-64-client simple-protocol pgbench leg. The runner automatically retains the
-temporary directory it prints on exit; it contains `meter-report.json`,
+To source-attribute PgBouncer's event-loop path with the same workload, use:
+
+```bash
+apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
+  --meter-bin target/debug/meter \
+  --meter-target pgbouncer
+```
+
+Meter starts only the selected process and uses its opaque driver to run one
+matching 64-client simple-protocol pgbench leg. The runner automatically retains
+the temporary directory it prints on exit; it contains `meter-report.json`,
 `meter.log`, `.meter/last-report.json`, and `.meter/*.collapsed` stack data.
 
-Sampling changes the pgpool leg's resource profile, so its comparison JSON adds
-`diagnostics.meter_sampled_pgpool: true` and
-`diagnostics.comparison_valid: false`. It does not run the counterbalanced
-peer pairs. Treat this run as hotspot evidence only; run the ordinary unsampled
+Sampling changes the selected leg's resource profile, so its comparison JSON
+adds `diagnostics.meter_sampled_target` and
+`diagnostics.comparison_valid: false`. It does not run the counterbalanced peer
+pairs. Treat this run as hotspot evidence only; run the ordinary unsampled
 command again to establish competitor-performance evidence.
 <!-- HANDWRITE-END -->

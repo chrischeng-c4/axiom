@@ -57,6 +57,29 @@ fn dry_run_profile_stays_immutable_when_meter_is_requested() {
 }
 
 #[test]
+fn dry_run_profile_stays_immutable_when_pgbouncer_is_the_meter_target() {
+    let ordinary = dry_run_profile();
+    let output = command(&[
+        "--dry-run",
+        "--meter-bin",
+        "/definitely/not/a/meter-binary",
+        "--meter-target",
+        "pgbouncer",
+    ]);
+    assert!(
+        output.status.success(),
+        "PgBouncer meter dry run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let with_meter: Value =
+        serde_json::from_slice(&output.stdout).expect("meter dry run should emit JSON");
+    assert_eq!(
+        with_meter, ordinary,
+        "meter target must not mutate the fixed profile"
+    );
+}
+
+#[test]
 fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
     let profile = dry_run_profile();
 
@@ -162,6 +185,17 @@ fn pgbouncer_config_forces_discard_all_on_every_transaction_release() {
         RUNNER_SOURCE.contains("server_reset_query_always = 1"),
         "PgBouncer must run its configured reset query on every transaction-pool return"
     );
+}
+
+#[test]
+fn meter_can_sample_either_pooler_but_never_changes_peer_verdict_rules() {
+    assert!(RUNNER_SOURCE.contains("--meter-target pgpool|pgbouncer"));
+    assert!(RUNNER_SOURCE.contains("run_pgpool_meter_diagnostic"));
+    assert!(RUNNER_SOURCE.contains("run_pgbouncer_meter_diagnostic"));
+    assert!(RUNNER_SOURCE.contains("meter_sampled_target"));
+    assert!(RUNNER_SOURCE.contains("winner_by_tps\":\"diagnostic-only"));
+    assert!(RUNNER_SOURCE.contains("comparison_valid\":false"));
+    assert!(RUNNER_SOURCE.contains("pgpool_win_eligible\":false"));
 }
 
 #[test]
