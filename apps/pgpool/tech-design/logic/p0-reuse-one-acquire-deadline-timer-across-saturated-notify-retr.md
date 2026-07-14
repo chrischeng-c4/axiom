@@ -73,36 +73,36 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-reused-acquire-deadline-timer-verification
+id: pgpool-reused-acquire-deadline-timer-contract-verification
 requirements:
-  capacity_safety:
-    id: R2
-    text: "A returned backend remains reusable by a waiting transaction while physical capacity, reset isolation, and cancellation cleanup remain exact."
-    kind: integration
-    risk: high
-    verify: cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay
-  meter_diagnosis:
+  diagnostic:
     id: R3
-    text: "Meter attributes less scheduler work to retry Sleep reset/drop after timer reuse; sampled TPS is not peer proof."
+    text: "Meter treats retry Sleep reset/drop reduction as diagnosis only; no sampled TPS result decides retention."
     kind: integration
     risk: medium
     verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --meter-bin target/debug/meter
-  peer_gate:
-    id: R4
-    text: "Only three clean unchanged unsampled release comparisons matching or exceeding PgBouncer retain the candidate; the first valid loss fully reverts it."
-    kind: e2e
-    risk: high
-    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
-  reused_deadline:
+  fixed_deadline:
     id: R1
-    text: "Repeated saturated Notify wakeups recheck pool state against one fixed acquisition deadline and do not extend the existing timeout."
+    text: "Wakeups before capacity is available recheck with one fixed deadline, and deadline expiry still returns the configured saturation error without extending wait time."
     kind: regression
     risk: high
     verify: pool::saturated_waiter_keeps_deadline_across_spurious_wakeups
+  peer_proof:
+    id: R4
+    text: "Three unchanged clean unsampled release comparisons must match or exceed PgBouncer; the first valid loss reverts the candidate."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
+  transaction_safety:
+    id: R2
+    text: "Contended transaction clients preserve DISCARD ALL isolation and the physical backend cap while acquisition retries reuse one deadline timer."
+    kind: integration
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay
 ---
 flowchart TD
-    r1[R1 reused deadline] --> pool_saturated_waiter_keeps_deadline_across_spurious_wakeups[pool::saturated_waiter_keeps_deadline_across_spurious_wakeups]
-    r2[R2 capacity safety] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay]
-    r3[R3 meter diagnosis] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_meter_bin_target_debug_meter[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --meter-bin target/debug/meter]
-    r4[R4 peer gate] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
+    r1[R1 fixed deadline] --> pool_saturated_waiter_keeps_deadline_across_spurious_wakeups[pool::saturated_waiter_keeps_deadline_across_spurious_wakeups]
+    r2[R2 transaction safety] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay]
+    r3[R3 diagnostic] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_meter_bin_target_debug_meter[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --meter-bin target/debug/meter]
+    r4[R4 peer proof] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
 ```
