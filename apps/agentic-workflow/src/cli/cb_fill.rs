@@ -113,12 +113,12 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
     }
 }
 
-// Walk the worktree source tree (under `crates/`, `projects/`, `src/`,
-// `tests/`) and return every open HANDWRITE block.
+// Walk the worktree source tree (under `apps/`, `libs/`, `crates/`,
+// `projects/`, `src/`, `tests/`) and return every open HANDWRITE block.
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
 pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> {
     let mut out: Vec<HandwriteMarkerEntry> = Vec::new();
-    let candidate_subdirs = ["crates", "projects", "src", "tests"];
+    let candidate_subdirs = ["apps", "libs", "crates", "projects", "src", "tests"];
 
     let mut roots: Vec<PathBuf> = Vec::new();
     for sub in candidate_subdirs {
@@ -447,15 +447,13 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
         std::process::exit(2);
     }
 
-    let all_markers = enumerate_worktree_markers(&worktree_abs);
-
     // Look up the spec_path from the explicit CLI arg, issue frontmatter, or
     // the unique TD spec touched by this branch. If none is available, preserve
     // the legacy all-marker behavior.
     let backend = LocalBackend::from_project_root(&worktree_abs);
     let issue = backend.get(&slug).await.ok().flatten();
     let spec_path = resolve_active_spec_path(&args, issue.as_ref(), &worktree_abs);
-    let markers = match spec_path.as_deref().filter(|p| !p.is_empty()) {
+    let (markers, change_paths) = match spec_path.as_deref().filter(|p| !p.is_empty()) {
         Some(path) => {
             let spec_abs = worktree_abs.join(path);
             let spec_content = match std::fs::read_to_string(&spec_abs) {
@@ -469,13 +467,55 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
                 }
             };
             let change_paths = extract_change_paths_from_spec(&spec_content);
-            scope_markers_for_change_paths(&all_markers, Some(&change_paths))
+            (
+                markers_for_td_changes(&worktree_abs, Some(&change_paths)),
+                Some(change_paths),
+            )
         }
-        None => scope_markers_for_change_paths(&all_markers, None),
+        None => (markers_for_td_changes(&worktree_abs, None), None),
     };
     let spec_path = spec_path.unwrap_or_default();
 
     if markers.is_empty() {
+        // A TD may legitimately generate no HANDWRITE blocks, or a caller may
+        // re-enter after the blocks were already filled but before the phase
+        // transition was recorded. Verify the scoped marker gate and record
+        // the normal post-fill phase rather than stranding the WI at
+        // `cb_genned` with no legal `--apply --marker` command.
+        if issue.as_ref().is_some_and(|issue| {
+            issue
+                .phase
+                .as_deref()
+                .is_some_and(crate::issues::types::td_phase::is_post_gen)
+        }) {
+            let scope = change_paths.as_deref().unwrap_or_default();
+            if let Err(message) = run_cb_check_gate_scoped(&worktree_abs, scope).await {
+                emit_error(
+                    &slug,
+                    &format!("cannot reconcile filled markers: {message}"),
+                )?;
+                std::process::exit(1);
+            }
+            let issue = issue
+                .as_ref()
+                .expect("post-gen phase requires an issue projection");
+            backend
+                .update(
+                    &slug,
+                    &IssuePatch {
+                        phase: Some(crate::issues::types::td_phase::CB_FILLED.to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            let issue_path = backend.issue_path(issue);
+            let issue_path_s = issue_path.to_string_lossy().into_owned();
+            if let Err(error) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
+                emit_error(&slug, &format!("git commit failed: {error}"))?;
+                std::process::exit(1);
+            }
+            crate::cli::workflow_guard::complete_issue_lock(&worktree_abs, &slug, "td").await?;
+        }
         // 0-marker fast-path: dispatch directly to terminal code-check.
         let env = serde_json::json!({
             "action": "dispatch",
@@ -688,6 +728,20 @@ pub fn scope_markers_for_change_paths(
     match change_paths {
         Some(paths) => filter_markers_to_change_paths(markers, paths),
         None => markers.to_vec(),
+    }
+}
+
+/// Select unfilled markers for a resolved TD Changes plan. Canonical TDs use
+/// monorepo paths such as `apps/tape/src/push.rs`; enumerate those paths
+/// directly instead of first walking the legacy root shortlist and filtering
+/// its result. This keeps app/lib targets both discoverable and bounded.
+fn markers_for_td_changes(
+    worktree: &Path,
+    change_paths: Option<&[String]>,
+) -> Vec<HandwriteMarkerEntry> {
+    match change_paths {
+        Some(paths) => enumerate_markers_for_scope(worktree, paths),
+        None => enumerate_worktree_markers(worktree),
     }
 }
 
@@ -1432,6 +1486,53 @@ mod tests {
         for file in files {
             assert!(paths.contains(file), "missing marker for {file}");
         }
+    }
+
+    #[test]
+    fn canonical_td_changes_path_queues_app_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("apps/tape/src/push.rs");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(
+            &source,
+            format!(
+                "{}\n// TODO: hand-write content for `apps/tape/src/push.rs`.\n{}\n",
+                handwrite_begin("gap=\"missing-generator:push\" reason=\"push worker\""),
+                handwrite_end(),
+            ),
+        )
+        .unwrap();
+
+        let changes = vec!["apps/tape/src/push.rs".to_string()];
+        let markers = markers_for_td_changes(tmp.path(), Some(&changes));
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].source_path, "apps/tape/src/push.rs");
+        assert_eq!(markers[0].id, "missing-generator:push");
+    }
+
+    #[test]
+    fn whole_worktree_walk_includes_apps_and_libs() {
+        let tmp = tempfile::tempdir().unwrap();
+        for path in ["apps/tape/src/push.rs", "libs/tape-core/src/lib.rs"] {
+            let source = tmp.path().join(path);
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(
+                source,
+                format!(
+                    "{}\n// TODO: hand-write content for `{path}`.\n{}\n",
+                    handwrite_begin("gap=\"missing-generator:scope\" reason=\"scope walk\""),
+                    handwrite_end(),
+                ),
+            )
+            .unwrap();
+        }
+
+        let paths: HashSet<String> = enumerate_worktree_markers(tmp.path())
+            .into_iter()
+            .map(|marker| marker.source_path)
+            .collect();
+        assert!(paths.contains("apps/tape/src/push.rs"));
+        assert!(paths.contains("libs/tape-core/src/lib.rs"));
     }
 
     #[test]
