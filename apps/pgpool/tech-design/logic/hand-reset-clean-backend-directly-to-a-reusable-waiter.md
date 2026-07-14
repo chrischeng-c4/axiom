@@ -104,19 +104,18 @@ changes:
     action: modify
     section: pgpool-reset-clean-direct-handoff
     impl_mode: hand-written
-    reason: Register reusable-only waiters and transfer a reset-clean stream/permit directly without changing fresh admission or generic Notify fallback.
+    reason: Directly deliver a reset-clean BackendLease to a live reusable waiter with cancellation-safe fallback to the existing idle/Notify path.
   - path: apps/pgpool/tests/pool.rs
     action: modify
     section: pgpool-reset-clean-direct-handoff
     impl_mode: hand-written
-    reason: Prove direct stream handoff skips idle re-acquisition and remains capacity/cancellation safe.
+    reason: Exercise direct handoff ownership and closed-waiter recovery with real local fake backend sockets.
   - path: apps/pgpool/tests/pool_modes.rs
     action: modify
     section: pgpool-reset-clean-direct-handoff
     impl_mode: hand-written
-    reason: Pin transaction reset isolation and backend-count stability while a reusable waiter receives a reset-clean connection.
+    reason: Verify reset isolation and stable capacity across direct transaction handoff.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
