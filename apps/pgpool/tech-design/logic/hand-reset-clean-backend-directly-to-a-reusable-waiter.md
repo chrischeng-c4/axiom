@@ -123,41 +123,41 @@ changes:
 ---
 id: pgpool-reset-clean-direct-handoff-verification
 requirements:
-  closed_waiter_recovery:
+  closed_receiver:
     id: R2
-    text: "A cancelled or closed direct waiter cannot leak the stream or permit; a next live waiter receives it and pool accounting remains bounded."
+    text: "A cancelled receiver returns its unsent lease to the next live waiter or idle state without a permit leak."
     kind: regression
     risk: high
     verify: pool::cancelled_direct_handoff_waiter_passes_backend_to_next_waiter
-  direct_stream_transfer:
+  exact_direct_lease:
     id: R1
-    text: "A reusable acquisition already waiting at saturation receives the exact reset-clean backend directly rather than re-acquiring it from idle."
+    text: "A waiting reusable acquire receives the just-reset stream and permit as a BackendLease without the idle liveness round trip."
     kind: regression
     risk: high
     verify: pool::reset_clean_backend_hands_directly_to_waiting_reusable_acquire
-  existing_paths:
+  legacy_paths:
     id: R4
-    text: "Fresh-only startup, replay publication, saturation deadline, and session mode retain their existing contracts."
+    text: "Fresh startup/session and replay publication retain existing timeout and capacity contracts."
     kind: integration
     risk: high
     verify: cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay
-  peer_comparison:
-    id: R5
-    text: "The unchanged 64-client/16-backend/simple/30-second peer comparison has no errors; a first valid loss is immediately reverted as a no-go."
-    kind: integration
-    risk: high
-    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
-  reset_isolation:
+  transaction_semantics:
     id: R3
-    text: "Transaction state is reset before the next owner observes a direct handoff and repeated transaction reuse holds backend count stable."
+    text: "Direct handoff occurs only after DISCARD ALL and keeps transaction state isolated with stable backend count."
     kind: integration
     risk: high
     verify: pool_modes::transaction_mode_direct_handoff_preserves_reset_isolation_and_capacity
+  unchanged_benchmark:
+    id: R5
+    text: "The fixed peer benchmark remains the sole success measure; meter is diagnostic only and a first valid loss reverts production code."
+    kind: integration
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
 ---
 flowchart TD
-    r1[R1 direct stream transfer] --> pool_reset_clean_backend_hands_directly_to_waiting_reusable_acquire[pool::reset_clean_backend_hands_directly_to_waiting_reusable_acquire]
-    r2[R2 closed waiter recovery] --> pool_cancelled_direct_handoff_waiter_passes_backend_to_next_waiter[pool::cancelled_direct_handoff_waiter_passes_backend_to_next_waiter]
-    r3[R3 reset isolation] --> pool_modes_transaction_mode_direct_handoff_preserves_reset_isolation_and_capacity[pool_modes::transaction_mode_direct_handoff_preserves_reset_isolation_and_capacity]
-    r4[R4 existing paths] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay]
-    r5[R5 peer comparison] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
+    r1[R1 exact direct lease] --> pool_reset_clean_backend_hands_directly_to_waiting_reusable_acquire[pool::reset_clean_backend_hands_directly_to_waiting_reusable_acquire]
+    r2[R2 closed receiver] --> pool_cancelled_direct_handoff_waiter_passes_backend_to_next_waiter[pool::cancelled_direct_handoff_waiter_passes_backend_to_next_waiter]
+    r3[R3 transaction semantics] --> pool_modes_transaction_mode_direct_handoff_preserves_reset_isolation_and_capacity[pool_modes::transaction_mode_direct_handoff_preserves_reset_isolation_and_capacity]
+    r4[R4 legacy paths] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay]
+    r5[R5 unchanged benchmark] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
 ```
