@@ -12,6 +12,7 @@ use crate::browser::context::BrowserContext;
 use crate::browser::page::Page;
 use crate::browser::{Browser, LaunchOptions};
 use crate::cdp_driver::{dispatch_page_request, parse_page_request, write_page_response};
+use crate::resolver::{is_node_builtin_specifier, ModuleResolver, ResolveOptions};
 use crate::test_runner::config::{LiveE2eConfig, RunnerConfig};
 use crate::test_runner::discovery::SpecFile;
 use crate::test_runner::reporter::{
@@ -43,6 +44,41 @@ const PAGE_SHIM: &str = include_str!("../../data/runtime/test/page.js");
 
 /// Matchers shim — polling Locator/Page matchers module imported by index.mjs.
 const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
+
+/// Node 18-compatible ESM loader used only by the native test worker.
+///
+/// Production builds route assets through Jet's bundler. Test workers instead
+/// execute source and installed packages directly under Node, so a package
+/// barrel such as `export { default as logo } from "./logo.svg"` would
+/// otherwise fail before a test can run. Stubbing the default export to the
+/// source file URL keeps unit tests deterministic without pretending to build
+/// an emitted production asset.
+const TEST_ASSET_LOADER: &str = r#"
+const ASSET_EXTENSIONS = new Set([
+  ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
+  ".woff", ".woff2", ".ttf", ".otf",
+]);
+
+function isTestAssetUrl(url) {
+  return url.startsWith("file:")
+    && [...ASSET_EXTENSIONS].some((extension) => new URL(url).pathname.toLowerCase().endsWith(extension));
+}
+
+export async function load(url, context, nextLoad) {
+  if (isTestAssetUrl(url)) {
+    return {
+      format: "module",
+      shortCircuit: true,
+      source: `export default ${JSON.stringify(url)};`,
+    };
+  }
+  return nextLoad(url, context);
+}
+"#;
+
+const TEST_ASSET_EXTENSIONS: &[&str] = &[
+    "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp", "woff", "woff2", "ttf", "otf",
+];
 
 /// Run a single spec file to completion. Returns a partial Summary for this
 /// file (aggregation happens in `test_runner::run`).
@@ -97,6 +133,9 @@ pub async fn run_spec(
     std::fs::write(shim_dir.join("page.js"), PAGE_SHIM)?;
     // Write matchers.js shim so index.mjs's "./matchers.js" import resolves.
     std::fs::write(shim_dir.join("matchers.js"), MATCHERS_SHIM)?;
+    let asset_loader_path = tmp.path().join("__jet_asset_loader.mjs");
+    std::fs::write(&asset_loader_path, TEST_ASSET_LOADER)
+        .context("Failed to write test asset loader")?;
 
     // P4.5 Playwright compat shim — tests that haven't migrated yet import
     // from "@playwright/test". This shim re-exports every public symbol
@@ -129,7 +168,8 @@ export default __jet;
             .canonicalize()
             .with_context(|| format!("canonicalizing CommonJS spec {}", spec.path.display()))?
     } else {
-        let mut emitter = TempModuleGraphEmitter::new(&modules_dir);
+        let mut emitter = TempModuleGraphEmitter::new(&modules_dir)
+            .context("Failed to create Node test module resolver")?;
         emitter
             .emit(
                 &spec.path,
@@ -144,6 +184,12 @@ export default __jet;
     //    for DOM-integrated matcher RPC calls (Phase 3) and PageResponse
     //    messages for page action RPCs (Phase 5).
     let mut child = Command::new("node")
+        // The ESM loader API is available on Node 18+, Jet's documented
+        // minimum. It intercepts raw image/font modules inside installed
+        // packages as well as source modules without changing production
+        // bundle behavior.
+        .arg("--experimental-loader")
+        .arg(&asset_loader_path)
         .arg(&boot_path)
         .current_dir(&config.project_root)
         .stdin(Stdio::piped())
@@ -2275,17 +2321,19 @@ fn is_require_call(source: &str, node: &tree_sitter::Node<'_>) -> bool {
 
 struct TempModuleGraphEmitter<'a> {
     out_dir: &'a Path,
+    package_resolver: ModuleResolver,
     outputs: HashMap<PathBuf, PathBuf>,
     next_id: usize,
 }
 
 impl<'a> TempModuleGraphEmitter<'a> {
-    fn new(out_dir: &'a Path) -> Self {
-        Self {
+    fn new(out_dir: &'a Path) -> Result<Self> {
+        Ok(Self {
             out_dir,
+            package_resolver: ModuleResolver::new(ResolveOptions::for_node_test())?,
             outputs: HashMap::new(),
             next_id: 0,
-        }
+        })
     }
 
     fn emit(&mut self, path: &Path, pretransformed: Option<String>) -> Result<PathBuf> {
@@ -2304,7 +2352,7 @@ impl<'a> TempModuleGraphEmitter<'a> {
             Some(source) => source,
             None => transform_spec(path)?,
         };
-        let rewritten = rewrite_relative_test_imports(&transformed, path, self)
+        let rewritten = rewrite_test_module_imports(&transformed, path, self)
             .with_context(|| format!("rewriting relative imports in {}", path.display()))?;
 
         if let Some(parent) = out_path.parent() {
@@ -2331,7 +2379,7 @@ fn temp_module_file_name(path: &Path, id: usize) -> String {
     format!("{id:04}-{safe}.mjs")
 }
 
-fn rewrite_relative_test_imports(
+fn rewrite_test_module_imports(
     source: &str,
     source_path: &Path,
     emitter: &mut TempModuleGraphEmitter<'_>,
@@ -2352,21 +2400,23 @@ fn rewrite_relative_test_imports(
     for (start, end) in module_specifier_ranges {
         let raw = &source[start..end];
         let spec = strip_module_quotes(raw);
-        if !is_relative_or_absolute_specifier(&spec) {
-            continue;
-        }
-        let Some(target) = resolve_test_relative_module(source_path, &spec)? else {
+        let Some(target) = resolve_test_module_specifier(source_path, &spec, emitter)? else {
             continue;
         };
         // Do not relocate CommonJS modules. Node resolves require() relative
         // to the physical module path, and an emitted .mjs/.cjs copy loses
         // that package boundary and its original relative dependencies.
-        let target_out = if test_module_kind(&target)? == TestModuleKind::CommonJs {
+        let target_out = if target.preserve_node_location || is_test_asset_module(&target.path) {
             target
+                .path
                 .canonicalize()
-                .with_context(|| format!("canonicalizing CommonJS module {}", target.display()))?
+                .with_context(|| format!("canonicalizing test module {}", target.path.display()))?
+        } else if test_module_kind(&target.path)? == TestModuleKind::CommonJs {
+            target.path.canonicalize().with_context(|| {
+                format!("canonicalizing CommonJS module {}", target.path.display())
+            })?
         } else {
-            emitter.emit(&target, None)?
+            emitter.emit(&target.path, None)?
         };
         let rewritten = serde_json::to_string(&path_to_file_url(&target_out))
             .expect("file URL string serializes");
@@ -2387,6 +2437,64 @@ fn rewrite_relative_test_imports(
     }
     out.push_str(&source[last..]);
     Ok(out)
+}
+
+/// Resolve an import from an original source path before it is moved into the
+/// temporary ESM graph. Relative JS/TS modules retain the existing emitter
+/// behavior. Bare package specifiers use Jet's resolver so legacy CJS deep
+/// imports gain extension probing (for example `lodash/camelCase` →
+/// `lodash/camelCase.js`) before Node's strict ESM loader sees them.
+struct ResolvedTestModuleTarget {
+    path: PathBuf,
+    /// Bare packages must keep their physical location: their own relative
+    /// imports, package boundary, and nested node_modules lookup are all part
+    /// of their runtime contract. Source modules are emitted into the temp
+    /// graph because they need TypeScript stripping first.
+    preserve_node_location: bool,
+}
+
+fn resolve_test_module_specifier(
+    source_path: &Path,
+    specifier: &str,
+    emitter: &TempModuleGraphEmitter<'_>,
+) -> Result<Option<ResolvedTestModuleTarget>> {
+    if is_relative_or_absolute_specifier(specifier) {
+        return Ok(
+            resolve_test_relative_module(source_path, specifier)?.map(|path| {
+                ResolvedTestModuleTarget {
+                    path,
+                    preserve_node_location: false,
+                }
+            }),
+        );
+    }
+
+    // These package names are worker-owned virtual shims that intentionally
+    // resolve from the generated temp graph, not project node_modules.
+    if matches!(specifier, "@jet/test" | "@playwright/test")
+        || specifier.starts_with("node:")
+        || specifier.starts_with('#')
+        || specifier.contains(':')
+        || is_node_builtin_specifier(specifier)
+    {
+        return Ok(None);
+    }
+
+    // Leave native Node builtins and genuinely unresolved packages to Node:
+    // resolving only successful package lookups prevents an error path from
+    // changing its reported specifier or accidentally replacing a builtin.
+    let Ok(resolved) = emitter.package_resolver.resolve(specifier, source_path) else {
+        return Ok(None);
+    };
+    if resolved.is_external
+        || (!is_test_source_module(&resolved.path) && !is_test_asset_module(&resolved.path))
+    {
+        return Ok(None);
+    }
+    Ok(Some(ResolvedTestModuleTarget {
+        path: resolved.path,
+        preserve_node_location: true,
+    }))
 }
 
 /// Collect static import/export module strings and literal dynamic imports at
@@ -2470,11 +2578,13 @@ fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBu
     };
 
     if base.is_file() {
-        return Ok(if is_test_source_module(&base) {
-            Some(base)
-        } else {
-            None
-        });
+        return Ok(
+            if is_test_source_module(&base) || is_test_asset_module(&base) {
+                Some(base)
+            } else {
+                None
+            },
+        );
     }
 
     if matches!(
@@ -2512,6 +2622,13 @@ fn is_test_source_module(path: &Path) -> bool {
         path.extension().and_then(|e| e.to_str()),
         Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")
     )
+}
+
+fn is_test_asset_module(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .is_some_and(|extension| TEST_ASSET_EXTENSIONS.contains(&extension.as_str()))
 }
 
 fn normalize_jet_test_virtual_imports(source: String) -> String {
@@ -2671,7 +2788,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.path().join("out");
-        let mut emitter = TempModuleGraphEmitter::new(&out_dir);
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir).unwrap();
         let emitted = emitter
             .emit(
                 &spec,
@@ -2707,6 +2824,56 @@ mod tests {
             WORKER_RUNTIME.contains("fn: makeJestMock"),
             "jest.fn must provide a real mock implementation"
         );
+    }
+
+    #[test]
+    fn emitter_rewrites_legacy_bare_package_subpaths() {
+        let tmp = TempDir::new().unwrap();
+        let package_dir = tmp.path().join("node_modules").join("legacy-package");
+        let spec = tmp.path().join("legacy-package.test.ts");
+        std::fs::create_dir_all(&package_dir).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"legacy-package","main":"./index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package_dir.join("deep-entry.js"),
+            "export const value = 42;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &spec,
+            "import { value } from 'legacy-package/deep-entry';\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir).unwrap();
+        let emitted = emitter
+            .emit(
+                &spec,
+                Some("import { value } from 'legacy-package/deep-entry';\n".to_string()),
+            )
+            .unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("file://") && code.contains("deep-entry.js"),
+            "legacy package subpath must resolve to its real extensioned file: {code}"
+        );
+        assert!(
+            !code.contains("'legacy-package/deep-entry'"),
+            "strict Node ESM must not receive the unresolved extensionless specifier: {code}"
+        );
+    }
+
+    #[test]
+    fn test_asset_extensions_are_rewritten_and_loader_backed() {
+        assert!(is_test_asset_module(Path::new("icon.svg")));
+        assert!(is_test_asset_module(Path::new("avatar.JPEG")));
+        assert!(!is_test_asset_module(Path::new("module.js")));
+        assert!(TEST_ASSET_LOADER.contains("shortCircuit: true"));
+        assert!(TEST_ASSET_LOADER.contains("export default"));
     }
 
     #[test]

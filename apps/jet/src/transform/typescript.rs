@@ -3,7 +3,10 @@
 use anyhow::Result;
 use tree_sitter::{Node, Parser};
 
-use super::type_strip::strip_unused_named_imports;
+use super::type_strip::{
+    has_inline_type_export_specifiers, strip_unused_named_imports,
+    transform_export_with_inline_types,
+};
 use super::{TransformOptions, TransformResult};
 
 /// Transform TypeScript to JavaScript by removing type annotations
@@ -151,10 +154,19 @@ fn visit_node<'a>(
                 }
             }
 
-            // Strip entire export statement if it only exports a type
+            // Inline `type` export specifiers share a named export list with
+            // runtime values, so rewrite that list before considering
+            // all-type export removal.
             "export_statement" => {
-                let has_only_type = child_has_only_type(&child);
-                if has_only_type {
+                if has_inline_type_export_specifiers(&child) {
+                    if *last_pos < child.start_byte() {
+                        result.push_str(&source[*last_pos..child.start_byte()]);
+                    }
+                    if let Some(transformed) = transform_export_with_inline_types(source, &child)? {
+                        result.push_str(&transformed);
+                    }
+                    *last_pos = child.end_byte();
+                } else if child_has_only_type(&child) {
                     if *last_pos < child.start_byte() {
                         result.push_str(&source[*last_pos..child.start_byte()]);
                     }
@@ -693,6 +705,48 @@ export function withTheme(Component) { return Component; }"#;
             result.code.matches("export function withTheme").count(),
             1,
             "must preserve only the implementation export: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_inline_type_export_specifiers_preserve_values_and_remove_empty_lists() {
+        let source = r#"export { RuntimeThing as RuntimeAlias, type TypeOnlyThing as TypeOnlyAlias } from "./values";
+export {
+  AnotherRuntime,
+  type MultiLineOnly,
+} from "./values";
+export { type AllTypeOnly, type AnotherTypeOnly as AnotherTypeAlias } from "./values";
+export const untouched = 1;"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            result
+                .code
+                .contains("export { RuntimeThing as RuntimeAlias } from \"./values\";"),
+            "must preserve mixed value re-export: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("export { AnotherRuntime } from \"./values\";"),
+            "must preserve multiline value re-export: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("TypeOnlyThing")
+                && !result.code.contains("MultiLineOnly")
+                && !result.code.contains("AllTypeOnly")
+                && !result.code.contains("AnotherTypeOnly")
+                && !result.code.contains("export { }"),
+            "must erase every inline type-only specifier: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains("export const untouched = 1"),
+            "must preserve code after an all-type export: {}",
             result.code
         );
     }

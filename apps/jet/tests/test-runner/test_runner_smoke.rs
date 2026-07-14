@@ -573,4 +573,312 @@ test("CommonJS globals and require stay native", () => {
     );
     assert_eq!(summary.passed, 1);
 }
+
+#[tokio::test]
+async fn jest_compatibility_supports_mock_timer_and_expect_extensions() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("actual.cjs"),
+        r#"
+globalThis.__jetRequireActualLoads = (globalThis.__jetRequireActualLoads ?? 0) + 1;
+module.exports = {
+  loads: globalThis.__jetRequireActualLoads,
+  token: "actual",
+};
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("jest-compat-surface.test.ts"),
+        r#"
+import { expect, jest, test } from "@jet/test";
+
+expect.extend({
+  toBeDivisibleBy(received, divisor) {
+    const pass = typeof received === "number" && received % divisor === 0;
+    return {
+      pass,
+      message: () => `expected ${received} to be divisible by ${divisor}`,
+    };
+  },
+});
+
+test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", () => {
+  const subject = { multiply(value) { return value * 2; } };
+  const spy = jest.spyOn(subject, "multiply");
+  expect(subject.multiply(3)).toBe(6);
+  spy.mockReturnValue(9);
+  expect(subject.multiply(3)).toBe(9);
+  expect(jest.mocked(spy)).toBe(spy);
+  jest.restoreAllMocks();
+  expect(subject.multiply(3)).toBe(6);
+  expect(jest.isMockFunction(subject.multiply)).toBeFalsy();
+
+  jest.mock("./actual.cjs", () => ({ token: "mock" }));
+  expect(jest.requireMock("./actual.cjs").token).toBe("mock");
+  const firstActual = jest.requireActual("./actual.cjs");
+  expect(firstActual.token).toBe("actual");
+  jest.resetModules();
+  const secondActual = jest.requireActual("./actual.cjs");
+  expect(secondActual.loads).toBe(firstActual.loads + 1);
+  expect(jest.requireMock("./actual.cjs").token).toBe("mock");
+
+  jest.useFakeTimers();
+  const fired = jest.fn();
+  const interval = setInterval(() => fired("interval"), 5);
+  setTimeout(() => fired("timeout"), 10);
+  expect(jest.getTimerCount()).toBe(2);
+  jest.advanceTimersByTime(5);
+  expect(fired.mock.calls).toHaveLength(1);
+  clearInterval(interval);
+  jest.advanceTimersByTime(5);
+  expect(fired.mock.calls).toHaveLength(2);
+  setTimeout(() => fired("cleared"), 1);
+  jest.clearAllTimers();
+  jest.runAllTimers();
+  expect(fired.mock.calls).toHaveLength(2);
+  jest.useRealTimers();
+
+  expect(12).toBeDivisibleBy(3);
+  expect(12).not.toBeDivisibleBy(5);
+  expect({ label: "jet native runner" }).toEqual({
+    label: expect.stringContaining("native"),
+  });
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "Jest-compatible extensions must execute with real semantics: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_strips_inline_type_exports_from_transitive_barrels() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        src.join("values.ts"),
+        r#"
+export const runtimeValue = 42;
+export type RuntimeValueShape = { value: number };
+export type AllTypeOnly = { label: string };
+"#,
+    )
+    .unwrap();
+    fs::write(
+        src.join("barrel.ts"),
+        r#"
+export {
+  runtimeValue,
+  type RuntimeValueShape,
+} from "./values.ts";
+export { type AllTypeOnly } from "./values.ts";
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("inline-type-export.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { runtimeValue } from "./src/barrel.ts";
+
+test("loads a transitive barrel with inline type exports", () => {
+  expect(runtimeValue).toBe(42);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "transitive inline type exports must not reach Node: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_resolves_extensionless_legacy_package_subpaths_and_indexes() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let node_modules = tmp.path().join("node_modules");
+    let legacy_cjs = node_modules.join("legacy-cjs");
+    let scoped_legacy = node_modules.join("@scope").join("legacy-utils");
+    let partial_exports = node_modules.join("exports-without-subpath");
+    fs::create_dir_all(legacy_cjs.join("nested")).unwrap();
+    fs::create_dir_all(scoped_legacy.join("dist")).unwrap();
+    fs::create_dir_all(&partial_exports).unwrap();
+
+    fs::write(
+        legacy_cjs.join("package.json"),
+        r#"{"name":"legacy-cjs","main":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(legacy_cjs.join("index.js"), "module.exports = {};\n").unwrap();
+    fs::write(
+        legacy_cjs.join("camelCase.js"),
+        "module.exports = value => String(value).replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());\n",
+    )
+    .unwrap();
+    fs::write(
+        legacy_cjs.join("nested/index.js"),
+        "module.exports = \"nested-index\";\n",
+    )
+    .unwrap();
+
+    fs::write(
+        scoped_legacy.join("package.json"),
+        r#"{"name":"@scope/legacy-utils","main":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(
+        scoped_legacy.join("dist/label.js"),
+        "module.exports = \"scoped-deep-import\";\n",
+    )
+    .unwrap();
+
+    fs::write(
+        partial_exports.join("package.json"),
+        r#"{"name":"exports-without-subpath","type":"module","exports":{".":"./index.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        partial_exports.join("index.js"),
+        "export const root = true;\n",
+    )
+    .unwrap();
+    fs::write(
+        partial_exports.join("legacy.js"),
+        "export const legacy = \"unexported-subpath\";\n",
+    )
+    .unwrap();
+
+    fs::write(
+        tmp.path().join("legacy-subpaths.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import camelCase from "legacy-cjs/camelCase";
+import nestedIndex from "legacy-cjs/nested";
+import scopedLabel from "@scope/legacy-utils/dist/label";
+import { legacy } from "exports-without-subpath/legacy";
+import path from "path";
+
+test("resolves legacy files and directory indexes without extensions", () => {
+  expect(camelCase("jet-test")).toBe("jetTest");
+  expect(nestedIndex).toBe("nested-index");
+  expect(scopedLabel).toBe("scoped-deep-import");
+  expect(legacy).toBe("unexported-subpath");
+  expect(path.basename("/tmp/jet")).toBe("jet");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "legacy bare package subpaths and index directories must resolve: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_stubs_static_assets_from_source_and_package_barrels() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let source_assets = tmp.path().join("src");
+    let package_assets = tmp.path().join("node_modules").join("assets-pkg");
+    fs::create_dir_all(&source_assets).unwrap();
+    fs::create_dir_all(package_assets.join("images")).unwrap();
+    fs::write(
+        package_assets.join("package.json"),
+        r#"{"name":"assets-pkg","type":"module","main":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(
+        package_assets.join("index.js"),
+        "export { default as logo } from \"./images/logo.svg\";\nexport { default as avatar } from \"./images/avatar.jpeg\";\n",
+    )
+    .unwrap();
+    fs::write(
+        package_assets.join("images/logo.svg"),
+        r#"<svg viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>"#,
+    )
+    .unwrap();
+    fs::write(package_assets.join("images/avatar.jpeg"), b"jpeg-bytes").unwrap();
+    fs::write(
+        source_assets.join("direct.svg"),
+        r#"<svg viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>"#,
+    )
+    .unwrap();
+
+    fs::write(
+        tmp.path().join("static-assets.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { logo, avatar } from "assets-pkg";
+import directLogo from "./src/direct.svg";
+import packageLogo from "assets-pkg/images/logo.svg";
+
+test("loads raw static assets as deterministic URL strings", () => {
+  expect(typeof logo).toBe("string");
+  expect(typeof avatar).toBe("string");
+  expect(typeof directLogo).toBe("string");
+  expect(typeof packageLogo).toBe("string");
+  expect(logo.endsWith("logo.svg")).toBe(true);
+  expect(avatar.endsWith("avatar.jpeg")).toBe(true);
+  expect(directLogo.endsWith("direct.svg")).toBe(true);
+  expect(packageLogo.endsWith("logo.svg")).toBe(true);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "source assets and installed-package asset barrels must be test-safe: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
 // CODEGEN-END

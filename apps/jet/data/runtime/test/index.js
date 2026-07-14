@@ -69,6 +69,8 @@ __jet.stack.push(__jet.root);
 // types so one __sendRequest implementation serves both.
 
 import { Page, Locator } from "./page.js";
+import { createRequire } from "node:module";
+import { resolve as resolvePath } from "node:path";
 // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R20
 import {
   toHaveTitle,
@@ -636,7 +638,218 @@ function afterEach(fn) {
 describe.each = makeEach(describe);
 
 const __jestMockFunctions = new Set();
+const __jestSpies = new Set();
 const __jestModuleMocks = new Map();
+const __jestRequiredModuleIds = new Set();
+let __jestNodeRequire = null;
+
+// The test worker is native ESM, but Jest's `requireActual` contract is a
+// synchronous CommonJS API. Keep a project/spec-relative require just for
+// that explicit escape hatch. Static ESM imports still belong to Node's ESM
+// graph and deliberately cannot be intercepted or reset from this runtime.
+function __setJestRequireForSpec(file) {
+  const relativeFile =
+    typeof file === "string" && file.length > 0
+      ? file
+      : "__jet_test_runtime__.cjs";
+  __jestNodeRequire = createRequire(resolvePath(process.cwd(), relativeFile));
+}
+
+function __getJestNodeRequire() {
+  if (__jestNodeRequire == null) {
+    __setJestRequireForSpec(null);
+  }
+  return __jestNodeRequire;
+}
+
+function __trackJestRequiredModuleTree(entryId) {
+  const nodeRequire = __getJestNodeRequire();
+  const cache = nodeRequire.cache;
+  if (!cache) {
+    __jestRequiredModuleIds.add(entryId);
+    return;
+  }
+
+  const pending = [entryId];
+  const seen = new Set();
+  while (pending.length > 0) {
+    const moduleId = pending.pop();
+    if (!moduleId || seen.has(moduleId)) continue;
+    seen.add(moduleId);
+    __jestRequiredModuleIds.add(moduleId);
+    const cached = cache[moduleId];
+    for (const child of cached?.children ?? []) {
+      if (child?.id) pending.push(child.id);
+    }
+  }
+}
+
+function __resetJestModuleRegistry() {
+  const cache = __getJestNodeRequire().cache;
+  if (cache) {
+    for (const moduleId of __jestRequiredModuleIds) {
+      delete cache[moduleId];
+    }
+  }
+  __jestRequiredModuleIds.clear();
+}
+
+const __nativeTimers = Object.freeze({
+  setTimeout: globalThis.setTimeout.bind(globalThis),
+  clearTimeout: globalThis.clearTimeout.bind(globalThis),
+  setInterval: globalThis.setInterval.bind(globalThis),
+  clearInterval: globalThis.clearInterval.bind(globalThis),
+  setImmediate:
+    typeof globalThis.setImmediate === "function"
+      ? globalThis.setImmediate.bind(globalThis)
+      : null,
+  clearImmediate:
+    typeof globalThis.clearImmediate === "function"
+      ? globalThis.clearImmediate.bind(globalThis)
+      : null,
+});
+
+// Deliberately small fake-timer clock: it virtualizes scheduled callbacks,
+// not Date or microtasks. That keeps runner timeouts and wire protocol timing
+// real while covering the Jest lifecycle that ordinary unit specs use.
+const __fakeTimers = {
+  enabled: false,
+  now: 0,
+  nextId: 1,
+  timers: new Map(),
+};
+
+function __timerDelay(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function __scheduleFakeTimer(callback, delay, args, intervalMs = null) {
+  if (typeof callback !== "function") {
+    throw new TypeError("fake timers require a function callback");
+  }
+  const id = __fakeTimers.nextId++;
+  __fakeTimers.timers.set(id, {
+    id,
+    callback,
+    args,
+    due: __fakeTimers.now + __timerDelay(delay),
+    intervalMs,
+  });
+  return id;
+}
+
+function __clearFakeTimer(id, clearNative) {
+  if (__fakeTimers.timers.delete(id)) return;
+  // The runner may have installed a native timeout before a test switches to
+  // fake timers. Delegate unknown handles so its own watchdog still cleans up.
+  clearNative(id);
+}
+
+function __nextFakeTimer(maxDue = Number.POSITIVE_INFINITY) {
+  let next = null;
+  for (const timer of __fakeTimers.timers.values()) {
+    if (timer.due > maxDue) continue;
+    if (
+      next == null ||
+      timer.due < next.due ||
+      (timer.due === next.due && timer.id < next.id)
+    ) {
+      next = timer;
+    }
+  }
+  return next;
+}
+
+function __runFakeTimer(timer) {
+  if (!__fakeTimers.timers.has(timer.id)) return;
+  if (timer.intervalMs == null) {
+    __fakeTimers.timers.delete(timer.id);
+  } else {
+    // Requeue before invoking the callback so clearInterval() inside it wins.
+    timer.due += timer.intervalMs;
+  }
+  return timer.callback(...timer.args);
+}
+
+function __requireFakeTimers(api) {
+  if (!__fakeTimers.enabled) {
+    throw new Error(`${api} requires jest.useFakeTimers()`);
+  }
+}
+
+function __advanceFakeTimersBy(ms) {
+  __requireFakeTimers("jest.advanceTimersByTime");
+  const target = __fakeTimers.now + __timerDelay(ms);
+  let timer;
+  while ((timer = __nextFakeTimer(target)) != null) {
+    __fakeTimers.now = timer.due;
+    __runFakeTimer(timer);
+  }
+  __fakeTimers.now = target;
+}
+
+function __runAllFakeTimers() {
+  __requireFakeTimers("jest.runAllTimers");
+  let runs = 0;
+  let timer;
+  while ((timer = __nextFakeTimer()) != null) {
+    if (runs++ >= 100_000) {
+      throw new Error("jest.runAllTimers exceeded 100000 scheduled callbacks");
+    }
+    __fakeTimers.now = timer.due;
+    __runFakeTimer(timer);
+  }
+}
+
+function __runOnlyPendingFakeTimers() {
+  __requireFakeTimers("jest.runOnlyPendingTimers");
+  const pending = [...__fakeTimers.timers.values()].sort(
+    (left, right) => left.due - right.due || left.id - right.id,
+  );
+  for (const timer of pending) {
+    if (!__fakeTimers.timers.has(timer.id)) continue;
+    __fakeTimers.now = timer.due;
+    __runFakeTimer(timer);
+  }
+}
+
+function __installFakeTimers() {
+  __fakeTimers.enabled = true;
+  __fakeTimers.now = 0;
+  __fakeTimers.nextId = 1;
+  __fakeTimers.timers.clear();
+
+  globalThis.setTimeout = (callback, delay, ...args) =>
+    __scheduleFakeTimer(callback, delay, args);
+  globalThis.clearTimeout = (id) =>
+    __clearFakeTimer(id, __nativeTimers.clearTimeout);
+  globalThis.setInterval = (callback, delay, ...args) =>
+    __scheduleFakeTimer(callback, delay, args, Math.max(1, __timerDelay(delay)));
+  globalThis.clearInterval = (id) =>
+    __clearFakeTimer(id, __nativeTimers.clearInterval);
+  if (__nativeTimers.setImmediate) {
+    globalThis.setImmediate = (callback, ...args) =>
+      __scheduleFakeTimer(callback, 0, args);
+  }
+  if (__nativeTimers.clearImmediate) {
+    globalThis.clearImmediate = (id) =>
+      __clearFakeTimer(id, __nativeTimers.clearImmediate);
+  }
+}
+
+function __restoreRealTimers() {
+  if (!__fakeTimers.enabled) return;
+  globalThis.setTimeout = __nativeTimers.setTimeout;
+  globalThis.clearTimeout = __nativeTimers.clearTimeout;
+  globalThis.setInterval = __nativeTimers.setInterval;
+  globalThis.clearInterval = __nativeTimers.clearInterval;
+  if (__nativeTimers.setImmediate) globalThis.setImmediate = __nativeTimers.setImmediate;
+  if (__nativeTimers.clearImmediate) globalThis.clearImmediate = __nativeTimers.clearImmediate;
+  __fakeTimers.enabled = false;
+  __fakeTimers.now = 0;
+  __fakeTimers.timers.clear();
+}
 
 function makeJestMock(implementation) {
   let defaultImplementation =
@@ -704,14 +917,32 @@ const jest = {
       throw new TypeError("jest.spyOn expects an existing function property");
     }
     const original = object[property];
+    const ownDescriptor = Object.getOwnPropertyDescriptor(object, property);
     const mock = makeJestMock(function (...args) {
       return original.apply(this, args);
     });
+    let restored = false;
     mock.mockRestore = () => {
-      object[property] = original;
+      if (restored) return mock;
+      restored = true;
+      mock.mockReset();
+      if (ownDescriptor) {
+        Object.defineProperty(object, property, ownDescriptor);
+      } else {
+        delete object[property];
+      }
+      __jestSpies.delete(mock);
       return mock;
     };
-    object[property] = mock;
+    try {
+      object[property] = mock;
+    } catch (err) {
+      throw new TypeError(`jest.spyOn could not replace ${String(property)}: ${err?.message ?? err}`);
+    }
+    if (object[property] !== mock) {
+      throw new TypeError(`jest.spyOn could not replace ${String(property)}`);
+    }
+    __jestSpies.add(mock);
     return mock;
   },
   // Factories are retained for explicit `jest.requireMock()` consumers. ESM
@@ -736,11 +967,73 @@ const jest = {
     }
     return __jestModuleMocks.get(moduleName);
   },
+  requireActual(moduleName) {
+    if (typeof moduleName !== "string") {
+      throw new TypeError("jest.requireActual expects a module name string");
+    }
+    const nodeRequire = __getJestNodeRequire();
+    try {
+      const resolved = nodeRequire.resolve(moduleName);
+      const actual = nodeRequire(moduleName);
+      __trackJestRequiredModuleTree(resolved);
+      return actual;
+    } catch (err) {
+      const esmHint = err?.code === "ERR_REQUIRE_ESM"
+        ? " Jet's ESM runner cannot synchronously require an ESM-only module; use `await import(...)` for that module."
+        : "";
+      throw new Error(
+        `jest.requireActual(${JSON.stringify(moduleName)}) failed: ${err?.message ?? err}.${esmHint}`,
+      );
+    }
+  },
+  // Jest's `mocked()` is a TypeScript narrowing helper; its runtime contract
+  // is identity, so callers keep the real mock object and its call history.
+  mocked(value) {
+    return value;
+  },
   clearAllMocks() {
     __jestMockFunctions.forEach((mock) => mock.mockClear());
   },
   resetAllMocks() {
     __jestMockFunctions.forEach((mock) => mock.mockReset());
+  },
+  restoreAllMocks() {
+    for (const mock of [...__jestSpies]) {
+      mock.mockRestore();
+    }
+  },
+  // Native ESM static imports are instantiated before test code runs and
+  // cannot be re-evaluated without a loader-level cache bust. This resets the
+  // CJS modules loaded through requireActual(), which is the registry this
+  // runtime owns, while intentionally preserving explicit jest.mock factories.
+  resetModules() {
+    __resetJestModuleRegistry();
+    return jest;
+  },
+  useFakeTimers() {
+    __installFakeTimers();
+    return jest;
+  },
+  useRealTimers() {
+    __restoreRealTimers();
+    return jest;
+  },
+  clearAllTimers() {
+    if (__fakeTimers.enabled) {
+      __fakeTimers.timers.clear();
+    }
+  },
+  getTimerCount() {
+    return __fakeTimers.enabled ? __fakeTimers.timers.size : 0;
+  },
+  advanceTimersByTime(ms) {
+    __advanceFakeTimersBy(ms);
+  },
+  runAllTimers() {
+    __runAllFakeTimers();
+  },
+  runOnlyPendingTimers() {
+    __runOnlyPendingFakeTimers();
   },
 };
 
@@ -764,6 +1057,8 @@ class AssertionError extends Error {
   }
 }
 
+const __expectCustomMatchers = new Map();
+
 function expect(actual) {
   const obj = __expectBase(actual);
   // @spec #2605 — `expect(x).not.toBe(y)` and friends. Wraps every
@@ -773,10 +1068,95 @@ function expect(actual) {
   return obj;
 }
 
+// Jest-compatible extension point for project-local matchers. Matchers return
+// `{ pass, message }` (or a Promise of that shape); an assertion failure stays
+// a Jet AssertionError so normal reporting and `.not` semantics still work.
+expect.extend = (matchers) => {
+  if (matchers == null || typeof matchers !== "object") {
+    throw new TypeError("expect.extend expects an object of matcher functions");
+  }
+  for (const [name, matcher] of Object.entries(matchers)) {
+    if (typeof matcher !== "function") {
+      throw new TypeError(`expect.extend matcher ${name} must be a function`);
+    }
+    __expectCustomMatchers.set(name, matcher);
+  }
+};
+
+// Asymmetric matcher consumed by deepEqual below, so this works in nested
+// `toEqual` structures exactly where Jest callers use stringContaining.
+expect.stringContaining = (expected) => {
+  if (typeof expected !== "string") {
+    throw new TypeError("expect.stringContaining expects a string");
+  }
+  return Object.freeze({
+    asymmetricMatch(value) {
+      return typeof value === "string" && value.includes(expected);
+    },
+    toString() {
+      return "StringContaining";
+    },
+    toAsymmetricMatcher() {
+      return `StringContaining ${JSON.stringify(expected)}`;
+    },
+  });
+};
+
+function __customMatcherContext(isNot) {
+  return {
+    isNot,
+    equals: deepEqual,
+    utils: {
+      printExpected: display,
+      printReceived: display,
+      matcherHint(name) {
+        return `expect${isNot ? ".not" : ""}.${name}`;
+      },
+    },
+  };
+}
+
+function __customMatcherFailure(name, result, isNot, actual) {
+  let message;
+  try {
+    message = typeof result?.message === "function"
+      ? result.message()
+      : result?.message;
+  } catch (err) {
+    message = `expect.${name} failed while building its message: ${err?.message ?? err}`;
+  }
+  return new AssertionError(
+    typeof message === "string" && message.length > 0
+      ? message
+      : `Expected ${display(actual)} ${isNot ? "not " : ""}to satisfy custom matcher ${name}`,
+  );
+}
+
+function __runCustomMatcher(name, matcher, actual, args, isNot) {
+  const verify = (result) => {
+    if (result == null || typeof result.pass !== "boolean") {
+      throw new TypeError(
+        `expect.extend matcher ${name} must return { pass: boolean, message?: string | function }`,
+      );
+    }
+    if (isNot ? result.pass : !result.pass) {
+      throw __customMatcherFailure(name, result, isNot, actual);
+    }
+  };
+  const result = matcher.call(__customMatcherContext(isNot), actual, ...args);
+  return result && typeof result.then === "function" ? result.then(verify) : verify(result);
+}
+
 function __negate(obj, actual) {
   const negated = {};
   for (const [name, fn] of Object.entries(obj)) {
     if (typeof fn !== "function") continue;
+    const customMatcher = __expectCustomMatchers.get(name);
+    if (customMatcher) {
+      negated[name] = (...args) =>
+        __runCustomMatcher(name, customMatcher, actual, args, true);
+      continue;
+    }
     negated[name] = function (...args) {
       let threw = false;
       let result;
@@ -814,7 +1194,7 @@ function __negate(obj, actual) {
 }
 
 function __expectBase(actual) {
-  return {
+  const matchers = {
     toBe(expected) {
       if (!Object.is(actual, expected)) {
         throw new AssertionError(
@@ -1288,6 +1668,12 @@ function __expectBase(actual) {
       }
     },
   };
+
+  for (const [name, matcher] of __expectCustomMatchers) {
+    matchers[name] = (...args) =>
+      __runCustomMatcher(name, matcher, actual, args, false);
+  }
+  return matchers;
 }
 
 function __textMatches(actual, expected) {
@@ -1344,6 +1730,9 @@ function display(v) {
 }
 
 function deepEqual(a, b) {
+  if (b && typeof b.asymmetricMatch === "function") {
+    return Boolean(b.asymmetricMatch(a));
+  }
   if (Object.is(a, b)) return true;
   if (typeof a !== typeof b) return false;
   if (a == null || b == null) return false;
@@ -1375,6 +1764,9 @@ export async function __jetRun(opts) {
   globalThis.afterAll = afterAll;
   globalThis.beforeEach = beforeEach;
   globalThis.afterEach = afterEach;
+  // Anchor `jest.requireActual("./relative")` at the source spec path even
+  // though ESM source is emitted into the worker's temporary module graph.
+  __setJestRequireForSpec(opts.file);
 
   try {
     await import(opts.specUrl);

@@ -149,12 +149,22 @@ fn rewrite_named_import(statement: &str, usage: &str) -> Option<String> {
     static NAMED_IMPORT_RE: OnceLock<Regex> = OnceLock::new();
     let re = NAMED_IMPORT_RE.get_or_init(|| {
         Regex::new(
-            r#"(?s)^(\s*import\s+)(?:(?P<default>[A-Za-z_$][\w$]*)\s*,\s*)?\{(?P<named>.*?)\}\s+from\s+(?P<module>['"][^'"]+['"])\s*;?\s*(?P<newline>\r?\n?)$"#,
+            r#"(?s)^(\s*import\s+)(?:(?P<default>[A-Za-z_$][\w$]*)\s*,\s*)?\{(?P<named>.*?)\}\s+from\s+(?P<module>['"][^'"]+['"])[\t ]*;?[\t ]*$"#,
         )
         .expect("valid named import regex")
     });
+    // Preserve the physical line ending outside the regex. A trailing `\s*`
+    // in the old expression greedily consumed it before the optional newline
+    // capture, joining two rewritten import declarations into one line.
+    let (statement, newline) = if let Some(without_newline) = statement.strip_suffix("\r\n") {
+        (without_newline, "\r\n")
+    } else if let Some(without_newline) = statement.strip_suffix('\n') {
+        (without_newline, "\n")
+    } else {
+        (statement, "")
+    };
     let Some(captures) = re.captures(statement) else {
-        return Some(statement.to_string());
+        return Some(format!("{statement}{newline}"));
     };
 
     let default_import = captures.name("default").map(|m| m.as_str());
@@ -166,11 +176,6 @@ fn rewrite_named_import(statement: &str, usage: &str) -> Option<String> {
         .name("module")
         .map(|m| m.as_str())
         .unwrap_or_default();
-    let newline = captures
-        .name("newline")
-        .map(|m| m.as_str())
-        .unwrap_or_default();
-
     let kept: Vec<String> = named
         .split(',')
         .filter_map(|raw| {
@@ -210,6 +215,37 @@ fn rewrite_named_import(statement: &str, usage: &str) -> Option<String> {
             "import {{ {} }} from {module};{newline}",
             kept.join(", ")
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_unused_named_imports;
+
+    #[test]
+    fn rewritten_named_imports_preserve_physical_line_endings() {
+        let source = "import { TypeOnly } from \"./types\";\nimport { value } from \"./value\";\nconsole.log(value);\n";
+        let rewritten = strip_unused_named_imports(source);
+
+        assert!(
+            rewritten.contains("import { value } from \"./value\";\nconsole.log(value);"),
+            "rewriting one import must not concatenate the next statement: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("import { value } from \"./value\";console.log"),
+            "the next statement must retain its original newline: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn rewritten_named_imports_preserve_windows_line_endings() {
+        let source = "import { TypeOnly } from \"./types\";\r\nimport { value } from \"./value\";\r\nconsole.log(value);\r\n";
+        let rewritten = strip_unused_named_imports(source);
+
+        assert!(
+            rewritten.contains("import { value } from \"./value\";\r\nconsole.log(value);"),
+            "rewriting must retain CRLF boundaries: {rewritten}"
+        );
     }
 }
 
@@ -346,6 +382,89 @@ pub fn transform_import_with_inline_types(source: &str, node: &Node) -> Result<O
     let result = result.replace("{  ", "{ ").replace("  }", " }");
 
     Ok(Some(result))
+}
+
+/// Check whether a named export contains a per-specifier `type` modifier.
+///
+/// For example, this returns true for `export { Value, type ValueShape }`.
+/// `export type { ValueShape }` is a separate all-type export form and is
+/// handled by [`is_type_only_export`].
+/// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
+pub fn has_inline_type_export_specifiers(node: &Node) -> bool {
+    let Some(export_clause) = named_export_clause(node) else {
+        return false;
+    };
+
+    let mut cursor = export_clause.walk();
+    for specifier in export_clause.children(&mut cursor) {
+        if specifier.kind() == "export_specifier" && export_specifier_is_type_only(&specifier) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Transform a named export with inline `type` specifiers.
+///
+/// TypeScript permits a type-only name beside runtime values in the same named
+/// export list. Node's JavaScript parser does not understand that modifier, so
+/// remove only those type-only specifiers and keep the runtime re-exports.
+/// Returns `None` when all named specifiers were type-only.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
+pub fn transform_export_with_inline_types(source: &str, node: &Node) -> Result<Option<String>> {
+    let Some(export_clause) = named_export_clause(node) else {
+        return Ok(Some(source[node.byte_range()].to_string()));
+    };
+
+    let mut cursor = export_clause.walk();
+    let specifiers: Vec<Node<'_>> = export_clause
+        .children(&mut cursor)
+        .filter(|child| child.kind() == "export_specifier")
+        .collect();
+
+    if specifiers.is_empty() {
+        return Ok(Some(source[node.byte_range()].to_string()));
+    }
+
+    let kept: Vec<&str> = specifiers
+        .iter()
+        .filter(|specifier| !export_specifier_is_type_only(specifier))
+        .map(|specifier| source[specifier.byte_range()].trim())
+        .collect();
+
+    if kept.len() == specifiers.len() {
+        return Ok(Some(source[node.byte_range()].to_string()));
+    }
+    if kept.is_empty() {
+        return Ok(None);
+    }
+
+    let before_clause = &source[node.start_byte()..export_clause.start_byte()];
+    let after_clause = &source[export_clause.end_byte()..node.end_byte()];
+    Ok(Some(format!(
+        "{before_clause}{{ {} }}{after_clause}",
+        kept.join(", ")
+    )))
+}
+
+fn named_export_clause<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "export_clause" {
+            return Some(child);
+        }
+    }
+    None
+}
+
+fn export_specifier_is_type_only(node: &Node) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "type" {
+            return true;
+        }
+    }
+    false
 }
 
 /// Transform satisfies_expression: keep LHS, drop `satisfies Type`
