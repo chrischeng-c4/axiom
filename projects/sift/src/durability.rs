@@ -12,12 +12,16 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use chrono::DateTime;
 use raft_host::{Index, RaftStateMachine};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    projection::{ReplayJob, SiftControlState, SIFT_COMMAND_FORMAT_VERSION},
-    AppendResult, DurableJournal, EventEnvelope, IncomingEvent, StoredEvent,
+    projection::{
+        ErrorLifecycleState, ErrorLifecycleV1, ReplayJob, SiftControlState,
+        SIFT_COMMAND_FORMAT_VERSION,
+    },
+    AppendResult, DurableJournal, EventEnvelope, IncomingEvent, SignalKind, StoredEvent,
 };
 
 const CONTROL_STATE_FILE: &str = "sift-control-state.json";
@@ -27,6 +31,7 @@ const CONTROL_STATE_FILE: &str = "sift-control-state.json";
 pub(crate) enum SiftCommandV1 {
     AppendEvent { event: Box<EventEnvelope> },
     UpsertReplayJob { job: Box<ReplayJob> },
+    TransitionErrorGroup { lifecycle: Box<ErrorLifecycleV1> },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -35,6 +40,8 @@ pub(crate) struct JournalSnapshot {
     pub events: Vec<StoredEvent>,
     #[serde(default)]
     pub replay_jobs: BTreeMap<String, ReplayJob>,
+    #[serde(default)]
+    pub error_lifecycles: BTreeMap<String, ErrorLifecycleV1>,
 }
 
 impl JournalSnapshot {
@@ -43,6 +50,7 @@ impl JournalSnapshot {
             applied_index: control.applied_index,
             events,
             replay_jobs: control.replay_jobs.clone(),
+            error_lifecycles: control.error_lifecycles.clone(),
         }
     }
 
@@ -52,6 +60,7 @@ impl JournalSnapshot {
             applied_index,
             events,
             replay_jobs: BTreeMap::new(),
+            error_lifecycles: BTreeMap::new(),
         }
     }
 }
@@ -129,6 +138,18 @@ impl SiftStateMachine {
             .cloned()
     }
 
+    pub fn error_lifecycle(&self, project: &str, fingerprint: &str) -> Option<ErrorLifecycleV1> {
+        self.control
+            .lock()
+            .expect("Sift control state lock poisoned")
+            .error_lifecycles
+            .get(&crate::projection::error_lifecycle_key(
+                project,
+                fingerprint,
+            ))
+            .cloned()
+    }
+
     pub fn take_append_outcome(&self, index: u64) -> Option<AppendResult> {
         self.append_outcomes
             .lock()
@@ -168,6 +189,48 @@ impl RaftStateMachine for SiftStateMachine {
                 job.commit_index = index;
                 control.replay_jobs.insert(job.id.clone(), *job);
             }
+            SiftCommandV1::TransitionErrorGroup { mut lifecycle } => {
+                validate_error_lifecycle(&lifecycle)?;
+                lifecycle.commit_index = index;
+                let key = lifecycle.key();
+                let previous = control
+                    .error_lifecycles
+                    .get(&key)
+                    .map(|value| value.state)
+                    .unwrap_or(ErrorLifecycleState::Open);
+                for signal in [SignalKind::AuditEvent, SignalKind::ChangeEvent] {
+                    let suffix = if signal == SignalKind::AuditEvent {
+                        "audit"
+                    } else {
+                        "change"
+                    };
+                    let mut event = EventEnvelope::for_project(
+                        lifecycle.project.clone(),
+                        "control",
+                        format!(
+                            "error-lifecycle:{}:{}:{index}:{suffix}",
+                            lifecycle.project, lifecycle.fingerprint
+                        ),
+                        signal,
+                        serde_json::json!({
+                            "kind": "error_group_lifecycle_transition",
+                            "fingerprint": lifecycle.fingerprint,
+                            "from": previous,
+                            "to": lifecycle.state,
+                            "actor": lifecycle.actor,
+                            "reason": lifecycle.reason,
+                            "muted_until": lifecycle.muted_until,
+                            "occurrence_cursor": lifecycle.occurrence_cursor,
+                            "commit_index": index,
+                        }),
+                    );
+                    event.occurred_at.clone_from(&lifecycle.updated_at);
+                    event.observed_at.clone_from(&lifecycle.updated_at);
+                    event.resource.insert("service.name".into(), "sift".into());
+                    self.journal.append(event)?;
+                }
+                control.error_lifecycles.insert(key, *lifecycle);
+            }
         }
         control.applied_index = index;
         persist_control(&self.control_path, &control)?;
@@ -194,6 +257,7 @@ impl RaftStateMachine for SiftStateMachine {
             format_version: SIFT_COMMAND_FORMAT_VERSION,
             applied_index: snapshot.applied_index,
             replay_jobs: snapshot.replay_jobs,
+            error_lifecycles: snapshot.error_lifecycles,
         };
         persist_control(&self.control_path, &restored)?;
         *self
@@ -208,6 +272,29 @@ impl RaftStateMachine for SiftStateMachine {
     fn applied_index(&self) -> Index {
         self.applied_index.load(Ordering::Acquire)
     }
+}
+
+fn validate_error_lifecycle(lifecycle: &ErrorLifecycleV1) -> Result<()> {
+    if lifecycle.project.trim().is_empty()
+        || lifecycle.fingerprint.trim().is_empty()
+        || lifecycle.actor.trim().is_empty()
+    {
+        bail!("error lifecycle project, fingerprint, and actor must not be empty");
+    }
+    DateTime::parse_from_rfc3339(&lifecycle.updated_at)
+        .context("error lifecycle updated_at must be RFC3339")?;
+    match (lifecycle.state, lifecycle.muted_until.as_deref()) {
+        (ErrorLifecycleState::Muted, Some(until)) => {
+            DateTime::parse_from_rfc3339(until)
+                .context("muted error lifecycle requires RFC3339 muted_until")?;
+        }
+        (ErrorLifecycleState::Muted, None) => {
+            bail!("muted error lifecycle requires muted_until")
+        }
+        (_, Some(_)) => bail!("only muted error lifecycle may set muted_until"),
+        (_, None) => {}
+    }
+    Ok(())
 }
 
 fn decode_command(bytes: &[u8]) -> Result<SiftCommandV1> {

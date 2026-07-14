@@ -37,10 +37,10 @@ use axum::{
     extract::{rejection::JsonRejection, Extension, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use service_auth::{Role, RoleMapPrincipal};
 use service_metrics::{Counter, Sample};
@@ -641,6 +641,14 @@ impl ServiceState {
         self.state_machine.replay_job(id)
     }
 
+    fn error_lifecycle(
+        &self,
+        project: &str,
+        fingerprint: &str,
+    ) -> Option<projection::ErrorLifecycleV1> {
+        self.state_machine.error_lifecycle(project, fingerprint)
+    }
+
     pub fn raft_router(&self) -> Option<Router> {
         self.raft.as_ref().map(|raft| raft.router())
     }
@@ -821,6 +829,12 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/logs:query", post(query_logs))
         .route("/v1/logs:tail", get(tail_logs))
         .route("/v1/traces/{id}", get(get_trace))
+        .route("/v1/errors:query", post(query_errors))
+        .route("/v1/errors/{fingerprint}", get(get_error_group))
+        .route(
+            "/v1/errors/{fingerprint}/state",
+            put(transition_error_group),
+        )
         .route("/v1/replay", get(replay_events))
         .route("/v1/replays", post(start_replay))
         .route("/v1/replays/{id}", get(get_replay))
@@ -1284,6 +1298,231 @@ async fn get_trace(
     Ok(Json(trace))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/errors:query",
+    request_body = projection::ErrorQuery,
+    responses(
+        (status = 200, description = "stable error group page", body = projection::ErrorPage),
+        (status = 400, description = "invalid error query", body = ErrorEnvelope),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn query_errors(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    payload: Result<Json<projection::ErrorQuery>, JsonRejection>,
+) -> Result<Json<projection::ErrorPage>, ApiError> {
+    let Json(query) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    authorize_project_read(principal.as_ref().map(|value| &value.0), &query.project)?;
+    state
+        .projections
+        .catch_up(projection::PROJECTION_ERROR_REPORT_STORE)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let projection_cursor = state
+        .projections
+        .wait_for_min_cursor(
+            projection::PROJECTION_ERROR_REPORT_STORE,
+            query.min_cursor.unwrap_or(0),
+            LOG_QUERY_PROJECTION_WAIT,
+        )
+        .await
+        .map_err(ApiError::projection_lag)?;
+    let requested_state = query.state;
+    let mut page = state
+        .projections
+        .query_errors(&query)
+        .map_err(|error| ApiError::bad_request("invalid_error_query", error.to_string()))?;
+    let now = Utc::now();
+    page.groups = page
+        .groups
+        .into_iter()
+        .map(|group| {
+            let lifecycle = state.error_lifecycle(&group.project, &group.fingerprint);
+            group.apply_lifecycle(lifecycle.as_ref(), now)
+        })
+        .filter(|group| requested_state.is_none_or(|requested| group.state == requested))
+        .collect();
+    page.next_cursor = page
+        .groups
+        .last()
+        .map(|group| group.last_cursor)
+        .unwrap_or(query.after_cursor);
+    page.projection_cursor = projection_cursor;
+    Ok(Json(page))
+}
+
+#[derive(Debug, Deserialize)]
+struct HttpErrorGroupQuery {
+    project: String,
+    min_cursor: Option<u64>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/errors/{fingerprint}",
+    params(
+        ("fingerprint" = String, Path, description = "versioned error fingerprint"),
+        ("project" = String, Query, description = "authorized project"),
+        ("min_cursor" = Option<u64>, Query, description = "read-your-write projection cursor")
+    ),
+    responses(
+        (status = 200, description = "error group detail", body = projection::ErrorGroupV1),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 404, description = "error group not found", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn get_error_group(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    AxumPath(fingerprint): AxumPath<String>,
+    Query(query): Query<HttpErrorGroupQuery>,
+) -> Result<Json<projection::ErrorGroupV1>, ApiError> {
+    authorize_project_read(principal.as_ref().map(|value| &value.0), &query.project)?;
+    state
+        .projections
+        .catch_up(projection::PROJECTION_ERROR_REPORT_STORE)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let projection_cursor = state
+        .projections
+        .wait_for_min_cursor(
+            projection::PROJECTION_ERROR_REPORT_STORE,
+            query.min_cursor.unwrap_or(0),
+            LOG_QUERY_PROJECTION_WAIT,
+        )
+        .await
+        .map_err(ApiError::projection_lag)?;
+    let lifecycle = state.error_lifecycle(&query.project, &fingerprint);
+    let mut group = state
+        .projections
+        .get_error_group(&query.project, &fingerprint)
+        .map_err(|error| ApiError::bad_request("invalid_error_query", error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "error_group_not_found",
+                format!(
+                    "error group `{fingerprint}` was not found in project `{}`",
+                    query.project
+                ),
+            )
+        })?
+        .apply_lifecycle(lifecycle.as_ref(), Utc::now());
+    group.projection_cursor = projection_cursor;
+    Ok(Json(group))
+}
+
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+struct ErrorLifecycleRequest {
+    state: projection::ErrorLifecycleState,
+    #[serde(default)]
+    muted_until: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[utoipa::path(
+    put,
+    path = "/v1/errors/{fingerprint}/state",
+    request_body = ErrorLifecycleRequest,
+    params(
+        ("fingerprint" = String, Path, description = "versioned error fingerprint"),
+        ("project" = String, Query, description = "authorized project")
+    ),
+    responses(
+        (status = 200, description = "durably committed error lifecycle", body = projection::ErrorLifecycleV1),
+        (status = 400, description = "invalid lifecycle transition", body = ErrorEnvelope),
+        (status = 403, description = "project write denied", body = ErrorEnvelope),
+        (status = 404, description = "error group not found", body = ErrorEnvelope)
+    )
+)]
+async fn transition_error_group(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    AxumPath(fingerprint): AxumPath<String>,
+    Query(query): Query<HttpErrorGroupQuery>,
+    payload: Result<Json<ErrorLifecycleRequest>, JsonRejection>,
+) -> Result<Json<projection::ErrorLifecycleV1>, ApiError> {
+    authorize_project(principal.as_ref().map(|value| &value.0), &query.project)?;
+    let Json(request) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    state
+        .projections
+        .catch_up(projection::PROJECTION_ERROR_REPORT_STORE)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let group = state
+        .projections
+        .get_error_group(&query.project, &fingerprint)
+        .map_err(|error| ApiError::bad_request("invalid_error_query", error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "error_group_not_found",
+                format!(
+                    "error group `{fingerprint}` was not found in project `{}`",
+                    query.project
+                ),
+            )
+        })?;
+    validate_error_lifecycle_request(&request)?;
+    let lifecycle = projection::ErrorLifecycleV1 {
+        project: query.project,
+        fingerprint,
+        state: request.state,
+        muted_until: request.muted_until,
+        actor: principal
+            .as_ref()
+            .and_then(|principal| principal.0.subject())
+            .unwrap_or("open")
+            .to_string(),
+        reason: request.reason,
+        occurrence_cursor: group.last_cursor,
+        updated_at: now_rfc3339(),
+        commit_index: 0,
+    };
+    state
+        .commit_command(durability::SiftCommandV1::TransitionErrorGroup {
+            lifecycle: Box::new(lifecycle.clone()),
+        })
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    state
+        .error_lifecycle(&lifecycle.project, &lifecycle.fingerprint)
+        .map(Json)
+        .ok_or_else(|| ApiError::internal("committed error lifecycle was not available"))
+}
+
+fn validate_error_lifecycle_request(request: &ErrorLifecycleRequest) -> Result<(), ApiError> {
+    match (request.state, request.muted_until.as_deref()) {
+        (projection::ErrorLifecycleState::Muted, Some(until)) => {
+            let until = DateTime::parse_from_rfc3339(until).map_err(|_| {
+                ApiError::bad_request("invalid_muted_until", "muted_until must be RFC3339")
+            })?;
+            if until.with_timezone(&Utc) <= Utc::now() {
+                return Err(ApiError::bad_request(
+                    "invalid_muted_until",
+                    "muted_until must be in the future",
+                ));
+            }
+        }
+        (projection::ErrorLifecycleState::Muted, None) => {
+            return Err(ApiError::bad_request(
+                "missing_muted_until",
+                "muted state requires muted_until",
+            ));
+        }
+        (_, Some(_)) => {
+            return Err(ApiError::bad_request(
+                "unexpected_muted_until",
+                "only muted state accepts muted_until",
+            ));
+        }
+        (_, None) => {}
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 struct HttpEventQuery {
     signal: Option<SignalKind>,
@@ -1458,6 +1697,9 @@ async fn get_replay(
         query_logs,
         tail_logs,
         get_trace,
+        query_errors,
+        get_error_group,
+        transition_error_group,
         query_events,
         replay_events,
         start_replay,
@@ -1486,6 +1728,13 @@ async fn get_replay(
         projection::SpanEventV1,
         projection::SpanRecordV1,
         projection::TraceResultV1,
+        projection::ErrorOccurrenceV1,
+        projection::ErrorGroupV1,
+        projection::ErrorQuery,
+        projection::ErrorPage,
+        projection::ErrorLifecycleState,
+        projection::ErrorLifecycleV1,
+        ErrorLifecycleRequest,
         projection::ReplayJob,
         projection::ReplayState,
         StartReplayRequest,

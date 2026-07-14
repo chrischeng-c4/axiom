@@ -124,6 +124,8 @@ pub struct SiftControlState {
     pub format_version: u16,
     pub applied_index: u64,
     pub replay_jobs: BTreeMap<String, ReplayJob>,
+    #[serde(default)]
+    pub error_lifecycles: BTreeMap<String, ErrorLifecycleV1>,
 }
 
 impl Default for SiftControlState {
@@ -132,8 +134,44 @@ impl Default for SiftControlState {
             format_version: SIFT_COMMAND_FORMAT_VERSION,
             applied_index: 0,
             replay_jobs: BTreeMap::new(),
+            error_lifecycles: BTreeMap::new(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorLifecycleState {
+    Open,
+    Acknowledged,
+    Resolved,
+    Muted,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
+pub struct ErrorLifecycleV1 {
+    pub project: String,
+    pub fingerprint: String,
+    pub state: ErrorLifecycleState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_until: Option<String>,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub occurrence_cursor: u64,
+    pub updated_at: String,
+    #[serde(default)]
+    pub commit_index: u64,
+}
+
+impl ErrorLifecycleV1 {
+    pub fn key(&self) -> String {
+        error_lifecycle_key(&self.project, &self.fingerprint)
+    }
+}
+
+pub fn error_lifecycle_key(project: &str, fingerprint: &str) -> String {
+    format!("{project}\u{1f}{fingerprint}")
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]

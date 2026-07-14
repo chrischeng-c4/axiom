@@ -17,6 +17,9 @@ use tokio::sync::Notify;
 use crate::{DurableJournal, EventQuery, StoredEvent};
 
 use super::{
+    error_report::{
+        ErrorGroupV1, ErrorPage, ErrorQuery, ErrorReportProjection, PROJECTION_ERROR_REPORT_STORE,
+    },
     logging::{LogPage, LogQuery, LoggingProjection, PROJECTION_LOGGING_STORE},
     lumen::EmbeddedLumenProjection,
     model::{
@@ -76,6 +79,8 @@ impl ProjectionRuntime {
                 as ProjectionFactory,
             Arc::new(|| Ok(Arc::new(TraceProjection::new()) as Arc<dyn Projection>))
                 as ProjectionFactory,
+            Arc::new(|| Ok(Arc::new(ErrorReportProjection::new()) as Arc<dyn Projection>))
+                as ProjectionFactory,
         ] {
             let (name, slot) = open_slot(&projection_root, factory)?;
             if slots.insert(name.clone(), slot).is_some() {
@@ -133,6 +138,32 @@ impl ProjectionRuntime {
             .downcast_ref::<TraceProjection>()
             .context("trace-store projection registration has the wrong implementation")?;
         traces.get_trace(project, trace_id)
+    }
+
+    pub fn query_errors(&self, query: &ErrorQuery) -> Result<ErrorPage> {
+        let slot = self.slot(PROJECTION_ERROR_REPORT_STORE)?;
+        let live = slot.live.lock().expect("projection state lock poisoned");
+        let errors = live
+            .implementation
+            .as_any()
+            .downcast_ref::<ErrorReportProjection>()
+            .context("error-report-store projection registration has the wrong implementation")?;
+        errors.query(query)
+    }
+
+    pub fn get_error_group(
+        &self,
+        project: &str,
+        fingerprint: &str,
+    ) -> Result<Option<ErrorGroupV1>> {
+        let slot = self.slot(PROJECTION_ERROR_REPORT_STORE)?;
+        let live = slot.live.lock().expect("projection state lock poisoned");
+        let errors = live
+            .implementation
+            .as_any()
+            .downcast_ref::<ErrorReportProjection>()
+            .context("error-report-store projection registration has the wrong implementation")?;
+        errors.get_group(project, fingerprint)
     }
 
     pub fn catch_up(&self, name: &str) -> Result<u64> {
