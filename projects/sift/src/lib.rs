@@ -649,6 +649,18 @@ impl ServiceState {
         self.state_machine.error_lifecycle(project, fingerprint)
     }
 
+    fn audit_legal_hold(&self, project: &str, id: &str) -> Option<projection::AuditLegalHoldV1> {
+        self.state_machine.audit_legal_hold(project, id)
+    }
+
+    fn audit_legal_holds(&self, project: &str) -> Vec<projection::AuditLegalHoldV1> {
+        self.state_machine.audit_legal_holds(project)
+    }
+
+    fn audit_export(&self, project: &str, id: &str) -> Option<projection::AuditExportManifestV1> {
+        self.state_machine.audit_export(project, id)
+    }
+
     pub fn raft_router(&self) -> Option<Router> {
         self.raft.as_ref().map(|raft| raft.router())
     }
@@ -831,6 +843,12 @@ pub fn router(state: Arc<ServiceState>) -> Router {
         .route("/v1/traces/{id}", get(get_trace))
         .route("/v1/errors:query", post(query_errors))
         .route("/v1/metrics:query", post(query_metrics))
+        .route("/v1/audit:query", post(query_audit))
+        .route("/v1/audit:export", post(export_audit))
+        .route(
+            "/v1/audit/holds/{id}",
+            put(upsert_audit_hold).delete(release_audit_hold),
+        )
         .route("/v1/errors/{fingerprint}", get(get_error_group))
         .route(
             "/v1/errors/{fingerprint}/state",
@@ -1395,6 +1413,239 @@ async fn query_metrics(
     Ok(Json(page))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/audit:query",
+    request_body = projection::AuditQuery,
+    responses(
+        (status = 200, description = "immutable retained audit/change timeline", body = projection::AuditPage),
+        (status = 400, description = "invalid audit query", body = ErrorEnvelope),
+        (status = 403, description = "project read denied", body = ErrorEnvelope),
+        (status = 503, description = "projection has not reached min_cursor", body = ErrorEnvelope)
+    )
+)]
+async fn query_audit(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    payload: Result<Json<projection::AuditQuery>, JsonRejection>,
+) -> Result<Json<projection::AuditPage>, ApiError> {
+    let Json(query) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    authorize_project_read(principal.as_ref().map(|value| &value.0), &query.project)?;
+    let page = query_audit_page(&state, &query).await?;
+    Ok(Json(page))
+}
+
+async fn query_audit_page(
+    state: &ServiceState,
+    query: &projection::AuditQuery,
+) -> Result<projection::AuditPage, ApiError> {
+    state
+        .projections
+        .catch_up(projection::PROJECTION_AUDIT_CHANGE_STORE)
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let projection_cursor = state
+        .projections
+        .wait_for_min_cursor(
+            projection::PROJECTION_AUDIT_CHANGE_STORE,
+            query.min_cursor.unwrap_or(0),
+            LOG_QUERY_PROJECTION_WAIT,
+        )
+        .await
+        .map_err(ApiError::projection_lag)?;
+    let holds = state.audit_legal_holds(&query.project);
+    let mut page = state
+        .projections
+        .query_audit(query, &holds, Utc::now())
+        .map_err(|error| ApiError::bad_request("invalid_audit_query", error.to_string()))?;
+    page.projection_cursor = projection_cursor;
+    Ok(page)
+}
+
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+struct AuditLegalHoldRequest {
+    start_time: String,
+    end_time: String,
+    reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HttpAuditControlQuery {
+    project: String,
+}
+
+#[utoipa::path(
+    put,
+    path = "/v1/audit/holds/{id}",
+    request_body = AuditLegalHoldRequest,
+    params(
+        ("id" = String, Path, description = "stable legal-hold id"),
+        ("project" = String, Query, description = "administered project")
+    ),
+    responses(
+        (status = 200, description = "durably active legal hold", body = projection::AuditLegalHoldV1),
+        (status = 400, description = "invalid legal hold", body = ErrorEnvelope),
+        (status = 403, description = "project admin denied", body = ErrorEnvelope)
+    )
+)]
+async fn upsert_audit_hold(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<HttpAuditControlQuery>,
+    payload: Result<Json<AuditLegalHoldRequest>, JsonRejection>,
+) -> Result<Json<projection::AuditLegalHoldV1>, ApiError> {
+    authorize_project_role(
+        principal.as_ref().map(|value| &value.0),
+        &query.project,
+        Role::Admin,
+    )?;
+    let Json(request) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    let hold = projection::AuditLegalHoldV1 {
+        id,
+        project: query.project,
+        start_time: request.start_time,
+        end_time: request.end_time,
+        reason: request.reason,
+        actor: principal
+            .as_ref()
+            .and_then(|principal| principal.0.subject())
+            .unwrap_or("open")
+            .into(),
+        active: true,
+        updated_at: now_rfc3339(),
+        commit_index: 0,
+    };
+    commit_audit_hold(&state, hold).await.map(Json)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/v1/audit/holds/{id}",
+    params(
+        ("id" = String, Path, description = "stable legal-hold id"),
+        ("project" = String, Query, description = "administered project")
+    ),
+    responses(
+        (status = 200, description = "durably released legal hold", body = projection::AuditLegalHoldV1),
+        (status = 403, description = "project admin denied", body = ErrorEnvelope),
+        (status = 404, description = "legal hold not found", body = ErrorEnvelope)
+    )
+)]
+async fn release_audit_hold(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<HttpAuditControlQuery>,
+) -> Result<Json<projection::AuditLegalHoldV1>, ApiError> {
+    authorize_project_role(
+        principal.as_ref().map(|value| &value.0),
+        &query.project,
+        Role::Admin,
+    )?;
+    let mut hold = state.audit_legal_hold(&query.project, &id).ok_or_else(|| {
+        ApiError::not_found(
+            "audit_hold_not_found",
+            format!(
+                "audit legal hold `{id}` was not found in project `{}`",
+                query.project
+            ),
+        )
+    })?;
+    hold.active = false;
+    hold.actor = principal
+        .as_ref()
+        .and_then(|principal| principal.0.subject())
+        .unwrap_or("open")
+        .into();
+    hold.updated_at = now_rfc3339();
+    hold.commit_index = 0;
+    commit_audit_hold(&state, hold).await.map(Json)
+}
+
+async fn commit_audit_hold(
+    state: &ServiceState,
+    hold: projection::AuditLegalHoldV1,
+) -> Result<projection::AuditLegalHoldV1, ApiError> {
+    state
+        .commit_command(durability::SiftCommandV1::UpsertAuditLegalHold {
+            hold: Box::new(hold.clone()),
+        })
+        .await
+        .map_err(|error| ApiError::bad_request("invalid_audit_hold", error.to_string()))?;
+    state
+        .audit_legal_hold(&hold.project, &hold.id)
+        .ok_or_else(|| ApiError::internal("committed audit legal hold was not available"))
+}
+
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+struct AuditExportRequest {
+    id: String,
+    query: projection::AuditQuery,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/audit:export",
+    request_body = AuditExportRequest,
+    responses(
+        (status = 200, description = "bounded controlled export and committed manifest", body = projection::AuditExportResponseV1),
+        (status = 400, description = "invalid or duplicate export", body = ErrorEnvelope),
+        (status = 403, description = "project admin denied", body = ErrorEnvelope)
+    )
+)]
+async fn export_audit(
+    State(state): State<Arc<ServiceState>>,
+    principal: Option<Extension<RoleMapPrincipal>>,
+    payload: Result<Json<AuditExportRequest>, JsonRejection>,
+) -> Result<Json<projection::AuditExportResponseV1>, ApiError> {
+    let Json(request) =
+        payload.map_err(|error| ApiError::bad_request("invalid_json", error.body_text()))?;
+    authorize_project_role(
+        principal.as_ref().map(|value| &value.0),
+        &request.query.project,
+        Role::Admin,
+    )?;
+    if request.id.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_export_id",
+            "audit export id must not be empty",
+        ));
+    }
+    let page = query_audit_page(&state, &request.query).await?;
+    let actor = principal
+        .as_ref()
+        .and_then(|principal| principal.0.subject())
+        .unwrap_or("open")
+        .to_string();
+    let manifest = projection::AuditExportManifestV1 {
+        id: request.id,
+        project: request.query.project.clone(),
+        start_time: request.query.start_time.clone(),
+        end_time: request.query.end_time.clone(),
+        record_count: page.records.len() as u64,
+        content_sha256: projection::export_content_sha256(&page.records)
+            .map_err(|error| ApiError::internal(error.to_string()))?,
+        actor,
+        exported_at: now_rfc3339(),
+        commit_index: 0,
+    };
+    state
+        .commit_command(durability::SiftCommandV1::RecordAuditExport {
+            export: Box::new(manifest.clone()),
+        })
+        .await
+        .map_err(|error| ApiError::bad_request("invalid_audit_export", error.to_string()))?;
+    let manifest = state
+        .audit_export(&manifest.project, &manifest.id)
+        .ok_or_else(|| ApiError::internal("committed audit export was not available"))?;
+    Ok(Json(projection::AuditExportResponseV1 {
+        manifest,
+        records: page.records,
+    }))
+}
+
 #[derive(Debug, Deserialize)]
 struct HttpErrorGroupQuery {
     project: String,
@@ -1740,6 +1991,10 @@ async fn get_replay(
         get_trace,
         query_errors,
         query_metrics,
+        query_audit,
+        upsert_audit_hold,
+        release_audit_hold,
+        export_audit,
         get_error_group,
         transition_error_group,
         query_events,
@@ -1786,6 +2041,14 @@ async fn get_replay(
         projection::MetricQuery,
         projection::MetricSeriesResultV1,
         projection::MetricPage,
+        projection::AuditChangeRecordV1,
+        projection::AuditQuery,
+        projection::AuditPage,
+        projection::AuditLegalHoldV1,
+        projection::AuditExportManifestV1,
+        projection::AuditExportResponseV1,
+        AuditLegalHoldRequest,
+        AuditExportRequest,
         projection::ReplayJob,
         projection::ReplayState,
         StartReplayRequest,

@@ -17,6 +17,7 @@ use tokio::sync::Notify;
 use crate::{DurableJournal, EventQuery, StoredEvent};
 
 use super::{
+    audit_change::{AuditChangeProjection, AuditPage, AuditQuery, PROJECTION_AUDIT_CHANGE_STORE},
     error_report::{
         ErrorGroupV1, ErrorPage, ErrorQuery, ErrorReportProjection, PROJECTION_ERROR_REPORT_STORE,
     },
@@ -24,8 +25,8 @@ use super::{
     lumen::EmbeddedLumenProjection,
     metric::{MetricPage, MetricProjection, MetricQuery, PROJECTION_METRIC_STORE},
     model::{
-        ProjectionCheckpoint, ProjectionDescriptor, ProjectionLag, ProjectionStateEnvelope,
-        RebuildComparison, PROJECTION_STATE_FORMAT_VERSION,
+        AuditLegalHoldV1, ProjectionCheckpoint, ProjectionDescriptor, ProjectionLag,
+        ProjectionStateEnvelope, RebuildComparison, PROJECTION_STATE_FORMAT_VERSION,
     },
     trace::{TraceProjection, TraceResultV1, PROJECTION_TRACE_STORE},
 };
@@ -83,6 +84,8 @@ impl ProjectionRuntime {
             Arc::new(|| Ok(Arc::new(ErrorReportProjection::new()) as Arc<dyn Projection>))
                 as ProjectionFactory,
             Arc::new(|| Ok(Arc::new(MetricProjection::new()) as Arc<dyn Projection>))
+                as ProjectionFactory,
+            Arc::new(|| Ok(Arc::new(AuditChangeProjection::new()) as Arc<dyn Projection>))
                 as ProjectionFactory,
         ] {
             let (name, slot) = open_slot(&projection_root, factory)?;
@@ -178,6 +181,22 @@ impl ProjectionRuntime {
             .downcast_ref::<MetricProjection>()
             .context("metric-store projection registration has the wrong implementation")?;
         metrics.query(query)
+    }
+
+    pub fn query_audit(
+        &self,
+        query: &AuditQuery,
+        holds: &[AuditLegalHoldV1],
+        now: chrono::DateTime<Utc>,
+    ) -> Result<AuditPage> {
+        let slot = self.slot(PROJECTION_AUDIT_CHANGE_STORE)?;
+        let live = slot.live.lock().expect("projection state lock poisoned");
+        let audit = live
+            .implementation
+            .as_any()
+            .downcast_ref::<AuditChangeProjection>()
+            .context("audit-change-store projection registration has the wrong implementation")?;
+        audit.query(query, holds, now)
     }
 
     pub fn catch_up(&self, name: &str) -> Result<u64> {

@@ -126,6 +126,10 @@ pub struct SiftControlState {
     pub replay_jobs: BTreeMap<String, ReplayJob>,
     #[serde(default)]
     pub error_lifecycles: BTreeMap<String, ErrorLifecycleV1>,
+    #[serde(default)]
+    pub audit_legal_holds: BTreeMap<String, AuditLegalHoldV1>,
+    #[serde(default)]
+    pub audit_exports: BTreeMap<String, AuditExportManifestV1>,
 }
 
 impl Default for SiftControlState {
@@ -135,6 +139,8 @@ impl Default for SiftControlState {
             applied_index: 0,
             replay_jobs: BTreeMap::new(),
             error_lifecycles: BTreeMap::new(),
+            audit_legal_holds: BTreeMap::new(),
+            audit_exports: BTreeMap::new(),
         }
     }
 }
@@ -172,6 +178,52 @@ impl ErrorLifecycleV1 {
 
 pub fn error_lifecycle_key(project: &str, fingerprint: &str) -> String {
     format!("{project}\u{1f}{fingerprint}")
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
+pub struct AuditLegalHoldV1 {
+    pub id: String,
+    pub project: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub reason: String,
+    pub actor: String,
+    pub active: bool,
+    pub updated_at: String,
+    #[serde(default)]
+    pub commit_index: u64,
+}
+
+impl AuditLegalHoldV1 {
+    pub fn key(&self) -> String {
+        audit_control_key(&self.project, &self.id)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
+pub struct AuditExportManifestV1 {
+    pub id: String,
+    pub project: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<String>,
+    pub record_count: u64,
+    pub content_sha256: String,
+    pub actor: String,
+    pub exported_at: String,
+    #[serde(default)]
+    pub commit_index: u64,
+}
+
+impl AuditExportManifestV1 {
+    pub fn key(&self) -> String {
+        audit_control_key(&self.project, &self.id)
+    }
+}
+
+pub fn audit_control_key(project: &str, id: &str) -> String {
+    format!("{project}\u{1f}{id}")
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]

@@ -71,10 +71,10 @@ first-class domain roots.
 | Replica Sync And Bootstrap | 1676 | implemented | partial | conformance | not_ready | existing Raft state machine plus pending three-node/domain recovery proof |
 | Backup And Restore | 1659 | implemented | partial | conformance | not_ready | snapshot plus real Vat-backed GCS archive/cold restore pass; scheduled off-node and three-node proof remain #1676 |
 | Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy and fixed projection-index allowlist are verified; metric cardinality remains |
-| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | logging, trace, error, and Sift-owned metric series/rollup stores pass; audit/change, profile, and GenAI stores remain #1668-#1670 |
-| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus authorized logging, trace, error, and typed metric reads pass; unified cross-signal query and streaming tail remain #1671 |
+| Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | logging, trace, error, metric, and immutable audit/change stores pass; profile and GenAI stores remain #1669-#1670 |
+| Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus authorized logging, trace, error, metric, and audit/change reads pass; unified cross-signal query and streaming tail remain #1671 |
 | GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
-| Security Audit And Governance | 1668 | planned | planned | conformance | not_ready | immutable audit/change projections, legal hold, scoped access, and export controls |
+| Security Audit And Governance | 1668 | implemented | verified | conformance | ready | immutable hash-chained audit/change projections, retention with legal hold, scoped reads, controlled hashed exports, and rebuild equality pass |
 | Profile Observability | 1669 | planned | planned | conformance | not_ready | OTel profiles, blob durability, flamegraphs, top functions, diffs, and trace correlation |
 | AI And Agent Observability | 1670 | planned | planned | conformance | not_ready | GenAI observations, sessions, token/cost views, and typed evaluation scores |
 | Alert Rules And Incident Lifecycle | 1672 | planned | planned | conformance | not_ready | durable typed rules, deduplicated incidents, and audited lifecycle transitions |
@@ -322,8 +322,9 @@ EC Dimensions: behavior: logging search/query/tail, trace topology,
 links/events, partial diagnostics, critical path, error fingerprint/group
 lifecycle, direct metric time-series/chunks/rollups, OTel temporality,
 histograms, exemplars, cardinality overflow, project authorization, and raw
-rebuild equality pass; audit/change timeline, profile analysis, and GenAI views
-remain pending.
+rebuild equality pass; immutable audit/change timeline, legal hold, controlled
+export, and integrity verification pass; profile analysis and GenAI views remain
+pending.
 Required Verification: conformance, dogfood
 Promise:
 Expose logging, tracing, error reporting, metrics, audit/change, profiles, and
@@ -338,7 +339,7 @@ Gate Inventory:
 - implemented trace topology/query: projects/sift/tests/trace_store.rs and projects/sift/tests/trace_api.rs
 - implemented error grouping/lifecycle: projects/sift/tests/error_report_store.rs and projects/sift/tests/error_report_api.rs
 - implemented metric projection/query: projects/sift/tests/metric_store.rs and projects/sift/tests/metric_api.rs
-- pending: projects/sift/tests/audit_change_store.rs
+- implemented audit/change projection/governance: projects/sift/tests/audit_change_store.rs and projects/sift/tests/audit_change_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -347,7 +348,7 @@ Gate Inventory:
 | trace-store-topology-and-correlation | change | 1665 | implemented | passing | conformance | projects/sift/tests/trace_store.rs and projects/sift/tests/trace_api.rs |
 | error-report-store-grouping-lifecycle | change | 1666 | implemented | passing | conformance | versioned fingerprints, ordered occurrences, durable authorized lifecycle, deterministic reopen/mute expiry, audit/change evidence, restart, and raw rebuild equality |
 | metric-store-direct-points-and-exemplars | change | 1667 | implemented | passing | conformance | gauge/delta/cumulative reset semantics, explicit/exponential histograms, exemplars, late points, chunks, 60s/1h rollups, overflow diagnostics, auth, pagination, lag, snapshot, and raw rebuild equality |
-| audit-and-change-store-timeline | change | 1668 | planned | planned | conformance | immutable timeline, legal hold, and export gate |
+| audit-and-change-store-timeline | change | 1668 | implemented | passing | conformance | immutable per-project hash chain, normalized actor/action/change context, raw rebuild equality, retention, legal hold, scoped query, and controlled hashed export |
 | profile-store-and-analysis | change | 1669 | planned | planned | conformance | flamegraph, top-functions, diff, and trace-correlation gate |
 | genai-session-cost-evaluation-views | change | 1670 | planned | planned | conformance | observation, session, token/cost, and evaluation gate |
 | store-rebuild-from-raw-journal | change | #1660 | implemented | passing | dogfood | fresh raw replay compares canonical semantic digest before atomic install |
@@ -372,6 +373,7 @@ change context, then tail or replay matching events during incidents.
 Gate Inventory:
 - implemented log-specific query/tail primitives: projects/sift/tests/logging_api.rs
 - implemented trace-specific retrieval and partial topology: projects/sift/tests/trace_api.rs
+- implemented audit/change query and controlled export: projects/sift/tests/audit_change_api.rs
 - pending unified query: projects/sift/tests/event_query_api.rs
 - pending streaming tail: projects/sift/tests/tail_api.rs
 - implemented: projects/sift/tests/replay_api.rs
@@ -420,9 +422,10 @@ Status: confirmed
 Surfaces: Storage: immutable audit and change-event stores with stricter
 retention and legal-hold policy; HTTP/CLI: actor, subject, resource, and change
 timeline lookup plus controlled export.
-EC Dimensions: behavior: pending audit-store gate - append-only actor/subject
-history, correlation to the causal request/trace, and ordered change timeline;
-security: pending scoped-access, retention, redaction, and export-control gate.
+EC Dimensions: behavior: append-only actor/subject history, correlation to the
+causal request/trace, ordered change timeline, per-project integrity chain, and
+raw rebuild equality pass; security: scoped read/admin access, retention, legal
+hold, and controlled hashed export pass.
 Required Verification: conformance, security
 Promise:
 Treat security audit and change history as first-class operational facts, not
@@ -430,14 +433,14 @@ application log conventions. Sift preserves their integrity, causality, and
 stricter governance policy while keeping the same raw-event correlation model
 as the logging, trace, error, and metric stores.
 Gate Inventory:
-- pending: projects/sift/tests/audit_change_store.rs
-- pending: projects/sift/tests/audit_governance.rs
+- implemented store/integrity/rebuild: projects/sift/tests/audit_change_store.rs
+- implemented retention/hold/auth/export: projects/sift/tests/audit_change_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| immutable-audit-event-projection | change | 1668 | planned | planned | conformance | audit append/order/immutability gate |
-| change-event-causality-timeline | change | 1668 | planned | planned | conformance | cross-signal change correlation gate |
-| audit-retention-hold-and-export-controls | change | 1668 | planned | planned | negative | legal hold, retention, auth, and export gate |
+| immutable-audit-event-projection | change | 1668 | implemented | passing | conformance | normalized append-only records, per-project SHA-256 chain, duplicate immutability, tamper rejection, and raw rebuild equality |
+| change-event-causality-timeline | change | 1668 | implemented | passing | conformance | ordered actor/action/target/version records preserve resource, trace, span, request, and session correlation |
+| audit-retention-hold-and-export-controls | change | 1668 | implemented | passing | negative | project read/admin authorization, retention expiry, legal-hold override/release, and durable content-hashed export manifest |
 
 ### Profile Observability
 
@@ -889,14 +892,14 @@ Gate Inventory:
 - implemented auth: projects/sift/tests/runtime_security_e2e.rs
 - implemented guard: projects/sift/guard.toml
 - pending content governance: 1657
-- pending immutable audit controls: 1668
+- implemented immutable audit controls: projects/sift/tests/audit_change_store.rs and projects/sift/tests/audit_change_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | shared-bearer-token-auth | change | 1604 | implemented | passing | conformance | projects/sift/tests/runtime_security_e2e.rs |
 | deployment-guard-hardening | change | 1616 | implemented | passing | negative | projects/sift/guard.toml |
 | scoped-event-view-access | change | 1671 | planned | planned | negative | store/query project authorization gate |
-| audit-event-retention-policy | change | 1668 | planned | planned | negative | legal hold, export, and retention gate |
+| audit-event-retention-policy | change | 1668 | implemented | passing | negative | retention expiry, legal-hold override/release, scoped administration, and content-hashed controlled export pass |
 | pii-redaction-and-index-denylist | change | 1657 | implemented | planned | negative | pre-journal policy passes; projection index denylist remains in #1660 |
 
 ### Competitor Feature Parity

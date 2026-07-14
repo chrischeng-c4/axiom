@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     projection::{
-        ErrorLifecycleState, ErrorLifecycleV1, ReplayJob, SiftControlState,
-        SIFT_COMMAND_FORMAT_VERSION,
+        AuditExportManifestV1, AuditLegalHoldV1, ErrorLifecycleState, ErrorLifecycleV1, ReplayJob,
+        SiftControlState, SIFT_COMMAND_FORMAT_VERSION,
     },
     AppendResult, DurableJournal, EventEnvelope, IncomingEvent, SignalKind, StoredEvent,
 };
@@ -32,6 +32,8 @@ pub(crate) enum SiftCommandV1 {
     AppendEvent { event: Box<EventEnvelope> },
     UpsertReplayJob { job: Box<ReplayJob> },
     TransitionErrorGroup { lifecycle: Box<ErrorLifecycleV1> },
+    UpsertAuditLegalHold { hold: Box<AuditLegalHoldV1> },
+    RecordAuditExport { export: Box<AuditExportManifestV1> },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -42,6 +44,10 @@ pub(crate) struct JournalSnapshot {
     pub replay_jobs: BTreeMap<String, ReplayJob>,
     #[serde(default)]
     pub error_lifecycles: BTreeMap<String, ErrorLifecycleV1>,
+    #[serde(default)]
+    pub audit_legal_holds: BTreeMap<String, AuditLegalHoldV1>,
+    #[serde(default)]
+    pub audit_exports: BTreeMap<String, AuditExportManifestV1>,
 }
 
 impl JournalSnapshot {
@@ -51,6 +57,8 @@ impl JournalSnapshot {
             events,
             replay_jobs: control.replay_jobs.clone(),
             error_lifecycles: control.error_lifecycles.clone(),
+            audit_legal_holds: control.audit_legal_holds.clone(),
+            audit_exports: control.audit_exports.clone(),
         }
     }
 
@@ -61,6 +69,8 @@ impl JournalSnapshot {
             events,
             replay_jobs: BTreeMap::new(),
             error_lifecycles: BTreeMap::new(),
+            audit_legal_holds: BTreeMap::new(),
+            audit_exports: BTreeMap::new(),
         }
     }
 }
@@ -150,6 +160,35 @@ impl SiftStateMachine {
             .cloned()
     }
 
+    pub fn audit_legal_hold(&self, project: &str, id: &str) -> Option<AuditLegalHoldV1> {
+        self.control
+            .lock()
+            .expect("Sift control state lock poisoned")
+            .audit_legal_holds
+            .get(&crate::projection::audit_control_key(project, id))
+            .cloned()
+    }
+
+    pub fn audit_legal_holds(&self, project: &str) -> Vec<AuditLegalHoldV1> {
+        self.control
+            .lock()
+            .expect("Sift control state lock poisoned")
+            .audit_legal_holds
+            .values()
+            .filter(|hold| hold.project == project && hold.active)
+            .cloned()
+            .collect()
+    }
+
+    pub fn audit_export(&self, project: &str, id: &str) -> Option<AuditExportManifestV1> {
+        self.control
+            .lock()
+            .expect("Sift control state lock poisoned")
+            .audit_exports
+            .get(&crate::projection::audit_control_key(project, id))
+            .cloned()
+    }
+
     pub fn take_append_outcome(&self, index: u64) -> Option<AppendResult> {
         self.append_outcomes
             .lock()
@@ -231,6 +270,62 @@ impl RaftStateMachine for SiftStateMachine {
                 }
                 control.error_lifecycles.insert(key, *lifecycle);
             }
+            SiftCommandV1::UpsertAuditLegalHold { mut hold } => {
+                validate_audit_legal_hold(&hold)?;
+                hold.commit_index = index;
+                let key = hold.key();
+                let previous_active = control
+                    .audit_legal_holds
+                    .get(&key)
+                    .is_some_and(|previous| previous.active);
+                append_control_evidence(
+                    &self.journal,
+                    &hold.project,
+                    &hold.updated_at,
+                    &format!("audit-hold:{}:{}:{index}", hold.project, hold.id),
+                    true,
+                    serde_json::json!({
+                        "kind": "audit_legal_hold_transition",
+                        "action": if hold.active { "audit.hold.activate" } else { "audit.hold.release" },
+                        "target": hold.id.clone(),
+                        "actor": hold.actor.clone(),
+                        "reason": hold.reason.clone(),
+                        "start_time": hold.start_time.clone(),
+                        "end_time": hold.end_time.clone(),
+                        "from_active": previous_active,
+                        "to_active": hold.active,
+                        "commit_index": index,
+                    }),
+                )?;
+                control.audit_legal_holds.insert(key, *hold);
+            }
+            SiftCommandV1::RecordAuditExport { mut export } => {
+                validate_audit_export(&export)?;
+                export.commit_index = index;
+                let key = export.key();
+                if control.audit_exports.contains_key(&key) {
+                    bail!("audit export id `{}` already exists", export.id);
+                }
+                append_control_evidence(
+                    &self.journal,
+                    &export.project,
+                    &export.exported_at,
+                    &format!("audit-export:{}:{}:{index}", export.project, export.id),
+                    false,
+                    serde_json::json!({
+                        "kind": "audit_controlled_export",
+                        "action": "audit.export",
+                        "target": export.id.clone(),
+                        "actor": export.actor.clone(),
+                        "record_count": export.record_count,
+                        "content_sha256": export.content_sha256.clone(),
+                        "start_time": export.start_time.clone(),
+                        "end_time": export.end_time.clone(),
+                        "commit_index": index,
+                    }),
+                )?;
+                control.audit_exports.insert(key, *export);
+            }
         }
         control.applied_index = index;
         persist_control(&self.control_path, &control)?;
@@ -258,6 +353,8 @@ impl RaftStateMachine for SiftStateMachine {
             applied_index: snapshot.applied_index,
             replay_jobs: snapshot.replay_jobs,
             error_lifecycles: snapshot.error_lifecycles,
+            audit_legal_holds: snapshot.audit_legal_holds,
+            audit_exports: snapshot.audit_exports,
         };
         persist_control(&self.control_path, &restored)?;
         *self
@@ -293,6 +390,80 @@ fn validate_error_lifecycle(lifecycle: &ErrorLifecycleV1) -> Result<()> {
         }
         (_, Some(_)) => bail!("only muted error lifecycle may set muted_until"),
         (_, None) => {}
+    }
+    Ok(())
+}
+
+fn validate_audit_legal_hold(hold: &AuditLegalHoldV1) -> Result<()> {
+    if hold.id.trim().is_empty()
+        || hold.project.trim().is_empty()
+        || hold.reason.trim().is_empty()
+        || hold.actor.trim().is_empty()
+    {
+        bail!("audit hold id, project, reason, and actor must not be empty");
+    }
+    let start = DateTime::parse_from_rfc3339(&hold.start_time)
+        .context("audit hold start_time must be RFC3339")?;
+    let end = DateTime::parse_from_rfc3339(&hold.end_time)
+        .context("audit hold end_time must be RFC3339")?;
+    DateTime::parse_from_rfc3339(&hold.updated_at)
+        .context("audit hold updated_at must be RFC3339")?;
+    if start >= end {
+        bail!("audit hold start_time must be earlier than end_time");
+    }
+    Ok(())
+}
+
+fn validate_audit_export(export: &AuditExportManifestV1) -> Result<()> {
+    if export.id.trim().is_empty()
+        || export.project.trim().is_empty()
+        || export.actor.trim().is_empty()
+    {
+        bail!("audit export id, project, and actor must not be empty");
+    }
+    if export.content_sha256.len() != 64
+        || !export
+            .content_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        bail!("audit export content_sha256 must be a 64-character hex digest");
+    }
+    DateTime::parse_from_rfc3339(&export.exported_at)
+        .context("audit export exported_at must be RFC3339")?;
+    Ok(())
+}
+
+fn append_control_evidence(
+    journal: &DurableJournal,
+    project: &str,
+    occurred_at: &str,
+    event_id_prefix: &str,
+    include_change: bool,
+    payload: serde_json::Value,
+) -> Result<()> {
+    let signals: &[SignalKind] = if include_change {
+        &[SignalKind::AuditEvent, SignalKind::ChangeEvent]
+    } else {
+        &[SignalKind::AuditEvent]
+    };
+    for signal in signals {
+        let suffix = if *signal == SignalKind::AuditEvent {
+            "audit"
+        } else {
+            "change"
+        };
+        let mut event = EventEnvelope::for_project(
+            project,
+            "control",
+            format!("{event_id_prefix}:{suffix}"),
+            *signal,
+            payload.clone(),
+        );
+        event.occurred_at = occurred_at.to_string();
+        event.observed_at = occurred_at.to_string();
+        event.resource.insert("service.name".into(), "sift".into());
+        journal.append(event)?;
     }
     Ok(())
 }

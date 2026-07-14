@@ -1,4 +1,5 @@
 // HANDWRITE-BEGIN gap="sift-projection-module" tracker="1660" reason="Export projection contracts, runtime, replay state, and the embedded Lumen adapter."
+mod audit_change;
 mod error_report;
 mod logging;
 mod lumen;
@@ -19,9 +20,10 @@ pub use metric::{
     METRIC_CHUNK_POINTS, METRIC_SCHEMA_VERSION, PROJECTION_METRIC_STORE, ROLLUP_WINDOWS_SECONDS,
 };
 pub use model::{
-    error_lifecycle_key, ErrorLifecycleState, ErrorLifecycleV1, ProjectionCheckpoint,
-    ProjectionDescriptor, ProjectionLag, ProjectionStateEnvelope, RebuildComparison, ReplayJob,
-    ReplayState, SiftControlState, PROJECTION_STATE_FORMAT_VERSION, SIFT_COMMAND_FORMAT_VERSION,
+    audit_control_key, error_lifecycle_key, AuditExportManifestV1, AuditLegalHoldV1,
+    ErrorLifecycleState, ErrorLifecycleV1, ProjectionCheckpoint, ProjectionDescriptor,
+    ProjectionLag, ProjectionStateEnvelope, RebuildComparison, ReplayJob, ReplayState,
+    SiftControlState, PROJECTION_STATE_FORMAT_VERSION, SIFT_COMMAND_FORMAT_VERSION,
 };
 pub use runtime::{
     Projection, ProjectionRuntime, PROJECTION_BATCH_SIZE, PROJECTION_EVENT_INDEX,
@@ -33,6 +35,11 @@ pub use trace::{
 };
 
 // HANDWRITE-END
+pub use audit_change::{
+    export_content_sha256, AuditChangeProjection, AuditChangeRecordV1, AuditExportResponseV1,
+    AuditPage, AuditQuery, AUDIT_CHANGE_SCHEMA_VERSION, AUDIT_RECORD_SCHEMA,
+    DEFAULT_AUDIT_RETENTION_DAYS, MAX_AUDIT_QUERY_LIMIT, PROJECTION_AUDIT_CHANGE_STORE,
+};
 pub use error_report::{
     fingerprint as error_fingerprint, ErrorGroupV1, ErrorOccurrenceV1, ErrorPage, ErrorQuery,
     ErrorReportProjection, ERROR_FINGERPRINT_VERSION, ERROR_REPORT_SCHEMA_VERSION,
