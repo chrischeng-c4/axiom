@@ -35,3 +35,20 @@ flowchart TD
   complete -->|no| refuse([error: target paths only])
   complete -->|yes| close([terminal lifecycle closes])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/agentic-workflow/tech-design/surface/validate/tests/td_no_merge_test.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: Add the source snapshot regression that proves a terminal code-check reads only the requested WI's declared TD paths.
+  - path: apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs
+    action: modify
+    section: source
+    impl_mode: codegen
+    description: Regenerate the real-AW integration regression from the updated source snapshot.
+```
