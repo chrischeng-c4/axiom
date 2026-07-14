@@ -19,6 +19,37 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
+/// Stable identity of one independently generated unit inside typed TD IR.
+///
+/// IDs are section-qualified so a `Schema` definition and a `CLI` command
+/// with the same logical name cannot collide in a `Changes.generates` plan.
+/// The canonical wire spellings are `schema:<name>` and `cli:<name>`.
+///
+/// @spec apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#schema
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GeneratedUnitId(String);
+
+impl GeneratedUnitId {
+    pub fn schema(name: &str) -> Self {
+        Self(format!("schema:{name}"))
+    }
+
+    pub fn cli(name: &str) -> Self {
+        Self(format!("cli:{name}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for GeneratedUnitId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// JSON Schema 2020-12 document body. Preserves `definitions` / `$defs`
 /// as typed maps so entity walkers can iterate keys directly.
 ///
@@ -37,6 +68,53 @@ pub struct JsonSchemaPayload {
     pub defs: BTreeMap<String, PayloadTypeDef>,
     #[serde(flatten, default, skip_serializing_if = "value_is_empty_mapping")]
     pub extra: Value,
+}
+
+impl JsonSchemaPayload {
+    /// Return deterministic IDs for every top-level Schema unit. Map keys are
+    /// already the typed IR's stable logical names; a direct/root schema uses
+    /// its title, or `$root` when the title is intentionally absent.
+    pub fn generated_unit_ids(&self) -> Vec<GeneratedUnitId> {
+        if self.root_is_generated_unit() {
+            return vec![GeneratedUnitId::schema(
+                self.title.as_deref().unwrap_or("$root"),
+            )];
+        }
+
+        let mut ids = self
+            .definitions
+            .keys()
+            .chain(self.defs.keys())
+            .map(|name| GeneratedUnitId::schema(name))
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            ids.push(GeneratedUnitId::schema(
+                self.title.as_deref().unwrap_or("$root"),
+            ));
+        }
+        ids.sort();
+        ids
+    }
+
+    /// Match the generator's legacy-compatible root-vs-definitions choice.
+    /// A directly generatable root remains the one unit even when the schema
+    /// also carries definitions; definitions become units only when the root
+    /// itself is a container document.
+    fn root_is_generated_unit(&self) -> bool {
+        let extra = &self.extra;
+        let has_properties = extra.get("properties").is_some();
+        let is_string_enum = extra.get("type").and_then(Value::as_str) == Some("string")
+            && extra
+                .get("enum")
+                .and_then(Value::as_sequence)
+                .is_some_and(|values| !values.is_empty());
+        let has_rust_enum_variants = extra
+            .get("x-rust-enum")
+            .and_then(|value| value.get("variants"))
+            .and_then(Value::as_sequence)
+            .is_some_and(|variants| !variants.is_empty());
+        has_properties || is_string_enum || has_rust_enum_variants
+    }
 }
 
 /// OpenRPC 1.3 document body. `methods[].name` is the precise replacement
@@ -109,6 +187,21 @@ pub struct CliManifestPayload {
     pub commands: Vec<CliCommandDef>,
     #[serde(flatten, default, skip_serializing_if = "value_is_empty_mapping")]
     pub extra: Value,
+}
+
+impl CliManifestPayload {
+    /// Return deterministic IDs for independently routable top-level CLI
+    /// commands. Nested subcommands remain part of their owning top-level
+    /// command unit.
+    pub fn generated_unit_ids(&self) -> Vec<GeneratedUnitId> {
+        let mut ids = self
+            .commands
+            .iter()
+            .map(|command| GeneratedUnitId::cli(&command.name))
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
 }
 
 /// Config manifest document body. `keys[].name` powers the typed config walk.
@@ -423,6 +516,49 @@ mod tests {
         assert_eq!(p.commands[0].name, "build");
         assert_eq!(p.commands[0].flags[0].name, "release");
         assert_eq!(p.commands[1].args[0].name, "filter");
+    }
+
+    #[test]
+    fn generated_unit_ids_are_section_qualified_and_order_stable() {
+        let schema: JsonSchemaPayload = serde_yaml::from_str(
+            "definitions:\n  Zebra: { type: object }\n  Alpha: { type: object }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            schema
+                .generated_unit_ids()
+                .iter()
+                .map(GeneratedUnitId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["schema:Alpha", "schema:Zebra"]
+        );
+
+        let cli: CliManifestPayload =
+            serde_yaml::from_str("commands:\n  - { name: test }\n  - { name: build }\n").unwrap();
+        assert_eq!(
+            cli.generated_unit_ids()
+                .iter()
+                .map(GeneratedUnitId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["cli:build", "cli:test"]
+        );
+        assert_ne!(
+            GeneratedUnitId::schema("build"),
+            GeneratedUnitId::cli("build")
+        );
+
+        let root_with_defs: JsonSchemaPayload = serde_yaml::from_str(
+            "title: Envelope\ntype: object\nproperties:\n  id: { type: string }\n$defs:\n  Detail: { type: object }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            root_with_defs
+                .generated_unit_ids()
+                .iter()
+                .map(GeneratedUnitId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["schema:Envelope"]
+        );
     }
 
     #[test]

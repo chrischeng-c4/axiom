@@ -76,6 +76,12 @@ capability_refs:
     rationale: "The CLI semantic domain owns read-only exact-spec preparation before TD lifecycle mutation, stable plan-error envelopes, and prepared-byte revalidation in src/cli/td.rs."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: exact-generated-unit-target-ownership
+    claim: exact-generated-unit-target-ownership
+    coverage: full
+    rationale: "The CLI admission surface emits structured invalid-ownership and unsupported-owned-unit envelopes before lifecycle mutation, including stable IDs, targets, remediation, and HITL state."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-touched-codegen-drift-gate
     claim: terminal-touched-codegen-drift-gate
     coverage: full
@@ -4106,6 +4112,13 @@ changes:
       unavailable and multiple are ambiguous. Only an admitted plan may enter
       lifecycle mutation, and its bytes are compared exactly again after
       activation before execution.
+      Issue #1634 extends that same admission boundary with stable
+      `schema:<name>` and `cli:<name>` unit IDs. Canonical Changes
+      `generates:` lists must form an exhaustive, unique partition before
+      lifecycle mutation; invalid ownership emits a structured remediation
+      envelope, while an owned unit without a generator emits a typed HITL
+      generator-gap envelope. The executor repeats the predicate and passes
+      only the current target's typed IR partition to Schema or CLI codegen.
       Issue #1602 activates an existing TD branch before inspecting reachable
       history. An exact slug plus Td-Init resumes normally; missing or
       same-slug-without-init history clears the stale authoring phase, branch,

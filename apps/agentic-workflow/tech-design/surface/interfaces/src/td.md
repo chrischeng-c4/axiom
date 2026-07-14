@@ -105,8 +105,11 @@ checkout, resolves absent Changes through read-only exact spec-ref inference,
 and rejects either zero knowable targets or multiple shared CODEGEN
 destinations through one structured stdout envelope. Explicit single-target,
 one inferred target, and CODEGEN-plus-HANDWRITE plans remain compatible. Exact
-prepared bytes are revalidated after activation before generation; #1634
-remains responsible for canonical multi-target `generates:` unit partitioning.
+prepared bytes are revalidated after activation before generation. Canonical
+multi-target plans use stable `schema:<name>` / `cli:<name>` IDs in exhaustive
+per-target `generates:` lists. Invalid ownership and unsupported owned units
+emit typed remediation/HITL envelopes before mutation; admitted execution
+passes only the current target's typed IR partition to its generator.
 
 ### Symbols
 
@@ -4602,7 +4605,17 @@ fn shell_quote_td_arg(value: &str) -> String {
 }
 
 fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateError) -> Result<()> {
-    let (error_kind, section, targets, spec_path, remediation, next_command) = match error {
+    let (
+        error_kind,
+        reason,
+        section,
+        unit_ids,
+        targets,
+        spec_path,
+        remediation,
+        next_command,
+        requires_hitl,
+    ) = match error {
         crate::generate::GenerateError::AmbiguousGenerationPlan {
             section,
             targets,
@@ -4610,11 +4623,49 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
             next_command,
         } => (
             "ambiguous_generation_plan",
+            None,
             Some(section.as_str()),
+            &[][..],
             targets.as_slice(),
             None,
             remediation.as_str(),
             next_command.as_str(),
+            false,
+        ),
+        crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+            section,
+            reason,
+            unit_ids,
+            targets,
+            remediation,
+            next_command,
+        } => (
+            "invalid_generated_unit_ownership",
+            Some(reason.as_str()),
+            Some(section.as_str()),
+            unit_ids.as_slice(),
+            targets.as_slice(),
+            None,
+            remediation.as_str(),
+            next_command.as_str(),
+            false,
+        ),
+        crate::generate::GenerateError::OwnedGeneratedUnitUnsupported {
+            section,
+            unit_ids,
+            targets,
+            remediation,
+            next_command,
+        } => (
+            "owned_generated_unit_unsupported",
+            Some("generator_gap"),
+            Some(section.as_str()),
+            unit_ids.as_slice(),
+            targets.as_slice(),
+            None,
+            remediation.as_str(),
+            next_command.as_str(),
+            true,
         ),
         crate::generate::GenerateError::GenerationPlanUnavailable {
             spec_path,
@@ -4623,10 +4674,13 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
         } => (
             "generation_plan_unavailable",
             None,
+            None,
+            &[][..],
             &[][..],
             Some(spec_path.as_str()),
             remediation.as_str(),
             next_command.as_str(),
+            false,
         ),
         _ => return Ok(()),
     };
@@ -4635,7 +4689,9 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
             "action": "error",
             "slug": slug,
             "error_kind": error_kind,
+            "reason": reason,
             "section": section,
+            "unit_ids": unit_ids,
             "targets": targets,
             "spec_path": spec_path,
             "message": error.to_string(),
@@ -4644,15 +4700,15 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
                 "kind": "remediation",
                 "command": next_command,
                 "reason": remediation,
-                "requires_hitl": false,
+                "requires_hitl": requires_hitl,
                 "payload_path": null,
             },
             "completion": {
                 "root_complete": false,
                 "workflow_complete": false,
-                "requires_hitl": false,
+                "requires_hitl": requires_hitl,
                 "criteria": [],
-                "missing": ["unambiguous complete TD generation plan"],
+                "missing": ["valid complete TD generated-unit ownership plan"],
             },
         }),
         true,

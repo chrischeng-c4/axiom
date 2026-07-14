@@ -53,6 +53,12 @@ capability_refs:
     rationale: "Real CLI fixtures prove an ambiguous Schema plan is rejected on main before TD branch activation or mutation, while one existing inferred Schema target remains fully generatable on a project branch."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: exact-generated-unit-target-ownership
+    claim: exact-generated-unit-target-ownership
+    coverage: full
+    rationale: "Real CLI fixtures prove cold exact Schema partitioning and typed unsupported-owned-unit HITL rejection before Git, issue, lifecycle, or source mutation."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-touched-codegen-drift-gate
     claim: terminal-touched-codegen-drift-gate
     coverage: full
@@ -1278,6 +1284,13 @@ changes:
       persistent project branch, proving the caller and executor share exact
       read-only spec-ref inference for one managed target and advance the
       lifecycle to `cb_genned` after replacing the stale symbol.
+      Issue #1634 then cold-generates two Schema targets whose canonical
+      `generates:` lists own disjoint stable IDs, proving Alpha and Beta never
+      leak across files and the admitted lifecycle reaches `cb_genned`. Its
+      negative fixture owns an unsupported alias and compares HEAD, branch,
+      index, status, issue, and target bytes around the typed
+      `owned_generated_unit_unsupported` HITL envelope, proving generator gaps
+      cannot degrade into marker-only CODEGEN or mutate lifecycle state.
       Issue #1635 creates one accepted and one unrelated generated target,
       commits drift in both, and stages an unrelated index sentinel. Real
       terminal code-check refuses only the accepted target before EC while

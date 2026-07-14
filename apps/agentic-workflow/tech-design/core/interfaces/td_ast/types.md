@@ -485,6 +485,7 @@ changes:
           - CliManifestPayload
           - ConfigKeyDef
           - ConfigManifestPayload
+          - GeneratedUnitId
           - JsonSchemaPayload
           - OpenApiOperation
           - OpenApiPathItem
