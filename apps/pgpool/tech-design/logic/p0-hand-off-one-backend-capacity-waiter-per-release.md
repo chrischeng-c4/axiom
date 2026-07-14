@@ -71,7 +71,6 @@ changes:
     section: pgpool-single-capacity-handoff
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
