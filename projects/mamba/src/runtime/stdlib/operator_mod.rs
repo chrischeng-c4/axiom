@@ -943,6 +943,18 @@ pub fn register() {
         op_methodcaller_call as *const () as usize,
     );
 
+    // `_operator` is the C-accelerator module `operator.py` re-exports from
+    // (`operator.add is _operator.add`, etc.) — mirror the same pattern used
+    // for `_bisect`/`_hashlib`/`_thread`/etc. `_operator` carries the base
+    // (non-dunder) names only; the `__add__`-style dunder twins are added by
+    // the pure-Python `operator` module layer, not the C module.
+    let mut accel_attrs = HashMap::new();
+    for (name, _) in &dispatchers {
+        if let Some(value) = attrs.get(*name).copied() {
+            accel_attrs.insert(name.to_string(), value);
+        }
+    }
+    super::register_module("_operator", accel_attrs);
     super::register_module("operator", attrs);
 }
 
