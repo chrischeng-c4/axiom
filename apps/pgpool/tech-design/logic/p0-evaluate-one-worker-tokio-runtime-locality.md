@@ -53,9 +53,8 @@ changes:
     action: modify
     section: pgpool-one-worker-runtime-locality
     impl_mode: hand-written
-    reason: Constrain the existing Tokio multi-thread runtime to one worker without changing service, pool, wire, or CLI behavior.
+    reason: Configure exactly one worker on the existing Tokio multi-thread runtime while leaving all service and pool semantics intact.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
