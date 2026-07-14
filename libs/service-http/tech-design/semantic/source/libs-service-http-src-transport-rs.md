@@ -21,8 +21,9 @@ Public API manifest for `libs/service-http/src/transport.rs` captured during lib
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `serve` | libs/service-http/src/transport.rs | function | pub | 19 | pub async fn serve( |
-| `trace_layer` | libs/service-http/src/transport.rs | function | pub | 43 | pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, DefaultMakeSpan> { |
+| `PropagatingMakeSpan` | libs/service-http/src/transport.rs | struct | pub | 13 | pub struct PropagatingMakeSpan; |
+| `serve` | libs/service-http/src/transport.rs | function | pub | 42 | pub async fn serve( |
+| `trace_layer` | libs/service-http/src/transport.rs | function | pub | 67 | pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, PropagatingMakeSpan> { |
 
 
 ## Source
@@ -38,7 +39,29 @@ Public API manifest for `libs/service-http/src/transport.rs` captured during lib
 
 use tokio::net::TcpListener;
 use tower_http::classify::{ServerErrorsAsFailures, SharedClassifier};
-use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tower_http::trace::{DefaultMakeSpan, MakeSpan, TraceLayer};
+
+/// Request span maker that preserves standard request fields and, in an
+/// OTLP-enabled build, attaches a valid propagated W3C parent context.
+#[derive(Debug, Clone, Copy)]
+pub struct PropagatingMakeSpan;
+
+impl<B> MakeSpan<B> for PropagatingMakeSpan {
+    fn make_span(&mut self, request: &axum::http::Request<B>) -> tracing::Span {
+        let mut default = DefaultMakeSpan::new().level(tracing::Level::INFO);
+        let span = default.make_span(request);
+        #[cfg(feature = "otlp")]
+        {
+            use opentelemetry::trace::TraceContextExt as _;
+            use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+            let parent = crate::logging::extract_trace_context(request.headers());
+            if parent.span().span_context().is_valid() {
+                span.set_parent(parent);
+            }
+        }
+        span
+    }
+}
 
 /// Serve `app` (HTTP/1.1 + h2c on one port) on `listener`, stopping when
 /// `shutdown` resolves (e.g. [`crate::signal::shutdown_with_drain`]).
@@ -71,8 +94,8 @@ pub async fn serve(
 /// Returns the concrete `TraceLayer` so callers `.layer()` it directly. For a
 /// different classifier/make-span, build `TraceLayer::new_for_http()` inline
 /// instead.
-pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, DefaultMakeSpan> {
-    TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
+pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, PropagatingMakeSpan> {
+    TraceLayer::new_for_http().make_span_with(PropagatingMakeSpan)
 }
 ````
 
@@ -87,5 +110,6 @@ changes:
     section: rust-source-unit
     impl_mode: codegen
     description: |
-      rust-source-unit (td_ast) source for `libs/service-http/src/transport.rs` captured during libs codegen standardization.
+      Replaces the default span factory with a shared factory that preserves a
+      valid W3C parent when the optional OTLP feature is enabled.
 ```
