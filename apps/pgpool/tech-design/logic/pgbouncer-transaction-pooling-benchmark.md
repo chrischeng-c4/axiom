@@ -80,7 +80,7 @@ flowchart TD
 3. Both use transaction pooling and a cap of 16 physical backend connections. PgBouncer's reset query is `DISCARD ALL`, matching pgpool's existing return-to-idle reset invariant.
 4. Both poolers finish startup before either measured leg. The same pgbench workload, client count, worker count, duration, database user, and cleartext loopback network path are used for each target.
 5. Two sequential pairs avoid shared-backend contention while counterbalancing position: PgBouncer-first then pgpool-first. Every target therefore has one first-position and one second-position sample.
-6. The runner reports each raw sample and marks the comparison invalid when the two paired TPS ratios differ by more than 20%; it must not name a winner for invalid host evidence. A later competitor-performance gate may turn demonstrated stable wins into a host-scoped ratchet.
+6. The runner reports each raw sample, pair winner, unanimous direction, and ratio stability. A pgpool win requires both pairs to favor pgpool and to differ by no more than 20%; mixed directions or an unstable pgpool direction are invalid. Two clean PgBouncer-favoring pairs reject a candidate even when their loss magnitude varies. A later competitor-performance gate may turn demonstrated stable wins into a host-scoped ratchet.
 
 ### Out of scope
 
@@ -110,18 +110,18 @@ requirements:
     kind: regression
     risk: medium
     verify: pgbouncer_benchmark::runner_is_syntax_valid_and_dry_run_is_hermetic
-  r3_counterbalanced_order_is_documented_and_enforced:
+  r3_counterbalanced_order_and_verdict_rules_are_documented_and_enforced:
     id: R3
-    text: "The ordinary runner starts both targets before measurement, records PgBouncer-first and pgpool-first samples, and documents that unstable pair evidence produces comparison_valid false rather than a winner."
+    text: "The ordinary runner starts both targets before measurement, records PgBouncer-first and pgpool-first samples, and documents pair winner, unanimous direction, and the stricter pgpool-win eligibility rule."
     kind: regression
     risk: high
-    verify: pgbouncer_benchmark::ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence
+    verify: pgbouncer_benchmark::ordinary_peer_profile_counterbalances_order_and_documents_peer_verdict_rules
 ---
 flowchart TD
     ac1[AC1 ac1 real runner emits nonzero comparable measurements] --> pgbouncer_benchmark_live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled[pgbouncer_benchmark::live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled]
     r1[R1 r1 dry run profile is exact and target symmetric] --> pgbouncer_benchmark_dry_run_profile_declares_equal_transaction_pooling_inputs[pgbouncer_benchmark::dry_run_profile_declares_equal_transaction_pooling_inputs]
     r2[R2 r2 runner is hermetic until explicitly enabled] --> pgbouncer_benchmark_runner_is_syntax_valid_and_dry_run_is_hermetic[pgbouncer_benchmark::runner_is_syntax_valid_and_dry_run_is_hermetic]
-    r3[R3 r3 counterbalanced order is documented and enforced] --> pgbouncer_benchmark_ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence[pgbouncer_benchmark::ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence]
+    r3[R3 r3 counterbalanced order and verdict rules are documented and enforced] --> pgbouncer_benchmark_ordinary_peer_profile_counterbalances_order_and_documents_peer_verdict_rules[pgbouncer_benchmark::ordinary_peer_profile_counterbalances_order_and_documents_peer_verdict_rules]
 ```
 
 ## Changes

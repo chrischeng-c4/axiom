@@ -47,8 +47,10 @@ throughput. The default `tpcb` profile remains unchanged as the database-stress
 regression workload.
 
 An ordinary peer comparison runs two 30-second paired trials in opposite
-target orders. It prints raw samples and marks a comparison invalid when the
-two paired TPS ratios differ by more than 20 percent. `--meter-bin` remains a
+target orders. It prints raw samples and marks a pgpool candidate inconclusive
+when the two paired TPS ratios differ by more than 20 percent. A pgpool win
+additionally requires both pairs to favor pgpool; two PgBouncer-favoring pairs
+reject a candidate even when their loss magnitude varies. `--meter-bin` remains a
 single pgpool diagnostic and cannot establish a valid competitor comparison.
 USAGE
 }
@@ -191,6 +193,10 @@ relative_spread() {
             printf "%.6f", mean == 0 ? 1 : abs(first - second) / mean
         }
     '
+}
+
+pair_winner() {
+    awk -v value="$1" 'BEGIN { print (value > 1 ? "pgpool" : (value < 1 ? "pgbouncer" : "tie")) }'
 }
 
 write_meter_driver() {
@@ -395,7 +401,7 @@ if [[ -n "$METER_BIN" ]]; then
     PGPOOL_TPS="$(metric "$WORK_DIR/pgpool-pgbench.log" tps)"
     PGPOOL_LATENCY_MS="$(metric "$WORK_DIR/pgpool-pgbench.log" latency_ms)"
     TPS_RATIO="$(ratio "$PGPOOL_TPS" "$PGBOUNCER_TPS")"
-    printf '{"schema":"%s","profile":{"workload":"%s","protocol":"simple","pool_mode":"transaction","backend_connection_cap":%s,"clients":%s,"jobs":%s,"duration_seconds":%s,"paired_trials":%s,"orders":["pgbouncer-first","pgpool-first"],"max_pair_ratio_relative_spread":%s,"scale":%s},"targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s},"comparison_valid":false,"winner_by_tps":"diagnostic-only","diagnostics":{"meter_sampled_pgpool":true,"comparison_valid":false}}\n' \
+    printf '{"schema":"%s","profile":{"workload":"%s","protocol":"simple","pool_mode":"transaction","backend_connection_cap":%s,"clients":%s,"jobs":%s,"duration_seconds":%s,"paired_trials":%s,"orders":["pgbouncer-first","pgpool-first"],"max_pair_ratio_relative_spread":%s,"scale":%s},"targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s},"comparison_valid":false,"pgpool_win_eligible":false,"winner_by_tps":"diagnostic-only","diagnostics":{"meter_sampled_pgpool":true,"comparison_valid":false}}\n' \
         "$PROFILE_SCHEMA" "$WORKLOAD_PROFILE" "$BACKEND_CAP" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PAIRED_TRIALS" "$MAX_PAIR_RATIO_RELATIVE_SPREAD" "$SCALE" \
         "$PGBOUNCER_TPS" "$PGBOUNCER_LATENCY_MS" "$PGPOOL_TPS" "$PGPOOL_LATENCY_MS" "$TPS_RATIO"
     exit 0
@@ -433,20 +439,34 @@ FIRST_RATIO="$(ratio "$PGPOOL_SECOND_TPS" "$PGBOUNCER_FIRST_TPS")"
 SECOND_RATIO="$(ratio "$PGPOOL_FIRST_TPS" "$PGBOUNCER_SECOND_TPS")"
 TPS_RATIO="$(mean_two "$FIRST_RATIO" "$SECOND_RATIO")"
 PAIR_RATIO_RELATIVE_SPREAD="$(relative_spread "$FIRST_RATIO" "$SECOND_RATIO")"
-COMPARISON_VALID="$(awk -v spread="$PAIR_RATIO_RELATIVE_SPREAD" -v limit="$MAX_PAIR_RATIO_RELATIVE_SPREAD" 'BEGIN { print (spread <= limit ? "true" : "false") }')"
+FIRST_PAIR_WINNER="$(pair_winner "$FIRST_RATIO")"
+SECOND_PAIR_WINNER="$(pair_winner "$SECOND_RATIO")"
+if [[ "$FIRST_PAIR_WINNER" == "$SECOND_PAIR_WINNER" ]]; then
+    UNANIMOUS_DIRECTION="$FIRST_PAIR_WINNER"
+else
+    UNANIMOUS_DIRECTION="mixed"
+fi
+STABLE="$(awk -v spread="$PAIR_RATIO_RELATIVE_SPREAD" -v limit="$MAX_PAIR_RATIO_RELATIVE_SPREAD" 'BEGIN { print (spread <= limit ? "true" : "false") }')"
+if [[ "$UNANIMOUS_DIRECTION" == "pgpool" && "$STABLE" == true ]]; then
+    PGPOOL_WIN_ELIGIBLE=true
+else
+    PGPOOL_WIN_ELIGIBLE=false
+fi
+if [[ "$UNANIMOUS_DIRECTION" == "pgbouncer" || "$PGPOOL_WIN_ELIGIBLE" == true ]]; then
+    COMPARISON_VALID=true
+    WINNER="$UNANIMOUS_DIRECTION"
+else
+    COMPARISON_VALID=false
+    WINNER="invalid"
+fi
 PGBOUNCER_TPS="$(mean_two "$PGBOUNCER_FIRST_TPS" "$PGBOUNCER_SECOND_TPS")"
 PGBOUNCER_LATENCY_MS="$(mean_two "$PGBOUNCER_FIRST_LATENCY_MS" "$PGBOUNCER_SECOND_LATENCY_MS")"
 PGPOOL_TPS="$(mean_two "$PGPOOL_FIRST_TPS" "$PGPOOL_SECOND_TPS")"
 PGPOOL_LATENCY_MS="$(mean_two "$PGPOOL_FIRST_LATENCY_MS" "$PGPOOL_SECOND_LATENCY_MS")"
-if [[ "$COMPARISON_VALID" == true ]]; then
-    WINNER="$(awk -v pgpool="$PGPOOL_TPS" -v pgbouncer="$PGBOUNCER_TPS" 'BEGIN { print (pgpool > pgbouncer ? "pgpool" : (pgpool < pgbouncer ? "pgbouncer" : "tie")) }')"
-else
-    WINNER="invalid"
-fi
 
-printf '{"schema":"%s","profile":{"workload":"%s","protocol":"simple","pool_mode":"transaction","backend_connection_cap":%s,"clients":%s,"jobs":%s,"duration_seconds":%s,"paired_trials":%s,"orders":["pgbouncer-first","pgpool-first"],"max_pair_ratio_relative_spread":%s,"scale":%s},"trials":[{"order":"pgbouncer-first","targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s}},{"order":"pgpool-first","targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s}}],"targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s,"pgpool_over_pgbouncer_tps_first_pair":%s,"pgpool_over_pgbouncer_tps_second_pair":%s,"pair_ratio_relative_spread":%s,"stable":%s},"comparison_valid":%s,"winner_by_tps":"%s"}\n' \
+printf '{"schema":"%s","profile":{"workload":"%s","protocol":"simple","pool_mode":"transaction","backend_connection_cap":%s,"clients":%s,"jobs":%s,"duration_seconds":%s,"paired_trials":%s,"orders":["pgbouncer-first","pgpool-first"],"max_pair_ratio_relative_spread":%s,"scale":%s},"trials":[{"order":"pgbouncer-first","targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s},"winner_by_tps":"%s"},{"order":"pgpool-first","targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s},"winner_by_tps":"%s"}],"targets":{"pgbouncer":{"tps":%s,"latency_average_ms":%s},"pgpool":{"tps":%s,"latency_average_ms":%s}},"ratios":{"pgpool_over_pgbouncer_tps":%s,"pgpool_over_pgbouncer_tps_first_pair":%s,"pgpool_over_pgbouncer_tps_second_pair":%s,"pair_ratio_relative_spread":%s,"stable":%s,"unanimous_direction":"%s"},"comparison_valid":%s,"pgpool_win_eligible":%s,"winner_by_tps":"%s"}\n' \
     "$PROFILE_SCHEMA" "$WORKLOAD_PROFILE" "$BACKEND_CAP" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PAIRED_TRIALS" "$MAX_PAIR_RATIO_RELATIVE_SPREAD" "$SCALE" \
-    "$PGBOUNCER_FIRST_TPS" "$PGBOUNCER_FIRST_LATENCY_MS" "$PGPOOL_SECOND_TPS" "$PGPOOL_SECOND_LATENCY_MS" "$FIRST_RATIO" \
-    "$PGBOUNCER_SECOND_TPS" "$PGBOUNCER_SECOND_LATENCY_MS" "$PGPOOL_FIRST_TPS" "$PGPOOL_FIRST_LATENCY_MS" "$SECOND_RATIO" \
-    "$PGBOUNCER_TPS" "$PGBOUNCER_LATENCY_MS" "$PGPOOL_TPS" "$PGPOOL_LATENCY_MS" "$TPS_RATIO" "$FIRST_RATIO" "$SECOND_RATIO" "$PAIR_RATIO_RELATIVE_SPREAD" "$COMPARISON_VALID" "$COMPARISON_VALID" "$WINNER"
+    "$PGBOUNCER_FIRST_TPS" "$PGBOUNCER_FIRST_LATENCY_MS" "$PGPOOL_SECOND_TPS" "$PGPOOL_SECOND_LATENCY_MS" "$FIRST_RATIO" "$FIRST_PAIR_WINNER" \
+    "$PGBOUNCER_SECOND_TPS" "$PGBOUNCER_SECOND_LATENCY_MS" "$PGPOOL_FIRST_TPS" "$PGPOOL_FIRST_LATENCY_MS" "$SECOND_RATIO" "$SECOND_PAIR_WINNER" \
+    "$PGBOUNCER_TPS" "$PGBOUNCER_LATENCY_MS" "$PGPOOL_TPS" "$PGPOOL_LATENCY_MS" "$TPS_RATIO" "$FIRST_RATIO" "$SECOND_RATIO" "$PAIR_RATIO_RELATIVE_SPREAD" "$STABLE" "$UNANIMOUS_DIRECTION" "$COMPARISON_VALID" "$PGPOOL_WIN_ELIGIBLE" "$WINNER"
 # HANDWRITE-END

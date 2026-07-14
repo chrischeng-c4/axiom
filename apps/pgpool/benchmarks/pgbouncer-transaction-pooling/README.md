@@ -32,12 +32,15 @@ second-position 30-second trial without concurrent pgbench traffic against the
 shared capped backend. Its JSON preserves raw TPS, average latency, order, and
 each pair's `pgpool_over_pgbouncer_tps` ratio, then reports the paired mean.
 
-The comparison is valid only when the two pair ratios differ by at most 20%; a
-host-drifted result is explicit `comparison_valid: false` with
-`winner_by_tps: "invalid"`, not a claimed PgBouncer or pgpool win. It also
-rejects a target that cannot establish all 64 declared clients or logs a
-pgbench client error, so a partial-workload run cannot be compared as valid
-evidence.
+Each trial carries a winner and the result records whether both pairs agree.
+A pgpool win is eligible only when both pairs favor pgpool *and* their ratios
+differ by at most 20%; otherwise the result is explicit
+`comparison_valid: false`, `pgpool_win_eligible: false`, and
+`winner_by_tps: "invalid"`. Conversely, if both clean pairs favor PgBouncer,
+the runner emits a PgBouncer verdict even when the loss magnitude varies, so a
+candidate is rejected promptly rather than being hidden behind an average.
+Mixed pair directions, incomplete clients, and pgbench client errors remain
+invalid evidence.
 
 ## Run
 

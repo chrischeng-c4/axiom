@@ -135,17 +135,21 @@ fn select_only_profile_keeps_pooler_inputs_equal_and_explicit() {
 }
 
 #[test]
-fn ordinary_peer_profile_counterbalances_order_and_documents_invalid_evidence() {
+fn ordinary_peer_profile_counterbalances_order_and_documents_peer_verdict_rules() {
     let profile = dry_run_profile();
 
     assert_eq!(profile["profile"]["paired_trials"], 2);
     assert!(RUNNER_SOURCE.contains("start_pgpool\n\nPGBOUNCER_FIRST_LOG"));
     assert!(RUNNER_SOURCE.contains("PGBOUNCER_FIRST_LOG"));
     assert!(RUNNER_SOURCE.contains("PGPOOL_FIRST_LOG"));
+    assert!(RUNNER_SOURCE.contains("pair_winner"));
+    assert!(RUNNER_SOURCE.contains("UNANIMOUS_DIRECTION"));
+    assert!(RUNNER_SOURCE.contains("PGPOOL_WIN_ELIGIBLE"));
     assert!(RUNNER_SOURCE.contains("comparison_valid"));
-    assert!(RUNNER_SOURCE.contains("pair_ratio_relative_spread"));
+    assert!(RUNNER_SOURCE.contains("pgpool_win_eligible"));
     assert!(BENCHMARK_README.contains("counterbalanced paired trials"));
-    assert!(BENCHMARK_README.contains("comparison_valid: false"));
+    assert!(BENCHMARK_README.contains("both clean pairs favor PgBouncer"));
+    assert!(BENCHMARK_README.contains("pgpool_win_eligible: false"));
 }
 
 #[test]
@@ -199,6 +203,8 @@ fn live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled() {
     assert_eq!(result["trials"].as_array().map(Vec::len), Some(2));
     assert_eq!(result["trials"][0]["order"], "pgbouncer-first");
     assert_eq!(result["trials"][1]["order"], "pgpool-first");
+    assert!(result["trials"][0]["winner_by_tps"].is_string());
+    assert!(result["trials"][1]["winner_by_tps"].is_string());
     assert!(
         result["targets"]["pgbouncer"]["tps"]
             .as_f64()
@@ -227,5 +233,6 @@ fn live_transaction_pooling_baseline_emits_comparable_metrics_when_enabled() {
         .as_f64()
         .is_some());
     assert!(result["comparison_valid"].is_boolean());
+    assert!(result["pgpool_win_eligible"].is_boolean());
 }
 // HANDWRITE-END
