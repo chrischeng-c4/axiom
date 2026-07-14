@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-09T15:41:17.193837+00:00"
-digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
-source_digest = "sha256:d8759dd654a8423255160888f6a58eb4f6335ba834606ccc479371d6763a1ead"
-ir_digest = "sha256:759ca7369223801c3e0f7f17021d358af60f4fa55640f32b0de9a18e5ba36ae3"
+generated_at = "2026-07-14T04:16:08.903995+00:00"
+digest = "sha256:a55402b262bde8fd1da2f132911c01764f4f101ad195ad2760b08ccbf7430b09"
+source_digest = "sha256:a55402b262bde8fd1da2f132911c01764f4f101ad195ad2760b08ccbf7430b09"
+ir_digest = "sha256:fe684e3eaa37381e6a99cdef0f0d19ecc63e6822239f6a709081c52084eec1c1"
 
 [[files]]
 path = "README.md"
@@ -26,15 +26,21 @@ ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd
 section_count = 3
 
 [[files]]
+path = "logic/adopt-shared-service-http-otlp-tracing.md"
+digest = "sha256:b427225b5b5f5544827dc6a91708e809b1afe45bc6d53f745a26fb7418092bf9"
+ir_digest = "sha256:c781cd0dc875cede456724ccc224c41599571d23684f9f7e2eb6d92e8b9d1e12"
+section_count = 3
+
+[[files]]
 path = "logic/tape-backup-service-tls-spec-gen-clients.md"
-digest = "sha256:e5e306fd402b26da5af549a2a4ab53e049241c25dfe002f55aa8e68ff41d4ad6"
-ir_digest = "sha256:cf15f79a5cd6a2e3533bbb1a727646dbc70358fdd303280f60265c44df60a6ef"
+digest = "sha256:7ea070320715478f8f67185c84f0f303cd765b1dc1e050725b8480edfb4fcea9"
+ir_digest = "sha256:601dcc9441fc7f19d8cc365ff98f4065383f2ca197e04ce6cb4cd2f0af6a853d"
 section_count = 3
 
 [[files]]
 path = "logic/tape-docs-scripts-traits-polish.md"
-digest = "sha256:52b51cd8cfea8502716763575e7fdf4d31a58bdb56896fcd25647b6834ba6526"
-ir_digest = "sha256:c7a5b5f18bea036f68c24f3b8f9d5b6b76c259f22e994add7abea737c59a7b86"
+digest = "sha256:48d882da92a5f90775134133eb220248b13b256a6c2065e262dad047e18fa027"
+ir_digest = "sha256:3bf94e584c861b8f600020ba863e9d365cbffc6ce6b47680835ceed7624af6f8"
 section_count = 3
 
 [[files]]
@@ -51,8 +57,8 @@ section_count = 3
 
 [[files]]
 path = "logic/tape-vat-meter-guard-ec-gates-observability.md"
-digest = "sha256:7c91920c00a15094d73136a5c04d501c9a91022d0343194be462d6098deec1e0"
-ir_digest = "sha256:36794e07a7da5e89aea35046c796a7d4fea5833646953f7084350860ad6c076d"
+digest = "sha256:1dcb1e1cb85c7fe023ea14bd1ffc770c3ecdbdd3a45a22d28b9cbeed51b46340"
+ir_digest = "sha256:26a59b2b75f242f36cc17154403f618e673bd4f8174da7a103c7993af2050136"
 section_count = 3
 
 [[files]]
