@@ -9,44 +9,38 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-readiness-gated-idle-liveness
-entry: acquire_idle
+id: pgpool-readiness-gated-idle-liveness-contract
+entry: idle_tuple
 nodes:
-  acquire_idle: { kind: start, label: "Acquire pops one reset-clean idle backend." }
-  readiness_gate: { kind: process, label: "Call TcpStream::try_io with READABLE interest. If runtime has no readable readiness, its syscall closure is not invoked." }
-  peek: { kind: process, label: "Only on reported readability, issue one socket-level MSG_PEEK inside try_io." }
-  result: { kind: decision, label: "Classify no-readiness/WouldBlock, queued bytes, EOF, or I/O error." }
-  live: { kind: terminal, label: "Lease the unchanged stream and existing permit." }
-  discard: { kind: process, label: "Drop dead stream and permit, notify waiters, and retry existing acquisition." }
+  idle_tuple: { kind: start, label: "Idle tuple exclusively owns a reset-clean stream and its permit." }
+  try_io: { kind: process, label: "Ask Tokio's READABLE registration to invoke one socket peek only if it considers the descriptor ready." }
+  classify: { kind: decision, label: "Classify no-ready/stale WouldBlock, positive peek, EOF, and other error." }
+  lease: { kind: terminal, label: "Return unchanged stream and transfer permit to outstanding." }
+  discard: { kind: terminal, label: "Drop tuple and continue existing acquire fallback." }
 edges:
-  - { from: acquire_idle, to: readiness_gate }
-  - { from: readiness_gate, to: result, label: "not ready: WouldBlock, no closure" }
-  - { from: readiness_gate, to: peek, label: "readable" }
-  - { from: peek, to: result }
-  - { from: result, to: live, label: "WouldBlock or bytes > 0" }
-  - { from: result, to: discard, label: "EOF or other error" }
+  - { from: idle_tuple, to: try_io }
+  - { from: try_io, to: classify }
+  - { from: classify, to: lease, label: "WouldBlock or bytes > 0" }
+  - { from: classify, to: discard, label: "EOF or other error" }
 ---
-flowchart LR
-  acquire_idle([pop idle backend]) --> readiness_gate{Tokio READABLE ready?}
-  readiness_gate -->|no: no syscall| live([reuse unchanged])
-  readiness_gate -->|yes| peek[one MSG_PEEK]
-  peek --> result{result}
-  result -->|bytes| live
-  result -->|EOF/error| discard[drop, notify, retry]
-  result -->|stale WouldBlock| live
+flowchart TD
+  idle_tuple([idle tuple]) --> try_io[try_io READABLE + conditional MSG_PEEK]
+  try_io --> classify{outcome}
+  classify -->|not ready/stale WouldBlock| lease([reuse unchanged])
+  classify -->|queued bytes| lease
+  classify -->|EOF/error| discard([drop then retry])
 ```
 
 ### Contract invariants
 
-- The non-ready fast path allocates no timer and invokes no socket syscall; `try_io` returns `WouldBlock` before executing its closure.
-- `MSG_PEEK` runs only under Tokio READABLE interest and never consumes protocol bytes. A stale readiness result that yields `WouldBlock` clears Tokio's stale read bit and remains a live socket.
-- Zero bytes is EOF; any error other than `WouldBlock` is unsafe for reuse and follows the existing drop-and-retry disposition.
-- Stream/permit ownership, reset-before-idle, wakeups, fresh-connect fallback, and acquire deadline stay unchanged.
+- `TcpStream::try_io(Interest::READABLE, closure)` is the sole readiness authority. When it returns `WouldBlock` before executing the closure, the stream is live and no syscall ran.
+- The closure uses an external socket facade rather than a Tokio stream method, exactly as Tokio requires for `try_io`; it performs only one READABLE operation.
+- Closure `WouldBlock` is returned only after a real peek sees stale readiness; Tokio can clear that stale read bit. This still yields a live stream.
+- Positive peek results preserve bytes; zero results and non-`WouldBlock` errors discard the tuple.
 
-### Error handling
+### Compatibility
 
-A `WouldBlock` result can represent either no registered readability or a stale readability bit after the peek syscall. Both mean the descriptor has no observable EOF/error and is returned unchanged. `Ok(0)` and non-`WouldBlock` errors drop the idle tuple before the acquire loop proceeds, preserving the physical cap.
-
+This is internal behavior only. It retains the established downstream PostgreSQL wire semantics and all pool API/error shapes. It differs from #1680 by making the common non-readable idle state a runtime-only decision rather than a kernel syscall.
 ## Changes
 <!-- type: changes lang: yaml -->
 
