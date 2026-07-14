@@ -3818,6 +3818,19 @@ pub fn resolve_callable_pub(func: MbValue) -> Option<usize> {
 
 /// General-purpose comparison for sorting: int/float → numeric, str → lexicographic, tuple → element-wise.
 fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
+    // Once an earlier comparison in this same sort has already raised (e.g.
+    // an unorderable-types TypeError), treat every further pair as a no-op
+    // instead of running a real comparison. Rust's `sort_by` has no concept
+    // of the runtime's pending-exception state, so without this guard it
+    // keeps calling the comparator on later pairs after the sort is already
+    // doomed — and any of those later comparisons can *also* raise, silently
+    // clobbering the first (correct, CPython-matching) TypeError message
+    // with one whose operand order reflects an unrelated later pair instead
+    // (#1547). CPython's real sort aborts at the first failing comparison,
+    // so preserving the first exception is what matches its behavior.
+    if super::exception::has_current_exception() {
+        return std::cmp::Ordering::Equal;
+    }
     // Fast path: both ints — direct i64 comparison (no float conversion).
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
         return ai.cmp(&bi);
