@@ -77,36 +77,36 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-contiguous-validated-relay-prefix-verification
+id: pgpool-contiguous-validated-relay-prefix-contract-verification
 requirements:
-  direct_validated_prefix:
-    id: R1
-    text: "A complete backend prefix, including multiple contiguous frames, is structurally validated in place and advances only after explicit successful-write consumption."
-    kind: regression
-    risk: high
-    verify: wire_codec::backend_relay_prefix_validates_and_consumes_contiguous_frames
-  peer_gate:
-    id: R4
-    text: "The unchanged competitor comparison is the sole retention gate: meter is diagnostic only, three clean unsampled release comparisons must match or exceed PgBouncer, and a first valid loss reverts production code."
-    kind: e2e
-    risk: high
-    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
-  suffix_ordering:
+  boundary_failures:
     id: R2
-    text: "An incomplete suffix remains buffered; malformed-first input produces no prefix, while a malformed suffix after a valid prefix preserves the valid-prefix-then-terminal order."
+    text: "A first malformed frame has no sendable descriptor, an incomplete suffix remains buffered, and a malformed suffix after a valid descriptor is terminal only after that descriptor is consumed."
     kind: regression
     risk: high
     verify: wire_codec::backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries
-  transaction_isolation:
+  competitor_proof:
+    id: R4
+    text: "Retention requires three clean unsampled unchanged release comparisons matching or exceeding contemporaneous PgBouncer; meter sampling is diagnostic, and the first valid loss reverts the production candidate."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool
+  pool_behavior:
     id: R3
-    text: "Transaction mode keeps its ReadyForQuery ownership boundary, DISCARD ALL reset isolation, and configured backend cap while the backend response relay uses post-write prefix consumption."
+    text: "Transaction pooling retains exact ReadyForQuery ownership, reset isolation, and bounded backend capacity with the direct backend-prefix relay."
     kind: integration
     risk: high
     verify: cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay --test proxy
+  post_write_consume:
+    id: R1
+    text: "The backend relay-prefix descriptor exposes only validated contiguous bytes; a successful explicit consume advances exactly once and commits its Ready status, while no output failure can consume it."
+    kind: regression
+    risk: high
+    verify: wire_codec::backend_relay_prefix_validates_and_consumes_contiguous_frames
 ---
 flowchart TD
-    r1[R1 direct validated prefix] --> wire_codec_backend_relay_prefix_validates_and_consumes_contiguous_frames[wire_codec::backend_relay_prefix_validates_and_consumes_contiguous_frames]
-    r2[R2 suffix ordering] --> wire_codec_backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries[wire_codec::backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries]
-    r3[R3 transaction isolation] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay_test_proxy[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay --test proxy]
-    r4[R4 peer gate] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
+    r1[R1 post write consume] --> wire_codec_backend_relay_prefix_validates_and_consumes_contiguous_frames[wire_codec::backend_relay_prefix_validates_and_consumes_contiguous_frames]
+    r2[R2 boundary failures] --> wire_codec_backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries[wire_codec::backend_relay_prefix_preserves_incomplete_and_malformed_suffix_boundaries]
+    r3[R3 pool behavior] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay_test_proxy[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay --test proxy]
+    r4[R4 competitor proof] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh_pgpool_bin_target_release_pgpool[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh --pgpool-bin target/release/pgpool]
 ```
