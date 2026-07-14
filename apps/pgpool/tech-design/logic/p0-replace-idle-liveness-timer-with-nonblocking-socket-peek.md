@@ -72,3 +72,49 @@ changes:
     impl_mode: hand-written
     reason: Prove no-byte idle reuse, EOF discard-and-retry, and preservation of readable bytes across the liveness probe.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-nonblocking-idle-liveness-peek-verification
+requirements:
+  competitor_evidence:
+    id: AC5
+    text: "Meter is diagnostic only; retain a candidate solely after error-free unsampled release benchmark wins against the unchanged PgBouncer contract."
+    kind: e2e
+    risk: high
+    verify: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+  dead_idle_is_discarded:
+    id: R2
+    text: "EOF and non-WouldBlock read failure on an idle backend drop its stream and permit before acquisition retries."
+    kind: regression
+    risk: high
+    verify: pool::acquire_drops_dead_idle_connection_and_retries
+  idle_reuse_without_timer:
+    id: R1
+    text: "A no-byte idle backend is reused through one synchronous nonblocking socket peek without constructing or awaiting a Tokio timer."
+    kind: regression
+    risk: high
+    verify: pool::acquire_reuses_idle_connection_after_liveness_check_passes
+  peek_preserves_protocol_bytes:
+    id: R3
+    text: "A readable byte observed during idle liveness remains queued for the normal relay after the backend is leased."
+    kind: regression
+    risk: high
+    verify: pool::acquire_liveness_peek_preserves_queued_backend_bytes
+  pool_contract_unchanged:
+    id: R4
+    text: "Session and transaction pool modes retain reset isolation, permit accounting, and retry behavior around the changed liveness probe."
+    kind: integration
+    risk: high
+    verify: cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay
+---
+flowchart TD
+    r1[R1 idle reuse without timer] --> pool_acquire_reuses_idle_connection_after_liveness_check_passes[pool::acquire_reuses_idle_connection_after_liveness_check_passes]
+    r2[R2 dead idle is discarded] --> pool_acquire_drops_dead_idle_connection_and_retries[pool::acquire_drops_dead_idle_connection_and_retries]
+    r3[R3 peek preserves protocol bytes] --> pool_acquire_liveness_peek_preserves_queued_backend_bytes[pool::acquire_liveness_peek_preserves_queued_backend_bytes]
+    r4[R4 pool contract unchanged] --> cargo_test_p_pgpool_test_pool_test_pool_modes_test_trust_startup_replay[cargo test -p pgpool --test pool --test pool_modes --test trust_startup_replay]
+    ac5[AC5 competitor evidence] --> apps_pgpool_benchmarks_pgbouncer_transaction_pooling_run_sh[apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh]
+```
