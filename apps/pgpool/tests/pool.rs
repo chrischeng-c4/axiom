@@ -218,6 +218,10 @@ async fn fresh_backend_lease_enables_tcp_nodelay() {
     );
 }
 
+/// This fixture intentionally leaves no backend bytes readable after reset, so
+/// it exercises the normal non-ready liveness path before the idle stream is
+/// returned to the next lease holder.
+///
 /// verify: pool::acquire_reuses_idle_connection_after_liveness_check_passes (R1)
 #[tokio::test]
 async fn acquire_reuses_idle_connection_after_liveness_check_passes() {
