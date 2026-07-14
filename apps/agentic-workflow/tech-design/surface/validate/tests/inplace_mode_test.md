@@ -20,6 +20,12 @@ capability_refs:
     claim: td-merged-candidate-in-memory-validation
     coverage: full
     rationale: "The real CLI proves invalid merged candidates preserve spec, payload, projection, phase, and HEAD, while a valid signature/loop LogicSpec replaces stale disk content and advances to Changes."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: generated-td-lock-commit-handoff
+    claim: generated-td-lock-commit-handoff
+    coverage: full
+    rationale: "The default-target real CLI proves generated TD locks receive one exact-path lifecycle commit, check/show stay read-only, and generation runs without a dirty-lock handoff."
 ---
 
 # Standardized apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs
@@ -27,7 +33,7 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization. The TD create replay fixture asserts the default `logic` to `changes` to `unit-test` queue, and the #1598 fixture applies both passes through the real CLI before proving `aw td gen` consumes the explicit Changes target plan, creates the named Logic target, and preserves the hand-written Unit Test target. The #1602 fixtures prove rewritten lifecycle history gets one safe reset and fresh init/projection, while an exact reachable init resumes with no reset or duplicate init and ordinary phase `created` still provisions. The #1580 fixtures prove fresh and recovered skeletons are committed exactly once while authored, non-exact status, sibling-dirty, post-gen, and terminal states remain immutable.
+Public API manifest for `apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs` generated from AST during Score force-regeneration standardization. The TD create replay fixture asserts the default `logic` to `changes` to `unit-test` queue, and the #1598 fixture applies both passes through the real CLI before proving `aw td gen` consumes the explicit Changes target plan, creates the named Logic target, and preserves the hand-written Unit Test target. Issue #1587 makes the intervening real `aw td lock` create one exact-path commit, prove its stable subject/trailers and clean checkout, and keep `--check`/`--show` read-only. The #1602 fixtures prove rewritten lifecycle history gets one safe reset and fresh init/projection, while an exact reachable init resumes with no reset or duplicate init and ordinary phase `created` still provisions. The #1580 fixtures prove fresh and recovered skeletons are committed exactly once while authored, non-exact status, sibling-dirty, post-gen, and terminal states remain immutable.
 
 The #1586 fixture starts from stale plain Mermaid on disk. It proves a malformed
 Mermaid Plus candidate fails the complete registry without changing spec,
@@ -1876,6 +1882,16 @@ path = "."
         String::from_utf8_lossy(&final_check.stderr),
     );
 
+    let pre_lock_head = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read pre-lock HEAD");
+    assert!(pre_lock_head.status.success());
+    let pre_lock_head = String::from_utf8_lossy(&pre_lock_head.stdout)
+        .trim()
+        .to_string();
     let lock = Command::new(&bin)
         .args(["td", "lock", "--project", "agentic-workflow"])
         .current_dir(root)
@@ -1887,18 +1903,97 @@ path = "."
         String::from_utf8_lossy(&lock.stdout),
         String::from_utf8_lossy(&lock.stderr),
     );
-    Command::new(&git)
+    let lock_head = Command::new(&git)
         .arg("-C")
         .arg(root)
-        .args(["add", "tech-design/td.lock"])
-        .status()
-        .unwrap();
-    Command::new(&git)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("read lock HEAD");
+    assert!(lock_head.status.success());
+    let lock_head = String::from_utf8_lossy(&lock_head.stdout)
+        .trim()
+        .to_string();
+    assert_ne!(lock_head, pre_lock_head, "aw td lock must create a commit");
+    let lock_commit_count = Command::new(&git)
         .arg("-C")
         .arg(root)
-        .args(["commit", "-m", "lock #1598 fixture TD"])
-        .status()
-        .unwrap();
+        .args([
+            "rev-list",
+            "--count",
+            &format!("{pre_lock_head}..{lock_head}"),
+        ])
+        .output()
+        .expect("count lock commits");
+    assert!(lock_commit_count.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&lock_commit_count.stdout).trim(),
+        "1",
+        "aw td lock must add exactly one lifecycle commit"
+    );
+    let lock_commit_paths = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--format=", "--name-only", "HEAD"])
+        .output()
+        .expect("read lock commit paths");
+    assert!(lock_commit_paths.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&lock_commit_paths.stdout)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>(),
+        vec!["tech-design/td.lock"],
+        "generated lock commit must contain only the configured lock path"
+    );
+    let lock_commit_message = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["log", "-1", "--format=%B"])
+        .output()
+        .expect("read lock commit message");
+    assert!(lock_commit_message.status.success());
+    let lock_commit_message = String::from_utf8_lossy(&lock_commit_message.stdout);
+    assert!(lock_commit_message.starts_with("td-lock(agentic-workflow) — update TD IR snapshot\n"));
+    assert!(lock_commit_message.contains("TD-Lock-Project: agentic-workflow"));
+    assert!(lock_commit_message.contains("TD-Lock-Path: tech-design/td.lock"));
+    assert_eq!(
+        git_status(&git, root),
+        "",
+        "aw td lock must leave its generated lock committed and clean"
+    );
+
+    for read_only_flag in ["--check", "--show"] {
+        let read_only = Command::new(&bin)
+            .args([
+                "td",
+                "lock",
+                "--project",
+                "agentic-workflow",
+                read_only_flag,
+            ])
+            .current_dir(root)
+            .output()
+            .unwrap_or_else(|error| panic!("run td lock {read_only_flag}: {error}"));
+        assert!(
+            read_only.status.success(),
+            "td lock {read_only_flag} must stay read-only:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&read_only.stdout),
+            String::from_utf8_lossy(&read_only.stderr)
+        );
+        let after_read_only = Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("read post-check HEAD");
+        assert!(after_read_only.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&after_read_only.stdout).trim(),
+            lock_head,
+            "td lock {read_only_flag} must not commit"
+        );
+        assert_eq!(git_status(&git, root), "");
+    }
 
     let gen = Command::new(&bin)
         .args(["td", "gen", slug, "--spec-path", spec_path])
@@ -2842,9 +2937,12 @@ changes:
       before contract Logic.
       Issue #1598 applies Logic, Changes, and Unit Test through applicability
       and contract with projection-lock assertions at every step, validates the
-      editable Changes scaffold, runs final `aw td check` and `aw td lock`, and
-      proves real `aw td gen` creates a new Logic target while preserving the
-      explicit hand-written Unit Test target without no-target inference.
+      editable Changes scaffold, and runs final `aw td check`. Issue #1587
+      proves real `aw td lock` adds one exact configured-path commit with
+      stable project/path trailers, leaves the checkout clean, keeps `--check`
+      and `--show` read-only, then lets `aw td gen` create a new Logic target
+      while preserving the explicit hand-written Unit Test target without
+      no-target inference.
       Issue #1602 rewrites away an exact Td-Init while retaining a later
       same-slug lifecycle commit and stale lock. Real `aw td create` clears
       that projection, emits one reset plus one fresh init, installs a fresh

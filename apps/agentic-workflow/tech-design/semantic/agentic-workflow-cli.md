@@ -64,6 +64,12 @@ capability_refs:
     rationale: "TD create admits only its sole exact untracked known-empty skeleton, preserves that candidate through activation and rebased reset/provision, and stages the canonical skeleton in exactly one queue-start commit."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: generated-td-lock-commit-handoff
+    claim: generated-td-lock-commit-handoff
+    coverage: full
+    rationale: "TD lock preflights lexical and canonical repository containment before any write, then fresh writes and legacy uncommitted-lock recovery create one lock-path-only lifecycle commit while preserving unrelated index and worktree state; read-only lock modes never commit."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -2124,6 +2130,12 @@ semantic_domain:
           - name: "TdLockTarget"
             kind: "struct"
             public: false
+          - name: "TdLockWriteAction"
+            kind: "enum"
+            public: false
+          - name: "TdLockWriteResult"
+            kind: "struct"
+            public: false
           - name: "TdLockConfig"
             kind: "struct"
             public: false
@@ -2140,6 +2152,21 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "write_project_td_lock"
+            kind: "function"
+            public: false
+          - name: "write_project_td_lock_at_root"
+            kind: "function"
+            public: false
+          - name: "write_project_td_lock_file_at_root"
+            kind: "function"
+            public: false
+          - name: "commit_td_lock_update"
+            kind: "function"
+            public: false
+          - name: "preflight_repo_relative_td_lock_path"
+            kind: "function"
+            public: false
+          - name: "git_diff_has_changes"
             kind: "function"
             public: false
           - name: "check_project_td_lock_at_root"
@@ -4064,6 +4091,20 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1587 makes the mutating lock writer a root-aware transaction. A
+      fresh or stale lock is serialized, staged with a literal exact path, and
+      committed with `git commit --only`; a semantically clean lock left by an
+      older CLI is recovered through the same path. Git diff exit 0, 1, and
+      error statuses remain distinct, the configured lock must resolve to a
+      regular file inside the repository, and the command fails closed when a
+      changed lock cannot be committed. Unrelated staged, unstaged, and
+      untracked paths retain their exact state. An already committed lock is a
+      no-op, while `--check` and `--show` return before any commit path. Before
+      snapshot or write, lexical path components and the canonical TD parent
+      must both remain real directories inside the repository; an existing
+      lock must be a non-symlink regular file at that exact canonical leaf.
+      External TD-directory and lock-leaf symlink regressions prove external
+      bytes, HEAD, and repository status remain unchanged on rejection.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/validate_proposal.rs"
     action: modify

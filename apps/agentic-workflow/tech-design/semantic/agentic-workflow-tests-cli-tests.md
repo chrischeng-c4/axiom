@@ -41,6 +41,12 @@ capability_refs:
     rationale: "Real CLI fixtures prove fresh, reachable-locked, and rebased skeleton ownership plus fail-closed authored/status/post-gen boundaries and repeat idempotence."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: generated-td-lock-commit-handoff
+    claim: generated-td-lock-commit-handoff
+    coverage: full
+    rationale: "The real default-target lifecycle proves aw td lock adds one exact-path commit with stable trailers, leaves the checkout clean, keeps check/show read-only, and hands directly to aw td gen."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -1211,9 +1217,12 @@ changes:
       initialized Changes JSON body as an editable target-plan skeleton,
       applies concrete Logic and Unit Test implementation edges, asserts every
       current section and payload path in the issue projection (including the
-      first contract Logic lock), runs the final read-only checker, writes and
-      commits the fixture TD IR lock, and proves `aw td gen` creates a new
-      explicitly named target with source ownership and contract block refs.
+      first contract Logic lock), runs the final read-only checker, and proves
+      `aw td gen` creates a new explicitly named target with source ownership
+      and contract block refs. Issue #1587 removes the fixture's manual lock
+      commit: real `aw td lock` advances HEAD by exactly one lock-path-only
+      commit with project/path trailers, leaves the checkout clean, keeps
+      `--check` and `--show` read-only, then hands directly to generation.
       Issue #1602 adds a rewritten-history fixture whose old exact Td-Init is
       unreachable while a later same-slug lifecycle commit and stale lock
       survive. Real `aw td create` emits one recovery reset and one fresh init,
