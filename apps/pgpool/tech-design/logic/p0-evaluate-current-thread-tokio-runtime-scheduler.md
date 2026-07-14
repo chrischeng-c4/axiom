@@ -55,7 +55,6 @@ changes:
     impl_mode: hand-written
     reason: Change only the Tokio scheduler flavor to current-thread while preserving all service and pool behavior.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
