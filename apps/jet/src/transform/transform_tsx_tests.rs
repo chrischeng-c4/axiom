@@ -241,6 +241,49 @@ fn t20_remove_empty_type_only_import() {
     );
 }
 
+/// T20a: Strip inline type export specifiers while preserving value re-exports.
+#[test]
+fn t20a_strip_inline_type_export_specifiers() {
+    let source = r#"export { RuntimeThing as RuntimeAlias, type TypeOnlyThing as TypeOnlyAlias } from "./values";
+export {
+  AnotherRuntime,
+  type MultiLineOnly,
+} from "./values";
+export { type AllTypeOnly, type AnotherTypeOnly as AnotherTypeAlias } from "./values";
+export const untouched = 1;"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result
+            .code
+            .contains("export { RuntimeThing as RuntimeAlias } from \"./values\";"),
+        "must preserve mixed value re-export: {}",
+        result.code
+    );
+    assert!(
+        result
+            .code
+            .contains("export { AnotherRuntime } from \"./values\";"),
+        "must preserve multiline value re-export: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains("TypeOnlyThing")
+            && !result.code.contains("MultiLineOnly")
+            && !result.code.contains("AllTypeOnly")
+            && !result.code.contains("AnotherTypeOnly")
+            && !result.code.contains("export { }"),
+        "must erase every inline type-only specifier: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("export const untouched = 1"),
+        "must preserve code after an all-type export: {}",
+        result.code
+    );
+}
+
 #[test]
 fn t20b_strip_arrow_function_type_predicate() {
     let source = "const edges = items.filter((edge): edge is { id: string; sourceIndex: number } => edge !== null);";

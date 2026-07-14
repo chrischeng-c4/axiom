@@ -25,12 +25,13 @@
 //! @issue #798
 //! @issue #936
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::types::{OutputFormat, SourceMapOption};
 use crate::resolver::package::{external_package_names, library_entries, LibraryEntry};
+use crate::resolver::{ModuleResolver, ResolveOptions};
 
 /// Options driving a single library build.
 #[derive(Debug, Clone)]
@@ -1215,39 +1216,51 @@ fn collect_entry_exports(source: &str) -> EntryExports {
 /// Returns `None` when the specifier is not external (should not happen for a
 /// bundled library entry, whose only surviving imports are external).
 fn rewrite_iife_import(line: &str, externals: &HashSet<String>) -> Option<String> {
-    // import * as X from "pkg";
-    if let Some(rest) = line.strip_prefix("import * as ") {
-        let (name, spec) = split_import_from(rest)?;
-        if !is_external_specifier(&spec, externals) {
-            return None;
-        }
-        let g = external_global_path(&spec);
-        return Some(format!("const {name} = {g};"));
-    }
-    // import { a, b } from "pkg";
-    if let Some(rest) = line.strip_prefix("import {") {
-        let (names, spec) = rest.split_once('}')?;
-        let spec = import_spec(spec)?;
-        if !is_external_specifier(&spec, externals) {
-            return None;
-        }
-        let g = external_global_path(&spec);
-        return Some(format!("const {{{names}}} = {g};"));
-    }
+    let rest = line.trim_start().strip_prefix("import ")?.trim_start();
     // import "pkg"; (side-effect) → nothing to bind under an IIFE.
-    if let Some(rest) = line.strip_prefix("import ") {
-        if rest.starts_with('"') || rest.starts_with('\'') {
-            return Some(String::new());
-        }
-        // import Default from "pkg";
-        let (name, spec) = split_import_from(rest)?;
-        if !is_external_specifier(&spec, externals) {
-            return None;
-        }
-        let g = external_global_path(&spec);
-        return Some(format!("const {name} = {g};"));
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        return Some(String::new());
     }
-    None
+
+    let (clause, spec) = parse_import_from_clause(rest)?;
+    if !is_external_specifier(&spec, externals) {
+        return None;
+    }
+    let g = external_global_path(&spec);
+    let clause = clause.trim();
+
+    // `import Default, { named } from "pkg"` needs two declarations in an
+    // IIFE. Keeping it explicit also means named-import coalescing never turns
+    // a previously-loadable IIFE into invalid `const Default, { named } = …`.
+    if let Some((default_binding, names)) = split_named_import_clause(clause) {
+        let mut declarations = Vec::new();
+        if let Some(default_binding) = default_binding {
+            declarations.push(format!("const {default_binding} = {g};"));
+        }
+        if !names.trim().is_empty() {
+            let names = cjs_object_destructure_bindings(names);
+            declarations.push(format!("const {{ {names} }} = {g};"));
+        }
+        return (!declarations.is_empty()).then(|| declarations.join("\n"));
+    }
+
+    // `import Default, * as Namespace from "pkg"` likewise needs two
+    // declarations because the ESM mixed form has no direct destructuring
+    // equivalent.
+    if let Some((default_binding, namespace)) = clause.split_once(", * as ") {
+        let default_binding = default_binding.trim();
+        let namespace = namespace.trim();
+        if is_js_identifier(default_binding) && is_js_identifier(namespace) {
+            return Some(format!(
+                "const {default_binding} = {g};\nconst {namespace} = {g};"
+            ));
+        }
+    }
+
+    if let Some(namespace) = clause.strip_prefix("* as ").map(str::trim) {
+        return is_js_identifier(namespace).then(|| format!("const {namespace} = {g};"));
+    }
+    is_js_identifier(clause).then(|| format!("const {clause} = {g};"))
 }
 
 /// Map an external specifier to the `globalThis.<Name>` expression an IIFE
@@ -1665,6 +1678,15 @@ fn rewrite_module_for_preserve(
             continue;
         };
         if is_external_specifier(&spec, externals) {
+            let Some((str_start, str_end)) = first_string_range(&child) else {
+                continue;
+            };
+            let rewritten = rewrite_external_library_specifier_for_node(path, &spec);
+            if rewritten != spec {
+                out.push_str(&source[last_end..str_start]);
+                out.push_str(&format!("\"{rewritten}\""));
+                last_end = str_end;
+            }
             continue;
         }
 
@@ -1730,6 +1752,13 @@ fn rewrite_relative_specifier_with_extension(spec: &str, extension: &str) -> Str
 /// the already-unquoted specifier extracted from the statement.
 fn rewrite_export_from_specifier(stmt: &str, spec: &str) -> String {
     let normalised = rewrite_relative_specifier(spec);
+    rewrite_statement_specifier(stmt, spec, &normalised)
+}
+
+/// Replace one statement's module specifier, preserving all surrounding import
+/// / export syntax. The output uses a double-quoted string just as the library
+/// relative-specifier rewrite does.
+fn rewrite_statement_specifier(stmt: &str, spec: &str, replacement: &str) -> String {
     // Replace the quoted specifier in place, preserving the original quote
     // style. The specifier always appears verbatim (sans quotes) in `stmt`.
     for quote in ['"', '\'', '`'] {
@@ -1738,7 +1767,7 @@ fn rewrite_export_from_specifier(stmt: &str, spec: &str) -> String {
             let mut out = String::with_capacity(stmt.len());
             out.push_str(&stmt[..idx]);
             out.push('"');
-            out.push_str(&normalised);
+            out.push_str(replacement);
             out.push('"');
             out.push_str(&stmt[idx + needle.len()..]);
             return out;
@@ -1746,6 +1775,124 @@ fn rewrite_export_from_specifier(stmt: &str, spec: &str) -> String {
     }
     // Specifier not found verbatim (unexpected): return the statement unchanged.
     stmt.to_string()
+}
+
+/// Rewrite a legacy bare package subpath to the file Node ESM can actually
+/// load. Node deliberately does not probe `.js` for `pkg/subpath` imports, so
+/// a library bundle that leaves an extensionless legacy deep import behind is
+/// syntactically valid but unloadable at runtime.
+///
+/// This is intentionally conservative: packages with an `exports` map retain
+/// their authored specifier because that map owns their public subpaths. We
+/// only rewrite an extensionless subpath when the in-repo resolver proves an
+/// `exports`-less package file exists below the same package root.
+fn rewrite_external_library_specifier_for_node(from: &Path, spec: &str) -> String {
+    let Some((package_name, subpath)) = bare_package_name_and_subpath(spec) else {
+        return spec.to_string();
+    };
+    if is_explicit_node_loadable_extension(subpath)
+        || crate::resolver::is_node_builtin_specifier(spec)
+    {
+        return spec.to_string();
+    }
+
+    let Ok(resolver) = ModuleResolver::new(ResolveOptions::for_node_test()) else {
+        return spec.to_string();
+    };
+    let Ok(resolved) = resolver.resolve(spec, from) else {
+        return spec.to_string();
+    };
+    let Some(package_dir) = package_dir_for_resolved_subpath(&resolved.path, package_name) else {
+        return spec.to_string();
+    };
+    if package_declares_exports(&package_dir) {
+        return spec.to_string();
+    }
+    let Ok(relative) = resolved.path.strip_prefix(&package_dir) else {
+        return spec.to_string();
+    };
+    if !is_node_loadable_library_module(relative) {
+        return spec.to_string();
+    }
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if relative.is_empty() {
+        return spec.to_string();
+    }
+    let canonical = format!("{package_name}/{relative}");
+    if canonical == spec {
+        return spec.to_string();
+    }
+
+    canonical
+}
+
+/// A dot in a package subpath is not necessarily a Node-loadable extension:
+/// legacy packages often ship `chunk.min.js` behind an authored `chunk.min`
+/// specifier. Only concrete JavaScript module suffixes are already safe for
+/// Node ESM to load without extension probing.
+fn is_explicit_node_loadable_extension(subpath: &str) -> bool {
+    matches!(
+        Path::new(subpath)
+            .extension()
+            .and_then(|extension| extension.to_str()),
+        Some("js" | "mjs" | "cjs")
+    )
+}
+
+fn bare_package_name_and_subpath(spec: &str) -> Option<(&str, &str)> {
+    if spec.starts_with('@') {
+        let mut parts = spec.splitn(3, '/');
+        let scope = parts.next()?;
+        let package = parts.next()?;
+        let subpath = parts.next()?;
+        if subpath.is_empty() {
+            return None;
+        }
+        let package_len = scope.len() + 1 + package.len();
+        Some((&spec[..package_len], subpath))
+    } else {
+        let (package, subpath) = spec.split_once('/')?;
+        (!package.is_empty() && !subpath.is_empty()).then_some((package, subpath))
+    }
+}
+
+fn package_dir_for_resolved_subpath(resolved: &Path, package_name: &str) -> Option<PathBuf> {
+    let package_parts = package_name.split('/').collect::<Vec<_>>();
+    let package_leaf = *package_parts.last()?;
+    for ancestor in resolved.ancestors().skip(1) {
+        if ancestor.file_name().and_then(|name| name.to_str()) != Some(package_leaf) {
+            continue;
+        }
+        let parent = ancestor.parent()?;
+        let is_package_root = if package_parts.len() == 1 {
+            parent.file_name().and_then(|name| name.to_str()) == Some("node_modules")
+        } else {
+            parent.file_name().and_then(|name| name.to_str()) == package_parts.first().copied()
+                && parent
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    == Some("node_modules")
+        };
+        if is_package_root {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
+fn package_declares_exports(package_dir: &Path) -> bool {
+    std::fs::read_to_string(package_dir.join("package.json"))
+        .ok()
+        .and_then(|source| serde_json::from_str::<serde_json::Value>(&source).ok())
+        .is_some_and(|package| package.get("exports").is_some())
+}
+
+fn is_node_loadable_library_module(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("js" | "mjs" | "cjs")
+    )
 }
 
 /// Map a public export subpath to its `.d.ts` file name.
@@ -1841,6 +1988,14 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
         false,
     )?;
 
+    // Inlined modules can each import the same external package.  Deduplicating
+    // by the complete statement is insufficient: two otherwise-valid imports
+    // such as `{ forwardRef, useMemo }` and `{ forwardRef, useRef }` would
+    // leave two declarations of the `forwardRef` binding in the emitted ESM.
+    // Coalesce compatible named-import clauses by package and local binding
+    // before handing the source to the TypeScript transform / CJS lowering.
+    let external_imports = coalesce_external_named_imports(&external_imports)?;
+
     let mut out = String::new();
     for stmt in &external_imports {
         out.push_str(stmt);
@@ -1853,6 +2008,361 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
     }
     out.push_str(&body);
     transpile_library_esm(&out)
+}
+
+/// A named external import that may be safely coalesced with another named
+/// import from the same package. Namespace and side-effect imports intentionally
+/// stay outside this representation: their syntax cannot be combined with a
+/// named clause without changing bindings or evaluation semantics.
+#[derive(Debug)]
+struct NamedExternalImport {
+    specifier: String,
+    default_binding: Option<String>,
+    named_bindings: Vec<String>,
+}
+
+/// One emitted named-import clause for an external package.
+#[derive(Debug)]
+struct CoalescedNamedExternalImport {
+    output_index: usize,
+    default_binding: Option<String>,
+    named_bindings: Vec<String>,
+}
+
+/// The original exported name behind one local binding. Separate source
+/// modules may legitimately reuse one local alias for *different* exports;
+/// a flat bundle cannot preserve that meaning without renaming every use, so
+/// that case must be reported rather than silently selecting the first import.
+#[derive(Debug)]
+struct NamedExternalBindingOwner {
+    entry_index: usize,
+    imported_name: String,
+}
+
+/// All compatible named imports for one external package. `binding_owners`
+/// gives each local binding one canonical emitted clause, preventing duplicate
+/// ESM declarations even when the imports came from separate inlined modules.
+#[derive(Debug, Default)]
+struct NamedExternalImportGroup {
+    entries: Vec<CoalescedNamedExternalImport>,
+    binding_owners: HashMap<String, NamedExternalBindingOwner>,
+}
+
+/// Semantically coalesce compatible external named imports.
+///
+/// A library bundle hoists imports from every inlined module. The source
+/// modules can legally each import a shared name, but their concatenation
+/// cannot declare that local binding twice. This keeps one binding per package
+/// and local name while preserving default-import aliases in separate clauses
+/// when they cannot share one ESM import declaration. Namespace, side-effect,
+/// and re-export statements are deliberately preserved verbatim.
+fn coalesce_external_named_imports(imports: &[String]) -> Result<Vec<String>> {
+    let mut output: Vec<Option<String>> = Vec::new();
+    let mut groups: HashMap<String, NamedExternalImportGroup> = HashMap::new();
+
+    for statement in imports {
+        let Some(import) = parse_named_external_import(statement) else {
+            output.push(Some(statement.clone()));
+            continue;
+        };
+
+        let group = groups.entry(import.specifier.clone()).or_default();
+        let target = if let Some(default_binding) = import.default_binding.as_deref() {
+            if let Some(owner) = group.binding_owners.get(default_binding) {
+                if owner.imported_name != "default" {
+                    bail!(
+                        "jet build --lib cannot safely hoist external import from `{}`: local binding `{}` refers to both `{}` and `default` in separate modules; rename one binding before bundling",
+                        import.specifier,
+                        default_binding,
+                        owner.imported_name,
+                    );
+                }
+                owner.entry_index
+            } else if let Some(index) = group
+                .entries
+                .iter()
+                .position(|entry| entry.default_binding.is_none())
+            {
+                group.entries[index].default_binding = Some(default_binding.to_string());
+                group.binding_owners.insert(
+                    default_binding.to_string(),
+                    NamedExternalBindingOwner {
+                        entry_index: index,
+                        imported_name: "default".to_string(),
+                    },
+                );
+                index
+            } else {
+                let index = group.entries.len();
+                group.entries.push(CoalescedNamedExternalImport {
+                    output_index: output.len(),
+                    default_binding: Some(default_binding.to_string()),
+                    named_bindings: Vec::new(),
+                });
+                group.binding_owners.insert(
+                    default_binding.to_string(),
+                    NamedExternalBindingOwner {
+                        entry_index: index,
+                        imported_name: "default".to_string(),
+                    },
+                );
+                output.push(None);
+                index
+            }
+        } else if group.entries.is_empty() {
+            group.entries.push(CoalescedNamedExternalImport {
+                output_index: output.len(),
+                default_binding: None,
+                named_bindings: Vec::new(),
+            });
+            output.push(None);
+            0
+        } else {
+            0
+        };
+
+        for binding in import.named_bindings {
+            let binding_key = named_import_binding_local_name(&binding)
+                .unwrap_or_else(|| binding.trim().to_string());
+            let imported_name =
+                named_import_binding_imported_name(&binding).unwrap_or_else(|| binding_key.clone());
+            if let Some(owner) = group.binding_owners.get(&binding_key) {
+                if owner.imported_name != imported_name {
+                    bail!(
+                        "jet build --lib cannot safely hoist external import from `{}`: local binding `{}` refers to both `{}` and `{}` in separate modules; rename one binding before bundling",
+                        import.specifier,
+                        binding_key,
+                        owner.imported_name,
+                        imported_name,
+                    );
+                }
+                continue;
+            }
+            group.entries[target].named_bindings.push(binding);
+            group.binding_owners.insert(
+                binding_key,
+                NamedExternalBindingOwner {
+                    entry_index: target,
+                    imported_name,
+                },
+            );
+        }
+    }
+
+    for (specifier, group) in groups {
+        for entry in group.entries {
+            if entry.default_binding.is_some() || !entry.named_bindings.is_empty() {
+                output[entry.output_index] = Some(render_named_external_import(
+                    &specifier,
+                    entry.default_binding.as_deref(),
+                    &entry.named_bindings,
+                ));
+            }
+        }
+    }
+
+    let output = output.into_iter().flatten().collect::<Vec<_>>();
+    validate_external_import_binding_collisions(&output)?;
+    Ok(output)
+}
+
+#[derive(Debug)]
+struct ExternalImportBinding {
+    specifier: String,
+    imported_name: String,
+    local_name: String,
+}
+
+/// Library modules are flattened into one ESM scope. Reject duplicate local
+/// bindings across every surviving import form (named, default, and namespace)
+/// instead of producing a syntactically-invalid artifact or silently changing
+/// a source module's imported value. Compatible named imports are coalesced
+/// above; remaining collisions need a future alpha-renaming pass.
+fn validate_external_import_binding_collisions(imports: &[String]) -> Result<()> {
+    let mut owners: HashMap<String, ExternalImportBinding> = HashMap::new();
+    for statement in imports {
+        for binding in external_import_bindings(statement) {
+            if let Some(previous) = owners.get(&binding.local_name) {
+                bail!(
+                    "jet build --lib cannot safely hoist external imports: local binding `{}` is declared by `{}` from `{}` and `{}` from `{}` in separate modules; rename one binding before bundling",
+                    binding.local_name,
+                    previous.imported_name,
+                    previous.specifier,
+                    binding.imported_name,
+                    binding.specifier,
+                );
+            }
+            owners.insert(binding.local_name.clone(), binding);
+        }
+    }
+    Ok(())
+}
+
+fn external_import_bindings(statement: &str) -> Vec<ExternalImportBinding> {
+    let Some(rest) = statement.trim().strip_prefix("import").map(str::trim_start) else {
+        return Vec::new();
+    };
+    if rest.starts_with('\"') || rest.starts_with('\'') {
+        return Vec::new();
+    }
+    let Some((clause, specifier)) = parse_import_from_clause(rest) else {
+        return Vec::new();
+    };
+    let clause = clause.trim();
+    if clause == "type" || clause.starts_with("type ") || clause.starts_with("type\t") {
+        return Vec::new();
+    }
+
+    let mut bindings = Vec::new();
+    let mut push = |imported_name: &str, local_name: &str| {
+        if is_js_identifier(local_name) {
+            bindings.push(ExternalImportBinding {
+                specifier: specifier.clone(),
+                imported_name: imported_name.to_string(),
+                local_name: local_name.to_string(),
+            });
+        }
+    };
+
+    if let Some((default_binding, names)) = split_named_import_clause(clause) {
+        if let Some(default_binding) = default_binding {
+            push("default", default_binding);
+        }
+        for name in names.split(',').map(str::trim) {
+            if name.is_empty() || is_inline_type_import_binding(name) {
+                continue;
+            }
+            let Some(local_name) = named_import_binding_local_name(name) else {
+                continue;
+            };
+            let Some(imported_name) = named_import_binding_imported_name(name) else {
+                continue;
+            };
+            push(&imported_name, &local_name);
+        }
+        return bindings;
+    }
+
+    if let Some((default_binding, namespace)) = clause.split_once(", * as ") {
+        let default_binding = default_binding.trim();
+        let namespace = namespace.trim();
+        push("default", default_binding);
+        push("*", namespace);
+        return bindings;
+    }
+    if let Some(namespace) = clause.strip_prefix("* as ").map(str::trim) {
+        push("*", namespace);
+        return bindings;
+    }
+    push("default", clause);
+    bindings
+}
+
+fn parse_named_external_import(statement: &str) -> Option<NamedExternalImport> {
+    let rest = statement.trim().strip_prefix("import")?.trim_start();
+    let (clause, specifier) = parse_import_from_clause(rest)?;
+    let clause = clause.trim();
+    // `import type` must stay in the source until the TypeScript transform
+    // erases it. Treating `type` as a default binding would turn a type-only
+    // import into an invalid runtime default import during rendering.
+    if clause == "type" || clause.starts_with("type ") || clause.starts_with("type\t") {
+        return None;
+    }
+    let open = clause.find('{')?;
+    let close = clause.rfind('}')?;
+    if close <= open || !clause[close + 1..].trim().is_empty() {
+        return None;
+    }
+
+    let default_prefix = clause[..open].trim().trim_end_matches(',').trim();
+    let default_binding = if default_prefix.is_empty() {
+        None
+    } else if is_js_identifier(default_prefix) {
+        Some(default_prefix.to_string())
+    } else {
+        return None;
+    };
+
+    let named_bindings = clause[open + 1..close]
+        .split(',')
+        .map(str::trim)
+        .filter(|binding| !binding.is_empty() && !is_inline_type_import_binding(binding))
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if named_bindings.is_empty() {
+        return None;
+    }
+
+    Some(NamedExternalImport {
+        specifier,
+        default_binding,
+        named_bindings,
+    })
+}
+
+fn is_inline_type_import_binding(binding: &str) -> bool {
+    let binding = binding.trim();
+    binding.starts_with("type ") || binding.starts_with("type\t")
+}
+
+fn named_import_binding_local_name(binding: &str) -> Option<String> {
+    let binding = binding.trim();
+    let local = binding
+        .rsplit_once(" as ")
+        .map(|(_, local)| local.trim())
+        .unwrap_or_else(|| {
+            binding
+                .strip_prefix("type ")
+                .or_else(|| binding.strip_prefix("type\t"))
+                .unwrap_or(binding)
+                .trim()
+        });
+    is_js_identifier(local).then(|| local.to_string())
+}
+
+fn named_import_binding_imported_name(binding: &str) -> Option<String> {
+    let binding = binding
+        .trim()
+        .strip_prefix("type ")
+        .or_else(|| binding.trim().strip_prefix("type\t"))
+        .unwrap_or_else(|| binding.trim());
+    let imported = binding
+        .rsplit_once(" as ")
+        .map(|(imported, _)| imported.trim())
+        .unwrap_or(binding);
+    is_js_identifier(imported).then(|| imported.to_string())
+}
+
+fn is_js_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
+fn render_named_external_import(
+    specifier: &str,
+    default_binding: Option<&str>,
+    named_bindings: &[String],
+) -> String {
+    let mut out = String::from("import ");
+    if let Some(default_binding) = default_binding {
+        out.push_str(default_binding);
+        if !named_bindings.is_empty() {
+            out.push_str(", ");
+        }
+    }
+    if !named_bindings.is_empty() {
+        out.push_str("{ ");
+        out.push_str(&named_bindings.join(", "));
+        out.push_str(" }");
+    }
+    out.push_str(" from \"");
+    out.push_str(specifier);
+    out.push_str("\";");
+    out
 }
 
 /// Recursively inline one module's body.
@@ -1931,8 +2441,14 @@ fn inline_module(
             // pass rewrites them to `exports.x = require("pkg").x`. Hoisting one
             // copy (deduplicated) is enough — do not also splice it into the
             // body, or the re-export would be emitted twice.
-            if seen_external.insert(stmt_text.to_string()) {
-                external_imports.push(stmt_text.to_string());
+            let rewritten_specifier = rewrite_external_library_specifier_for_node(path, &spec);
+            let external_statement = if rewritten_specifier == spec {
+                stmt_text.to_string()
+            } else {
+                rewrite_statement_specifier(stmt_text, &spec, &rewritten_specifier)
+            };
+            if seen_external.insert(external_statement.clone()) {
+                external_imports.push(external_statement);
             }
             // A plain side-effect / default / named *import* is fully satisfied
             // by the hoisted statement above; an export re-export is also
@@ -2305,6 +2821,65 @@ fn resolve_relative(from: &Path, spec: &str) -> Result<Option<PathBuf>> {
 /// value-copy `exports.x = …` emitted here) are deferred — the value-copy form
 /// is correct for the eagerly-evaluated modules a published library entry uses.
 fn esm_to_cjs(esm: &str) -> String {
+    let mut parser = tree_sitter::Parser::new();
+    let language: tree_sitter::Language = tree_sitter_javascript::LANGUAGE.into();
+    if parser.set_language(&language).is_err() {
+        return esm_to_cjs_linewise(esm);
+    }
+    let Some(tree) = parser.parse(esm, None) else {
+        return esm_to_cjs_linewise(esm);
+    };
+
+    let root = tree.root_node();
+    let mut out = String::with_capacity(esm.len());
+    let mut export_assignments = Vec::new();
+    let mut cursor = root.walk();
+    let mut last_end = 0usize;
+
+    // Work statement-by-statement rather than line-by-line. The transform may
+    // legitimately place `import …;import …;` on one line; treating that as a
+    // single line used to make the first import consume the second one's
+    // specifier and produce unloadable CJS.
+    for child in root.children(&mut cursor) {
+        let kind = child.kind();
+        if kind != "import_statement" && kind != "export_statement" {
+            continue;
+        }
+
+        let start = child.start_byte();
+        let end = child.end_byte();
+        out.push_str(&esm[last_end..start]);
+        let original = &esm[start..end];
+        let trimmed = original.trim();
+
+        if let Some((rewritten, assignment)) = rewrite_cjs_export_declaration(trimmed, original) {
+            out.push_str(&rewritten);
+            export_assignments.push(assignment);
+        } else if let Some(rewritten) = rewrite_cjs_line(trimmed) {
+            out.push_str(&rewritten);
+        } else {
+            out.push_str(original);
+        }
+        last_end = end;
+    }
+    out.push_str(&esm[last_end..]);
+
+    if !export_assignments.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        for assignment in export_assignments {
+            out.push_str(&assignment);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Conservative fallback for an unexpected parser setup failure. Normal
+/// library output uses the AST-aware path above; this keeps the legacy
+/// best-effort behavior available rather than returning the original ESM.
+fn esm_to_cjs_linewise(esm: &str) -> String {
     let mut out = String::new();
     let mut export_assignments = Vec::new();
     for line in esm.lines() {
@@ -2371,25 +2946,8 @@ fn strip_export_keyword_preserving_indent(line: &str) -> String {
 }
 
 fn rewrite_cjs_line(line: &str) -> Option<String> {
-    // import * as X from "pkg";
-    if let Some(rest) = line.strip_prefix("import * as ") {
-        let (name, spec) = split_import_from(rest)?;
-        return Some(format!("const {name} = require(\"{spec}\");"));
-    }
-    // import { a, b } from "pkg";
-    if let Some(rest) = line.strip_prefix("import {") {
-        let (names, spec) = rest.split_once('}')?;
-        let spec = import_spec(spec)?;
-        return Some(format!("const {{{names}}} = require(\"{spec}\");"));
-    }
-    // import "pkg"; (side-effect) or import Default from "pkg";
-    if let Some(rest) = line.strip_prefix("import ") {
-        if rest.starts_with('"') || rest.starts_with('\'') {
-            let spec = strip_quotes(rest.trim_end_matches(';'));
-            return Some(format!("require(\"{spec}\");"));
-        }
-        let (name, spec) = split_import_from(rest)?;
-        return Some(format!("const {name} = require(\"{spec}\");"));
+    if let Some(rewritten) = rewrite_cjs_import(line) {
+        return Some(rewritten);
     }
     // export default <expr>;
     if let Some(rest) = line.strip_prefix("export default ") {
@@ -2457,6 +3015,69 @@ fn rewrite_cjs_line(line: &str) -> Option<String> {
     None
 }
 
+fn rewrite_cjs_import(line: &str) -> Option<String> {
+    let rest = line.trim_start().strip_prefix("import ")?.trim_start();
+    // `import "pkg";`
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        let spec = import_spec(rest)?;
+        return Some(format!("require(\"{spec}\");"));
+    }
+
+    let (clause, spec) = parse_import_from_clause(rest)?;
+    let clause = clause.trim();
+
+    // `import Default, { named } from "pkg"` lowers to two valid CJS
+    // declarations. The old generic default branch emitted
+    // `const Default, { named } = require(...)`, which is invalid JavaScript.
+    if let Some((default_binding, names)) = split_named_import_clause(clause) {
+        let mut declarations = Vec::new();
+        if let Some(default_binding) = default_binding {
+            declarations.push(format!("const {default_binding} = require(\"{spec}\");"));
+        }
+        if !names.trim().is_empty() {
+            let names = cjs_object_destructure_bindings(names);
+            declarations.push(format!("const {{ {names} }} = require(\"{spec}\");"));
+        }
+        return (!declarations.is_empty()).then(|| declarations.join("\n"));
+    }
+
+    // `import Default, * as Namespace from "pkg"` is another mixed form
+    // that cannot be represented by one `const` declaration.
+    if let Some((default_binding, namespace)) = clause.split_once(", * as ") {
+        let default_binding = default_binding.trim();
+        let namespace = namespace.trim();
+        if is_js_identifier(default_binding) && is_js_identifier(namespace) {
+            return Some(format!(
+                "const {default_binding} = require(\"{spec}\");\nconst {namespace} = require(\"{spec}\");"
+            ));
+        }
+    }
+
+    if let Some(namespace) = clause.strip_prefix("* as ").map(str::trim) {
+        return is_js_identifier(namespace)
+            .then(|| format!("const {namespace} = require(\"{spec}\");"));
+    }
+    is_js_identifier(clause).then(|| format!("const {clause} = require(\"{spec}\");"))
+}
+
+/// ESM uses `imported as local` inside named import clauses, while JavaScript
+/// object destructuring needs `imported: local`. Keep unaliased names intact
+/// so the CJS/IIFE lowerings accept the same merged external import clauses as
+/// the ESM artifact.
+fn cjs_object_destructure_bindings(names: &str) -> String {
+    names
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            name.rsplit_once(" as ")
+                .map(|(imported, local)| format!("{}: {}", imported.trim(), local.trim()))
+                .unwrap_or_else(|| name.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Split one entry of an `export { … }` clause into `(local, exported)`.
 ///
 ///   `a`        → (`a`, `a`)
@@ -2470,23 +3091,96 @@ fn split_export_alias(entry: &str) -> (String, String) {
     }
 }
 
-/// Helper: `Name from "pkg";` → `(Name, pkg)`.
-fn split_import_from(rest: &str) -> Option<(String, String)> {
-    let (name, spec) = rest.split_once(" from ")?;
-    let spec = import_spec(spec)?;
-    Some((name.trim().to_string(), spec))
+/// Split an import clause from its static module specifier. This accepts
+/// multiline whitespace and deliberately ignores `from` identifiers inside a
+/// named-import list, unlike a simple `split_once(" from ")`.
+fn parse_import_from_clause(rest: &str) -> Option<(&str, String)> {
+    let from_index = find_import_from_keyword(rest)?;
+    let clause = rest[..from_index].trim_end();
+    let spec = import_spec(&rest[from_index + "from".len()..])?;
+    Some((clause, spec))
+}
+
+fn find_import_from_keyword(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    let mut brace_depth = 0usize;
+    let mut quote = None;
+
+    while index < bytes.len() {
+        if let Some(quote_char) = quote {
+            if bytes[index] == b'\\' {
+                index += 2;
+                continue;
+            }
+            if bytes[index] == quote_char {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        match bytes[index] {
+            b'\'' | b'\"' | b'`' => quote = Some(bytes[index]),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            b'f' if brace_depth == 0
+                && bytes[index..].starts_with(b"from")
+                && index > 0
+                && bytes[index - 1].is_ascii_whitespace()
+                && bytes
+                    .get(index + "from".len())
+                    .is_some_and(u8::is_ascii_whitespace) =>
+            {
+                return Some(index);
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Split `Default, { named }` or `{ named }` into its optional default binding
+/// and braced named clause. Namespace imports intentionally return `None`.
+fn split_named_import_clause(clause: &str) -> Option<(Option<&str>, &str)> {
+    let open = clause.find('{')?;
+    let close = clause.rfind('}')?;
+    if close <= open || !clause[close + 1..].trim().is_empty() {
+        return None;
+    }
+    let default_prefix = clause[..open].trim().trim_end_matches(',').trim();
+    let default_binding = if default_prefix.is_empty() {
+        None
+    } else if is_js_identifier(default_prefix) {
+        Some(default_prefix)
+    } else {
+        return None;
+    };
+    Some((default_binding, clause[open + 1..close].trim()))
 }
 
 /// Helper: extract a quoted specifier from the tail of an import, e.g.
 /// ` from "pkg";` or `"pkg";`.
 fn import_spec(tail: &str) -> Option<String> {
-    let tail = tail.trim().trim_start_matches("from").trim();
-    let spec = strip_quotes(tail.trim_end_matches(';').trim());
-    if spec.is_empty() {
-        None
-    } else {
-        Some(spec)
+    let tail = tail.trim();
+    let tail = tail.strip_prefix("from").unwrap_or(tail).trim();
+    let quote = tail.chars().next()?;
+    if quote != '\'' && quote != '\"' && quote != '`' {
+        return None;
     }
+    let after_open = &tail[quote.len_utf8()..];
+    let end = after_open.find(quote)?;
+    if !after_open[end + quote.len_utf8()..]
+        .trim()
+        .trim_end_matches(';')
+        .trim()
+        .is_empty()
+    {
+        return None;
+    }
+    let spec = &after_open[..end];
+    (!spec.is_empty()).then(|| spec.to_string())
 }
 
 #[cfg(test)]
@@ -2545,6 +3239,41 @@ mod tests {
         assert_eq!(
             external_global_path("react/jsx-runtime"),
             "globalThis.react"
+        );
+    }
+
+    #[test]
+    fn iife_import_lowering_converts_esm_aliases_to_object_patterns() {
+        let externals = HashSet::from(["react".to_string()]);
+        assert_eq!(
+            rewrite_iife_import(
+                "import { forwardRef as render, useMemo } from \"react\";",
+                &externals,
+            ),
+            Some("const { forwardRef: render, useMemo } = globalThis.react;".to_string())
+        );
+    }
+
+    #[test]
+    fn legacy_node_subpath_rewrite_keeps_export_mapped_packages_authored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let package = tmp.path().join("node_modules/export-mapped-package");
+        let importer = tmp.path().join("src/index.js");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"export-mapped-package","exports":{".":"./index.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(package.join("index.js"), "export const root = true;\n").unwrap();
+        std::fs::write(package.join("chunk.js"), "export const chunk = true;\n").unwrap();
+        std::fs::write(&importer, "export {};\n").unwrap();
+
+        assert_eq!(
+            rewrite_external_library_specifier_for_node(&importer, "export-mapped-package/chunk"),
+            "export-mapped-package/chunk",
+            "an exports map owns package subpaths even when a physical fallback exists"
         );
     }
 
@@ -2708,6 +3437,132 @@ mod tests {
             rewrite_export_from_specifier("export { x } from './m';", "./m"),
             "export { x } from \"./m.js\";"
         );
+    }
+
+    #[test]
+    fn external_named_imports_coalesce_by_package_and_local_binding() {
+        let imports = vec![
+            "import { forwardRef, useMemo } from \"react\";".to_string(),
+            "import { forwardRef, useRef } from \"react\";".to_string(),
+            "import * as React from \"react\";".to_string(),
+        ];
+
+        let out = coalesce_external_named_imports(&imports).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                "import { forwardRef, useMemo, useRef } from \"react\";",
+                "import * as React from \"react\";",
+            ],
+            "only named clauses may merge; namespace bindings stay separate"
+        );
+    }
+
+    #[test]
+    fn external_named_imports_preserve_default_binding_while_merging_names() {
+        let imports = vec![
+            "import React, { forwardRef } from \"react\";".to_string(),
+            "import { forwardRef, useMemo } from \"react\";".to_string(),
+        ];
+
+        let out = coalesce_external_named_imports(&imports).unwrap();
+        assert_eq!(
+            out,
+            vec!["import React, { forwardRef, useMemo } from \"react\";"],
+            "a compatible default clause remains the canonical declaration"
+        );
+    }
+
+    #[test]
+    fn external_named_imports_reject_conflicting_local_aliases() {
+        let imports = vec![
+            "import { foo as shared } from \"pkg\";".to_string(),
+            "import { bar as shared } from \"pkg\";".to_string(),
+        ];
+
+        let err = coalesce_external_named_imports(&imports)
+            .expect_err("a flat bundle cannot silently retarget a conflicting local alias");
+        let message = err.to_string();
+        assert!(
+            message.contains("cannot safely hoist external import"),
+            "{message}"
+        );
+        assert!(
+            message.contains("foo") && message.contains("bar"),
+            "{message}"
+        );
+        assert!(message.contains("shared"), "{message}");
+    }
+
+    #[test]
+    fn external_imports_reject_conflicting_aliases_from_different_packages() {
+        let imports = vec![
+            "import { foo as shared } from \"first-pkg\";".to_string(),
+            "import { bar as shared } from \"second-pkg\";".to_string(),
+        ];
+
+        let err = coalesce_external_named_imports(&imports)
+            .expect_err("cross-package aliases would otherwise make invalid ESM");
+        let message = err.to_string();
+        assert!(
+            message.contains("first-pkg") && message.contains("second-pkg"),
+            "{message}"
+        );
+        assert!(message.contains("shared"), "{message}");
+    }
+
+    #[test]
+    fn external_imports_reject_duplicate_default_bindings_left_unmerged() {
+        let imports = vec![
+            "import React from \"react\";".to_string(),
+            "import React, { useMemo } from \"react\";".to_string(),
+        ];
+
+        let err = coalesce_external_named_imports(&imports)
+            .expect_err("duplicate default declarations would make invalid ESM");
+        assert!(err.to_string().contains("local binding `React`"), "{err}");
+    }
+
+    #[test]
+    fn external_named_imports_leave_type_only_statements_for_ts_stripping() {
+        let imports = vec![
+            "import type { Shape } from \"pkg\";".to_string(),
+            "import { Shape } from \"pkg\";".to_string(),
+        ];
+        let hoisted = coalesce_external_named_imports(&imports).unwrap();
+        let transpiled =
+            transpile_library_esm(&format!("{}\nconsole.log(Shape);\n", hoisted.join("\n")))
+                .unwrap();
+
+        assert!(
+            !transpiled.contains("import type"),
+            "type-only imports must be erased instead of becoming default imports: {transpiled}"
+        );
+        assert!(
+            transpiled.contains("import { Shape } from \"pkg\";"),
+            "the runtime value import must survive type stripping: {transpiled}"
+        );
+    }
+
+    #[test]
+    fn cjs_rewrite_handles_semicolon_adjacent_import_statements() {
+        let out = esm_to_cjs(
+            "import { forwardRef as render, useMemo } from \"react\";import { useRef } from \"react\";\n\
+             export const value = render(useMemo(useRef(1)));\n",
+        );
+        assert!(
+            out.contains("const { forwardRef: render, useMemo } = require(\"react\");"),
+            "aliased first same-line import must lower to valid object destructuring, got:\n{out}"
+        );
+        assert!(
+            out.contains("const { useRef } = require(\"react\");"),
+            "second same-line import must lower independently, got:\n{out}"
+        );
+        assert!(
+            !out.contains("import {"),
+            "no ESM import may leak into CJS, got:\n{out}"
+        );
+        assert!(out.contains("exports.value = value;"), "{out}");
     }
 }
 // </HANDWRITE>

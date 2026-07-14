@@ -161,6 +161,20 @@ fn node_builtin_name(specifier: &str) -> Option<&str> {
         .then_some(name)
 }
 
+/// Whether a specifier names a Node builtin rather than an installed package.
+/// Consumers that execute native Node (such as the test worker) use this to
+/// leave builtins to Node instead of resolving an accidentally shadowing
+/// `node_modules` directory.
+pub(crate) fn is_node_builtin_specifier(specifier: &str) -> bool {
+    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
+    NODE_BUILTINS_WITH_BROWSER_FALLBACK.iter().any(|builtin| {
+        name == *builtin
+            || name
+                .strip_prefix(builtin)
+                .is_some_and(|subpath| subpath.starts_with('/'))
+    })
+}
+
 fn append_extension(base: &Path, ext: &str) -> PathBuf {
     let mut path = base.as_os_str().to_os_string();
     path.push(".");
@@ -647,6 +661,33 @@ impl ResolveOptions {
         ];
         options
     }
+
+    /// Native Node execution should prefer Node/package ESM entries and must
+    /// never synthesize the browser builtin polyfills used by `jet build`.
+    ///
+    /// The test worker uses this when it resolves a package specifier before
+    /// handing the resulting canonical file URL to Node's ESM loader. Include
+    /// `.mjs` and `.cjs` in addition to the build defaults so legacy package
+    /// deep imports retain the same extension-probing behavior as Node-style
+    /// tooling.
+    pub fn for_node_test() -> Self {
+        let mut options = Self::default();
+        options.extensions = vec![
+            "js".to_string(),
+            "jsx".to_string(),
+            "ts".to_string(),
+            "tsx".to_string(),
+            "mjs".to_string(),
+            "cjs".to_string(),
+            "json".to_string(),
+        ];
+        options.conditions = vec![
+            "node".to_string(),
+            "import".to_string(),
+            "default".to_string(),
+        ];
+        options
+    }
 }
 
 #[cfg(test)]
@@ -663,6 +704,61 @@ mod tests {
         assert_eq!(resolver.detect_kind(".."), ResolveKind::Relative);
         assert_eq!(resolver.detect_kind("/abs/path"), ResolveKind::Absolute);
         assert_eq!(resolver.detect_kind("react"), ResolveKind::Package);
+    }
+
+    #[test]
+    fn node_test_options_prefer_node_without_browser_polyfills() {
+        let options = ResolveOptions::for_node_test();
+        assert_eq!(options.conditions, vec!["node", "import", "default"]);
+        assert!(options.extensions.iter().any(|ext| ext == "mjs"));
+        assert!(options.extensions.iter().any(|ext| ext == "cjs"));
+        assert!(
+            !options
+                .conditions
+                .iter()
+                .any(|condition| condition == "browser"),
+            "native tests must preserve Node builtins rather than emit build polyfills"
+        );
+    }
+
+    #[test]
+    fn node_builtin_specifiers_are_detected_before_package_lookup() {
+        assert!(is_node_builtin_specifier("fs"));
+        assert!(is_node_builtin_specifier("node:fs"));
+        assert!(is_node_builtin_specifier("node:stream"));
+        assert!(is_node_builtin_specifier("fs/promises"));
+        assert!(is_node_builtin_specifier("node:stream/promises"));
+        assert!(is_node_builtin_specifier("path/posix"));
+        assert!(is_node_builtin_specifier("util/types"));
+        assert!(!is_node_builtin_specifier("filesystem-helper"));
+        assert!(!is_node_builtin_specifier("pathology"));
+    }
+
+    #[test]
+    fn node_test_resolver_probes_legacy_package_directory_indexes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package_dir = tmp.path().join("node_modules").join("legacy-package");
+        let nested_index = package_dir.join("nested").join("index.mjs");
+        let importer = tmp.path().join("src").join("entry.ts");
+        std::fs::create_dir_all(nested_index.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{"name":"legacy-package","main":"./index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(&nested_index, "export const nested = true;\n").unwrap();
+        std::fs::write(
+            &importer,
+            "import { nested } from 'legacy-package/nested';\n",
+        )
+        .unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::for_node_test()).unwrap();
+        let resolved = resolver
+            .resolve("legacy-package/nested", &importer)
+            .unwrap();
+        assert_eq!(resolved.path, nested_index);
     }
 
     #[test]
