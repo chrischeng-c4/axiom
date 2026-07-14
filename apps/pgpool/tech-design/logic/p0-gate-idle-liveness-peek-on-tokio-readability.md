@@ -49,21 +49,20 @@ coverage_kind: semantic
 changes:
   - path: apps/pgpool/Cargo.toml
     action: modify
-    section: pgpool-readiness-gated-idle-liveness
+    section: pgpool-readiness-gated-idle-liveness-contract
     impl_mode: hand-written
-    reason: Declare the safe socket facade used solely inside Tokio's readiness-gated closure.
+    reason: Declare the direct socket facade used in the Tokio-owned readiness closure.
   - path: apps/pgpool/src/pool/backend_pool.rs
     action: modify
-    section: pgpool-readiness-gated-idle-liveness
+    section: pgpool-readiness-gated-idle-liveness-contract
     impl_mode: hand-written
-    reason: Replace timer liveness with Tokio READABLE gating and conditional non-consuming socket peek classification.
+    reason: Implement exact try_io/MSG_PEEK classifications without changing pool ownership or error paths.
   - path: apps/pgpool/tests/pool.rs
     action: modify
-    section: pgpool-readiness-gated-idle-liveness
+    section: pgpool-readiness-gated-idle-liveness-contract
     impl_mode: hand-written
-    reason: Cover no-readiness reuse, ready EOF rejection, and preserved queued protocol bytes.
+    reason: Keep byte preservation and EOF handling observable at the pool boundary.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
