@@ -52,22 +52,15 @@ changes:
 
 ```mermaid
 ---
-id: relay-stateful-service-workload-verification
+id: relay-stateful-workload-contract-verification
 requirements:
-  baseline_links_authoritative_evidence:
-    id: R2
-    text: "The projected root links existing shared mechanisms and Relay-local durable, topology, backup, security, and deployment evidence without duplicating domain capability prose."
-    kind: regression
-    risk: low
-    verify: apps/relay/README.md stateful-service-workload capability contract
-  stateful_workload_root_is_projected:
+  contract_composes_existing_evidence:
     id: R1
-    text: "Relay exposes the stateful-service-workload capability derived from its stateful_storage trait."
-    kind: functional
+    text: "Relay's stateful workload capability names shared mechanisms and Relay-local durable acknowledgement, StatefulSet identity, raft, backup, security, and lifecycle evidence through links to their authoritative roots."
+    kind: regression
     risk: low
     verify: aw capability check --project relay --skip-issue-inventory
 ---
 flowchart TD
-    r1[R1 stateful workload root is projected] --> aw_capability_check_project_relay_skip_issue_inventory[aw capability check --project relay --skip-issue-inventory]
-    r2[R2 baseline links authoritative evidence] --> apps_relay_readme_md_stateful_service_workload_capability_contract[apps/relay/README.md stateful-service-workload capability contract]
+    r1[R1 contract composes existing evidence] --> aw_capability_check_project_relay_skip_issue_inventory[aw capability check --project relay --skip-issue-inventory]
 ```
