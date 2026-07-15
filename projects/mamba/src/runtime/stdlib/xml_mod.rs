@@ -780,7 +780,11 @@ fn kwarg_get(val: MbValue, key: &str) -> Option<MbValue> {
     let ptr = val.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock.read().unwrap().get(key).copied();
+            // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+            // not Rust's native `str` hash — a raw `.get(&str)` here would
+            // silently miss present keys (#1566). Route through the
+            // hash-domain-safe helper.
+            return super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key);
         }
     }
     None
@@ -865,9 +869,13 @@ pub fn qname_text_value(val: MbValue) -> Option<String> {
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
-            let class = map.get("__class__").copied().and_then(extract_str)?;
+            // Hash-safe probe (see `dict_get_key`'s doc comment) — a raw
+            // `map.get("__class__")` misses since #1028.
+            let class = super::super::dict_ops::dict_get_exact_str(&map, "__class__")
+                .and_then(extract_str)?;
             if class == "QName" {
-                return map.get("text").copied().and_then(extract_str);
+                return super::super::dict_ops::dict_get_exact_str(&map, "text")
+                    .and_then(extract_str);
             }
         }
     }
@@ -1129,22 +1137,19 @@ fn is_element(val: MbValue) -> bool {
 
 /// `_children` list of an Element-stub dict (borrowed). The single guard used
 /// by the dict/len/iter intrinsics to reroute sequence ops onto children.
+///
+/// Must probe via `dict_get_key` (hash-safe `dict_ops::dict_get_exact_str`),
+/// not a raw `IndexMap::get(&str)` — `DictKey::Str`'s `Hash` impl no longer
+/// shares Rust's native `str` `Hash` domain (#1028), so a raw `&str` probe
+/// hashes into the wrong bucket and silently misses even when the key is
+/// present (same bug class as #1627's `dict_get_key` fix, here in the
+/// separate children/`len`/iter-dispatch mechanism instead of the attrib
+/// dict).
 pub(crate) fn element_stub_children(dict: MbValue) -> Option<MbValue> {
-    let ptr = dict.as_ptr()?;
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*ptr).data {
-            let map = lock.read().unwrap();
-            let cls = map.get("__class__").copied()?;
-            if let Some(p) = cls.as_ptr() {
-                if let ObjData::Str(ref s) = (*p).data {
-                    if s == "Element" {
-                        return map.get("_children").copied();
-                    }
-                }
-            }
-        }
+    if !is_element(dict) {
+        return None;
     }
-    None
+    dict_get_key(dict, "_children")
 }
 
 /// Children of an element as an owned Vec of borrowed values.
@@ -1331,16 +1336,16 @@ impl XmlSerContext {
         let Some(ptr) = elem.as_ptr() else {
             return;
         };
+        // Hash-safe probes throughout (see `dict_get_key`'s doc comment) — a
+        // raw `map.get(&str)` misses since #1028 because `DictKey::Str`'s
+        // `Hash` no longer shares Rust's native `str` hashing domain.
         let (tag, attr_keys, child_items) = unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                let tag = map
-                    .get("tag")
-                    .and_then(|v| extract_str(*v))
+                let tag = super::super::dict_ops::dict_get_exact_str(&map, "tag")
+                    .and_then(extract_str)
                     .unwrap_or_default();
-                let attr_keys = map
-                    .get("attrib")
-                    .copied()
+                let attr_keys = super::super::dict_ops::dict_get_exact_str(&map, "attrib")
                     .and_then(|attrib| attrib.as_ptr())
                     .and_then(|ap| {
                         if let ObjData::Dict(ref a_lock) = (*ap).data {
@@ -1357,9 +1362,7 @@ impl XmlSerContext {
                         }
                     })
                     .unwrap_or_default();
-                let child_items = map
-                    .get("_children")
-                    .copied()
+                let child_items = super::super::dict_ops::dict_get_exact_str(&map, "_children")
                     .and_then(|children| children.as_ptr())
                     .and_then(|cp| {
                         if let ObjData::List(ref list_lock) = (*cp).data {
@@ -1493,14 +1496,13 @@ fn element_text_only(elem: MbValue) -> String {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                let mut out = map
-                    .get("text")
-                    .and_then(|v| extract_str(*v))
+                // Hash-safe probes (see `dict_get_key`'s doc comment).
+                let mut out = super::super::dict_ops::dict_get_exact_str(&map, "text")
+                    .and_then(extract_str)
                     .unwrap_or_default();
-                let children = map.get("_children").copied();
-                let tail = map
-                    .get("tail")
-                    .and_then(|v| extract_str(*v))
+                let children = super::super::dict_ops::dict_get_exact_str(&map, "_children");
+                let tail = super::super::dict_ops::dict_get_exact_str(&map, "tail")
+                    .and_then(extract_str)
                     .unwrap_or_default();
                 let child_items: Vec<MbValue> = children
                     .and_then(|c| c.as_ptr())
@@ -1535,23 +1537,27 @@ fn element_to_string(
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                let tail = map
-                    .get("tail")
-                    .and_then(|v| extract_str(*v))
+                // Hash-safe probes throughout (see `dict_get_key`'s doc
+                // comment) — a raw `map.get(&str)` misses since #1028
+                // because `DictKey::Str`'s `Hash` no longer shares Rust's
+                // native `str` hashing domain, silently falling back to the
+                // "?" tag / empty text-tail defaults below.
+                let tail = super::super::dict_ops::dict_get_exact_str(&map, "tail")
+                    .and_then(extract_str)
                     .unwrap_or_default();
 
                 // Comment / ProcessingInstruction nodes serialize as markers.
-                if let Some(kind) = map.get("_kind").and_then(|v| extract_str(*v)) {
-                    let text = map
-                        .get("text")
-                        .and_then(|v| extract_str(*v))
+                if let Some(kind) = super::super::dict_ops::dict_get_exact_str(&map, "_kind")
+                    .and_then(extract_str)
+                {
+                    let text = super::super::dict_ops::dict_get_exact_str(&map, "text")
+                        .and_then(extract_str)
                         .unwrap_or_default();
                     let body = match kind.as_str() {
                         "comment" => format!("<!--{text}-->"),
                         _ => {
-                            let target = map
-                                .get("target")
-                                .and_then(|v| extract_str(*v))
+                            let target = super::super::dict_ops::dict_get_exact_str(&map, "target")
+                                .and_then(extract_str)
                                 .unwrap_or_default();
                             if text.is_empty() {
                                 format!("<?{target}?>")
@@ -1563,14 +1569,12 @@ fn element_to_string(
                     return format!("{body}{tail}");
                 }
 
-                let raw_tag = map
-                    .get("tag")
-                    .and_then(|v| extract_str(*v))
+                let raw_tag = super::super::dict_ops::dict_get_exact_str(&map, "tag")
+                    .and_then(extract_str)
                     .unwrap_or_else(|| "?".to_string());
                 let tag = ctx.display_name(&raw_tag, false);
-                let text = map
-                    .get("text")
-                    .and_then(|v| extract_str(*v))
+                let text = super::super::dict_ops::dict_get_exact_str(&map, "text")
+                    .and_then(extract_str)
                     .filter(|t| !t.is_empty());
 
                 // Build attributes string (xmlns declaration first on the root).
@@ -1578,7 +1582,7 @@ fn element_to_string(
                 if depth == 0 {
                     attr_str.push_str(&ctx.root_declarations());
                 }
-                if let Some(attrib) = map.get("attrib").copied() {
+                if let Some(attrib) = super::super::dict_ops::dict_get_exact_str(&map, "attrib") {
                     if let Some(a_ptr) = attrib.as_ptr() {
                         if let ObjData::Dict(ref a_lock) = (*a_ptr).data {
                             let a_map = a_lock.read().unwrap();
@@ -1593,7 +1597,7 @@ fn element_to_string(
                 }
 
                 // Children
-                let children = map.get("_children").copied();
+                let children = super::super::dict_ops::dict_get_exact_str(&map, "_children");
                 let child_items: Vec<MbValue> = children
                     .and_then(|c| c.as_ptr())
                     .map(|p| {

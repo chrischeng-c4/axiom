@@ -483,6 +483,25 @@ fn instance_dict_update(proxy: MbValue, other: MbValue) -> bool {
 
 /// Type-preserving dict key. Distinguishes int from string keys so that
 /// `d[1]` and `d["1"]` are distinct entries (matching CPython semantics).
+///
+/// # Hash-domain hazard (#1566)
+/// `DictKey::Str`'s [`Hash`](std::hash::Hash) impl hashes the Python-semantic
+/// `dict_string_hash_value(s)` (since #1028), **not** the raw bytes of `s` —
+/// this intentionally matches CPython's string hashing so that mamba dicts
+/// observe the same iteration/collision behavior as CPython. This means a
+/// raw `&str`/`String` query fed into `IndexMap<DictKey, _>::get(...)` hashes
+/// via its own native `str`/`String` `Hash` impl, which lands in a
+/// *different* bucket than the stored `DictKey::Str` entry. The lookup
+/// **compiles** (an [`indexmap::Equivalent<DictKey>`] impl exists for `str`/
+/// `String` so `.get()` type-checks) but silently returns `None` for keys
+/// that are actually present — no panic, no error, just a missed kwarg or
+/// attribute. Confirmed 4x independently (#227, #239, #1627, plus a wave-1
+/// `logging` site) before this audit swept ~20 more production call sites.
+///
+/// **Never** call `.get()`/`.contains_key()` with a bare `&str`/`String`
+/// query against an `IndexMap<DictKey, _>` (including `ObjData::Dict`'s
+/// backing map). Use [`dict_get_exact_str`] instead, which hashes the query
+/// through the same Python-semantic domain via `BorrowedDictStrKey`.
 #[derive(Debug)]
 pub enum DictKey {
     Int(i64),
