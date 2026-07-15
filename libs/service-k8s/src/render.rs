@@ -1,4 +1,4 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#rust-source-unit
+// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The sharded-HA render toolkit: a [`RenderCtx`] carrying the per-service
 //! identity (app/manager/GVK/name/ns/owner) plus helpers that emit the common
@@ -27,7 +27,7 @@ pub const ENV_REPLICAS_PER_SHARD: &str = "REPLICAS_PER_SHARD";
 pub const ENV_VOTER_COUNT: &str = "VOTER_COUNT";
 
 /// Per-service render identity, threaded through the helpers.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct RenderCtx<'a> {
     pub app: &'a str,
     pub manager: &'a str,
@@ -38,7 +38,7 @@ pub struct RenderCtx<'a> {
     pub owner: Option<Value>,
 }
 
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 impl RenderCtx<'_> {
     /// Recommended labels common to every child object.
     pub fn labels(&self, component: &str) -> Value {
@@ -73,7 +73,7 @@ impl RenderCtx<'_> {
 
 /// The owner reference that ties a child to its CR (cascading GC). `uid` comes
 /// from the live CR's metadata.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn owner_ref(api_version: &str, kind: &str, name: &str, uid: &str) -> Value {
     json!({
         "apiVersion": api_version,
@@ -86,7 +86,7 @@ pub fn owner_ref(api_version: &str, kind: &str, name: &str, uid: &str) -> Value 
 }
 
 /// Guaranteed-QoS CPU/memory resources (`requests == limits`).
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn guaranteed_resources(cpu: &str, memory: &str) -> Value {
     json!({
         "requests": { "cpu": cpu, "memory": memory },
@@ -121,7 +121,7 @@ pub fn dedicated_node_affinity(selector: Value) -> Value {
 }
 
 /// A rendered PVC template plus the container mount path it should back.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct WorkloadVolumeClaim<'a> {
     pub name: String,
     pub template: Value,
@@ -130,7 +130,7 @@ pub struct WorkloadVolumeClaim<'a> {
 }
 
 /// A ServiceAccount for the workload pods.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn service_account(cx: &RenderCtx, component: &str) -> Value {
     json!({
         "apiVersion": "v1",
@@ -170,7 +170,7 @@ fn service(
 }
 
 /// A headless Service with caller-supplied ports.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn headless_service_with_ports(
     cx: &RenderCtx,
     name: &str,
@@ -181,7 +181,7 @@ pub fn headless_service_with_ports(
 }
 
 /// A headless Service (stable per-pod DNS for a StatefulSet's peers).
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn headless_service(cx: &RenderCtx, name: &str, component: &str, port: i32) -> Value {
     headless_service_with_ports(
         cx,
@@ -192,7 +192,7 @@ pub fn headless_service(cx: &RenderCtx, name: &str, component: &str, port: i32) 
 }
 
 /// A ClusterIP Service with caller-supplied ports.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn client_service_with_ports(
     cx: &RenderCtx,
     name: &str,
@@ -203,7 +203,7 @@ pub fn client_service_with_ports(
 }
 
 /// A ClusterIP client Service.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn client_service(cx: &RenderCtx, name: &str, component: &str, port: i32) -> Value {
     client_service_with_ports(
         cx,
@@ -214,7 +214,7 @@ pub fn client_service(cx: &RenderCtx, name: &str, component: &str, port: i32) ->
 }
 
 /// A PodDisruptionBudget.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn pdb(cx: &RenderCtx, name: &str, component: &str, max_unavailable: i32) -> Value {
     json!({
         "apiVersion": "policy/v1",
@@ -225,7 +225,7 @@ pub fn pdb(cx: &RenderCtx, name: &str, component: &str, max_unavailable: i32) ->
 }
 
 /// Parameters for [`horizontal_pod_autoscaler`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct HorizontalPodAutoscaler<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -240,7 +240,7 @@ pub struct HorizontalPodAutoscaler<'a> {
 }
 
 /// A HorizontalPodAutoscaler targeting a rendered service workload.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn horizontal_pod_autoscaler(p: HorizontalPodAutoscaler) -> Value {
     let HorizontalPodAutoscaler {
         cx,
@@ -276,7 +276,7 @@ pub fn horizontal_pod_autoscaler(p: HorizontalPodAutoscaler) -> Value {
 }
 
 /// Parameters for [`cron_job`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct CronJob<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -301,7 +301,7 @@ pub struct CronJob<'a> {
 ///
 /// Operators schedule and wire the runner; the service or runner still owns the
 /// actual domain bytes. This helper deliberately stays manifest-only.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn cron_job(p: CronJob) -> Value {
     let cx = p.cx;
     let mut container = json!({
@@ -382,7 +382,7 @@ fn ensure_named_template_metadata(mut template: Value, name: &str, labels: &Valu
 }
 
 /// Parameters for [`service_statefulset`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct ServiceStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -427,7 +427,7 @@ pub struct ServiceStatefulSet<'a> {
 /// workloads. It preserves the exact raft-runtime env contract while letting a
 /// service supply its own probes, security hardening, storage path, extra
 /// volumes, and rollout details.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
     let ServiceStatefulSet {
         cx,
@@ -576,7 +576,7 @@ pub fn service_statefulset(p: ServiceStatefulSet) -> Value {
 }
 
 /// Parameters for [`sharded_statefulset`].
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct ShardedStatefulSet<'a> {
     pub cx: &'a RenderCtx<'a>,
     pub name: &'a str,
@@ -606,7 +606,7 @@ pub struct ShardedStatefulSet<'a> {
 /// (`POD_NAME`/`POD_NAMESPACE`/`SHARD_COUNT`/`REPLICAS_PER_SHARD`/`VOTER_COUNT`)
 /// + `<headless_env_key>` that `raft_runtime::cluster::ClusterTopology::from_env`
 /// reads to derive node id / membership / peers.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-render-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn sharded_statefulset(p: ShardedStatefulSet) -> Value {
     let volume_claim = p.volume_claim.map(|template| {
         let name = template["metadata"]["name"]
