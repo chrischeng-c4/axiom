@@ -78,6 +78,7 @@ reqwest = { workspace = true, optional = true }
 [dev-dependencies]
 async-nats = { workspace = true }
 futures = { workspace = true }
+rig = { path = "../rig" }
 tempfile = "3"
 tokio = { workspace = true, features = ["full"] }
 reqwest = { workspace = true }

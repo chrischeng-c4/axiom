@@ -1,6 +1,12 @@
 ---
 id: '1645'
-summary: (fill)
+summary: Add a reusable bounded stateful-service lifecycle with retained evidence and Lumen/Tape domain adapters.
+capability_refs:
+  - id: stateful-service-scenarios
+    role: primary
+    claim: reusable-bounded-stateful-lifecycle-and-consumer-adapters
+    coverage: full
+    rationale: "The TD defines and verifies the complete shared runner plus its first two stateful-service consumer adapters."
 fill_sections: [logic, changes, unit-test]
 ---
 

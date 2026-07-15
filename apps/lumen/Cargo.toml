@@ -163,6 +163,7 @@ axum-test = "17"
 criterion = "0.5"
 proptest = "1"
 rand = "0.8"
+rig = { path = "../rig" }
 serde_json.workspace = true
 tempfile = "3"
 # HTTP client for the perf-gate / write-qps harness (drives lumen + OpenSearch).
