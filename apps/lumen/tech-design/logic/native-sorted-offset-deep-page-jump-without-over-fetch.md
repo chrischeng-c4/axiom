@@ -77,3 +77,35 @@ changes:
     impl_mode: hand-written
     description: "Lock OpenAPI and offline-spec offset metadata."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: native-search-offset-verification
+requirements:
+  cursor_exclusivity:
+    id: R2
+    text: "A non-zero offset cannot be combined with an opaque cursor and returns a clear client error."
+    kind: functional
+    risk: medium
+    verify: cargo test -p lumen storage::sorted_offset_tests -- --nocapture
+  global_shard_offset:
+    id: R3
+    text: "Shard routing applies offset only after global ordering and exposes the canonical OpenAPI field."
+    kind: integration
+    risk: high
+    verify: cargo test -p lumen routing -- --nocapture && cargo test -p lumen --test spec_cli -- --nocapture
+  sorted_offset_slice:
+    id: R1
+    text: "Native offset returns the exact number, keyword, composite and score-ranked slice without returning preceding hits."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen storage::sorted_offset_tests -- --nocapture
+---
+flowchart TD
+    r1[R1 sorted offset slice] --> cargo_test_p_lumen_storage_sorted_offset_tests_nocapture[cargo test -p lumen storage::sorted_offset_tests -- --nocapture]
+    r2[R2 cursor exclusivity] --> cargo_test_p_lumen_storage_sorted_offset_tests_nocapture
+    r3[R3 global shard offset] --> cargo_test_p_lumen_routing_nocapture_cargo_test_p_lumen_test_spec_cli_nocapture[cargo test -p lumen routing -- --nocapture && cargo test -p lumen --test spec_cli -- --nocapture]
+```
