@@ -1970,7 +1970,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Select the write log. `--wal raft` also yields a driver whose router is
     // merged into the serve app below (peer RPCs ride the h2c port).
     #[cfg(feature = "raft-wal")]
-    let mut raft_runtime: Option<Arc<raft_runtime::RaftHost>> = None;
+    let mut raft_host: Option<Arc<raft_runtime::RaftHost>> = None;
     #[cfg(feature = "raft-wal")]
     let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
     // Live `ClusterState` for `AppState::with_cluster` (#1349): populated only
@@ -2073,7 +2073,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             );
             raft_cluster = Some(cluster_state);
 
-            raft_runtime = Some(Arc::clone(&host));
+            raft_host = Some(Arc::clone(&host));
             raft_writer = Some(Arc::new(lumen::raft_sm::RaftWriteSink::new(host, sm)));
             None
         }
@@ -2315,7 +2315,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let mut app = lumen::api::router(state);
     // Peer raft RPCs (`/raft/*`, `/raftz`) share the h2c serve port.
     #[cfg(feature = "raft-wal")]
-    if let Some(host) = &raft_runtime {
+    if let Some(host) = &raft_host {
         app = app.merge(host.router());
     }
 
@@ -2325,7 +2325,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Otherwise the RDB snapshotter writes the `--data-dir` checkpoints the apply
     // loop tails from on restart.
     #[cfg(feature = "raft-wal")]
-    if let Some(host) = raft_runtime.clone() {
+    if let Some(host) = raft_host.clone() {
         let period = Duration::from_secs(args.snapshot_secs.max(1));
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(period);

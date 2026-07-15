@@ -7,7 +7,7 @@
 //! The `recommended_h2c_connections` value is marked so you can see it land at
 //! the saturation knee.
 //!
-//! Run: `cargo run -p h2c --example conn_sweep --release`
+//! Run: `cargo run -p transport-h2c --example conn_sweep --release`
 use bytes::Bytes;
 use transport_h2c::{recommended_h2c_connections_for, H2cPool};
 use http_body_util::Full;
