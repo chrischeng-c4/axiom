@@ -34,7 +34,6 @@ flowchart TD
     retain --> verify
     verify --> done([No stale live reference remains])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
