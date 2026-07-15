@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-15T15:11:15.553010+00:00"
-digest = "sha256:e25fd64b3339a4b106fcdc6149668a1a0f55c72dfd1fd4da5d03d1e26d15bbbc"
-source_digest = "sha256:e25fd64b3339a4b106fcdc6149668a1a0f55c72dfd1fd4da5d03d1e26d15bbbc"
-ir_digest = "sha256:6fe9dde364a67dd506c7aa3e4f4852c157cab73df271bc7998d392ce3c7de1b9"
+generated_at = "2026-07-15T17:58:11.152482+00:00"
+digest = "sha256:52946871ec19e1b99635800354a140f8ed4b0ec2c707298f36ecf504a5a5fdf1"
+source_digest = "sha256:52946871ec19e1b99635800354a140f8ed4b0ec2c707298f36ecf504a5a5fdf1"
+ir_digest = "sha256:3efd6cd5c6db14e0004a47aeaa186a46d36fa15092c231185a275b9410c0414f"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -78,6 +78,12 @@ path = "logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
 digest = "sha256:8dc4bb277616934a11195cf480d94ac6b7fe3811813dc36c47c3ce4c99e931f6"
 ir_digest = "sha256:7a158c837dcd3b0143ef8d7d24933dfc0b85f21bfe5fc12bccaf86f49aa7a89d"
 section_count = 4
+
+[[files]]
+path = "logic/adopt-shared-stateful-service-foundations.md"
+digest = "sha256:37bcc32b6376fd6eae08cd33ed2e5835023b7814ee9aa46053e49d2126237fed"
+ir_digest = "sha256:060f464d11965f6b49f6865ac3fc4a6809ef93382bccbf9b4569b8640fdab4a9"
+section_count = 3
 
 [[files]]
 path = "logic/allow-has-child-to-combine-with-sort-by-materializing-parent-bit.md"
@@ -339,14 +345,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-api-rs.md"
-digest = "sha256:12aa4f7e1e5a97b27cfc34ed4fc76bd131d02e84a05da27dc887ad1eda7fc5af"
-ir_digest = "sha256:a4dd6b045b01ded442b1d8da95b55b1cdc75bdd2fb197b497832f200c09c3d3d"
+digest = "sha256:6bfdf512857b9f1c7abf5fce6ed869b5d019397e4a21c6aa46d7da1a58e4f348"
+ir_digest = "sha256:63337fdc6f44c617e4337beb8369aa0570d00a86854e11729156c3d52dd4f78a"
 section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-auth-rs.md"
-digest = "sha256:01b4055159f27a3d106621456f096df46ef0de5990922a106f4d98d92321b0b7"
-ir_digest = "sha256:de5b85a05242d3dadab02f6a91d94836638c04a99fd2d07fff33da33def31137"
+digest = "sha256:7ed017605570b287a815add7122170f97141b89fdbcaa253175ec40892a54ce4"
+ir_digest = "sha256:9d60e0dd39bcccd1f39cb304858cb156f1cce7036b8896b16161e43c593dddcf"
 section_count = 3
 
 [[files]]
@@ -519,8 +525,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-tls-rs.md"
-digest = "sha256:39293d342a87871bcf5d80859d9cca48f9acefd5a46f1d84744dc03cd72abc8e"
-ir_digest = "sha256:1bf74517963c25336392dacbaca4381ae1c275d551739155f2dc61b7456fed8c"
+digest = "sha256:049e1391d7ebe3ff715df7bb88a224d46c9789e475a9290441f35b26bfca19fa"
+ir_digest = "sha256:b55c0d5031b6435cca829848707a2856f3f859e21d1067bb084b55712745e52a"
 section_count = 3
 
 [[files]]
