@@ -48,7 +48,6 @@ flowchart TD
     server_identity -->|yes| dispatch([Raft RPC])
     serve --> dispatch
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
