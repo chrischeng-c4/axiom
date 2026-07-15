@@ -24,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "apps/lumen/examples/consumer_pg_logical.py"
         language: "python"
-        ownership_state: "codegen"
+        ownership_state: "handwrite"
         generator_primitives: ["service_method"]
         symbols:
           - name: "shard_of"
@@ -58,7 +58,7 @@ python_modules:
       lines:
       - '#!/usr/bin/env python3'
       - '# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-examples.md#schema'
-      - '# CODEGEN-BEGIN'
+      - '# HANDWRITE-BEGIN gap="missing-generator:multi-target-python-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition this semantic Python example inventory into one exact source owner; preserve the verified example until #1634 lands canonical ownership."'
       - '"""Illustrative DIY ingestion recipe: Postgres logical replication -> lumen.'
       - ''
       - lumen bundles no connector. Getting data in is the caller's own pub/sub into
@@ -176,7 +176,7 @@ python_modules:
       - ''
       - 'if __name__ == "__main__":'
       - '    main()'
-      - '# CODEGEN-END'
+      - '# HANDWRITE-END'
 ```
 
 ## Unit Test
@@ -208,7 +208,7 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: codegen
+    impl_mode: hand-written
   - action: annotate
     section: unit-test
     impl_mode: hand-written

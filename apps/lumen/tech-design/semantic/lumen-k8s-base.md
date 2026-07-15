@@ -82,7 +82,6 @@ deployment:
           # (`replicasPerShard > 1`) so the data plane gets raft StatefulSet identity.
           - deployment.yaml
           - service.yaml
-          - hpa.yaml
           - pdb.yaml
           # Observability (ServiceMonitor + PrometheusRule) is NOT in base: it needs
           # the prometheus-operator CRDs (monitoring.coreos.com/v1). The staging/prod

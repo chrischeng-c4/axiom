@@ -83,18 +83,6 @@ deployment:
               kind: Deployment
               name: lumen
             patch: |-
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/requests/cpu
-                value: "1"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/requests/memory
-                value: "2Gi"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/limits/cpu
-                value: "1"
-              - op: replace
-                path: /spec/template/spec/containers/0/resources/limits/memory
-                value: "2Gi"
               - op: add
                 path: /spec/template/spec/containers/0/env/-
                 value:
@@ -103,17 +91,6 @@ deployment:
                     configMapKeyRef:
                       name: lumen-config
                       key: LUMEN_AUTH
-          # Match the HPA floor to the Deployment replica count.
-          - target:
-              kind: HorizontalPodAutoscaler
-              name: lumen
-            patch: |-
-              - op: replace
-                path: /spec/minReplicas
-                value: 1
-              - op: replace
-                path: /spec/maxReplicas
-                value: 1
         # CODEGEN-END
 ```
 
