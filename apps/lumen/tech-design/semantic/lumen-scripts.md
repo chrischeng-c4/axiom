@@ -29,6 +29,16 @@ semantic_domain:
   coverage_kind: semantic
   evidence:
     source_units:
+      - path: "apps/lumen/scripts/kind-e2e.sh"
+        language: "shell"
+        ownership_state: "handwrite"
+        generator_primitives: ["stateful_service_kind_journey"]
+        source_evidence_node:
+          layer: "operations"
+          ecosystem: "kind"
+          role: "e2e-test"
+          section_type: "unit-test"
+          domain: "apps/lumen/scripts"
       - path: "apps/lumen/scripts/load-fixture.py"
         language: "python"
         ownership_state: "codegen"
@@ -962,6 +972,14 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
+  - path: "apps/lumen/scripts/kind-e2e.sh"
+    action: modify
+    section: unit-test
+    description: |
+      Keep the shipped 1 CPU / 4Gi baseline while explicitly reducing the
+      ephemeral kind fixture's request to 250m / 512Mi. The shared generated
+      stateful-service journey gap is tracked by #1646.
+    impl_mode: hand-written
   - path: "apps/lumen/scripts/load-fixture.py"
     action: modify
     section: schema

@@ -1,3 +1,4 @@
+# HANDWRITE-BEGIN gap="missing-generator:deployment:direct-install-strategy" tracker="1646" reason="The single-node direct-install Deployment is a hand-authored compatibility path until the shared stateful-service template can generate its Recreate rollout, one-pod-per-node scheduling, probes, security context, and request-only resources; HA is operator-owned."
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,12 +18,11 @@ spec:
       app: lumen
       role: server
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      # Keep read capacity during rollouts; each new pod must reach /readyz
-      # (log tail caught up) before an old one is torn down.
-      maxUnavailable: 0
-      maxSurge: 1
+    # required podAntiAffinity enforces the one-pod-per-node production
+    # baseline. A one-replica direct install therefore cannot surge a second
+    # pod onto the same node; Recreate avoids a deterministic rollout
+    # deadlock. HA/no-downtime topology belongs to the operator StatefulSet.
+    type: Recreate
   template:
     metadata:
       labels:
@@ -163,3 +163,4 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+# HANDWRITE-END

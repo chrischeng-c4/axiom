@@ -44,6 +44,16 @@ deployment:
           role: "kustomization"
           section_type: "deployment"
           domain: "apps/lumen/k8s/base"
+      - path: "apps/lumen/k8s/base/deployment.yaml"
+        language: "kubernetes"
+        ownership_state: "handwrite"
+        generator_primitives: ["stateful_service_direct_install"]
+        source_evidence_node:
+          layer: "operations"
+          ecosystem: "kubernetes"
+          role: "workload"
+          section_type: "deployment"
+          domain: "apps/lumen/k8s/base"
   artifacts:
     - path: "apps/lumen/k8s/base/kustomization.yaml"
       kind: "kustomization"
@@ -94,4 +104,12 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: codegen
+  - path: "apps/lumen/k8s/base/deployment.yaml"
+    action: modify
+    section: deployment
+    description: |
+      Keep the single-node direct-install workload on Recreate strategy because
+      required one-pod-per-node anti-affinity cannot admit a surge pod. The
+      shared stateful-service generator gap is tracked by #1646.
+    impl_mode: hand-written
 ```
