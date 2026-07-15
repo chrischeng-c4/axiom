@@ -507,12 +507,20 @@ async fn test_worker_handles_physical_esm_directory_imports_and_workspace_tsx_in
     let node_modules = tmp.path().join("node_modules");
     let physical_esm = node_modules.join("physical-esm");
     let workspace_source = node_modules.join("workspace-source");
+    let calendar_wrapper = node_modules.join("calendar-wrapper");
+    let react_big_calendar = node_modules.join("react-big-calendar");
+    let table_wrapper = node_modules.join("table-wrapper");
+    let rc_table = node_modules.join("rc-table");
     let react = node_modules.join("react");
     let exact_dot = tmp.path().join("exact-dot");
     let exact_dotdot = tmp.path().join("exact-dotdot");
 
     fs::create_dir_all(physical_esm.join("es/affix")).unwrap();
     fs::create_dir_all(workspace_source.join("source")).unwrap();
+    fs::create_dir_all(calendar_wrapper.join("lib/calendar")).unwrap();
+    fs::create_dir_all(react_big_calendar.join("lib/addons")).unwrap();
+    fs::create_dir_all(&table_wrapper).unwrap();
+    fs::create_dir_all(rc_table.join("es/hooks")).unwrap();
     fs::create_dir_all(&react).unwrap();
     fs::create_dir_all(&exact_dot).unwrap();
     fs::create_dir_all(exact_dotdot.join("nested")).unwrap();
@@ -530,6 +538,51 @@ async fn test_worker_handles_physical_esm_directory_imports_and_workspace_tsx_in
     fs::write(
         physical_esm.join("es/affix/index.js"),
         "export const affixValue = \"physical-directory-index\";\n",
+    )
+    .unwrap();
+    fs::write(
+        calendar_wrapper.join("package.json"),
+        r#"{"name":"calendar-wrapper","type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(
+        calendar_wrapper.join("index.js"),
+        "export { calendarAddon } from \"./lib/calendar/calendar.js\";\n",
+    )
+    .unwrap();
+    fs::write(
+        calendar_wrapper.join("lib/calendar/calendar.js"),
+        "export { calendarAddon } from \"react-big-calendar/lib/addons\";\n",
+    )
+    .unwrap();
+    fs::write(
+        react_big_calendar.join("package.json"),
+        r#"{"name":"react-big-calendar","type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(
+        react_big_calendar.join("lib/addons/index.js"),
+        "export const calendarAddon = \"legacy-calendar-addon\";\n",
+    )
+    .unwrap();
+    fs::write(
+        table_wrapper.join("package.json"),
+        r#"{"name":"table-wrapper","type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(
+        table_wrapper.join("index.js"),
+        "export { tableHook } from \"rc-table/es/hooks\";\n",
+    )
+    .unwrap();
+    fs::write(
+        rc_table.join("package.json"),
+        r#"{"name":"rc-table","type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(
+        rc_table.join("es/hooks/index.js"),
+        "export const tableHook = \"legacy-table-hook\";\n",
     )
     .unwrap();
 
@@ -563,9 +616,13 @@ export const jsxs = jsx;
 import { test, expect } from "@jet/test";
 import { affixValue } from "physical-esm";
 import { WorkspacePanel } from "workspace-source";
+import { calendarAddon } from "calendar-wrapper";
+import { tableHook } from "table-wrapper";
 
 test("loads physical ESM directory indexes and workspace TSX package indexes", () => {
   expect(affixValue).toBe("physical-directory-index");
+  expect(calendarAddon).toBe("legacy-calendar-addon");
+  expect(tableHook).toBe("legacy-table-hook");
   expect(typeof WorkspacePanel).toBe("function");
 });
 "#,
@@ -725,11 +782,13 @@ import defaultValue, {
   getter as commonJsGetter,
   forEach as commonJsForEach,
 } from "complex-commonjs";
+import{ getter as compactCommonJsGetter }from "complex-commonjs";
 
 const values = [];
 commonJsForEach(["jet", "facade"], (value) => values.push(`${commonJsGetter}:${value}`));
 export const rendered = values.join(",");
 export const defaultShape = `${defaultValue.getter}:${typeof defaultValue.forEach}`;
+export const compactGetter = compactCommonJsGetter;
 export {
   getter as reexportedGetter,
   forEach,
@@ -788,6 +847,7 @@ module.exports = Object.assign({}, api);
 import { test, expect } from "@jet/test";
 import {
   defaultShape,
+  compactGetter,
   forEach as reexportedForEach,
   rendered,
   reexportedGetter,
@@ -796,6 +856,7 @@ import {
 test("facades physical ESM mixed CommonJS imports and named re-exports", () => {
   expect(rendered).toBe("getter:jet,getter:facade");
   expect(defaultShape).toBe("getter:function");
+  expect(compactGetter).toBe("getter");
   expect(reexportedGetter).toBe("getter");
   const reexportedValues = [];
   reexportedForEach(["re-export"], (value) => reexportedValues.push(`${reexportedGetter}:${value}`));
@@ -965,6 +1026,48 @@ test("CommonJS globals and require stay native", () => {
 }
 
 #[tokio::test]
+async fn test_worker_provides_spec_relative_require_to_esm_specs() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let source_dir = tmp.path().join("source");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        source_dir.join("local.cjs"),
+        "module.exports = { answer: 42 };\n",
+    )
+    .unwrap();
+    fs::write(
+        source_dir.join("esm-require.test.ts"),
+        r#"
+import { expect, test } from "@jet/test";
+
+test("ESM specs can use spec-relative inline require", () => {
+  const path = require("node:path");
+  const local = require("./local.cjs");
+  expect(path.basename("/tmp/jet")).toBe("jet");
+  expect(local.answer).toBe(42);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "ESM specs must receive a require shim relative to their source path: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
 async fn jest_compatibility_supports_mock_timer_and_expect_extensions() {
     if which::which("node").is_err() {
         eprintln!("skipping: node not on PATH");
@@ -998,7 +1101,14 @@ expect.extend({
   },
 });
 
+const authToken = { removeIdToken() { return "real"; } };
+const spyRemoveIdToken = jest.spyOn(authToken, "removeIdToken").mockImplementation();
+
 test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", async () => {
+  expect(authToken.removeIdToken()).toBeUndefined();
+  expect(spyRemoveIdToken.mockImplementation(() => "replacement")).toBe(spyRemoveIdToken);
+  expect(authToken.removeIdToken()).toBe("replacement");
+
   const subject = { multiply(value) { return value * 2; } };
   const spy = jest.spyOn(subject, "multiply");
   expect(subject.multiply(3)).toBe(6);
@@ -1056,6 +1166,16 @@ test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", asy
     label: expect.stringContaining("native"),
   });
   expect("jet native runner").toEqual(expect.stringMatching(/^jet .* runner$/));
+  class Credential {}
+  expect({
+    label: "jet native runner",
+    attempts: 3,
+    credential: new Credential(),
+  }).toEqual({
+    label: expect.any(String),
+    attempts: expect.any(Number),
+    credential: expect.any(Credential),
+  });
   expect({
     label: "jet native runner",
     nested: { timer: "virtual" },
@@ -1157,6 +1277,12 @@ export const formatFromString = (
   { isNullable = true }: DraftEditorFormatOptions = {},
 ): EditorState | null => ({ value, nullable: isNullable });
 
+export class FormDraftEditor {}
+FormDraftEditor.formatFromString = (
+  value: string,
+  { isNullable = true }: DraftEditorFormatOptions = {},
+): EditorState | null => ({ value, nullable: isNullable });
+
 type PlatformConfigContextProps = { variableText: string };
 type Menu = { name: string };
 
@@ -1175,11 +1301,13 @@ export const nameSeatalkBotCol = ({
         tmp.path().join("destructured-parameters.test.tsx"),
         r#"
 import { test, expect } from "@jet/test";
-import { formatFromString, nameSeatalkBotCol } from "./src/destructured-parameters.tsx";
+import { FormDraftEditor, formatFromString, nameSeatalkBotCol } from "./src/destructured-parameters.tsx";
 
 test("loads complex destructured parameter annotations", () => {
   expect(formatFromString("value")).toEqual({ value: "value", nullable: true });
   expect(formatFromString("value", { isNullable: false })).toEqual({ value: "value", nullable: false });
+  expect(FormDraftEditor.formatFromString("value")).toEqual({ value: "value", nullable: true });
+  expect(FormDraftEditor.formatFromString("value", { isNullable: false })).toEqual({ value: "value", nullable: false });
   expect(nameSeatalkBotCol({
     record: { name: "bot" },
     variableText: "label",
@@ -1389,8 +1517,18 @@ async fn test_worker_stubs_static_assets_from_source_and_package_barrels() {
     .unwrap();
     fs::write(package_assets.join("images/avatar.jpeg"), b"jpeg-bytes").unwrap();
     fs::write(
+        package_assets.join("styles.css"),
+        ".package { color: red; }\n",
+    )
+    .unwrap();
+    fs::write(
         source_assets.join("direct.svg"),
         r#"<svg viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>"#,
+    )
+    .unwrap();
+    fs::write(
+        source_assets.join("direct.css"),
+        ".source { color: blue; }\n",
     )
     .unwrap();
 
@@ -1401,6 +1539,8 @@ import { test, expect } from "@jet/test";
 import { logo, avatar } from "assets-pkg";
 import directLogo from "./src/direct.svg";
 import packageLogo from "assets-pkg/images/logo.svg";
+import "assets-pkg/styles.css";
+import "./src/direct.css";
 
 test("loads raw static assets as deterministic URL strings", () => {
   expect(typeof logo).toBe("string");

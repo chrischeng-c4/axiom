@@ -926,7 +926,12 @@ function makeJestMock(implementation) {
 
   mock.mock = { calls: [], contexts: [], instances: [], results: [] };
   mock._isMockFunction = true;
-  mock.mockImplementation = (next) => {
+  mock.mockImplementation = (...args) => {
+    if (args.length === 0) {
+      defaultImplementation = () => undefined;
+      return mock;
+    }
+    const [next] = args;
     if (typeof next !== "function") throw new TypeError("jest.fn mockImplementation expects a function");
     defaultImplementation = next;
     return mock;
@@ -1181,6 +1186,31 @@ expect.stringMatching = (expected) => {
     },
     toAsymmetricMatcher() {
       return `StringMatching ${matcher}`;
+    },
+  });
+};
+
+expect.any = (expected) => {
+  if (typeof expected !== "function") {
+    throw new TypeError("expect.any expects a constructor");
+  }
+  return Object.freeze({
+    asymmetricMatch(value) {
+      if (expected === String) return typeof value === "string" || value instanceof String;
+      if (expected === Number) return typeof value === "number" || value instanceof Number;
+      if (expected === Boolean) return typeof value === "boolean" || value instanceof Boolean;
+      if (expected === Function) return typeof value === "function";
+      if (expected === Object) return value != null && (typeof value === "object" || typeof value === "function");
+      if (expected === Array) return Array.isArray(value);
+      if (expected === BigInt) return typeof value === "bigint";
+      if (expected === Symbol) return typeof value === "symbol";
+      return value instanceof expected;
+    },
+    toString() {
+      return "Any";
+    },
+    toAsymmetricMatcher() {
+      return `Any<${expected.name || "anonymous"}>`;
     },
   });
 };
@@ -1873,6 +1903,7 @@ export async function __jetRun(opts) {
   // Anchor `jest.requireActual("./relative")` at the source spec path even
   // though ESM source is emitted into the worker's temporary module graph.
   __setJestRequireForSpec(opts.file);
+  globalThis.require = __getJestNodeRequire();
 
   try {
     await import(opts.specUrl);
