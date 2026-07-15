@@ -77,3 +77,35 @@ changes:
     impl_mode: hand-written
     description: "Lock runtime-derived field catalogue and canonical OpenAPI prefix metadata."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: keyword-prefix-query-verification
+requirements:
+  segment_and_contract_parity:
+    id: R3
+    text: "Segment plus live-tail and delete results match live memory, and field/OpenAPI catalogues advertise the same prefix capability."
+    kind: integration
+    risk: high
+    verify: cargo test -p lumen --test prefix_query -- --nocapture && cargo test -p lumen --test spec_cli -- --nocapture
+  unicode_prefix:
+    id: R1
+    text: "A case-sensitive Taiwanese UTF-8 path prefix returns exact starts-with keyword matches and composes under boolean and sort."
+    kind: functional
+    risk: high
+    verify: cargo test -p lumen --test prefix_query -- --nocapture
+  validation:
+    id: R2
+    text: "Empty prefixes and prefix queries against non-keyword fields fail with a clear 400-class error."
+    kind: regression
+    risk: medium
+    verify: cargo test -p lumen --test prefix_query -- --nocapture
+---
+flowchart TD
+    r1[R1 unicode prefix] --> cargo_test_p_lumen_test_prefix_query_nocapture[cargo test -p lumen --test prefix_query -- --nocapture]
+    r2[R2 validation] --> cargo_test_p_lumen_test_prefix_query_nocapture
+    r3[R3 segment and contract parity] --> cargo_test_p_lumen_test_prefix_query_nocapture_cargo_test_p_lumen_test_spec_cli_nocapture[cargo test -p lumen --test prefix_query -- --nocapture && cargo test -p lumen --test spec_cli -- --nocapture]
+```
