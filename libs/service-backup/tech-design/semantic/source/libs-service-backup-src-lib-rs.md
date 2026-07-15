@@ -23,7 +23,8 @@ Public API manifest for `libs/service-backup/src/lib.rs` captured during libs co
 |------|--------|------|------------|------|-----------|
 | `llm` | libs/service-backup/src/lib.rs | module | pub | 17 | pub mod llm; |
 | `BackupDestination` | libs/service-backup/src/lib.rs | re-export | pub | 25 | pub use destination::BackupDestination; |
-| `BackupPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 26 | pub use policy::{BackupPolicy, RetentionPolicy}; |
+| `BackupPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 26 | pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy}; |
+| `ScheduledBackupPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 26 | pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy}; |
 | `RetentionPolicy` | libs/service-backup/src/lib.rs | re-export | pub | 26 | pub use policy::{BackupPolicy, RetentionPolicy}; |
 | `run_backup_once` | libs/service-backup/src/lib.rs | re-export | pub | 27 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
 | `BackupObject` | libs/service-backup/src/lib.rs | re-export | pub | 27 | pub use runner::{run_backup_once, BackupObject, BackupRunResult}; |
@@ -64,7 +65,7 @@ mod sink;
 mod source;
 
 pub use destination::BackupDestination;
-pub use policy::{BackupPolicy, RetentionPolicy};
+pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy};
 pub use runner::{run_backup_once, BackupObject, BackupRunResult};
 pub use sink::{sink_from_destination, BackupSink, LocalFsSink, UnsupportedCloudSink};
 pub use source::fetch_backup_object;

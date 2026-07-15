@@ -835,6 +835,26 @@ fn crd_yaml_emits_lumen_definition() {
 }
 
 #[test]
+fn crd_backup_schema_flattens_shared_policy() {
+    let yaml = lumen::operator::crd_yaml();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
+    let backup_props = &doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
+        ["spec"]["properties"]["serving"]["properties"]["backup"]["properties"];
+    for field in [
+        "schedule",
+        "destination",
+        "retentionSecs",
+        "adminTokenSecret",
+    ] {
+        assert!(
+            backup_props.get(field).is_some(),
+            "shared backup schema must keep flat field `{field}`"
+        );
+    }
+    assert_eq!(backup_props["destination"]["type"], "string");
+}
+
+#[test]
 fn crd_schema_reshard_recommendation_only_default_matches_runtime_default() {
     // #1319 R3: the declared schema default for `status.reshard.recommendationOnly`
     // must agree with the runtime default (`ReshardPolicy::default().max_shard_bytes
@@ -885,9 +905,11 @@ fn backup_cronjob_wires_schedule_and_destination() {
     // `lumen backup --url <cluster-dns-fqdn> --dest <destination>` args list.
     let mut spec = dev_spec();
     spec.serving.backup = Some(lumen::operator::crd::ServingBackupSpec {
-        schedule: "0 * * * *".into(),
-        destination: "s3://my-bucket/lumen-backups".into(),
-        retention_secs: None,
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "0 * * * *".into(),
+            destination: "s3://my-bucket/lumen-backups".into(),
+            retention_secs: None,
+        },
         admin_token_secret: None,
     });
     let l = lumen("search", spec);
@@ -935,9 +957,11 @@ fn backup_cronjob_wires_retention_and_admin_token() {
     // that Secret's `token` key.
     let mut spec = dev_spec();
     spec.serving.backup = Some(lumen::operator::crd::ServingBackupSpec {
-        schedule: "@daily".into(),
-        destination: "file:///backups/lumen".into(),
-        retention_secs: Some(604800),
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "@daily".into(),
+            destination: "file:///backups/lumen".into(),
+            retention_secs: Some(604800),
+        },
         admin_token_secret: Some("lumen-backup-token".into()),
     });
     let l = lumen("search", spec);
