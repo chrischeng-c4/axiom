@@ -102,8 +102,14 @@ fn kwarg<'a>(items: &'a [MbValue], key: &str) -> Option<MbValue> {
         if let Some(ptr) = last.as_ptr() {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
-                    if let Some(v) = lock.read().unwrap().get(key) {
-                        return Some(*v);
+                    // `DictKey::Str` hashes with the Python-semantic domain
+                    // (#1028), not Rust's native `str` hash — a raw
+                    // `.get(&str)` here would silently miss present keys
+                    // (#1566).
+                    if let Some(v) =
+                        super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
+                    {
+                        return Some(v);
                     }
                 }
             }

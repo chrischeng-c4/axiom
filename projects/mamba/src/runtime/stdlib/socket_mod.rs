@@ -813,7 +813,12 @@ mod tests {
     fn dict_get_bool(val: MbValue, key: &str) -> Option<bool> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(key).and_then(|v| v.as_bool())
+                // `DictKey::Str` hashes with the Python-semantic domain
+                // (#1028), not Rust's native `str` hash — a raw `.get(&str)`
+                // here would silently miss present keys (#1566). Route
+                // through the hash-domain-safe helper.
+                super::super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
+                    .and_then(|v| v.as_bool())
             } else {
                 None
             }
@@ -823,7 +828,8 @@ mod tests {
     fn dict_get_int(val: MbValue, key: &str) -> Option<i64> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(key).and_then(|v| v.as_int())
+                super::super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
+                    .and_then(|v| v.as_int())
             } else {
                 None
             }

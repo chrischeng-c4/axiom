@@ -1070,8 +1070,13 @@ fn env_lookup(key: &str) -> Option<String> {
         let ptr = environ.as_ptr()?;
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
+                // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+                // not Rust's native `str` hash — a raw `.get(&str)` here would
+                // silently miss present keys (#1566). Route through the
+                // hash-domain-safe helper.
                 let guard = lock.read().unwrap();
-                return guard.get(key).and_then(|v| extract_str(*v));
+                return super::super::dict_ops::dict_get_exact_str(&guard, key)
+                    .and_then(|v| extract_str(v));
             }
         }
         None

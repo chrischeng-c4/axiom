@@ -288,8 +288,14 @@ fn is_kwargs_dict(val: MbValue) -> bool {
         .map(|ptr| unsafe {
             use super::super::rc::ObjData;
             if let ObjData::Dict(ref lock) = (*ptr).data {
+                // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+                // not Rust's native `str` hash — a raw `.get(&str)` here would
+                // silently miss present keys (#1566). Route through the
+                // hash-domain-safe helper.
                 let map = lock.read().unwrap();
-                map.get("url").is_some() || map.get("type").is_some() || map.get("strict").is_some()
+                super::super::dict_ops::dict_get_exact_str(&map, "url").is_some()
+                    || super::super::dict_ops::dict_get_exact_str(&map, "type").is_some()
+                    || super::super::dict_ops::dict_get_exact_str(&map, "strict").is_some()
             } else {
                 false
             }
@@ -302,7 +308,11 @@ fn kwarg(val: MbValue, key: &str) -> Option<MbValue> {
     val.as_ptr().and_then(|ptr| unsafe {
         use super::super::rc::ObjData;
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).copied()
+            // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+            // not Rust's native `str` hash — a raw `.get(&str)` here would
+            // silently miss present keys (#1566). Route through the
+            // hash-domain-safe helper.
+            super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
         } else {
             None
         }

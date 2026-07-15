@@ -157,11 +157,10 @@ fn kwarg_str(args_items: &[MbValue], name: &str) -> Option<String> {
     let ptr = last.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock
-                .read()
-                .unwrap()
-                .get(name)
-                .copied()
+            // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+            // not Rust's native `str` hash — a raw `.get(&str)` here would
+            // silently miss present keys (#1566).
+            return super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), name)
                 .and_then(extract_str);
         }
     }
@@ -1680,11 +1679,10 @@ fn req_header(req: MbValue, name: &str) -> Option<String> {
     let hd = req_get_field(req, "headers")?.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*hd).data {
-            return lock
-                .read()
-                .unwrap()
-                .get(name)
-                .copied()
+            // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+            // not Rust's native `str` hash — a raw `.get(&str)` here would
+            // silently miss present keys (#1566).
+            return super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), name)
                 .and_then(extract_str);
         }
     }
