@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-14T06:30:56.599461+00:00"
-digest = "sha256:a1a58b6d24f17370d116f667e1e0fee41a9c2c790da73f291303196ef795d6b1"
-source_digest = "sha256:a1a58b6d24f17370d116f667e1e0fee41a9c2c790da73f291303196ef795d6b1"
-ir_digest = "sha256:47eaee94a66e28137140ad5c2e9efacfb5650bf41db90ec4a226e874815e677f"
+generated_at = "2026-07-15T06:37:25.764335+00:00"
+digest = "sha256:3d42c9c376606b71ccf29ac2a43bfb2607a04d1b6f2edb72047ac1b491684aff"
+source_digest = "sha256:3d42c9c376606b71ccf29ac2a43bfb2607a04d1b6f2edb72047ac1b491684aff"
+ir_digest = "sha256:8c777b18b51cebed345263e4274515cfc7f5b62bf8d9517fe1c7ee88bf01689f"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5212,6 +5212,12 @@ ir_digest = "sha256:f56780626be2c7339194f643fac6a59d09714b1f65e123cc3cc83adece65
 section_count = 3
 
 [[files]]
+path = "semantic/rename-shared-service-libraries-around-semantic-responsibility-t.md"
+digest = "sha256:8d0c1031b48a516a3a56de0bea1a32d2f18775f04182450b2cdd0acd075499ba"
+ir_digest = "sha256:850cbf5a9f9bfa01b077755984d12ec73a76f96fb30a96ae9ffe8f85c2fe4d11"
+section_count = 3
+
+[[files]]
 path = "semantic/td-gen-source-source-snapshot-projection.md"
 digest = "sha256:fc8ea0a9bb0b31fd016efd1e1806239fbebf93735240b5030528799d5e40c25d"
 ir_digest = "sha256:7b5fec2cca5e216d440f240bb8f0aca864016839381abbac4b499c307bc36170"
@@ -5373,8 +5379,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/cb.md"
-digest = "sha256:d1369b356193029f0711c5d569f65a93d02d88cea910dd2e87a4fe3cd2873534"
-ir_digest = "sha256:8d3fc6c28bc97dd5227c661bd44ed7791c66ae0c497d29a7d8bdd3d273c5814a"
+digest = "sha256:7bd347d8cd66235ef54e330721129dccd2419aaab24e511dd29b8d97a4a3b4fc"
+ir_digest = "sha256:00016ec2372fae5adc4fc2e264b2298bfd62b4b603c72a48e3a4fc3e03832597"
 section_count = 3
 
 [[files]]
@@ -5843,8 +5849,8 @@ section_count = 2
 
 [[files]]
 path = "surface/specs/score-section-type-registry.md"
-digest = "sha256:6c9db0d86ed1c38869eda60b03a3476ba3e1b8f899dd877f9b3b831a784ff46a"
-ir_digest = "sha256:eda50596736fa0cc8a7fafaada60df96d8610f68df3a39f5c5a01e56bb8b9db4"
+digest = "sha256:d205726b4cc7a75534bf8a6a8ffa02c2b211c63c6ffb4abbd3bfee00ac3ee816"
+ir_digest = "sha256:8c4265842a93f9578665d4997f083757e6b79da1027e902afeec15a8c98b1de1"
 section_count = 2
 
 [[files]]
@@ -6033,8 +6039,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_no_merge_test.md"
-digest = "sha256:7d35d7c5fb16db3ce524b98d2bfedb298df2fad5079e6c8fed8773cb7e4f4c09"
-ir_digest = "sha256:4a65e389b90a750a0ad6562aeb84de6e521b78b929c616cd2ce10f17f0f9efbc"
+digest = "sha256:55b1ff17b7f9d03bb712ae98159059e7b2f050b9bbd8798b58fe3905fd07f89e"
+ir_digest = "sha256:85743f1837ec8cb8a9060f0d45c486eb2fb3034508485c9055583d85fe10fa8f"
 section_count = 2
 
 [[files]]
