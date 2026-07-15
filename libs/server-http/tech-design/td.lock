@@ -1,0 +1,14 @@
+version = 2
+project = "server-http"
+ir_kind = "td"
+td_path = "libs/server-http/tech-design"
+generated_at = "2026-07-15T08:21:25.145825+00:00"
+digest = "sha256:c3144223da3882f3fd4efa3b87672bcfd47395f7c7c2a625e0989e94b13d5f76"
+source_digest = "sha256:c3144223da3882f3fd4efa3b87672bcfd47395f7c7c2a625e0989e94b13d5f76"
+ir_digest = "sha256:b1eab3d6c6aa105cb78c9387e350f51e85c1c7c2cf554542607279d0ab7fbf24"
+
+[[files]]
+path = "logic/converge-http-runtime-on-shared-lifecycle-ownership.md"
+digest = "sha256:313e59c494675c6071222b1c46224feae9fe18a11bab217229a2db53cf11f4ee"
+ir_digest = "sha256:6a3368ec7688bdfe0a3afd45778d3232f6ab733d37cff6b0883c4279717cc7dd"
+section_count = 3
