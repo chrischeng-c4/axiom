@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "working-name PostgreSQL pooler service built on server-core/tcp-server/http-server"
+description = "working-name PostgreSQL pooler service built on server-lifecycle/server-tcp/server-http"
 build = "build.rs"
 
 [lib]
@@ -22,18 +22,18 @@ axum = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false }
-http-server = { path = "../../libs/http-server" }
+server-http = { path = "../../libs/server-http" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-server-core = { path = "../../libs/server-core" }
-tcp-server = { path = "../../libs/tcp-server" }
+server-lifecycle = { path = "../../libs/server-lifecycle" }
+server-tcp = { path = "../../libs/server-tcp" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-h2c = { path = "../../libs/h2c" }
+transport-h2c = { path = "../../libs/transport-h2c" }
 http-body-util = "0.1"
 reqwest = { workspace = true }
 tokio-postgres = "0.7"

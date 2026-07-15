@@ -1,8 +1,8 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: operator::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (flat string off|required) + tokensSecret (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
+// HANDWRITE-BEGIN gap="missing-generator:logic:bfdc7475" tracker="pending-tracker" reason="TapeSpec CustomResource (group tape.dev, v1alpha1, kind Tape, plural tapes, shortname tp, namespaced, status TapeStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1, pinned by the render -- tape is a single raft group) + storage (default 10Gi) + storageClass + graceSecs (default 10) + logLevel (Option) + auth (flat string off|required) + tokensSecret (Option<String>). TapeStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
 //! The `Tape` custom resource (`tape.dev/v1alpha1`).
 //!
 //! One `Tape` object declares a tape deployment's HA topology. The spec
-//! flattens the shared [`operator::ClusterSpec`] (image + sharding/replication
+//! flattens the shared [`service_k8s::ClusterSpec`] (image + sharding/replication
 //! knobs + per-pod resources) and adds tape's own runtime knobs (durable
 //! journal disk tier, drain window, log level, and the opt-in bearer-auth
 //! wiring). tape is a **single raft group**: `shardCount` exists in the
@@ -10,7 +10,7 @@
 //! `replicasPerShard` is the only scale knob (1 = single node, 3 = raft HA).
 //!
 //! HA peer DNS note: tape's serve path derives peer addresses from the
-//! `TAPE_PEER_SERVICE` headless Service (`raft_host::cluster::ClusterTopology`
+//! `TAPE_PEER_SERVICE` headless Service (`raft_runtime::cluster::ClusterTopology`
 //! resolves per-pod peer hosts from the downward-API quartet), so an HA
 //! (`replicasPerShard > 1`) instance's headless Service must match.
 
@@ -42,7 +42,7 @@ pub struct TapeSpec {
     /// `cluster:` nesting), exactly as the render toolkit expects. tape is a
     /// single raft group: the render pins `shardCount` to 1.
     #[serde(flatten)]
-    pub cluster: operator::ClusterSpec,
+    pub cluster: service_k8s::ClusterSpec,
 
     /// Per-pod journal (+ raft hard state + applied-index marker) PVC size.
     /// Defaults to `10Gi`.

@@ -716,7 +716,7 @@ fn resolve_wal_backend(requested: WalBackend) -> WalBackend {
         return requested;
     }
     #[cfg(feature = "raft-wal")]
-    if raft_host::cluster::replica_mode() {
+    if raft_runtime::cluster::replica_mode() {
         tracing::info!("wal=auto → raft (StatefulSet REPLICAS_PER_SHARD > 1)");
         return WalBackend::Raft;
     }
@@ -1786,16 +1786,16 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     );
     match body {
         InstanceBody::Dev => {
-            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  serving:\n    autoscaling:\n      minReplicas: 1\n      maxReplicas: 3\n      targetCpuUtilization: 70\n");
+            yaml.push_str("  shardCount: 1\n  replicasPerShard: 1\n  voterCount: 1\n  logFormat: pretty\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
         InstanceBody::Staging => {
-            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 3\n      maxReplicas: 6\n      targetCpuUtilization: 70\n  observability: true\n");
+            yaml.push_str("  shardCount: 3\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n  observability: true\n");
         }
         InstanceBody::Prod => {
-            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    autoscaling:\n      minReplicas: 6\n      maxReplicas: 12\n      targetCpuUtilization: 65\n    cpu: \"4\"\n    memory: 16Gi\n    graceSecs: 45\n  observability: true\n");
+            yaml.push_str("  imagePullPolicy: Always\n  shardCount: 6\n  replicasPerShard: 3\n  voterCount: 3\n  logFormat: json\n  logLevel: warn\n  auth: required\n  tokensSecret: lumen-tokens\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n    graceSecs: 45\n  observability: true\n");
         }
         InstanceBody::Template => {
-            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    autoscaling:\n      minReplicas: 2\n      maxReplicas: 8\n      targetCpuUtilization: 70\n");
+            yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
     ensure_trailing_newline(&yaml)
@@ -1871,7 +1871,7 @@ fn ensure_trailing_newline(input: &str) -> String {
 /// (#1389): forces the same synchronous stage-then-rename checkpoint the
 /// periodic snapshotter performs (`SegmentRdbStore::save`), but synchronously
 /// on demand — this is what `POST /admin/checkpoint` answers, and what the
-/// reshard driver's cutover gate (`operator::reshard_driver::
+/// reshard driver's cutover gate (`service_k8s::reshard_driver::
 /// checkpoint_touched_shards`) awaits per touched shard before triggering the
 /// cutover rolling restart. Also prunes + trims the AOF through the
 /// checkpointed sequence, mirroring the periodic path exactly, so an
@@ -1957,7 +1957,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Select the write log. `--wal raft` also yields a driver whose router is
     // merged into the serve app below (peer RPCs ride the h2c port).
     #[cfg(feature = "raft-wal")]
-    let mut raft_host: Option<Arc<raft_host::RaftHost>> = None;
+    let mut raft_runtime: Option<Arc<raft_runtime::RaftHost>> = None;
     #[cfg(feature = "raft-wal")]
     let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
     // Live `ClusterState` for `AppState::with_cluster` (#1349): populated only
@@ -2001,7 +2001,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
                 .unwrap_or_else(|_| "lumen-headless".to_string());
             let topo =
-                raft_host::ClusterTopology::from_env("lumen", &headless, args.port, "LUMEN_PEERS")
+                raft_runtime::ClusterTopology::from_env("lumen", &headless, args.port, "LUMEN_PEERS")
                     .context("raft: cluster topology from env")?;
             tracing::info!(
                 node_id = topo.node_id,
@@ -2010,10 +2010,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 data_dir = %args.raft_data_dir,
                 "wal=raft (raft_core; multi-pod)"
             );
-            let store = raft_host::RaftStore::open(
+            let store = raft_runtime::RaftStore::open(
                 &args.raft_data_dir,
                 topo.node_id,
-                raft_host::FsyncPolicy::Always,
+                raft_runtime::FsyncPolicy::Always,
             )
             .context("open raft store")?;
             // The host is the sole applier: committed entries fold straight into
@@ -2021,14 +2021,14 @@ async fn serve(args: ServeArgs) -> Result<()> {
             // seam for the raft path. Cold-start (restore + replay) happens in
             // `RaftHost::spawn`; snapshot/compaction is driven externally below.
             let sm = lumen::raft_sm::EngineSm::new(engine.clone(), 0);
-            let host = Arc::new(raft_host::RaftHost::spawn(
+            let host = Arc::new(raft_runtime::RaftHost::spawn(
                 topo.node_id,
                 topo.membership,
                 topo.peers,
                 store,
-                sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
-                raft_host::HostConfig {
-                    snapshot: raft_host::SnapshotPolicy::External,
+                sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+                raft_runtime::HostConfig {
+                    snapshot: raft_runtime::SnapshotPolicy::External,
                     ..Default::default()
                 },
             ));
@@ -2060,7 +2060,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             );
             raft_cluster = Some(cluster_state);
 
-            raft_host = Some(Arc::clone(&host));
+            raft_runtime = Some(Arc::clone(&host));
             raft_writer = Some(Arc::new(lumen::raft_sm::RaftWriteSink::new(host, sm)));
             None
         }
@@ -2302,7 +2302,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let mut app = lumen::api::router(state);
     // Peer raft RPCs (`/raft/*`, `/raftz`) share the h2c serve port.
     #[cfg(feature = "raft-wal")]
-    if let Some(host) = &raft_host {
+    if let Some(host) = &raft_runtime {
         app = app.merge(host.router());
     }
 
@@ -2312,7 +2312,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Otherwise the RDB snapshotter writes the `--data-dir` checkpoints the apply
     // loop tails from on restart.
     #[cfg(feature = "raft-wal")]
-    if let Some(host) = raft_host.clone() {
+    if let Some(host) = raft_runtime.clone() {
         let period = Duration::from_secs(args.snapshot_secs.max(1));
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(period);
@@ -2434,7 +2434,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
 /// Keeps `AppState.cluster` (#1310's read-consistency enforcement seam)
 /// current for the process lifetime (#1349): polls the already-running
 /// `RaftHost` for its live role/leader view (`is_leader`/`leader`, both
-/// pre-existing — no new raft-host surface added) and republishes it onto
+/// pre-existing — no new raft-runtime surface added) and republishes it onto
 /// the shared `ClusterState` via its atomic setters, so every concurrently
 /// running request handler observes the latest election result without a
 /// restart. Runs for the life of the `serve` process; errors from the raft
@@ -2449,7 +2449,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
 /// silently serving a stale follower.
 #[cfg(feature = "raft-wal")]
 fn spawn_cluster_state_poller(
-    host: Arc<raft_host::RaftHost>,
+    host: Arc<raft_runtime::RaftHost>,
     cluster: Arc<lumen::raft::ClusterState>,
     is_voter: bool,
 ) {
@@ -3054,17 +3054,17 @@ mod tests {
         ));
         let _ = std::fs::create_dir_all(&tmp);
         let sm = lumen::raft_sm::EngineSm::new(Arc::new(Engine::new()), 0);
-        let host = Arc::new(raft_host::RaftHost::spawn(
+        let host = Arc::new(raft_runtime::RaftHost::spawn(
             0,
-            raft_host::Membership {
+            raft_runtime::Membership {
                 voters: vec![0],
                 learners: vec![],
             },
             std::collections::HashMap::new(),
-            raft_host::RaftStore::open(tmp.to_str().unwrap(), 0, raft_host::FsyncPolicy::Os)
+            raft_runtime::RaftStore::open(tmp.to_str().unwrap(), 0, raft_runtime::FsyncPolicy::Os)
                 .unwrap(),
-            sm.clone() as Arc<dyn raft_host::RaftStateMachine>,
-            raft_host::HostConfig::default(),
+            sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+            raft_runtime::HostConfig::default(),
         ));
 
         // Bootstrap value deliberately wrong (Follower/no-leader), matching

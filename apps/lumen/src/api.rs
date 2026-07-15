@@ -101,7 +101,7 @@ pub trait SearchBackend: Send + Sync {
 }
 
 /// Forces a synchronous, awaited durability checkpoint of the live engine
-/// state (#1389). The reshard driver's cutover (`operator::reshard_driver::
+/// state (#1389). The reshard driver's cutover (`service_k8s::reshard_driver::
 /// advance_catching_up`) calls `POST /admin/checkpoint` — which routes here —
 /// on every shard it just migrated data into or evicted data from, and waits
 /// for the response before flipping `spec.shardMap` and triggering the
@@ -2207,7 +2207,7 @@ struct ReshardFenceRequest {
 
 /// `POST /admin/reshard:fence`: arm or clear a bounded write pause on a set
 /// of virtual buckets (#1396 R2). The reshard driver's cutover
-/// (`operator::reshard_driver::advance_catching_up`) arms this over exactly
+/// (`service_k8s::reshard_driver::advance_catching_up`) arms this over exactly
 /// the buckets its final `CatchingUp` migration pass is about to copy,
 /// immediately before that pass, and clears it (`buckets: []`) once the
 /// pass/evict/checkpoint/cutover sequence finishes — on success or on

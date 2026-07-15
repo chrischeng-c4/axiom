@@ -275,23 +275,23 @@ operator defaults.
 | Lib | Role |
 |-----|------|
 | **`libs/raft-core`** | the step-driven raft **consensus core** (serde-only; replaced openraft). |
-| **`libs/raft-host`** | the raft **host**: h2c peer transport, the single apply loop, **snapshot + log compaction** (the "backup layer"), read-your-write `propose`, and **k8s topology + auto-mode** (`cluster::ClusterTopology::from_env` + `replica_mode`, plus the reusable `ClusterDims`/`peer_ordinal`/`parse_peer_overrides` primitives — never re-derive the ordinal math locally). A service supplies a `RaftStateMachine` (`apply`/`snapshot`/`restore`/`applied_index`) and gets HA + backup for free. Also ships the read-side companions: the `X-Read-Consistency` header contract (`ReadConsistency`), the `RaftRole`/cluster-view introspection model, and `OutcomeWindow` (the bounded index→outcome window behind rich read-your-write results). |
-| **`libs/operator`** | the **k8s operator scaffold + render toolkit**: `ManagedService`, `ClusterSpec`, `ResourceSpec`, owner refs, labels/selectors, ServiceAccount, client/headless Services, PDB, CronJob, and `sharded_statefulset` with the exact downward-API env that `raft-host` reads — generalized by `service_statefulset`/`ServiceStatefulSet`, the configurable service-workload StatefulSet primitive (service-supplied probes, security contexts, extra volumes/mounts, update strategy — generic JSON pass-throughs, so e.g. a CSI volume needs no lib change) that per-service operators compose while preserving that env contract — plus `resize` (k8s storage-quantity parsing + live-PVC expansion around immutable `volumeClaimTemplates`). |
-| **`libs/server-core`** | the **server substrate**: bind config, shutdown/drain, readiness signals, connection budgets, and metrics hooks shared by raw TCP servers, HTTP tool/dev servers, and k8s-native services. |
-| **`libs/tcp-server`** | the **TCP runtime**: accept loop, per-connection supervision, admission budgeting, and drain-aware shutdown for raw protocols, proxies, and poolers. |
-| **`libs/http-server`** | the **HTTP runtime**: HTTP/1.1 + h2c serving composition and common request tracing for tool/dev servers and service shells. |
-| **`libs/h2c`** | the **HTTP/2 transport/client**: h2c client helpers (`h2c_client`/`H2cPool`) plus the h2c server transport used by `http-server`. |
+| **`libs/raft-runtime`** | the raft **host**: h2c peer transport, the single apply loop, **snapshot + log compaction** (the "backup layer"), read-your-write `propose`, and **k8s topology + auto-mode** (`cluster::ClusterTopology::from_env` + `replica_mode`, plus the reusable `ClusterDims`/`peer_ordinal`/`parse_peer_overrides` primitives — never re-derive the ordinal math locally). A service supplies a `RaftStateMachine` (`apply`/`snapshot`/`restore`/`applied_index`) and gets HA + backup for free. Also ships the read-side companions: the `X-Read-Consistency` header contract (`ReadConsistency`), the `RaftRole`/cluster-view introspection model, and `OutcomeWindow` (the bounded index→outcome window behind rich read-your-write results). Membership is currently startup-static; `ensure_static_membership_unchanged` hard-rejects a replica delta until a replicated joint-consensus transition exists. |
+| **`libs/service-k8s`** | the **k8s operator scaffold + render toolkit**: `ManagedService`, `ClusterSpec`, `ResourceSpec`, owner refs, labels/selectors, ServiceAccount, client/headless Services, PDB, CronJob, and `sharded_statefulset` with the exact downward-API env that `raft-runtime` reads — generalized by `service_statefulset`/`ServiceStatefulSet`, the configurable service-workload StatefulSet primitive (service-supplied probes, security contexts, extra volumes/mounts, update strategy — generic JSON pass-throughs, so e.g. a CSI volume needs no lib change) that per-service operators compose while preserving that env contract — plus request-only data-pod defaults (`1` CPU / `4Gi`, no limits), required hostname anti-affinity for one pod per node, whole-layer per-shard CPU/memory capacity planning, and `resize` (k8s storage-quantity parsing + live-PVC expansion around immutable `volumeClaimTemplates`). |
+| **`libs/server-lifecycle`** | the **server substrate**: bind config, shutdown/drain, readiness signals, connection budgets, and metrics hooks shared by raw TCP servers, HTTP tool/dev servers, and k8s-native services. |
+| **`libs/server-tcp`** | the **TCP runtime**: accept loop, per-connection supervision, admission budgeting, and drain-aware shutdown for raw protocols, proxies, and poolers. |
+| **`libs/server-http`** | the **HTTP runtime**: HTTP/1.1 + h2c serving composition and common request tracing for tool/dev servers and service shells. |
+| **`libs/transport-h2c`** | the **HTTP/2 transport/client**: h2c client helpers (`h2c_client`/`H2cPool`) plus the h2c server transport used by `server-http`. |
 | **`libs/service-http`** | the **HTTP service shell**: standard probe/admin routes, tracing init, graceful drain, metrics/readiness hooks, HTTP runtime composition, and the shared **HTTP error envelope** (`ErrorEnvelope` + the `ApiErr` status/kind builder) so error JSON is uniform across services. |
-| **`libs/service-auth`** | the **request-auth shell**: shared `Authorization: Bearer` extraction, reject/inject middleware, the `Verifier` trait every service implements, and **`role_map`** — the standard token-registry verifier (`Role` hierarchy, `TokenClaims` with wildcard grants, registry-file loader, `StaticRoleMapVerifier`) implementing the archetype's `<SVC>_TOKEN_REGISTRY_FILE` contract. Token crypto belongs in **`libs/claimtoken`** when signed tokens are needed; resource-policy *decisions* stay in the service handlers (`role_map` supplies the mechanism). |
-| **`libs/service-durability`** | the **durable local storage primitive layer**: shared `FsyncPolicy`, temp-file atomic replace with file + parent-dir sync, CRC-framed append logs with torn-tail recovery/compaction, and sequence-named local snapshot stores. Services supply domain codecs and state-machine semantics; they do not hand-roll fsync/rename/frame parsing. |
+| **`libs/service-auth`** | the **request-auth shell**: shared `Authorization: Bearer` extraction, reject/inject middleware, the `Verifier` trait every service implements, and **`role_map`** — the standard token-registry verifier (`Role` hierarchy, `TokenClaims` with wildcard grants, registry-file loader, `StaticRoleMapVerifier`) implementing the archetype's `<SVC>_TOKEN_REGISTRY_FILE` contract. Token crypto belongs in **`libs/claim-token`** when signed tokens are needed; resource-policy *decisions* stay in the service handlers (`role_map` supplies the mechanism). |
+| **`libs/storage-durable`** | the **durable local storage primitive layer**: shared `FsyncPolicy`, temp-file atomic replace with file + parent-dir sync, CRC-framed append logs with torn-tail recovery/compaction, and sequence-named local snapshot stores. Services supply domain codecs and state-machine semantics; they do not hand-roll fsync/rename/frame parsing. |
 | **`libs/service-backup`** | the **backup contract**: destination/policy schema, `BackupSink`, local + S3-compatible object-store sinks (feature `s3`; GCS destinations parse/round-trip but runners fail loudly until a real GCS adapter lands), and a runner primitive. Services produce consistent snapshot bytes; runners upload them; operators schedule/manage the runner. |
-| **`libs/service-tls`** | **peer mTLS material loading**: `PeerTlsConfig::from_env(<PREFIX>)`, PEM cert/key/CA loaders, rustls server/client config builders, and the Once-guarded default-crypto-provider install. (h2c stays cleartext by design; this covers the mutually-authenticated peer/replication port.) |
-| **`libs/service-metrics`** | the **metrics registry**: dep-free counter/gauge primitives + the Prometheus text-format encoder — the standard implementation behind `service-http`'s `MetricsProvider` seam and the `/metrics` endpoint. |
+| **`libs/peer-tls`** | **peer mTLS material loading**: `PeerTlsConfig::from_env(<PREFIX>)`, PEM cert/key/CA loaders, rustls server/client config builders, and the Once-guarded default-crypto-provider install. (h2c stays cleartext by design; this covers the mutually-authenticated peer/replication port.) |
+| **`libs/metrics-prometheus`** | the **metrics registry**: dep-free counter/gauge primitives + the Prometheus text-format encoder — the standard implementation behind `service-http`'s `MetricsProvider` seam and the `/metrics` endpoint. |
 | **`libs/cli-std`** | the **standard CLI** commands (`llm` / `upgrade` / `issue`). |
 | **`libs/build-stamp`** | the **build stamp** (a `[build-dependencies]` crate): `stamp("<PREFIX>")` emits the `<PREFIX>_GIT_SHA` / `<PREFIX>_BUILT_AT` / `<PREFIX>_TARGET` rustc-env lines that feed `cli-std`'s `ToolInfo` — one implementation instead of a per-service `build.rs` copy. |
 
 **k8s-native auto-mode + discovery.** A service defaults to single-node and turns
-on raft **only when the StatefulSet scales out** — `raft_host::cluster::
+on raft **only when the StatefulSet scales out** — `raft_runtime::cluster::
 replica_mode()` is `true` when `REPLICAS_PER_SHARD > 1` (a downward-API value). So
 `<svc> serve` needs **no flags or cluster env** for local/single-node dev; k8s
 scaling flips it to replica mode automatically, with node id / membership / peers
@@ -301,13 +301,13 @@ hand-roll the pod-ordinal or peer-DNS math.
 
 **Operator/render convergence.** The Kubernetes topology that drives that
 auto-mode is also shared. A service CR should flatten or mirror
-`operator::ClusterSpec`/`ResourceSpec` unless it has a concrete product reason
-not to, implement `operator::ManagedService`, and render shared shapes with
-`libs/operator::render` helpers. In particular, StatefulSet identity,
+`service_k8s::ClusterSpec`/`ResourceSpec` unless it has a concrete product reason
+not to, implement `service_k8s::ManagedService`, and render shared shapes with
+`libs/service-k8s::render` helpers. In particular, StatefulSet identity,
 `SHARD_COUNT`, `REPLICAS_PER_SHARD`, `VOTER_COUNT`, headless-service env,
 labels/selectors, owner refs, PDB/client/headless Service shapes, and
 maintenance CronJobs are library contracts. Do not duplicate that YAML/JSON
-construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/operator`
+construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/service-k8s`
 when the helper is incomplete.
 
 A service is not "done" until it satisfies every row:
@@ -315,15 +315,15 @@ A service is not "done" until it satisfies every row:
 | Dimension | Requirement | Reference / gotcha |
 |-----------|-------------|--------------------|
 | **Shape** | Workspace member that is **both `lib` and `bin`** — embeddable as a crate, runnable as a server. Metadata via `version/edition/authors/license = .workspace`. | every service `Cargo.toml` |
-| **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Compose **`libs/service-http`** and **`libs/h2c`** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
+| **Transport** | HTTP/2 cleartext (**h2c**) **+** HTTP/1.1 on **one port**, with an OpenAPI surface (`utoipa`). | Compose **`libs/service-http`** and **`libs/transport-h2c`** — built on `hyper-util` `auto::Builder`, **not `axum::serve`** (HTTP/1-only). The same crate's client side (`h2c_client`/`H2cPool`) is the in-tree client. |
 | **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | Prefer **`libs/service-http`** standard probe/admin route helpers. `lumen` is the reference for the full surface. The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
-| **Auth** | Every service uses the same bearer-token shape: server env `<SVC>_AUTH=off|required` plus `<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json`; clients use `<SVC>_URL` + `<SVC>_TOKEN` and send `Authorization: Bearer <token>`. | Compose **`libs/service-auth`** for middleware and **`libs/claimtoken`** for signed-token verification when needed. In k8s/cloud, the registry file is mounted from a Kubernetes Secret, CSI Secret Store, or cloud Secret Manager sync. Do not add one-off auth headers, per-service token env names, or inline server token lists as the production path. |
+| **Auth** | Every service uses the same bearer-token shape: server env `<SVC>_AUTH=off|required` plus `<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json`; clients use `<SVC>_URL` + `<SVC>_TOKEN` and send `Authorization: Bearer <token>`. | Compose **`libs/service-auth`** for middleware and **`libs/claim-token`** for signed-token verification when needed. In k8s/cloud, the registry file is mounted from a Kubernetes Secret, CSI Secret Store, or cloud Secret Manager sync. Do not add one-off auth headers, per-service token env names, or inline server token lists as the production path. |
 | **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
-| **Durability / ack boundary** | **Mandatory for every service-archetype data plane:** an accepted mutation is durable before the service reports success. In-memory-only, best-effort, or "durable later" write paths are local-dev shortcuts only and must not be the production default. | Compose **`libs/service-durability`** for local durable file mechanics and a service-owned durable log/state store plus `raft-core`/`raft-host` for replicated state. Define the exact ack boundary in the service README/TD and test crash/restart or replay behavior. |
-| **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
-| **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-host` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to S3-compatible object storage today and to GCS once the adapter exists; the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
+| **Durability / ack boundary** | **Mandatory for every service-archetype data plane:** an accepted mutation is durable before the service reports success. In-memory-only, best-effort, or "durable later" write paths are local-dev shortcuts only and must not be the production default. | Compose **`libs/storage-durable`** for local durable file mechanics and a service-owned durable log/state store plus `raft-core`/`raft-runtime` for replicated state. Define the exact ack boundary in the service README/TD and test crash/restart or replay behavior. |
+| **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-runtime`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-runtime`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
+| **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-runtime` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to S3-compatible object storage today and to GCS once the adapter exists; the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
-| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; dedicated/standalone data-plane mode as the production baseline; an `HA.md`. | Use **`libs/operator`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
+| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; dedicated/standalone data-plane mode as the production baseline; an `HA.md`. | Use **`libs/service-k8s`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
@@ -392,7 +392,7 @@ resource that an application team applies next to the app it integrates with.
 When a reconcile's rendered shape stops including a resource it rendered
 previously — a conditional HPA, a per-mode Service, or any other
 conditionally-rendered child — the service operator must explicitly delete
-that child. The shared `libs/operator` reconcile loop renders desired state;
+that child. The shared `libs/service-k8s` reconcile loop renders desired state;
 it does not garbage-collect a resource that an earlier render produced and
 the current render no longer wants. The deletion must be idempotent, scoped
 to the names/labels the operator itself stamps (never a foreign or
@@ -472,11 +472,11 @@ advice:
 - **Direct install is not the HA story.** Kustomize `base` / overlays should be a
   small direct install, usually single-node/embedded for kind and smoke tests.
   Production HA goes through the operator CR path, which renders the StatefulSet
-  topology and downward-API env that `raft-host` consumes.
+  topology and downward-API env that `raft-runtime` consumes.
 - **Operator owns lifecycle, not bytes.** The operator creates RBAC,
   ServiceAccounts, Services, StatefulSets/Deployments, PDBs, CronJobs, Secrets,
   status, and finalizers. It does not serialize service data. Snapshot bytes are
-  produced by the service state machine/admin surface; `raft-host` installs
+  produced by the service state machine/admin surface; `raft-runtime` installs
   snapshots and compacts logs; `libs/service-backup` runners upload/prune them.
 - **Scheduled object snapshots are baseline.** A production stateful service CR
   must render or reference a periodic backup job that writes consistent
@@ -560,7 +560,7 @@ extract `Authorization: Bearer <token>`, verify it through a service-supplied
 `Verifier`, reject with the shared JSON error shape, and inject the authenticated
 principal into handlers. Services use the shared registry verifier
 (`service_auth::role_map::StaticRoleMapVerifier` — role hierarchy, wildcard
-grants, registry-file loader) or signed tokens through `libs/claimtoken`, but
+grants, registry-file loader) or signed tokens through `libs/claim-token`, but
 the HTTP contract and middleware shape stay the same.
 
 Production server config follows one env pattern:
@@ -598,9 +598,13 @@ only when a single-node mode is a legitimate deployment (e.g. `keep`).
 
 A stateful sharded service scales storage and compute along two independent,
 autonomous axes: storage ownership grows through disk-usage-driven shard
-splits, compute capacity grows through CPU-driven replica/HPA scaling, and
-neither axis has a human gate. HPA owns compute scaling only — it never
-changes shard ownership or storage topology.
+splits; compute capacity grows through operator-planned CPU/memory replica
+layers. A vanilla HPA must never target the data StatefulSet directly: it
+scales total pods (and can produce a partial shard layer) and cannot perform a
+Raft membership transition. `libs/service-k8s` rounds capacity decisions to whole
+per-shard layers; the membership controller must admit/promote or demote/remove
+members before it patches the StatefulSet. Neither axis changes the other's
+topology.
 
 ### EC gates — `vat`-driven, evidence under `external-contracts/`
 
@@ -673,8 +677,8 @@ patch that introduces it.
 
 Internal libraries may contribute agent-facing `llm` fragments, but they do not
 become standalone user-facing CLIs just to publish docs. A reusable lib with an
-operational contract agents need to understand (for example `libs/operator`,
-`libs/raft-host`, `libs/service-backup`, `libs/service-auth`, `libs/h2c`, or
+operational contract agents need to understand (for example `libs/service-k8s`,
+`libs/raft-runtime`, `libs/service-backup`, `libs/service-auth`, `libs/transport-h2c`, or
 `libs/openapi-codegen`) should expose a small `cli_std::llm::Topic` provider or
 constructor from its Rust API. The consuming project decides whether that topic
 belongs in its own `llm` registry, may wrap or prefix the id to fit the

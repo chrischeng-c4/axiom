@@ -62,7 +62,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Install the shared process-level rustls provider before CLI dispatch so the operator's kube TLS client cannot panic when multiple providers are linked, and resolve the single-node operator PVC's TAPE_DATA_DIR to journal.json while preserving explicit --store precedence and Raft-only HA durability. generator gaps: missing-generator:service-tls-bootstrap, missing-generator:single-node-pvc-store-resolution (#1590)."
+    description: "Install the shared process-level rustls provider before CLI dispatch so the operator's kube TLS client cannot panic when multiple providers are linked, and resolve the single-node operator PVC's TAPE_DATA_DIR to journal.json while preserving explicit --store precedence and Raft-only HA durability. generator gaps: missing-generator:peer-tls-bootstrap, missing-generator:single-node-pvc-store-resolution (#1590)."
   - path: apps/tape/Dockerfile
     action: modify
     section: runtime-image

@@ -12,5 +12,3 @@ path = "src/lib.rs"
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
-
-<!-- marker: missing-generator:logic:0d5f04cf path: libs/server-lifecycle/Cargo.toml reason: scaffold for libs/server-lifecycle/Cargo.toml — fill in by hand and update tracker when codegen is ready -->

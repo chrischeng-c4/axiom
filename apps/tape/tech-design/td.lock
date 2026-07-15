@@ -74,7 +74,7 @@ ir_digest = "sha256:d51a1baeedc227682c2fad86351cdd76142ae3df76a0a2a8658775782487
 section_count = 2
 
 [[files]]
-path = "logic/tape-backup-service-tls-spec-gen-clients.md"
+path = "logic/tape-backup-peer-tls-spec-gen-clients.md"
 digest = "sha256:7ea070320715478f8f67185c84f0f303cd765b1dc1e050725b8480edfb4fcea9"
 ir_digest = "sha256:601dcc9441fc7f19d8cc365ff98f4065383f2ca197e04ce6cb4cd2f0af6a853d"
 section_count = 3
@@ -92,7 +92,7 @@ ir_digest = "sha256:0165a40acac06a3aa22126b07ae1c86da2250a72e59e3a85f5b2641cf7f8
 section_count = 3
 
 [[files]]
-path = "logic/tape-raft-host-primary-replicas.md"
+path = "logic/tape-raft-runtime-primary-replicas.md"
 digest = "sha256:72ee950649d4c5ac6d73eb95f22e512a5d8dc0bb91806f0ff349d12b6489fae7"
 ir_digest = "sha256:3ecb0fd4bb6e6e967a940d43cc4b397a55c4c335d78903401ec4af00d8752a03"
 section_count = 3

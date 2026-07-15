@@ -42,7 +42,7 @@ real-service external peer calibration remain separate work roots.
 | Observability | #1588 | implemented | passing | conformance | not_ready | shared Prometheus pull metrics plus optional ServiceMonitor/PrometheusRule; OTLP remains a shared-library gap rather than copied Lumen code |
 | Backup & Restore | #1585 | implemented | passing | conformance | not_ready | exact journal snapshots ship through `libs/service-backup`; cold recovery only seeds a fresh PVC before Raft catch-up, never a live in-place restore |
 | Replica Sync & Bootstrap | #1327, #1585 | implemented | passing | conformance | not_ready | Raft owns live replica synchronization; an explicit `TAPE_BOOTSTRAP_SEED_URI` can seed only an empty replacement PVC before normal delta catch-up |
-| Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
+| Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-runtime auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-runtime h2c has no TLS seam yet) |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
 | Chainable Output Conformance | #768 | implemented | verified | smoke | ready | replay/admin commands emit terminal `next:` hints |
@@ -156,7 +156,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | topic-replay-security-boundary | epic | #768 | partial | planned | none | bearer role map, Secret projection, non-root operator workload; remaining audit/rotation/limits are not claimed |
-| opt-in-server-ingress-network-policy | enhancement | #1593 | implemented | passing | conformance | apps/tape/k8s/components/network-policy<br>apps/tape/tests/network_policy_assets.rs |
+| opt-in-server-ingress-network-policy | change | #1593 | implemented | passing | conformance | apps/tape/k8s/components/network-policy<br>apps/tape/tests/network_policy_assets.rs |
 
 ### Competitor Feature Parity
 
@@ -332,7 +332,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | h2c-openapi-route-list | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
 | service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/openapi.rs<br>apps/tape/tests/http_transport.rs |
-| backup-service-tls-spec-gen-clients | change | #1329 | implemented | passing | smoke | apps/tape/src/backup.rs<br>apps/tape/src/server.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/clients/<br>apps/tape/tests/backup.rs |
+| backup-peer-tls-spec-gen-clients | change | #1329 | implemented | passing | smoke | apps/tape/src/backup.rs<br>apps/tape/src/server.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/clients/<br>apps/tape/tests/backup.rs |
 
 ### Standard Operational Endpoints
 
@@ -365,7 +365,7 @@ ID: observability
 Type: Devops
 Root WI: #1588
 Status: confirmed
-Surfaces: HTTP: `/metrics` from shared `service-metrics`; K8s: optional
+Surfaces: HTTP: `/metrics` from shared `metrics-prometheus`; K8s: optional
 ServiceMonitor and PrometheusRule component; Logs: structured `tracing` output.
 EC Dimensions: behavior: `cargo test -p tape --test observability_assets` -
 offline manifest and metric-name conformance.
@@ -434,7 +434,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | dedicated-statefulset-operator-topology | epic | #768 | implemented | verified | smoke | apps/tape/tests/{deploy_cli,operator}.rs; #1328 |
-| operator-kind-pvc-restart-replay | test | #1590 | implemented | passing | dogfood | apps/tape/scripts/kind-e2e.sh |
+| operator-kind-pvc-restart-replay | change | #1590 | implemented | passing | dogfood | apps/tape/scripts/kind-e2e.sh |
 
 ### Stateful Service Workload
 
@@ -443,7 +443,7 @@ Type: Service
 Root WI: #1554
 Status: verified
 Surfaces: Durable journal state plus stateful deployment: `apps/tape/src/lib.rs`,
-`libs/raft-core`, `libs/raft-host`, `apps/tape/src/backup.rs`, and the dedicated
+`libs/raft-core`, `libs/raft-runtime`, `apps/tape/src/backup.rs`, and the dedicated
 StatefulSet/operator rendering surface under `apps/tape/k8s/`.
 EC Dimensions: behavior: `aw capability check --project tape --skip-issue-inventory` -
 the `stateful_storage` profile resolves its shared baseline; stability: existing
@@ -514,14 +514,14 @@ kill-9 failover and restart recovery.
 Required Verification: conformance, dogfood
 Promise:
 Existing PVCs recover their local Raft state and synchronise through
-`raft-host`; a replacement with no local state may load one exact external
+`raft-runtime`; a replacement with no local state may load one exact external
 snapshot before it catches up. Backup artifacts are a cold seed or DR path,
 not a substitute for ordinary live replication, leader forwarding, or
 InstallSnapshot.
 Gate Inventory:
 - apps/tape/src/{raft,bin/tape}.rs
 - apps/tape/tests/{raft_cluster,raft_failover,raft_persistence,bootstrap}.rs
-- libs/raft-host
+- libs/raft-runtime
 - libs/service-backup/src/source.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
@@ -535,7 +535,7 @@ ID: primary-replicas
 Type: Runtime
 Root WI: #768, #1327
 Status: confirmed
-Surfaces: Raft: topic journal state machine over `libs/raft-core` and `libs/raft-host`'s `TapeRaft`/`TapeStateMachine` (#1327); auto-mode leader/follower topology activated by `REPLICAS_PER_SHARD>1` (plus the standard `POD_NAME`/`SHARD_COUNT`/`VOTER_COUNT` downward-API quartet) — no tape-specific `--raft` flag. Peer mTLS (`TAPE_PEER_TLS_CERT`/`_KEY`/`_CA`, `TAPE_PEER_MTLS`) validates at startup but is not yet terminated on the peer port (`libs/raft-host`'s h2c transport has no TLS seam yet).
+Surfaces: Raft: topic journal state machine over `libs/raft-core` and `libs/raft-runtime`'s `TapeRaft`/`TapeStateMachine` (#1327); auto-mode leader/follower topology activated by `REPLICAS_PER_SHARD>1` (plus the standard `POD_NAME`/`SHARD_COUNT`/`VOTER_COUNT` downward-API quartet) — no tape-specific `--raft` flag. Peer mTLS (`TAPE_PEER_TLS_CERT`/`_KEY`/`_CA`, `TAPE_PEER_MTLS`) validates at startup but is not yet terminated on the peer port (`libs/raft-runtime`'s h2c transport has no TLS seam yet).
 EC Dimensions: behavior: real 3-node in-process raft group - election, leader-applied writes replicate to followers, follower-received appends forward to the leader, direct follower peer-route POST answers 421, fresh-node catch-up via InstallSnapshot; stability: live 3-node `kill -9` leader failover with no committed event loss, restart-recovery of the durable applied-index floor across process restarts; pending: peer-mTLS termination (config-surface + fail-fast validation only today)
 Required Verification: conformance, dogfood
 Promise:

@@ -16,5 +16,3 @@ axum = { workspace = true }
 tokio = { workspace = true }
 tower-http = { workspace = true, features = ["trace"] }
 tracing = { workspace = true }
-
-<!-- marker: missing-generator:logic:f401f64b path: libs/server-http/Cargo.toml reason: scaffold for libs/server-http/Cargo.toml — fill in by hand and update tracker when codegen is ready -->

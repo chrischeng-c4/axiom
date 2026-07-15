@@ -55,13 +55,14 @@ spec:
                 type: string
               replicasPerShard:
                 default: 1
+                description: Starting/minimum members per shard. With startup-static raft-runtime membership this is also the fixed desired value; a future membership controller may plan whole replica layers above this floor.
                 type: integer
                 minimum: 0.0
               resources:
                 default:
                   cpu: ''
                   memory: ''
-                description: CPU/memory request==limit (Guaranteed QoS). @spec libs/operator/tech-design/semantic/source/libs-operator-src-service-rs.md#source
+                description: Per-pod CPU/memory requests. Empty values resolve to the shared data-plane defaults (`1` CPU / `4Gi`) at render time. Limits are intentionally omitted so a dedicated-node pod can use otherwise-idle node capacity. @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#source
                 properties:
                   cpu:
                     default: ''

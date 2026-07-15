@@ -614,7 +614,7 @@ async fn main() -> Result<()> {
     // kube-rs (operator), raft peer TLS, and online CLI paths can link
     // different rustls providers. Install the shared aws-lc-rs default before
     // any of those paths construct a TLS client or server.
-    service_tls::install_default_crypto_provider();
+    peer_tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.command {
         Command::Append(args) => append(args),
@@ -836,7 +836,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // so use that PVC for the ordinary journal store. An explicit --store
     // still wins, and replica mode continues to keep journal durability in
     // the Raft state machine instead of a second local store.
-    let replica_mode = raft_host::cluster::replica_mode();
+    let replica_mode = raft_runtime::cluster::replica_mode();
     let store = resolve_journal_store(args.store.clone(), args.data_dir.as_deref(), replica_mode);
     let journal = match &store {
         Some(path) => load_journal(path)?,
@@ -846,11 +846,11 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
 
     // Auto-mode HA (#1327): the standard downward-API quartet flips replica
     // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. Topology comes
-    // from raft-host (never re-derive the ordinal math locally); the raft
+    // from raft-runtime (never re-derive the ordinal math locally); the raft
     // group replicates append/checkpoint-put into this process's journal and
     // its peer router rides the serve port OUTSIDE the bearer-auth data plane
     // (cluster traffic, tokenless like probes; mTLS termination is a later
-    // slice — raft-host's h2c transport has no TLS seam yet). Held for the
+    // slice — raft-runtime's h2c transport has no TLS seam yet). Held for the
     // process lifetime via `state` — dropping it would abort the tick/pump
     // tasks.
     if args.bootstrap_seed_uri.is_some() {
@@ -868,7 +868,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         // spawns, so a misconfigured deployment (partial TAPE_PEER_TLS_* set,
         // mis-pointed path, unusable PEM) exits nonzero at startup instead of
         // failing at dial time. Termination on the peer port is NOT yet
-        // applied — raft-host's h2c transport has no TLS seam (the filed gap
+        // applied — raft-runtime's h2c transport has no TLS seam (the filed gap
         // in the TD); this proves the mounted material is usable today.
         match tape::peer_tls::PeerTlsConfig::from_env()? {
             Some(tls) => {
@@ -878,14 +878,14 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
                     tracing::warn!(
                         cert = %tls.cert.display(),
                         "peer TLS material validated; TAPE_PEER_MTLS=on requested but mTLS \
-                         termination on the raft peer port is not yet applied (raft-host/h2c \
+                         termination on the raft peer port is not yet applied (raft-runtime/h2c \
                          TLS seam gap) — peer RPCs stay h2c"
                     );
                 } else {
                     tracing::info!(
                         cert = %tls.cert.display(),
                         "peer TLS material validated (not required); peer RPCs stay h2c until \
-                         the raft-host TLS seam lands"
+                         the raft-runtime TLS seam lands"
                     );
                 }
             }
@@ -901,7 +901,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             .ok_or_else(|| {
                 anyhow::anyhow!("cannot derive the raft peer port from --bind {}", args.bind)
             })?;
-        let topo = raft_host::ClusterTopology::from_env(
+        let topo = raft_runtime::ClusterTopology::from_env(
             "tape",
             &args.peer_service,
             peer_port,
@@ -1253,22 +1253,22 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     match body {
         InstanceBody::Dev => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  resources:\n    cpu: \"250m\"\n    memory: 256Mi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Staging => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  resources:\n    cpu: \"1\"\n    memory: 2Gi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Prod => {
             yaml.push_str(
-                "  imagePullPolicy: Always\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  storage: 100Gi\n  graceSecs: 30\n  auth: required\n  tokensSecret: tape-token-registry\n  resources:\n    cpu: \"4\"\n    memory: 8Gi\n",
+                "  imagePullPolicy: Always\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  storage: 100Gi\n  graceSecs: 30\n  auth: required\n  tokensSecret: tape-token-registry\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Template => {
             yaml.push_str(
-                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  resources:\n    cpu: \"1\"\n    memory: 1Gi\n",
+                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
     }
