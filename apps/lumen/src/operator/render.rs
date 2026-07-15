@@ -106,7 +106,7 @@ fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
 /// perform the Raft membership transition required before a replica delta.
 /// The retained handoff loop consults this function to prune HPAs emitted by
 /// older Lumen versions for every topology.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn wants_hpa(_lumen: &Lumen) -> bool {
     false
 }
@@ -117,7 +117,7 @@ pub(crate) fn wants_hpa(_lumen: &Lumen) -> bool {
 /// (#1385, R2) can confirm a live HPA found at this CR's name was actually
 /// rendered by lumen — not a user-created object with a coincidentally
 /// matching name — before deleting it.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> {
     let mut labels = std::collections::BTreeMap::new();
     labels.insert("app.kubernetes.io/name".to_string(), APP.to_string());
@@ -142,7 +142,7 @@ pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, St
 /// of `replicasPerShard`. No topology renders a direct HPA: single-member
 /// scale-out would create uncoordinated copies, while raft-HA needs a
 /// membership-aware whole-layer transition before changing pod count.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let name = instance(lumen);
     let ns = namespace(lumen);
@@ -183,7 +183,7 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
 /// endpoint's bytes to a destination via `lumen backup`
 /// (`libs/service-backup`). The shared [`service_k8s::render::cron_job`] helper
 /// stays manifest-only.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
     let policy = lumen.spec.serving.backup.as_ref()?;
     let cron_name = format!("{}-backup", cx.name);

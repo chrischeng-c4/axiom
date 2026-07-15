@@ -115,13 +115,13 @@ use crate::storage::Engine;
 /// if a `SegmentRdbStore` value itself — not just an outer `Arc` around it —
 /// is cloned.
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-segment_rdb-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-segment_rdb-rs.md#source
 pub struct SegmentRdbStore {
     root: PathBuf,
     save_lock: Arc<Mutex<()>>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-segment_rdb-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-segment_rdb-rs.md#source
 impl SegmentRdbStore {
     /// Open (creating) the checkpoint root directory.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {

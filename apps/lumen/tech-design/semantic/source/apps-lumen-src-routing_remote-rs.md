@@ -144,7 +144,7 @@ struct RemoteShard {
 /// serving pod (#1398 R1-R3). Local-owned buckets hit `engine`/`local_write`
 /// directly; remote-owned buckets forward one hop to the owning pod's
 /// stable per-shard DNS name (`routing::shard_host`).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing_remote-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#source
 pub struct RoutedRouter {
     engine: Arc<Engine>,
     local_write: Arc<dyn WriteBackend>,
@@ -153,7 +153,7 @@ pub struct RoutedRouter {
     remotes: Vec<Option<RemoteShard>>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing_remote-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#source
 impl RoutedRouter {
     /// `shard_urls[shard]` is the base URL (`http://host:port`, no trailing
     /// slash) forwarded requests for that shard are sent to; its length must
@@ -471,7 +471,7 @@ fn percent_encode_component(s: &str) -> String {
 }
 
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing_remote-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#source
 impl RoutedBackend for RoutedRouter {
     async fn search(
         &self,

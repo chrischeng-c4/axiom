@@ -973,7 +973,7 @@ fn openapi_json_declares_3_2_and_describes_query_twins() {
 /// it must byte-match live generation exactly so the offline contract cannot
 /// silently lag the surface it
 /// describes. Modeled on `openapi_is_valid_json_with_search_path`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn openapi_committed_snapshot_matches_live_generation() {
     let committed = include_str!("../clients/openapi.json");
@@ -1126,7 +1126,7 @@ fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
 /// #1480 R2: the reshard admin verbs section must cover all six
 /// `Role::Admin`-gated verbs, including `POST /admin/reshard:fence`'s TTL
 /// semantics, driver-owned framing, and manual-use risk warning.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_storage_documents_reshard_fence_admin_verb() {
     let storage = llm_storage_md();
@@ -1152,7 +1152,7 @@ fn llm_storage_documents_reshard_fence_admin_verb() {
 /// #1480 R3: the workflow topic must disclose the routed multi-shard client
 /// retry contract — the three retryable `503` codes and the two rejected
 /// (not retryable) verbs with their alternatives.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_workflow_discloses_routed_mode_retry_contract() {
     let g = llm_workflow_md();
@@ -1177,7 +1177,7 @@ fn llm_workflow_discloses_routed_mode_retry_contract() {
 /// `lumen_scatter_map_version_mismatches_total` counter, and the
 /// `awaitingTopologyConvergence`/`topologyConvergenceStalled` status
 /// conditions) into the deployment topic.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_deployment_documents_reshard_convergence_observability() {
     let deployment = llm_deployment_md();

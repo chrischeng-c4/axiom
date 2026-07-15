@@ -26,7 +26,7 @@ struct LumenServer {
     handle: tokio::task::JoinHandle<()>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-tests-generated_clients_crud_e2e-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-tests-generated_clients_crud_e2e-rs.md#source
 impl LumenServer {
     async fn start() -> Self {
         let engine = Arc::new(lumen::storage::Engine::new());

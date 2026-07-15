@@ -344,7 +344,7 @@ struct KubeHpaControl {
     client: Client,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 #[async_trait::async_trait]
 impl HpaControl for KubeHpaControl {
     async fn hpa_labels(
@@ -485,7 +485,7 @@ fn spawn_hpa_handoff_loop(client: Client) {
 }
 
 /// lumen's contribution to the shared operator.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 impl ManagedService for Lumen {
     /// Server-side-apply field manager + leader-election Lease name.
     const MANAGER: &'static str = "lumen-operator";
@@ -633,7 +633,7 @@ impl ManagedService for Lumen {
 /// [`crate::operator::reshard_driver::spawn_reshard_driver_loop`]), and the
 /// HPA topology-transition handoff loop (#1385; independently leader-gated —
 /// see [`spawn_hpa_handoff_loop`]).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     match Client::try_default().await {
         Ok(client) => {

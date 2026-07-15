@@ -53,13 +53,13 @@ const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
 const LEGACY_TOKENS_ENV: &str = "LUMEN_TOKENS";
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub struct AuthConfig {
     pub required: bool,
     pub tokens: HashMap<String, TokenClaims>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthConfig {
     pub fn open() -> Self {
         Self {
@@ -136,10 +136,10 @@ impl Verifier for LumenVerifier {
 /// thin newtype over the shared [`AuditedRoleMapPrincipal`] so [`ensure`](Self::ensure)
 /// can map its rejection into lumen's own [`AuthErr`] / `ApiError` shape.
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub struct AuthContext(AuditedRoleMapPrincipal);
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthContext {
     pub fn ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> {
         self.0.ensure(collection_id, needed).map_err(AuthErr::from)
@@ -150,7 +150,7 @@ impl AuthContext {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub async fn auth_middleware(
     State(verifier): State<Arc<LumenVerifier>>,
     req: Request,
@@ -160,7 +160,7 @@ pub async fn auth_middleware(
 }
 
 #[derive(Debug)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub enum AuthErr {
     Forbidden {
         subject: String,
@@ -169,7 +169,7 @@ pub enum AuthErr {
     },
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl From<RoleMapDenied> for AuthErr {
     fn from(denied: RoleMapDenied) -> Self {
         AuthErr::Forbidden {
@@ -180,7 +180,7 @@ impl From<RoleMapDenied> for AuthErr {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl IntoResponse for AuthErr {
     fn into_response(self) -> Response {
         match self {

@@ -19,7 +19,7 @@ use crate::types::{CreateCollectionRequest, FieldSpec, IndexRequest, ReplaceDocs
 /// Every variant maps 1:1 to the matching `Engine::*` method; see
 /// [`crate::storage::Engine::apply_raft_entry`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-log_entry-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-log_entry-rs.md#source
 pub enum RaftLogEntry {
     CreateCollection {
         collection_id: String,
@@ -62,6 +62,6 @@ pub enum RaftLogEntry {
 /// makes a write visible to subsequent reads, so nothing needs to come back —
 /// this is a unit-shaped marker (the `R` of the consensus type config).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-log_entry-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-log_entry-rs.md#source
 pub struct RaftLogResponse;
 // CODEGEN-END

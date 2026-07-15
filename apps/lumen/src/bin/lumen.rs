@@ -1890,7 +1890,7 @@ struct SegmentCheckpointSink {
     aof: Option<lumen::coordinator::SharedAof>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#source
 #[async_trait::async_trait]
 impl lumen::api::CheckpointSink for SegmentCheckpointSink {
     async fn checkpoint_now(&self) -> Result<bool> {
