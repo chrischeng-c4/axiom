@@ -1000,7 +1000,30 @@ impl TypeChecker {
                             self.error(expr.span, "called value is not a function");
                             return self.tcx.error();
                         }
-                        if external.is_some() {
+                        if let Some(ext) = &external {
+                            // #1628: `NamedTuple("Employee", [...])` is a
+                            // direct call on the `typing.NamedTuple`/
+                            // `NamedTupleFallback` class object itself.
+                            // Normally calling a class object returns an
+                            // instance of that same class (the #246 rule
+                            // right above), but the functional form
+                            // dynamically synthesizes a brand-new class
+                            // instead (mirroring `collections.namedtuple`),
+                            // so typing the result as "an instance of
+                            // typing.NamedTuple" is wrong and makes the
+                            // synthesized name itself uncallable
+                            // (`Employee(...)` walls as "called value is not
+                            // a function" — NamedTuple instances have no
+                            // `__call__`). Defer to whatever
+                            // `check_structured_stdlib_call` already resolved
+                            // (its receiver is dropped for this owner, see
+                            // the #1628 comment there) instead of forcing the
+                            // generic instance-role result below.
+                            if structured_stdlib_handled
+                                && Self::is_named_tuple_base_owner(&ext.module, &ext.name)
+                            {
+                                return stdlib_ret.unwrap_or_else(|| self.tcx.any());
+                            }
                             if !structured_stdlib_handled {
                                 for arg in args {
                                     self.check_call_arg(arg);
@@ -2364,6 +2387,31 @@ impl TypeChecker {
             || (module == "_typeshed._type_checker_internals" && qualifier == "NamedTupleFallback")
     }
 
+    /// #1628: a *direct* `NamedTuple("Point", [...])` call is enforced (see
+    /// `is_named_tuple_base_owner` above) against the real `__init__(self,
+    /// typename, fields)` factory shape, but its RESULT is never "an
+    /// instance of `typing.NamedTuple`" the way `SomeStdlibClass(...)`
+    /// returns an instance of `SomeStdlibClass` — the functional form
+    /// dynamically synthesizes a brand-new class (mirroring
+    /// `collections.namedtuple`), and `NamedTuple` instances have no
+    /// `__call__`. Modeling the call's result as a self-instance made the
+    /// synthesized name itself uncallable (`Employee = NamedTuple("Employee",
+    /// [...])` then `Employee(...)` walled as "called value is not a
+    /// function"). Skip the self-instance receiver for exactly this owner so
+    /// the call result falls back to the untyped/dynamic path instead,
+    /// without touching the argument-checking wall above.
+    fn constructor_result_receiver(
+        owner_module: &str,
+        owner_qualifier: &str,
+        receiver: ExternalClass,
+    ) -> Option<ExternalClass> {
+        if Self::is_named_tuple_base_owner(owner_module, owner_qualifier) {
+            None
+        } else {
+            Some(receiver)
+        }
+    }
+
     fn structured_stdlib_constructor(
         module: &str,
         qualifier: &str,
@@ -2380,7 +2428,16 @@ impl TypeChecker {
                 Self::structured_stdlib_member_owner(module, qualifier, name)
             {
                 // Inherited-only guard: see `is_named_tuple_base_owner` (#1595).
-                if Self::is_named_tuple_base_owner(&owner_module, &owner_qualifier) {
+                // #1628: a *direct* call on `NamedTuple`/`NamedTupleFallback`
+                // itself (`module`/`qualifier` ARE the base owner) reaches
+                // this same owner in exactly one hop (typeshed models
+                // `NamedTuple` as inheriting its `__init__` straight from
+                // `NamedTupleFallback`) — that is the enforceable factory
+                // call, not an inherited subclass hit, so only skip when the
+                // *original* callee differs from the resolved owner.
+                if Self::is_named_tuple_base_owner(&owner_module, &owner_qualifier)
+                    && !Self::is_named_tuple_base_owner(module, qualifier)
+                {
                     return None;
                 }
                 return Some((owner_module, owner_qualifier, name));
@@ -2466,12 +2523,20 @@ impl TypeChecker {
                     &receiver.module,
                     &receiver.name,
                 )?;
+                // #1628: this is the path actually taken for a class-object
+                // call bound to a plain identifier (`NamedTuple(...)`) — the
+                // `constructor_result_receiver` skip must apply here too, or
+                // the functional form's result keeps being typed as "an
+                // instance of typing.NamedTuple" and the synthesized name
+                // stays uncallable.
+                let result_receiver =
+                    Self::constructor_result_receiver(&module, &qualifier, receiver.clone());
                 Some(ResolvedStdlibSpecCall {
                     module,
                     qualifier,
                     name: name.to_string(),
                     access: StdlibSpecAccess::Constructor,
-                    receiver: Some(receiver.clone()),
+                    receiver: result_receiver,
                 })
             }
             // #1595: an *instance* of an external/stdlib class (e.g. the
@@ -2549,16 +2614,21 @@ impl TypeChecker {
                             owner_qualifier,
                             constructor,
                         )| {
+                            let receiver = Self::constructor_result_receiver(
+                                &owner_module,
+                                &owner_qualifier,
+                                ExternalClass {
+                                    module: module.clone(),
+                                    name: member.to_string(),
+                                    args: Vec::new(),
+                                },
+                            );
                             ResolvedStdlibSpecCall {
                                 module: owner_module,
                                 qualifier: owner_qualifier,
                                 name: constructor.to_string(),
                                 access: StdlibSpecAccess::Constructor,
-                                receiver: Some(ExternalClass {
-                                    module: module.clone(),
-                                    name: member.to_string(),
-                                    args: Vec::new(),
-                                }),
+                                receiver,
                             }
                         })
                     }
@@ -4363,6 +4433,55 @@ impl TypeChecker {
             && target.name == "dir"
         {
             return None;
+        }
+        // #1628: a *direct* `NamedTuple("Point", [...])` call resolves its
+        // `__init__` to typeshed's real two-overload set — overload 1 is
+        // `(typename: str, fields: Iterable[tuple[str, Any]], /)` (no
+        // `**kwargs`), overload 2 is the deprecated keyword form
+        // `(typename: str, fields: None = None, /, **kwargs: Any)`. Evaluating
+        // both branches against a call that mixes a real `fields` list with an
+        // extra keyword (`NamedTuple("Bad", [...], y=str)`) rejects every
+        // candidate — overload 1 has no parameter for the keyword, overload
+        // 2's `fields` is typed exactly `None` — even though that combination
+        // is legal Python syntax whose factory implementation raises the
+        // TypeError at *runtime*, not statically. Returning `None` here to
+        // defer to the legacy path would also throw away
+        // `constructor_result_receiver`'s untyped-result skip below (the
+        // fix that keeps `Employee = NamedTuple(...); Employee(...)`
+        // callable), so instead enforce the narrower shape that both real
+        // overloads agree on directly: `typename` is always `str` (the
+        // `type/` dimension `NamedTuple__init__typename_as_str_wrong` guard
+        // stays enforced), while `fields` and any trailing keywords stay
+        // `Unknown`/skip — the same shape the folded `STDLIB_SIGS_GENERATED`
+        // row for this owner already carries. Every arg is still visited
+        // (via `check_stdlib_scalar_arg`/`check_expr`) so downstream
+        // inference on `fields`/keyword values runs as normal.
+        if target.access == StdlibSpecAccess::Constructor
+            && Self::is_named_tuple_base_owner(&target.module, &target.qualifier)
+        {
+            let typename_param = super::stdlib_sigs::ParamSig {
+                name: "typename",
+                ty: super::stdlib_sigs::CoreTy::Str,
+                star: false,
+            };
+            for (index, arg) in args.iter().enumerate() {
+                let value = match arg {
+                    CallArg::Positional(value)
+                    | CallArg::StarArg(value)
+                    | CallArg::Keyword { value, .. }
+                    | CallArg::DoubleStarArg(value) => value,
+                };
+                let is_typename_slot =
+                    index == 0 && matches!(arg, CallArg::Positional(_) | CallArg::Keyword { .. });
+                if is_typename_slot {
+                    self.check_stdlib_scalar_arg(&typename_param, value, false);
+                } else {
+                    self.check_expr(value);
+                }
+            }
+            return Some(target.receiver.as_ref().map(|receiver| {
+                self.external_class_instance(&receiver.module, &receiver.name, receiver.args.clone())
+            }));
         }
         let constructor_result = if target.access == StdlibSpecAccess::Constructor {
             target.receiver.as_ref().map(|receiver| {
