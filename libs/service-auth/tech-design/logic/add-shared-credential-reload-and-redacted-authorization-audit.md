@@ -104,7 +104,6 @@ changes:
     impl_mode: hand-written
     description: "Verify Tape rotation and authorization remain compatible through the shared lifecycle."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
