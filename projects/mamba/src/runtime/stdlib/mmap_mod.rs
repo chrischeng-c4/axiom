@@ -8,7 +8,7 @@ use super::super::value::MbValue;
 /// via the `libc` crate.
 ///
 /// Dependency note (#871): `memmap2` is NOT a dependency of the `mamba`
-/// crate itself (only `projects/lumen` and `vendor/cranelift-jit` use it
+/// crate itself (only `apps/lumen` and `vendor/cranelift-jit` use it
 /// elsewhere in the workspace) — per the issue's explicit fallback
 /// instruction, this uses raw `libc` mmap/munmap directly rather than adding
 /// an unauthorized dependency. `libc = "0.2"` is already a direct `mamba`

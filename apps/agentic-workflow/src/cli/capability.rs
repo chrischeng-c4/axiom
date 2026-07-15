@@ -12952,7 +12952,7 @@ traits = ["service"]
     #[test]
     fn lumen_agent_facing_trait_adds_dx_without_expanding_service_obligations() {
         let tmp = tempfile::tempdir().unwrap();
-        let project_dir = tmp.path().join("projects/lumen");
+        let project_dir = tmp.path().join("apps/lumen");
         std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(
             project_dir.join("aw.toml"),
