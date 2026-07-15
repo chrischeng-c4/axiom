@@ -21,7 +21,20 @@ covers builtins.{ImportError,range,type}, functools.{partial,reduce,lru_cache}
 tracked: #1615). The legacy path skips when unsure (enforceable +
 concrete-scalar-disjoint). Signature truth stacks in four layers: generated
 TypeSpec manifest → curated STDLIB_SIGS overrides → intrinsic `Ty::Fn` →
-user `FunctionParamSigs` (see ARCHITECTURE.md).
+user `FunctionParamSigs` (see ARCHITECTURE.md); layer 1 is authoritative
+end-to-end — `check_expr.rs:669`'s `structured_stdlib_authoritative` flag
+fully bypasses the compact-scalar and `check_user_fn_argument_type`
+mismatch checks (incl. the `bytes_literal_str_mismatch` special case) once
+`check_structured_stdlib_call` resolves a call, so a layer-3 intrinsic
+`def_builtin` registration (`builtins.rs`) can look wrong in isolation and
+still never fire. Worked example: `ord` looks monomorphic-`str`-only at
+`builtins.rs:131` (`def_builtin("ord", &[str_ty], int)`), but the generated
+manifest row (`stdlib_sigs_generated.rs:~21797`, `p("c", CoreTy::Typed,
+false)`) owns every real call site and is permissive — `ord(b"A")` /
+`ord(bytearray(b"Z"))` compile and run correctly today (verified directly:
+`chr/behavior.py` byte-matches the oracle unmodified). Confirm empirically
+against a fresh binary before trusting a layer-3 signature reading; #1550's
+`ord`/bytes suspicion did not reproduce.
 
 ## Proven widenings (each keeps its guard set red)
 
@@ -47,19 +60,15 @@ user `FunctionParamSigs` (see ARCHITECTURE.md).
   (tracked: #1628).
 - Residual over-walling clusters (~470 corpus-wide post wave-1/2) — same
   fix pattern; goal-loop waves burn them down (tracked: #1615).
-- `ord()` is registered monomorphic-`str`-only (`builtins.rs:131`,
-  `self.def_builtin("ord", &[str_ty], int)`), so `ord(b"A")` /
-  `ord(bytearray(b"Z"))` hard-wall at compile time — CPython 3.12 accepts
-  any length-1 `str`/`bytes`/`bytearray`. `check_user_fn_argument_type`'s
-  `bytes_literal_str_mismatch` special case (`check_expr.rs:1655-1658`)
-  even forces the reported "got" type to `bytes` for a `BytesLit` arg,
-  producing `"expected str, got bytes"` on legal code. The runtime
-  (`mb_ord`, `char_radix.rs:64`) already accepts and length-checks all
-  three shapes correctly — this is a checker-only false positive. Fix =
-  widen the signature to `Ty::Union(vec![str_ty, bytes_ty, bytearray_ty])`
-  (precedent: `check.rs:4974` uses the same `Ty::Union` builtin-param
-  shape); runtime already owns the length-1 TypeError, so no new wall
-  guard is needed beyond the existing corpus. tracked: #1550.
+- `all(42)`/`any(42)`-shape non-iterable args to iterable-consuming builtins
+  compile-reject instead of deferring to the runtime `TypeError` the fixture
+  expects to catch — live-reproduced 2026-07-15 across ≥10 fixtures in
+  `_regression/builtin-libs/builtins/` (`all`, `any`, `map`, `max`, `min`,
+  `reversed`, `isinstance`, `bytearray_methods`, `errors.py`,
+  `long_tail/slice/slice_basic.py`); `range_broad.py` separately DIVERGEs
+  on an int-vs-float value (int arithmetic returning `55.0` not `55`).
+  Newly discovered during #1550 verification, distinct root cause(s) from
+  #1550's original 4 — tracked: #1775.
 
 ## Working rule for any new widening
 
