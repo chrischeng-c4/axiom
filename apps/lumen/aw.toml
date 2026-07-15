@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:5b27bcb24cfbc31a02ee0ca75d1262b6971dd8b2c668b886741235b0bea46343"
+generated_from_td_digest = "sha256:09b8b781f8c76710448f282d4bf4f9f6263b29ab9f508e4f15037fe5d9e6e87f"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -802,7 +802,7 @@ command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
 assertions = [
     "lumen llm outline publishes the cclab.llm.v2 typed task manifest and every advertised topic parses through the binary.",
-    "lumen llm integrate-source-db preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
+    "lumen llm integrate-source-db preserves provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
     "agent-facing playbook output remains deterministic and offline.",
 ]
 
@@ -1069,7 +1069,7 @@ id = "lumen-guard-auth-surface"
 tool = "guard"
 path = "apps/lumen/guard.toml"
 td_ref = "apps/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-guard-auth-surface"
-content_digest = "sha256:525edc47f13dc0feae7a3b484bfe2fa43847e69271f1686f5e1be5fea0fc4edd"
+content_digest = "sha256:3aafdadcbeae06215cc83b5f60c1cd05f68a8ea5c6993be366854dc3e327ef58"
 command = "target/debug/guard scan apps/lumen --compact --no-persist"
 category = "security"
 
@@ -1078,7 +1078,7 @@ id = "lumen-guard-search-security"
 tool = "guard"
 path = "apps/lumen/guard-search.toml"
 td_ref = "apps/lumen/external-contracts/security-hardening/security/access-control.md#lumen-guard-search-security"
-content_digest = "sha256:277545539c5f0e73eefd6e3e09352f8224def803f0e4cb980b84e883e24d0dd6"
+content_digest = "sha256:71a40fb9a7d8d9baa52917eddef22d16d9bb9d83337ce9829b93f9157ccff086"
 command = "target/debug/guard scan apps/lumen --compact --no-persist"
 category = "security"
 
@@ -1087,7 +1087,7 @@ id = "lumen-meter-search-efficiency"
 tool = "meter"
 path = "apps/lumen/meter-search-efficiency.toml"
 td_ref = "apps/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency"
-content_digest = "sha256:74040e3ae27665af7cb0e0ff468da8230db7ecbcac2d36e3255eaa68a67c4c7a"
+content_digest = "sha256:016eacf2ccf59fb87d5a5d6ac30633521c3fed36c91b64886c18da246fa91549"
 command = "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter"
 category = "efficiency"
 
@@ -1096,7 +1096,7 @@ id = "lumen-meter-search-security"
 tool = "meter"
 path = "apps/lumen/meter-search-security.toml"
 td_ref = "apps/lumen/external-contracts/security-hardening/security/access-control.md#lumen-meter-search-security"
-content_digest = "sha256:7f2b1940337d43560c50d5027aabda4c3ef938514825c56c5d29d88aa91236af"
+content_digest = "sha256:c8f2577d90b0483ff2a93df7049caf6467bbba83569374a39d7be68cd4d92549"
 command = "target/debug/meter test -- -p lumen --test api_e2e -- --ignored"
 category = "security"
 
@@ -1105,7 +1105,7 @@ id = "lumen-meter-search-stability"
 tool = "meter"
 path = "apps/lumen/meter-search-stability.toml"
 td_ref = "apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-meter-search-stability"
-content_digest = "sha256:7ab3c60ccd66b463f9b5b430fbf95ce9852fc0ea123a872daeda2ea891358888"
+content_digest = "sha256:48f5e99c959d019e07a8eed463ad8601d9b0d23849181cb1df272cb0718f35aa"
 command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
 category = "stability"
 
@@ -1114,7 +1114,7 @@ id = "lumen-rig-resilience"
 tool = "rig"
 path = "apps/lumen/rig.toml"
 td_ref = "apps/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-rig-resilience"
-content_digest = "sha256:dc7385fcc2ce189e7f284bed20300def51c9af1dbf1a444f539262c6e1bc1e59"
+content_digest = "sha256:54bc3b4e76d2dfc46fd3d836b8eebac9b0ec8b30b36daa24501491d88d7ed85b"
 command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
 category = "stability"
 
@@ -1123,7 +1123,7 @@ id = "lumen-rig-search-stability"
 tool = "rig"
 path = "apps/lumen/rig-search.toml"
 td_ref = "apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-rig-search-stability"
-content_digest = "sha256:6e10998fdb5bc2a1a2f1b1914c193047591debd06c7f39bf9011d228d7e1d88e"
+content_digest = "sha256:ed53f1c1c7dff5eace459c47cd858510b017f7e1c4deee8d6a798521ac4460f9"
 command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
 category = "stability"
 # AW-EC-END

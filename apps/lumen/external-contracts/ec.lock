@@ -3,17 +3,17 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "apps/lumen/external-contracts"
 inventory_path = "apps/lumen/aw.toml"
-generated_at = "2026-07-11T04:37:38.941541+00:00"
-ir_digest = "sha256:89eb2ffd085f7f52e3577ccba47b72c90d827901fcc340044b2661821bf21a62"
-source_digest = "sha256:d9f170abc367ef32e9249cdcd071568a7833d8b60252e566d71927073b86d843"
+generated_at = "2026-07-15T13:37:52.147215+00:00"
+ir_digest = "sha256:758df36a8dc52507dca307ebb07b17882b943a8aa6112f8c77874340ff3e0729"
+source_digest = "sha256:735c10b00df0c9bb8f104202d0e94765c6534e51cad81acf2dc7c40c1e98c700"
 
 [[sources]]
 path = "apps/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:8f8aebf9b41a6c1cbb303b62c0444e879b7d9e80fd2465775b36f2ed3dd8f729"
+digest = "sha256:da0f3d98222148ab9bb25fcabf53020ed612221997288864007aaee4130dd01a"
 
 [[sources]]
 path = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
-digest = "sha256:b7ff112545323ee8b76b36bf3213da21595c831857d2fa83775644872aeb5aee"
+digest = "sha256:be3effe5ec10f142a9192f53d90bc0bf0fd2782cb438104bfd9e80e8036814d2"
 
 [[sources]]
 path = "apps/lumen/external-contracts/competitor-feature-parity/behavior/serve-functional.md"
@@ -21,7 +21,7 @@ digest = "sha256:03f0f9e2b7f72ad1c2ac707221fc48516123d6e266f86048c7c26b1a4f59ddc
 
 [[sources]]
 path = "apps/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
-digest = "sha256:31219c5406c431054b827518dfeafdfb04796f0a7f02cc8d51fe07ab3fbcba66"
+digest = "sha256:fdc0c5e552ce11b468c97e0d832d7e198b1cd4e8e66d265b8ec1ea301b0ce4d2"
 
 [[sources]]
 path = "apps/lumen/external-contracts/long-running-stability/behavior/devops-render.md"
@@ -29,46 +29,46 @@ digest = "sha256:e339fca3895fcd04b5b0f0a4b0c5ffdc53d2d487d675fbe0bbe380c74a80094
 
 [[sources]]
 path = "apps/lumen/external-contracts/long-running-stability/behavior/meta-api.md"
-digest = "sha256:f1e1841690f6fd4e58ef96c493db9986180c3c96db99c1aac0d6587cb1576edc"
+digest = "sha256:d38e5aed543424a79a2255f966dc3a0b862cae2665bb1fd1d24435b36d990061"
 
 [[sources]]
 path = "apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md"
-digest = "sha256:b1e0b6eda050dfdcbddc4bde10735da41e4b52680fed72585df63e89991a4248"
+digest = "sha256:9acbaf053d411038b9a445bd607bfdefea030621f0677b9e32a745d43b52db26"
 
 [[sources]]
 path = "apps/lumen/external-contracts/long-running-stability/stability/resilience-survival.md"
-digest = "sha256:7fdcbb894640edbce62b17dd8f248b103a0f7648487689125d0db1d42357d8af"
+digest = "sha256:1e2f885894656ef49c0ace1d329fc90f089df03daef88056f6665f88a9576156"
 
 [[sources]]
 path = "apps/lumen/external-contracts/security-hardening/security/access-control.md"
-digest = "sha256:2a1ad35fbaa3ba313b654f3766c78d9a9a23108cda38d8db0d2d442c5462c9ca"
+digest = "sha256:bfcbf8d635d6efcc77c14bafc7788682fc8cafb795becfd54e588c1500815696"
 
 [[sources]]
 path = "apps/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md"
-digest = "sha256:bcd4dbdc117e2cadc7fc408fdb936c60d09dbbcb05bba59e2da1ee5dfdd2e953"
+digest = "sha256:b29c47717f33464b60f1a00ba97861fd14f559ea1f31099fab2b19a536573ba2"
 
 [[sources]]
 path = "apps/lumen/external-contracts/topology/behavior/shard-topology.md"
-digest = "sha256:aaea8f71ad6724ed25c48fb0ad4d54d1db7dfad5a3e0c6764a1f5ceca15e3d08"
+digest = "sha256:8a972f749c84c99214de251c4406ab54a95c3f031479b2ef6f46c5bca3c7117c"
 
 [[cases]]
 id = "lumen-claim-agent-llm-topics"
-capability_id = "agent-offline-integration"
-claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-contract_id = "agent-llm-topics"
+capability_id = "agent-task-navigation"
+claim_id = "lumen-llm-v2-task-navigation"
+contract_id = "agent-llm-v2-task-navigation"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-llm-topics"
 test_path = "apps/lumen/tests/behavior_lumen_claim_agent_llm_topics.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
-assertions = ["The offline LLM outline, workflow, integration, quickstart, and recipe topics remain available."]
+assertions = ["The offline cclab.llm.v2 outline publishes every typed Lumen task and each task emits a source-backed Markdown/JSON runbook."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9d9ce6a3dad7cba00a38a9ca4c30eef056dc4f2105771058cd62fc9e882cccff"
+digest = "sha256:bfdd4b40cb78a7f9f277d5742020bdc616714e51d8e0dc2f6b38e110548f55a0"
 
 [[cases]]
 id = "lumen-claim-agent-offline-spec"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
 contract_id = "agent-offline-spec"
 dimension = "behavior"
@@ -79,11 +79,11 @@ required_for_production = true
 assertions = ["Offline schema commands produce valid OpenAPI JSON/YAML and JSON-schema output for agents."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f29f1b809dbf4f1f9b879dc0c1e4cea429d8e22de73194e875029e5b17b47755"
+digest = "sha256:8c95b8c25a57c59e070812606d3712d69630a19a8957223dda849e494c8a9740"
 
 [[cases]]
 id = "lumen-claim-agent-query-catalog"
-capability_id = "agent-offline-integration"
+capability_id = "developer-agent-experience"
 claim_id = "query-shape-cookbook-field-analyzer-catalog"
 contract_id = "agent-query-catalog"
 dimension = "behavior"
@@ -94,7 +94,7 @@ required_for_production = true
 assertions = ["The offline query-shape and field/analyzer catalogs remain deterministic for agent ingestion."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:3d57600ded491c6da599725e15df0a55351e7aa711ebb78934fffb7ac5c7893f"
+digest = "sha256:c4c35100d5c7692267ca68cd7362fcf4905fbf56e61dbbcb217207cee4afc398"
 
 [[cases]]
 id = "lumen-claim-backup-periodic-snapshotter"
@@ -109,7 +109,7 @@ required_for_production = true
 assertions = ["The serving process snapshot loop and restore path remain covered by the backup/restore e2e gate; live replica synchronization remains raft-owned."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e68ae2f145b2b9f197f5eda70256f79b3ce31e53f66636c77a4087e59394a994"
+digest = "sha256:c88a1c6872491f12b47e0ee21567c684d1e4578c4915aaef8c94e35cd8b1c3b7"
 
 [[cases]]
 id = "lumen-claim-backup-rdb-store"
@@ -124,7 +124,7 @@ required_for_production = true
 assertions = ["RDB snapshots restore through the LocalFsRdbStore baseline as a cold restore and future bootstrap seed surface."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:07dd83c9759de153cd9185146c2918d19f43b5f6b839a778595a0cda880a9e31"
+digest = "sha256:42e9bae34a220c4b1ebea3c54b74a0eb4ec84298a4e67af53309949d80735ff1"
 
 [[cases]]
 id = "lumen-claim-chainable-artifact-render-follow-ups"
@@ -139,7 +139,7 @@ required_for_production = true
 assertions = ["Artifact render commands write exactly one runnable trailing `next:` line when writing files and keep stream mode raw."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:589f0ff9eba739664a8a8ee4d684cf6e45d44e4aaa11d8d17d4d1448ea29a86f"
+digest = "sha256:97dfe08313a0423afd15a9c93ae62cfbc96609c8168d91202abd30138dd3c8a5"
 
 [[cases]]
 id = "lumen-claim-chainable-backup-export-import-next"
@@ -154,7 +154,7 @@ required_for_production = true
 assertions = ["Backup, export, and import helpers emit machine-readable next or terminal markers through the built binary."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:adc3df6f74c0cdcf5a57cdb0628a553b59c811f81061b3d9f97049730d0eb70b"
+digest = "sha256:da5de72752cbade8eb82bd45d73980ed1f15d9c26a29f8d4dcdb191369218eed"
 
 [[cases]]
 id = "lumen-claim-chainable-issue-upgrade-terminal"
@@ -169,7 +169,7 @@ required_for_production = true
 assertions = ["Shared issue dry-run paths and upgrade check terminate with explicit `next: done` markers."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:43649fdac2ee5609b0777a9bb62448c4d2fae505c1021641c4341b9af3d7e404"
+digest = "sha256:a1cd38d5231e421151293beac01f08d74749a3b8ed06340ae758558d3107322e"
 
 [[cases]]
 id = "lumen-claim-cli-deployment-operator-command-surface"
@@ -184,7 +184,7 @@ required_for_production = true
 assertions = ["The operator-facing command surface renders CRD and serving objects used by the deployment path."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a03e211b582a9f7c4b50953875e20afe7827975d656449ea471ff3b9e9f578ea"
+digest = "sha256:57cb36d1987c79a09b0a9534f5a428c968e34f4fd6be86693a4b0d3b296de1e1"
 
 [[cases]]
 id = "lumen-claim-cli-service-process-interface"
@@ -199,7 +199,7 @@ required_for_production = true
 assertions = ["The long-running service exposes health, readiness, version, metrics, indexing, and search routes through the binary-served API."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d022e6c9c44b3019777ed857c90f365f6e7976a6c3e97889b11c0133fb08af93"
+digest = "sha256:884023d9378d176811587a93b557f7e39fa0ac7791fbc4c5fee4e3638adfc7b3"
 
 [[cases]]
 id = "lumen-claim-cli-standard-issue-surface"
@@ -214,7 +214,7 @@ required_for_production = true
 assertions = ["The shared issue group exposes search, view, create, and comment under `lumen issue`."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:01baf103ff3d8b1c4e83bc21948a14e281fd77caf0659a89343c4738de03f3ee"
+digest = "sha256:11b79d0701cefafff4ccb9d78b8ec9809e4f242dc004058065d46c2147d44a3e"
 
 [[cases]]
 id = "lumen-claim-cli-standard-llm-entrypoint"
@@ -229,7 +229,7 @@ required_for_production = true
 assertions = ["The shared `lumen llm` entrypoint publishes the agent topic set through the standard CLI convention."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:268baf27f360e7eac17ab083b6715a45516834ab4c4e7f33f4ade242d7b96c6c"
+digest = "sha256:76e3ae73b527db38a2f6029b16623d0aba8f7336186512ef4d12f6197eda6783"
 
 [[cases]]
 id = "lumen-claim-cli-standard-upgrade-check"
@@ -244,7 +244,7 @@ required_for_production = true
 assertions = ["The shared upgrade check surface remains available and emits an explicit terminal marker."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:01c3f66d90c75ad4ccd4e27711f18e9dfffe84d86c4deba230f872cc1a74efa9"
+digest = "sha256:42999f0681a28d6d56baf59af0076b86b7fc9a9958a0ad70eece85122290e277"
 
 [[cases]]
 id = "lumen-claim-competitor-feature-schema-metadata"
@@ -259,7 +259,7 @@ required_for_production = true
 assertions = ["Schema lifecycle, reindex/replay, and stats/metadata behavior pass the production conformance tests."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f68c132379e600c27ec26953d3f1caa0aa9902d7bd7cb8c22a0dfce23553d26d"
+digest = "sha256:9a841ca2e6266a2e0f8f0a7170b12012fbe09c9d15fc65bf7dc0d63a9cc47067"
 
 [[cases]]
 id = "lumen-claim-competitor-feature-search-breadth"
@@ -274,7 +274,7 @@ required_for_production = true
 assertions = ["The API, vector, hash, duplicate, and nested search surfaces execute correctly across the replacement feature set."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:06320ad1784d261d579930424530ff32236fb0b8bb30e1596e692c999a9e7214"
+digest = "sha256:e16b772eb95b1cd55473283240beec97d64e089976695c1ff6d4f35b60efeaf7"
 
 [[cases]]
 id = "lumen-claim-competitor-performance-depth-invariant"
@@ -289,7 +289,7 @@ required_for_production = true
 assertions = ["The Lumen-only deep-page and filter/sort perf gates stay depth-invariant against the retained calibrated floors without rerunning peer databases by default."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:53f2e79cd26a16a44e23cc0106c78f03bca9194bba7efeb688f3b0c37c83823f"
+digest = "sha256:b1ee4b2a59100b6e9a14722a7d7c4f2c71e39819ad62551ea72e40910bbea428"
 
 [[cases]]
 id = "lumen-claim-competitor-performance-envelope"
@@ -304,7 +304,7 @@ required_for_production = true
 assertions = ["Absolute latency and throughput floors stay within the ratcheted perf gate envelope."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:268270d1bd8a6409721ebac89d24624173d6ab960fbe025f4113d3afe3df811b"
+digest = "sha256:36f8f3a15246ca90661d9830cde3a7ddccb0597ec63f473ed88ade229a6d0ab3"
 
 [[cases]]
 id = "lumen-claim-competitor-performance-external-comparison"
@@ -319,7 +319,7 @@ required_for_production = true
 assertions = ["The vat efficiency runner executes the Lumen-only regression path against retained Postgres/OpenSearch-calibrated floors; explicit calibration runners refresh peers only on demand."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:77a83c73513a58d4a0474298994c5e0090a2e80d99c4260261e6df92a45e5000"
+digest = "sha256:d3d89e42f2ab85fa9b48731d56ba4bbb606a4b392ca5ec6c9af506eb26646e81"
 
 [[cases]]
 id = "lumen-claim-duplicates-group-by"
@@ -334,7 +334,7 @@ required_for_production = true
 assertions = ["Duplicate detection returns groups of external IDs sharing a field value."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9f0b3bc8468a995de20a8721997e4e55bd0678c98dd26d1eb9f98335bb4d9d35"
+digest = "sha256:4f3f3cf67cb4bd221f30d7aea7a7fc13e480a1472299a267f706eafa0b31fba5"
 
 [[cases]]
 id = "lumen-claim-dynamic-multi-shard-replica-kind"
@@ -349,7 +349,7 @@ required_for_production = true
 assertions = ["The live kind dogfood path covers multi-shard and replicated-shard operator profiles."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:01c8c365bc17c71a8b4ddbaa333dcb4c631326ad019e04159f25189507f86ca9"
+digest = "sha256:b41314a3c993e713b54e56be40dc588cd3232a74ab9084b2741d4179c74f6cb6"
 
 [[cases]]
 id = "lumen-claim-dynamic-reshard-durability"
@@ -364,7 +364,7 @@ required_for_production = true
 assertions = ["The checkpointed reshard phase driver (state machine, checkpoint-gated cutover, no-transition guard), the four reshard/backup admin verbs (scoped export, additive apply, source eviction, on-demand checkpoint) including idempotency and auth, and cold-start durability of applied/evicted reshard mutations all pass — keeping the migration-path regression class #1389 fixed under standing gate."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9b0564b4aaeeb19a262c48611b025db835a905a0309232c20d03ffccaaa64e69"
+digest = "sha256:e748233bdaba12b9fd73477726e5a5dcd0e619a30552fc6548fadb8dae77b493"
 
 [[cases]]
 id = "lumen-claim-dynamic-storage-pressure-split-policy"
@@ -379,7 +379,7 @@ required_for_production = true
 assertions = ["The operator render gate proves rendering topology conformance: storage-pressure reshard recommendations compute correctly without changing HPA-owned serving scale (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d7f9e75f00f33d1b9d702fa8a0aec413efd5f9f2d1e783ca80ee6e24138de7d5"
+digest = "sha256:718d03bf65c09e88868c580e26a45a5b984d8bc4575f0de01870a421c2a35bb9"
 
 [[cases]]
 id = "lumen-claim-dynamic-versioned-virtual-bucket-map"
@@ -394,7 +394,7 @@ required_for_production = true
 assertions = ["Versioned virtual-bucket routing remains the stable shard ownership contract."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b715b899c03e94dfd100a080203b0d17e07b9699b9a1042ecf43f5d5a7b804c5"
+digest = "sha256:1c0451dcfebaa279122cf8e18ddb8ffb18f95c6ac263e1224026e3d7e1d5ff25"
 
 [[cases]]
 id = "lumen-claim-ec-claim-closure-evidence"
@@ -409,7 +409,7 @@ required_for_production = true
 assertions = ["The production claim-closure document remains synchronized with generated EC cases."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:94782569db1ab9f6b95aad75a0bc6999d46580e19c3315db137b6fc632f12822"
+digest = "sha256:f5d5adfafcff4dd83de7fdc75aa288f249c1ff062da1a5d44b4d6d3535a16eee"
 
 [[cases]]
 id = "lumen-claim-ec-generated-inventory-dispatch"
@@ -424,7 +424,7 @@ required_for_production = true
 assertions = ["The generated AW EC inventory stays in sync with claim tests and dispatch commands."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f08255464e4fabf6d2dac6aacea6d85ef784aa01d2e96064b4b3fe41b1b29b73"
+digest = "sha256:9c4e3f01e08203d0d6404afe510a9e14b115175375a0dc2bb52e474d0fabdf59"
 
 [[cases]]
 id = "lumen-claim-ec-vat-managed-runners"
@@ -439,7 +439,7 @@ required_for_production = true
 assertions = ["The vat-managed meter runner remains executable for Lumen efficiency EC dispatch."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a88e406dc6d79a389e7b3e9dfe437aead366db693d917085c19e17c82400068f"
+digest = "sha256:b611b2bb859e19a09d2d5081fc4c205953b75ceb3488c8d0437973955fa97003"
 
 [[cases]]
 id = "lumen-claim-elastic-disk-tier"
@@ -454,7 +454,7 @@ required_for_production = true
 assertions = ["The disk-scale proof keeps the full corpus on disk-backed segments while bounded hot state remains in memory."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9eb0bc0df2e59b303f5304016867ff313f9ccd783bbd6b7016fa0a2c2d398e07"
+digest = "sha256:a2a5015236f0e570628396d5d5a6b544f24dcc664d19475e8cfeb1a1b656049f"
 
 [[cases]]
 id = "lumen-claim-exact-term-range-set"
@@ -469,7 +469,7 @@ required_for_production = true
 assertions = ["Term, range, and set filter behavior stays within the exact/filter search gate."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a64066aaffbbb9b8401e8e4d665d91adafb8ecb005a67d4766dc6ec5927f871f"
+digest = "sha256:0ac75a94f876f7a419fa6e0be713c855fcc239c7a18bda0921357401971e40dc"
 
 [[cases]]
 id = "lumen-claim-exact-wide-range-filter"
@@ -484,7 +484,7 @@ required_for_production = true
 assertions = ["Wide range filters over sorted disk-backed values pass the exact/filter gate."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4e4086ab773477a68a0a82afeaa6c30e4fe20ea4ae445e90b7982242cf2f3091"
+digest = "sha256:dad014f191ef34b3a35cd348fcb38f2c0e8659c8887f25cb21f218cb1d180c2d"
 
 [[cases]]
 id = "lumen-claim-http2-client-route-list"
@@ -499,7 +499,7 @@ required_for_production = true
 assertions = ["Search and index HTTP routes are exposed and exercised through the binary-served API tests."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ddd1cce1da28cfe77de09d5b347602a3aa3b18c7157ab51bdd93ce8d7ff80d06"
+digest = "sha256:fe618576f499bb68aff637023768f3e015cd67c8b40b39e29e04e8f1a93ea166"
 
 [[cases]]
 id = "lumen-claim-http2-offline-spec-list"
@@ -514,7 +514,7 @@ required_for_production = true
 assertions = ["The offline spec commands publish the supported HTTP API inventory."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:5066744abb96c1b844643e2973cc29481f99fc3ab1bc1d1d1533c8b6deec88f8"
+digest = "sha256:45e3c9b8f35f4964bf7bfc1d022f02bb8a1a717776ef9032eee3b93fd918c4aa"
 
 [[cases]]
 id = "lumen-claim-http2-ops-route-list"
@@ -529,7 +529,7 @@ required_for_production = true
 assertions = ["Health, readiness, OpenAPI, metrics, and version routes are exposed and exercised."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:de87c90380884a639c3f76ea8feeabcdc24111af37faf4aab550dae4d5b2c253"
+digest = "sha256:0aedc6ba58d42bcf3e4b605c79e76677dbff1e2134ecbc41c479befc6c058e5b"
 
 [[cases]]
 id = "lumen-claim-hybrid-rrf"
@@ -544,7 +544,7 @@ required_for_production = true
 assertions = ["Lexical and semantic result lists are fused through RRF while preserving per-leg filters."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2953f8fad444b76b8594c9558b5c6db2a6d3ac00a461dfd5b75b88e6c6ddfe2d"
+digest = "sha256:b40bd20ada2c9e748a0cc8fe52ebd6cbcfe8b82069b2e810aa119cb0cd6f1021"
 
 [[cases]]
 id = "lumen-claim-k8s-kustomize-base"
@@ -559,7 +559,7 @@ required_for_production = true
 assertions = ["The Kubernetes base, overlays, HPA/PDB, and operator manifests render successfully."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:69df55db0d4a0613eaec4f4198a48f8a55146fd8b6dfdc9ab90093729226ce90"
+digest = "sha256:69a45cfc48d0c2b0db47cb3298b0d94a4d3de530af3476ba41bfea3ba8f1e696"
 
 [[cases]]
 id = "lumen-claim-k8s-operator-reconcile"
@@ -574,7 +574,7 @@ required_for_production = true
 assertions = ["The kube-rs operator render path proves rendering topology conformance: Lumen CRD inputs map to serving resources, including storage-pressure reshard policy, status phases, and fixed storage topology (rendering only — the live reconcile loop, reshard driver, and admin verbs are covered by the dedicated reshard-durability gate)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0563712f72253990609225abf39a78ac02ed0b1aa10a279bbce293084e88791b"
+digest = "sha256:3af2f31431d6bb26fedc86d7fbfb75a4a1a952cd911660a5dded20bba4721945"
 
 [[cases]]
 id = "lumen-claim-k8s-operator-storage-topology-reshard"
@@ -589,7 +589,7 @@ required_for_production = true
 assertions = ["The operator render gate proves rendering topology conformance: fixed StatefulSet storage topology and reshard status exposure (rendering only — reshard driver execution, admin verbs, and migration durability are covered by the dedicated reshard-durability gate)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a49428a1e00cc3c8548c332cd3576aff2f3c3d1cd539a3fd1e0afc31d8600a6d"
+digest = "sha256:179d6f92706c71e87df857c7327667016fb4dbc914234ec3ce97c1cfb58e261b"
 
 [[cases]]
 id = "lumen-claim-k8s-stateless-kind"
@@ -604,7 +604,7 @@ required_for_production = true
 assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7c19e756dbf56f41a1a0a9f5e59ea00cdd3cc20d33acd0165228754400847fca"
+digest = "sha256:cfbe998590e700a440a2f79f7abd7f019b082ff29b424ab08f4b08d1693e3549"
 
 [[cases]]
 id = "lumen-claim-lexical-bm25"
@@ -619,7 +619,7 @@ required_for_production = true
 assertions = ["BM25 ranking and analyzer behavior pass the ratcheted performance/conformance comparison."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4dadc93e74d8a1c458e2e3ad0002bfeca798ac61757ee4f1ddecc32f285efd68"
+digest = "sha256:69293bcf2a6ba4b9aa87084f9e09449fc451829d6a6cf64056ab8f575a84e754"
 
 [[cases]]
 id = "lumen-claim-long-running-kustomize-base"
@@ -634,7 +634,7 @@ required_for_production = true
 assertions = ["The base, dev, staging, prod, and operator kustomize surfaces render valid Kubernetes manifests."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e4a52f3487549e02aee5c707f885a30bd234a159a29089c621cec5f349995d74"
+digest = "sha256:2ac9e1202708c222328b90b4fd4d095fe373ec9158005f238e29a1ef8c9b91ca"
 
 [[cases]]
 id = "lumen-claim-long-running-log-fanout"
@@ -649,7 +649,7 @@ required_for_production = true
 assertions = ["A late or second node can replay the published write stream and converge with live writes; shard-group topology is now dogfooded by the operator kind profiles."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c9d32cc2f197c406ff1480560ff364fa57f45d6c4bd33dc0322bfff51b906f1d"
+digest = "sha256:a0cfc0b3d7176081320283122a439d7d4380e98a3c8e460430b7d17e454b258a"
 
 [[cases]]
 id = "lumen-claim-long-running-stateless-kind"
@@ -664,7 +664,7 @@ required_for_production = true
 assertions = ["The live kind dogfood path runs Lumen only, without building or deploying Relay, and proves the serving API recovers after a pod restart; operator mode also proves shardCount=2 with replicasPerShard=1 and replicasPerShard=3 storage topology."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:29e8e91678c2f68b3b41c555dee3123fbfb32390825fdc420d2ee35dbff5a14f"
+digest = "sha256:55339f3c5ff402a934ddeb73509319f84923460a993ab1dfbc9888f972bf0afe"
 
 [[cases]]
 id = "lumen-claim-nested-collapse"
@@ -679,7 +679,7 @@ required_for_production = true
 assertions = ["Nested has_child/group/collapse behavior passes the data-table search tests."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:58271b7a49dd0f86968d41d491ce89acd018ea447a6e835c71531603f0d32c24"
+digest = "sha256:532831302e7a03dce058d901190dd6a3410b5377ed2587c1667465c3b962637f"
 
 [[cases]]
 id = "lumen-claim-observability-otlp"
@@ -694,7 +694,7 @@ required_for_production = true
 assertions = ["The serving process keeps observability configuration and metadata routes wired."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:573f1bee92e8ee18c3ee2810a09a7bb2151d2ac10edb944f4c7663f8663d5368"
+digest = "sha256:0097551c5d9edd75fdb402d6c75a6420eaeef7541e7eff42997d2a76d40a5b74"
 
 [[cases]]
 id = "lumen-claim-observability-prometheus-metrics"
@@ -709,7 +709,7 @@ required_for_production = true
 assertions = ["The /metrics endpoint emits Prometheus text with the expected scrape content type."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2c19a63c32e4ae0fd238f852cdee11b2a2fac6e5c61c9e1d2fc113e79505d310"
+digest = "sha256:d93ce41e707d33fbab7317ef4f506e8b88a10a53348a8f5139b883320a11c3b7"
 
 [[cases]]
 id = "lumen-claim-observability-servicemonitor-rule"
@@ -724,7 +724,7 @@ required_for_production = true
 assertions = ["The production overlay renders the ServiceMonitor and PrometheusRule bundle."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fac5e731ab907be7e917c3c6aec02d0d61c745ab4e8c7ad9b0dc02f74bc78431"
+digest = "sha256:d988786f537beffa249dccbfcf2d1516e9b40f68ad0e4ff19d921a49bba1884d"
 
 [[cases]]
 id = "lumen-claim-schema-ddl-drop-field"
@@ -739,7 +739,7 @@ required_for_production = true
 assertions = ["Collection DDL, online drop-field drain, and drain readiness semantics pass."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9b708df06e6377715a6de348a6510b61096d9f27467bbd9c66308ce869490411"
+digest = "sha256:1601f4742262196ed851adc874d376a496838327d2fe719061b8c9d1ac8f65e4"
 
 [[cases]]
 id = "lumen-claim-schema-reindex-replay"
@@ -754,7 +754,7 @@ required_for_production = true
 assertions = ["Reindex/replay stream behavior indexes items and reports progress/errors correctly."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:7fe80ac5fae88b02fc97f321f1d744d9a4174f8d8ec5482f1a8a9ab3eb4ee426"
+digest = "sha256:e70555d1a7f73bf97d54ea489229e7898b8e731a5ef775610c579e71052c56f3"
 
 [[cases]]
 id = "lumen-claim-schema-stats-metadata"
@@ -769,7 +769,7 @@ required_for_production = true
 assertions = ["Stats and per-field metadata match indexed data and byte attribution."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:49549586b25b549f4c68eed2445f6f673569ec7a1a42b9a498f183a1a8607ca2"
+digest = "sha256:a296934a208e38b34a58cde28dc038f4b1f60f74143047a208cbd7486b99394b"
 
 [[cases]]
 id = "lumen-claim-search-core-filter-sort"
@@ -784,7 +784,7 @@ required_for_production = true
 assertions = ["Filter/sort early-termination behavior is covered by the ratcheted database comparison gate."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9c2d4514bf4cda7a406734404620cda1a0a2e9263586ada64264f163728d0445"
+digest = "sha256:dcdc560d3f2d80076e52ec35cc373b910a41963248666c6cd0e4f3dce2fdb60a"
 
 [[cases]]
 id = "lumen-claim-search-core-planner"
@@ -799,7 +799,7 @@ required_for_production = true
 assertions = ["The planner keeps boolean evaluation and roaring-posting behavior aligned with brute-force expectations."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6ff92a1bb8a6926fa97d4ee9b39ad61b2f92ca8d976747a2535e020d2aaff93c"
+digest = "sha256:2fecf045a80ada85cd42615af9edcd9d638581ee6c4b4644b3189c370dee9cc5"
 
 [[cases]]
 id = "lumen-claim-security-bearer-auth"
@@ -814,7 +814,7 @@ required_for_production = true
 assertions = ["Bearer-token auth rejects invalid callers and accepts valid tokens under LUMEN_AUTH=required."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e3db99915eea553bb395164ad3f6a341ffc086b872ccdbcd9ee9755a2058867e"
+digest = "sha256:4530d7d4d8e93e6afcb0e17aa592f71c56145364efbd590bd3ccfc9d72c7ee59"
 
 [[cases]]
 id = "lumen-claim-security-query-safety"
@@ -829,7 +829,7 @@ required_for_production = true
 assertions = ["Malformed, deeply nested, and adversarial query shapes remain bounded and do not panic."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:24d96abd087dba88219c5d5110d76ac1f0cbe6777748224a98cee378818216e3"
+digest = "sha256:90fc29a04a9a1f4395bbca26abeaa1b730b36a204f74e09450f09a7bc946dd60"
 
 [[cases]]
 id = "lumen-claim-security-rbac-matrix"
@@ -844,7 +844,7 @@ required_for_production = true
 assertions = ["Per-route RBAC enforces read/write/admin permissions and bounds result/page sizes."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:74a6f2c89c9481ac93500ac4a7283d7121599aed010bb08e22653fa57e2f3507"
+digest = "sha256:a5f56bbad76b8309cf26802edcfedab9002bb8cf01fb0a02c2b43445c4dc923c"
 
 [[cases]]
 id = "lumen-claim-security-score-confidentiality"
@@ -859,7 +859,7 @@ required_for_production = true
 assertions = ["Scores and hit existence do not leak across collection boundaries."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b0abe99da5d666356379be4c46412bc9409d106aa5b9ea72643aea71fe393c4d"
+digest = "sha256:adff631580e52b6e35fcb6c787b7461f218bc4d25c625824b2c6afac46d7f981"
 
 [[cases]]
 id = "lumen-claim-security-tls-rustls"
@@ -874,7 +874,7 @@ required_for_production = true
 assertions = ["The rustls-backed TLS surface passes the runtime TLS gate."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:8a892eaaceb1b3c1be9b5c556285863056f9d47db210259d49f107c5be52fa7c"
+digest = "sha256:747bacd9ff4dcc0ad86f68b52d98f7389f6466dfc06de4ff4e39ca3fd7f64981"
 
 [[cases]]
 id = "lumen-claim-standard-live-openapi-swagger"
@@ -889,7 +889,7 @@ required_for_production = true
 assertions = ["The live service serves OpenAPI JSON and Swagger UI against the operational route surface."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e0b8cbc0b55af39c6a0e11b9d4e0b40db4113a9b215cea6ca640b66eb6294a78"
+digest = "sha256:9473d06cc6fd4f302061a56cae343fbb97d74b07beb48a7a93ddade3a25f5052"
 
 [[cases]]
 id = "lumen-claim-standard-offline-openapi"
@@ -904,7 +904,7 @@ required_for_production = true
 assertions = ["The offline `lumen spec` OpenAPI output remains valid and includes the operational search route."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9a98264c34f4149892e9041f50583dc749041131b70173c98f002cb299fbefe5"
+digest = "sha256:089f616d0395b94e8f8e454b43e9dfc718483d1f3a9f18b509338e88ffdab8e4"
 
 [[cases]]
 id = "lumen-claim-standard-service-probe-routes"
@@ -919,7 +919,7 @@ required_for_production = true
 assertions = ["The service exposes health, readiness, version, metrics, indexing, and search routes through the binary-served API."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e836f5682a394ffe5bcec43dec69f2be7262d04dc8fe3f04c6db30297f5a0447"
+digest = "sha256:fca63c4674f103926490f48369bcb6bda18ee93eb65623ad178dfea18145f940"
 
 [[cases]]
 id = "lumen-claim-topology-empty-pvc-bootstrap-seed"
@@ -934,7 +934,7 @@ required_for_production = true
 assertions = ["A fresh serving process restores a configured SnapshotV1 seed before WAL or raft catch-up."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:be23887aa596426868b21af37d4573754579591f8d4bb2aa6b9892323f507df6"
+digest = "sha256:d5babb1efd228bc387deff6773123c213f8a18059632447e5ee77d35872b8dff"
 
 [[cases]]
 id = "lumen-claim-vector-filtered-knn"
@@ -949,7 +949,7 @@ required_for_production = true
 assertions = ["Filtered kNN returns the nearest vector within the filter without recall collapse."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bb033d2dbf0e351b5bc46c2dfefe57837f9dcaf0253625b6bd4384455a420b6a"
+digest = "sha256:ff05ae488272ebdda5f2e67572be2be01bd9c768a76073f86ca5738f9c394c71"
 
 [[cases]]
 id = "lumen-claim-vector-hash-hamming"
@@ -964,7 +964,7 @@ required_for_production = true
 assertions = ["Hash Hamming search returns bounded-distance matches over the hash index."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:026113b39577a34419a97386932129fbccc01d9056fad0afbdfef48aaeab1b0e"
+digest = "sha256:d53a8b0a38f672b14539201d0fe7b8c46306cc5cff7cd26acaaadd595af6404a"
 
 [[cases]]
 id = "lumen-claim-vector-hnsw"
@@ -979,7 +979,7 @@ required_for_production = true
 assertions = ["CPU vector kNN returns ordered nearest-neighbor results and preserves restore behavior."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:a43d8b0b41251fa3d422f162bd898b4190711b0966f59afeb4172ebebd5be139"
+digest = "sha256:5eaa5b887f8771ad430b20b370e3fe5b2ef43fdb75abc3511c15b0ff358b1eb4"
 
 [[cases]]
 id = "lumen-cli-interface-generated-clients"
@@ -999,26 +999,26 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c1d9da76f5758ea12121a5ef09d4fcd72f23a967f0a7c9a0bc22c8f674742e24"
+digest = "sha256:5d108719ed7b0ebc6a6b4f504acd53a5866f501310cb7ae44268962d5e4dab77"
 
 [[cases]]
 id = "lumen-cli-interface-llm-playbook"
-capability_id = "cli-interface"
-claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-contract_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+capability_id = "agent-task-navigation"
+claim_id = "lumen-llm-v2-task-navigation"
+contract_id = "lumen-llm-v2-task-navigation"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-llm-playbook"
 test_path = "apps/lumen/tests/behavior_lumen_cli_interface_llm_playbook.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
 assertions = [
-    "lumen llm outline, workflow, integration, quickstart, and recipes preserve the agent-facing topic set.",
-    "lumen llm integration preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
+    "lumen llm outline publishes the cclab.llm.v2 typed task manifest and every advertised topic parses through the binary.",
+    "lumen llm integrate-source-db preserves provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
     "agent-facing playbook output remains deterministic and offline.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6b213c5f081b95afaa3f5c5adf453450360e793b1cc2216b693ecd4e7d34bcc5"
+digest = "sha256:5c4505712a95d84f9362afb6b5893b2b06e620ab23c0ebd26d381d102f84062b"
 
 [[cases]]
 id = "lumen-cli-interface-offline-cli"
@@ -1033,12 +1033,12 @@ required_for_production = true
 assertions = [
     "lumen spec emits valid OpenAPI JSON, OpenAPI YAML, and JSON-schema output offline.",
     "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
-    "lumen llm outline, workflow, integration, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals.",
-    "lumen llm integration recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL.",
+    "lumen llm outline publishes a cclab.llm.v2 task manifest and each advertised topic preserves the task-navigation contract.",
+    "lumen llm integrate-source-db recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b5c8efc587a4bdb91816764224d180df09d42d28fc17d48a639504bf6dafa81a"
+digest = "sha256:7068baa9ba9568dec78e40764af49a2bcee11097d77da1be8549cea525f7215d"
 
 [[cases]]
 id = "lumen-cli-interface-protocol-transport"
@@ -1057,7 +1057,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c55c81ceb634f5783bf02df4ed834e71dbd84da80ae9b1e412a7efd3cf65b827"
+digest = "sha256:8b5e53fcd8895ebef4cc8946047f69646124ef334ec680a56f56386af6f32fcb"
 
 [[cases]]
 id = "lumen-cli-interface-query-catalog"
@@ -1075,7 +1075,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ba8db5e4f662a2532956dcd78387807165742bf7eb3480ebd6ea08b31d5c7790"
+digest = "sha256:e5fc585de3e83d9e5400896f35bab3d303415d7a013edb6cf5d141adccabab5a"
 
 [[cases]]
 id = "lumen-competitor-feature-parity-api-and-search"
@@ -1094,7 +1094,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:72c8dd31f69b3d97c09da4f0eaf02964fb8be4ed00e13e3093a3970f39d1f7d6"
+digest = "sha256:76016a606fa197aed29531622906b4ce636a996fff0708d3b1ef7e5ecbb4c4b9"
 
 [[cases]]
 id = "lumen-competitor-performance-competitive"
@@ -1114,7 +1114,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c3ac2f06c0ee04174d241cce9eb0b22e387cb9d73abb9939871702b7b83701bd"
+digest = "sha256:56f47016d2721e540e65b5911a9f2cc7b5ba524bbf6c45145e78314a98bd694c"
 
 [[cases]]
 id = "lumen-long-running-stability-latency-drift"
@@ -1129,7 +1129,7 @@ required_for_production = true
 assertions = ["(f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:be79c493398e3a9b8e7f88a15be36fc45914541f15a44a5c4b4c262c041bd0a8"
+digest = "sha256:188ebbacde70b2b45571e5f5367a8d75e073180ae4f9476235d3b6fc79926d82"
 
 [[cases]]
 id = "lumen-long-running-stability-meta-api"
@@ -1149,7 +1149,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:317b5f52e757f8652c9b765a98443123cce218a472008c1d7407ae8872086bd1"
+digest = "sha256:dcd9d76c3912fb077ffc16e0899f902a1d3ce74f226156d4d22fd33945031a27"
 
 [[cases]]
 id = "lumen-long-running-stability-operator-render"
@@ -1167,7 +1167,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:00ce2c267d7e7b93f40439be02480be5381293b546591cc68e6fadd64fae2460"
+digest = "sha256:c4e5d896341de2c3eb1d0e020f610c51a56cc08adba26e599780ae7262197d87"
 
 [[cases]]
 id = "lumen-long-running-stability-overload-backpressure"
@@ -1182,7 +1182,7 @@ required_for_production = true
 assertions = ["(d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:506b77976d87982cecab779decf22e0ca18ae296bc1cfe188624053d2f1f3353"
+digest = "sha256:b540c38409389516bc5c8cf967531b0e5597a8be8e174b1979044b4eccaebf65"
 
 [[cases]]
 id = "lumen-long-running-stability-query-resilience"
@@ -1201,7 +1201,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:236ad3e97b7df2e16ce43c6d258e6626fb7fdfff55478cee6ca019d84602c91b"
+digest = "sha256:f72f8e7b323417da73a32fa070ab670a98a5d6977038b6a5a16a101b7630f27d"
 
 [[cases]]
 id = "lumen-long-running-stability-resilience-survival"
@@ -1219,7 +1219,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:057e7163be081dd7cb589fa99a7895c274ef82b57c9a0f5494b37b535d7dddf8"
+digest = "sha256:ae8886e55908aa069b63f8798f7be8eed18bbd0d288e1f66d0dd0bdd2d5a33a0"
 
 [[cases]]
 id = "lumen-long-running-stability-resource-leak"
@@ -1234,7 +1234,7 @@ required_for_production = true
 assertions = ["(e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:26ffdaf402e896d774e321443f7d273e1ac5543ac4d03e95284bc597c07e9569"
+digest = "sha256:32cb521498429c2a8a20b40d7995eaff3efac392f68a12182f8c2cb2d888254a"
 
 [[cases]]
 id = "lumen-security-hardening-access-control"
@@ -1252,7 +1252,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b822ad4e9065999f1dbc596fd84924248d2ebb6a567bdf209c558f354f15f268"
+digest = "sha256:59649542e2c04f4c138bab5298f816891479dbacfd10150073334ca76b3eee08"
 
 [[cases]]
 id = "lumen-security-hardening-auth-bearer-rbac"
@@ -1270,7 +1270,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:c3fbf3832f52fde979c03a8e6758a2bff1ae5e6b3dbc762b6758143da50c5f75"
+digest = "sha256:597ef4d6bf30d10af859456cdfb36e27503c0e53427cb670f53d44ebd90c9a59"
 
 [[cases]]
 id = "lumen-security-hardening-query-injection"
@@ -1285,7 +1285,7 @@ required_for_production = true
 assertions = ["C2: malformed JSON, deeply-nested JSON query DSL, special-char search text, inverted ranges, and range numeric overflow are rejected or evaluated safely (no panic, no 5xx, bounded work)."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f19955a6fbbf7e3bc31a7468f8029556bc291e6f9f013147ebc4e7d37bd63950"
+digest = "sha256:6741fce252dd73eec3133ef21a1e809a3e38fa37e60f7804659b1616b214aad5"
 
 [[cases]]
 id = "lumen-security-hardening-result-leak"
@@ -1300,7 +1300,7 @@ required_for_production = true
 assertions = ["C3: relevance scores and hit existence do not leak documents across collection boundaries; RBAC denial coverage remains pinned by the authz matrix case."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:1a26739da22c09efcef7a2801e1380eef98c50fee60e5dfeefd4b150b9ff16ab"
+digest = "sha256:17b63397b00e0811bfe8e950820fb8e5391d1ef0146dc4c381ace6d330a0733d"
 
 [[cases]]
 id = "lumen-topology-existing-backup-seed"
@@ -1315,7 +1315,7 @@ required_for_production = true
 assertions = ["The backup/restore e2e gate proves cold snapshot restore; the empty-PVC bootstrap seed path now restores SnapshotV1 before WAL/raft catch-up."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0eebf9b96dfb58ce0543ca55cb42dca0ae2950e5d8b103568c564e96eede8092"
+digest = "sha256:f4b0b21e524bcfbebc8ff6e35a67aee6e3be84cf776e61d42b24b46ab8a5312a"
 
 [[cases]]
 id = "lumen-topology-existing-raft-replica-sync"
@@ -1330,7 +1330,7 @@ required_for_production = true
 assertions = ["The existing compatibility log convergence gate remains the executable proof for late/second node replay; shard-group topology is now dogfooded by the operator kind profiles."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bfe3ac929e54ea02817875a951c8962cfe87a4fbba685c5951a22cdb41944715"
+digest = "sha256:5b4a3105d8643b3f477bf962309f6c8c8cd12179af8e5167ef8b720715c6da9b"
 
 [[tool_contracts]]
 id = "lumen-guard-auth-surface"
@@ -1339,8 +1339,8 @@ dimension = "security"
 source_ref = "apps/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-guard-auth-surface"
 manifest_path = "apps/lumen/guard.toml"
 command = "target/debug/guard scan apps/lumen --compact --no-persist"
-content_digest = "sha256:525edc47f13dc0feae7a3b484bfe2fa43847e69271f1686f5e1be5fea0fc4edd"
-digest = "sha256:437ee1cd5d52c8b13540245f6ed12b708a71ba2dddc565e6d7c50a211114bebe"
+content_digest = "sha256:3aafdadcbeae06215cc83b5f60c1cd05f68a8ea5c6993be366854dc3e327ef58"
+digest = "sha256:29220d1f85e27fbcfd074cc13f9716c69c83fea92d5c81ed6175b9cfe007bb53"
 
 [[tool_contracts]]
 id = "lumen-guard-search-security"
@@ -1349,8 +1349,8 @@ dimension = "security"
 source_ref = "apps/lumen/external-contracts/security-hardening/security/access-control.md#lumen-guard-search-security"
 manifest_path = "apps/lumen/guard-search.toml"
 command = "target/debug/guard scan apps/lumen --compact --no-persist"
-content_digest = "sha256:277545539c5f0e73eefd6e3e09352f8224def803f0e4cb980b84e883e24d0dd6"
-digest = "sha256:f940ec5c57eea0520cf488490dcad1792e3d6ad444638d7d086d5f3e4d283a6a"
+content_digest = "sha256:71a40fb9a7d8d9baa52917eddef22d16d9bb9d83337ce9829b93f9157ccff086"
+digest = "sha256:96cc27e7a07e03bddd3d52ace20cb199e5086ee259d10127aaf6e0b89bc5c9a8"
 
 [[tool_contracts]]
 id = "lumen-meter-search-efficiency"
@@ -1359,8 +1359,8 @@ dimension = "efficiency"
 source_ref = "apps/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency"
 manifest_path = "apps/lumen/meter-search-efficiency.toml"
 command = "cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter"
-content_digest = "sha256:74040e3ae27665af7cb0e0ff468da8230db7ecbcac2d36e3255eaa68a67c4c7a"
-digest = "sha256:29dbf4968fca2470a53a891a04d449cf11295eada2c8ce04957ef0ce0b5da0d0"
+content_digest = "sha256:016eacf2ccf59fb87d5a5d6ac30633521c3fed36c91b64886c18da246fa91549"
+digest = "sha256:1a3277f4fd40f98aa85cfb6935748ea3b974395cbe7e73514d0f09b692009e95"
 
 [[tool_contracts]]
 id = "lumen-meter-search-security"
@@ -1369,8 +1369,8 @@ dimension = "security"
 source_ref = "apps/lumen/external-contracts/security-hardening/security/access-control.md#lumen-meter-search-security"
 manifest_path = "apps/lumen/meter-search-security.toml"
 command = "target/debug/meter test -- -p lumen --test api_e2e -- --ignored"
-content_digest = "sha256:7f2b1940337d43560c50d5027aabda4c3ef938514825c56c5d29d88aa91236af"
-digest = "sha256:f13f1b22d0edc064c32575caaf0ed49490f641b0524ee9e7e20b8f5f23afa034"
+content_digest = "sha256:c8f2577d90b0483ff2a93df7049caf6467bbba83569374a39d7be68cd4d92549"
+digest = "sha256:b9e92c5ec96f8dfa2fb427e184de90f1cc59f91547ba6e489f3c948112815b81"
 
 [[tool_contracts]]
 id = "lumen-meter-search-stability"
@@ -1379,8 +1379,8 @@ dimension = "stability"
 source_ref = "apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-meter-search-stability"
 manifest_path = "apps/lumen/meter-search-stability.toml"
 command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
-content_digest = "sha256:7ab3c60ccd66b463f9b5b430fbf95ce9852fc0ea123a872daeda2ea891358888"
-digest = "sha256:2c4931e88b1317935aa38511f41bcfad790df9d5ecdcbc791b360ac50d767d74"
+content_digest = "sha256:48f5e99c959d019e07a8eed463ad8601d9b0d23849181cb1df272cb0718f35aa"
+digest = "sha256:532b79d3bae254b32fa6f83ea787ce3b217d991297000e323861d3de13753b75"
 
 [[tool_contracts]]
 id = "lumen-rig-resilience"
@@ -1389,8 +1389,8 @@ dimension = "stability"
 source_ref = "apps/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-rig-resilience"
 manifest_path = "apps/lumen/rig.toml"
 command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
-content_digest = "sha256:dc7385fcc2ce189e7f284bed20300def51c9af1dbf1a444f539262c6e1bc1e59"
-digest = "sha256:98875f642de6d25914456afe12ee6c84c1e5fcc36ebe7cbf61efcc867738809d"
+content_digest = "sha256:54bc3b4e76d2dfc46fd3d836b8eebac9b0ec8b30b36daa24501491d88d7ed85b"
+digest = "sha256:9751b8ced8cfd604e3581fc457bd71d68fb8b3a19236da77e9683a559908a0a0"
 
 [[tool_contracts]]
 id = "lumen-rig-search-stability"
@@ -1399,5 +1399,5 @@ dimension = "stability"
 source_ref = "apps/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-rig-search-stability"
 manifest_path = "apps/lumen/rig-search.toml"
 command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
-content_digest = "sha256:6e10998fdb5bc2a1a2f1b1914c193047591debd06c7f39bf9011d228d7e1d88e"
-digest = "sha256:ef76443f1492f91226ca63879e080c3d6d426a445afb0024ff894a8713db628e"
+content_digest = "sha256:ed53f1c1c7dff5eace459c47cd858510b017f7e1c4deee8d6a798521ac4460f9"
+digest = "sha256:875f6e4f8c7276b424ed3de4a6295bc44cfa9661eea1b8eaed58c5c6a07a9a4c"

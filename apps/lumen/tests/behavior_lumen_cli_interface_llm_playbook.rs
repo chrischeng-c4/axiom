@@ -11,7 +11,7 @@
 // AW-EC-END
 
 // Contract: lumen llm outline publishes the cclab.llm.v2 typed task manifest and every advertised topic parses through the binary.
-// Contract: lumen llm integrate-source-db preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.
+// Contract: lumen llm integrate-source-db preserves provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.
 // Contract: agent-facing playbook output remains deterministic and offline.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
