@@ -100,3 +100,42 @@ changes:
     impl_mode: hand-written
     description: "Bind Tape replay and checkpoint continuity assertions to the shared Rig stateful lifecycle. generator gap: missing-generator:tape-stateful-adapter (#1645)."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: rig-stateful-service-harness-verification
+requirements:
+  bounded_lifecycle:
+    id: R1
+    text: "The runner executes warmup, observe, fault, recover, verify, and teardown in fixed order with explicit per-phase and primary-lifecycle time budgets."
+    kind: functional
+    risk: high
+    verify: cargo test -p rig --test stateful_service_harness
+  failure_evidence:
+    id: R2
+    text: "A failed or timed-out primary phase records its phase, error, duration, and already-captured evidence before the runner always executes bounded teardown."
+    kind: regression
+    risk: high
+    verify: cargo test -p rig --test stateful_service_harness
+  real_stateful_fixture:
+    id: R3
+    text: "The shared runner drives a real local HTTP stateful fixture through steady state, fault, recovery, and continuity verification without mocks."
+    kind: functional
+    risk: high
+    verify: cargo test -p rig --test stateful_service_harness
+  shared_adapters:
+    id: R4
+    text: "Lumen and Tape use the same Rig runner API while supplying different domain assertions for search continuity versus ordered replay and checkpoint continuity."
+    kind: functional
+    risk: medium
+    verify: cargo test -p lumen --test rig_stateful_adapter && cargo test -p tape --test rig_stateful_adapter
+---
+flowchart TD
+    r1[R1 bounded lifecycle] --> cargo_test_p_rig_test_stateful_service_harness[cargo test -p rig --test stateful_service_harness]
+    r2[R2 failure evidence] --> cargo_test_p_rig_test_stateful_service_harness
+    r3[R3 real stateful fixture] --> cargo_test_p_rig_test_stateful_service_harness
+    r4[R4 shared adapters] --> cargo_test_p_lumen_test_rig_stateful_adapter_cargo_test_p_tape_test_rig_stateful_adapter[cargo test -p lumen --test rig_stateful_adapter && cargo test -p tape --test rig_stateful_adapter]
+```
