@@ -51,3 +51,21 @@ changes:
     impl_mode: hand-written
     description: "Make the Lumen capability-profile discovery fixture exercise apps/lumen rather than the retired projects/lumen root."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: lumen-source-root-convergence-verification
+requirements:
+  canonical_source_root:
+    id: R1
+    text: "Every live Lumen source-root fact and discovery fixture uses apps/lumen while AW project identity remains lumen."
+    kind: regression
+    risk: medium
+    verify: cargo test -p agentic-workflow lumen_agent_facing_trait_adds_dx_without_expanding_service_obligations && cargo build -p lumen
+---
+flowchart TD
+    r1[R1 canonical source root] --> cargo_test_p_agentic_workflow_lumen_agent_facing_trait_adds_dx_without_expanding_service_obligations_cargo_build_p_lumen[cargo test -p agentic-workflow lumen_agent_facing_trait_adds_dx_without_expanding_service_obligations && cargo build -p lumen]
+```
