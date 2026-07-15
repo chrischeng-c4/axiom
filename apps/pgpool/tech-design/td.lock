@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-15T09:45:05.659505+00:00"
-digest = "sha256:5636b971fc8e081892766a8ed85e4cce486e6ab39cc5ebd07708ab0ad1da7b83"
-source_digest = "sha256:5636b971fc8e081892766a8ed85e4cce486e6ab39cc5ebd07708ab0ad1da7b83"
-ir_digest = "sha256:d5ebdaa1d97e7a9de4355abb693142585ba9c430e04097a521d48011173fdd7c"
+generated_at = "2026-07-15T09:49:44.734261+00:00"
+digest = "sha256:af5e694f405b9ea165b8ab8df3a9094c8082feb3bbde0d5741b10909477267c5"
+source_digest = "sha256:af5e694f405b9ea165b8ab8df3a9094c8082feb3bbde0d5741b10909477267c5"
+ir_digest = "sha256:6153a53c18b2524684e287d9c97f0e33ebd46d851ea077c445f5daea05ebb5c0"
 
 [[files]]
 path = "logic/adopt-shared-labeled-prometheus-metrics-encoder.md"
@@ -27,8 +27,8 @@ section_count = 5
 
 [[files]]
 path = "logic/served-admin-plane-with-drain-aware-readiness.md"
-digest = "sha256:5910d0d19af5a5859444fc052c242212af563a35638bc72cc6c9f8d37c1ac5ed"
-ir_digest = "sha256:82cda8f934e16da9a8eed3524159d7ca2578b0b396feaf90833b9f0969cdc164"
+digest = "sha256:8b400d8ca445bf548e2d186d396f82d83018b3a05c1ed9ecd6642ebfd82183b7"
+ir_digest = "sha256:6e7a0aa53233561ec270f7a708379d5689a427f6d7769eb6ac932003be0ea447"
 section_count = 6
 
 [[files]]
