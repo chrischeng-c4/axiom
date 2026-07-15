@@ -79,7 +79,6 @@ The per-endpoint invariant is extended rather than replaced: discovered usable c
 BackendPool remains local and reuse-first. Any waiter may take a reset-clean normal backend. Only after reservePoolTimeout does it signal bounded demand to a background lease client. The client coalesces requests and renewals; relay, reset, and queue-wake paths only inspect an in-memory lease snapshot. A new reserve TCP connection consumes a cached grant before dialing. Failed connect, failed reset, cancellation, expiry, and drain converge on one idempotent reconciliation key, returning or retaining capacity exactly once.
 
 Fairness is FIFO among live waiters per endpoint. Cancellation and completed waiters are skipped lazily without changing deadline order. Allocator denial, controller unavailability, endpoint failure, and expiry prohibit new reserve connections but leave normal reuse and valid existing grants available. A waiter wakes on normal capacity or returns BackendPoolSaturated with SQLSTATE 53300 at queueWaitTimeout. Idle reserve backends close after the configured TTL; draining Pods retain grants through physical close or safely reconciled expiry.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
