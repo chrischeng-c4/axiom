@@ -36,7 +36,7 @@ opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true
 tracing-opentelemetry = { version = "0.22", optional = true }
 
 # The HTTP runtime (HTTP/1.1 + h2c on one port) is composed, not re-implemented.
-http-server = { path = "../http-server" }
+server-http = { path = "../server-http" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

@@ -1,8 +1,8 @@
 // SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#logic
 // HANDWRITE-BEGIN gap="missing-generator:logic:a53592d8" tracker="pending-tracker" reason="TapeCommand::Append { topic, key, payload, timestamp_ms } / TapeCommand::CheckpointPut { topic, consumer, offset, updated_at_ms } (the replicated commands, both time fields resolved by the caller before proposing so every replica computes the identical value); TapeOutcome::{Appended(TapeEvent), Checkpoint(Result<ConsumerCheckpoint, TapeError>)} (local-only, claimed from an OutcomeWindow, never serialized over the wire); TapeStateMachine (apply = lock the shared Arc<Mutex<TapeJournal>> and call the unchanged journal.append / journal.put_checkpoint_at, stash the outcome, persist the fsynced applied-<node>.idx marker; snapshot/restore = whole-journal serde_json tagged with the applied index; applied_index recovered from the marker at construction); TapeRaft (single-group wrapper: RaftStore::open on {data_dir}/raft, RaftHost::spawn, router() passthrough, propose_append/propose_checkpoint = propose + claim outcome, from_topology(ClusterTopology) constructor, is_leader/leader/applied_index accessors, host_config(snapshot_every))."
-//! raft-host-backed consensus for tape (#1327).
+//! raft-runtime-backed consensus for tape (#1327).
 //!
-//! `apps/tape`'s journal is wired as a [`raft_host::RaftStateMachine`] so HA
+//! `apps/tape`'s journal is wired as a [`raft_runtime::RaftStateMachine`] so HA
 //! append/checkpoint-put go through the shared driver (propose -> commit ->
 //! sole applier) instead of a hand-rolled one. tape is a **single-group**
 //! adopter (like relay, unlike keep's host-per-shard): one [`RaftHost`]
@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use axum::Router;
-use raft_host::{
+use raft_runtime::{
     ClusterTopology, FsyncPolicy, HostConfig, Index, Membership, NodeId, OutcomeWindow, RaftHost,
     RaftStateMachine, RaftStore, SnapshotPolicy,
 };
@@ -110,7 +110,7 @@ pub fn snapshot_bytes(journal: &Arc<Mutex<TapeJournal>>, up_to: Index) -> Result
 /// itself replayed once an entry is at/below the recovered floor (that is the
 /// whole point of the floor: it stops double-apply). So the floor alone would
 /// silently lose journal content across a real process restart. To close
-/// that gap without waiting on raft-host's own (peer-to-peer-only)
+/// that gap without waiting on raft-runtime's own (peer-to-peer-only)
 /// InstallSnapshot plumbing, [`Self::persist_marker`] also writes a
 /// full-journal snapshot file (`snapshot-<node>.json`, sibling to the
 /// marker), and [`Self::new`] restores it before recovering the floor -- a
@@ -154,8 +154,10 @@ impl TapeStateMachine {
             let snap_path = snapshot_path_for(path);
             match std::fs::read(&snap_path) {
                 Ok(bytes) => {
-                    let snap: JournalSnapshot = serde_json::from_slice(&bytes)
-                        .with_context(|| format!("corrupt journal snapshot {}", snap_path.display()))?;
+                    let snap: JournalSnapshot =
+                        serde_json::from_slice(&bytes).with_context(|| {
+                            format!("corrupt journal snapshot {}", snap_path.display())
+                        })?;
                     *journal.lock().expect("journal mutex poisoned") = snap.journal;
                     applied = snap.up_to;
                 }
@@ -194,7 +196,7 @@ impl TapeStateMachine {
     /// Writing the whole journal on every apply is a deliberate
     /// correctness-first tradeoff for this slice (proving no committed event
     /// loss matters more than write amplification here); throttling this to
-    /// every `SNAPSHOT_EVERY` applies, mirroring raft-host's own log
+    /// every `SNAPSHOT_EVERY` applies, mirroring raft-runtime's own log
     /// compaction cadence, is a reasonable follow-up once tape's journals are
     /// large enough for it to matter.
     fn persist_marker(&self, index: Index) {
@@ -334,7 +336,10 @@ impl TapeRaft {
             .to_str()
             .context("raft data dir is not valid UTF-8")?;
         let store = RaftStore::open(dir, node_id, FsyncPolicy::Always)?;
-        let sm = TapeStateMachine::new(journal, Some(raft_dir.join(format!("applied-{node_id}.idx"))))?;
+        let sm = TapeStateMachine::new(
+            journal,
+            Some(raft_dir.join(format!("applied-{node_id}.idx"))),
+        )?;
         let host = RaftHost::spawn(
             node_id,
             membership,

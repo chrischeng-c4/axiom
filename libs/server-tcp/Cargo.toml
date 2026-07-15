@@ -1,0 +1,16 @@
+[package]
+name = "server-tcp"
+version = "0.1.0"
+edition = "2021"
+description = "Shared TCP protocol runtime built on server-lifecycle: accept loop, per-connection supervision, admission budgeting, drain-aware shutdown, and handler traits."
+
+[lib]
+name = "server_tcp"
+path = "src/lib.rs"
+
+[dependencies]
+server-lifecycle = { path = "../server-lifecycle" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+socket2 = "0.6"

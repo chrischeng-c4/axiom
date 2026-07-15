@@ -51,7 +51,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
-    use server_core::{ConnectionBudget, DrainController};
+    use server_lifecycle::{ConnectionBudget, DrainController};
     use std::time::Duration;
     use tower::ServiceExt;
 

@@ -19,7 +19,7 @@
 //!
 //! The PEM loading, rustls server/client config builders, and the
 //! Once-guarded crypto-provider install are generic across every service
-//! with a peer/replication port and live in `libs/service-tls` (#971); this
+//! with a peer/replication port and live in `libs/peer-tls` (#971); this
 //! module is a thin adapter over it that keeps lumen's `LUMEN_PEER_TLS_*`/
 //! `LUMEN_PEER_MTLS` env names and pub API unchanged.
 
@@ -27,7 +27,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-/// The prefix passed to `service_tls::PeerTlsConfig::from_env`: derives
+/// The prefix passed to `peer_tls::PeerTlsConfig::from_env`: derives
 /// `LUMEN_PEER_TLS_CERT` / `LUMEN_PEER_TLS_KEY` / `LUMEN_PEER_TLS_CA` /
 /// `LUMEN_PEER_MTLS`, preserving lumen's env contract byte-for-byte.
 const ENV_PREFIX: &str = "LUMEN_PEER";
@@ -42,8 +42,8 @@ pub struct PeerTlsConfig {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
-impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
-    fn from(cfg: service_tls::PeerTlsConfig) -> Self {
+impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
+    fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
             cert: cfg.cert,
             key: cfg.key,
@@ -54,7 +54,7 @@ impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
-impl From<PeerTlsConfig> for service_tls::PeerTlsConfig {
+impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
             cert: cfg.cert,
@@ -70,21 +70,21 @@ impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
     pub fn from_env() -> Result<Option<Self>> {
-        Ok(service_tls::PeerTlsConfig::from_env(ENV_PREFIX)?.map(Self::from))
+        Ok(peer_tls::PeerTlsConfig::from_env(ENV_PREFIX)?.map(Self::from))
     }
 
     /// Build a rustls server config for the peer transport.
     pub fn rustls_server_config(&self) -> Result<rustls::ServerConfig> {
-        service_tls::PeerTlsConfig::from(self.clone()).rustls_server_config()
+        peer_tls::PeerTlsConfig::from(self.clone()).rustls_server_config()
     }
 
     /// Build a rustls client config for dialing peer transports.
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
-        service_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
+        peer_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
     }
 }
 
-pub use service_tls::install_default_crypto_provider;
+pub use peer_tls::install_default_crypto_provider;
 
 #[cfg(test)]
 mod tests {

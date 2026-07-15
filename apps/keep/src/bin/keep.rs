@@ -522,7 +522,7 @@ const TOPICS: &[cli_std::llm::Topic] = &[
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install the process-level rustls crypto provider before anything parses or
-    // dials TLS (the operator/kube, raft-host peer, and online CLI paths all link
+    // dials TLS (the operator/kube, raft-runtime peer, and online CLI paths all link
     // rustls, which panics without a default provider). A no-op in the default,
     // rustls-free build. See `keep::tls`.
     keep::tls::install_default_crypto_provider();
@@ -1004,7 +1004,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // single-node deployments keep the direct-to-engine write path. The hosts
     // are held for the server's lifetime (Drop aborts their tick/pump tasks).
     #[cfg(feature = "raft")]
-    let shard_hosts = if raft_host::cluster::replica_mode() {
+    let shard_hosts = if raft_runtime::cluster::replica_mode() {
         let replicas = std::env::var("KEEP_REPLICAS_PER_SHARD")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
@@ -1084,8 +1084,8 @@ fn derive_cluster_config(args: &ServeArgs) -> Result<keep::ClusterConfig> {
 
     let headless =
         std::env::var("KEEP_HEADLESS_SERVICE").unwrap_or_else(|_| "keep-headless".to_string());
-    let dims = raft_host::ClusterDims::from_env()?;
-    let topo = raft_host::ClusterTopology::from_env("keep", &headless, args.port, "KEEP_PEERS")?;
+    let dims = raft_runtime::ClusterDims::from_env()?;
+    let topo = raft_runtime::ClusterTopology::from_env("keep", &headless, args.port, "KEEP_PEERS")?;
     let node_count = topo.replicas_per_shard.max(1) as usize;
     let mut peers = vec![String::new(); node_count];
     for (node, url) in topo.peers {

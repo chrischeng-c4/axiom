@@ -9,7 +9,7 @@
 //! pods would do, minus k8s itself. `axum_test::TestServer` real-port
 //! instances are h2c-prior-knowledge compatible (both it and production
 //! `service_http::serve` build on `hyper_util::server::conn::auto::Builder`),
-//! so `RoutedRouter`'s `h2c::H2cPool` forwarding works identically here and
+//! so `RoutedRouter`'s `transport_h2c::H2cPool` forwarding works identically here and
 //! in production. Mirrors `reshard_driver_e2e.rs`'s `spin_up_shard` pattern
 //! but wires the pod-side routing layer instead of the driver-facing admin
 //! surface.

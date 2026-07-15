@@ -65,7 +65,7 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! ([`error`]) each service renders for its error responses. This crate is
 //! the one place that shape lives — the 6th service-kit lib, after `h2c`
 //! (transport), `cli-std` (the `llm`/`upgrade`/`issue` CLI convention),
-//! `raft-core` + `raft-host` (replication), and `operator` (the k8s
+//! `raft-core` + `raft-runtime` (replication), and `operator` (the k8s
 //! reconcile scaffold). It operationalizes the CONTRIBUTING "standard
 //! endpoints" convention: every service exposes the same probe surface,
 //! with the same auth-exempt / no-body-limit treatment.
@@ -73,7 +73,7 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! ## Composition
 //!
 //! It composes, it does not replace: [`transport::serve`] delegates to
-//! [`h2c::serve`]; [`probes::standard_probe_routes`] returns an `axum::Router`
+//! [`transport_h2c::serve`]; [`probes::standard_probe_routes`] returns an `axum::Router`
 //! a service `.merge`s its own (auth'd, body-limited) data plane onto.
 //!
 //! ## What a service wires

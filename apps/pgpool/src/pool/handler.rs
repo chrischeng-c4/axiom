@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md#schema
 // <HANDWRITE gap="missing-generator:logic:pgpool-backend-pool" tracker="#1289" reason="Backend pool needs generator primitives that do not exist yet.">
-//! `PoolHandler`: the single `tcp_server::TcpHandler` `pgpool serve` binds
+//! `PoolHandler`: the single `server_tcp::TcpHandler` `pgpool serve` binds
 //! to its listener, selected once at process start from
 //! `RuntimePlan::pool_mode` (per the TD Schema section) and dispatching to
 //! whichever mode-specific handler it wraps.
@@ -9,7 +9,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::Result;
-use tcp_server::{ConnectionContext, TcpHandler};
+use server_tcp::{ConnectionContext, TcpHandler};
 use tokio::net::TcpStream;
 
 use crate::pool::transaction::TransactionHandler;

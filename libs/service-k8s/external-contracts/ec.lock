@@ -1,0 +1,31 @@
+version = 1
+project = "service-k8s"
+ir_kind = "ec"
+ec_path = "libs/service-k8s/external-contracts"
+inventory_path = "libs/service-k8s/aw.toml"
+generated_at = "2026-07-15T07:39:14.722710+00:00"
+ir_digest = "sha256:3ec338110a747bb6ff9c75a577da6c9680efb6268f493c88d726ae2e93e62f13"
+source_digest = "sha256:328e1b338b22b7f8419926a50f77d6e68d7d7d9afbaf604eb24c870a690fd289"
+tool_contracts = []
+
+[[sources]]
+path = "libs/service-k8s/external-contracts/behavior/shared-kubernetes-operator-scaffold-contract.md"
+digest = "sha256:cc07c82875774ece817b126645a4048000fb967acb580b3998bca30d670201d3"
+
+[[cases]]
+id = "shared-kubernetes-operator-scaffold-contract"
+capability_id = "shared-kubernetes-operator-scaffold"
+claim_id = "shared-kubernetes-operator-scaffold-contract"
+contract_id = "shared-kubernetes-operator-scaffold-contract"
+dimension = "behavior"
+source_ref = "libs/service-k8s/external-contracts/behavior/shared-kubernetes-operator-scaffold-contract.md#shared-kubernetes-operator-scaffold-contract"
+test_path = "libs/service-k8s/tests/behavior_shared_kubernetes_operator_scaffold_contract.rs"
+command = "cargo test -p service-k8s"
+required_for_production = true
+assertions = [
+    "Shared Kubernetes Operator Scaffold public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:58e99ae4baa7c5d0253218e96df1255d58093f355d0e4a461b0b26594fe0beae"

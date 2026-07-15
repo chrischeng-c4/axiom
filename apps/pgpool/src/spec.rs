@@ -86,7 +86,7 @@ pub const fn llm_boundaries_md() -> &'static str {
 
 - Core pooling does not embed Cloud SQL Proxy or AlloyDB discovery.
 - Platform adapters may supply backend endpoints and auth material later.
-- `server-core`, `tcp-server`, and `http-server` own reusable runtime mechanics.
+- `server-lifecycle`, `server-tcp`, and `server-http` own reusable runtime mechanics.
 - `pgpool` owns PostgreSQL pool semantics, connection reuse, and drain policy.
 "#
 }

@@ -207,7 +207,7 @@ fn unreachable_backend() -> SocketAddr {
 /// over h2c, one entirely over HTTP/1.1 -- each issuing `POST /drain` as
 /// its own LAST call. Two processes avoid a race between the two protocol
 /// clients contending for a single process's post-drain listener state
-/// (`h2c::server::serve_with_options`'s accept loop stops taking new
+/// (`transport_h2c::server::serve_with_options`'s accept loop stops taking new
 /// connections the instant its shutdown future resolves).
 #[tokio::test]
 async fn all_routes_respond_on_h2c_and_http1() {
@@ -220,7 +220,7 @@ async fn all_routes_respond_on_h2c_and_http1() {
     // h2c-driven process.
     {
         let mut serve = ServeProcess::spawn(unreachable_backend(), &[]).await;
-        let client = h2c::h2c_client().expect("build h2c client");
+        let client = transport_h2c::h2c_client().expect("build h2c client");
         for path in &get_routes {
             let response = client
                 .get(serve.admin_url(path))
@@ -292,7 +292,7 @@ async fn all_routes_respond_on_h2c_and_http1() {
 /// a single `write_all` before either response is read) rather than issued
 /// as two sequential `reqwest` calls. This is deliberate: the admin
 /// listener's accept loop stops taking brand-new connections the very
-/// instant drain starts (confirmed by reading `libs/h2c/src/server.rs`),
+/// instant drain starts (confirmed by reading `libs/transport-h2c/src/server.rs`),
 /// and hyper-util's `GracefulShutdown` closes idle keep-alive connections
 /// essentially immediately too -- so a *second*, separately-issued request
 /// (whether on a fresh connection or a reused idle one) races the shutdown

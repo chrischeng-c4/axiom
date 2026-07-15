@@ -36,15 +36,17 @@ tokio = { workspace = true }
 service-http = { path = "../../libs/service-http" }
 # Prometheus metric primitives (Counter/Latency + text-format render) for
 # TapeMetrics.
-service-metrics = { path = "../../libs/service-metrics" }
+metrics-prometheus = { path = "../../libs/metrics-prometheus" }
 # Shared bearer-token auth contract (#1326): StaticRoleMapVerifier, the
 # blanket auth_middleware, and the registry loader.
 service-auth = { path = "../../libs/service-auth" }
 # Shared raft driver (#1327): RaftHost/RaftStore/RaftStateMachine,
 # ClusterTopology::from_env, OutcomeWindow, SnapshotPolicy/HostConfig, and
 # the shared peer-TLS config adapter.
-raft-host = { path = "../../libs/raft-host" }
-# K8s operator (feature `operator`) — the shared libs/operator scaffold + render
+raft-runtime = { path = "../../libs/raft-runtime" }
+# Shared peer mTLS material/configuration for the Raft transport.
+peer-tls = { path = "../../libs/peer-tls" }
+# K8s operator (feature `operator`) — the shared libs/service-k8s scaffold + render
 # toolkit (#1328), mirroring relay's #1208 slice. tape supplies a TapeSpec CRD +
 # ManagedService and gets the reconcile controller for free. Versions mirror
 # the workspace's existing kube-rs users (relay / keep / lumen) so the
@@ -53,7 +55,7 @@ raft-host = { path = "../../libs/raft-host" }
 kube = { version = "0.98", features = ["runtime", "derive", "client"], optional = true }
 k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 schemars = { version = "0.8", optional = true }
-operator = { path = "../../libs/operator", optional = true }
+service-k8s = { path = "../../libs/service-k8s", optional = true }
 axum = { workspace = true }
 utoipa = { workspace = true }
 # Serve-path tracing init (RUST_LOG wins, else info EnvFilter).
@@ -79,7 +81,7 @@ futures = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["full"] }
 reqwest = { workspace = true }
-h2c = { path = "../../libs/h2c" }
+transport-h2c = { path = "../../libs/transport-h2c" }
 http-body-util = "0.1"
 tower = { workspace = true, features = ["util"] }
 
@@ -90,11 +92,11 @@ build-stamp = { path = "../../libs/build-stamp" }
 default = []
 self-update = ["cli-std/online"]
 issue = ["cli-std/online"]
-# operator — the shared libs/operator scaffold: a TapeSpec CRD + ManagedService
+# operator — the shared libs/service-k8s scaffold: a TapeSpec CRD + ManagedService
 # render, driven by operator::run. Ships the `tape k8s operator run` controller
 # and the CRD generator; pulls kube-rs, so the serving image stays kube-free
 # unless built with this feature (#1328).
-operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:operator"]
+operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s"]
 # backup — `tape backup` (#1329): fetches a snapshot from a running node's
 # `GET /admin/backup` over HTTP and ships it to a libs/service-backup
 # destination sink (relay #1209 layout). Enables the lib's s3 sink; file://

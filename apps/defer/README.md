@@ -267,7 +267,7 @@ ID: primary-replicas
 Type: Runtime
 Root WI: #766
 Status: confirmed
-Surfaces: Raft: delayed task state machine over `libs/raft-core` and `libs/raft-host`.
+Surfaces: Raft: delayed task state machine over `libs/raft-core` and `libs/raft-runtime`.
 EC Dimensions: stability: pending raft scheduler failover gate - no committed task loss or duplicate terminal ack
 Required Verification: conformance, dogfood
 Promise:

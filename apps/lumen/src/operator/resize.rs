@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:7b95a80b" tracker="pending-tracker" reason="Thin Lumen-specific adapter over the shared `operator::resize` module (#970): fetches the named Lumen CR for spec.serving.raftStorage and delegates PVC listing/quantity-compare/patch logic (parse_storage_bytes, ResizeAction/decide, PvcResizeOutcome, resize_instance) to libs/operator, supplying the `app.kubernetes.io/instance=<name>` label selector and the `raft-<name>-` PVC name filter. No generator primitive exists yet for this shape, so it stays HANDWRITE per CLAUDE.md until one covers it."
+// HANDWRITE-BEGIN gap="missing-generator:logic:7b95a80b" tracker="pending-tracker" reason="Thin Lumen-specific adapter over the shared `service_k8s::resize` module (#970): fetches the named Lumen CR for spec.serving.raftStorage and delegates PVC listing/quantity-compare/patch logic (parse_storage_bytes, ResizeAction/decide, PvcResizeOutcome, resize_instance) to libs/service-k8s, supplying the `app.kubernetes.io/instance=<name>` label selector and the `raft-<name>-` PVC name filter. No generator primitive exists yet for this shape, so it stays HANDWRITE per CLAUDE.md until one covers it."
 //! `lumen k8s operator resize-storage` (#809) support module.
 //!
 //! StatefulSet `volumeClaimTemplates` are immutable after creation, so
@@ -7,7 +7,7 @@
 //! StatefulSet's `apply` is a silent no-op for that field. The generic
 //! detect-and-patch tool (quantity parsing, grow/no-op/shrink decision, PVC
 //! listing + `StorageClass`-gated patch) lives in the shared
-//! [`operator::resize`] module (#970); this module is the thin Lumen-specific
+//! [`service_k8s::resize`] module (#970); this module is the thin Lumen-specific
 //! adapter that fetches the CR's declared `spec.serving.raftStorage` and
 //! scopes the PVC listing to the instance's `raft-<name>-<n>` volumes.
 
@@ -16,7 +16,7 @@ use kube::api::Api;
 
 use super::crd::Lumen;
 
-pub use operator::resize::{decide, parse_storage_bytes, PvcResizeOutcome, ResizeAction};
+pub use service_k8s::resize::{decide, parse_storage_bytes, PvcResizeOutcome, ResizeAction};
 
 /// List the live `raft-<name>-<n>` PVCs for the named `Lumen` instance,
 /// compare each to the CR's declared `spec.serving.raftStorage`, and patch
@@ -41,7 +41,7 @@ pub async fn resize_instance(
     let label_selector = format!("app.kubernetes.io/instance={name}");
     let prefix = format!("raft-{name}-");
 
-    operator::resize::resize_instance(
+    service_k8s::resize::resize_instance(
         client,
         namespace,
         &label_selector,

@@ -235,7 +235,7 @@ ID: primary-replicas
 Type: Runtime
 Root WI: #767
 Status: confirmed
-Surfaces: Raft: metadata, partition ownership, and rollup job state over `libs/raft-core` and `libs/raft-host`.
+Surfaces: Raft: metadata, partition ownership, and rollup job state over `libs/raft-core` and `libs/raft-runtime`.
 EC Dimensions: stability: pending raft OLAP failover gate - metadata and partition ownership survive failover
 Required Verification: conformance, dogfood
 Promise:

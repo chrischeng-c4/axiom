@@ -6,9 +6,9 @@
 //!
 //! keep is always a durable StatefulSet (per-pod WAL + snapshot PVC), so unlike
 //! a stateless service there is no Deployment branch — single-node is just
-//! `shardCount = replicasPerShard = 1`. The shared [`operator::render`] toolkit
+//! `shardCount = replicasPerShard = 1`. The shared [`service_k8s::render`] toolkit
 //! supplies the identity, the downward-API StatefulSet (the env
-//! `raft_host::cluster::ClusterTopology::from_env` consumes), and the
+//! `raft_runtime::cluster::ClusterTopology::from_env` consumes), and the
 //! Service/PDB/ServiceAccount shapes; keep adds its ConfigMap, health probes,
 //! security hardening, and disk tier on top.
 //!
@@ -17,7 +17,7 @@
 use serde_json::{json, Value};
 
 use super::crd::Keep;
-use operator::render::{self, RenderCtx, ShardedStatefulSet};
+use service_k8s::render::{self, RenderCtx, ShardedStatefulSet};
 
 const APP: &str = "keep";
 const MANAGER: &str = "keep-operator";
@@ -52,7 +52,7 @@ fn owner_ref(keep: &Keep) -> Option<Value> {
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
-/// keep's render identity for the shared [`operator::render`] helpers.
+/// keep's render identity for the shared [`service_k8s::render`] helpers.
 fn ctx<'a>(keep: &Keep, name: &'a str, ns: &'a str) -> RenderCtx<'a> {
     RenderCtx {
         app: APP,
@@ -94,7 +94,7 @@ pub fn render(keep: &Keep) -> Vec<Value> {
 /// It invokes `keep backup --dest <uri> --data-dir /data --shards <engineShards>
 /// [--retention-secs <n>]` on the policy's schedule, so keep still owns
 /// producing the consistent snapshot bytes (the runner just schedules it). The
-/// shared [`operator::render::cron_job`] helper stays manifest-only.
+/// shared [`service_k8s::render::cron_job`] helper stays manifest-only.
 fn backup_cron_job(keep: &Keep, cx: &RenderCtx) -> Option<Value> {
     let policy = keep.spec.backup.as_ref()?;
     let s = &keep.spec;
@@ -156,23 +156,15 @@ fn configmap(keep: &Keep, cx: &RenderCtx) -> Value {
 }
 
 /// The sharded, durable serving StatefulSet: the toolkit's downward-API base
-/// (`replicas = shardCount * replicasPerShard`, the raft-host env quartet + the
+/// (`replicas = shardCount * replicasPerShard`, the raft-runtime env quartet + the
 /// headless-service env, the `/data` PVC) hardened with keep's probes, security
 /// contexts, and writable `/tmp`.
 fn statefulset(keep: &Keep, cx: &RenderCtx, headless: &str) -> Value {
     let s = &keep.spec;
     let cfg = format!("{}-config", cx.name);
     let from_cfg = |key: &str| json!({ "name": key, "valueFrom": { "configMapKeyRef": { "name": cfg, "key": key } } });
-    let cpu = if s.cluster.resources.cpu.is_empty() {
-        "2"
-    } else {
-        s.cluster.resources.cpu.as_str()
-    };
-    let memory = if s.cluster.resources.memory.is_empty() {
-        "4Gi"
-    } else {
-        s.cluster.resources.memory.as_str()
-    };
+    let cpu = s.cluster.resources.cpu.as_str();
+    let memory = s.cluster.resources.memory.as_str();
 
     // Per-pod durable disk tier: WAL + snapshots on a ReadWriteOnce PVC, mounted
     // at /data (the helper mounts a `data` claim there).

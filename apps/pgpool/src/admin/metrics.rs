@@ -62,7 +62,7 @@ mod tests {
     use crate::proxy::BackendEndpointConfig;
     use crate::wire::WireCodecConfig;
     use crate::PoolMode;
-    use server_core::ConnectionBudget;
+    use server_lifecycle::ConnectionBudget;
     use std::time::Duration;
 
     fn one_pool_state(name: &str) -> AdminState {
@@ -77,7 +77,7 @@ mod tests {
             wire: WireCodecConfig::default(),
         });
         AdminState::new(
-            server_core::DrainController::new(),
+            server_lifecycle::DrainController::new(),
             vec![NamedPool {
                 name: name.to_string(),
                 mode: PoolMode::Transaction,

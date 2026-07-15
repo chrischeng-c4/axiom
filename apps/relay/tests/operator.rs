@@ -2,7 +2,7 @@
 //! Operator-adoption render-shape tests (WI #1208). Compiled only with
 //! `--features operator`.
 //!
-//! - R2: `RelaySpec` flattens `operator::ClusterSpec` into the CRD schema.
+//! - R2: `RelaySpec` flattens `service_k8s::ClusterSpec` into the CRD schema.
 //! - R2: `render` emits the downward-API StatefulSet with the exact env/probe
 //!   contract relay's serve reads, plus ServiceAccount/Services/PDB.
 //! - R2: the token-registry Secret wiring is opt-in (lumen's pattern).
@@ -14,11 +14,11 @@
 
 use std::collections::HashMap;
 
-use operator::{ClusterSpec, ManagedService, ReadyFacts};
 use relay::operator::render::render;
 use relay::operator::{crd_yaml, Relay, RelaySpec};
 use relay::tls::install_default_crypto_provider;
 use serde_json::Value;
+use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
 
 fn spec(replicas: u32) -> RelaySpec {
     RelaySpec {
@@ -123,7 +123,7 @@ fn render_emits_downward_api_statefulset() {
 
     let env = env_of(sts);
     let keys: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
-    // The exact contract serve reads: raft_host::cluster (quartet) +
+    // The exact contract serve reads: raft_runtime::cluster (quartet) +
     // --peer-service (RELAY_PEER_SERVICE) + bind/data-dir/grace.
     for k in [
         "POD_NAME",
@@ -157,6 +157,9 @@ fn render_emits_downward_api_statefulset() {
     assert_eq!(container["startupProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["ports"][0]["containerPort"], 7000);
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
+    assert_eq!(container["resources"]["requests"]["cpu"], "1");
+    assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
+    assert!(container["resources"].get("limits").is_none());
 
     // Durable disk tier: the /data PVC carries the CR's storage size.
     assert_eq!(
@@ -287,7 +290,7 @@ fn rustls_provider_install_is_idempotent() {
 }
 
 /// #1209 R4 — the `<name>-backup` CronJob renders only when `spec.backup` is
-/// set, via the shared `operator::render::cron_job` helper: schedule, the
+/// set, via the shared `service_k8s::render::cron_job` helper: schedule, the
 /// `relay backup` args against the cluster-DNS client Service, retention, and
 /// the `RELAY_BACKUP_TOKEN` secretKeyRef when `adminTokenSecret` is named.
 /// The CRD schema carries the flat-URI backup shape (keep #776 trap: never

@@ -1,9 +1,9 @@
 ---
 id: relay-adopt-raft-host
 summary: >
-  Adopt libs/raft-host as relay's consensus driver and delete the hand-rolled
+  Adopt libs/raft-runtime as relay's consensus driver and delete the hand-rolled
   raft glue (raft_driver/raft_store/raft_config + the relay-raft bin).
-  RelayStateMachine implements raft_host::RaftStateMachine over Arc<Relay>:
+  RelayStateMachine implements raft_runtime::RaftStateMachine over Arc<Relay>:
   the replicated command is PubCommand { subject, message_id, payload,
   headers, priority, not_before } (multi-subject), apply publishes
   idempotently through the engine, applied_index survives restart via a small
@@ -11,7 +11,7 @@ summary: >
   the bounded dedupe window require so cold-replay cannot resurrect acked
   work), and snapshot/restore serialize the live (un-acked) engine state via
   new minimal Relay::dump_live/load_live accessors. Auto-mode: bare `relay`
-  serve stays direct-engine; when raft_host::cluster::replica_mode()
+  serve stays direct-engine; when raft_runtime::cluster::replica_mode()
   (REPLICAS_PER_SHARD > 1) the serve path builds ClusterTopology::from_env
   ("relay", RELAY_PEER_SERVICE, serve port, RELAY_PEERS), spawns one RaftHost
   with RelayStateMachine, mounts host.router() on the serve port OUTSIDE the
@@ -35,7 +35,7 @@ nodes:
     label: "serve_main (bare `relay`): existing config resolution unchanged (bind, data dir, auth, reconciler). New: derive the peer port from the bind address and read --peer-service (RELAY_PEER_SERVICE, default relay) for the headless-Service DNS template"
   mode:
     kind: decision
-    label: "raft_host::cluster::replica_mode(): REPLICAS_PER_SHARD > 1 from the standard downward-API quartet? Unset env or 1 replica = single-node — the auto-mode switch; no relay-specific flags"
+    label: "raft_runtime::cluster::replica_mode(): REPLICAS_PER_SHARD > 1 from the standard downward-API quartet? Unset env or 1 replica = single-node — the auto-mode switch; no relay-specific flags"
   single:
     kind: process
     label: "Single-node path (default, AC1): today's direct-engine router exactly — publish/publish-batch/lease/ack/consume hit Arc<Relay> in-process; no raft task, no peer surface, zero behavior change"
@@ -44,7 +44,7 @@ nodes:
     label: "HA path: ClusterTopology::from_env('relay', peer_service, peer_port, 'RELAY_PEERS') — node_id = replica index, voters 0..VOTER_COUNT, peer URLs relay-<ordinal>.<svc>:<port> or the RELAY_PEERS local override. NO local ordinal math (deletes raft_config.rs; CONTRIBUTING: never re-derive it)"
   spawn:
     kind: process
-    label: "RelayRaft::spawn: raft_host::RaftStore::open({data_dir}/raft, node_id, Always) replaces relay's raft_store.rs; RelayStateMachine::new(Arc<Relay>, marker path) recovers its applied floor; RaftHost::spawn(node_id, membership, peers, store, sm, HostConfig with snapshot EveryEntries(1024)) replaces the whole hand-rolled raft_driver.rs tick/pump/flush/persist-before-flush loop"
+    label: "RelayRaft::spawn: raft_runtime::RaftStore::open({data_dir}/raft, node_id, Always) replaces relay's raft_store.rs; RelayStateMachine::new(Arc<Relay>, marker path) recovers its applied floor; RaftHost::spawn(node_id, membership, peers, store, sm, HostConfig with snapshot EveryEntries(1024)) replaces the whole hand-rolled raft_driver.rs tick/pump/flush/persist-before-flush loop"
   mount:
     kind: process
     label: "app = router(state-with-raft).merge(host.router()): /raft/request-vote, /raft/append-entries, /raft/install-snapshot, /raft/publish, /raftz ride the SAME serve port but OUTSIDE the bearer-auth data plane (cluster traffic, tokenless like probes; mTLS is a later slice). The relay-raft bin and its bespoke env contract are deleted"
@@ -65,7 +65,7 @@ nodes:
     label: "Lease/ack/heartbeat/consume/len stay NODE-LOCAL in HA mode (unchanged handlers): leases are not replicated — exactly the old driver's model, which replicated publishes only. Documented limitation (TD + llm operations topic): on failover the new leader redelivers work that was leased-but-unacked (and acked work not yet trimmed by a snapshot install) — at-least-once, fenced per-node by lease epochs"
   k8s:
     kind: terminal
-    label: "k8s/statefulset.yaml switches to the standard contract raft-host reads: POD_NAME (downward API), SHARD_COUNT=1, REPLICAS_PER_SHARD, VOTER_COUNT + RELAY_PEER_SERVICE=relay (headless Service); the image runs the single `relay` entrypoint (Dockerfile drops relay-raft); readiness moves to /readyz"
+    label: "k8s/statefulset.yaml switches to the standard contract raft-runtime reads: POD_NAME (downward API), SHARD_COUNT=1, REPLICAS_PER_SHARD, VOTER_COUNT + RELAY_PEER_SERVICE=relay (headless Service); the image runs the single `relay` entrypoint (Dockerfile drops relay-raft); readiness moves to /readyz"
 edges:
   - { from: boot, to: mode }
   - { from: mode, to: single, label: "no cluster env / 1 replica" }
@@ -84,7 +84,7 @@ flowchart TD
     boot([serve_main: bind and peer-service resolved]) --> mode{replica_mode: REPLICAS_PER_SHARD gt 1?}
     mode -->|no| single[direct-engine path unchanged — zero flags, zero behavior change]
     mode -->|yes| topo[ClusterTopology::from_env relay / RELAY_PEER_SERVICE / RELAY_PEERS — no local ordinal math]
-    topo --> spawn[RelayRaft::spawn: raft_host RaftStore + RelayStateMachine + RaftHost]
+    topo --> spawn[RelayRaft::spawn: raft_runtime RaftStore + RelayStateMachine + RaftHost]
     spawn --> mount[merge host.router onto serve port outside bearer auth]
     mount --> pub{publish or publish-batch?}
     pub -->|yes| apply[PubCommand -> host.propose -> apply on every node: idempotent publish_at + OutcomeWindow + fsynced applied marker]
@@ -121,13 +121,13 @@ requirements:
     verify: tests/raft_persistence.rs::restart_rejoins_with_applied_state_intact
   hand_rolled_stack_deleted:
     id: R2
-    text: "src/raft_driver.rs, src/raft_store.rs, src/raft_config.rs and src/bin/relay_raft.rs are deleted along with their lib.rs exports: grep for raft_driver|raft_store|raft_config over apps/relay/src and apps/relay/tests returns no hits, and cargo test -p relay stays green with raft-host supplying store, transport, and topology."
+    text: "src/raft_driver.rs, src/raft_store.rs, src/raft_config.rs and src/bin/relay_raft.rs are deleted along with their lib.rs exports: grep for raft_driver|raft_store|raft_config over apps/relay/src and apps/relay/tests returns no hits, and cargo test -p relay stays green with raft-runtime supplying store, transport, and topology."
     kind: regression
     risk: medium
     verify: cargo test -p relay (workspace grep gate in the WI AC5)
   k8s_standard_contract:
     id: R4
-    text: "k8s/statefulset.yaml injects the standard contract raft-host reads (POD_NAME via the downward API, SHARD_COUNT=1, REPLICAS_PER_SHARD, VOTER_COUNT, RELAY_PEER_SERVICE) and runs the single `relay` image entrypoint; the Dockerfile no longer builds or copies relay-raft."
+    text: "k8s/statefulset.yaml injects the standard contract raft-runtime reads (POD_NAME via the downward API, SHARD_COUNT=1, REPLICAS_PER_SHARD, VOTER_COUNT, RELAY_PEER_SERVICE) and runs the single `relay` image entrypoint; the Dockerfile no longer builds or copies relay-raft."
     kind: functional
     risk: low
     verify: manifest review: apps/relay/k8s/statefulset.yaml + apps/relay/Dockerfile
@@ -151,16 +151,16 @@ requirements:
     verify: tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot
   state_machine_apply_and_outcome:
     id: R1
-    text: "RelayStateMachine implements raft_host::RaftStateMachine over Arc<Relay>: apply decodes PubCommand { subject, message_id, payload, headers, priority, not_before } and publishes idempotently through Relay::publish_at (a re-applied or duplicate message_id dedupes instead of double-appending); the apply outcome {seq, deduped} is claimable by raft index from the OutcomeWindow so a proposing handler returns the engine outcome. Verified end-to-end by a 3-node in-process group: a publish proposed on the leader is applied and readable via the engine on ALL nodes."
+    text: "RelayStateMachine implements raft_runtime::RaftStateMachine over Arc<Relay>: apply decodes PubCommand { subject, message_id, payload, headers, priority, not_before } and publishes idempotently through Relay::publish_at (a re-applied or duplicate message_id dedupes instead of double-appending); the apply outcome {seq, deduped} is claimable by raft index from the OutcomeWindow so a proposing handler returns the engine outcome. Verified end-to-end by a 3-node in-process group: a publish proposed on the leader is applied and readable via the engine on ALL nodes."
     kind: functional
     risk: high
     verify: tests/raft_cluster.rs::three_node_group_elects_replicates_forwards_and_fails_over
   topology_from_standard_env:
     id: R3
-    text: "relay derives its cluster topology exclusively from the standard downward-API quartet via raft-host (no local ordinal math): with POD_NAME/SHARD_COUNT/REPLICAS_PER_SHARD/VOTER_COUNT set, ClusterTopology::from_env('relay', ...) yields the replica node id, the voter membership, and peer URLs honoring the RELAY_PEERS local override; replica_mode() is false when the env is unset or REPLICAS_PER_SHARD=1."
+    text: "relay derives its cluster topology exclusively from the standard downward-API quartet via raft-runtime (no local ordinal math): with POD_NAME/SHARD_COUNT/REPLICAS_PER_SHARD/VOTER_COUNT set, ClusterTopology::from_env('relay', ...) yields the replica node id, the voter membership, and peer URLs honoring the RELAY_PEERS local override; replica_mode() is false when the env is unset or REPLICAS_PER_SHARD=1."
     kind: functional
     risk: medium
-    verify: tests/raft_config.rs::topology_derives_from_standard_env_via_raft_host
+    verify: tests/raft_config.rs::topology_derives_from_standard_env_via_raft_runtime
 ---
 flowchart TD
     r1[R1 applied floor survives restart] --> tests_raft_persistence_rs_acked_work_is_not_resurrected_by_cold_replay[tests/raft_persistence.rs::acked_work_is_not_resurrected_by_cold_replay]
@@ -168,7 +168,7 @@ flowchart TD
     r1[R1 state machine apply and outcome] --> tests_raft_cluster_rs_three_node_group_elects_replicates_forwards_and_fails_over[tests/raft_cluster.rs::three_node_group_elects_replicates_forwards_and_fails_over]
     r3[R3 auto mode serve] --> tests_raft_cluster_rs_three_node_group_elects_replicates_forwards_and_fails_over
     r2[R2 hand rolled stack deleted] --> cargo_test_p_relay_workspace_grep_gate_in_the_wi_ac5[cargo test -p relay (workspace grep gate in the WI AC5)]
-    r3[R3 topology from standard env] --> tests_raft_config_rs_topology_derives_from_standard_env_via_raft_host[tests/raft_config.rs::topology_derives_from_standard_env_via_raft_host]
+    r3[R3 topology from standard env] --> tests_raft_config_rs_topology_derives_from_standard_env_via_raft_runtime[tests/raft_config.rs::topology_derives_from_standard_env_via_raft_runtime]
     r4[R4 k8s standard contract] --> manifest_review_projects_relay_k8s_statefulset_yaml_projects_relay_dockerfile[manifest review: apps/relay/k8s/statefulset.yaml + apps/relay/Dockerfile]
     r5[R5 failover no committed loss] --> tests_raft_persistence_rs_restart_rejoins_with_applied_state_intact[tests/raft_persistence.rs::restart_rejoins_with_applied_state_intact]
     r5[R5 raft core sim kept honest] --> tests_raft_core_rs_relay_engines_converge_across_failover[tests/raft_core.rs::relay_engines_converge_across_failover]
@@ -183,12 +183,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add the raft-host path dependency (shared driver: RaftHost, RaftStore, RaftStateMachine, ClusterTopology, OutcomeWindow, SnapshotPolicy); demote raft-core to dev-dependencies (only the tests/raft_core.rs simulation drives the consensus core directly); drop the [[bin]] relay-raft target."
+    description: "Add the raft-runtime path dependency (shared driver: RaftHost, RaftStore, RaftStateMachine, ClusterTopology, OutcomeWindow, SnapshotPolicy); demote raft-core to dev-dependencies (only the tests/raft_core.rs simulation drives the consensus core directly); drop the [[bin]] relay-raft target."
   - path: apps/relay/src/raft.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Rewrite from the raft_core re-export shim to the raft-host adoption surface: PubCommand { subject, message_id, payload, headers, priority, not_before } (the replicated command, multi-subject); RelayStateMachine (apply = idempotent Relay::publish_at + OutcomeWindow outcome stash + fsynced applied-marker floor; snapshot = up_to + Relay::dump_live; restore = Relay::load_live + floor := up_to; applied_index recovered from the marker at construction); RelayRaft (single-group wrapper: RaftStore::open on {data_dir}/raft, RaftHost::spawn, router() passthrough, publish() = propose + claim outcome, from_topology(ClusterTopology) constructor, is_leader/leader/applied_index accessors)."
+    description: "Rewrite from the raft_core re-export shim to the raft-runtime adoption surface: PubCommand { subject, message_id, payload, headers, priority, not_before } (the replicated command, multi-subject); RelayStateMachine (apply = idempotent Relay::publish_at + OutcomeWindow outcome stash + fsynced applied-marker floor; snapshot = up_to + Relay::dump_live; restore = Relay::load_live + floor := up_to; applied_index recovered from the marker at construction); RelayRaft (single-group wrapper: RaftStore::open on {data_dir}/raft, RaftHost::spawn, router() passthrough, publish() = propose + claim outcome, from_topology(ClusterTopology) constructor, is_leader/leader/applied_index accessors)."
   - path: apps/relay/src/engine.rs
     action: modify
     section: logic
@@ -198,17 +198,17 @@ changes:
     action: delete
     section: logic
     impl_mode: hand-written
-    description: "Hand-rolled h2c raft driver (tick/pump/flush loop, persist-before-flush, peer POSTs, redirect-to-leader publish, /raftz) — fully replaced by raft_host::RaftHost."
+    description: "Hand-rolled h2c raft driver (tick/pump/flush loop, persist-before-flush, peer POSTs, redirect-to-leader publish, /raftz) — fully replaced by raft_runtime::RaftHost."
   - path: apps/relay/src/raft_store.rs
     action: delete
     section: logic
     impl_mode: hand-written
-    description: "Hand-rolled hard-state file store — replaced by raft_host::RaftStore (which was lifted from this code; identical persist-before-flush contract)."
+    description: "Hand-rolled hard-state file store — replaced by raft_runtime::RaftStore (which was lifted from this code; identical persist-before-flush contract)."
   - path: apps/relay/src/raft_config.rs
     action: delete
     section: logic
     impl_mode: hand-written
-    description: "Hand-derived pod ordinal + peer DNS math — replaced by raft_host::cluster::ClusterTopology::from_env (CONTRIBUTING: never re-derive the ordinal math locally)."
+    description: "Hand-derived pod ordinal + peer DNS math — replaced by raft_runtime::cluster::ClusterTopology::from_env (CONTRIBUTING: never re-derive the ordinal math locally)."
   - path: apps/relay/src/bin/relay_raft.rs
     action: delete
     section: logic
@@ -228,7 +228,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Auto-mode serve: --peer-service flag (RELAY_PEER_SERVICE, default relay); when raft_host::cluster::replica_mode() — ClusterTopology::from_env('relay', peer_service, port-from-bind, 'RELAY_PEERS'), RelayRaft::from_topology over the serve engine with the core data dir, state.set_raft, app.merge(raft.router()) outside the bearer-auth data plane; single-node path unchanged."
+    description: "Auto-mode serve: --peer-service flag (RELAY_PEER_SERVICE, default relay); when raft_runtime::cluster::replica_mode() — ClusterTopology::from_env('relay', peer_service, port-from-bind, 'RELAY_PEERS'), RelayRaft::from_topology over the serve engine with the core data dir, state.set_raft, app.merge(raft.router()) outside the bearer-auth data plane; single-node path unchanged."
   - path: apps/relay/src/llm.rs
     action: modify
     section: logic
@@ -243,12 +243,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Downward-API env switches to the standard raft-host contract: POD_NAME (metadata.name), SHARD_COUNT=1, REPLICAS_PER_SHARD, VOTER_COUNT, RELAY_PEER_SERVICE + RELAY_BIND/RELAY_DATA_DIR; image relay:dev, single entrypoint; readiness probes /readyz."
+    description: "Downward-API env switches to the standard raft-runtime contract: POD_NAME (metadata.name), SHARD_COUNT=1, REPLICAS_PER_SHARD, VOTER_COUNT, RELAY_PEER_SERVICE + RELAY_BIND/RELAY_DATA_DIR; image relay:dev, single entrypoint; readiness probes /readyz."
   - path: apps/relay/tests/raft_cluster.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Rewrite against the raft-host stack: an in-process 3-node group (explicit peer maps over real h2c listeners) elects exactly one leader, a leader publish applies on every node's engine, a follower publish is forwarded by the host, a direct follower /raft/publish answers 421 not-leader, and killing the leader re-elects with no committed loss; plus the snapshot path — a small SnapshotPolicy threshold compacts the leader log and a late-started fresh node catches up via InstallSnapshot."
+    description: "Rewrite against the raft-runtime stack: an in-process 3-node group (explicit peer maps over real h2c listeners) elects exactly one leader, a leader publish applies on every node's engine, a follower publish is forwarded by the host, a direct follower /raft/publish answers 421 not-leader, and killing the leader re-elects with no committed loss; plus the snapshot path — a small SnapshotPolicy threshold compacts the leader log and a late-started fresh node catches up via InstallSnapshot."
   - path: apps/relay/tests/raft_persistence.rs
     action: modify
     section: unit-test

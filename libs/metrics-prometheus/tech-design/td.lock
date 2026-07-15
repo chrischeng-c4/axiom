@@ -1,0 +1,19 @@
+version = 2
+project = "metrics-prometheus"
+ir_kind = "td"
+td_path = "libs/metrics-prometheus/tech-design"
+generated_at = "2026-07-15T07:38:06.919756+00:00"
+digest = "sha256:8e2389f162261f323f7256dabadc65ac94846fc4dbdf80210151228fca16ac98"
+source_digest = "sha256:8e2389f162261f323f7256dabadc65ac94846fc4dbdf80210151228fca16ac98"
+ir_digest = "sha256:4816c5a6f61cf2479df3a406218dfb89ed3d74e5fbbce06e5fcc372b17a1a6cd"
+
+[[files]]
+path = "semantic/metrics-prometheus-libs-metrics-prometheus.md"
+digest = "sha256:958b053914f80ecf28f169ebcd1fab82f6c683db13db4d818e7f9c2a2cd0704c"
+parse_error = "schema:15-56: section 'schema' at lines 15..56: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
+
+[[files]]
+path = "semantic/source/libs-metrics-prometheus-src-lib-rs.md"
+digest = "sha256:361c16af21b48ae12e34308d935fc2ef85b212f5676c5effad9ffe9f950a7636"
+ir_digest = "sha256:b40ed08d5e4073c4ade7904fc30ffae7cffc5a0d4f2f851f40e6e06f06b465a7"
+section_count = 3

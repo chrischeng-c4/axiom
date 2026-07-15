@@ -61,7 +61,7 @@ pub const TOPICS: &[cli_std::llm::Topic] = &[
             Delivery model: single-cast work-queue — each message is leased to exactly one \
             competing consumer, acked, then deleted (delete-on-ack retention), with \
             lease-expiry redelivery, a dead-letter path, and priority bands.\n\n\
-            HA is auto-mode raft (shared raft-host driver): scale the StatefulSet and set \
+            HA is auto-mode raft (shared raft-runtime driver): scale the StatefulSet and set \
             `REPLICAS_PER_SHARD` > 1 (plus `POD_NAME`, `SHARD_COUNT=1`, `VOTER_COUNT` from \
             the downward API) and the same `relay` bin runs a raft group — publishes \
             replicate (leader propose; follower publishes are forwarded to the leader), \
@@ -103,7 +103,7 @@ pub const TOPICS: &[cli_std::llm::Topic] = &[
             (+ `RELAY_PEER_MTLS=on` to require client certs). Serve validates the \
             material fail-fast at startup (partial config or a mis-pointed path \
             exits nonzero). HONEST LIMIT: mTLS termination on the raft peer port \
-            is not yet applied — raft-host's h2c transport has no TLS seam (filed \
+            is not yet applied — raft-runtime's h2c transport has no TLS seam (filed \
             gap; peer RPCs stay cleartext h2c inside the cluster until it lands).\n",
     },
 ];

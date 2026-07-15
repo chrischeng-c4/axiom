@@ -336,7 +336,7 @@ fn sign_token(secret: &Option<Vec<u8>>, task: &TaskMessage) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let scope = claimtoken::Scope {
+    let scope = claim_token::Scope {
         r: task
             .input_refs
             .first()
@@ -345,7 +345,7 @@ fn sign_token(secret: &Option<Vec<u8>>, task: &TaskMessage) -> String {
         w: format!("{}:{}:result", task.run_id, task.node_id),
         exp: now + 300,
     };
-    claimtoken::sign(secret, &scope)
+    claim_token::sign(secret, &scope)
 }
 
 /// One persistent bidi `/consume` stream to relay for a group: buffered entries
@@ -942,10 +942,10 @@ mod tests {
             &Some(b"secret".to_vec()),
             &task(vec![KeepRef("in:1".into())], None),
         );
-        let scope = claimtoken::verify(b"secret", &tok, 0).unwrap();
+        let scope = claim_token::verify(b"secret", &tok, 0).unwrap();
         assert_eq!(scope.r, "in:1");
         assert_eq!(scope.w, "run1:nodeA:result");
-        assert!(claimtoken::verify(b"wrong", &tok, 0).is_none());
+        assert!(claim_token::verify(b"wrong", &tok, 0).is_none());
         assert_eq!(sign_token(&None, &task(vec![], None)), ""); // no secret → empty token
     }
 }

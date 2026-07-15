@@ -401,8 +401,8 @@ Backup is the cold disaster-recovery and seed surface; it is not the normal
 live replica synchronization mechanism.
 "#
     .to_string();
-    out.push_str("\n## Shared raft-host topology primitive\n");
-    out.push_str(raft_host::llm::topic().body);
+    out.push_str("\n## Shared raft-runtime topology primitive\n");
+    out.push_str(raft_runtime::llm::topic().body);
     out
 }
 
@@ -760,7 +760,7 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
     out.push_str("\n## Shared generated-client primitive\n");
     out.push_str(cclab_openapi_codegen::llm::topic().body);
     out.push_str("\n## Shared h2c client primitive\n");
-    out.push_str(h2c::llm::topic().body);
+    out.push_str(transport_h2c::llm::topic().body);
     out
 }
 
@@ -938,7 +938,7 @@ explicitly to get the same durability the operator now wires by default.
 - Fixed replica count `shardCount * replicasPerShard` (raft needs a known,
   stable peer set) — no HPA is attached.
 - Each pod additionally gets the downward-API env quartet
-  `raft_host::cluster::ClusterTopology::from_env` reads (`POD_NAME`,
+  `raft_runtime::cluster::ClusterTopology::from_env` reads (`POD_NAME`,
   `POD_NAMESPACE`, `REPLICAS_PER_SHARD`, `VOTER_COUNT`,
   `LUMEN_HEADLESS_SERVICE`) and a stable DNS identity via the serving
   headless Service (`<name>-headless`), required for the StatefulSet's
@@ -1080,7 +1080,7 @@ full-engine restore:
   rejected with `400 invalid_ttl_secs`); expiry is enforced on the *serving*
   pod independent of the caller, so a caller that dies between arming and
   clearing can never leave a bucket permanently unwritable. This is a
-  **driver-owned** verb: the reshard driver (`operator::reshard_driver::
+  **driver-owned** verb: the reshard driver (`service_k8s::reshard_driver::
   advance_catching_up`) arms it over exactly the buckets its final
   `CatchingUp` migration pass is about to copy, immediately before that pass,
   and always clears it (`buckets: []`) on every exit path of that tick —
@@ -1292,8 +1292,8 @@ they want — the fix here is this guidance, not new API surface.
     .to_string();
     out.push_str("\n## Shared backup primitive\n");
     out.push_str(service_backup::llm::topic().body);
-    out.push_str("\n## Shared raft-host primitive\n");
-    out.push_str(raft_host::llm::topic().body);
+    out.push_str("\n## Shared raft-runtime primitive\n");
+    out.push_str(raft_runtime::llm::topic().body);
     out
 }
 // CODEGEN-END

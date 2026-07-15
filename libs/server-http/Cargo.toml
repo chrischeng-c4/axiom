@@ -1,0 +1,18 @@
+[package]
+name = "server-http"
+version = "0.1.0"
+edition = "2021"
+description = "Shared HTTP protocol runtime built on server-lifecycle and server-tcp: HTTP/1.1 plus h2c serving, request tracing, and hooks for service shells and development servers."
+
+[lib]
+name = "server_http"
+path = "src/lib.rs"
+
+[dependencies]
+server-lifecycle = { path = "../server-lifecycle" }
+server-tcp = { path = "../server-tcp" }
+transport-h2c = { path = "../transport-h2c", features = ["server"] }
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true, features = ["trace"] }
+tracing = { workspace = true }

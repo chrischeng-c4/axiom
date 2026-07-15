@@ -129,7 +129,7 @@ ID: primary-replicas
 Type: Runtime
 Root WI: #110
 Status: confirmed
-Surfaces: Raft: workflow state primary/replica topology over `libs/raft-core` and `libs/raft-host`.
+Surfaces: Raft: workflow state primary/replica topology over `libs/raft-core` and `libs/raft-runtime`.
 EC Dimensions: stability: pending raft primary/replica gate - leader failover, replica catch-up, snapshot restore, and committed-transition safety
 Required Verification: conformance, dogfood
 Promise:
@@ -205,7 +205,7 @@ ID: state-durability
 Type: RuntimeTool
 Root WI: #110
 Status: confirmed
-Surfaces: Raft: sharded workflow state machine over `libs/raft-core` and `libs/raft-host`; Snapshot: service-owned workflow state snapshots.
+Surfaces: Raft: sharded workflow state machine over `libs/raft-core` and `libs/raft-runtime`; Snapshot: service-owned workflow state snapshots.
 EC Dimensions: stability: pending raft durability gate - crash recovery, snapshot restore, and failover without committed workflow loss
 Required Verification: conformance, dogfood
 Promise:

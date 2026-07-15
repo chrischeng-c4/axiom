@@ -1,9 +1,9 @@
 //! Operator-adoption integration tests (#775). Compiled only with
 //! `--features operator`.
 //!
-//! - R1: `KeepSpec` flattens `operator::ClusterSpec` into the CRD schema.
+//! - R1: `KeepSpec` flattens `service_k8s::ClusterSpec` into the CRD schema.
 //! - R2: `render` emits the sharded StatefulSet with the downward-API env
-//!   raft-host consumes, correct replica math, and status phases.
+//!   raft-runtime consumes, correct replica math, and status phases.
 //! - R4: the generated CRD is Kubernetes-OpenAPI compatible (no `uint32`/
 //!   `uint64`; unsigned counts keep `minimum`).
 //! - R5: the process-level rustls crypto provider install is idempotent.
@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use keep::operator::render::render;
 use keep::operator::{crd_yaml, Keep, KeepSpec};
 use keep::tls::install_default_crypto_provider;
-use operator::{ClusterSpec, ManagedService, ReadyFacts};
 use serde_json::Value;
+use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
 
 fn spec(shard_count: u32, replicas: u32) -> KeepSpec {
     KeepSpec {
@@ -75,7 +75,7 @@ fn crd_flattens_cluster_spec() {
     assert!(props.get("storage").is_some());
 }
 
-/// R2 — the rendered StatefulSet carries the downward-API env raft-host reads,
+/// R2 — the rendered StatefulSet carries the downward-API env raft-runtime reads,
 /// the right replica count, keep's runtime knobs + disk tier, and drives a
 /// readiness/status contract.
 #[test]
@@ -119,6 +119,10 @@ fn render_emits_downward_api_statefulset() {
             ["readOnlyRootFilesystem"],
         true
     );
+    let container = &sts["spec"]["template"]["spec"]["containers"][0];
+    assert_eq!(container["resources"]["requests"]["cpu"], "1");
+    assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
+    assert!(container["resources"].get("limits").is_none());
 
     // The rest of the child set is present.
     assert_eq!(

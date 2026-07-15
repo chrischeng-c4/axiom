@@ -6,7 +6,7 @@
 //! (`EngineSnapshot` = `dump_live` + applied index) the raft snapshotter
 //! uses; this is transport + shipping only, meant to be driven by the
 //! operator's optional backup CronJob (`spec.backup`, see
-//! `operator::render::backup_cron_job`) or invoked ad hoc via the CLI
+//! `service_k8s::render::backup_cron_job`) or invoked ad hoc via the CLI
 //! (lumen #808 pattern).
 //!
 //! Restore is a library-side `load_live` MERGE: feed the artifact to

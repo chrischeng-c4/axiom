@@ -39,26 +39,32 @@ storage, backup, or operator plumbing locally. Shared service capabilities
 belong in `libs/*`; apps supply domain behavior and wiring. Libraries have no
 user-facing CLI or release pipeline; those surfaces belong under `apps/`.
 
+The prefix is the map: `server-*` is protocol runtime, `transport-*` is wire
+transport, `service-*` is an app-integrated capability, and narrower
+`storage-*`, `metrics-*`, `peer-*`, and `raft-*` families name their owned
+mechanism directly. Directory, Cargo package, and Rust crate identities move
+together; see [Shared-library naming grammar](CONTRIBUTING.md#shared-library-naming-grammar).
+
 | Library | What it is |
 |---------|------------|
 | [build-stamp](libs/build-stamp/Cargo.toml) | Shared `build.rs` stamping for service CLIs: git short SHA, build epoch, and target triple. |
-| [claimtoken](libs/claimtoken/Cargo.toml) | Scoped claim-check access tokens; issuers sign bounded payload/key access and services verify the scope. |
+| [claim-token](libs/claim-token/Cargo.toml) | Scoped claim-check access tokens; issuers sign bounded payload/key access and services verify the scope. |
 | [cli-std](libs/cli-std/Cargo.toml) | Shared implementation for the required `llm`, `upgrade`, and `issue` CLI convention. |
 | [compass](libs/compass/README.md) | Code-intelligence engine for navigation, analysis, refactoring, and watch workflows. |
-| [h2c](libs/h2c/Cargo.toml) | Shared HTTP/2 cleartext transport: single client, round-robin pool, frame-level manager, and connection-count heuristic. |
+| [transport-h2c](libs/transport-h2c/Cargo.toml) | Shared HTTP/2 cleartext transport: client, pool, frame-level manager, connection sizing, and optional server runtime. |
 | [openapi-codegen](libs/openapi-codegen/Cargo.toml) | Typed TypeScript, Python, and Rust API client generation from OpenAPI 3.0/3.1 documents. |
-| [server-core](libs/server-core/Cargo.toml) | Shared server substrate: bind config, shutdown/drain, readiness signals, connection budgets, and metrics hooks. |
-| [tcp-server](libs/tcp-server/Cargo.toml) | Shared TCP accept/runtime layer for raw protocols, proxies, and poolers, built on server-core. |
-| [http-server](libs/http-server/Cargo.toml) | Shared HTTP runtime for tool/dev servers and service shells: HTTP/1.1 + h2c serve and request tracing. |
-| [operator](libs/operator/Cargo.toml) | Shared Kubernetes operator scaffold: reconcile controller, leader election, and HA render toolkit. |
+| [server-lifecycle](libs/server-lifecycle/Cargo.toml) | Protocol-neutral server lifecycle: bind config, shutdown/drain, readiness signals, connection budgets, and metrics hooks. |
+| [server-tcp](libs/server-tcp/Cargo.toml) | Shared TCP accept/runtime layer for raw protocols, proxies, and poolers, built on server-lifecycle. |
+| [server-http](libs/server-http/Cargo.toml) | Shared HTTP runtime for tool/dev servers and service shells: HTTP/1.1 + h2c serve and request tracing. |
+| [service-k8s](libs/service-k8s/Cargo.toml) | Kubernetes service integration: reconcile controller, leader election, workload rendering, stateful capacity planning, and resize primitives. |
 | [raft-core](libs/raft-core/Cargo.toml) | Transport- and storage-agnostic, step-driven Raft consensus core. |
-| [raft-host](libs/raft-host/Cargo.toml) | Shared Raft host driver over h2c peer transport with snapshots, compaction, and read-your-write propose. |
+| [raft-runtime](libs/raft-runtime/Cargo.toml) | Shared Raft runtime over h2c peer transport with apply, topology, snapshots, compaction, and read-your-write propose. |
 | [service-auth](libs/service-auth/Cargo.toml) | Shared request-auth middleware: extract, verify, reject, and inject verified identity into service handlers. |
 | [service-backup](libs/service-backup/Cargo.toml) | Shared backup contract: destination and policy schema, sink trait, local and S3-compatible sinks, and runner primitive. |
-| [service-durability](libs/service-durability/Cargo.toml) | Shared durable local storage primitives: fsync policy, atomic replace, CRC-framed append logs, and sequence-named snapshot stores. |
+| [storage-durable](libs/storage-durable/Cargo.toml) | Shared durable local storage primitives: fsync policy, atomic replace, CRC-framed append logs, and sequence-named snapshot stores. |
 | [service-http](libs/service-http/Cargo.toml) | Standard HTTP service shell: probes, readiness, metrics, OpenAPI/docs routes, tracing, graceful drain, and h2c serve. |
-| [service-metrics](libs/service-metrics/Cargo.toml) | Lock-free Prometheus primitives and text encoder for service metrics. |
-| [service-tls](libs/service-tls/Cargo.toml) | Peer mTLS material loading and rustls server/client config builders. |
+| [metrics-prometheus](libs/metrics-prometheus/Cargo.toml) | Lock-free Prometheus primitives and text encoder for service metrics. |
+| [peer-tls](libs/peer-tls/Cargo.toml) | Peer mTLS material loading and rustls server/client config builders. |
 | [surface](libs/surface/Cargo.toml) | Renderer-neutral UI element model shared by Jet WASM, native readers, renderers, and parity tools. |
 | [ui-runtime](libs/ui-runtime/Cargo.toml) | Renderer-neutral component runtime: hooks, fiber storage, mount, flush, and update scheduling. |
 

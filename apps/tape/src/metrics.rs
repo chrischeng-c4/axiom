@@ -1,9 +1,9 @@
 //! tape HTTP request observability: per-op request counts + latency,
 //! rendered into the Prometheus exposition served at `/metrics`.
 //!
-//! Built on the shared `libs/service-metrics` primitives (`Latency` — a
+//! Built on the shared `libs/metrics-prometheus` primitives (`Latency` — a
 //! lock-free `sum`/`count` counter pair — plus the text-format encoder
-//! [`service_metrics::render`]); this module owns only tape's metric names
+//! [`metrics_prometheus::render`]); this module owns only tape's metric names
 //! and the route -> op mapping. Recording happens in [`track`], a
 //! `route_layer` middleware over the `/topics` data plane (mirrors
 //! relay/keep's `metrics::track`), so the journal hot path never carries a
@@ -15,7 +15,7 @@ use std::time::Instant;
 use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use service_metrics::{Latency, Sample};
+use metrics_prometheus::{Latency, Sample};
 
 /// Per-op request metrics for the tape data plane. One [`Latency`]
 /// (count + latency-ms sum) per op family; `count` doubles as the request
@@ -66,9 +66,9 @@ impl TapeMetrics {
     }
 
     /// Render the Prometheus text exposition (0.0.4) for the recorded
-    /// request metrics, through the shared `service_metrics` encoder.
+    /// request metrics, through the shared `metrics_prometheus` encoder.
     pub fn render(&self) -> String {
-        service_metrics::render(&[
+        metrics_prometheus::render(&[
             Sample::new(
                 "tape_append_requests_total",
                 "counter",

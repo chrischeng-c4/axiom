@@ -1,8 +1,8 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:07a338e2" tracker="pending-tracker" reason="RelaySpec CustomResource (group relay.dev, v1alpha1, kind Relay, plural relays, namespaced, status RelayStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: operator::ClusterSpec (shardCount defaults 1; relay is a single raft group — render pins it) + storage (default 10Gi), storageClass, graceSecs (default 10), logLevel (Option, RUST_LOG), auth (flat string off|required — no divergent-variant enums in the CRD), tokensSecret (Option<String> Secret name); RelayStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
+// HANDWRITE-BEGIN gap="missing-generator:logic:07a338e2" tracker="pending-tracker" reason="RelaySpec CustomResource (group relay.dev, v1alpha1, kind Relay, plural relays, namespaced, status RelayStatus, printcolumns Phase/Ready/Age): #[serde(flatten)] cluster: service_k8s::ClusterSpec (shardCount defaults 1; relay is a single raft group — render pins it) + storage (default 10Gi), storageClass, graceSecs (default 10), logLevel (Option, RUST_LOG), auth (flat string off|required — no divergent-variant enums in the CRD), tokensSecret (Option<String> Secret name); RelayStatus { phase, observedGeneration, readyReplicas, desiredReplicas, message }."
 //! The `Relay` custom resource (`relay.dev/v1alpha1`).
 //!
 //! One `Relay` object declares a relay deployment's HA topology. The spec
-//! flattens the shared [`operator::ClusterSpec`] (image + sharding/replication
+//! flattens the shared [`service_k8s::ClusterSpec`] (image + sharding/replication
 //! knobs + per-pod resources) and adds relay's own runtime knobs (durable-log
 //! disk tier, drain window, log level, and the opt-in bearer-auth wiring).
 //! relay is a **single raft group**: `shardCount` exists in the shared shape
@@ -42,7 +42,7 @@ pub struct RelaySpec {
     /// `cluster:` nesting), exactly as the render toolkit expects. relay is a
     /// single raft group: the render pins `shardCount` to 1.
     #[serde(flatten)]
-    pub cluster: operator::ClusterSpec,
+    pub cluster: service_k8s::ClusterSpec,
 
     /// Per-pod durable-log (+ raft hard state) PVC size. Defaults to `10Gi`.
     #[serde(default = "default_storage")]

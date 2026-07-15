@@ -34,24 +34,24 @@ Public API manifest for `apps/lumen/src/operator/reconcile.rs` generated from AS
 ````rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! lumen's operator wiring onto the shared `libs/operator` controller.
+//! lumen's operator wiring onto the shared `libs/service-k8s` controller.
 //!
-//! The reconcile loop + leader-election lease now live in `libs/operator`
-//! (`operator::run` drives the watch + leader-gated apply over h2c-free kube;
-//! `operator::lease` is the elector). lumen supplies only its `ManagedService`
+//! The reconcile loop + leader-election lease now live in `libs/service-k8s`
+//! (`service_k8s::run` drives the watch + leader-gated apply over h2c-free kube;
+//! `service_k8s::lease` is the elector). lumen supplies only its `ManagedService`
 //! impl — what to render, which workloads to poll for readiness, and the
 //! `Lumen` status subresource to write.
 //!
 //! Live per-shard storage-usage measurement (#1319 R1): `ManagedService::
 //! status_patch` is synchronous and does no I/O by contract (shared with
-//! keep/relay/loom via `libs/operator`), so it cannot itself poll pod
+//! keep/relay/loom via `libs/service-k8s`), so it cannot itself poll pod
 //! `/metrics` endpoints. Instead `run()` spawns a lumen-local background
 //! loop (`spawn_shard_usage_loop`) that periodically scrapes every storage
 //! pod's `lumen_storage_bytes` gauge over its headless-Service DNS name and
 //! writes the per-shard max into an in-process cache; `status_patch` reads
 //! that cache synchronously (best-effort — an empty/missing cache falls back
 //! to the policy-only [`crate::operator::crd::LumenSpec::reshard_status`]).
-//! This keeps the shared `libs/operator` trait untouched.
+//! This keeps the shared `libs/service-k8s` trait untouched.
 //!
 //! This loop only *reports* a crossed `prepareAtPercent` / `urgentAtPercent`
 //! threshold in `status.reshard`; a second, independently leader-gated
@@ -86,7 +86,7 @@ Public API manifest for `apps/lumen/src/operator/reconcile.rs` generated from AS
 //!
 //! [`render::render`] stops emitting a HorizontalPodAutoscaler once the CR's
 //! shape no longer wants one ([`render::wants_hpa`] — today, `shardCount >
-//! 1`), but `libs/operator`'s shared reconcile contract (`libs/operator::
+//! 1`), but `libs/service-k8s`'s shared reconcile contract (`libs/service-k8s::
 //! service`) deliberately does not prune children across a render-shape
 //! change — that handoff is left to the service. A third independently
 //! leader-gated background loop, [`spawn_hpa_handoff_loop`], is lumen's side
@@ -108,8 +108,8 @@ use std::time::Duration;
 
 use kube::api::{Api, ApiResource, DeleteParams, DynamicObject};
 use kube::{Client, ResourceExt};
-use operator::{ManagedService, ReadinessTarget, ReadyFacts};
 use serde_json::json;
+use service_k8s::{ManagedService, ReadinessTarget, ReadyFacts};
 
 use crate::operator::crd::Lumen;
 use crate::operator::render;
@@ -131,7 +131,7 @@ const SHARD_USAGE_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const HPA_HANDOFF_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Leader-election Lease name for [`spawn_hpa_handoff_loop`] (#1385) —
-/// distinct from both `libs/operator`'s own `S::MANAGER`-named apply-loop
+/// distinct from both `libs/service-k8s`'s own `S::MANAGER`-named apply-loop
 /// Lease and `reshard_driver::DRIVER_LEASE_NAME`, so none of the three
 /// independently leader-gated loops contend on one Lease object (mirrors the
 /// same duplicated `identity`/`lease_namespace` resolution
@@ -206,7 +206,7 @@ async fn pod_storage_bytes(http: &reqwest::Client, url: &str) -> Option<u64> {
 /// Every storage pod's `(shard_index, /metrics URL)`, addressed by its
 /// StatefulSet headless-Service DNS name
 /// (`<name>-<ordinal>.<name>-headless.<ns>.svc.cluster.local:<port>`).
-/// Ordinal-to-shard mapping matches `libs/raft-host`'s pod placement:
+/// Ordinal-to-shard mapping matches `libs/raft-runtime`'s pod placement:
 /// `shard_index = ordinal % shard_count`, `replica_index = ordinal /
 /// shard_count`. Pod count and shard-count clamping follow
 /// [`crate::operator::crd::LumenSpec::storage_pod_count`] exactly, including
@@ -260,7 +260,7 @@ async fn measure_shard_usage(http: &reqwest::Client, lumen: &Lumen) -> BTreeMap<
 /// every `Lumen` CR cluster-wide, measure its live per-shard storage usage,
 /// and refresh [`shard_usage_cache`]. Runs on every replica (not just the
 /// leader) since it only populates a local read cache that `status_patch`
-/// consults best-effort; the leader-gated `libs/operator` apply loop is
+/// consults best-effort; the leader-gated `libs/service-k8s` apply loop is
 /// still the only writer of the CR's status subresource.
 fn spawn_shard_usage_loop(client: Client) {
     tokio::spawn(async move {
@@ -303,8 +303,8 @@ fn spawn_shard_usage_loop(client: Client) {
 }
 
 /// The `ApiResource` for a live HorizontalPodAutoscaler, matching what
-/// `libs/operator::render::horizontal_pod_autoscaler` renders
-/// (`autoscaling/v2`) and what `libs/operator::controller`'s generic apply
+/// `libs/service-k8s::render::horizontal_pod_autoscaler` renders
+/// (`autoscaling/v2`) and what `libs/service-k8s::controller`'s generic apply
 /// loop server-side-applies it as.
 fn hpa_api_resource() -> ApiResource {
     ApiResource {
@@ -441,7 +441,7 @@ async fn prune_stale_hpa(control: &dyn HpaControl, lumen: &Lumen) {
 /// spawn_reshard_driver_loop`]) since deletion is a cluster write, unlike
 /// [`spawn_shard_usage_loop`]'s read-only cache population.
 fn spawn_hpa_handoff_loop(client: Client) {
-    // Mirrors `libs/operator::controller`'s own `identity`/`lease_namespace`
+    // Mirrors `libs/service-k8s::controller`'s own `identity`/`lease_namespace`
     // helpers (private to that crate, so duplicated here, same as
     // `reshard_driver::spawn_reshard_driver_loop` already does) so every
     // independently-leader-gated loop resolves the same pod identity and
@@ -626,7 +626,7 @@ impl ManagedService for Lumen {
 }
 
 /// `lumen k8s operator run` — run the reconcile controller on the shared
-/// `libs/operator` host (leader-gated; safe at `replicas > 1`), alongside
+/// `libs/service-k8s` host (leader-gated; safe at `replicas > 1`), alongside
 /// the live shard-usage measurement loop (#1319 R1; every replica runs it,
 /// not just the leader — see [`spawn_shard_usage_loop`]), the autonomous
 /// reshard phase driver (#1319 R2, #1381; independently leader-gated — see
@@ -648,7 +648,7 @@ pub async fn run() -> anyhow::Result<()> {
             );
         }
     }
-    operator::run::<Lumen>().await
+    service_k8s::run::<Lumen>().await
 }
 
 #[cfg(test)]

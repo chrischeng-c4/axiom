@@ -9,15 +9,15 @@
 
 use std::future::Future;
 
-use server_core::DrainController;
-use tcp_server::TcpServerConfig;
+use server_lifecycle::DrainController;
+use server_tcp::TcpServerConfig;
 
 /// `share_drain` node: overrides `config.drain` with the SAME shared
 /// `DrainController` clone `AdminState` holds, replacing the fresh
 /// `DrainController::new()` that `TcpServerConfig::new()` builds by default
 /// (R7). `TcpServerConfig` has no `with_drain()` builder — all its fields
 /// are `pub`, so struct-update syntax is the intended seam.
-pub fn wire_tcp_server_drain(config: TcpServerConfig, drain: &DrainController) -> TcpServerConfig {
+pub fn wire_server_tcp_drain(config: TcpServerConfig, drain: &DrainController) -> TcpServerConfig {
     TcpServerConfig {
         drain: drain.clone(),
         ..config
@@ -25,7 +25,7 @@ pub fn wire_tcp_server_drain(config: TcpServerConfig, drain: &DrainController) -
 }
 
 /// `spawn_signal_task` node: awaits `shutdown` (production passes
-/// `server_core::signal::wait_shutdown_signal()`) and then calls
+/// `server_lifecycle::signal::wait_shutdown_signal()`) and then calls
 /// `start_drain()` on the shared controller (R2, R7). `serve()` spawns this
 /// as a background task; tests await it directly with a manually-resolved
 /// `shutdown` future.
@@ -37,11 +37,11 @@ pub async fn drain_on_shutdown_signal(drain: DrainController, shutdown: impl Fut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use server_core::BindConfig;
+    use server_lifecycle::BindConfig;
 
-    /// verify: admin::serve_wires_shared_drain_controller_into_tcp_server_config (R7)
+    /// verify: admin::serve_wires_shared_drain_controller_into_server_tcp_config (R7)
     #[test]
-    fn tcp_server_config_carries_the_shared_drain_controller_not_a_fresh_one() {
+    fn server_tcp_config_carries_the_shared_drain_controller_not_a_fresh_one() {
         let drain = DrainController::new();
         // Keep a receiver alive: `tokio::sync::watch::Sender::send` is a
         // silent no-op with zero live receivers (mirrors production, where
@@ -49,7 +49,7 @@ mod tests {
         // `config.drain.signal()`).
         let _signal = drain.signal();
         let config = TcpServerConfig::new(BindConfig::localhost(0));
-        let config = wire_tcp_server_drain(config, &drain);
+        let config = wire_server_tcp_drain(config, &drain);
 
         // Identity (not equality): starting drain on the ORIGINAL handle
         // must be observed through `config.drain`, proving it is the same
@@ -69,7 +69,7 @@ mod tests {
         let _signal = drain.signal();
         assert!(!drain.is_draining());
 
-        // Test seam substituting for `server_core::signal::wait_shutdown_signal()`:
+        // Test seam substituting for `server_lifecycle::signal::wait_shutdown_signal()`:
         // an already-resolved future, standing in for "SIGTERM/SIGINT observed".
         drain_on_shutdown_signal(drain.clone(), async {}).await;
 

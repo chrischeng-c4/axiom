@@ -1,0 +1,16 @@
+[package]
+name = "storage-durable"
+version = "0.1.0"
+edition = "2021"
+description = "Shared durable local-storage primitives: fsync policy, atomic replacement, CRC-framed logs, and sequence-named snapshot file stores."
+
+[lib]
+name = "storage_durable"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+crc32fast = "1.4"
+
+[dev-dependencies]
+tempfile = "3"

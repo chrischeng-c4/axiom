@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use server_core::{BindConfig, ConnectionBudget};
-use tcp_server::TcpSocketOptions;
+use server_lifecycle::{BindConfig, ConnectionBudget};
+use server_tcp::TcpSocketOptions;
 
 pub mod spec;
 
@@ -23,7 +23,7 @@ pub struct RuntimePlan {
     pub max_frontend_connections: usize,
     pub max_backend_connections: usize,
     pub pool_mode: PoolMode,
-    pub admin_h2c: http_server::H2cServerOptions,
+    pub admin_h2c: server_http::H2cServerOptions,
 }
 
 impl RuntimePlan {
@@ -62,7 +62,7 @@ impl RuntimePlan {
                 "max_concurrent_streams": self.admin_h2c.max_concurrent_streams,
                 "drain_timeout_ms": self.admin_h2c.drain_timeout.as_millis()
             },
-            "shared_libs": ["server-core", "tcp-server", "http-server"]
+            "shared_libs": ["server-lifecycle", "server-tcp", "server-http"]
         })
     }
 }
@@ -76,7 +76,7 @@ impl Default for RuntimePlan {
             max_frontend_connections: 10_000,
             max_backend_connections: 512,
             pool_mode: PoolMode::Transaction,
-            admin_h2c: http_server::H2cServerOptions::default(),
+            admin_h2c: server_http::H2cServerOptions::default(),
         }
     }
 }
@@ -130,6 +130,6 @@ mod tests {
         let json = default_runtime_plan().to_json();
         assert_eq!(json["app_id"], "pgpool");
         assert_eq!(json["name_status"], "working-name");
-        assert_eq!(json["shared_libs"][0], "server-core");
+        assert_eq!(json["shared_libs"][0], "server-lifecycle");
     }
 }

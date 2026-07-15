@@ -8,7 +8,7 @@
 //! as a StatefulSet with a durable per-pod `raft` PVC backing the WAL —
 //! `replicasPerShard` only gates raft consensus, never persistence. The
 //! reconcile loop in [`super::reconcile`] turns this spec into StatefulSet,
-//! Service, ConfigMap, HPA (single-member regime only), PDB, and
+//! Service, ConfigMap, PDB, and
 //! ServiceAccount objects, garbage-collected via owner references.
 
 use std::collections::BTreeMap;
@@ -46,7 +46,7 @@ pub struct LumenSpec {
 
     /// Physical storage shard count. Data ownership is resolved through the
     /// versioned virtual-bucket map, not permanent `hash % shardCount`
-    /// routing. HPA never changes this value.
+    /// routing. Replica-layer capacity changes never change this value.
     #[serde(default = "default_shard_count")]
     pub shard_count: u32,
 
@@ -56,11 +56,13 @@ pub struct LumenSpec {
     #[serde(default)]
     pub shard_map: ShardMapSpec,
 
-    /// Raft replicas per shard. `1` (default) = a single-member serving
+    /// Starting/minimum replicas per shard. With the current startup-static
+    /// raft-runtime membership it is also the fixed desired value. `1` (default)
+    /// = a single-member serving
     /// StatefulSet with no raft consensus (still durable — the same
-    /// PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds
-    /// raft-HA: a fixed peer set whose pods inject the downward-API env
-    /// `raft_host::cluster` reads (no HPA — raft needs a known membership).
+    /// PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose
+    /// pods inject the downward-API env `raft_runtime::cluster` reads. Direct HPA
+    /// scaling is never used because membership changes must be coordinated.
     #[serde(default = "default_replicas_per_shard")]
     pub replicas_per_shard: u32,
 
@@ -342,18 +344,22 @@ impl AuthMode {
     }
 }
 
-/// Stateless serving-fleet shape: autoscaling bounds + per-pod resources.
+/// Stateful serving-fleet shape: retained legacy autoscaling input + per-pod
+/// resource requests. Replica changes are planned in whole per-shard layers by
+/// `libs/service-k8s` and require a Raft membership workflow; this struct does not
+/// make the StatefulSet a direct HPA target.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct ServingSpec {
-    /// HPA bounds + CPU target.
+    /// Legacy HPA bounds retained for CR compatibility. Direct StatefulSet HPA
+    /// is disabled; new capacity control uses the shared replica-layer policy.
     #[serde(default)]
     pub autoscaling: Autoscaling,
-    /// Per-pod CPU, applied as request==limit (Guaranteed QoS). e.g. `"2"`.
+    /// Per-pod CPU request. No CPU limit is emitted. Defaults to `"1"`.
     #[serde(default = "default_serving_cpu")]
     pub cpu: String,
-    /// Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
+    /// Per-pod memory request. No memory limit is emitted. Defaults to `"4Gi"`.
     #[serde(default = "default_serving_memory")]
     pub memory: String,
     /// Graceful drain window on SIGTERM (seconds); tracks
@@ -456,12 +462,12 @@ pub struct ServingBackupSpec {
     pub admin_token_secret: Option<String>,
 }
 
-/// HPA bounds for the serving fleet.
+/// Legacy HPA bounds retained for backward-compatible CR decoding.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct Autoscaling {
-    /// Floor (also the StatefulSet's apply-time replica count in HPA mode).
+    /// Historical HPA floor; no longer drives the data StatefulSet.
     pub min_replicas: i32,
     /// Ceiling.
     pub max_replicas: i32,
@@ -494,7 +500,7 @@ pub struct LumenStatus {
     /// Ready serving replicas (from the StatefulSet status).
     #[serde(default)]
     pub serving_ready_replicas: i32,
-    /// Desired serving replicas (HPA floor at apply, or the live count).
+    /// Desired serving replicas from the declared shard/replica topology.
     #[serde(default)]
     pub desired_replicas: i32,
     /// Effective shard count.
@@ -769,7 +775,7 @@ fn default_reshard_recommendation_only() -> bool {
     true
 }
 fn default_serving_cpu() -> String {
-    "2".into()
+    "1".into()
 }
 fn default_serving_memory() -> String {
     "4Gi".into()

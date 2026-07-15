@@ -95,7 +95,7 @@ nodes:
     label: "Backend/client EOF or FrameError mid-transaction: the lease is released as BackendPool::release(id, stream, LeaseDisposition::Close) — never returned to idle, since its session state is unknown/unsafe to reuse — and the client socket is closed"
   drain_interaction:
     kind: process
-    label: "Concurrently, DrainSignal flips to Draining on SIGTERM/SIGINT (unchanged tcp-server mechanism): the accept loop stops admitting new connections immediately, while an in-flight handshake or transaction lease keeps running unaffected until it ends or TcpServerConfig.drain_timeout elapses, at which point the task is abandoned"
+    label: "Concurrently, DrainSignal flips to Draining on SIGTERM/SIGINT (unchanged server-tcp mechanism): the accept loop stops admitting new connections immediately, while an in-flight handshake or transaction lease keeps running unaffected until it ends or TcpServerConfig.drain_timeout elapses, at which point the task is abandoned"
 edges:
   - from: handle_accept
     to: frontend_admit
@@ -425,7 +425,7 @@ definitions:
     description: >-
       The plain Rust stats API (R4) a later admin-plane WI surfaces over
       HTTP (out of scope here \u2014 this slice ships only the Rust API);
-      composes the existing server_core::ConnectionBudget::active()
+      composes the existing server_lifecycle::ConnectionBudget::active()
       (frontend admission, unchanged from WI #1288) with BackendPoolStats
       (this TD) into one snapshot.
     properties:
@@ -455,7 +455,7 @@ definitions:
       helpers need.
     properties:
       frontend_budget:
-        x-rust-type: server_core::ConnectionBudget
+        x-rust-type: server_lifecycle::ConnectionBudget
         description: "Same admission primitive as SessionProxyConfig::frontend_budget \u2014 one shared frontend-connection cap regardless of pool mode."
       backend_pool:
         x-rust-type: crate::pool::BackendPool
@@ -473,7 +473,7 @@ definitions:
     x-rust-derive: [Debug, Clone]
     required: [config]
     description: >-
-      The tcp_server::TcpHandler impl pgpool serve binds to its listener in
+      The server_tcp::TcpHandler impl pgpool serve binds to its listener in
       transaction mode: dispatches each accepted client through the
       admission-handshake-then-per-transaction-lease pipeline described in
       the Logic section, using its TransactionProxyConfig.
@@ -491,7 +491,7 @@ definitions:
       RuntimePlan::PoolMode: wraps the unchanged crate::proxy::SessionHandler
       for PoolMode::Session, or the new TransactionHandler for
       PoolMode::Transaction. pgpool serve constructs exactly one variant and
-      binds it to the single tcp-server listener \u2014 the mode is fixed for the
+      binds it to the single server-tcp listener \u2014 the mode is fixed for the
       process, not renegotiated per connection.
     oneOf:
       - title: Session

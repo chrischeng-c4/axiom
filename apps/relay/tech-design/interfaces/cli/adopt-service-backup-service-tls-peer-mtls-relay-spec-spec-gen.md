@@ -16,13 +16,13 @@ summary: >
   and ships them to a libs/service-backup destination sink with optional age
   retention; restore is a load_live merge on a fresh node (idempotent per
   message_id — surplus entries redeliver, at-least-once). Peer-mTLS material
-  loads through a thin src/peer_tls.rs adapter over libs/service-tls
+  loads through a thin src/peer_tls.rs adapter over libs/peer-tls
   (PeerTlsConfig::from_env("RELAY_PEER"): RELAY_PEER_TLS_CERT/KEY/CA +
   RELAY_PEER_MTLS=on|off), validated fail-fast at serve startup in replica
-  mode; mTLS termination on the raft peer port is a filed raft-host/h2c seam
+  mode; mTLS termination on the raft peer port is a filed raft-runtime/h2c seam
   gap, not hacked around. The operator CRD gains spec.backup (flat URI string
   destination — keep #776 structural-schema trap) rendering an optional
-  <name>-backup CronJob via the shared operator::render::cron_job. The llm
+  <name>-backup CronJob via the shared service_k8s::render::cron_job. The llm
   operations topic documents all three surfaces.
 fill_sections: [logic, unit-test, changes]
 ---
@@ -37,7 +37,7 @@ entry: main
 nodes:
   main:
     kind: start
-    label: "Single relay bin gains the deploy-CLI tail: Command::Spec + Command::Backup arms beside serve/llm/upgrade/issue/k8s/dockerfile. main still installs the rustls crypto provider FIRST — now unconditionally via service_tls::install_default_crypto_provider (service-tls links rustls in every build, so the private rustls-provider feature indirection collapses; src/tls.rs delegates)"
+    label: "Single relay bin gains the deploy-CLI tail: Command::Spec + Command::Backup arms beside serve/llm/upgrade/issue/k8s/dockerfile. main still installs the rustls crypto provider FIRST — now unconditionally via peer_tls::install_default_crypto_provider (peer-tls links rustls in every build, so the private rustls-provider feature indirection collapses; src/tls.rs delegates)"
   verb:
     kind: decision
     label: "Which verb? spec | spec gen | backup. spec/spec gen are OFFLINE (no server, no network, stdout/--out only); backup needs a RUNNING node (HTTP fetch) and the `backup` build feature"
@@ -61,19 +61,19 @@ nodes:
     label: "Restore semantics (documented, exercised library-side; no HTTP restore endpoint this slice): feed the artifact's bytes to load_snapshot_bytes on a fresh node — load_live re-publishes every entry through the normal engine path, idempotent per message_id, preserving not_before/priority/appended_at. It is a MERGE, not a wipe: entries the target already holds dedupe; entries it holds that the snapshot lacks stay and redeliver — at-least-once, exactly the raft InstallSnapshot semantics. Leases/acks are NOT in the snapshot (node-local by design, #544): restored work is un-leased and redelivers"
   tls:
     kind: process
-    label: "src/peer_tls.rs (new, always compiled): thin adapter over libs/service-tls — pub PeerTlsConfig { cert, key, ca, required } + From conversions, from_env() = service_tls::PeerTlsConfig::from_env(RELAY_PEER) deriving RELAY_PEER_TLS_CERT / RELAY_PEER_TLS_KEY / RELAY_PEER_TLS_CA / RELAY_PEER_MTLS=on|off (lumen's env contract byte-for-byte with the RELAY prefix), plus rustls_server_config()/rustls_client_config() passthroughs. Ok(None) when nothing is set; partial config or a mis-pointed path is an Err naming the variable/path (fail fast, never a silent fallback)"
+    label: "src/peer_tls.rs (new, always compiled): thin adapter over libs/peer-tls — pub PeerTlsConfig { cert, key, ca, required } + From conversions, from_env() = peer_tls::PeerTlsConfig::from_env(RELAY_PEER) deriving RELAY_PEER_TLS_CERT / RELAY_PEER_TLS_KEY / RELAY_PEER_TLS_CA / RELAY_PEER_MTLS=on|off (lumen's env contract byte-for-byte with the RELAY prefix), plus rustls_server_config()/rustls_client_config() passthroughs. Ok(None) when nothing is set; partial config or a mis-pointed path is an Err naming the variable/path (fail fast, never a silent fallback)"
   tlswire:
     kind: decision
     label: "serve_main, replica/HA mode only: peer_tls::PeerTlsConfig::from_env()? BEFORE the raft group spawns — a misconfigured deployment exits nonzero at startup. None => plain h2c peer transport (today's behavior, logged at info). Some => material validated + rustls builders proven constructible; log identity. required=true => WARN: mTLS termination on the raft peer port is NOT YET APPLIED"
   gap:
     kind: terminal
-    label: "FILED SEAM GAP (mirrors lumen, which also ships config-surface-only): raft-host's peer transport is h2c prior-knowledge (raft_host router merged onto the cleartext serve port; peers dialed via reqwest http://) with no TLS acceptor/connector seam. Wiring real mTLS needs raft-host to accept a rustls ServerConfig/ClientConfig pair (or a dedicated TLS peer listener) — a libs/raft-host change benefiting keep/lumen/relay alike. This slice deliberately does NOT hack a parallel TLS stack into h2c; the adapter + startup validation + env contract land now so material can be mounted and verified before the seam exists"
+    label: "FILED SEAM GAP (mirrors lumen, which also ships config-surface-only): raft-runtime's peer transport is h2c prior-knowledge (raft_runtime router merged onto the cleartext serve port; peers dialed via reqwest http://) with no TLS acceptor/connector seam. Wiring real mTLS needs raft-runtime to accept a rustls ServerConfig/ClientConfig pair (or a dedicated TLS peer listener) — a libs/raft-runtime change benefiting keep/lumen/relay alike. This slice deliberately does NOT hack a parallel TLS stack into h2c; the adapter + startup validation + env contract land now so material can be mounted and verified before the seam exists"
   crd:
     kind: process
     label: "Operator/CRD (feature operator): RelaySpec gains backup: Option<RelayBackupSpec> { schedule (CronJob cron), destination (FLAT URI STRING — file:///path | s3://bucket/prefix | gs://bucket/prefix; keep #776 trap: k8s structural schemas cannot represent the shared tagged-union BackupDestination), retention_secs: Option<u64>, admin_token_secret: Option<String> (Secret whose token key holds a bearer with admin on '*', injected as RELAY_BACKUP_TOKEN — needed when auth: required) }"
   cron:
     kind: terminal
-    label: "render(): when spec.backup is Some, append backup_cron_job via the SHARED operator::render::cron_job helper (manifest-only; lumen #808 pattern) — name {name}-backup, component backup, schedule from spec, same relay image, command [relay], args [backup, --url, http://{name}.{ns}.svc.cluster.local:7000, --dest, <destination>, (--retention-secs N)], env RELAY_BACKUP_TOKEN from secretKeyRef when admin_token_secret set, serviceAccountName {name}, 100m/128Mi, history limits 3/3. None => no CronJob; /admin/backup stays reachable for ad hoc use. llm operations topic documents spec/spec gen, backup (CLI + endpoint + CronJob), and the peer-TLS env contract + gap"
+    label: "render(): when spec.backup is Some, append backup_cron_job via the SHARED service_k8s::render::cron_job helper (manifest-only; lumen #808 pattern) — name {name}-backup, component backup, schedule from spec, same relay image, command [relay], args [backup, --url, http://{name}.{ns}.svc.cluster.local:7000, --dest, <destination>, (--retention-secs N)], env RELAY_BACKUP_TOKEN from secretKeyRef when admin_token_secret set, serviceAccountName {name}, 100m/128Mi, history limits 3/3. None => no CronJob; /admin/backup stays reachable for ad hoc use. llm operations topic documents spec/spec gen, backup (CLI + endpoint + CronJob), and the peer-TLS env contract + gap"
 edges:
   - { from: main, to: verb }
   - { from: verb, to: spec, label: "spec" }
@@ -90,18 +90,18 @@ edges:
   - { from: spec, to: gen, label: "same document" }
 ---
 flowchart TD
-    main([relay bin: Spec + Backup arms; rustls provider install now unconditional via service-tls]) --> verb{verb?}
+    main([relay bin: Spec + Backup arms; rustls provider install now unconditional via peer-tls]) --> verb{verb?}
     verb -->|spec| spec[offline OpenAPI: json pretty / yaml / components-only json-schema; no --shapes/--fields — relay has no catalogs]
     verb -->|spec gen| gen[cclab_openapi_codegen::generate on relay's own document — ts/py/rust clients into --out]
     verb -->|backup| backup[feature backup: fetch snapshot bytes over HTTP, ship to service-backup sink, print BackupRunResult]
     backup -->|GET /admin/backup| endpoint[admin-guarded route inside the auth middleware: Role::Admin on *]
     endpoint -->|bytes from| fmt[ONE format: pub EngineSnapshot + raft snapshot_bytes / load_snapshot_bytes shared by state machine, endpoint, artifact]
     fmt -->|round-trip| restore[restore = load_live MERGE on a fresh node: idempotent per message_id, leases not replicated, at-least-once]
-    main -->|serve path| tls[src/peer_tls.rs: service_tls PeerTlsConfig from_env RELAY_PEER — cert/key/ca + RELAY_PEER_MTLS=on]
+    main -->|serve path| tls[src/peer_tls.rs: peer_tls PeerTlsConfig from_env RELAY_PEER — cert/key/ca + RELAY_PEER_MTLS=on]
     tls --> tlswire{replica mode: material set?}
     tlswire -->|None| plain[plain h2c peers — today's behavior]
     tlswire -->|Some| valid[validate + prove rustls builders; fail fast on partial/mis-pointed config]
-    valid -->|required=on| gap([filed gap: raft-host/h2c has no TLS seam — no parallel stack hacked in])
+    valid -->|required=on| gap([filed gap: raft-runtime/h2c has no TLS seam — no parallel stack hacked in])
     backup -->|operator schedules| crd[RelaySpec.backup: flat URI destination string + schedule + retentionSecs + adminTokenSecret]
     crd --> cron([shared render cron_job: name-backup CronJob invoking relay backup; RELAY_BACKUP_TOKEN secretKeyRef])
     spec -->|same document| gen
@@ -145,7 +145,7 @@ requirements:
     verify: src/bin/relay.rs::tests::spec_and_backup_verbs_parse
   crd_backup_cron_render:
     id: R4
-    text: "RelaySpec.backup (flat URI string destination) renders a <name>-backup CronJob via the shared operator::render::cron_job — schedule, relay backup args (--url cluster-DNS, --dest, --retention-secs), RELAY_BACKUP_TOKEN secretKeyRef when adminTokenSecret set; absent backup renders NO CronJob and the CRD stays structural-schema safe."
+    text: "RelaySpec.backup (flat URI string destination) renders a <name>-backup CronJob via the shared service_k8s::render::cron_job — schedule, relay backup args (--url cluster-DNS, --dest, --retention-secs), RELAY_BACKUP_TOKEN secretKeyRef when adminTokenSecret set; absent backup renders NO CronJob and the CRD stays structural-schema safe."
     kind: functional
     risk: medium
     verify: tests/operator.rs::backup_cron_job_renders_only_when_policy_set (cfg feature operator)
@@ -163,7 +163,7 @@ requirements:
     verify: src/peer_tls.rs::tests::{from_env_returns_none_when_nothing_set,from_env_loads_when_all_set,from_env_errors_on_partial_config,mis_pointed_cert_path_fails_fast_naming_the_path}
   peer_tls_rustls_builders:
     id: R3
-    text: "Scratch PEM material (the service-tls fixture cert/key) builds both rustls server and client configs through the adapter passthroughs — the material is proven usable even though the raft-host/h2c seam cannot terminate mTLS yet (filed gap)."
+    text: "Scratch PEM material (the peer-tls fixture cert/key) builds both rustls server and client configs through the adapter passthroughs — the material is proven usable even though the raft-runtime/h2c seam cannot terminate mTLS yet (filed gap)."
     kind: functional
     risk: low
     verify: src/peer_tls.rs::tests::builds_rustls_peer_configs_from_pem_material
@@ -202,7 +202,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Feature `backup` = [dep:reqwest, service-backup/s3] (lumen #808 layout). New unconditional deps: service-backup (shared destination/policy/sink/runner contract), service-tls (peer-mTLS material loading — links rustls in every build), cclab-openapi-codegen (spec gen), serde_yaml (spec --format openapi-yaml; was operator-only), rustls (peer_tls builder passthrough types). reqwest becomes an optional runtime dep (still a dev-dep). The private rustls-provider feature collapses: rustls is always linked now, so self-update/issue/operator drop the indirection and src/tls.rs installs unconditionally."
+    description: "Feature `backup` = [dep:reqwest, service-backup/s3] (lumen #808 layout). New unconditional deps: service-backup (shared destination/policy/sink/runner contract), peer-tls (peer-mTLS material loading — links rustls in every build), cclab-openapi-codegen (spec gen), serde_yaml (spec --format openapi-yaml; was operator-only), rustls (peer_tls builder passthrough types). reqwest becomes an optional runtime dep (still a dev-dep). The private rustls-provider feature collapses: rustls is always linked now, so self-update/issue/operator drop the indirection and src/tls.rs installs unconditionally."
   - path: apps/relay/src/bin/relay.rs
     action: modify
     section: logic
@@ -217,12 +217,12 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New always-compiled thin adapter over libs/service-tls (lumen src/tls.rs #971 pattern): ENV_PREFIX RELAY_PEER, pub PeerTlsConfig {cert,key,ca,required} + From conversions, from_env() deriving RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on|off, rustls_server_config/rustls_client_config passthroughs. Unit tests: none-set => None, all-set + on => required, partial => must-all-be-set error, mis-pointed cert path => error naming the path, PEM fixture builds both rustls configs."
+    description: "New always-compiled thin adapter over libs/peer-tls (lumen src/tls.rs #971 pattern): ENV_PREFIX RELAY_PEER, pub PeerTlsConfig {cert,key,ca,required} + From conversions, from_env() deriving RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on|off, rustls_server_config/rustls_client_config passthroughs. Unit tests: none-set => None, all-set + on => required, partial => must-all-be-set error, mis-pointed cert path => error naming the path, PEM fixture builds both rustls configs."
   - path: apps/relay/src/tls.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "install_default_crypto_provider() now delegates unconditionally to service_tls::install_default_crypto_provider (service-tls links rustls in every build; the rustls-provider cfg gate and doc caveats go away)."
+    description: "install_default_crypto_provider() now delegates unconditionally to peer_tls::install_default_crypto_provider (peer-tls links rustls in every build; the rustls-provider cfg gate and doc caveats go away)."
   - path: apps/relay/src/raft.rs
     action: modify
     section: logic
@@ -252,12 +252,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "backup_cron_job(relay, cx) -> Option<Value> via the shared operator::render::cron_job helper: {name}-backup, schedule, same relay image, command [relay], args [backup --url http://{name}.{ns}.svc.cluster.local:7000 --dest <destination> (--retention-secs N)], RELAY_BACKUP_TOKEN secretKeyRef when adminTokenSecret set, serviceAccountName {name}; appended to render() only when spec.backup is Some."
+    description: "backup_cron_job(relay, cx) -> Option<Value> via the shared service_k8s::render::cron_job helper: {name}-backup, schedule, same relay image, command [relay], args [backup --url http://{name}.{ns}.svc.cluster.local:7000 --dest <destination> (--retention-secs N)], RELAY_BACKUP_TOKEN secretKeyRef when adminTokenSecret set, serviceAccountName {name}; appended to render() only when spec.backup is Some."
   - path: apps/relay/src/llm.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "operations topic documents relay spec / spec gen, relay backup + GET /admin/backup + the operator CronJob + RELAY_BACKUP_TOKEN, and the RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on contract with the raft-host/h2c mTLS-termination gap stated honestly."
+    description: "operations topic documents relay spec / spec gen, relay backup + GET /admin/backup + the operator CronJob + RELAY_BACKUP_TOKEN, and the RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on contract with the raft-runtime/h2c mTLS-termination gap stated honestly."
   - path: apps/relay/tests/spec_cli.rs
     action: create
     section: unit-test

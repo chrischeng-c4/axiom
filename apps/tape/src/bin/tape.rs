@@ -650,7 +650,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     // slice — raft-host's h2c transport has no TLS seam yet). Held for the
     // process lifetime via `state` — dropping it would abort the tick/pump
     // tasks.
-    if raft_host::cluster::replica_mode() {
+    if raft_runtime::cluster::replica_mode() {
         // Peer-mTLS material (#1327): load + validate BEFORE the raft group
         // spawns, so a misconfigured deployment (partial TAPE_PEER_TLS_* set,
         // mis-pointed path, unusable PEM) exits nonzero at startup instead of
@@ -661,16 +661,16 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             Some(tls) => {
                 tls.rustls_server_config()?;
                 tls.rustls_client_config()?;
-                if tls.mtls_required() {
+                if tls.required {
                     tracing::warn!(
-                        cert = %tls.cert().display(),
+                        cert = %tls.cert.display(),
                         "peer TLS material validated; TAPE_PEER_MTLS=on requested but mTLS \
                          termination on the raft peer port is not yet applied (raft-host/h2c \
                          TLS seam gap) — peer RPCs stay h2c"
                     );
                 } else {
                     tracing::info!(
-                        cert = %tls.cert().display(),
+                        cert = %tls.cert.display(),
                         "peer TLS material validated (not required); peer RPCs stay h2c until \
                          the raft-host TLS seam lands"
                     );
@@ -688,7 +688,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             .ok_or_else(|| {
                 anyhow::anyhow!("cannot derive the raft peer port from --bind {}", args.bind)
             })?;
-        let topo = raft_host::ClusterTopology::from_env(
+        let topo = raft_runtime::ClusterTopology::from_env(
             "tape",
             &args.peer_service,
             peer_port,

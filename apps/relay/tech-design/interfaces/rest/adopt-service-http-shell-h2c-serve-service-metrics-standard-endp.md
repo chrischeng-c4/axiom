@@ -6,7 +6,7 @@ summary: >
   with the /v1 data plane, the h2c + HTTP/1.1 one-port serve loop with a
   SIGTERM-aware graceful drain (--grace-secs, RELAY_GRACE_SECS), the shared
   {error, message} ApiErr envelope on error paths, and RelayMetrics — per-op
-  request counts + latency on libs/service-metrics primitives, recorded by a
+  request counts + latency on libs/metrics-prometheus primitives, recorded by a
   route_layer middleware and exposed through the MetricsProvider seam.
 fill_sections: [logic, unit-test, changes]
 ---
@@ -42,7 +42,7 @@ nodes:
     label: "Handler: decode JSON or CBOR body, run the Relay op, encode the response; decode errors return ApiErr 400 bad_request, engine/encode errors ApiErr 500 internal; consume rejects a non-Subscribe first frame with ApiErr 400 instead of a silent empty 200 stream"
   track:
     kind: process
-    label: "metrics::track route_layer middleware: map the matched route pattern to its op family (publish / publish-batch / lease / ack / consume / other) and observe count + latency ms into RelayMetrics (service-metrics Latency primitives)"
+    label: "metrics::track route_layer middleware: map the matched route pattern to its op family (publish / publish-batch / lease / ack / consume / other) and observe count + latency ms into RelayMetrics (metrics-prometheus Latency primitives)"
   sigterm:
     kind: process
     label: "SIGTERM or SIGINT: start_drain flips the draining AtomicBool so /readyz reports 503, the grace window holds, then the listener closes"
@@ -108,13 +108,13 @@ requirements:
     verify: src/bin/relay.rs::tests::cli_parse_surface
   h2c_and_h1_one_port:
     id: R1
-    text: "service_http::serve serves HTTP/2 prior-knowledge (h2c, via libs/h2c h2c_client) AND HTTP/1.1 requests on the same port — replacing the HTTP/1-only axum::serve."
+    text: "service_http::serve serves HTTP/2 prior-knowledge (h2c, via libs/transport-h2c h2c_client) AND HTTP/1.1 requests on the same port — replacing the HTTP/1-only axum::serve."
     kind: functional
     risk: high
     verify: tests/http2_transport.rs::h2c_and_http11_share_the_serve_port
   metrics_counters:
     id: R3
-    text: "RelayMetrics (service-metrics Latency primitives, recorded by the metrics::track route_layer) renders per-op relay request counters + latency into the Prometheus text /metrics serves after traffic."
+    text: "RelayMetrics (metrics-prometheus Latency primitives, recorded by the metrics::track route_layer) renders per-op relay request counters + latency into the Prometheus text /metrics serves after traffic."
     kind: functional
     risk: medium
     verify: tests/http2_transport.rs::metrics_report_relay_request_counters_after_traffic
@@ -143,12 +143,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add service-http + service-metrics path deps and tracing + tracing-subscriber (env-filter) for the shared shell and serve-path tracing init."
+    description: "Add service-http + metrics-prometheus path deps and tracing + tracing-subscriber (env-filter) for the shared shell and serve-path tracing init."
   - path: apps/relay/src/metrics.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: "RelayMetrics on libs/service-metrics primitives (Latency = count + sum, render): publish / publish-batch / lease / ack / consume / other request counts + latency ms, plus the track route_layer middleware that maps the matched route pattern to its op family (mirrors keep's http/metrics.rs track)."
+    description: "RelayMetrics on libs/metrics-prometheus primitives (Latency = count + sum, render): publish / publish-batch / lease / ack / consume / other request counts + latency ms, plus the track route_layer middleware that maps the matched route pattern to its op family (mirrors keep's http/metrics.rs track)."
   - path: apps/relay/src/lib.rs
     action: modify
     section: logic
@@ -178,5 +178,5 @@ changes:
     action: modify
     section: unit-test
     impl_mode: hand-written
-    description: "Serve the test app through service_http::serve; add probe_surface_answers_on_serve_port, readyz_flips_to_503_on_drain, h2c_and_http11_share_the_serve_port (libs/h2c h2c_client + plain HTTP/1.1 reqwest), metrics_report_relay_request_counters_after_traffic, and errors_render_the_shared_envelope; existing publish/lease/ack + CBOR tests stay as the regression net."
+    description: "Serve the test app through service_http::serve; add probe_surface_answers_on_serve_port, readyz_flips_to_503_on_drain, h2c_and_http11_share_the_serve_port (libs/transport-h2c h2c_client + plain HTTP/1.1 reqwest), metrics_report_relay_request_counters_after_traffic, and errors_render_the_shared_envelope; existing publish/lease/ack + CBOR tests stay as the regression net."
 ```

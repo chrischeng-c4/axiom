@@ -32,30 +32,12 @@ patches:
       - op: add
         path: /data/LUMEN_AUTH
         value: "off"
-  # Tiny serving-node resources for a laptop / kind cluster.
+  # Direct-install runtime wiring. Resource requests inherit the shared
+  # 1 CPU / 4Gi request-only baseline; users tune this overlay for their node.
   - target:
       kind: Deployment
       name: lumen
     patch: |-
-      # apply_raft_entry is a synchronous CPU-bound op (bulk index + BM25);
-      # too tight a CPU limit lets it starve the tokio runtime under load.
-      # 1 core keeps a 10k-doc index e2e responsive.
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/cpu
-        value: "500m"
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/memory
-        value: "512Mi"
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/limits/cpu
-        value: "1"
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/limits/memory
-        value: "512Mi"
-      # Single-node dev clusters rarely have zone labels; relax host spread.
-      - op: replace
-        path: /spec/template/spec/topologySpreadConstraints/1/whenUnsatisfiable
-        value: "ScheduleAnyway"
       # AUTH is off in dev; wire LUMEN_AUTH through from the merged ConfigMap.
       - op: add
         path: /spec/template/spec/containers/0/env/-
@@ -65,15 +47,4 @@ patches:
             configMapKeyRef:
               name: lumen-config
               key: LUMEN_AUTH
-  # Floor the HPA at 1 so it never forces a second pod in dev.
-  - target:
-      kind: HorizontalPodAutoscaler
-      name: lumen
-    patch: |-
-      - op: replace
-        path: /spec/minReplicas
-        value: 1
-      - op: replace
-        path: /spec/maxReplicas
-        value: 1
 # CODEGEN-END

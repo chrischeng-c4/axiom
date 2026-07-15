@@ -236,7 +236,7 @@ ID: primary-replicas
 Type: Runtime
 Root WI: #769
 Status: confirmed
-Surfaces: Raft: collection metadata, shard ownership, and index lifecycle state over `libs/raft-core` and `libs/raft-host`.
+Surfaces: Raft: collection metadata, shard ownership, and index lifecycle state over `libs/raft-core` and `libs/raft-runtime`.
 EC Dimensions: stability: pending raft vector failover gate - metadata and index lifecycle state survive failover
 Required Verification: conformance, dogfood
 Promise:

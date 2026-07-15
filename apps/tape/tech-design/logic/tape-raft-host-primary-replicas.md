@@ -1,8 +1,8 @@
 ---
 id: tape-raft-host-primary-replicas
 summary: >
-  Wire apps/tape onto libs/raft-host for the primary_replicas trait.
-  TapeStateMachine implements raft_host::RaftStateMachine over the shared
+  Wire apps/tape onto libs/raft-runtime for the primary_replicas trait.
+  TapeStateMachine implements raft_runtime::RaftStateMachine over the shared
   Arc<Mutex<TapeJournal>>: the replicated commands are TapeCommand::Append
   { topic, key, payload, timestamp_ms } and TapeCommand::CheckpointPut
   { topic, consumer, offset, updated_at_ms } (both resolved deterministically
@@ -15,14 +15,14 @@ summary: >
   TapeJournal (topics + checkpoints) tagged with the applied index -- valid
   because tape's journal is pure-append with no trimming, unlike relay's
   live/un-acked subset. Auto-mode: bare `tape serve` stays direct-journal;
-  when raft_host::cluster::replica_mode() (REPLICAS_PER_SHARD > 1) the serve
+  when raft_runtime::cluster::replica_mode() (REPLICAS_PER_SHARD > 1) the serve
   path builds ClusterTopology::from_env("tape", TAPE_PEER_SERVICE, serve
   port, TAPE_PEERS), spawns one RaftHost with TapeStateMachine, mounts
   raft.router() on the serve port OUTSIDE the bearer-auth /topics data
   plane, and routes append/checkpoint-put through raft.propose (leader
   redirect/forward handled by the host). replay/checkpoint-get stay
   node-local reads. Peer TLS is config-surface + fail-fast validation only
-  (raft-host's h2c transport has no TLS seam yet -- the shared gap also
+  (raft-runtime's h2c transport has no TLS seam yet -- the shared gap also
   filed against relay/keep/lumen). Verified by a live 3-node kill -9
   failover test proving no committed event loss.
 fill_sections: [logic, unit-test, changes]
@@ -41,19 +41,19 @@ nodes:
     label: "serve_main: existing config resolution unchanged (bind, store, grace, auth). New: --data-dir (TAPE_DATA_DIR) for durable raft state and --peer-service (TAPE_PEER_SERVICE, default tape) for the headless-Service peer DNS template"
   mode:
     kind: decision
-    label: "raft_host::cluster::replica_mode(): REPLICAS_PER_SHARD > 1 from the standard downward-API quartet? Unset env or 1 replica = single-node -- the auto-mode switch; no tape-specific flags"
+    label: "raft_runtime::cluster::replica_mode(): REPLICAS_PER_SHARD > 1 from the standard downward-API quartet? Unset env or 1 replica = single-node -- the auto-mode switch; no tape-specific flags"
   single:
     kind: process
     label: "Single-node path (default, AC1): today's direct-journal router exactly -- append/replay/checkpoint hit Arc<Mutex<TapeJournal>> in-process, --store file persistence unchanged; no raft task, no peer surface, zero behavior change"
   peertls:
     kind: process
-    label: "Peer TLS material (config-surface + fail-fast validation ONLY, mirroring relay #1209): tape::peer_tls::PeerTlsConfig::from_env() (TAPE_PEER_TLS_CERT/KEY/CA, TAPE_PEER_MTLS=on|off) loads + validates BEFORE the raft group spawns -- partial config or a mis-pointed path is a startup error. raft-host's h2c peer transport has no TLS acceptor/connector seam yet (the shared gap also filed against relay/keep/lumen), so termination is NOT applied; peer RPCs stay plain h2c either way"
+    label: "Peer TLS material (config-surface + fail-fast validation ONLY, mirroring relay #1209): tape::peer_tls::PeerTlsConfig::from_env() (TAPE_PEER_TLS_CERT/KEY/CA, TAPE_PEER_MTLS=on|off) loads + validates BEFORE the raft group spawns -- partial config or a mis-pointed path is a startup error. raft-runtime's h2c peer transport has no TLS acceptor/connector seam yet (the shared gap also filed against relay/keep/lumen), so termination is NOT applied; peer RPCs stay plain h2c either way"
   topo:
     kind: process
     label: "HA path: ClusterTopology::from_env('tape', peer_service, port-from-bind, 'TAPE_PEERS') -- node_id = replica index, voters 0..VOTER_COUNT, peer URLs tape-<ordinal>.<svc>:<port> or the TAPE_PEERS local override. NO local ordinal math"
   spawn:
     kind: process
-    label: "TapeRaft::spawn: raft_host::RaftStore::open({data_dir}/raft, node_id, FsyncPolicy::Always); TapeStateMachine::new(Arc<Mutex<TapeJournal>>, marker path) recovers its applied floor from applied-<node_id>.idx; RaftHost::spawn(node_id, membership, peers, store, sm, HostConfig{ snapshot: EveryEntries(SNAPSHOT_EVERY) })"
+    label: "TapeRaft::spawn: raft_runtime::RaftStore::open({data_dir}/raft, node_id, FsyncPolicy::Always); TapeStateMachine::new(Arc<Mutex<TapeJournal>>, marker path) recovers its applied floor from applied-<node_id>.idx; RaftHost::spawn(node_id, membership, peers, store, sm, HostConfig{ snapshot: EveryEntries(SNAPSHOT_EVERY) })"
   mount:
     kind: process
     label: "app = router(state-with-raft).merge(raft.router()): /raft/request-vote, /raft/append-entries, /raft/install-snapshot, /raft/propose, /raftz ride the SAME serve port but OUTSIDE the bearer-auth /topics data plane (cluster traffic, tokenless like probes)"
@@ -98,7 +98,7 @@ flowchart TD
     mode -->|no| single[direct-journal path unchanged, zero flags, zero behavior change]
     mode -->|yes| peertls[peer_tls::PeerTlsConfig::from_env, config-surface + fail-fast validation only]
     peertls --> topo[ClusterTopology::from_env tape / TAPE_PEER_SERVICE / TAPE_PEERS, no local ordinal math]
-    topo --> spawn[TapeRaft::spawn: raft_host RaftStore + TapeStateMachine + RaftHost]
+    topo --> spawn[TapeRaft::spawn: raft_runtime RaftStore + TapeStateMachine + RaftHost]
     spawn --> mount[merge raft.router onto serve port outside bearer auth]
     mount --> write{append or checkpoint-put?}
     write -->|yes| propose[resolve timestamp_ms / updated_at_ms then TapeCommand -> raft.propose]
@@ -136,7 +136,7 @@ requirements:
     verify: tests/raft_failover.rs::three_node_live_process_kill_9_failover_no_committed_loss
   peer_tls_config_surface_fail_fast:
     id: R6
-    text: "tape::peer_tls::PeerTlsConfig::from_env() mirrors relay's config-surface-only contract: nothing set is Ok(None) (plain h2c); a partial TAPE_PEER_TLS_* triple is a startup error; a mis-pointed path names itself in the error; a complete PEM fixture builds both rustls server/client configs even though raft-host has no TLS seam to apply them to yet."
+    text: "tape::peer_tls::PeerTlsConfig::from_env() mirrors relay's config-surface-only contract: nothing set is Ok(None) (plain h2c); a partial TAPE_PEER_TLS_* triple is a startup error; a mis-pointed path names itself in the error; a complete PEM fixture builds both rustls server/client configs even though raft-runtime has no TLS seam to apply them to yet."
     kind: functional
     risk: medium
     verify: src/peer_tls.rs::tests
@@ -154,16 +154,16 @@ requirements:
     verify: tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot
   state_machine_apply_and_outcome:
     id: R1
-    text: "TapeStateMachine implements raft_host::RaftStateMachine over the shared Arc<Mutex<TapeJournal>>: apply decodes TapeCommand::Append/CheckpointPut and calls the unchanged, validated TapeJournal::append/put_checkpoint_at methods; the apply outcome (the appended TapeEvent, or the checkpoint Result) is claimable by raft index from an OutcomeWindow so a proposing handler returns the real domain result instead of a synthetic one. Verified end-to-end by a 3-node in-process group: an append proposed on the leader is applied and readable via the journal on ALL nodes, and a checkpoint-put's stale/beyond-end rejection surfaces to the caller unchanged."
+    text: "TapeStateMachine implements raft_runtime::RaftStateMachine over the shared Arc<Mutex<TapeJournal>>: apply decodes TapeCommand::Append/CheckpointPut and calls the unchanged, validated TapeJournal::append/put_checkpoint_at methods; the apply outcome (the appended TapeEvent, or the checkpoint Result) is claimable by raft index from an OutcomeWindow so a proposing handler returns the real domain result instead of a synthetic one. Verified end-to-end by a 3-node in-process group: an append proposed on the leader is applied and readable via the journal on ALL nodes, and a checkpoint-put's stale/beyond-end rejection surfaces to the caller unchanged."
     kind: functional
     risk: high
     verify: tests/raft_cluster.rs::three_node_group_elects_replicates_forwards_and_fails_over
   topology_from_standard_env:
     id: R7
-    text: "tape derives its cluster topology exclusively from the standard downward-API quartet via raft-host (no local ordinal math): with POD_NAME/SHARD_COUNT/REPLICAS_PER_SHARD/VOTER_COUNT set, ClusterTopology::from_env('tape', ...) yields the replica node id, voter membership, and peer URLs honoring the TAPE_PEERS local override; replica_mode() is false when the env is unset or REPLICAS_PER_SHARD=1."
+    text: "tape derives its cluster topology exclusively from the standard downward-API quartet via raft-runtime (no local ordinal math): with POD_NAME/SHARD_COUNT/REPLICAS_PER_SHARD/VOTER_COUNT set, ClusterTopology::from_env('tape', ...) yields the replica node id, voter membership, and peer URLs honoring the TAPE_PEERS local override; replica_mode() is false when the env is unset or REPLICAS_PER_SHARD=1."
     kind: regression
     risk: low
-    verify: libs/raft-host/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)
+    verify: libs/raft-runtime/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)
 ---
 flowchart TD
     r1[R1 state machine apply and outcome] --> tests_raft_cluster_rs_three_node_group_elects_replicates_forwards_and_fails_over[tests/raft_cluster.rs::three_node_group_elects_replicates_forwards_and_fails_over]
@@ -172,7 +172,7 @@ flowchart TD
     r4[R4 snapshot restore whole journal] --> tests_raft_cluster_rs_fresh_node_catches_up_via_install_snapshot[tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot]
     r5[R5 failover no committed loss] --> tests_raft_failover_rs_three_node_live_process_kill_9_failover_no_committed_loss[tests/raft_failover.rs::three_node_live_process_kill_9_failover_no_committed_loss]
     r6[R6 peer tls config surface fail fast] --> src_peer_tls_rs_tests[src/peer_tls.rs::tests]
-    r7[R7 topology from standard env] --> libs_raft_host_src_cluster_rs_tests_shared_exercised_via_tape_s_clustertopology_from_env_call[libs/raft-host/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)]
+    r7[R7 topology from standard env] --> libs_raft_runtime_src_cluster_rs_tests_shared_exercised_via_tape_s_clustertopology_from_env_call[libs/raft-runtime/src/cluster.rs::tests (shared, exercised via tape's ClusterTopology::from_env call)]
     r8[R8 single node regression] --> cargo_test_p_tape[cargo test -p tape]
 ```
 ## Changes
@@ -184,7 +184,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add the raft-host and service-tls path dependencies (shared driver: RaftHost, RaftStore, RaftStateMachine, ClusterTopology, OutcomeWindow, SnapshotPolicy; shared peer-TLS config/rustls builders); add reqwest + tempfile to dev-dependencies for the cluster/failover integration tests (reqwest already present, tempfile already present)."
+    description: "Add the raft-runtime and peer-tls path dependencies (shared driver: RaftHost, RaftStore, RaftStateMachine, ClusterTopology, OutcomeWindow, SnapshotPolicy; shared peer-TLS config/rustls builders); add reqwest + tempfile to dev-dependencies for the cluster/failover integration tests (reqwest already present, tempfile already present)."
   - path: apps/tape/src/raft.rs
     action: create
     section: logic
@@ -194,7 +194,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "Thin adapter over libs/service-tls mirroring relay's src/peer_tls.rs: TAPE_PEER_TLS_CERT/KEY/CA + TAPE_PEER_MTLS=on|off env contract, PeerTlsConfig::from_env() (None when unset, error on partial config or a mis-pointed path), rustls_server_config/rustls_client_config passthroughs. Config-surface + fail-fast validation only -- raft-host's h2c peer transport has no TLS acceptor/connector seam yet (the shared gap also filed against relay/keep/lumen); termination is not applied."
+    description: "Thin adapter over libs/peer-tls mirroring relay's src/peer_tls.rs: TAPE_PEER_TLS_CERT/KEY/CA + TAPE_PEER_MTLS=on|off env contract, PeerTlsConfig::from_env() (None when unset, error on partial config or a mis-pointed path), rustls_server_config/rustls_client_config passthroughs. Config-surface + fail-fast validation only -- raft-runtime's h2c peer transport has no TLS acceptor/connector seam yet (the shared gap also filed against relay/keep/lumen); termination is not applied."
   - path: apps/tape/src/lib.rs
     action: modify
     section: logic
@@ -209,7 +209,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "serve_main gains auto-mode HA (#1327): new --data-dir (TAPE_DATA_DIR) and --peer-service (TAPE_PEER_SERVICE, default tape) flags; when raft_host::cluster::replica_mode() (REPLICAS_PER_SHARD > 1), load + validate tape::peer_tls::PeerTlsConfig::from_env() before spawning (fail fast on partial/mis-pointed config), derive the peer port from --bind, build ClusterTopology::from_env('tape', peer_service, peer_port, 'TAPE_PEERS'), require --data-dir to be set (fail fast otherwise), TapeRaft::from_topology over the shared journal Arc, state.set_raft, and app.merge(raft.router()) outside the bearer-auth /topics data plane; the single-node path (no cluster env) is unchanged byte-for-byte."
+    description: "serve_main gains auto-mode HA (#1327): new --data-dir (TAPE_DATA_DIR) and --peer-service (TAPE_PEER_SERVICE, default tape) flags; when raft_runtime::cluster::replica_mode() (REPLICAS_PER_SHARD > 1), load + validate tape::peer_tls::PeerTlsConfig::from_env() before spawning (fail fast on partial/mis-pointed config), derive the peer port from --bind, build ClusterTopology::from_env('tape', peer_service, peer_port, 'TAPE_PEERS'), require --data-dir to be set (fail fast otherwise), TapeRaft::from_topology over the shared journal Arc, state.set_raft, and app.merge(raft.router()) outside the bearer-auth /topics data plane; the single-node path (no cluster env) is unchanged byte-for-byte."
   - path: apps/tape/tests/raft_cluster.rs
     action: create
     section: unit-test
@@ -234,5 +234,5 @@ changes:
     action: modify
     section: changes
     impl_mode: hand-written
-    description: "Update the 'Primary Replicas' capability row's maturity/verification from planned/planned/none/not_ready to reflect the raft-host wiring actually landed and verified in this slice (only this row changes)."
+    description: "Update the 'Primary Replicas' capability row's maturity/verification from planned/planned/none/not_ready to reflect the raft-runtime wiring actually landed and verified in this slice (only this row changes)."
 ```

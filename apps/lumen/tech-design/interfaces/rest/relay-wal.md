@@ -1,7 +1,7 @@
 ---
 id: lumen-relay-wal
 summary: Historical relay-backed WAL design for Lumen. The explicit broker-log
-  mode has been retired from the active source tree in favor of raft-host backed
+  mode has been retired from the active source tree in favor of raft-runtime backed
   primary/replica durability, so this TD is retained as design history only and
   must not replay deleted `wal_relay` artifacts.
 capability_refs:
@@ -10,7 +10,7 @@ capability_refs:
     gap: "log-fan-out-rebuild-from-log"
     claim: "log-fan-out-rebuild-from-log"
     coverage: full
-    rationale: "Historical RelayWal design notes are retained under the rebuild-from-log capability, but active source ownership is now raft-host based."
+    rationale: "Historical RelayWal design notes are retained under the rebuild-from-log capability, but active source ownership is now raft-runtime based."
 fill_sections: [logic, unit-test, changes]
 ---
 
@@ -91,7 +91,7 @@ changes:
     action: annotate
     section: logic
     impl_mode: hand-written
-    reason: "Historical RelayWal design retained without active source replay targets; raft-host is the active durable primary/replica log path."
+    reason: "Historical RelayWal design retained without active source replay targets; raft-runtime is the active durable primary/replica log path."
   - path: apps/lumen/tech-design/interfaces/rest/relay-wal.md
     action: annotate
     section: unit-test

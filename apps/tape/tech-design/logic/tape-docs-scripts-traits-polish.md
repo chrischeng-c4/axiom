@@ -3,7 +3,7 @@ id: tape-docs-scripts-traits-polish
 summary: >
   Final docs/scripts/traits polish slice for apps/tape (WI #1331, epic
   #1324), closing out the service-archetype convergence after #1325
-  service-http, #1326 service-auth, #1327 raft-host, #1328 operator/k8s/
+  service-http, #1326 service-auth, #1327 raft-runtime, #1328 operator/k8s/
   dockerfile, #1329 backup/spec-gen/clients, and #1330 vat/meter/guard/
   observability. Adds `apps/tape/docs/deployment-handoff.md` and
   `apps/tape/docs/benchmarks-scale.md`, mirroring `apps/lumen/docs/`'s
@@ -19,7 +19,7 @@ summary: >
   cluster using the real `TAPE_DATA_DIR`/`TAPE_PEER_SERVICE`/`TAPE_PEERS`
   plus the standard `REPLICAS_PER_SHARD`/`SHARD_COUNT`/`VOTER_COUNT`/
   `POD_NAME` downward-API quartet consumed by
-  `raft_host::ClusterTopology::from_env`), mirroring lumen's
+  `raft_runtime::ClusterTopology::from_env`), mirroring lumen's
   `scripts/dev-single.sh`/`scripts/dev-cluster.sh` shape. `kind-e2e.sh`/
   `chaos.sh`/`soak.sh` are intentionally NOT added: WI #1328 explicitly
   deferred live kind-cluster proof (no cluster available in that slice,
@@ -65,7 +65,7 @@ nodes:
     label: "scripts/dev-single.sh boots one tape serve process locally with an embedded file-backed journal"
   dev_cluster_script:
     kind: process
-    label: "scripts/dev-cluster.sh boots 3 tape serve processes with REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_host::ClusterTopology::from_env resolves peers and the raft group replicates"
+    label: "scripts/dev-cluster.sh boots 3 tape serve processes with REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_runtime::ClusterTopology::from_env resolves peers and the raft group replicates"
   kind_scripts_skipped:
     kind: decision
     label: "kind-e2e.sh/chaos.sh/soak.sh are NOT added: WI #1328 explicitly deferred live kind-cluster proof, so a kind/chaos/soak script would be untested and aspirational"
@@ -185,7 +185,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New script (mirrors apps/lumen/scripts/dev-cluster.sh): 3-node local raft cluster, sets REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_host::ClusterTopology::from_env resolves peers and TapeRaft::from_topology replicates append/checkpoint-put across 3 tape serve processes on distinct ports."
+    description: "New script (mirrors apps/lumen/scripts/dev-cluster.sh): 3-node local raft cluster, sets REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_runtime::ClusterTopology::from_env resolves peers and TapeRaft::from_topology replicates append/checkpoint-put across 3 tape serve processes on distinct ports."
   - path: apps/tape/README.md
     action: modify
     section: logic
