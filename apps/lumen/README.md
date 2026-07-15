@@ -616,8 +616,8 @@ Gate Inventory:
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
 | kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | apps/lumen/scripts/kind-e2e.sh |
 | operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
-| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs (live kind pod-delete-and-recreate proof) |
-| topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator (live kind proof: stale single-member HPA deleted on split) |
+| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs<br>apps/lumen/scripts/kind-e2e.sh |
+| topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator<br>apps/lumen/scripts/kind-e2e.sh |
 
 ### Stateful Service Workload
 
@@ -679,11 +679,11 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | - | implemented | passing | conformance | sub-domain: offline-contract; apps/lumen/tests/spec_cli.rs<br>apps/lumen/clients/openapi.json |
-| query-shape-cookbook-field-analyzer-catalog | epic | - | implemented | passing | conformance | sub-domain: offline-contract; apps/lumen/tests/spec_cli.rs |
-| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | sub-domain: agent-onboarding; apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/tests/spec_cli.rs |
-| interactive-tooling | epic | - | implemented | passing | conformance | sub-domain: interactive-tooling; apps/lumen/src/bin/lumen.rs (`lumen connect`, `lumen query`) |
-| integration-contract | epic | 1480 | implemented | passing | conformance | sub-domain: integration-contract; apps/lumen/tests/spec_cli.rs (routed-mode retry contract, read consistency, reshard admin verbs incl. `reshard:fence`) |
+| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | - | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs<br>apps/lumen/clients/openapi.json |
+| query-shape-cookbook-field-analyzer-catalog | epic | - | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
+| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/tests/spec_cli.rs |
+| interactive-tooling | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/tests/cli_convention.rs |
+| integration-contract | epic | 1480 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
 
 ### Agent Task Navigation
 
@@ -706,7 +706,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md; apps/lumen/src/dx.rs; apps/lumen/tests/spec_cli.rs |
+| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/src/dx.rs<br>apps/lumen/tests/spec_cli.rs |
 
 ## Benchmarks
 
