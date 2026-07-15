@@ -58,7 +58,7 @@ Public API manifest for `apps/agentic-workflow/src/cli/workflow_guard.rs` genera
 //! coarse lock signal and the issue body carries a structured hidden state
 //! block. The repo never writes `.aw/workflow/locks/*.toml`.
 
-use crate::issues::{Issue, IssueBackend, IssueFilter, IssuePatch, LocalBackend};
+use crate::issues::{Issue, IssueBackend, IssueFilter, IssuePatch, IssueState, LocalBackend};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -230,7 +230,7 @@ pub struct IssueLockView {
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/workflow_guard.md#source
 impl IssueLockView {
     fn from_issue(issue: &Issue) -> Option<Self> {
-        if !issue.labels.iter().any(|l| l == LOCK_LABEL) {
+        if issue.state == IssueState::Closed || !issue.labels.iter().any(|l| l == LOCK_LABEL) {
             return None;
         }
         let projection = parse_projection(&issue.body);
@@ -772,6 +772,23 @@ mod tests {
         };
         let body = upsert_projection("Body", &projection).unwrap();
         let issue = issue("123", &body, vec![LOCK_LABEL, TD_LOCK_LABEL]);
+
+        assert!(IssueLockView::from_issue(&issue).is_none());
+    }
+
+    #[test]
+    fn issue_lock_view_ignores_closed_issue_with_stale_lock_projection() {
+        let projection = WorkflowProjection {
+            version: 1,
+            issue_id: "123".to_string(),
+            locked: true,
+            owner: Some("td".to_string()),
+            expected_command: Some("aw td create 123 --apply".to_string()),
+            ..Default::default()
+        };
+        let body = upsert_projection("Body", &projection).unwrap();
+        let mut issue = issue("123", &body, vec![LOCK_LABEL, TD_LOCK_LABEL]);
+        issue.state = IssueState::Closed;
 
         assert!(IssueLockView::from_issue(&issue).is_none());
     }

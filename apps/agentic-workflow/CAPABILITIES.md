@@ -75,6 +75,7 @@ Gate Inventory:
 | Runtime Envelope Backward Compatibility | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib envelope_profile -- --nocapture`; apps/agentic-workflow/tech-design/specs/3903.md |
 | Self-hosting root-runner policy | change | #1501 | implemented | verified | smoke | `cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md; AW rejects its own WI/capability/project root runners before mutation and uses sanctioned direct commits plus focused health/TD/EC verification instead |
 | EC-first WI root loop | change | #1500 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib phase_less_project_wi_enters_ec_before_td -- --nocapture`; `cargo test -p agentic-workflow --lib ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md; fresh WI roots persist EC draft/fill/review/gen transitions, enter TD only after successful EC generation, and route EC red/green to adaptation/code-check |
+| Closed workflow lock release | change | #1755 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib issue_lock_view_ignores_closed_issue_with_stale_lock_projection -- --nocapture`; closed/rejected tracker items cannot retain a stale workflow lock that blocks unrelated TD/CB work |
 
 ### Capability Control Plane
 
