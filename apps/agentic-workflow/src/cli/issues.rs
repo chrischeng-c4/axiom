@@ -1580,6 +1580,8 @@ enum IssueEnvelope<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         agent: Option<&'a str>,
         slug: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        artifact: Option<super::artifact_producer::ArtifactProducerContract>,
         invoke: Invoke<'a>,
     },
     #[allow(dead_code)] // emitted by `aw wi merge` (Phase D)
@@ -2291,14 +2293,28 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         // capability alignment, scope, and reference context gates. The
         // mainthread runs `--apply --section all`, then runs `validate` once
         // after the full-body merge.
+        let payload = fill_section_payload_path(&active_path, &created.slug);
+        let payload_initialized =
+            initialize_payload_file(&payload, &fill_section_payload_template("all")?)?;
+        let issue_path = backend.issue_path(&created);
+        let artifact = super::artifact_producer::wi_contract(
+            &created.slug,
+            &issue_path.to_string_lossy(),
+            &payload.to_string_lossy(),
+            "all",
+            true,
+        )?;
         let envelope = IssueEnvelope::Dispatch {
             agent: None,
             slug: &created.slug,
+            artifact: Some(artifact),
             invoke: Invoke {
                 command: "aw wi fill-section",
                 args: serde_json::json!({
                     "slug": created.slug,
                     "sections": ["all"],
+                    "payload_path": payload,
+                    "payload_initialized": payload_initialized,
                 }),
             },
         };
@@ -2685,6 +2701,57 @@ fn merge_all_sections(base_body: &str, payload_body: &str) -> String {
     join_body_from_sections(&merged)
 }
 
+fn validate_wi_fill_payload_scope(
+    section_arg: &str,
+    payload_body: &str,
+    targets: &[crate::issues::IssueSection],
+) -> Result<()> {
+    let parsed = split_body_by_h2(payload_body);
+    if parsed
+        .first()
+        .is_some_and(|(heading, prefix)| heading.is_empty() && !prefix.trim().is_empty())
+    {
+        anyhow::bail!("payload contains content outside an allowed H2 fill slot");
+    }
+    let allowed = if section_arg_is_all(section_arg) {
+        [
+            "## Problem",
+            "## Capability Alignment",
+            "## Requirements",
+            "## Scope",
+            "## Acceptance Criteria",
+            "## Reference Context",
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    } else {
+        targets
+            .iter()
+            .map(|target| target.heading())
+            .collect::<BTreeSet<_>>()
+    };
+    let mut present = BTreeSet::new();
+    for (heading, _) in parsed.iter().filter(|(heading, _)| !heading.is_empty()) {
+        if !allowed.contains(heading.as_str()) {
+            anyhow::bail!(
+                "payload heading `{heading}` is outside requested slot `{section_arg}`; allowed headings: {}",
+                allowed.iter().copied().collect::<Vec<_>>().join(", ")
+            );
+        }
+        if !present.insert(heading.as_str()) {
+            anyhow::bail!("payload contains duplicate fill-slot heading `{heading}`");
+        }
+    }
+    let missing = allowed.difference(&present).copied().collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "payload is missing requested fill-slot heading(s): {}",
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
 // Apply mode: read the subagent's payload, merge ONLY the requested sections
 // into the issue file, delete the payload, and dispatch mainthread to run
 // `aw wi validate` next.
@@ -2733,6 +2800,29 @@ async fn run_fill_section_apply(
         .get(slug)
         .await?
         .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
+
+    let artifact = super::artifact_producer::wi_contract(
+        slug,
+        &backend.issue_path(&existing).to_string_lossy(),
+        &payload.to_string_lossy(),
+        section_arg,
+        true,
+    )?;
+    let payload_error = artifact
+        .validate_slot_payload(section_arg, &payload_body)
+        .err()
+        .or_else(|| {
+            validate_wi_fill_payload_scope(section_arg, &payload_body, &targets)
+                .err()
+                .map(|error| artifact.schema_violation(section_arg, error.to_string()))
+        });
+    if let Some(error) = payload_error {
+        print_envelope(&IssueEnvelope::Error {
+            slug,
+            message: &error.to_string(),
+        })?;
+        return Ok(());
+    }
 
     let merged_body = if is_all {
         merge_all_sections(&existing.body, &payload_body)
@@ -2789,6 +2879,7 @@ async fn run_fill_section_apply(
     print_envelope(&IssueEnvelope::Dispatch {
         agent: None,
         slug,
+        artifact: None,
         invoke: Invoke {
             command: "aw wi validate",
             args: serde_json::json!({ "slug": slug }),
@@ -7534,6 +7625,27 @@ labels:\n\
         assert!(template.contains("### In Scope"));
         assert!(template.contains("### Out of Scope"));
         assert!(!template.contains("## Reference Context"));
+    }
+
+    #[test]
+    fn fill_section_payload_scope_accepts_only_declared_slots() {
+        let all = fill_section_payload_template("all").unwrap();
+        validate_wi_fill_payload_scope("all", &all, &[]).unwrap();
+
+        let extra = format!("{all}\n## Surprise\n\noutside the producer contract\n");
+        let error = validate_wi_fill_payload_scope("all", &extra, &[]).unwrap_err();
+        assert!(error.to_string().contains("outside requested slot `all`"));
+
+        let targets = parse_section_arg("requirements,scope").unwrap();
+        let specific = fill_section_payload_template("requirements,scope").unwrap();
+        validate_wi_fill_payload_scope("requirements,scope", &specific, &targets).unwrap();
+
+        let wrong = fill_section_payload_template("reference_context").unwrap();
+        let error =
+            validate_wi_fill_payload_scope("requirements,scope", &wrong, &targets).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("outside requested slot `requirements,scope`"));
     }
 
     #[test]

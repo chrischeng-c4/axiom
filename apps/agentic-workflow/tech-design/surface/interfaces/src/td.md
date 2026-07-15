@@ -3909,6 +3909,13 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         let payload_path = first_section
             .as_ref()
             .map(|section| section_payload_path(&project_root, &slug, pass, section));
+        let artifact_slots = first_section
+            .iter()
+            .zip(payload_path.iter())
+            .map(|(section, payload)| (section.clone(), payload.clone()))
+            .collect::<Vec<_>>();
+        let artifact =
+            super::artifact_producer::td_contract(&slug, &spec_path, pass, &artifact_slots, true)?;
         let next = if let (Some(section), Some(payload)) =
             (first_section.as_ref(), payload_path.as_ref())
         {
@@ -3938,6 +3945,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
             "agent": null,
             "slug": slug,
             "next": next,
+            "artifact": artifact,
             "payload_initialized": first_payload_created.unwrap_or(false),
             "target": {
                 "spec_path": spec_path,
@@ -3972,6 +3980,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         spec_path
     );
     println!("Fill exactly one initialized section payload at a time as directed below.");
+    println!(
+        "Artifact protocol: {}.",
+        super::artifact_producer::ARTIFACT_PROTOCOL_VERSION
+    );
     println!();
     println!("## Spec format");
     println!();
@@ -4148,6 +4160,13 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         let pass = td_authoring_pass(args.phase.as_deref());
         let payload_path = section_payload_path(&project_root, slug, pass, section);
         let payload_abs = std::path::Path::new(&payload_path);
+        let artifact = super::artifact_producer::td_contract(
+            slug,
+            spec_path,
+            pass,
+            &[(section.to_string(), payload_path.clone())],
+            true,
+        )?;
 
         let base_body_opt = if spec_abs.exists() {
             Some(std::fs::read_to_string(&spec_abs).context("failed to read base spec")?)
@@ -4178,23 +4197,26 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
             }
             std::fs::write(payload_abs, &payload_json)
                 .context("failed to reseed section payload")?;
-            let msg = format!(
-                "section '{}' already has authored content; the payload was missing or still a \
-                 placeholder, so it was (re)seeded from the existing section at {}. Review/edit \
-                 that file, then rerun this command.",
-                section, payload_path
+            let msg = artifact.schema_violation(
+                section,
+                format!(
+                    "section already has authored content; payload was missing or placeholder and was reseeded at {payload_path}"
+                ),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         }
 
         let Some(payload_body_raw) = payload_raw_opt else {
             initialize_td_payload_file(&payload_path, &td_section_payload_template(section)?)?;
-            let msg = format!(
-                "section payload was missing; initialized {}. Fill that file, then rerun this command.",
-                payload_path
+            let msg = artifact.schema_violation(
+                section,
+                format!("section payload was missing; initialized {payload_path}"),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         };
+        if let Err(error) = artifact.validate_slot_payload(section, &payload_body_raw) {
+            return td_error(slug, error.to_string());
+        }
         // TD section payloads are always JSON. Generic sections carry a
         // `body` field containing the complete section markdown; structured
         // sections such as `unit-test` use a section-specific schema and are
@@ -4202,7 +4224,12 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         let payload_body = match render_td_json_section_payload(section, &payload_body_raw) {
             Ok(rendered) => rendered,
             Err(e) => {
-                return td_error(slug, e.to_string());
+                return td_error(
+                    slug,
+                    artifact
+                        .schema_violation(section, e.to_string())
+                        .to_string(),
+                );
             }
         };
         let base_body = if let Some(body) = base_body_opt {
@@ -4213,12 +4240,11 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
             // by mainthread from the brief printed by `aw td create
             // <slug>` (no flags). If this file is missing we bail loud
             // rather than invent a header.
-            let msg = format!(
-                "spec file not found: {} (write the frontmatter skeleton first; see `aw td create {}`)",
-                spec_abs.display(),
-                slug
+            let msg = artifact.schema_violation(
+                section,
+                format!("spec skeleton not found: {}", spec_abs.display()),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         };
 
         // Generic JSON payloads accept either the initialized complete
@@ -4231,14 +4257,26 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         } else {
             match normalize_generic_td_section_payload(section, &payload_body, &spec_abs) {
                 Ok(normalized) => normalized,
-                Err(error) => return td_error(slug, error.to_string()),
+                Err(error) => {
+                    return td_error(
+                        slug,
+                        artifact
+                            .schema_violation(section, error.to_string())
+                            .to_string(),
+                    )
+                }
             }
         };
 
         let merged = match merge_spec_section(&base_body, section, &payload_body) {
             Ok(m) => m,
             Err(e) => {
-                return td_error(slug, format!("section merge failed: {}", e));
+                return td_error(
+                    slug,
+                    artifact
+                        .schema_violation(section, format!("section merge failed: {e}"))
+                        .to_string(),
+                );
             }
         };
 
@@ -4250,12 +4288,15 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         if report.has_errors() {
             let errors = td_content_error_messages(&report);
             print_td_content_errors("TD content validation errors", &report);
-            let msg = format!(
-                "td content validation failed ({} errors): {}",
-                errors.len(),
-                errors.join("; ")
+            let msg = artifact.schema_violation(
+                section,
+                format!(
+                    "td content validation failed ({} errors): {}",
+                    errors.len(),
+                    errors.join("; ")
+                ),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         }
 
         std::fs::write(&spec_abs, merged).context("failed to write merged spec")?;

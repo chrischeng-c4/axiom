@@ -936,6 +936,13 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
         )?;
     }
     let rel = relative_to(&ctx.project_root, &path);
+    let artifact_slots = fill_sections
+        .iter()
+        .cloned()
+        .zip(payload_paths.iter().cloned())
+        .collect::<Vec<_>>();
+    let artifact =
+        super::artifact_producer::ec_contract(&ctx.project, &id, &rel, &artifact_slots, true)?;
     if args.json {
         println!(
             "{}",
@@ -945,6 +952,7 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
                 "id": id,
                 "category": category,
                 "payload_paths": payload_paths,
+                "artifact": artifact,
                 "next": payload_paths.first().map(|payload| serde_json::json!({
                     "kind": "dispatch",
                     "command": format!(
@@ -961,6 +969,7 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
         );
     } else {
         println!("ec draft {}: wrote {}", ctx.project, rel);
+        println!("artifact protocol: {}", artifact.schema_version);
         for (section, payload) in fill_sections.iter().zip(payload_paths.iter()) {
             println!("payload {section}: {payload}");
         }
@@ -1051,10 +1060,26 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
     }
     let payload_raw =
         fs::read_to_string(&body_file).with_context(|| format!("read {}", body_file.display()))?;
-    let payload = render_ec_json_section_payload(&args.section, &payload_raw)?;
-    let merged = merge_ec_section(&existing, &args.section, &payload)?;
-    fs::write(&path, merged).with_context(|| format!("write {}", path.display()))?;
     let rel = relative_to(&ctx.project_root, &path);
+    let artifact = super::artifact_producer::ec_contract(
+        &ctx.project,
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("draft"),
+        &rel,
+        &[(
+            args.section.clone(),
+            relative_to(&ctx.project_root, &body_file),
+        )],
+        true,
+    )?
+    .after_fill();
+    artifact.validate_slot_payload(&args.section, &payload_raw)?;
+    let payload = render_ec_json_section_payload(&args.section, &payload_raw)
+        .map_err(|error| artifact.schema_violation(&args.section, error.to_string()))?;
+    let merged = merge_ec_section(&existing, &args.section, &payload)
+        .map_err(|error| artifact.schema_violation(&args.section, error.to_string()))?;
+    fs::write(&path, merged).with_context(|| format!("write {}", path.display()))?;
     if args.json {
         println!(
             "{}",
@@ -1064,6 +1089,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
                 "section": args.section,
                 "payload_path": relative_to(&ctx.project_root, &body_file),
                 "action": "filled",
+                "artifact": artifact,
                 "next": {
                     "command": format!("aw ec review --project {}", ctx.project),
                 },
@@ -1074,6 +1100,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
             "ec fill {}: filled {} in {}",
             ctx.project, args.section, rel
         );
+        println!("artifact protocol: {}", artifact.schema_version);
         println!("next: aw ec review --project {}", ctx.project);
     }
     Ok(())
