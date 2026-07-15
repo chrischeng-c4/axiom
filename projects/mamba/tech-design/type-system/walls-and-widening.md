@@ -47,6 +47,19 @@ user `FunctionParamSigs` (see ARCHITECTURE.md).
   (tracked: #1628).
 - Residual over-walling clusters (~470 corpus-wide post wave-1/2) — same
   fix pattern; goal-loop waves burn them down (tracked: #1615).
+- `ord()` is registered monomorphic-`str`-only (`builtins.rs:131`,
+  `self.def_builtin("ord", &[str_ty], int)`), so `ord(b"A")` /
+  `ord(bytearray(b"Z"))` hard-wall at compile time — CPython 3.12 accepts
+  any length-1 `str`/`bytes`/`bytearray`. `check_user_fn_argument_type`'s
+  `bytes_literal_str_mismatch` special case (`check_expr.rs:1655-1658`)
+  even forces the reported "got" type to `bytes` for a `BytesLit` arg,
+  producing `"expected str, got bytes"` on legal code. The runtime
+  (`mb_ord`, `char_radix.rs:64`) already accepts and length-checks all
+  three shapes correctly — this is a checker-only false positive. Fix =
+  widen the signature to `Ty::Union(vec![str_ty, bytes_ty, bytearray_ty])`
+  (precedent: `check.rs:4974` uses the same `Ty::Union` builtin-param
+  shape); runtime already owns the length-1 TypeError, so no new wall
+  guard is needed beyond the existing corpus. tracked: #1550.
 
 ## Working rule for any new widening
 
