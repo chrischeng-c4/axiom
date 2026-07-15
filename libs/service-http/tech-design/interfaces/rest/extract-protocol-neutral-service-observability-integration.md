@@ -71,3 +71,49 @@ changes:
   - { path: README.md, action: modify, section: logic, impl_mode: hand-written, description: "Name one owner for every observability layer." }
   - { path: CONTRIBUTING.md, action: modify, section: logic, impl_mode: hand-written, description: "Define service-observability, metrics-prometheus, server lifecycle, and HTTP adapter boundaries." }
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: shared-service-observability-integration-verification
+requirements:
+  consumer_observability_regression:
+    id: R5
+    text: "Lumen, Tape, Keep, Relay, and Courier continue compiling and serving their existing metrics and request-tracing policy after ownership extraction."
+    kind: regression
+    risk: medium
+    verify: cargo check -p lumen -p tape -p keep -p relay -p courier
+  http_compatibility:
+    id: R3
+    text: "service-http keeps byte-compatible probe metrics and OpenAPI responses while delegating protocol-neutral configuration, tracing, and MetricsProvider ownership."
+    kind: regression
+    risk: high
+    verify: cargo test -p service-http
+  lifecycle_prometheus_bridge:
+    id: R2
+    text: "LifecycleMetrics emits accepted, rejected, and closed callbacks through server-lifecycle and renders their counters with the canonical metrics-prometheus encoder."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-observability lifecycle_metrics
+  otlp_feature_compatibility:
+    id: R4
+    text: "Default and OTLP-enabled builds preserve logging-only, valid exporter, invalid endpoint, and W3C propagation behavior through the compatibility surface."
+    kind: regression
+    risk: high
+    verify: cargo test -p service-observability --features otlp; cargo test -p service-http --features otlp --test otlp_tracing
+  protocol_neutral_configuration:
+    id: R1
+    text: "service-observability owns typed logging format, stable identity, observability configuration, trace-mode resolution, and subscriber installation without depending on service-http or axum."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-observability
+---
+flowchart TD
+    r1[R1 protocol neutral configuration] --> cargo_test_p_service_observability[cargo test -p service-observability]
+    r2[R2 lifecycle prometheus bridge] --> cargo_test_p_service_observability_lifecycle_metrics[cargo test -p service-observability lifecycle_metrics]
+    r3[R3 http compatibility] --> cargo_test_p_service_http[cargo test -p service-http]
+    r4[R4 otlp feature compatibility] --> cargo_test_p_service_observability_features_otlp_cargo_test_p_service_http_features_otlp_test_otlp_tracing[cargo test -p service-observability --features otlp; cargo test -p service-http --features otlp --test otlp_tracing]
+    r5[R5 consumer observability regression] --> cargo_check_p_lumen_p_tape_p_keep_p_relay_p_courier[cargo check -p lumen -p tape -p keep -p relay -p courier]
+```
