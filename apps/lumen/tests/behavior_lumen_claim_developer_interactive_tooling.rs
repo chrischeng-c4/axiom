@@ -7,14 +7,15 @@
 // @contract developer-interactive-tooling
 // @category behavior
 // @required_for_production true
-// @command cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help
+// @command cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help
 // AW-EC-END
 
 // Contract: The installed CLI exposes discoverable connect and query tooling for agents and operators.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_developer_interactive_tooling() {
-    let command = "cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help";
+    let command =
+        "cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help";
     let id = "lumen-claim-developer-interactive-tooling";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

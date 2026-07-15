@@ -3,13 +3,13 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "apps/lumen/external-contracts"
 inventory_path = "apps/lumen/aw.toml"
-generated_at = "2026-07-15T20:04:41.997330+00:00"
-ir_digest = "sha256:9f63b74410a28e94601fa63697813c0cefed842f57514b0bdad6c6986ee25bd4"
-source_digest = "sha256:9538448466cc1335abe02924c0d7a7c79025d9741091ad3622766b3a3dc1c952"
+generated_at = "2026-07-15T20:20:10.262650+00:00"
+ir_digest = "sha256:98561b87a29c7cb2516b976a8c5d17bbf58c36474070dbfe417bc8db274d3c50"
+source_digest = "sha256:4cf4f6394362460c009081255172e9390872b555f5294ac8eb1dd6589d2908ed"
 
 [[sources]]
 path = "apps/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:79c3f0d816839e75d5e8ff5a4b2850b19415393e81732c7989420ac7ae6d7f09"
+digest = "sha256:ea7e7e321cfc5f96b1fe17da0f3f56ae7d479e9b39db8d12b9ce3890175d0607"
 
 [[sources]]
 path = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
@@ -179,12 +179,12 @@ contract_id = "cli-connect-query-workflow"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-connect-query-workflow"
 test_path = "apps/lumen/tests/behavior_lumen_claim_cli_connect_query_workflow.rs"
-command = "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+command = "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help"
 required_for_production = true
 assertions = ["The connect and query command groups parse and the query adapter emits the published request shape."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d5200c732814f5d4a9b8f266684c069550ad1af272ff5aabdbe266ae443b1017"
+digest = "sha256:58e5fa3ca3b24b2297a1917e923ebac574c1ec5b36b2823bf21331d7aa5c9e49"
 
 [[cases]]
 id = "lumen-claim-cli-deployment-operator-command-surface"
@@ -374,12 +374,12 @@ contract_id = "developer-interactive-tooling"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-developer-interactive-tooling"
 test_path = "apps/lumen/tests/behavior_lumen_claim_developer_interactive_tooling.rs"
-command = "cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+command = "cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help"
 required_for_production = true
 assertions = ["The installed CLI exposes discoverable connect and query tooling for agents and operators."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:958a5c413e96fee0d263d8a277887d8a0b39f8130e860b1b5543fd38e7ba8e83"
+digest = "sha256:1fd85f097fcac0e93898dbe7b0575399734ef6d497c60d6d1f42228ecef006fc"
 
 [[cases]]
 id = "lumen-claim-developer-llm-v2-task-navigation"

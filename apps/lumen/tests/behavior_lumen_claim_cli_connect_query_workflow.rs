@@ -7,7 +7,7 @@
 // @contract cli-connect-query-workflow
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help
+// @command cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help
 // AW-EC-END
 
 // Contract: The connect and query command groups parse and the query adapter emits the published request shape.
@@ -15,7 +15,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_cli_connect_query_workflow() {
     let command =
-        "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help";
+        "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help";
     let id = "lumen-claim-cli-connect-query-workflow";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -548,7 +548,7 @@ e2e_tests:
     claim_id: lumen-connect-query-k8s-agent-workflow
     contract_id: cli-connect-query-workflow
     category: behavior
-    command: "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+    command: "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help"
     assertions:
       - "The connect and query command groups parse and the query adapter emits the published request shape."
   - id: lumen-claim-long-running-shared-foundations
@@ -705,7 +705,7 @@ e2e_tests:
     claim_id: interactive-tooling
     contract_id: developer-interactive-tooling
     category: behavior
-    command: "cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+    command: "cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help"
     assertions:
       - "The installed CLI exposes discoverable connect and query tooling for agents and operators."
   - id: lumen-claim-developer-integration-contract

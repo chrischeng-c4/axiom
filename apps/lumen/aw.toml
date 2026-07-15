@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:e2fcc41136be0f8a5690f962d25c0c89446f76cb19492537c9869160fa7511ab"
+generated_from_td_digest = "sha256:83ecc17fc2cb4d03560fcd246e86c756f6625c7adc7e18a30286917263caef97"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -133,7 +133,7 @@ contract_id = "cli-connect-query-workflow"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-connect-query-workflow"
 test_path = "apps/lumen/tests/behavior_lumen_claim_cli_connect_query_workflow.rs"
-command = "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+command = "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help"
 required_for_production = true
 assertions = ["The connect and query command groups parse and the query adapter emits the published request shape."]
 
@@ -289,7 +289,7 @@ contract_id = "developer-interactive-tooling"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-developer-interactive-tooling"
 test_path = "apps/lumen/tests/behavior_lumen_claim_developer_interactive_tooling.rs"
-command = "cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+command = "cargo run -p lumen --bin lumen -- connect --help && cargo run -p lumen --bin lumen -- query --help"
 required_for_production = true
 assertions = ["The installed CLI exposes discoverable connect and query tooling for agents and operators."]
 
