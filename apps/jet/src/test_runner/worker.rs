@@ -109,12 +109,16 @@ function namedCommonJsFacadeUrl(specifier, context, resolved) {
     const names = Object.keys(object).filter(
       (name) => name !== "default" && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name),
     );
+    let localBinding = "__jet_cjs_module";
+    while (names.includes(localBinding)) {
+      localBinding += "_";
+    }
     const source = [
       'import { createRequire } from "node:module";',
       `const require = createRequire(${JSON.stringify(resolved.url)});`,
-      `const object = require(${JSON.stringify(fileURLToPath(resolved.url))});`,
-      "export default object;",
-      ...names.map((name) => `export const ${name} = object[${JSON.stringify(name)}];`),
+      `const ${localBinding} = require(${JSON.stringify(fileURLToPath(resolved.url))});`,
+      `export default ${localBinding};`,
+      ...names.map((name) => `export const ${name} = ${localBinding}[${JSON.stringify(name)}];`),
     ].join("\n");
     return `data:text/javascript,${encodeURIComponent(source)}`;
   } catch {
@@ -3041,6 +3045,8 @@ mod tests {
         assert!(TEST_ASSET_LOADER.contains("shortCircuit: true"));
         assert!(TEST_ASSET_LOADER.contains("export default"));
         assert!(TEST_ASSET_LOADER.contains("isTestStylesheetUrl"));
+        assert!(TEST_ASSET_LOADER.contains("let localBinding = \"__jet_cjs_module\";"));
+        assert!(TEST_ASSET_LOADER.contains("const ${localBinding} = require"));
     }
 
     #[test]
