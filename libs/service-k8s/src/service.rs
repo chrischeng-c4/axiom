@@ -1,4 +1,4 @@
-// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#rust-source-unit
+// SPEC-MANAGED: libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The [`ManagedService`] trait a service implements + the shared CRD fragments.
 
@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// A workload to poll for `.status.readyReplicas` during reconcile.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
 pub struct ReadinessTarget {
     pub kind: &'static str,
     pub name: String,
@@ -20,12 +20,12 @@ pub struct ReadinessTarget {
 
 /// Observed readiness handed to [`ManagedService::status_patch`]
 /// (workload name → `readyReplicas`).
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
 pub struct ReadyFacts {
     pub ready: HashMap<String, i64>,
 }
 
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
 impl ReadyFacts {
     /// Ready replicas for `name`, or 0 if the workload was absent.
     pub fn get(&self, name: &str) -> i64 {
@@ -36,7 +36,7 @@ impl ReadyFacts {
 /// One service's contribution to the shared operator. Implemented on the CRD
 /// root type (e.g. lumen's `Lumen`). The [`crate::controller`] is generic over
 /// `S`, so the watch/apply/lease loop is written once.
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
 pub trait ManagedService:
     Resource<DynamicType = (), Scope = NamespaceResourceScope>
     + CustomResourceExt
@@ -66,7 +66,7 @@ pub trait ManagedService:
 /// `#[serde(flatten)] pub cluster: service_k8s::ClusterSpec`.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
 pub struct ClusterSpec {
     pub image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,7 +89,7 @@ pub struct ClusterSpec {
 /// so a dedicated-node pod can use otherwise-idle node capacity.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-/// @spec libs/service-k8s/tech-design/semantic/source/libs-operator-src-service-rs.md#source
+/// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
 pub struct ResourceSpec {
     #[serde(default)]
     pub cpu: String,
