@@ -166,6 +166,12 @@ pub async fn serve_arc<H, S>(
 {
     // @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
     let local_addr = listener.local_addr().ok();
+    // Keep handler-owned shared resources alive through the connection-drain
+    // phase. A compiler is otherwise free to drop `handler` as soon as the
+    // accept loop ends, even while its cloned connection tasks are still
+    // draining. Stateful handler adjuncts (for example a readiness owner)
+    // therefore get the same lifetime boundary as those tasks.
+    let handler_drain_owner = Arc::clone(&handler);
     let mut shutdown = std::pin::pin!(shutdown);
     let mut tasks = JoinSet::new();
 
@@ -247,6 +253,7 @@ pub async fn serve_arc<H, S>(
             "tcp drain timeout; abandoning remaining connection tasks"
         );
     }
+    drop(handler_drain_owner);
 }
 
 #[cfg(test)]

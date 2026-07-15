@@ -192,12 +192,15 @@ fn ordinary_peer_profile_counterbalances_order_and_documents_peer_verdict_rules(
     assert!(RUNNER_SOURCE.contains("pair_winner"));
     assert!(RUNNER_SOURCE.contains("UNANIMOUS_DIRECTION"));
     assert!(RUNNER_SOURCE.contains("PGPOOL_WIN_ELIGIBLE"));
+    assert!(RUNNER_SOURCE.contains("PGPOOL_BENCH_LOCK_HELD"));
+    assert!(RUNNER_SOURCE.contains("lockf -t"));
     assert!(RUNNER_SOURCE.contains("comparison_valid"));
     assert!(RUNNER_SOURCE.contains("pgpool_win_eligible"));
     assert!(BENCHMARK_README.contains("counterbalanced paired trials"));
     assert!(BENCHMARK_README.contains("five-second target-specific warmup"));
     assert!(BENCHMARK_README.contains("excluded from the JSON and verdict"));
     assert!(BENCHMARK_README.contains("both clean pairs favor PgBouncer"));
+    assert!(BENCHMARK_README.contains("host-level `lockf` lock"));
     assert!(BENCHMARK_README.contains("pgpool_win_eligible: false"));
 }
 

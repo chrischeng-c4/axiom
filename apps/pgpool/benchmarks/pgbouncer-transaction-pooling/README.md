@@ -24,6 +24,8 @@ Both targets use the same intentionally constrained workload:
   the PgBouncer target sets both `server_reset_query = DISCARD ALL` and
   `server_reset_query_always = 1`, so the reset is executed on every
   transaction-pool return rather than merely configured
+- pgpool's production-default transaction readiness reactor; the explicit
+  `PGPOOL_TRANSACTION_ENGINE=legacy` rollback path is not used by the runner
 
 The runner warms the shared backend, starts both poolers, then gives the target
 of each scored leg a five-second target-specific warmup with the same client,
@@ -44,6 +46,11 @@ the runner emits a PgBouncer verdict even when the loss magnitude varies, so a
 candidate is rejected promptly rather than being hidden behind an average.
 Mixed pair directions, incomplete clients, and pgbench client errors remain
 invalid evidence.
+
+Ordinary peer runs take a host-level `lockf` lock before they create a local
+PostgreSQL cluster. Independently invoked copies therefore serialize; a timeout
+is a scheduling failure, not benchmark evidence. `--dry-run` stays hermetic and
+does not acquire the lock.
 
 ## Run
 

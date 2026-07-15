@@ -10,7 +10,7 @@
 //! logic here (header/length parsing, bounds, split-read reassembly) is
 //! identical either way.
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::wire::backend::{
@@ -109,6 +109,29 @@ impl FrameReader {
         stream: &mut (impl AsyncRead + Unpin),
     ) -> std::io::Result<usize> {
         stream.read_buf(&mut self.buf).await
+    }
+
+    /// Appends directly from a synchronous nonblocking transport. The parser
+    /// owns the receive allocation, so readiness reactors avoid copying every
+    /// socket read through an intermediate scratch buffer.
+    // @spec apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md#logic
+    pub(crate) fn read_from_sync(
+        &mut self,
+        stream: &mut impl std::io::Read,
+    ) -> std::io::Result<usize> {
+        const READ_RESERVE: usize = 16 * 1024;
+        self.buf.reserve(READ_RESERVE);
+        let destination = self.buf.chunk_mut();
+        // SAFETY: `chunk_mut` exposes `destination.len()` writable,
+        // uninitialized bytes. `Read` initializes exactly the returned prefix
+        // and `advance_mut` publishes only that initialized prefix.
+        let destination =
+            unsafe { std::slice::from_raw_parts_mut(destination.as_mut_ptr(), destination.len()) };
+        let read = std::io::Read::read(stream, destination)?;
+        // SAFETY: `read` cannot exceed the slice passed to `Read::read`, and
+        // that prefix was initialized by the successful call above.
+        unsafe { self.buf.advance_mut(read) };
+        Ok(read)
     }
 
     /// The `TransactionStatus` last observed via a backend `ReadyForQuery`

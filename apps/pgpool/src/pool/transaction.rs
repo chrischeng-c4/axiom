@@ -27,6 +27,7 @@ use tokio::net::TcpStream;
 use crate::pool::backend_pool::{BackendLease, BackendPool, StartupAdmission};
 use crate::pool::telemetry::{TransactionPhase, TransactionPhaseOutcome};
 use crate::pool::types::{BackendConnectionId, LeaseDisposition, PoolRejectionReason};
+use crate::pool::TransactionReactor;
 use crate::proxy::{
     forward_backend, forward_backend_batch, forward_frontend, forward_raw,
     read_backend_relay_batch_with_raw, read_relay_frame_with_raw, read_startup, relay_until_ready,
@@ -60,11 +61,33 @@ pub struct TransactionProxyConfig {
 #[derive(Debug, Clone)]
 pub struct TransactionHandler {
     config: TransactionProxyConfig,
+    engine: TransactionEngine,
+}
+
+#[derive(Debug, Clone)]
+enum TransactionEngine {
+    Legacy,
+    Reactor(TransactionReactor),
 }
 
 impl TransactionHandler {
+    // @spec apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md#logic
     pub fn new(config: TransactionProxyConfig) -> Self {
-        Self { config }
+        // The single-owner readiness reactor is the production transaction
+        // data path. Keep an explicit legacy escape hatch for operational
+        // rollback while the session-mode Tokio handler remains unchanged.
+        let engine = if std::env::var("PGPOOL_TRANSACTION_ENGINE").as_deref() == Ok("legacy") {
+            TransactionEngine::Legacy
+        } else {
+            match TransactionReactor::start(config.backend_pool.clone()) {
+                Ok(reactor) => TransactionEngine::Reactor(reactor),
+                Err(error) => {
+                    tracing::warn!(%error, "pgpool transaction reactor unavailable; using legacy handler");
+                    TransactionEngine::Legacy
+                }
+            }
+        };
+        Self { config, engine }
     }
 
     pub fn config(&self) -> &TransactionProxyConfig {
@@ -80,8 +103,40 @@ impl TcpHandler for TransactionHandler {
 
     fn handle(&self, stream: TcpStream, cx: ConnectionContext) -> Self::Future {
         let config = self.config.clone();
+        let engine = self.engine.clone();
         Box::pin(async move {
-            run_transaction_client(stream, &config, cx.peer_addr).await;
+            match engine {
+                TransactionEngine::Legacy => {
+                    run_transaction_client(stream, &config, cx.peer_addr).await;
+                }
+                TransactionEngine::Reactor(reactor) => {
+                    let permit = match config.frontend_budget.try_acquire() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            let mut client = stream;
+                            write_rejection(&mut client, RejectionReason::FrontendBudgetExhausted)
+                                .await;
+                            return Ok(());
+                        }
+                    };
+                    match reactor.handoff(stream, permit) {
+                        Ok(done) => {
+                            // Keep the tcp-server task alive for the reactor
+                            // client's real lifetime. Drain therefore stops
+                            // accepting new frontends but still waits for an
+                            // already-open transaction to commit/close.
+                            let _ = done.await;
+                        }
+                        Err(_) => {
+                            tracing::info!(
+                                peer = %cx.peer_addr,
+                                outcome = "reactor_handoff_failed",
+                                "pgpool transaction reactor handoff failed"
+                            );
+                        }
+                    }
+                }
+            }
             Ok(())
         })
     }

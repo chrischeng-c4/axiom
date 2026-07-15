@@ -599,6 +599,50 @@ async fn saturation_timeout_produces_typed_error_response() {
     stop_proxy(server, shutdown_tx).await;
 }
 
+/// verify: pool_modes::transaction_mode_backend_connect_failure_releases_frontend (#1753)
+#[tokio::test]
+async fn transaction_mode_backend_connect_failure_releases_frontend() {
+    // Reserve and release a loopback port so the reactor gets a real refused
+    // nonblocking connect rather than a synthetic backend implementation.
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve backend port");
+    let backend_addr = probe.local_addr().expect("reserved backend address");
+    drop(probe);
+
+    let backend_pool = BackendPool::new(pool_config(backend_addr, 1, Duration::from_millis(500)));
+    let frontend_budget = ConnectionBudget::new(1);
+    let (proxy_addr, server, shutdown_tx) =
+        spawn_transaction_proxy(backend_pool.clone(), frontend_budget.clone()).await;
+    let dsn = proxy_dsn(proxy_addr, &backend_user());
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio_postgres::connect(&dsn, tokio_postgres::NoTls),
+    )
+    .await;
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "a refused backend connect must close the frontend promptly"
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let stats = backend_pool.stats();
+        if frontend_budget.active() == 0 && stats.backend_active == 0 && stats.backend_idle == 0 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "failed backend connect leaked capacity: frontend_active={}, backend_active={}, backend_idle={}",
+            frontend_budget.active(),
+            stats.backend_active,
+            stats.backend_idle
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    stop_proxy(server, shutdown_tx).await;
+}
+
 /// verify: pool_modes::churn_100_cycles_holds_backend_count_stable_no_leak (AC4)
 #[tokio::test]
 async fn churn_100_cycles_holds_backend_count_stable_no_leak() {

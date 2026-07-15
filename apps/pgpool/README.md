@@ -15,6 +15,7 @@ the pooler runtime.
 
 Current implementation slice: `apps/pgpool` is a Rust workspace crate and
 binary with PostgreSQL wire handling, bounded session/transaction pooling, a
+single-owner dense-buffer readiness reactor for the transaction data plane, a
 served admin plane, live remote-PostgreSQL capacity discovery, global endpoint
 quota/drain models, and layered Pgpool CRD/operator/instance artifacts. Shared
 runtime dependencies remain wired through `server-lifecycle`, `server-tcp`,
@@ -52,7 +53,7 @@ and the platform adapter boundary remain first-class domain roots.
 | CLI Standard Surface | - | implemented | passing | smoke | partial | mandatory baseline: shared `cli-std` llm/upgrade/issue surface with build-stamp provenance |
 | Chainable Output Conformance | - | implemented | passing | smoke | partial | mandatory baseline: `runtime-plan` emits `next:`; raw spec streams stay unwrapped |
 | Competitor Feature Parity | 1285 | planned | planned | none | not_ready | mandatory baseline: PgBouncer/Odyssey/pgcat transaction-pooling replacement breadth |
-| Competitor Performance | 1285 | planned | planned | none | not_ready | mandatory baseline: vat-isolated meter throughput/latency ratchet vs PgBouncer-class poolers |
+| Competitor Performance | 1285 | implemented | passing | dogfood | partial | fixed local ABBA harness has six eligible pgpool wins vs PgBouncer (#1753); vat-isolated ratchet remains open |
 | EC Gates Configured | 1285 | planned | planned | none | not_ready | mandatory baseline: aw.toml EC inventory, vat meter/guard runners, external-contracts evidence |
 | HTTP/2 API List | 1282 | implemented | passing | smoke | partial | mandatory baseline: offline `pgpool spec` admin route inventory; served contract remains open |
 | Kubernetes-Native Deployment | 1284 | implemented | passing | conformance | partial | PgpoolSpec CRD/operator/instance render, shared Deployment composition, quota admission, and drain behavior are covered; image artifact work remains |
@@ -124,6 +125,7 @@ Gate Inventory:
 | pg-wire-frontend-protocol | epic | 1287 | implemented | passing | conformance | apps/pgpool/tests/wire_codec.rs; apps/pgpool/tech-design/logic/pg-wire-message-codec-frontend-backend-frames.md |
 | backend-pool-and-reuse | epic | 1289 | implemented | passing | conformance | apps/pgpool/tests/pool.rs; apps/pgpool/tests/pool_modes.rs; apps/pgpool/tech-design/logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md |
 | transaction-session-pool-modes | epic | 1289 | implemented | passing | conformance | apps/pgpool/tests/pool.rs; apps/pgpool/tests/pool_modes.rs; apps/pgpool/tech-design/logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md |
+| transaction-readiness-reactor | change | 1753 | implemented | passing | dogfood | apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md; apps/pgpool/tests/pool_modes.rs; apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh |
 | serve-entrypoint-and-drain | epic | 1288 | implemented | passing | conformance | apps/pgpool/tests/proxy.rs; apps/pgpool/tests/session_proxy.rs; apps/pgpool/tech-design/logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md |
 
 ### Platform Adapter Boundary
@@ -235,23 +237,24 @@ Gate Inventory:
 
 ID: competitor-performance
 Type: RuntimeTool
-Surfaces: Meter/Vat: pending `apps/pgpool/vat.toml#meter-perf` - isolated meter execution for the throughput/latency ratchet.; Harness: pending external pooler comparison vs PgBouncer-class targets.
-EC Dimensions: efficiency: pending vat meter-perf runner - meter-owned throughput/latency model and ratchet conformance
+Surfaces: Harness: `apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh` - fixed counterbalanced PgBouncer transaction-pooling comparison.; Meter/Vat: meter diagnostics are executable while `apps/pgpool/vat.toml#meter-perf` remains pending for an isolated ratchet.
+EC Dimensions: efficiency: fixed 64-client, 16-backend, simple-protocol release ABBA comparison with complete-client/error validation; pending vat promotion to an enforced ratchet
 Root WI: 1285
-Status: candidate
+Status: confirmed
 Required Verification: dogfood
 Promise:
 Tie pgpool's performance claims to repeatable pooled-connection throughput and
 latency tests under a vat-isolated meter gate, with the external PgBouncer /
 Odyssey / pgcat comparison as advisory dogfood until promoted.
 Gate Inventory:
-- pending: apps/pgpool/vat.toml meter-perf runner
-- pending: pooled-throughput deterministic local gate
+- apps/pgpool/tests/pgbouncer_benchmark.rs - hermetic profile/verdict contract
+- apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh - six eligible release wins recorded on #1753, including the default transaction engine
+- pending: apps/pgpool/vat.toml meter-perf promotion to an enforced isolated ratchet
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | vat-meter-throughput-gate | epic | 1285 | planned | planned | none | pending: vat meter-perf runner |
-| external-pooler-comparison | epic | 1285 | planned | planned | none | pending: bench harness vs PgBouncer-class poolers |
+| external-pooler-comparison | change | 1753 | implemented | passing | dogfood | fixed local ABBA runner; six eligible pgpool wins vs PgBouncer with both orders unanimous |
 
 ### EC Gates Configured
 

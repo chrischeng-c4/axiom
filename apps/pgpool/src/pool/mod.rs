@@ -7,12 +7,14 @@
 
 mod backend_pool;
 mod handler;
+mod reactor;
 pub(crate) mod telemetry;
 mod transaction;
 mod types;
 
 pub use backend_pool::{BackendLease, BackendPool, StartupAdmission};
 pub use handler::PoolHandler;
+pub(crate) use reactor::TransactionReactor;
 pub use telemetry::{
     TransactionPhaseMetric, TransactionPhaseTelemetry, TransactionPhaseTelemetrySnapshot,
 };

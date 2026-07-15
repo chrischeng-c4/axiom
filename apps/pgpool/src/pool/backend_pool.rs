@@ -10,6 +10,7 @@
 //! has already removed the id from `outstanding`).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -114,6 +115,14 @@ struct PoolInner {
     state: Mutex<PoolState>,
     notify: Notify,
     telemetry: Option<Arc<TransactionPhaseTelemetry>>,
+    reactor_stats: ReactorStats,
+}
+
+#[derive(Debug)]
+struct ReactorStats {
+    enabled: AtomicBool,
+    active: AtomicUsize,
+    idle: AtomicUsize,
 }
 
 /// Shared backend-connection pool: idle-reuse-preferring acquire with a
@@ -153,6 +162,11 @@ impl BackendPool {
                 }),
                 notify: Notify::new(),
                 telemetry,
+                reactor_stats: ReactorStats {
+                    enabled: AtomicBool::new(false),
+                    active: AtomicUsize::new(0),
+                    idle: AtomicUsize::new(0),
+                },
             }),
         }
     }
@@ -400,11 +414,33 @@ impl BackendPool {
     }
 
     pub fn stats(&self) -> BackendPoolStats {
+        if self.inner.reactor_stats.enabled.load(Ordering::Acquire) {
+            return BackendPoolStats {
+                backend_active: self.inner.reactor_stats.active.load(Ordering::Relaxed),
+                backend_idle: self.inner.reactor_stats.idle.load(Ordering::Relaxed),
+            };
+        }
         let state = self.inner.state.lock().expect("pool state lock");
         BackendPoolStats {
             backend_active: state.outstanding.len(),
             backend_idle: state.idle.len(),
         }
+    }
+
+    pub(crate) fn publish_reactor_stats(&self, active: usize, idle: usize) {
+        self.inner
+            .reactor_stats
+            .active
+            .store(active, Ordering::Relaxed);
+        self.inner.reactor_stats.idle.store(idle, Ordering::Relaxed);
+        self.inner
+            .reactor_stats
+            .enabled
+            .store(true, Ordering::Release);
+    }
+
+    pub(crate) fn reactor_config(&self) -> PoolConfig {
+        self.config.clone()
     }
 
     /// Returns the fixed-cardinality diagnostic snapshot only when the pool

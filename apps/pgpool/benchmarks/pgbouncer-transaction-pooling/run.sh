@@ -15,6 +15,8 @@ readonly SCALE=1
 readonly POOL_ACQUIRE_TIMEOUT_MS=60000
 readonly DATABASE="pgpool_bench"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+readonly BENCHMARK_LOCK_TIMEOUT_SECONDS="${PGPOOL_BENCH_LOCK_TIMEOUT_SECONDS:-900}"
+readonly BENCHMARK_LOCK_FILE="${TMPDIR:-/tmp}/pgpool-pgbouncer-transaction-pooling.lock"
 
 PGPOOL_BIN="${PGPOOL_BIN:-$REPO_ROOT/target/release/pgpool}"
 METER_BIN=""
@@ -30,6 +32,7 @@ PGPOOL_PID=""
 USED_PORTS=()
 NEXT_FREE_PORT=""
 KEEP_WORK_DIR="${PGPOOL_BENCH_KEEP_WORK_DIR:-false}"
+ORIGINAL_ARGS=("$@")
 
 usage() {
     cat <<'USAGE'
@@ -421,6 +424,15 @@ configure_workload
 if [[ "$DRY_RUN" == true ]]; then
     emit_dry_run_profile
     exit 0
+fi
+
+# A peer result is valid only when the host does not run a competing pgbench
+# workload. Re-exec beneath an advisory lock so independently invoked copies
+# of this runner serialize without changing the measured profile. Dry runs
+# intentionally return before this point and remain machine-hermetic.
+if [[ "${PGPOOL_BENCH_LOCK_HELD:-false}" != true ]]; then
+    require_command lockf
+    exec env PGPOOL_BENCH_LOCK_HELD=true lockf -t "$BENCHMARK_LOCK_TIMEOUT_SECONDS" "$BENCHMARK_LOCK_FILE" "$BASH_SOURCE" "${ORIGINAL_ARGS[@]}"
 fi
 
 for command in initdb pg_ctl psql pgbench pgbouncer lsof; do
