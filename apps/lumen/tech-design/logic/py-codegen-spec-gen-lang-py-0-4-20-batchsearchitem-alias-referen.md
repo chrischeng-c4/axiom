@@ -35,3 +35,15 @@ flowchart TD
     aliases --> execute[compile and execute generated models.py]
     execute --> done([generated package is import-safe])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/lumen/tests/spec_gen_e2e.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Extend the real lumen spec gen --lang py e2e test to assert SearchRequest is declared before BatchSearchItem = SearchRequest and execute the emitted models.py with python3, locking import-time safety for reference aliases."
+```
