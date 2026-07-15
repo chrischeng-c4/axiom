@@ -3104,6 +3104,15 @@ semantic_domain:
           - name: "is_aw_guard_handler"
             kind: "function"
             public: false
+          - name: "guard_handler_is_active"
+            kind: "function"
+            public: false
+          - name: "hook_file_has_guard_handler"
+            kind: "function"
+            public: false
+          - name: "decide_active_pretool_payload"
+            kind: "function"
+            public: false
           - name: "decide_pretool_payload"
             kind: "function"
             public: false

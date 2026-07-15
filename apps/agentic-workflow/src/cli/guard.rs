@@ -33,6 +33,8 @@ pub enum GuardCommand {
     /// Enable Codex/Claude direct edit/create tool guards for a project scope.
     On(GuardToggleArgs),
     /// Disable AW-managed direct edit/create tool guards for a project scope.
+    /// Already-loaded hook callbacks observe the disabled state on their next
+    /// invocation, so Codex does not need a session reload.
     Off(GuardToggleArgs),
     /// Hook entrypoint: read PreToolUse JSON from stdin and allow/deny.
     Pretool(GuardPretoolArgs),
@@ -150,7 +152,7 @@ async fn run_pretool(args: GuardPretoolArgs) -> Result<()> {
             return Ok(());
         }
     };
-    match decide_pretool_payload(&root, &args.project, args.agent, &payload).await {
+    match decide_active_pretool_payload(&root, &args.project, args.agent, &payload).await {
         Ok(GuardDecision::Allow) => {}
         Ok(GuardDecision::AllowSanctioned { path, reason }) => {
             println!(
@@ -470,6 +472,57 @@ fn is_aw_guard_handler(hook: &Value, agent: Option<&str>, project: Option<&str>)
     true
 }
 
+/// Check the live hook configuration before enforcing the policy. Codex can
+/// retain a callback that was loaded before `aw guard off`; that callback still
+/// invokes this command, so the command itself must honour the current config
+/// instead of treating callback invocation as proof that the guard is enabled.
+fn guard_handler_is_active(root: &Path, project: &str, agent: GuardAgent) -> Result<bool> {
+    let mut active = false;
+    if agent.includes_codex() {
+        active |= hook_file_has_guard_handler(root, CODEX_HOOKS_REL, "codex", project)?;
+    }
+    if agent.includes_claude() {
+        active |= hook_file_has_guard_handler(root, CLAUDE_SETTINGS_REL, "claude", project)?;
+    }
+    Ok(active)
+}
+
+fn hook_file_has_guard_handler(root: &Path, rel: &str, agent: &str, project: &str) -> Result<bool> {
+    let path = root.join(rel);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let doc = read_json_or_empty_object(&path)?;
+    Ok(doc
+        .get("hooks")
+        .and_then(|hooks| hooks.get("PreToolUse"))
+        .and_then(Value::as_array)
+        .is_some_and(|groups| {
+            groups.iter().any(|group| {
+                group
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .is_some_and(|hooks| {
+                        hooks
+                            .iter()
+                            .any(|hook| is_aw_guard_handler(hook, Some(agent), Some(project)))
+                    })
+            })
+        }))
+}
+
+async fn decide_active_pretool_payload(
+    root: &Path,
+    requested_project: &str,
+    agent: GuardAgent,
+    payload: &Value,
+) -> Result<GuardDecision> {
+    if !guard_handler_is_active(root, requested_project, agent)? {
+        return Ok(GuardDecision::Allow);
+    }
+    decide_pretool_payload(root, requested_project, agent, payload).await
+}
+
 async fn decide_pretool_payload(
     root: &Path,
     requested_project: &str,
@@ -780,6 +833,47 @@ paths = ["libs/demo/**"]
         assert!(!codex.contains("aw guard pretool"));
         let claude = fs::read_to_string(tmp.path().join(CLAUDE_SETTINGS_REL)).unwrap();
         assert!(!claude.contains("aw guard pretool"));
+    }
+
+    #[tokio::test]
+    async fn pretool_allows_current_session_callback_after_guard_off() {
+        let _guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tmp = TempDir::new().unwrap();
+        write_project_config(tmp.path());
+        fs::create_dir_all(tmp.path().join("projects/demo/src")).unwrap();
+        install_guard_hooks(tmp.path(), "demo", GuardAgent::Codex).unwrap();
+        assert!(
+            guard_handler_is_active(tmp.path(), "demo", GuardAgent::Codex).unwrap(),
+            "{}",
+            fs::read_to_string(tmp.path().join(CODEX_HOOKS_REL)).unwrap()
+        );
+
+        let payload = json!({
+            "tool_name": "apply_patch",
+            "tool_input": {
+                "command": "*** Begin Patch\n*** Add File: projects/demo/src/new.rs\n+pub fn demo() {}\n*** End Patch\n",
+            },
+        });
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let enabled =
+            decide_active_pretool_payload(tmp.path(), "demo", GuardAgent::Codex, &payload)
+                .await
+                .unwrap();
+        assert!(
+            matches!(enabled, GuardDecision::Deny { .. }),
+            "expected the live handler to deny before off, got {enabled:?}"
+        );
+
+        remove_guard_hooks(tmp.path(), "demo", GuardAgent::Codex).unwrap();
+        let disabled =
+            decide_active_pretool_payload(tmp.path(), "demo", GuardAgent::Codex, &payload)
+                .await
+                .unwrap();
+        std::env::set_current_dir(previous).unwrap();
+        assert_eq!(disabled, GuardDecision::Allow);
     }
 
     #[tokio::test]
