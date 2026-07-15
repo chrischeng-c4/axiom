@@ -43,6 +43,31 @@ fn gen_py_writes_pydantic_h2c_client() {
         models.contains("and_: list[QueryNode] = Field(alias=\"and\")"),
         "QueryNode keyword variant alias was not preserved"
     );
+    let search_request_pos = models
+        .find("class SearchRequest(BaseModel):")
+        .expect("models.py missing SearchRequest");
+    let batch_search_item_pos = models
+        .find("BatchSearchItem = SearchRequest")
+        .expect("models.py missing BatchSearchItem reference alias");
+    assert!(
+        search_request_pos < batch_search_item_pos,
+        "reference alias must be emitted after its concrete model"
+    );
+    let model_path = dir.path().join("models.py");
+    let python = Command::new("python3")
+        .args([
+            "-c",
+            "import pathlib, sys; path = pathlib.Path(sys.argv[1]); exec(compile(path.read_text(), str(path), 'exec'))",
+        ])
+        .arg(&model_path)
+        .output()
+        .unwrap();
+    assert!(
+        python.status.success(),
+        "generated models.py failed at import time\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&python.stdout),
+        String::from_utf8_lossy(&python.stderr)
+    );
     let runtime = std::fs::read_to_string(dir.path().join("h2c_runtime.py")).unwrap();
     assert!(
         runtime.contains("class H2CClient"),
