@@ -32,6 +32,14 @@ fill_sections: [overview, logic, unit-test, changes]
 local `TapeJournal` file store and exposes standard ecosystem commands through
 `cli-std`.
 
+### Shared OTLP tracing
+
+The `serve` command maps `TAPE_OTLP_ENDPOINT` plus its existing logging and
+drain settings into `service_http::HttpConfig`, then installs tracing with a
+stable Tape package identity. `service-http` owns the optional exporter,
+fallback behavior, and W3C request-parent propagation; Tape retains topic,
+journal, authentication, and consumer semantics.
+
 ## Logic
 <!-- type: logic lang: mermaid -->
 
