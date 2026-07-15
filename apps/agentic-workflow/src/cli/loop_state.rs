@@ -189,7 +189,12 @@ pub fn decide_next_action(last: &LastResult, issue_id: &str) -> (LoopStatus, Opt
         }
         LastResult::Red { .. } => {
             let base = td_phase::next_phase_command(td_phase::TD_CREATED).unwrap_or("aw td gen");
-            (LoopStatus::Iterating, Some(base.to_string()))
+            let command = if issue_id.is_empty() {
+                base.to_string()
+            } else {
+                format!("{base} {issue_id}")
+            };
+            (LoopStatus::Iterating, Some(command))
         }
         LastResult::Blocked { .. } => (LoopStatus::Blocked, None),
         LastResult::None => (LoopStatus::Iterating, None),
@@ -257,7 +262,7 @@ mod tests {
         };
         assert_eq!(
             decide_next_action(&red, "42"),
-            (LoopStatus::Iterating, Some("aw td gen".to_string()))
+            (LoopStatus::Iterating, Some("aw td gen 42".to_string()))
         );
     }
 
@@ -289,7 +294,7 @@ mod tests {
         );
         assert_eq!(s.iterations.len(), 1);
         assert_eq!(s.status, LoopStatus::Iterating);
-        assert_eq!(s.next_action.as_deref(), Some("aw td gen"));
+        assert_eq!(s.next_action.as_deref(), Some("aw td gen 1"));
 
         s.record_verification(LastResult::Green, None);
         assert_eq!(s.iterations.len(), 2);
@@ -415,7 +420,7 @@ mod tests {
         assert_eq!(s.issue_id, "188");
         assert_eq!(s.iterations.len(), 1);
         assert_eq!(s.status, LoopStatus::Iterating);
-        assert_eq!(s.next_action.as_deref(), Some("aw td gen"));
+        assert_eq!(s.next_action.as_deref(), Some("aw td gen 188"));
 
         // Re-apply a Green verdict on the same body -> converged, 2nd iteration,
         // block replaced in place (not duplicated). `issue_id` is already

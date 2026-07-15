@@ -249,6 +249,21 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "project-root envelope's work-item queue gate command",
     },
     EmitSite {
+        source: "run.rs:ec_draft_command (EC-first fresh WI admission)",
+        sample: "aw ec draft 1500 --project agentic-workflow --wi 1500",
+        note: "a fresh bounded WI creates its project-local EC skeleton before TD/codegen",
+    },
+    EmitSite {
+        source: "ec.rs:EC-first WI transition",
+        sample: "aw ec gen --project agentic-workflow --verify --wi 1500",
+        note: "only a successful EC generation may unlock the owning WI's TD create act",
+    },
+    EmitSite {
+        source: "run.rs:ec_verify_command (EC verdict transition)",
+        sample: "aw ec verify --project agentic-workflow --wi 1500",
+        note: "a completed TD/codegen candidate records its EC verdict before root dispatch",
+    },
+    EmitSite {
         source: "run.rs:loop_state_envelope (converged)",
         sample: "aw td code-check 915",
         note: "loop engine's terminal act, sourced from LoopState.next_action \

@@ -13,7 +13,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | AW Agent-First CLI Model | #1496 | implemented | verified | smoke | ready | verified; one coding-agent CLI owns next-action guidance, artifact skeletons, strict validation/phases, codegen, WorkItem-first admission, and evidence-backed rollup |
-| Workflow Root Runner | - | implemented | verified | smoke | ready | verified; CLI workflow chain and root-to-child rollup contract |
+| Workflow Root Runner | - | implemented | verified | smoke | ready | verified; EC-first CLI workflow chain and root-to-child rollup contract |
 | Capability Control Plane | - | implemented | verified | smoke | ready | verified; CAPABILITIES.md capability map, `aw capability`, and verification summaries |
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
 | TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to code-check terminal workflow |
@@ -63,7 +63,7 @@ Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-`aw wi run`/`aw capability run` emit a CLI workflow chain from project, capability, epic, or change roots and keep rolling work upward until the project root is complete or blocked.
+`aw wi run`/`aw capability run` emit one EC-first CLI workflow chain from project, capability, epic, or change roots: a fresh bounded WI authors and generates a project-local EC contract before TD/codegen; EC red returns to adaptation, EC green permits terminal code-check, then the runner rolls work upward until the project root is complete or blocked. Capability remains the META-doc goal ledger and `aw health` remains read-only.
 Gate Inventory:
 - apps/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
 
@@ -74,6 +74,7 @@ Gate Inventory:
 | Parent rollup routing | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection` |
 | Runtime Envelope Backward Compatibility | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib envelope_profile -- --nocapture`; apps/agentic-workflow/tech-design/specs/3903.md |
 | Self-hosting root-runner policy | change | #1501 | implemented | verified | smoke | `cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md; AW rejects its own WI/capability/project root runners before mutation and uses sanctioned direct commits plus focused health/TD/EC verification instead |
+| EC-first WI root loop | change | #1500 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib phase_less_project_wi_enters_ec_before_td -- --nocapture`; `cargo test -p agentic-workflow --lib ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md; fresh WI roots persist EC draft/fill/review/gen transitions, enter TD only after successful EC generation, and route EC red/green to adaptation/code-check |
 
 ### Capability Control Plane
 
@@ -233,7 +234,7 @@ Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-Existing projects can be adopted one bounded tick at a time: capability readiness stays in `aw capability`, takeover runs through managed/semantic/traceability, and generator gaps route back into normal WI/TD/CB work.
+Existing projects can be adopted one bounded tick at a time: capability readiness stays in `aw capability`, takeover runs through managed/semantic/traceability, and generator gaps route back into normal WI/EC/TD-codegen work.
 Gate Inventory:
 - apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md
 

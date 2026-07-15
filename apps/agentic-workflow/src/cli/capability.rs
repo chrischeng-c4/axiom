@@ -6621,7 +6621,7 @@ fn choose_next_action(
                             (
                                 CapabilityActionKind::AtomizeWi,
                                 format!("aw wi atomize --project {}", report.project),
-                                "active WI is an epic; atomize it before TD/CB lifecycle"
+                                "active WI is an epic; atomize it before the EC-first TD/codegen lifecycle"
                                     .to_string(),
                             )
                         }
@@ -6633,7 +6633,7 @@ fn choose_next_action(
                         td_spec_path,
                         td_review_status,
                         include_issue_inventory,
-                        "active WI exists; continue WI -> TD -> CB lifecycle",
+                        "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
                     ),
                     _ => (
                         CapabilityActionKind::CreateWi,
@@ -7328,9 +7328,9 @@ fn lifecycle_action_for_work_item(
 
     if lifecycle_issue_evidence_unresolved(evidence) {
         let reason = if require_issue_inventory {
-            "active WI reference is not present in project issue inventory; sync or recreate a bounded WI before TD/CB lifecycle"
+            "active WI reference is not present in project issue inventory; sync or recreate a bounded WI before the EC-first TD/codegen lifecycle"
         } else {
-            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
+            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before the EC-first TD/codegen lifecycle"
         };
         return (
             CapabilityActionKind::ReconcileWiRefs,
@@ -7353,7 +7353,7 @@ fn lifecycle_action_for_work_item(
         Some(td_phase::TD_CREATED) => (
             CapabilityActionKind::RunCb,
             cb_gen_command(work_item, td_spec_path),
-            "active WI has reviewed TD; continue CB generation".to_string(),
+            "active WI has reviewed TD; continue TD code generation".to_string(),
         ),
         Some(td_phase::CB_GENNED) | Some("cb_fill_in_progress") => (
             CapabilityActionKind::RunCb,
@@ -7361,29 +7361,31 @@ fn lifecycle_action_for_work_item(
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
         // cb_reviewed / cb_revised / cb_arbitrated all normalize to
-        // cb_filled, which the terminal code-check guard accepts — closes
-        // the #850 dispatch-loop (cb_reviewed used to route here directly
-        // and get rejected by the un-normalized guard).
+        // cb_filled. Record the project EC verdict first, then let its
+        // persisted loop-state choose TD adaptation (red) or code-check
+        // (green); this keeps capability and WI roots on one decision table.
         Some(td_phase::CB_FILLED) => (
-            CapabilityActionKind::RunTd,
-            format!("aw td code-check {work_item}"),
-            "active WI has generated and checked implementation output; run terminal code-check"
+            CapabilityActionKind::RunVerify,
+            crate::cli::run::ec_verify_command(&report.project, work_item),
+            "active WI has generated implementation output; record the EC verdict before terminal code-check"
                 .to_string(),
         ),
         Some(td_phase::TD_MERGED) => (
             CapabilityActionKind::RunVerify,
             format!("aw capability report --project {} --verify", report.project),
-            "active WI has merged TD/CB lifecycle; verify capability readiness".to_string(),
+            "active WI has completed its TD/codegen lifecycle; verify capability readiness".to_string(),
         ),
         _ if td_review_status == Some("approved") && td_spec_path.is_some() => (
             CapabilityActionKind::RunCb,
             cb_gen_command(work_item, td_spec_path),
-            "active WI has approved TD evidence; continue CB generation".to_string(),
+            "active WI has approved TD evidence; continue TD code generation".to_string(),
         ),
         _ => (
             CapabilityActionKind::RunTd,
-            format!("aw td create {work_item}"),
-            default_reason.to_string(),
+            crate::cli::run::ec_draft_command(&report.project, work_item),
+            format!(
+                "{default_reason}; accepted WI has no EC verifier, so create the project-local EC skeleton before TD/codegen"
+            ),
         ),
     }
 }
@@ -7406,7 +7408,8 @@ fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
         || command.starts_with("aw td code-")
     {
         CapabilityActionKind::RunCb
-    } else if command.starts_with("aw capability report")
+    } else if command.starts_with("aw ec verify")
+        || command.starts_with("aw capability report")
         || command.starts_with("aw capability check")
     {
         CapabilityActionKind::RunVerify
@@ -7483,7 +7486,7 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
                 td_ref.map(|td_ref| td_ref.spec_path.as_str()),
                 td_ref.and_then(|td_ref| td_ref.review_status.as_deref()),
                 true,
-                "bounded child WI exists; continue WI -> TD -> CB lifecycle",
+                "bounded child WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
             );
             return Some(CapabilityAction {
                 kind,
@@ -12331,7 +12334,9 @@ mod tests {
             claim_id: None,
             target: "Package Manager".to_string(),
             command: command.to_string(),
-            reason: "active WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+            reason:
+                "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle"
+                    .to_string(),
             requires_hitl,
             hitl_question: None,
         }
@@ -14220,7 +14225,8 @@ Gate Inventory:
                 target: "WASM And Multi-Target Execution".to_string(),
                 command: "aw td create 3783".to_string(),
                 latest_evidence_path: None,
-                reason: "active WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+                reason: "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle"
+                    .to_string(),
             },
             CapabilityActionQueueEntry {
                 project: "meter".to_string(),
@@ -17524,7 +17530,7 @@ capability_refs:
         assert_eq!(action.kind, CapabilityActionKind::RunTd);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
         assert_eq!(action.gap_id.as_deref(), Some("package-manager-readiness"));
-        assert_eq!(action.command, "aw td create 3779");
+        assert_eq!(action.command, "aw ec draft 3779 --project jet --wi 3779");
     }
 
     #[test]
@@ -17692,7 +17698,7 @@ capability_refs:
             Some("apps/agentic-workflow/tech-design/logic/manual.md"),
             None,
             true,
-            "active WI exists; continue WI -> TD -> CB lifecycle",
+            "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
         );
 
         assert_eq!(kind, CapabilityActionKind::RunCb);
@@ -17704,14 +17710,11 @@ capability_refs:
     }
 
     // issue #850: cb_reviewed/cb_revised/cb_arbitrated are retired CRRR
-    // phases that normalize to cb_filled. Before this fix, cb_reviewed
-    // routed straight to `aw td code-check` without normalizing first,
-    // which the terminal code-check phase guard then rejected outright —
-    // an unrecoverable dispatch-loop. This proves the capability loop now
-    // routes all three retired post-fill phases to the terminal
-    // code-check command the (normalized) guard accepts.
+    // phases that normalize to cb_filled. The EC-first root table must route
+    // all of them to the same verdict act before the loop decides adaptation
+    // or terminal code-check.
     #[test]
-    fn lifecycle_action_for_retired_post_fill_phases_runs_terminal_code_check() {
+    fn lifecycle_action_for_post_fill_phases_records_ec_verdict() {
         let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
         for phase in ["cb_reviewed", "cb_revised", "cb_arbitrated", "cb_filled"] {
             let evidence = CapabilityWiEvidence {
@@ -17731,14 +17734,17 @@ capability_refs:
                 Some("apps/agentic-workflow/tech-design/logic/manual.md"),
                 None,
                 true,
-                "active WI exists; continue WI -> TD -> CB lifecycle",
+                "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
             );
 
-            assert_eq!(kind, CapabilityActionKind::RunTd, "phase: {phase}");
-            assert_eq!(command, "aw td code-check 57", "phase: {phase}");
+            assert_eq!(kind, CapabilityActionKind::RunVerify, "phase: {phase}");
+            assert_eq!(
+                command, "aw ec verify --project jet --wi 57",
+                "phase: {phase}"
+            );
             assert_eq!(
                 reason,
-                "active WI has generated and checked implementation output; run terminal code-check",
+                "active WI has generated implementation output; record the EC verdict before terminal code-check",
                 "phase: {phase}"
             );
         }
@@ -17764,7 +17770,7 @@ capability_refs:
             Some("apps/agentic-workflow/tech-design/logic/manual.md"),
             Some("approved"),
             true,
-            "active WI exists; continue WI -> TD -> CB lifecycle",
+            "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
         );
 
         assert_eq!(kind, CapabilityActionKind::RunCb);
@@ -17786,7 +17792,7 @@ capability_refs:
             Some("apps/agentic-workflow/tech-design/logic/manual.md"),
             Some("approved"),
             true,
-            "active WI exists; continue WI -> TD -> CB lifecycle",
+            "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
         );
 
         assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
@@ -17814,7 +17820,7 @@ capability_refs:
             Some(".aw/tech-design/projects/jet/specs/3783.md"),
             Some("approved"),
             true,
-            "active WI exists; continue WI -> TD -> CB lifecycle",
+            "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
         );
 
         assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
@@ -17842,7 +17848,7 @@ capability_refs:
             Some(".aw/tech-design/projects/jet/specs/3783.md"),
             Some("approved"),
             false,
-            "active WI exists; continue WI -> TD -> CB lifecycle",
+            "active WI exists; continue WI -> EC -> TD/codegen -> verify -> rollup lifecycle",
         );
 
         assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);

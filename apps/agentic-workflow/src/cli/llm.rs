@@ -267,8 +267,8 @@ loop converges on ec green.
 
 ## The decision (driven by ec, not review)
 
-    ec green  -> converged   -> aw td code-check
-    ec red    -> iterating   -> aw td gen      (adapt; never re-run the same fail)
+    ec green  -> converged   -> aw td code-check <wi>
+    ec red    -> iterating   -> aw td gen <wi> (adapt; never re-run the same fail)
     blocked   -> HITL        -> surface hitl_question to a human
 
 ## The envelope
@@ -281,7 +281,9 @@ Drive it: `aw wi run <id>` for one work item, or `aw capability run
 <capability-id> --project <project>` for a capability's work-root queue; the
 linear authoring path is `skeleton -> fill -> validate`; unresolved product
 decisions become HITL. There is no WI review or arbitration phase. The
-implementation path is `wi -> ec -> td/codegen -> code-check`.
+implementation path is `wi -> ec skeleton/fill/review/gen -> td/codegen ->
+ec verify -> code-check -> parent rollup`; capability is the META-doc goal
+ledger and `aw health` is read-only observation, not an authoring step.
 
 For exact flags, run `aw wi run --help`, `aw capability run --help`, or
 `aw wi --help`.

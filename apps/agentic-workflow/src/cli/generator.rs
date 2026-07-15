@@ -23,7 +23,7 @@ pub struct GeneratorArgs {
 #[derive(Debug, Subcommand)]
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
 pub enum GeneratorCommand {
-    /// Inspect generator gaps that can be routed into WI/TD/CB.
+    /// Inspect generator gaps that can be routed into the EC-first WI/TD-codegen lifecycle.
     Check(GeneratorCheckArgs),
     /// Create a generator gap WI draft payload after takeover readiness passes.
     Request(GeneratorRequestArgs),
@@ -192,7 +192,7 @@ fn build_check_report(project: &str, health: &ProjectHealthReport) -> GeneratorC
                     project,
                     shell_quote(&gap.id)
                 ),
-                reason: "request the next generator gap through WI/TD/CB".to_string(),
+                reason: "request the next generator gap through WI/EC/TD-codegen".to_string(),
             }
         } else {
             GeneratorNextAction {
@@ -300,7 +300,7 @@ fn build_request_report(
                     shell_quote(&format!("Strengthen generator for {gap_id}")),
                     shell_quote(&payload)
                 ),
-                reason: "create a WI draft, then continue normal WI/TD/CB lifecycle".to_string(),
+                reason: "create a WI draft, then continue the normal WI/EC/TD-codegen lifecycle".to_string(),
             },
         },
         false,
@@ -393,7 +393,7 @@ fn write_request_payload(project: &str, gap: &GeneratorGap, path: &Path) -> Resu
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
     let body = format!(
-        "# Generator Gap Request\n\n## Project\n{}\n\n## Gap ID\n{}\n\n## Gap\n{}\n\n## Required Flow\nUse normal AW lifecycle: WI -> TD -> CB. Do not add a generator-specific lifecycle command.\n",
+        "# Generator Gap Request\n\n## Project\n{}\n\n## Gap ID\n{}\n\n## Gap\n{}\n\n## Required Flow\nUse the normal AW lifecycle: WI -> EC -> TD/codegen -> EC verify -> terminal code-check -> rollup. Do not add a generator-specific lifecycle command.\n",
         project, gap.id, gap.description
     );
     fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))?;

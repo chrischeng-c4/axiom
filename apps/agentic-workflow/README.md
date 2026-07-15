@@ -59,6 +59,14 @@ work. Agents must re-run the same root command after each child command
 completes and stop only when the envelope reports workflow completion, HITL,
 blocker, or error.
 
+For every accepted bounded WI, the root order is fixed: `WI -> EC skeleton /
+fill / independent review / generation -> TD/codegen -> EC verify -> terminal
+code-check -> parent rollup`. A new WI therefore never starts `aw td create`
+until its project-local EC inventory has generated successfully. Capability is
+the META-doc goal ledger and scheduler for these WIs; it does not create a
+second implementation lifecycle. `aw health` observes the resulting rollup
+and never becomes an authoring step.
+
 ## Lifecycle Surface
 
 AW uses canonical agent-facing command names for the main lifecycle:
@@ -74,7 +82,7 @@ AW uses canonical agent-facing command names for the main lifecycle:
 The canonical flow for greenfield projects is:
 
 ```text
-aw meta init/check -> aw capability report/next/migrate/check -> aw ec draft/fill -> aw ec gen -> aw td create/gen/fill/code-check -> aw health
+aw meta init/check -> aw capability report/next -> aw wi -> aw ec draft/fill/review/gen -> aw td create/gen/fill -> aw ec verify -> aw td code-check -> parent rollup -> aw health
 ```
 
 Greenfield starts by creating the repo/project META-doc control plane, then
@@ -150,7 +158,7 @@ The quick map below points to the canonical entries in
 | Workflow Root Runner | Root-scoped project, capability, and WI workflow envelopes with child-command rollup. | ready | [CAPABILITIES.md](CAPABILITIES.md#workflow-root-runner) |
 | Capability Control Plane | Markdown capability contracts, readiness reporting, project sweep, and contract field setters. | ready | [CAPABILITIES.md](CAPABILITIES.md#capability-control-plane) |
 | Work Item Planning | Capability roots can become epic/subepic candidates, then bounded change WIs. | ready | [CAPABILITIES.md](CAPABILITIES.md#work-item-planning) |
-| TD/CB Lifecycle Automation | Atomic WIs move through TD, code generation/fill, code-check, and merge gates. | ready | [CAPABILITIES.md](CAPABILITIES.md#tdcb-lifecycle-automation) |
+| TD/CB Lifecycle Automation | EC-ready atomic WIs move through TD, code generation/fill, EC verification, and terminal code-check. | ready | [CAPABILITIES.md](CAPABILITIES.md#tdcb-lifecycle-automation) |
 | Project-Local TD and EC Gates | Project-local TD roots, external contracts, generated gates, and dirty-scope protections. | ready | [CAPABILITIES.md](CAPABILITIES.md#project-local-td-and-ec-gates) |
 | Manual Evidence Artifacts | EC-derived product manuals are tracked as generated evidence artifacts. | ready | [CAPABILITIES.md](CAPABILITIES.md#manual-evidence-artifacts) |
 | Existing Project Standardization | Brownfield takeover guidance, readiness rollup, and generator-gap routing. | ready | [CAPABILITIES.md](CAPABILITIES.md#existing-project-standardization) |

@@ -26,8 +26,13 @@ authoring, CLI, service, and meta-doc rules remain in
 - Treat `CAPABILITIES.md` as the project promise map and keep capability IDs,
   work-root rows, WI refs, TD refs, and EC evidence resolvable.
 - For AW self-hosting repairs, direct commits are allowed when the lifecycle
-  itself is broken; otherwise prefer the active `aw wi` -> `aw td` -> `aw td
-  code-check` route.
+  itself is broken; otherwise prefer the active `aw wi` -> `aw ec` -> `aw td`
+  -> `aw td code-check` route.
+- For a newly accepted bounded WI, establish the project-local EC skeleton,
+  fill, independent review, and generation before `aw td create`; EC red
+  returns to bounded TD/codegen adaptation, while EC green permits terminal
+  code-check and parent rollup. `aw health` is read-only evidence, never an
+  authoring phase.
 - For CLI surface changes, update the command implementation, generated or
   mirrored agent docs, active skill templates, and focused CLI tests together.
 - For `SPEC-MANAGED` or generated files, update the owning TD/source unit and
@@ -57,9 +62,9 @@ Every registered `aw` CLI verb carries a lifecycle class in
 `src/cli/chain.rs`'s `VERB_LIFECYCLE_REGISTRY` (epic #1270 R4+R9):
 
 - `Core` — the `meta`/`wi`/`td`/`ec`/`capability`/`health`/`conf` lifecycle and loop
-  surface: the verbs the LINEAR loop (`aw wi` -> `aw td create` -> `gen` ->
-  `fill` -> `code-check`) and its sibling `ec`/`capability`/`health` loops
-  actually dispatch through.
+  surface: the verbs the LINEAR loop (`aw wi` -> `aw ec` -> `aw td create` ->
+  `gen` -> `fill` -> EC verify -> `code-check`) and its capability/health
+  rollup surfaces actually dispatch through.
 - `Utility` — support tooling that is not itself a lifecycle-loop step: the
   CLI-convention trio (`llm`/`upgrade`/`issue`), `guard`/`new`/
   `report-issue`/`generator`, and the read-only/debug `td` verbs (`ast`,

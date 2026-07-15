@@ -119,6 +119,11 @@ pub struct EcDraftArgs {
     /// Overwrite an existing draft.
     #[arg(long)]
     pub force: bool,
+    /// Local lifecycle work-item that owns this EC-first root transition.
+    /// When set, the draft persists its follow-up action onto that WI's
+    /// loop-state so `aw wi run` and `aw capability run` share one route.
+    #[arg(long)]
+    pub wi: Option<String>,
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
@@ -140,6 +145,9 @@ pub struct EcFillArgs {
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
+    /// Local lifecycle work-item that owns this EC-first root transition.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -154,6 +162,10 @@ pub struct EcGenArgs {
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
+    /// Local lifecycle work-item that may enter TD only after this EC
+    /// inventory is generated successfully.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -189,6 +201,9 @@ pub struct EcReviewArgs {
     /// Emit JSON instead of human-readable output.
     #[arg(long)]
     pub json: bool,
+    /// Local lifecycle work-item that owns this EC-first root transition.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -221,6 +236,11 @@ pub struct EcVerifyArgs {
     /// terminal EC gate's filter); default runs every configured case.
     #[arg(long)]
     pub required_only: bool,
+    /// Local lifecycle work-item that receives this verifier verdict. A green
+    /// result advances to terminal code-check; a red result returns to bounded
+    /// TD/codegen adaptation.
+    #[arg(long)]
+    pub wi: Option<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -882,6 +902,131 @@ pub fn run(args: EcArgs) -> Result<()> {
     }
 }
 
+/// Keep a root-owned EC transition attached to the local WI state rather than
+/// asking capability and WI runners to infer progress from a project-global
+/// EC inventory. The external-contract artifacts remain project-scoped, while
+/// the next implementation act is owned by exactly one bounded WI.
+fn persist_ec_first_next_action(project_root: &Path, wi: &str, next_action: String) -> Result<()> {
+    use crate::issues::IssueBackend;
+
+    let wi = wi.trim();
+    if wi.is_empty() {
+        bail!("EC lifecycle WI id cannot be empty");
+    }
+    let backend = crate::issues::local_backend(project_root);
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let mut issue =
+                load_or_hydrate_local_lifecycle_issue(project_root, &backend, wi).await?;
+            let mut state =
+                crate::cli::loop_state::parse_loop_state(&issue.body).unwrap_or_default();
+            state.version = 1;
+            if state.issue_id.trim().is_empty() {
+                state.issue_id = wi.to_string();
+            }
+            if state.goal.is_none() {
+                state.goal = Some(format!("ec-first:{wi}"));
+            }
+            state.verifier = Some("ec".to_string());
+            state.status = crate::cli::loop_state::LoopStatus::Iterating;
+            state.next_action = Some(next_action);
+            state.updated_at = Some(chrono::Utc::now().to_rfc3339());
+            issue.body = crate::cli::loop_state::upsert_loop_state(&issue.body, &state)?;
+            backend.write(&issue).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })
+}
+
+/// Read the local lifecycle ledger first, hydrating it from the configured
+/// tracker only when a root or capability command reaches EC before a WI root
+/// had a chance to seed the local copy.
+async fn load_or_hydrate_local_lifecycle_issue(
+    project_root: &Path,
+    local_backend: &crate::issues::LocalBackend,
+    wi: &str,
+) -> Result<crate::issues::Issue> {
+    use crate::issues::IssueBackend;
+
+    if let Some(issue) = local_backend.get(wi).await? {
+        return Ok(issue);
+    }
+    let (kind, repo, host) = crate::issues::resolve_default_backend(project_root)?;
+    let backend = crate::issues::make_backend(&kind, project_root, repo, host)?;
+    let Some(issue) = backend.get(wi).await? else {
+        bail!(
+            "work item `{wi}` was not found in the local lifecycle ledger or configured issue backend"
+        );
+    };
+    local_backend.write(&issue).await?;
+    Ok(issue)
+}
+
+/// Persist an actual EC verifier verdict onto the owning WI. The root runner
+/// consumes this state on its next tick, making red and green outcomes a
+/// normal lifecycle transition rather than a terminal-process error.
+fn record_ec_first_verification(
+    project_root: &Path,
+    wi: &str,
+    result: crate::cli::loop_state::LastResult,
+    summary: Option<String>,
+) -> Result<crate::cli::loop_state::LoopState> {
+    use crate::issues::IssueBackend;
+
+    let wi = wi.trim();
+    if wi.is_empty() {
+        bail!("EC lifecycle WI id cannot be empty");
+    }
+    let backend = crate::issues::local_backend(project_root);
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let mut issue =
+                load_or_hydrate_local_lifecycle_issue(project_root, &backend, wi).await?;
+            let mut state =
+                crate::cli::loop_state::parse_loop_state(&issue.body).unwrap_or_default();
+            state.version = 1;
+            if state.issue_id.trim().is_empty() {
+                state.issue_id = wi.to_string();
+            }
+            if state.goal.is_none() {
+                state.goal = Some(format!("ec-first:{wi}"));
+            }
+            state.verifier = Some("ec".to_string());
+            state.record_verification(result, summary);
+            state.updated_at = Some(chrono::Utc::now().to_rfc3339());
+            issue.body = crate::cli::loop_state::upsert_loop_state(&issue.body, &state)?;
+            backend.write(&issue).await?;
+            Ok::<_, anyhow::Error>(state)
+        })
+    })
+}
+
+fn command_with_wi(command: String, wi: Option<&str>) -> String {
+    match wi.map(str::trim).filter(|wi| !wi.is_empty()) {
+        Some(wi) => format!("{command} --wi {wi}"),
+        None => command,
+    }
+}
+
+/// Emit an EC-review result and, when the review belongs to a root-owned WI,
+/// make its returned command the WI's durable next action. Without this write,
+/// the next root tick would keep routing to `aw ec review` after an accepted
+/// or revision-requesting review had already completed.
+fn emit_ec_review_summary_for_wi(
+    project_root: &Path,
+    wi: Option<&str>,
+    summary: &EcReviewSummary,
+    json: bool,
+) -> Result<()> {
+    if let (Some(wi), Some(next)) = (
+        wi.map(str::trim).filter(|wi| !wi.is_empty()),
+        summary.next.as_ref(),
+    ) {
+        persist_ec_first_next_action(project_root, wi, next.clone())?;
+    }
+    emit_ec_review_summary(summary, json)
+}
+
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub fn project_ec_check_summary(project: &str) -> Result<EcCheckSummary> {
     let project_root = crate::find_project_root()?;
@@ -943,6 +1088,18 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
         .collect::<Vec<_>>();
     let artifact =
         super::artifact_producer::ec_contract(&ctx.project, &id, &rel, &artifact_slots, true)?;
+    let fill_command = command_with_wi(
+        format!(
+            "aw ec fill --project {} {} --section {}",
+            ctx.project,
+            rel,
+            fill_sections.first().cloned().unwrap_or_default()
+        ),
+        args.wi.as_deref(),
+    );
+    if let Some(wi) = args.wi.as_deref() {
+        persist_ec_first_next_action(&project_root, wi, fill_command.clone())?;
+    }
     if args.json {
         println!(
             "{}",
@@ -955,12 +1112,7 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
                 "artifact": artifact,
                 "next": payload_paths.first().map(|payload| serde_json::json!({
                     "kind": "dispatch",
-                    "command": format!(
-                        "aw ec fill --project {} {} --section {}",
-                        ctx.project,
-                        rel,
-                        fill_sections.first().cloned().unwrap_or_default()
-                    ),
+                    "command": fill_command,
                     "payload_path": payload,
                     "reason": "fill the initialized EC section payload and apply it",
                     "requires_hitl": false,
@@ -973,16 +1125,20 @@ fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
         for (section, payload) in fill_sections.iter().zip(payload_paths.iter()) {
             println!("payload {section}: {payload}");
         }
-        if let Some(section) = fill_sections.first() {
+        if !fill_sections.is_empty() {
             println!(
-                "next: fill {} then run `aw ec fill --project {} {} --section {}`",
+                "next: fill {} then run `{}`",
                 payload_paths.first().cloned().unwrap_or_default(),
-                ctx.project,
-                rel,
-                section
+                fill_command
             );
         }
-        println!("then: aw ec review --project {}", ctx.project);
+        println!(
+            "then: {}",
+            command_with_wi(
+                format!("aw ec review --project {}", ctx.project),
+                args.wi.as_deref()
+            )
+        );
     }
     Ok(())
 }
@@ -1040,6 +1196,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
             command: None,
             tool: Vec::new(),
             force: false,
+            wi: None,
             json: false,
         };
         initialize_ec_payload_file(
@@ -1080,6 +1237,13 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
     let merged = merge_ec_section(&existing, &args.section, &payload)
         .map_err(|error| artifact.schema_violation(&args.section, error.to_string()))?;
     fs::write(&path, merged).with_context(|| format!("write {}", path.display()))?;
+    let review_command = command_with_wi(
+        format!("aw ec review --project {}", ctx.project),
+        args.wi.as_deref(),
+    );
+    if let Some(wi) = args.wi.as_deref() {
+        persist_ec_first_next_action(&project_root, wi, review_command.clone())?;
+    }
     if args.json {
         println!(
             "{}",
@@ -1091,7 +1255,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
                 "action": "filled",
                 "artifact": artifact,
                 "next": {
-                    "command": format!("aw ec review --project {}", ctx.project),
+                    "command": review_command,
                 },
             }))?
         );
@@ -1101,7 +1265,7 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
             ctx.project, args.section, rel
         );
         println!("artifact protocol: {}", artifact.schema_version);
-        println!("next: aw ec review --project {}", ctx.project);
+        println!("next: {review_command}");
     }
     Ok(())
 }
@@ -1476,6 +1640,12 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
         }
     }
 
+    if !args.dry_run {
+        if let Some(wi) = args.wi.as_deref() {
+            persist_ec_first_next_action(&project_root, wi, format!("aw td create {wi}"))?;
+        }
+    }
+
     Ok(())
 }
 
@@ -1568,7 +1738,9 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     let review_path_rel = relative_to(&ctx.project_root, &review_path);
 
     if !ec_semantic_review_required(&manifest) {
-        return emit_ec_review_summary(
+        return emit_ec_review_summary_for_wi(
+            &project_root,
+            args.wi.as_deref(),
             &EcReviewSummary {
                 project: ctx.project.clone(),
                 status: "not_required".to_string(),
@@ -1578,7 +1750,10 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 review_path: review_path_rel,
                 payload_path: None,
                 findings: Vec::new(),
-                next: Some(format!("aw ec gen --project {} --verify", ctx.project)),
+                next: Some(command_with_wi(
+                    format!("aw ec gen --project {} --verify", ctx.project),
+                    args.wi.as_deref(),
+                )),
             },
             args.json,
         );
@@ -1586,8 +1761,11 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
 
     let automatic_findings = ec_semantic_review_findings(&ctx, &manifest.cases);
     if !automatic_findings.is_empty() {
-        let next = first_ec_fill_command(&ctx, &manifest.cases);
-        return emit_ec_review_summary(
+        let next = first_ec_fill_command(&ctx, &manifest.cases)
+            .map(|command| command_with_wi(command, args.wi.as_deref()));
+        return emit_ec_review_summary_for_wi(
+            &project_root,
+            args.wi.as_deref(),
             &EcReviewSummary {
                 project: ctx.project.clone(),
                 status: "needs_revision".to_string(),
@@ -1607,7 +1785,9 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
         if let Some(record) = load_ec_review_record(&ctx)? {
             let findings = ec_review_record_findings(&ctx, &manifest, &record);
             if findings.is_empty() {
-                return emit_ec_review_summary(
+                return emit_ec_review_summary_for_wi(
+                    &project_root,
+                    args.wi.as_deref(),
                     &EcReviewSummary {
                         project: ctx.project.clone(),
                         status: "accepted".to_string(),
@@ -1617,7 +1797,10 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                         review_path: review_path_rel,
                         payload_path: None,
                         findings: Vec::new(),
-                        next: Some(format!("aw ec gen --project {} --verify", ctx.project)),
+                        next: Some(command_with_wi(
+                            format!("aw ec gen --project {} --verify", ctx.project),
+                            args.wi.as_deref(),
+                        )),
                     },
                     args.json,
                 );
@@ -1632,7 +1815,9 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     let mut record = read_ec_review_record(&payload_path)?;
 
     if record.decision == EcReviewDecision::Pending {
-        return emit_ec_review_summary(
+        return emit_ec_review_summary_for_wi(
+            &project_root,
+            args.wi.as_deref(),
             &EcReviewSummary {
                 project: ctx.project.clone(),
                 status: "pending".to_string(),
@@ -1657,7 +1842,9 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     remove_ec_review_payload(&payload_path);
 
     match record.decision {
-        EcReviewDecision::Accepted => emit_ec_review_summary(
+        EcReviewDecision::Accepted => emit_ec_review_summary_for_wi(
+            &project_root,
+            args.wi.as_deref(),
             &EcReviewSummary {
                 project: ctx.project.clone(),
                 status: "accepted".to_string(),
@@ -1667,13 +1854,19 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 review_path: review_path_rel,
                 payload_path: None,
                 findings: Vec::new(),
-                next: Some(format!("aw ec gen --project {} --verify", ctx.project)),
+                next: Some(command_with_wi(
+                    format!("aw ec gen --project {} --verify", ctx.project),
+                    args.wi.as_deref(),
+                )),
             },
             args.json,
         ),
         EcReviewDecision::NeedsRevision => {
-            let next = ec_fill_command_for_target(&ctx, &record.target_path);
-            emit_ec_review_summary(
+            let next = ec_fill_command_for_target(&ctx, &record.target_path)
+                .map(|command| command_with_wi(command, args.wi.as_deref()));
+            emit_ec_review_summary_for_wi(
+                &project_root,
+                args.wi.as_deref(),
                 &EcReviewSummary {
                     project: ctx.project.clone(),
                     status: "needs_revision".to_string(),
@@ -2024,8 +2217,61 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     let summary = verify_ec_context(&ctx, args.required_only)?;
+    let lifecycle_state = args
+        .wi
+        .as_deref()
+        .map(|wi| {
+            let result = if summary.clean {
+                crate::cli::loop_state::LastResult::Green
+            } else {
+                let failed_cases = summary
+                    .results
+                    .iter()
+                    .filter(|result| result.status != "passed" && result.status != "skipped")
+                    .collect::<Vec<_>>();
+                let dimension = failed_cases
+                    .iter()
+                    .find_map(|result| {
+                        (!result.category.trim().is_empty()).then_some(result.category.clone())
+                    })
+                    .unwrap_or_else(|| "behavior".to_string());
+                let cases = failed_cases
+                    .iter()
+                    .map(|result| result.case_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                crate::cli::loop_state::LastResult::Red {
+                    dimension,
+                    why: format!(
+                        "EC verification failed for {} of {} command(s): {cases}",
+                        summary.failed_count, summary.command_count
+                    ),
+                }
+            };
+            record_ec_first_verification(
+                &project_root,
+                wi,
+                result,
+                Some(format!(
+                    "EC verify {}/{} command(s) passed",
+                    summary.passed_count, summary.command_count
+                )),
+            )
+        })
+        .transpose()?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&summary)?);
+        if let Some(state) = &lifecycle_state {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "summary": summary,
+                    "loop_state": state,
+                    "next": state.next_action,
+                }))?
+            );
+        } else {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
     } else if summary.clean {
         println!(
             "ec verify {}: passed ({}/{} command(s))",
@@ -2045,7 +2291,12 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
             }
         }
     }
-    if !summary.clean {
+    if let Some(state) = &lifecycle_state {
+        if let Some(next) = &state.next_action {
+            println!("next: {next}");
+        }
+    }
+    if !summary.clean && lifecycle_state.is_none() {
         std::process::exit(1);
     }
     Ok(())
@@ -5901,6 +6152,125 @@ e2e_tests:
         write_ec_review_record(&ec_review_path(ctx), &record).unwrap();
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ec_first_transition_persists_the_owning_wi_next_action() {
+        use crate::issues::{Issue, IssueBackend, IssueState, IssueType, LocalBackend};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let backend = LocalBackend::from_project_root(tmp.path());
+        let issue = Issue {
+            issue_type: IssueType::Enhancement,
+            title: "EC-first fixture".to_string(),
+            state: IssueState::Open,
+            id: None,
+            github_id: None,
+            gitlab_id: None,
+            url: None,
+            author: None,
+            labels: vec!["app:demo".to_string()],
+            created_at: None,
+            updated_at: None,
+            slug: "ec-first-fixture".to_string(),
+            body: "# EC-first fixture\n".to_string(),
+            related: Vec::new(),
+            implements: Vec::new(),
+            phase: None,
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: Vec::new(),
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        };
+        backend.write(&issue).await.unwrap();
+
+        persist_ec_first_next_action(
+            tmp.path(),
+            "ec-first-fixture",
+            "aw ec fill --project demo projects/demo/external-contracts/behavior/ec-first-fixture.md --section e2e-test --wi ec-first-fixture".to_string(),
+        )
+        .unwrap();
+
+        let stored = backend
+            .get("ec-first-fixture")
+            .await
+            .unwrap()
+            .expect("persisted local WI");
+        let state = crate::cli::loop_state::parse_loop_state(&stored.body)
+            .expect("EC transition writes loop state");
+        assert_eq!(state.issue_id, "ec-first-fixture");
+        assert_eq!(state.verifier.as_deref(), Some("ec"));
+        assert_eq!(
+            state.next_action.as_deref(),
+            Some("aw ec fill --project demo projects/demo/external-contracts/behavior/ec-first-fixture.md --section e2e-test --wi ec-first-fixture")
+        );
+
+        let review_summary = EcReviewSummary {
+            project: "demo".to_string(),
+            status: "accepted".to_string(),
+            clean: true,
+            requires_hitl: false,
+            source_digest: "fixture-digest".to_string(),
+            review_path: "external-contracts/ec-review.yaml".to_string(),
+            payload_path: None,
+            findings: Vec::new(),
+            next: Some("aw ec gen --project demo --verify --wi ec-first-fixture".to_string()),
+        };
+        emit_ec_review_summary_for_wi(tmp.path(), Some("ec-first-fixture"), &review_summary, true)
+            .unwrap();
+
+        let stored = backend
+            .get("ec-first-fixture")
+            .await
+            .unwrap()
+            .expect("review transition persists local WI");
+        let state = crate::cli::loop_state::parse_loop_state(&stored.body)
+            .expect("EC review transition updates loop state");
+        assert_eq!(
+            state.next_action.as_deref(),
+            Some("aw ec gen --project demo --verify --wi ec-first-fixture")
+        );
+
+        let red = record_ec_first_verification(
+            tmp.path(),
+            "ec-first-fixture",
+            crate::cli::loop_state::LastResult::Red {
+                dimension: "behavior".to_string(),
+                why: "fixture verifier failed".to_string(),
+            },
+            Some("fixture red".to_string()),
+        )
+        .unwrap();
+        assert_eq!(
+            red.next_action.as_deref(),
+            Some("aw td gen ec-first-fixture")
+        );
+
+        let green = record_ec_first_verification(
+            tmp.path(),
+            "ec-first-fixture",
+            crate::cli::loop_state::LastResult::Green,
+            Some("fixture green".to_string()),
+        )
+        .unwrap();
+        assert_eq!(
+            green.next_action.as_deref(),
+            Some("aw td code-check ec-first-fixture")
+        );
+    }
+
     #[test]
     fn ec_case_test_path_does_not_double_prefix_app_source_root() {
         let root = Path::new("/repo/apps/tape");
@@ -6426,6 +6796,7 @@ tool_contracts:
             command: None,
             tool: vec!["meter".to_string()],
             force: false,
+            wi: None,
             json: false,
         };
         let draft = render_ec_draft(
@@ -6514,6 +6885,7 @@ tool_contracts:
             command: Some("cargo test -p demo-crate indexing_speed".to_string()),
             tool: vec!["meter".to_string()],
             force: false,
+            wi: None,
             json: false,
         };
 

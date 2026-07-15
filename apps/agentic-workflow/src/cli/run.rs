@@ -451,6 +451,20 @@ pub(crate) fn wi_run_command(id: &str) -> String {
     format!("aw wi run {id}")
 }
 
+/// The first mutating act for a bounded WI without an EC verifier. EC owns the
+/// observable definition of done, so a fresh root must not create TD/codegen
+/// artifacts before this project-local skeleton exists.
+pub(crate) fn ec_draft_command(project: &str, wi: &str) -> String {
+    format!("aw ec draft {wi} --project {project} --wi {wi}")
+}
+
+/// The root-owned verdict act after TD/codegen reaches a terminal candidate.
+/// Its `--wi` projection makes EC red resumable as TD adaptation and EC green
+/// resumable as the bounded terminal code-check.
+pub(crate) fn ec_verify_command(project: &str, wi: &str) -> String {
+    format!("aw ec verify --project {project} --wi {wi}")
+}
+
 /// Thin shell: `aw wi run <id>` -- drive one work item's next lifecycle tick
 /// via the shared root loop.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1042,6 +1056,28 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
         return closed_wi_envelope(&issue);
     }
 
+    // EC-first child commands persist their next transition on the local
+    // lifecycle ledger. A GitHub/GitLab WI may be visible to the configured
+    // backend before it has a local copy, so seed that copy at root admission
+    // instead of emitting an `aw ec ... --wi` command that cannot resume.
+    if issue.issue_type != IssueType::Epic
+        && issue.phase.is_none()
+        && project_from_labels(&issue).is_some()
+    {
+        if let Err(err) = ensure_local_lifecycle_issue(&project_root, wi, &issue).await {
+            return blocked_envelope(
+                root.clone(),
+                WorkflowNode {
+                    kind: "change".to_string(),
+                    id: issue_ref(&issue),
+                },
+                format!("aw wi show {}", issue_cli_ref(&issue)),
+                format!("cannot initialize local EC-first lifecycle state: {err}"),
+                true,
+            );
+        }
+    }
+
     // #188 E1: when the WI carries an `<!-- aw:loop-state -->` block, the loop
     // engine drives the next act from the verifier result (decide_next_action),
     // not the CRRR phase machine. The block is authored on the LOCAL lifecycle
@@ -1065,6 +1101,19 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
     if issue.issue_type == IssueType::Epic {
         open_epic_envelope(&issue)
     } else {
+        if issue.phase.is_none() && project_from_labels(&issue).is_none() {
+            return blocked_envelope(
+                root.clone(),
+                WorkflowNode {
+                    kind: "change".to_string(),
+                    id: issue_ref(&issue),
+                },
+                format!("aw wi show {}", issue_cli_ref(&issue)),
+                "accepted WI has no project label, so AW cannot resolve the project-local EC root"
+                    .to_string(),
+                true,
+            );
+        }
         let (command, reason) = wi_change_lifecycle_step(&issue);
         WorkflowEnvelope {
             action: "dispatch".to_string(),
@@ -1152,14 +1201,16 @@ fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
 /// from its tracker-reported `phase:*` label (`issue.phase`, already
 /// normalized on read by the issue backend — see
 /// `crate::issues::types::td_phase::normalize`), instead of unconditionally
-/// dispatching `aw td create`. Mirrors the phase table
+/// dispatching `aw td create`. A phase-less accepted WI instead begins with
+/// an EC skeleton; its persisted EC loop-state owns the later TD handoff.
+/// The remaining phase table mirrors
 /// `capability::lifecycle_action_for_work_item` uses for `aw capability
 /// run` (issue #916) so both runner surfaces agree on the live linear
-/// lifecycle (`aw wi` -> `aw td create` -> `gen` -> `fill` -> `code-check`,
-/// no merge step per #842-#860): a WI already at `td_created` must route to
-/// `aw td gen`, not back through `aw td create`, which rejects it.
-/// `None`/`td_inited`/unrecognized phases keep the original bounded
-/// new-WI behavior (`aw td create`).
+/// lifecycle (`aw wi` -> `aw ec` -> `aw td create` -> `gen` -> `fill` ->
+/// EC verify -> `code-check`, no merge step per #842-#860): a WI already at
+/// `td_created` must route to `aw td gen`, not back through `aw td create`,
+/// which rejects it. `td_inited`/unrecognized legacy phases retain their
+/// established TD resume behavior.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
     let wi_id = issue_ref(issue).trim_start_matches('#').to_string();
@@ -1173,18 +1224,37 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
             format!("aw td fill {wi_id}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
-        Some(td_phase::CB_FILLED) => (
-            format!("aw td code-check {wi_id}"),
-            "active WI has generated and checked implementation output; run terminal code-check"
-                .to_string(),
-        ),
+        Some(td_phase::CB_FILLED) => match project_from_labels(issue) {
+            Some(project) => (
+                ec_verify_command(&project, &wi_id),
+                "active WI has generated implementation output; record the EC verdict before terminal code-check"
+                    .to_string(),
+            ),
+            None => (
+                format!("aw td code-check {wi_id}"),
+                "active WI has no project label for EC verification; retry terminal code-check"
+                    .to_string(),
+            ),
+        },
         Some(td_phase::TD_MERGED) => (
             format!("aw td code-check {wi_id}"),
             "active WI's terminal code-check is resumable; retry terminal code-check".to_string(),
         ),
+        None => match project_from_labels(issue) {
+            Some(project) => (
+                ec_draft_command(&project, &wi_id),
+                "accepted WI has no EC verifier; author the EC skeleton before TD/codegen"
+                    .to_string(),
+            ),
+            None => (
+                format!("aw wi show {wi_id}"),
+                "accepted WI has no project label, so AW cannot resolve the project-local EC root"
+                    .to_string(),
+            ),
+        },
         _ => (
             format!("aw td create {wi_id}"),
-            "atomic change roots enter the WI -> TD -> CB -> code-check lifecycle".to_string(),
+            "existing TD lifecycle state resumes its bounded TD/codegen path".to_string(),
         ),
     }
 }
@@ -1352,6 +1422,19 @@ async fn resolve_issue(wi: &str, project_root: &std::path::Path) -> Result<Optio
     let (kind, repo, host) = resolve_default_backend(project_root)?;
     let backend = make_backend(&kind, project_root, repo, host)?;
     backend.get(wi).await
+}
+
+/// Ensure a remote-first work item has the local ledger required by EC-first
+/// lifecycle commands. Existing local copies are authoritative because they
+/// carry the loop-state block and are intentionally not pushed to the tracker.
+async fn ensure_local_lifecycle_issue(project_root: &Path, wi: &str, issue: &Issue) -> Result<()> {
+    use crate::issues::IssueBackend;
+
+    let backend = crate::issues::local_backend(project_root);
+    if backend.get(wi).await?.is_none() {
+        backend.write(issue).await?;
+    }
+    Ok(())
 }
 
 fn capability_action_envelope(
@@ -2683,6 +2766,72 @@ mod tests {
     }
 
     #[test]
+    fn phase_less_project_wi_enters_ec_before_td() {
+        let mut issue = open_issue(IssueType::Enhancement, 1500);
+        issue.labels = vec!["app:demo".to_string()];
+        issue.phase = None;
+
+        let (command, reason) = wi_change_lifecycle_step(&issue);
+
+        assert_eq!(command, "aw ec draft 1500 --project demo --wi 1500");
+        assert!(reason.contains("EC verifier"));
+        assert!(!command.contains("aw td"));
+    }
+
+    #[tokio::test]
+    async fn remote_wi_admission_seeds_the_local_ec_lifecycle_ledger() {
+        use crate::issues::IssueBackend;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let issue = open_issue(IssueType::Enhancement, 1500);
+
+        ensure_local_lifecycle_issue(tmp.path(), "1500", &issue)
+            .await
+            .unwrap();
+
+        let stored = crate::issues::local_backend(tmp.path())
+            .get("1500")
+            .await
+            .unwrap()
+            .expect("root admission writes a local lifecycle copy");
+        assert_eq!(stored.github_id, Some(1500));
+        assert_eq!(stored.body.trim(), issue.body.trim());
+    }
+
+    #[test]
+    fn ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check() {
+        use crate::cli::loop_state::{LastResult, LoopState, LoopStatus};
+
+        let issue = open_issue(IssueType::Enhancement, 1500);
+        let root = WorkflowNode {
+            kind: "change".to_string(),
+            id: issue_ref(&issue),
+        };
+        let red = LoopState {
+            issue_id: "1500".to_string(),
+            status: LoopStatus::Iterating,
+            last_result: LastResult::Red {
+                dimension: "behavior".to_string(),
+                why: "fixture failed".to_string(),
+            },
+            next_action: Some("aw td gen 1500".to_string()),
+            ..Default::default()
+        };
+        let red_envelope = loop_state_envelope(root.clone(), &issue, &red);
+        assert_eq!(red_envelope.next.command, "aw td gen 1500");
+
+        let green = LoopState {
+            issue_id: "1500".to_string(),
+            status: LoopStatus::Converged,
+            last_result: LastResult::Green,
+            next_action: Some("aw td code-check 1500".to_string()),
+            ..Default::default()
+        };
+        let green_envelope = loop_state_envelope(root, &issue, &green);
+        assert_eq!(green_envelope.next.command, "aw td code-check 1500");
+    }
+
+    #[test]
     fn loop_state_envelope_dispatches_or_blocks_on_next_action() {
         use crate::cli::loop_state::{LoopState, LoopStatus};
         let issue = open_issue(IssueType::Enhancement, 188);
@@ -2779,7 +2928,7 @@ mod tests {
 
         issue.phase = Some("cb_filled".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td code-check 937");
+        assert_eq!(command, "aw ec verify --project jet --wi 937");
 
         // A retired CRRR phase normalizes (td_phase::normalize, #916) before
         // routing, same as the capability.rs router.
@@ -2787,12 +2936,12 @@ mod tests {
         let (command, _reason) = wi_change_lifecycle_step(&issue);
         assert_eq!(command, "aw td gen 937");
 
-        // No phase label at all -- the original bounded new-WI behavior is
-        // preserved: still `aw td create`.
+        // No phase label at all means this bounded, project-labeled WI has no
+        // verifier yet, so the shared root table starts its EC skeleton.
         issue.phase = None;
         let (command, reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td create 937");
-        assert!(reason.contains("WI -> TD -> CB -> code-check"));
+        assert_eq!(command, "aw ec draft 937 --project jet --wi 937");
+        assert!(reason.contains("EC verifier"));
         assert!(!reason.contains("TD merge"));
     }
 
