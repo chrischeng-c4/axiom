@@ -75,7 +75,10 @@ use crate::api::{
     RoutedBackend, ShardForwardMisrouted, ShardForwardRemoteError, ShardForwardUnavailable,
     ShardMapVersionMismatch, WriteBackend,
 };
-use crate::routing::{merge_shard_search_responses, SearchShardTarget, VirtualBucketShardMap};
+use crate::routing::{
+    merge_shard_search_responses, search_request_offset, SearchShardTarget,
+    VirtualBucketShardMap,
+};
 use crate::storage::Engine;
 use crate::types::{
     IndexItem, IndexRequest, IndexResponse, ReplaceDocItem, ReplaceDocsRequest,
@@ -351,9 +354,10 @@ impl RoutedRouter {
         headers: &HeaderMap,
     ) -> Result<SearchResponse> {
         let start = Instant::now();
-        let offset = cursor_offset(req.cursor.as_deref()) as usize;
+        let offset = search_request_offset(&req)?;
         let limit = req.limit as usize;
         let mut shard_req = req.clone();
+        shard_req.offset = 0;
         shard_req.cursor = None;
         shard_req.limit = offset.saturating_add(limit).min(u32::MAX as usize) as u32;
 
@@ -404,6 +408,7 @@ impl RoutedRouter {
 /// caller — this is incidental cursor-codec plumbing, not the reusable
 /// merge primitive (`merge_shard_search_responses`) this module already
 /// shares with `routing.rs`.
+#[cfg(test)]
 fn cursor_offset(cursor: Option<&str>) -> u64 {
     use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
     let Some(s) = cursor else {
@@ -1078,6 +1083,7 @@ mod tests {
                 value: FieldValue::String("taipei".into()),
             }),
             limit: 10,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort,

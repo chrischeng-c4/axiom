@@ -40,7 +40,7 @@ use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
     HammingQuery, HasChildQuery, IdsQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp,
-    MatchQuery, QueryNode, RangeBound, RangeQuery, ReplaceDocItem, ReplaceDocResult,
+    MatchQuery, PrefixQuery, QueryNode, RangeBound, RangeQuery, ReplaceDocItem, ReplaceDocResult,
     ReplaceDocsRequest, ReplaceDocsResponse, RrfQuery, SearchHit, SearchRequest, SearchResponse,
     SortMissing, SortOrder, SortSpec, StatsResponse, StorageStats, TermQuery, TermsQuery,
     VectorSpec, MAX_BATCH_REPLACE_SIZE,
@@ -97,6 +97,8 @@ pub enum StorageError {
     BulkLimit { got: usize, max: usize },
     #[error("query too complex: {0}")]
     QueryTooComplex(String),
+    #[error("invalid pagination: {0}")]
+    InvalidPagination(String),
     #[error("unsupported sort: {0}")]
     UnsupportedSort(String),
     #[error("collection `{0}` was deleted and is pending physical removal")]
@@ -3824,6 +3826,12 @@ impl Engine {
         let start = Instant::now();
         // DoS guard: reject pathological query trees before evaluation.
         validate_query(&req.query)?;
+        if req.offset != 0 && req.cursor.is_some() {
+            return Err(StorageError::InvalidPagination(
+                "offset and cursor cannot be combined".into(),
+            )
+            .into());
+        }
         let state = self.state.read().map_err(|_| anyhow!("state poisoned"))?;
         let coll = state
             .collections
@@ -3834,9 +3842,12 @@ impl Engine {
 
         let interner = &coll.interner;
         let parsed_cursor = req.cursor.as_deref().and_then(parse_page_cursor);
+        let native_offset = usize::try_from(req.offset).map_err(|_| {
+            StorageError::InvalidPagination("offset does not fit this server platform".into())
+        })?;
         let offset = match &parsed_cursor {
             Some(PageCursor::Offset(n)) => *n as usize,
-            _ => 0,
+            _ => native_offset,
         };
         // #180: a sort with any `missing: first|last` key is served by the
         // materialized missing-aware path below, which paginates with offset
@@ -3851,22 +3862,22 @@ impl Engine {
         // eval_query, then the parents are sorted by their parent fields.
         let sort_needs_materialize = sort_uses_missing
             || (req.sort.as_deref().is_some_and(|s| !s.is_empty())
-                && query_has_has_child(&req.query));
+                && (query_has_has_child(&req.query) || req.offset != 0));
         // #179: an offset cursor cannot drive a field-sorted (exclude) page.
         // `try_plan` bails for offset != 0, so a non-zero offset would silently
         // fall through to the score-ranked path and IGNORE `sort`. Reject instead
         // of returning a mis-ordered page: sequential sorted paging uses the
-        // keyset cursor handed back in the response; random page-jumps use
-        // over-fetch (limit = offset + page_size, then slice client-side).
+        // keyset cursor handed back in the response; random page-jumps use the
+        // request's native `offset` field and the materialized path above.
         // @spec apps/lumen/tech-design/logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md
-        if offset != 0
+        if matches!(parsed_cursor, Some(PageCursor::Offset(n)) if n != 0)
             && req.sort.as_deref().is_some_and(|s| !s.is_empty())
             && !sort_needs_materialize
         {
             return Err(StorageError::UnsupportedSort(
                 "offset pagination cannot be combined with sort; use a keyset \
                  cursor (omit the cursor on page 1, then follow the returned \
-                 cursor) or over-fetch (limit = offset + page_size, then slice)"
+                 cursor), or use the native offset field for a direct page jump"
                     .into(),
             )
             .into());
@@ -4006,7 +4017,7 @@ impl Engine {
                 })
                 .collect();
             let next_offset = offset + hits.len();
-            let cursor = if (next_offset as u64) < total {
+            let cursor = if req.offset == 0 && (next_offset as u64) < total {
                 Some(make_cursor(next_offset))
             } else {
                 None
@@ -4102,7 +4113,7 @@ impl Engine {
                 })
                 .collect();
             let next_offset = offset + hits.len();
-            let cursor = if (next_offset as u64) < total {
+            let cursor = if req.offset == 0 && (next_offset as u64) < total {
                 Some(make_cursor(next_offset))
             } else {
                 None
@@ -5331,6 +5342,11 @@ pub fn validate_query(root: &QueryNode) -> std::result::Result<(), StorageError>
                     k.k
                 )));
             }
+            QueryNode::Prefix(p) if p.value.is_empty() => {
+                return Err(StorageError::QueryTooComplex(
+                    "prefix value must not be empty".into(),
+                ));
+            }
             _ => {}
         }
     }
@@ -5378,6 +5394,7 @@ fn eval_query(
         QueryNode::Match(m) => eval_match(coll, m)?,
         QueryNode::Term(t) => constant_score(eval_term(coll, t)?),
         QueryNode::Terms(t) => constant_score(eval_terms(coll, t)?),
+        QueryNode::Prefix(p) => constant_score(eval_prefix(coll, p)?),
         QueryNode::Ids(q) => constant_score(eval_ids(coll, q)?),
         QueryNode::Range(r) => constant_score(eval_range(coll, r)?),
         QueryNode::Knn(k) => eval_knn(coll, k)?,
@@ -6638,6 +6655,37 @@ fn eval_term(coll: &Collection, t: &TermQuery) -> Result<RoaringBitmap> {
     })
 }
 
+fn eval_prefix(coll: &Collection, q: &PrefixQuery) -> Result<RoaringBitmap> {
+    if q.value.is_empty() {
+        return Err(StorageError::QueryTooComplex("prefix value must not be empty".into()).into());
+    }
+    let fi = coll
+        .fields
+        .get(&q.field)
+        .ok_or_else(|| StorageError::UnknownField {
+            collection: "<>".into(),
+            field: q.field.clone(),
+        })?;
+    if !fi.field_type().capabilities().prefix {
+        bail!(
+            "prefix query is only valid on keyword fields (field `{}`)",
+            q.field
+        );
+    }
+    let FieldIndex::Keyword(index) = fi else {
+        unreachable!("only keyword fields advertise prefix capability")
+    };
+    let mut matches = RoaringBitmap::new();
+    let terms = index.live_terms();
+    for (term, postings) in terms.range(q.value.clone()..) {
+        if !term.starts_with(&q.value) {
+            break;
+        }
+        matches |= postings;
+    }
+    Ok(matches)
+}
+
 /// #182: resolve an `ids` query to the docid bitmap of the named external_ids.
 /// Unknown ids are skipped (they simply contribute nothing).
 ///
@@ -6912,6 +6960,7 @@ fn is_predicable(node: &QueryNode) -> bool {
         node,
         QueryNode::Term(_)
             | QueryNode::Terms(_)
+            | QueryNode::Prefix(_)
             | QueryNode::Ids(_)
             | QueryNode::Range(_)
             | QueryNode::Match(_)
@@ -7242,6 +7291,7 @@ fn estimate_selectivity(coll: &Collection, node: &QueryNode) -> u64 {
                 .sum(),
             _ => u64::MAX,
         },
+        QueryNode::Prefix(_) => u64::MAX,
         QueryNode::Range(r) => match coll.fields.get(&r.field) {
             // Phase 2h-3: range df from the active source (segment count-prefix
             // sum when sealed, else the live range posting-length sum).
@@ -7462,6 +7512,19 @@ fn clause_matches(coll: &Collection, node: &QueryNode, id: u32) -> Result<Option
             };
             hit.then_some(1.0)
         }
+        QueryNode::Prefix(q) => {
+            let fi = coll.fields.get(&q.field).ok_or_else(|| unknown(&q.field))?;
+            let FieldIndex::Keyword(index) = fi else {
+                bail!(
+                    "prefix query is only valid on keyword fields (field `{}`)",
+                    q.field
+                );
+            };
+            index
+                .keyword_at(id)
+                .is_some_and(|value| value.starts_with(&q.value))
+                .then_some(1.0)
+        }
         QueryNode::Range(r) => {
             let fi = coll.fields.get(&r.field).ok_or_else(|| unknown(&r.field))?;
             match fi {
@@ -7534,6 +7597,7 @@ fn eval_filter_bitmap(coll: &Collection, node: &QueryNode) -> Result<RoaringBitm
     match node {
         QueryNode::Term(t) => eval_term(coll, t),
         QueryNode::Terms(t) => eval_terms(coll, t),
+        QueryNode::Prefix(q) => eval_prefix(coll, q),
         QueryNode::Ids(q) => eval_ids(coll, q),
         QueryNode::Range(r) => eval_range(coll, r),
         QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1),
@@ -8223,9 +8287,11 @@ fn prep_matches<'a>(
 /// Boolean: does `id` satisfy `node`? (Score ignored — used by sort-walk.)
 fn query_predicate(coll: &Collection, node: &QueryNode, id: u32) -> Result<bool> {
     Ok(match node {
-        QueryNode::Term(_) | QueryNode::Terms(_) | QueryNode::Range(_) | QueryNode::Match(_) => {
-            clause_matches(coll, node, id)?.is_some()
-        }
+        QueryNode::Term(_)
+        | QueryNode::Terms(_)
+        | QueryNode::Prefix(_)
+        | QueryNode::Range(_)
+        | QueryNode::Match(_) => clause_matches(coll, node, id)?.is_some(),
         // #182: ids is a direct membership test against the resolved bitmap.
         QueryNode::Ids(q) => eval_ids(coll, q)?.contains(id),
         QueryNode::And(cs) => {
@@ -10834,6 +10900,7 @@ mod segment_predicate_diff_tests {
         SearchRequest {
             query,
             limit: 100_000, // larger than any corpus → page == full match set
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -11094,6 +11161,7 @@ mod segment_keyword_diff_tests {
         SearchRequest {
             query,
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -11333,6 +11401,7 @@ mod segment_keyword_inverted_diff_tests {
         SearchRequest {
             query,
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -11597,6 +11666,32 @@ mod segment_keyword_inverted_diff_tests {
         assert_eq!(k.term_df("beta"), 1, "df beta segment-only");
         assert_eq!(k.term_df("gamma"), 1, "df gamma tail-only");
         assert_eq!(k.term_df("missing"), 0, "df absent term");
+    }
+
+    #[test]
+    fn prefix_composes_segment_tail_and_delete_tombstones() {
+        let e = Arc::new(Engine::new());
+        e.create_collection("c", schema()).unwrap();
+        index_kw(&e, "sealed-keep", Some("台北市/大安區"), None);
+        index_kw(&e, "sealed-delete", Some("台北市/信義區"), None);
+        index_kw(&e, "sealed-other", Some("新北市/板橋區"), None);
+
+        let dir = tempfile::tempdir().unwrap();
+        e.__seal_keyword_field_to_segment("c", "kw", dir.path())
+            .unwrap();
+        index_kw(&e, "tail-keep", Some("台北市/中正區"), None);
+        index_kw(&e, "tail-other", Some("桃園市/桃園區"), None);
+        e.delete("c", "sealed-delete", None).unwrap();
+
+        let query = QueryNode::Prefix(PrefixQuery {
+            field: "kw".into(),
+            value: "台北市/".into(),
+        });
+        let got = set_of(&run(&e, query));
+        let want: BTreeSet<String> = ["sealed-keep".into(), "tail-keep".into()]
+            .into_iter()
+            .collect();
+        assert_eq!(got, want);
     }
 
     // -----------------------------------------------------------------------
@@ -11884,6 +11979,7 @@ mod segment_number_range_diff_tests {
         SearchRequest {
             query,
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -11896,6 +11992,7 @@ mod segment_number_range_diff_tests {
         SearchRequest {
             query,
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
@@ -12748,6 +12845,7 @@ mod segment_set_diff_tests {
         SearchRequest {
             query,
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -13003,6 +13101,7 @@ mod segment_set_inverted_diff_tests {
         SearchRequest {
             query,
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -13558,6 +13657,7 @@ mod segment_text_diff_tests {
         SearchRequest {
             query,
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -14243,6 +14343,7 @@ mod segment_hash_diff_tests {
                 max_distance: max,
             }),
             limit: 100_000,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -14389,6 +14490,7 @@ mod segment_vector_diff_tests {
                 k,
             }),
             limit: k,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -14593,6 +14695,7 @@ mod tests {
                         op: MatchOp::And,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: Some(vec![crate::types::SortSpec {
@@ -14652,6 +14755,7 @@ mod tests {
                     lte: None,
                 }),
                 limit: 2,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
@@ -14707,6 +14811,7 @@ mod tests {
                 lte: None,
             }),
             limit: 2,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: Some(vec![
@@ -14787,6 +14892,7 @@ mod tests {
                 lte: None,
             }),
             limit: 2,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
@@ -14837,6 +14943,7 @@ mod tests {
                     lte: None,
                 }),
                 limit: 7,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
@@ -14897,6 +15004,7 @@ mod tests {
                 value: FieldValue::String("even@x.com".into()),
             }),
             limit: 4,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
@@ -14956,6 +15064,7 @@ mod tests {
                 op: MatchOp::And,
             }),
             limit: 6,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -15006,6 +15115,7 @@ mod tests {
                 lte: None,
             }),
             limit: 10,
+            offset: 0,
             cursor: Some(make_cursor(25)),
             routing_key: None,
             sort: None,
@@ -15072,6 +15182,7 @@ mod tests {
                     lte: None,
                 }),
                 limit: 5,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort: Some(vec![crate::types::SortSpec {
@@ -15128,6 +15239,7 @@ mod tests {
                 lte: None,
             }),
             limit: 10,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: Some(vec![crate::types::SortSpec {
@@ -15342,6 +15454,7 @@ mod tests {
                         value: FieldValue::String("a@x.com".into()),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15389,6 +15502,7 @@ mod tests {
                         op: MatchOp::And,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15425,6 +15539,7 @@ mod tests {
                 op: MatchOp::Or,
             }),
             limit: 10,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -15487,6 +15602,7 @@ mod tests {
                         op: MatchOp::Or,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15505,6 +15621,7 @@ mod tests {
                         op: MatchOp::Or,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15546,6 +15663,7 @@ mod tests {
                         lte: None,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15604,6 +15722,7 @@ mod tests {
                         lte: None,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15660,6 +15779,7 @@ mod tests {
                         lte: None,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15686,6 +15806,7 @@ mod tests {
                         lte: None,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15747,6 +15868,7 @@ mod tests {
                 SearchRequest {
                     query: q,
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -15822,6 +15944,7 @@ mod tests {
                 SearchRequest {
                     query,
                     limit: 100,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16198,6 +16321,7 @@ mod tests {
                         field: "bio".into(),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16240,6 +16364,7 @@ mod tests {
                         value: FieldValue::String("old@x.com".into()),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16258,6 +16383,7 @@ mod tests {
                         value: FieldValue::String("new@x.com".into()),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16294,6 +16420,7 @@ mod tests {
                         value: FieldValue::String("a@x.com".into()),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16405,6 +16532,7 @@ mod tests {
                     op,
                 }),
                 limit: 50,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort: None,
@@ -16708,6 +16836,7 @@ mod tests {
                         }),
                     ]),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16759,6 +16888,7 @@ mod tests {
                         }),
                     ]),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16799,6 +16929,7 @@ mod tests {
                         value: FieldValue::String("rust".into()),
                     }))),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16834,6 +16965,7 @@ mod tests {
                 SearchRequest {
                     query: q,
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16902,6 +17034,7 @@ mod tests {
                         value: FieldValue::Number(30.0),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -16965,6 +17098,7 @@ mod tests {
                 SearchRequest {
                     query: QueryNode::Range(q),
                     limit: 50,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -17182,6 +17316,7 @@ mod tests {
                         value: FieldValue::String(format!("{eid}@x.com")),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -17527,6 +17662,7 @@ mod triple_path_diff_tests {
         SearchRequest {
             query,
             limit,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -17949,6 +18085,7 @@ mod checkpoint_engine_tests {
         SearchRequest {
             query,
             limit,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -18388,8 +18525,8 @@ mod checkpoint_engine_tests {
 // ---------------------------------------------------------------------------
 // #179: an offset cursor combined with `sort` must be REJECTED (400), never
 // silently fall through to score ranking and ignore the sort. Sequential
-// sorted paging uses the keyset cursor handed back in the response; random
-// page-jumps use over-fetch + client-side slice.
+// sorted paging uses the keyset cursor handed back in the response; native
+// `offset` provides direct page jumps without client over-fetch.
 // @spec apps/lumen/tech-design/logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.md
 // ---------------------------------------------------------------------------
 #[cfg(test)]
@@ -18413,6 +18550,7 @@ mod offset_sort_guard_tests {
         let mut fields = BTreeMap::new();
         fields.insert("price".into(), fieldspec(FieldType::Number));
         fields.insert("cat".into(), fieldspec(FieldType::Keyword));
+        fields.insert("code".into(), fieldspec(FieldType::Keyword));
         CreateCollectionRequest { fields }
     }
 
@@ -18437,6 +18575,12 @@ mod offset_sort_guard_tests {
                             value: FieldValue::String("x".into()),
                             version: None,
                         },
+                        IndexItem {
+                            external_id: format!("d{i}"),
+                            field: "code".into(),
+                            value: FieldValue::String(format!("k{i}")),
+                            version: None,
+                        },
                     ],
                     request_id: None,
                 },
@@ -18457,6 +18601,7 @@ mod offset_sort_guard_tests {
         SearchRequest {
             query: cat_x(),
             limit: 2,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -18507,6 +18652,63 @@ mod offset_sort_guard_tests {
             .expect("offset cursor without sort must succeed");
         assert_eq!(resp.total, 5, "exact total across the unsorted match set");
         assert!(resp.hits.len() <= 2, "page honors the limit");
+    }
+
+    #[test]
+    fn native_offset_applies_after_numeric_sort() {
+        let e = seed();
+        let mut r = base();
+        r.sort = Some(sort_price_asc());
+        r.offset = 2;
+        let resp = e.search("c", r).expect("native sorted offset succeeds");
+        assert_eq!(ids(&resp), ["d2", "d3"]);
+        assert_eq!(resp.total, 5);
+        assert!(resp.cursor.is_none(), "an offset jump does not emit a cursor");
+    }
+
+    #[test]
+    fn native_offset_applies_after_keyword_and_composite_sort() {
+        let e = seed();
+        let mut r = base();
+        r.offset = 1;
+        r.sort = Some(vec![
+            SortSpec {
+                field: "cat".into(),
+                order: SortOrder::Asc,
+                missing: SortMissing::Exclude,
+            },
+            SortSpec {
+                field: "code".into(),
+                order: SortOrder::Desc,
+                missing: SortMissing::Exclude,
+            },
+        ]);
+        let resp = e
+            .search("c", r)
+            .expect("native keyword/composite offset succeeds");
+        assert_eq!(ids(&resp), ["d3", "d2"]);
+    }
+
+    #[test]
+    fn native_offset_applies_after_score_ordering() {
+        let e = seed();
+        let mut r = base();
+        r.offset = 2;
+        let resp = e.search("c", r).expect("native score offset succeeds");
+        assert_eq!(ids(&resp), ["d2", "d3"]);
+    }
+
+    #[test]
+    fn nonzero_native_offset_and_cursor_are_rejected() {
+        let e = seed();
+        let mut r = base();
+        r.offset = 1;
+        r.cursor = Some(make_cursor(1));
+        let err = e.search("c", r).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<StorageError>(),
+            Some(StorageError::InvalidPagination(_))
+        ));
     }
 
     /// R3: a keyset cursor combined with sort paginates correctly (page 1 with
@@ -18591,6 +18793,7 @@ mod external_version_lww_tests {
                 value: FieldValue::Number(price),
             }),
             limit: 100,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -18723,6 +18926,7 @@ mod sort_missing_tests {
                     value: FieldValue::String("x".into()),
                 }),
                 limit,
+                offset: 0,
                 cursor,
                 routing_key: None,
                 sort: Some(vec![SortSpec {
@@ -18907,6 +19111,7 @@ mod has_child_sort_tests {
             SearchRequest {
                 query,
                 limit: 100,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort,
@@ -18960,6 +19165,7 @@ mod has_child_sort_tests {
                         k: 5,
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: sort_ts_desc(),
@@ -19051,6 +19257,7 @@ mod ids_query_tests {
             SearchRequest {
                 query,
                 limit: 100,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort,
@@ -19271,6 +19478,7 @@ mod multikey_sort_cap_tests {
                 SearchRequest {
                     query: all(),
                     limit: 100,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: Some(sort_asc(&["a", "b", "c"])),
@@ -19296,6 +19504,7 @@ mod multikey_sort_cap_tests {
                 SearchRequest {
                     query: all(),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: Some(sort_asc(&["a", "b", "c", "a", "b"])), // 5 keys

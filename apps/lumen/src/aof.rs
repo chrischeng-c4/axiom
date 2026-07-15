@@ -547,6 +547,7 @@ mod crux_recovery_tests {
         SearchRequest {
             query,
             limit,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,

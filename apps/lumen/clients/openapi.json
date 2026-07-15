@@ -787,6 +787,59 @@
         }
       }
     },
+    "/collections/{collection_id}/search:all": {
+      "post": {
+        "tags": [
+          "Query"
+        ],
+        "summary": "Export every matching external id in one explicit full-materialization",
+        "description": "request. The local engine evaluates the request while holding one read-lock\nsnapshot; routed deployments collect one independently consistent snapshot\nper shard and intentionally do not claim a cross-shard transaction.",
+        "operationId": "search_all",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchAllRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "All matching external ids; materializes the complete result set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchAllResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query or unsupported sort",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/collections/{collection_id}/stats": {
       "get": {
         "tags": [
@@ -1652,6 +1705,22 @@
           }
         }
       },
+      "PrefixQuery": {
+        "type": "object",
+        "description": "Case-sensitive UTF-8 starts-with query for `keyword` fields.",
+        "required": [
+          "field",
+          "value"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
       "QueryNode": {
         "oneOf": [
           {
@@ -1684,6 +1753,17 @@
             "properties": {
               "terms": {
                 "$ref": "#/components/schemas/TermsQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "prefix"
+            ],
+            "properties": {
+              "prefix": {
+                "$ref": "#/components/schemas/PrefixQuery"
               }
             }
           },
@@ -2063,6 +2143,62 @@
           }
         }
       },
+      "SearchAllRequest": {
+        "type": "object",
+        "description": "`POST /collections/{id}/search:all` body. This is an explicitly expensive\nfull-materialization operation for export/maintenance workflows; ordinary\ninteractive queries should use [`SearchRequest`] pagination.",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "$ref": "#/components/schemas/QueryNode"
+          },
+          "routing_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SortSpec"
+            },
+            "nullable": true
+          }
+        }
+      },
+      "SearchAllResponse": {
+        "type": "object",
+        "description": "Complete matching id set returned by `search:all` from one local read-lock\nsnapshot, or from one snapshot per routed shard (there is intentionally no\ncross-shard transaction).",
+        "required": [
+          "external_ids",
+          "total",
+          "took_ms",
+          "took_us"
+        ],
+        "properties": {
+          "external_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "took_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "took_us": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "SearchHit": {
         "type": "object",
         "description": "@spec apps/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#source",
@@ -2101,6 +2237,13 @@
             "format": "int32",
             "minimum": 0
           },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Zero-based deep-page jump applied after filtering and global\nscore/field ordering. Defaults to zero. `offset` and `cursor` are\nmutually exclusive; use an offset for a direct jump, then issue another\noffset request or restart cursor pagination from the first page.",
+            "default": 0,
+            "minimum": 0
+          },
           "query": {
             "$ref": "#/components/schemas/QueryNode"
           },
@@ -2114,7 +2257,7 @@
             "items": {
               "$ref": "#/components/schemas/SortSpec"
             },
-            "description": "Sort results by one or more fields instead of by relevance score.\nWhen absent, results are ranked by score (BM25 / constant) then\nexternal_id. Number and keyword fields are sortable (up to 4 keys);\nsingle number-field sorts use the keyset planner, keyword and composite\nsorts use the materialized fallback. Rows missing a sort-key value\nfollow the per-key `missing` mode: `exclude` (the default) drops them\nfrom the page and from `total`; `first`/`last` keep them — placed\nbefore/after all present values and counted in `total`, like SQL\n`NULLS FIRST`/`NULLS LAST`. A query containing `has_child` can be\nsorted by parent fields; it routes through the materialized sort path\nwith exact `total`. `sort` remains incompatible with `knn`, `rrf`, and\n`hamming`, and cannot be combined with an offset cursor — those return\n400. Page a sorted result with the keyset cursor returned in the\nresponse, or over-fetch and slice.\n@spec apps/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md",
+            "description": "Sort results by one or more fields instead of by relevance score.\nWhen absent, results are ranked by score (BM25 / constant) then\nexternal_id. Number and keyword fields are sortable (up to 4 keys);\nsingle number-field sorts use the keyset planner, keyword and composite\nsorts use the materialized fallback. Rows missing a sort-key value\nfollow the per-key `missing` mode: `exclude` (the default) drops them\nfrom the page and from `total`; `first`/`last` keep them — placed\nbefore/after all present values and counted in `total`, like SQL\n`NULLS FIRST`/`NULLS LAST`. A query containing `has_child` can be\nsorted by parent fields; it routes through the materialized sort path\nwith exact `total`. `sort` remains incompatible with `knn`, `rrf`, and\n`hamming`. Legacy offset cursors remain incompatible with the normal\nkeyset sort path; the native `offset` field deliberately selects the\nexact materialized deep-page path instead. Page sequentially with the\nkeyset cursor returned by a first-page request, or jump directly with\n`offset`.\n@spec apps/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md",
             "nullable": true
           },
           "track_total": {

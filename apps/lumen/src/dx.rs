@@ -52,6 +52,7 @@ fn field_entry(field_type: FieldType) -> Value {
         "operations": {
             "bm25": capabilities.bm25,
             "exact": capabilities.exact,
+            "prefix": capabilities.prefix,
             "range": capabilities.range,
             "sort": capabilities.sort,
             "set_membership": capabilities.set_membership,
@@ -71,7 +72,10 @@ fn field_entry(field_type: FieldType) -> Value {
             object.insert("queries".into(), json!(["match"]));
         }
         FieldType::Keyword => {
-            object.insert("queries".into(), json!(["term", "terms", "range", "sort"]));
+            object.insert(
+                "queries".into(),
+                json!(["term", "terms", "prefix", "range", "sort"]),
+            );
         }
         FieldType::Number => {
             object.insert("queries".into(), json!(["term", "range", "sort"]));

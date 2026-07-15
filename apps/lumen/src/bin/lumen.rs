@@ -916,7 +916,10 @@ async fn main() -> Result<()> {
                     SpecFormat::JsonSchema => lumen::spec::json_schema_json(),
                 }
             };
-            println!("{out}");
+            // Raw spec bytes are a public artifact: this CLI output, the live
+            // `/openapi.json` route, `spec gen`, and the committed snapshot all
+            // consume `spec::openapi_json()` without an extra wrapper/newline.
+            print!("{out}");
             Ok(())
         }
         Command::Llm(args) => {
@@ -1570,6 +1573,7 @@ fn build_search_body(args: &QuerySearchArgs) -> Result<(String, serde_json::Valu
     let request = lumen::types::SearchRequest {
         query,
         limit: args.limit,
+        offset: 0,
         cursor: None,
         routing_key: None,
         sort: None,
@@ -2854,6 +2858,7 @@ mod tests {
                         value: FieldValue::String("seeded".into()),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,

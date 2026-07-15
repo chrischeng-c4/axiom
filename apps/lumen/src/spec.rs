@@ -130,12 +130,15 @@ pub fn token_registry_example_json() -> String {
 pub fn query_shapes() -> Value {
     json!({
         "search_endpoint": "POST /collections/{collection}/search",
+        "search_all_endpoint": "POST /collections/{collection}/search:all",
         "note": "lumen returns ranked/sorted external_id hits only — never documents.",
         "shapes": [
             { "name": "term", "description": "exact keyword/number/bool match",
               "request": { "query": { "term": { "field": "status", "value": "active" } }, "limit": 20 } },
             { "name": "terms", "description": "keyword in a set (IN)",
               "request": { "query": { "terms": { "field": "status", "values": ["active", "trial"] } }, "limit": 20 } },
+            { "name": "prefix", "description": "case-sensitive UTF-8 starts-with match on a keyword field",
+              "request": { "query": { "prefix": { "field": "path", "value": "台北市/" } }, "limit": 20 } },
             { "name": "ids", "description": "filter by a set of external_ids (row_id_in); unknown ids skipped",
               "request": { "query": { "ids": { "values": ["row-42", "row-91"] } }, "limit": 20 } },
             { "name": "range", "description": "numeric range on a `number` field (e.g. 1000 <= price < 5000)",
@@ -190,6 +193,12 @@ pub fn query_shapes() -> Value {
             { "name": "filter_then_sort", "description": "filter, then sort by a field instead of relevance",
               "request": { "query": { "range": { "field": "price", "gte": 100 } },
                            "sort": [ { "field": "price", "order": "asc" } ], "track_total": false, "limit": 20 } },
+            { "name": "native_offset", "description": "jump directly after global filtering and ordering without client over-fetch; offset and cursor are mutually exclusive",
+              "request": { "query": { "range": { "field": "price", "gte": 100 } },
+                           "sort": [ { "field": "price", "order": "asc" } ], "offset": 1000, "limit": 20 } },
+            { "name": "search_all", "description": "explicitly expensive full materialization of every matching external_id (POST /collections/{id}/search:all); local consistency is one read-lock snapshot, routed consistency is one snapshot per shard",
+              "request": { "query": { "term": { "field": "status", "value": "active" } },
+                           "sort": [ { "field": "created_at", "order": "asc" } ] } },
             { "name": "duplicates", "description": "find external_ids sharing a value (POST /collections/{id}/duplicates)",
               "request": { "field": "email", "min_group_size": 2, "limit": 100 } },
             { "name": "index", "description": "index one or more field values (POST /collections/{id}/index); the wire shape is FLAT — {items:[{external_id,field,value}]} — not the nested {id, fields:{...}} shape a caller might assume",

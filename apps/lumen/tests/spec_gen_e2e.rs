@@ -122,8 +122,7 @@ fn plain_spec_still_prints_openapi() {
     let out = lumen().arg("spec").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.trim_start().starts_with('{'));
-    assert!(stdout.contains("\"openapi\""));
+    assert_eq!(stdout, lumen::spec::openapi_json());
 }
 
 /// R4: generated Python h2c client drives a live Lumen public API journey.

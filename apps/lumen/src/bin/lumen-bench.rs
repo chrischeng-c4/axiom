@@ -184,6 +184,7 @@ fn run_bool_filter(args: &RunArgs) -> Result<BenchReport> {
                         }),
                     ]),
                     limit: 20,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -234,6 +235,7 @@ fn sorted_page_request(limit: u32) -> SearchRequest {
             lte: None,
         }),
         limit,
+        offset: 0,
         cursor: None,
         routing_key: None,
         sort: Some(vec![SortSpec {

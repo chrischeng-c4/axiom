@@ -218,6 +218,7 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
     for required in [
         "term",
         "terms",
+        "prefix",
         "range",
         "match_bm25",
         "autocomplete_ngram",
@@ -229,6 +230,8 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
         "has_child_nested_group",
         "collapse_group_by",
         "filter_then_sort",
+        "native_offset",
+        "search_all",
     ] {
         assert!(
             names.contains(&required),
@@ -967,20 +970,17 @@ fn openapi_json_declares_3_2_and_describes_query_twins() {
 
 /// #1480 R1: `clients/openapi.json` is a committed snapshot of
 /// `lumen spec --format openapi`'s live output, not a hand-maintained copy —
-/// it must byte-match live generation (normalized only for a trailing
-/// newline) so the offline contract can never silently lag the surface it
+/// it must byte-match live generation exactly so the offline contract cannot
+/// silently lag the surface it
 /// describes. Modeled on `openapi_is_valid_json_with_search_path`.
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 #[test]
 fn openapi_committed_snapshot_matches_live_generation() {
     let committed = include_str!("../clients/openapi.json");
     let live = openapi_json();
-    fn normalize(s: &str) -> &str {
-        s.trim_end_matches('\n')
-    }
     assert_eq!(
-        normalize(committed),
-        normalize(&live),
+        committed,
+        live,
         "clients/openapi.json is stale: regenerate via \
          `./target/debug/lumen spec --format openapi > clients/openapi.json` \
          (CONTRIBUTING.md DX convention: offline-contract must not lag the live surface)"
@@ -1012,6 +1012,7 @@ fn dx_field_catalog_matches_runtime_field_capabilities() {
         let expected = field_type.capabilities();
         assert_eq!(operations["bm25"], expected.bm25);
         assert_eq!(operations["exact"], expected.exact);
+        assert_eq!(operations["prefix"], expected.prefix);
         assert_eq!(operations["range"], expected.range);
         assert_eq!(operations["sort"], expected.sort);
         assert_eq!(operations["set_membership"], expected.set_membership);
@@ -1021,6 +1022,7 @@ fn dx_field_catalog_matches_runtime_field_capabilities() {
 
     let text = fields.iter().find(|entry| entry["type"] == "text").unwrap();
     assert_eq!(text["operations"]["bm25"], true);
+    assert_eq!(text["operations"]["prefix"], false);
     assert_eq!(text["operations"]["range"], false);
     assert_eq!(text["operations"]["sort"], false);
     for field in ["keyword", "number"] {
@@ -1028,6 +1030,38 @@ fn dx_field_catalog_matches_runtime_field_capabilities() {
         assert_eq!(entry["operations"]["range"], true);
         assert_eq!(entry["operations"]["sort"], true);
     }
+    let keyword = fields
+        .iter()
+        .find(|entry| entry["type"] == "keyword")
+        .unwrap();
+    assert_eq!(keyword["operations"]["prefix"], true);
+    assert!(keyword["queries"]
+        .as_array()
+        .expect("keyword queries")
+        .contains(&json!("prefix")));
+}
+
+#[test]
+fn openapi_exposes_native_offset_prefix_and_search_all_contracts() {
+    let spec: Value = serde_json::from_str(&openapi_json()).expect("valid OpenAPI JSON");
+    let search_request = &spec["components"]["schemas"]["SearchRequest"];
+    assert_eq!(search_request["properties"]["offset"]["type"], "integer");
+    assert_eq!(search_request["properties"]["offset"]["default"], 0);
+
+    let query_node = &spec["components"]["schemas"]["QueryNode"];
+    assert!(query_node.to_string().contains("PrefixQuery"));
+    assert!(!spec["components"]["schemas"]["PrefixQuery"].is_null());
+
+    let operation = &spec["paths"]["/collections/{collection_id}/search:all"]["post"];
+    assert_eq!(operation["operationId"], "search_all");
+    assert_eq!(
+        operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchAllRequest"
+    );
+    assert_eq!(
+        operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchAllResponse"
+    );
 }
 
 #[test]
