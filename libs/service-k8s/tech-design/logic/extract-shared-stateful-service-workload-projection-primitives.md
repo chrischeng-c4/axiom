@@ -59,3 +59,35 @@ changes:
     impl_mode: hand-written
     description: "Record Tape as a consumer of ShardedStatefulSet while retaining its distinct Tape CRD and topic-service policy."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: shared-stateful-workload-projection-verification
+requirements:
+  distinct_app_adoption:
+    id: R3
+    text: "Lumen and Tape both consume the shared workload renderer while retaining distinct CRDs, app-specific environment, storage, probes, and domain policy."
+    kind: integration
+    risk: high
+    verify: cargo test -p lumen --features operator --test operator_render && cargo test -p tape --features operator --test operator
+  optional_hpa:
+    id: R2
+    text: "The shared HPA projection is opt-in and remains separate from the durable shard and replica topology encoded by the StatefulSet input."
+    kind: regression
+    risk: high
+    verify: cargo test -p service-k8s
+  typed_projection:
+    id: R1
+    text: "service-k8s renders a typed StatefulSet with the raft-runtime downward-API contract, app-provided storage and probes, secure pod/container defaults, and resource requests without mandatory limits."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-k8s
+---
+flowchart TD
+    r1[R1 typed projection] --> cargo_test_p_service_k8s[cargo test -p service-k8s]
+    r2[R2 optional hpa] --> cargo_test_p_service_k8s
+    r3[R3 distinct app adoption] --> cargo_test_p_lumen_features_operator_test_operator_render_cargo_test_p_tape_features_operator_test_operator[cargo test -p lumen --features operator --test operator_render && cargo test -p tape --features operator --test operator]
+```
