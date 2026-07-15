@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-scripts.md#schema
-# CODEGEN-BEGIN
+# HANDWRITE-BEGIN gap="missing-generator:multi-target-python-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition this semantic Python module inventory across exact script targets; preserve the verified script until #1634 lands canonical ownership."
 """Generate a synthetic lumen index fixture.
 
 Emits two files:
@@ -144,4 +144,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-# CODEGEN-END
+# HANDWRITE-END

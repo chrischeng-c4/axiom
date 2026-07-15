@@ -41,7 +41,7 @@ semantic_domain:
           domain: "apps/lumen/scripts"
       - path: "apps/lumen/scripts/load-fixture.py"
         language: "python"
-        ownership_state: "codegen"
+        ownership_state: "handwrite"
         generator_primitives: ["service_method"]
         symbols:
           - name: "gen_bio"
@@ -61,7 +61,7 @@ semantic_domain:
           domain: "apps/lumen/scripts"
       - path: "apps/lumen/scripts/bench_vs_db.py"
         language: "python"
-        ownership_state: "codegen"
+        ownership_state: "handwrite"
         generator_primitives: ["python_data_model", "service_method"]
         symbols:
           - name: "Doc"
@@ -170,7 +170,7 @@ python_modules:
       lines:
       - '#!/usr/bin/env python3'
       - '# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-scripts.md#schema'
-      - '# CODEGEN-BEGIN'
+      - '# HANDWRITE-BEGIN gap="missing-generator:multi-target-python-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition this semantic Python module inventory across exact script targets; preserve the verified script until #1634 lands canonical ownership."'
       - '"""Generate a synthetic lumen index fixture.'
       - ''
       - 'Emits two files:'
@@ -314,14 +314,14 @@ python_modules:
       - ''
       - 'if __name__ == "__main__":'
       - '    raise SystemExit(main())'
-      - '# CODEGEN-END'
+      - '# HANDWRITE-END'
   - path: apps/lumen/scripts/bench_vs_db.py
     body:
     - kind: raw
       lines:
       - '#!/usr/bin/env python3'
       - '# SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-scripts.md#schema'
-      - '# CODEGEN-BEGIN'
+      - '# HANDWRITE-BEGIN gap="missing-generator:multi-target-python-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition this semantic Python module inventory across exact script targets; preserve the verified script until #1634 lands canonical ownership."'
       - '"""Cross-engine search latency benchmark: lumen vs PostgreSQL vs MongoDB vs OpenSearch.'
       - ''
       - 'Goal (per the user''s two criteria):'
@@ -945,7 +945,7 @@ python_modules:
       - ''
       - 'if __name__ == "__main__":'
       - '    main()'
-      - '# CODEGEN-END'
+      - '# HANDWRITE-END'
 ```
 
 ## Unit Test
@@ -985,13 +985,13 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: codegen
+    impl_mode: hand-written
   - path: "apps/lumen/scripts/bench_vs_db.py"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: codegen
+    impl_mode: hand-written
   - action: annotate
     section: unit-test
     impl_mode: hand-written
