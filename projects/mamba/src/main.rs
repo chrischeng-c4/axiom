@@ -1053,6 +1053,47 @@ fn run_script_path(path: &str) -> Result<()> {
     }
 }
 
+/// Directory to remove on process exit when `MAMBA_SCRATCH_CWD=1` isolation
+/// was entered. Cleanup runs via a `libc::atexit` hook rather than `Drop`
+/// because most `cmd_run` error paths call `std::process::exit()` directly,
+/// which skips destructors but still invokes atexit handlers.
+static SCRATCH_CWD_TO_CLEAN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+extern "C" fn cleanup_scratch_cwd() {
+    if let Some(dir) = SCRATCH_CWD_TO_CLEAN.get() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// Issue #1558: opt-in scratch-CWD isolation for the agent/harness direct-run
+/// path (`MAMBA_SCRATCH_CWD=1 mamba run <fixture>`). CPython-conformance
+/// fixtures use `test.support.os_helper.TESTFN`, a CWD-relative scratch
+/// filename by design (relative-path I/O assertions are part of the fixture
+/// semantics) — so the fix relocates the CWD, not the filename, mirroring
+/// `conformance::ScratchCwd`'s regrtest-style throwaway CWD. No-op unless the
+/// env var is set, so default `mamba run` behavior (real programs run in the
+/// user's CWD) is unchanged.
+fn maybe_enter_scratch_cwd() {
+    if std::env::var("MAMBA_SCRATCH_CWD").ok().as_deref() != Some("1") {
+        return;
+    }
+    let scratch = std::env::temp_dir().join(format!(
+        "mamba_run_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    if std::fs::create_dir_all(&scratch).is_ok() && std::env::set_current_dir(&scratch).is_ok() {
+        if SCRATCH_CWD_TO_CLEAN.set(scratch).is_ok() {
+            unsafe {
+                libc::atexit(cleanup_scratch_cwd);
+            }
+        }
+    }
+}
+
 fn cmd_run(sub: &ArgMatches) -> Result<()> {
     use std::io::Read as _;
 
@@ -1092,6 +1133,15 @@ fn cmd_run(sub: &ArgMatches) -> Result<()> {
             "no source file specified and no mamba.toml found; pass a file or cd into a project directory"
         ),
     };
+
+    // Resolve a relative `file` (and the `-` stdin sentinel is left as-is)
+    // against the CURRENT cwd before any scratch-CWD chdir below — config
+    // discovery above already needed the original cwd, so scratch entry is
+    // the last thing before we start running the program.
+    let file = std::fs::canonicalize(&file)
+        .map(|p| p.display().to_string())
+        .unwrap_or(file);
+    maybe_enter_scratch_cwd();
 
     let config = CompilerConfig {
         backend: Backend::CraneliftJit,
