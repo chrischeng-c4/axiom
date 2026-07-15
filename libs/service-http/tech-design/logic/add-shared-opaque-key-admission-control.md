@@ -104,7 +104,6 @@ changes:
     impl_mode: hand-written
     description: "Verify Tape-selected append policy uses shared enforcement and default routing stays disabled."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
