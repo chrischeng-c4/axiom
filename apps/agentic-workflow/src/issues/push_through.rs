@@ -13,7 +13,9 @@
 //! 3. Call `backend.get(slug)` to refresh the issue from remote (so any
 //!    server-side normalisation — label ordering, body whitespace,
 //!    timestamps — round-trips back into the lifecycle issue file).
-//! 4. Re-serialise the refreshed issue and overwrite that file.
+//! 4. Restore workflow-local fields that issue trackers do not represent,
+//!    including the exact TD paths in `Issue.implements`.
+//! 5. Re-serialise the refreshed issue and overwrite that file.
 //!
 //! On any failure the issue file is left untouched at its post-merge
 //! state; the caller is responsible for `git checkout -- <issue_path>` to
@@ -48,6 +50,7 @@ pub async fn push_through(
     // frontmatter), so parse_issue_file returns slug="". Restore it from the
     // function parameter before handing the issue to the backend.
     issue.slug = slug.to_string();
+    let local_implements = issue.implements.clone();
 
     // Canonical identity on a tracker backend is the platform-assigned
     // numeric id, not the kebab slug. Once `create()` populates
@@ -72,7 +75,7 @@ pub async fn push_through(
         .with_context(|| format!("probe remote for issue '{}' before push", lookup_id))?
         .is_some();
 
-    let refreshed = if exists_remotely {
+    let mut refreshed = if exists_remotely {
         backend
             .write(&issue)
             .await
@@ -93,6 +96,18 @@ pub async fn push_through(
             .await
             .with_context(|| format!("create issue '{}' on remote backend", lookup_id))?
     };
+
+    // GitHub and GitLab do not have a native `implements` field. Their
+    // decoders therefore return an empty vector after every create/update
+    // refresh. The local lifecycle copy is authoritative for this field:
+    // dropping it broadens later TD/CB fallback discovery to unrelated
+    // projects. Merge instead of replace so a backend that eventually does
+    // represent TD references can add data without losing local ownership.
+    for implementation in local_implements {
+        if !refreshed.implements.contains(&implementation) {
+            refreshed.implements.push(implementation);
+        }
+    }
 
     let serialised = serialise_issue_file(&refreshed)?;
     std::fs::write(issue_path, serialised)
@@ -203,6 +218,7 @@ mod tests {
         next_id: u64,
         create_calls: u32,
         write_calls: u32,
+        strip_implements_on_round_trip: bool,
     }
 
     #[async_trait]
@@ -222,12 +238,19 @@ mod tests {
                 // `slug:*` label is gone.
                 return Ok(None);
             };
-            Ok(inner.store.iter().find(|i| i.github_id == Some(n)).cloned())
+            let mut issue = inner.store.iter().find(|i| i.github_id == Some(n)).cloned();
+            if inner.strip_implements_on_round_trip {
+                if let Some(issue) = issue.as_mut() {
+                    issue.implements.clear();
+                }
+            }
+            Ok(issue)
         }
 
         async fn write(&self, issue: &Issue) -> Result<()> {
             let mut inner = self.inner.lock().unwrap();
             inner.write_calls += 1;
+            let strip_implements = inner.strip_implements_on_round_trip;
             let Some(n) = issue.github_id else {
                 anyhow::bail!("write() called with no github_id");
             };
@@ -237,6 +260,9 @@ mod tests {
                 .find(|i| i.github_id == Some(n))
                 .ok_or_else(|| anyhow::anyhow!("write() of unknown id {}", n))?;
             *target = issue.clone();
+            if strip_implements {
+                target.implements.clear();
+            }
             Ok(())
         }
 
@@ -248,6 +274,9 @@ mod tests {
             let mut staged = issue.clone();
             staged.github_id = Some(n);
             staged.slug = n.to_string();
+            if inner.strip_implements_on_round_trip {
+                staged.implements.clear();
+            }
             inner.store.push(staged.clone());
             Ok(staged)
         }
@@ -289,6 +318,36 @@ mod tests {
         );
         assert_eq!(inner.write_calls, 1, "second push must write-update");
         assert_eq!(inner.store.len(), 1, "remote must hold exactly one issue");
+    }
+
+    #[tokio::test]
+    async fn push_through_preserves_local_implements_across_remote_normalization() {
+        let mut issue = fixture_issue();
+        issue.implements =
+            vec!["apps/tape/tech-design/logic/adopt-shared-service-http-otlp-tracing.md".into()];
+        let serialised = serialise_issue_file(&issue).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let issue_file = dir.path().join("round-trip.md");
+        std::fs::write(&issue_file, serialised).unwrap();
+
+        let backend = FakeRemote::default();
+        backend.inner.lock().unwrap().strip_implements_on_round_trip = true;
+
+        for _ in 0..2 {
+            let refreshed = push_through(&issue_file, &backend, "round-trip")
+                .await
+                .unwrap();
+            assert_eq!(refreshed.implements, issue.implements);
+            let persisted = parse_issue_file(&std::fs::read_to_string(&issue_file).unwrap())
+                .expect("parse rewritten lifecycle issue");
+            assert_eq!(persisted.implements, issue.implements);
+        }
+
+        let inner = backend.inner.lock().unwrap();
+        assert!(
+            inner.store[0].implements.is_empty(),
+            "fake tracker must continue to prove it cannot store implements"
+        );
     }
 }
 

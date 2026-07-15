@@ -17,6 +17,9 @@
 //! `.jet.loop-prompt.md`) are intentionally out of scope: they are not
 //! documentation and shell `*.md` globbing does not surface them either.
 
+use agentic_workflow::cli::meta_docs::{
+    allowed_repo_meta_doc_filenames, is_repo_only_agent_doc, validate_meta_doc_layout,
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,19 +33,10 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-const ALLOWED_ROOT_DOCS: &[&str] = &["README.md", "CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md"];
-const ALLOWED_ROOT_UPPERCASE_META: &[&str] = &[
-    "README.md",
-    "CONTRIBUTING.md",
-    "CLAUDE.md",
-    "AGENTS.md",
-    "LICENSE",
-];
-
 #[test]
 fn repo_root_md_files_match_allowlist() {
     let root = repo_root();
-    let allowed: BTreeSet<&str> = ALLOWED_ROOT_DOCS.iter().copied().collect();
+    let allowed = allowed_repo_meta_doc_filenames(false);
 
     let mut found: BTreeSet<String> = BTreeSet::new();
     for entry in fs::read_dir(&root).expect("read repo root") {
@@ -69,14 +63,15 @@ fn repo_root_md_files_match_allowlist() {
     assert!(
         unexpected.is_empty(),
         "unexpected root-level doc(s) {unexpected:?} — repo root carries only \
-         {ALLOWED_ROOT_DOCS:?}; see CONTRIBUTING.md meta-doc content contract \
+         {allowed:?}; see CONTRIBUTING.md meta-doc content contract \
          and move the content: project docs live under projects/<p>/, \
          conventions live next to the tree they govern"
     );
 
-    let missing: Vec<&&str> = ALLOWED_ROOT_DOCS
+    let missing: Vec<&str> = allowed
         .iter()
-        .filter(|name| !found.contains(&***name))
+        .copied()
+        .filter(|name| !found.contains(*name))
         .collect();
     assert!(
         missing.is_empty(),
@@ -102,7 +97,8 @@ fn is_uppercase_meta_filename(name: &str) -> bool {
 #[test]
 fn repo_root_uppercase_meta_files_match_allowlist() {
     let root = repo_root();
-    let allowed: BTreeSet<&str> = ALLOWED_ROOT_UPPERCASE_META.iter().copied().collect();
+    let mut allowed = allowed_repo_meta_doc_filenames(false);
+    allowed.insert("LICENSE");
 
     let mut found: BTreeSet<String> = BTreeSet::new();
     for entry in fs::read_dir(&root).expect("read repo root") {
@@ -126,7 +122,7 @@ fn repo_root_uppercase_meta_files_match_allowlist() {
     assert!(
         unexpected.is_empty(),
         "unexpected root uppercase meta file(s) {unexpected:?} — root allows only \
-         {ALLOWED_ROOT_UPPERCASE_META:?}; LICENSE is the only uppercase meta file \
+         {allowed:?}; LICENSE is the only uppercase meta file \
          without a .md extension"
     );
 }
@@ -148,7 +144,7 @@ fn collect_live_agent_docs(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !matches!(name, "CLAUDE.md" | "AGENTS.md") {
+        if !is_repo_only_agent_doc(name) {
             continue;
         }
         let rel = path.strip_prefix(root).unwrap_or(&path);
@@ -187,6 +183,8 @@ fn markdown_section_body(doc: &str, heading: &str) -> String {
 #[test]
 fn agentic_workflow_readme_links_project_layer_meta_docs() {
     let root = repo_root();
+    let report = validate_meta_doc_layout(&root, false, &[PathBuf::from("apps/agentic-workflow")]);
+    assert!(report.clean, "{:#?}", report.findings);
     let readme_path = root.join("apps/agentic-workflow/README.md");
     let readme = fs::read_to_string(&readme_path)
         .unwrap_or_else(|err| panic!("read {}: {err}", readme_path.display()));

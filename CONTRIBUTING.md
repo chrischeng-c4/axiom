@@ -254,9 +254,9 @@ meta-doc producer/check after a trait changes.
 | `competitive_replacement` | `competitor-feature-parity`, `competitor-performance` | — | Project aims to replace or match an existing competitor tool; no settled CONTRIBUTING.md doc home yet. |
 | `long_running` | `long-running-stability` | — | Project runs as a long-lived process; no settled CONTRIBUTING.md doc home yet. |
 | `network_exposed` | `security-hardening` | — | Project exposes a network-reachable surface; no settled CONTRIBUTING.md doc home yet. |
-| `agent_facing` |  | — | Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet. |
-| `stateful_storage` |  | — | Project owns durable stateful storage; prompt-only, no enforced baseline capability yet. |
-| `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly. |
+| `agent_facing` | `developer-agent-experience` | [DX convention: every service and CLI ships a Developer & Agent Experience capability](#dx-convention-every-service-and-cli-ships-a-developer-agent-experience-capability) | Project is primarily driven by agents rather than humans and must own the Developer & Agent Experience capability baseline. |
+| `stateful_storage` | `stateful-service-workload` | [Service workload profiles — common, StatefulSet, Deployment](#service-workload-profiles-common-statefulset-deployment) | Service owns durable application state, so it selects the StatefulSet profile: stable identity, PVC/storage durability, peer topology, backup/restore, and an explicit workload-kind migration handoff. |
+| `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for the common service baseline; expands to transport, deploy artifacts, operational endpoints, EC gates, and CLI conventions. Without stateful_storage the primary workload is a Deployment; stateful_storage selects the StatefulSet profile. |
 <!-- aw:trait-table:end -->
 
 ### The shared service kit — compose these libs, do not hand-roll
@@ -290,8 +290,8 @@ operator defaults.
 | **`libs/cli-std`** | the **standard CLI** commands (`llm` / `upgrade` / `issue`). |
 | **`libs/build-stamp`** | the **build stamp** (a `[build-dependencies]` crate): `stamp("<PREFIX>")` emits the `<PREFIX>_GIT_SHA` / `<PREFIX>_BUILT_AT` / `<PREFIX>_TARGET` rustc-env lines that feed `cli-std`'s `ToolInfo` — one implementation instead of a per-service `build.rs` copy. |
 
-**k8s-native auto-mode + discovery.** A service defaults to single-node and turns
-on raft **only when the StatefulSet scales out** — `raft_host::cluster::
+**k8s-native auto-mode + discovery.** A StatefulSet-profile service defaults to
+single-node and turns on raft **only when the StatefulSet scales out** — `raft_host::cluster::
 replica_mode()` is `true` when `REPLICAS_PER_SHARD > 1` (a downward-API value). So
 `<svc> serve` needs **no flags or cluster env** for local/single-node dev; k8s
 scaling flips it to replica mode automatically, with node id / membership / peers
@@ -303,12 +303,51 @@ hand-roll the pod-ordinal or peer-DNS math.
 auto-mode is also shared. A service CR should flatten or mirror
 `operator::ClusterSpec`/`ResourceSpec` unless it has a concrete product reason
 not to, implement `operator::ManagedService`, and render shared shapes with
-`libs/operator::render` helpers. In particular, StatefulSet identity,
+`libs/operator::render` helpers. For the StatefulSet profile, identity,
 `SHARD_COUNT`, `REPLICAS_PER_SHARD`, `VOTER_COUNT`, headless-service env,
 labels/selectors, owner refs, PDB/client/headless Service shapes, and
 maintenance CronJobs are library contracts. Do not duplicate that YAML/JSON
 construction in `lumen`, `keep`, `relay`, or `loom`; extend `libs/operator`
 when the helper is incomplete.
+
+### Service workload profiles — common, StatefulSet, Deployment
+
+Every service composes one common baseline and exactly one primary workload
+profile. This is a service/instance ownership decision, not a replica-count
+shortcut: ancillary Jobs and CronJobs do not change the primary profile.
+
+#### Common
+
+All profiles share server/runtime composition, standard health/readiness/
+metrics surfaces, authentication and TLS policy, graceful shutdown/drain,
+image plus layered k8s artifacts, operator reconciliation, labels/selectors,
+owner references, ServiceAccount, ordinary client Service, and applicable
+PDB/HPA helpers. Product-specific state machines, downstream quotas, schemas,
+and routing policy remain in the service.
+
+#### StatefulSet-specific
+
+Declare `stateful_storage` when Pods own durable application state or require
+stable identity/topology. This selects the StatefulSet profile and adds the
+`stateful-service-workload` baseline: durable acknowledgement, PVC-backed
+storage, headless Service, downward-API ordinal/peer discovery, Raft/replication
+when HA is required, backup/restore, and stateful scale/upgrade rules.
+
+#### Deployment-specific
+
+A `service` without `stateful_storage` selects the Deployment profile. Pods own
+no durable application state or stable identity: use an ordinary Deployment and
+ClusterIP Service, readiness plus preStop drain, and rollout/disruption/HPA
+policy. Do not add PVC, headless Service, Raft, peer DNS, or ClientIP session
+affinity. If Pods consume a bounded remote dependency, scale and rolling surge
+must respect that external capacity; pgpool's PostgreSQL connection budget is
+the reference case.
+
+Primary workload kind is not a live renderer toggle. The shared reconciler
+applies current children but does not garbage-collect an old child of another
+kind, so Deployment↔StatefulSet changes require an explicit migration handoff
+that removes or transfers traffic from the stale workload before the new one
+becomes authoritative.
 
 A service is not "done" until it satisfies every row:
 
@@ -319,11 +358,11 @@ A service is not "done" until it satisfies every row:
 | **Standard endpoints** | The same operational surface on the one port: **`/healthz`** (liveness), **`/readyz`** (readiness), **`/metrics`** (Prometheus), **`/openapi.json`** (machine OpenAPI), **`/docs`** (Swagger UI). Probes + scrape **depend** on these, so they stay auth-exempt and always-on. | Prefer **`libs/service-http`** standard probe/admin route helpers. `lumen` is the reference for the full surface. The contract is reachable three ways — **`<cli> spec`** (offline) ≡ **`/openapi.json`** (served) ≡ **`/docs`** (browsable) — one OpenAPI, three access paths. |
 | **Auth** | Every service uses the same bearer-token shape: server env `<SVC>_AUTH=off|required` plus `<SVC>_TOKEN_REGISTRY_FILE=/var/run/secrets/<svc>/token-registry.json`; clients use `<SVC>_URL` + `<SVC>_TOKEN` and send `Authorization: Bearer <token>`. | Compose **`libs/service-auth`** for middleware and **`libs/claimtoken`** for signed-token verification when needed. In k8s/cloud, the registry file is mounted from a Kubernetes Secret, CSI Secret Store, or cloud Secret Manager sync. Do not add one-off auth headers, per-service token env names, or inline server token lists as the production path. |
 | **OpenAPI client codegen** | Generate typed clients from the service's **own** OpenAPI via **`libs/openapi-codegen`** (`cclab-openapi-codegen`) — **never** hand-rolled or an external tool. Expose it on the CLI: `<cli> spec gen --lang ts\|py\|rust --out <dir>`. Adopters get a typed client with **no external codegen step**. | `lumen spec gen` is the reference; the polyglot core (ts/py/rust) was extracted so any CLI composes it. |
-| **Durability / ack boundary** | **Mandatory for every service-archetype data plane:** an accepted mutation is durable before the service reports success. In-memory-only, best-effort, or "durable later" write paths are local-dev shortcuts only and must not be the production default. | Compose **`libs/service-durability`** for local durable file mechanics and a service-owned durable log/state store plus `raft-core`/`raft-host` for replicated state. Define the exact ack boundary in the service README/TD and test crash/restart or replay behavior. |
+| **Durability / ack boundary** | **Mandatory for the StatefulSet profile:** an accepted mutation to service-owned state is durable before success. A Deployment-profile proxy may own no durable mutation at all; durability remains with its downstream system. | Stateful services compose **`libs/service-durability`** plus a service-owned durable log/state store and `raft-core`/`raft-host` when replicated. Deployment proxies document downstream durability and prove drain/reconnect behavior instead of inventing local persistence. |
 | **HA / consensus** | **Mandatory for any stateful service:** sharded, strongly-consistent state replicated with **`libs/raft-core`** driven by **`libs/raft-host`** — the replication path **wired** (a `RaftStateMachine` impl), not a DTO-only / "later slice" stub. Follower tails the leader over h2c; snapshot/compaction comes from the host. | Use `raft-core`+`raft-host`, **not `openraft`** and **not** a hand-rolled driver. The raft path may be a Cargo feature (`keep`); `lumen` is the reference adopter (`EngineSm`). |
 | **Backup / restore** | Stateful services expose consistent snapshot/restore from their state machine and use **`libs/service-backup`** for destination/policy/sink/runner shape. A production instance must configure a scheduled object-storage snapshot job; manual/local snapshots are break-glass or local-dev paths, not the service-archetype baseline. | `raft-host` owns snapshot install + log compaction. The service admin/CLI produces snapshot bytes; the backup runner uploads to S3-compatible object storage today and to GCS once the adapter exists; the operator schedules, wires secrets/IAM, reports status, and never serializes service data itself. |
 | **Core neutrality** | Keep domain/payload knowledge **out of the transport core** where feasible, so the core is reusable. | `relay` carries an opaque JSON body and "knows nothing about workflows" (#120). |
-| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; StatefulSet identity/peers from the **downward API**; dedicated/standalone data-plane mode as the production baseline; an `HA.md`. | Use **`libs/operator`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
+| **Deploy** | `Dockerfile` (+ `.release` / `.bench` variants); `<cli> dockerfile render`; **k8s-native** kustomize tree (`k8s/base` + `k8s/overlays`); `<cli> k8s crd/operator/instance`; exactly one primary workload profile. StatefulSet identity/peers come from the downward API; Deployment Pods use ordinary identity plus drain-aware rollout. | Use **`libs/operator`** for CR/operator/render shape. `keep/k8s`, `lumen k8s` (+ `operator` feature), `relay/k8s`, and `loom/deploy` are adoption surfaces; when they differ, converge them toward the shared kit instead of copying local YAML. Shared multi-tenant backends are optional platform work, not the default service archetype. |
 | **SDD-managed** | `aw.toml` + `tech-design/` + `SPEC-MANAGED` / `HANDWRITE` markers in source. Drive changes through the `aw` lifecycle. | see the SDD rules in `CLAUDE.md`. |
 | **EC gates** | Evidence-contract gates wired below. | see *EC gates* next. |
 | **CLI** | The bin ships `llm` / `upgrade` / `issue`. | see the *CLI convention* below. |
@@ -410,9 +449,10 @@ still present after the pod is recreated.
 
 *(policy-only — judgment, not trait-enforced)*
 
-The service archetype is **dedicated-first**. A stateful service must be able to
-run as its own data plane — one service instance, one app namespace or
-service-owned namespace, one StatefulSet/Deployment, one storage/backup surface,
+The service archetype is **dedicated-first**. A service must be able to run as
+its own data plane — one service instance, one app namespace or service-owned
+namespace, one primary workload selected by profile, and, for stateful
+services, one storage/backup surface,
 and one operational SLO envelope. This dedicated/standalone mode is mandatory
 because it is the simplest reliable production shape: ownership, upgrades,
 backups, failure blast radius, and delete/finalizer behavior are all local to the
@@ -463,16 +503,18 @@ advice:
   conventions, and generated client codegen. A service may own product-specific
   state transitions and API shape, but if two services need the same mechanism,
   the mechanism is a library capability with service adopters.
-- **Durable-only production.** The service archetype does not have a volatile
-  production mode. Accepted writes must survive process restart and pod
-  reschedule through service-owned durable state, and replicated services must
-  keep raft/log replay on the write path rather than treating it as a later
-  migration slice. If a local/demo mode skips durability, name it as local-only
-  and keep it out of release, k8s, and production EC gates.
+- **State-owning production is durable-only.** The StatefulSet profile does not
+  have a volatile production mode. Accepted service-owned writes must survive
+  process restart and pod reschedule, and replicated services keep raft/log
+  replay on the write path. Deployment-profile proxies may be stateless, but
+  must identify their downstream durability boundary and prove drain/reconnect
+  behavior instead of claiming local persistence.
 - **Direct install is not the HA story.** Kustomize `base` / overlays should be a
-  small direct install, usually single-node/embedded for kind and smoke tests.
-  Production HA goes through the operator CR path, which renders the StatefulSet
-  topology and downward-API env that `raft-host` consumes.
+  small direct install for kind and smoke tests. Stateful production HA goes
+  through the operator CR path that renders StatefulSet topology and the
+  downward-API env consumed by `raft-host`; Deployment-profile availability
+  goes through replica, disruption, rollout, drain, and external-capacity
+  policy instead.
 - **Operator owns lifecycle, not bytes.** The operator creates RBAC,
   ServiceAccounts, Services, StatefulSets/Deployments, PDBs, CronJobs, Secrets,
   status, and finalizers. It does not serialize service data. Snapshot bytes are
@@ -851,30 +893,43 @@ section.
 > nothing catches the drift.
 
 Meta docs split by *layer*, not by topic. A fact belongs to exactly one layer.
+The machine-readable source is
+`apps/agentic-workflow/src/cli/meta_docs.rs`; its matrix drives placement and
+section validation as well as the projection below. The sole writer/checker
+registry is `apps/agentic-workflow/src/cli/meta.rs`; use `aw meta init`,
+`aw meta sync`, and read-only `aw meta check` instead of maintaining a second
+META-doc projector.
 
-**Repo/global layer** is for facts that apply across the repository or teach an
-agent how to operate in this checkout. The only live root meta docs are:
+<!-- aw:meta-doc-matrix:start -->
+| Layer | Doc | Fact owner | Required headings | Inherits |
+|---|---|---|---|---|
+| repo | `/AGENTS.md` | Codex checkout operations; CLAUDE projection plus the fixed Codex whitelist | `## Agentic Workflow CLI Surface` | none |
+| repo | `/CLAUDE.md` | Claude checkout operations and shared agent workflow guidance | `## Agentic Workflow CLI Surface` | none |
+| repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
+| repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
+| project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |
+| project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
+| project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index` | repo capability schema policy |
+<!-- aw:meta-doc-matrix:end -->
 
-| Doc | Ownership |
-|-----|-----------|
-| `README.md` | repo identity, generated Projects table, install/discovery entrypoint |
-| `CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, service archetypes, meta-doc taxonomy |
-| `CLAUDE.md` | repo-level agent operating manual for Claude Code |
-| `AGENTS.md` | repo-level agent operating manual for Codex; generated/mirrored from `CLAUDE.md` plus Codex-only inserts |
-| `LICENSE` | legal license text; the only root uppercase meta file without a `.md` extension |
+The repo/global layer applies across the repository and teaches an agent how
+to operate in the checkout. `AGENTS.md` and `CLAUDE.md` exist only at this
+layer. `LICENSE` remains the legal text and the only root uppercase meta file
+without a `.md` extension.
 
-**Project/app layer** is for one deliverable's product contract and scoped
-local conventions. `apps/<name>` is for app-facing binaries/services; legacy
-and library-like deliverables may still live under `projects/<name>`. Allowed
-project/app-layer meta docs are:
+The project/app layer owns one deliverable's product contract and scoped local
+conventions. `apps/<name>` is for app-facing binaries/services; legacy and
+library-like deliverables may still live under `projects/<name>`. In a
+single-product repository the repo root is also the project root, so the
+project rows apply there and root `CAPABILITIES.md` is required. In a
+monorepo, root `CAPABILITIES.md` is forbidden because the root is not itself a
+product. Scoped convention docs remain allowed only next to the tree they
+govern; generated evidence/docs require an explicit producer, validator, or
+policy-only marker.
 
-| Doc | Ownership |
-|-----|-----------|
-| `apps/<name>/README.md` or `projects/<name>/README.md` | fixed orientation shell: `## Brief`, `## Contributing`, and `## Capability Contract`; the latter two include a short brief extracted from the linked project/app-layer docs |
-| `apps/<name>/CONTRIBUTING.md` or `projects/<name>/CONTRIBUTING.md` | local authoring, verification, migration, and contribution rules that are too specific for this repo-wide file; must include `## Brief` |
-| `apps/<name>/CAPABILITIES.md` or `projects/<name>/CAPABILITIES.md` | capability contract using the canonical capability schema; must include `## Brief`; README links here rather than restating the full contract |
-| scoped convention docs | only when placed next to the tree they govern, e.g. test fixture layout rules under the fixture tree |
-| generated evidence/docs | only when backed by an explicit producer, validator, or policy-only marker |
+`CAPABILITIES.md` is therefore a project-layer META-doc goal contract, not a
+separate lifecycle phase. WI, EC, and TD work roots resolve against it; they do
+not transfer ownership of the product promise out of the META-doc layer.
 
 Project-layer docs are written for agents first: they should answer "what is
 this project promising?", "where is the source of truth?", "what am I allowed

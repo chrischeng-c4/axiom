@@ -18,9 +18,9 @@ capability_refs:
 The logic generator in `apps/agentic-workflow/src/generate/gen/rust/logic.rs`
 translates Mermaid Plus flowchart YAML into Rust function bodies via
 recursive `emit_node` calls. The current implementation uses `MAX_DEPTH=20`
-as the sole cycle guard: when a flowchart contains a cycle (e.g. the
-`next_line → listen_read_line` back-edge in the chat-jsonl-migration listen
-branch), recursion hits the depth cap and emits `// (max nesting depth
+as the sole cycle guard: when a flowchart contains a cycle (for example, a
+`process_next → read_next` back-edge in a streaming record loop), recursion
+hits the depth cap and emits `// (max nesting depth
 reached)` instead of a well-formed Rust loop. This is the remaining half of
 the `#flowchart-to-fn` HANDWRITE-BEGIN gap; the process-node side was closed
 in commit `b210af680`.

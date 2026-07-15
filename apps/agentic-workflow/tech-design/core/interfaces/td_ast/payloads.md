@@ -35,6 +35,7 @@ Six payload structs land in `apps/agentic-workflow/src/td_ast/payloads.rs`:
 
 Plus shared helpers:
 
+- `GeneratedUnitId("schema:<name>" | "cli:<name>")`
 - `PayloadTypeDef { name?, ty?, description?, properties?, required, extra }`
 - `RpcMethod { name, summary?, params, result?, extra }`
 - `RpcParam { name, schema?, required?, description?, extra }`
@@ -55,6 +56,13 @@ the heuristic Schema-section walk in `entities.rs`. The
 the heuristic OpenRPC walk. Same for OpenAPI paths, AsyncAPI channels,
 CLI commands, and config keys. R3 and R4 follow mechanically.
 
+Schema definitions and top-level CLI commands also expose deterministic
+section-qualified generated-unit IDs. `JsonSchemaPayload::generated_unit_ids`
+and `CliManifestPayload::generated_unit_ids` sort those IDs independently of
+author order so Changes `generates:` ownership can be validated and partitioned
+without filename heuristics. Nested CLI commands remain part of their owning
+top-level command unit.
+
 ## Overview
 <!-- type: overview lang: markdown -->
 
@@ -71,6 +79,7 @@ Public API manifest for `apps/agentic-workflow/src/td_ast/payloads.rs` generated
 | `CliManifestPayload` | apps/agentic-workflow/src/td_ast/payloads.rs | struct | pub | 107 |  |
 | `ConfigKeyDef` | apps/agentic-workflow/src/td_ast/payloads.rs | struct | pub | 266 |  |
 | `ConfigManifestPayload` | apps/agentic-workflow/src/td_ast/payloads.rs | struct | pub | 118 |  |
+| `GeneratedUnitId` | apps/agentic-workflow/src/td_ast/payloads.rs | struct | pub | 31 |  |
 | `JsonSchemaPayload` | apps/agentic-workflow/src/td_ast/payloads.rs | struct | pub | 27 |  |
 | `OpenApiOperation` | apps/agentic-workflow/src/td_ast/payloads.rs | struct | pub | 203 |  |
 | `OpenApiPathItem` | apps/agentic-workflow/src/td_ast/payloads.rs | struct | pub | 184 |  |
@@ -95,6 +104,9 @@ description: >
   TypedBody plus shared helper types. Satisfies R1, R3, R4, R5, R6.
 
 definitions:
+  GeneratedUnitId:
+    type: string
+    description: "Stable section-qualified identity: schema:<name> or cli:<name>."
   JsonSchemaPayload:
     type: object
     $id: JsonSchemaPayload
@@ -569,6 +581,7 @@ types:
   AsyncApiPayload:  { kind: struct }
   CliManifestPayload: { kind: struct }
   ConfigManifestPayload: { kind: struct }
+  GeneratedUnitId:   { kind: struct }
   PayloadTypeDef:   { kind: struct }
   RpcMethod:        { kind: struct }
   RpcParam:         { kind: struct }
@@ -587,6 +600,7 @@ edges:
   - { from: TypedBody, to: CliManifestPayload, kind: owns, label: "CliManifest variant" }
   - { from: TypedBody, to: ConfigManifestPayload, kind: owns, label: "ConfigManifest variant" }
   - { from: JsonSchemaPayload, to: PayloadTypeDef, kind: owns, label: "definitions" }
+  - { from: JsonSchemaPayload, to: GeneratedUnitId, kind: derives, label: "schema:<name>" }
   - { from: OpenRpcPayload, to: RpcMethod, kind: owns, label: "methods" }
   - { from: OpenRpcPayload, to: PayloadTypeDef, kind: owns, label: "components.schemas" }
   - { from: RpcMethod, to: RpcParam, kind: owns, label: "params" }
@@ -594,6 +608,7 @@ edges:
   - { from: OpenApiPathItem, to: OpenApiOperation, kind: owns, label: "verbs" }
   - { from: AsyncApiPayload, to: AsyncApiChannel, kind: owns, label: "channels" }
   - { from: CliManifestPayload, to: CliCommandDef, kind: owns, label: "commands" }
+  - { from: CliManifestPayload, to: GeneratedUnitId, kind: derives, label: "cli:<name>" }
   - { from: CliCommandDef, to: CliArgDef, kind: owns, label: "args/flags" }
   - { from: ConfigManifestPayload, to: ConfigKeyDef, kind: owns, label: "keys" }
 ---
@@ -605,6 +620,7 @@ classDiagram
     class AsyncApiPayload
     class CliManifestPayload
     class ConfigManifestPayload
+    class GeneratedUnitId
     class PayloadTypeDef
     class RpcMethod
     class RpcParam
@@ -622,6 +638,7 @@ classDiagram
     TypedBody --> CliManifestPayload
     TypedBody --> ConfigManifestPayload
     JsonSchemaPayload --> PayloadTypeDef
+    JsonSchemaPayload ..> GeneratedUnitId : derives schema IDs
     OpenRpcPayload --> RpcMethod
     OpenRpcPayload --> PayloadTypeDef
     RpcMethod --> RpcParam
@@ -629,6 +646,7 @@ classDiagram
     OpenApiPathItem --> OpenApiOperation
     AsyncApiPayload --> AsyncApiChannel
     CliManifestPayload --> CliCommandDef
+    CliManifestPayload ..> GeneratedUnitId : derives CLI IDs
     CliCommandDef --> CliArgDef
     ConfigManifestPayload --> ConfigKeyDef
 ```
@@ -639,6 +657,8 @@ classDiagram
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/td_ast/payloads.rs -->
 ```rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/interfaces/td_ast/payloads.md#source
+// CODEGEN-BEGIN
 //! Typed payload structs for `TypedBody` variants — Stage 1B of the
 //! TD AST migration.
 //!
@@ -658,6 +678,37 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
+/// Stable identity of one independently generated unit inside typed TD IR.
+///
+/// IDs are section-qualified so a `Schema` definition and a `CLI` command
+/// with the same logical name cannot collide in a `Changes.generates` plan.
+/// The canonical wire spellings are `schema:<name>` and `cli:<name>`.
+///
+/// @spec apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#schema
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GeneratedUnitId(String);
+
+impl GeneratedUnitId {
+    pub fn schema(name: &str) -> Self {
+        Self(format!("schema:{name}"))
+    }
+
+    pub fn cli(name: &str) -> Self {
+        Self(format!("cli:{name}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for GeneratedUnitId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// JSON Schema 2020-12 document body. Preserves `definitions` / `$defs`
 /// as typed maps so entity walkers can iterate keys directly.
 ///
@@ -676,6 +727,53 @@ pub struct JsonSchemaPayload {
     pub defs: BTreeMap<String, PayloadTypeDef>,
     #[serde(flatten, default, skip_serializing_if = "value_is_empty_mapping")]
     pub extra: Value,
+}
+
+impl JsonSchemaPayload {
+    /// Return deterministic IDs for every top-level Schema unit. Map keys are
+    /// already the typed IR's stable logical names; a direct/root schema uses
+    /// its title, or `$root` when the title is intentionally absent.
+    pub fn generated_unit_ids(&self) -> Vec<GeneratedUnitId> {
+        if self.root_is_generated_unit() {
+            return vec![GeneratedUnitId::schema(
+                self.title.as_deref().unwrap_or("$root"),
+            )];
+        }
+
+        let mut ids = self
+            .definitions
+            .keys()
+            .chain(self.defs.keys())
+            .map(|name| GeneratedUnitId::schema(name))
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            ids.push(GeneratedUnitId::schema(
+                self.title.as_deref().unwrap_or("$root"),
+            ));
+        }
+        ids.sort();
+        ids
+    }
+
+    /// Match the generator's legacy-compatible root-vs-definitions choice.
+    /// A directly generatable root remains the one unit even when the schema
+    /// also carries definitions; definitions become units only when the root
+    /// itself is a container document.
+    fn root_is_generated_unit(&self) -> bool {
+        let extra = &self.extra;
+        let has_properties = extra.get("properties").is_some();
+        let is_string_enum = extra.get("type").and_then(Value::as_str) == Some("string")
+            && extra
+                .get("enum")
+                .and_then(Value::as_sequence)
+                .is_some_and(|values| !values.is_empty());
+        let has_rust_enum_variants = extra
+            .get("x-rust-enum")
+            .and_then(|value| value.get("variants"))
+            .and_then(Value::as_sequence)
+            .is_some_and(|variants| !variants.is_empty());
+        has_properties || is_string_enum || has_rust_enum_variants
+    }
 }
 
 /// OpenRPC 1.3 document body. `methods[].name` is the precise replacement
@@ -748,6 +846,21 @@ pub struct CliManifestPayload {
     pub commands: Vec<CliCommandDef>,
     #[serde(flatten, default, skip_serializing_if = "value_is_empty_mapping")]
     pub extra: Value,
+}
+
+impl CliManifestPayload {
+    /// Return deterministic IDs for independently routable top-level CLI
+    /// commands. Nested subcommands remain part of their owning top-level
+    /// command unit.
+    pub fn generated_unit_ids(&self) -> Vec<GeneratedUnitId> {
+        let mut ids = self
+            .commands
+            .iter()
+            .map(|command| GeneratedUnitId::cli(&command.name))
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
 }
 
 /// Config manifest document body. `keys[].name` powers the typed config walk.
@@ -1065,6 +1178,49 @@ mod tests {
     }
 
     #[test]
+    fn generated_unit_ids_are_section_qualified_and_order_stable() {
+        let schema: JsonSchemaPayload = serde_yaml::from_str(
+            "definitions:\n  Zebra: { type: object }\n  Alpha: { type: object }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            schema
+                .generated_unit_ids()
+                .iter()
+                .map(GeneratedUnitId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["schema:Alpha", "schema:Zebra"]
+        );
+
+        let cli: CliManifestPayload =
+            serde_yaml::from_str("commands:\n  - { name: test }\n  - { name: build }\n").unwrap();
+        assert_eq!(
+            cli.generated_unit_ids()
+                .iter()
+                .map(GeneratedUnitId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["cli:build", "cli:test"]
+        );
+        assert_ne!(
+            GeneratedUnitId::schema("build"),
+            GeneratedUnitId::cli("build")
+        );
+
+        let root_with_defs: JsonSchemaPayload = serde_yaml::from_str(
+            "title: Envelope\ntype: object\nproperties:\n  id: { type: string }\n$defs:\n  Detail: { type: object }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            root_with_defs
+                .generated_unit_ids()
+                .iter()
+                .map(GeneratedUnitId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["schema:Envelope"]
+        );
+    }
+
+    #[test]
     fn config_manifest_payload_roundtrip() {
         let raw = "keys:\n  - name: log_level\n    type: string\n    default: info\n    env: LOG_LEVEL\n  - name: max_workers\n    type: integer\n    default: 4\n";
         let p: ConfigManifestPayload = serde_yaml::from_str(raw).unwrap();
@@ -1083,6 +1239,8 @@ mod tests {
         assert!(back.contains("requirementsTraceMatrix"));
     }
 }
+
+// CODEGEN-END
 ```
 
 ## Changes
@@ -1100,6 +1258,7 @@ changes:
       ConfigManifestPayload) plus shared helpers (PayloadTypeDef,
       RpcMethod, RpcParam, OpenApiPathItem, OpenApiOperation,
       AsyncApiChannel, CliCommandDef, CliArgDef, ConfigKeyDef) and the
+      GeneratedUnitId / deterministic Schema+CLI unit inventories plus the
       TdParseErrorKind discriminant, emitted from a source template so
       serde flatten + rename + skip_serializing_if combinations remain
       byte-stable. Roundtrip parse tests live in cfg(test) at the bottom
@@ -1164,7 +1323,8 @@ changes:
     section: schema
     impl_mode: hand-written
     description: >
-      Register pub mod payloads and re-export the six payload structs.
+      Register pub mod payloads and re-export the six payload structs plus
+      GeneratedUnitId.
       Update HANDWRITE markers' tracker from
       enhancement-stage-1-complete-unified-tdast-full-sectiontype-co to
       this issue's slug per R9.

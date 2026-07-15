@@ -12,29 +12,28 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| AW Core Client Model | #3894 | implemented | verified | smoke | ready | verified; shared AW Core nouns, WorkItem-first artifact admission, and client boundaries |
-| Workflow Root Runner | - | implemented | verified | smoke | ready | verified; CLI workflow chain and root-to-child rollup contract |
+| AW Agent-First CLI Model | #1496 | implemented | verified | smoke | ready | verified; one coding-agent CLI owns next-action guidance, artifact skeletons, strict validation/phases, codegen, WorkItem-first admission, and evidence-backed rollup |
+| Workflow Root Runner | - | implemented | verified | smoke | ready | verified; EC-first CLI workflow chain and root-to-child rollup contract |
 | Capability Control Plane | - | implemented | verified | smoke | ready | verified; CAPABILITIES.md capability map, `aw capability`, and verification summaries |
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
 | TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to code-check terminal workflow |
 | Project-Local TD and EC Gates | #13 | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, EC contracts default to `<project.path>/external-contracts`, and generated tests/tool configs stay project-local |
 | Manual Evidence Artifacts | #57 | implemented | verified | smoke | ready | verified; generated product manuals are tracked as EC evidence artifacts with runner commands and optional media |
-| Repo View Desktop App | - | implemented | verified | smoke | ready | verified; exposes `aw view`, `aw view --layout left-right|top-bottom`, `aw view --snapshot`, `aw view --check`, `aw view --screenshot <png>`, and `aw view --app <app>` for the native repo reader, in-app layout toggle, EC snapshot, quick headless contract check, app-level visual debug capture, and macOS app bundle |
 | Existing Project Standardization | - | implemented | verified | smoke | ready | verified; takeover readiness, managed/semantic/traceability gates, and generator gap requests |
 
-### AW Core Client Model
+### AW Agent-First CLI Model
 
 ID: aw-core-client-model-workitem-first-artifact-lifecycle
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw wi` + `aw td` + `aw wi run`/`aw capability run` - standalone AW Core client entrypoints over the shared workflow protocol.
+- CLI: `aw meta` + `aw wi` + `aw ec` + `aw td` + `aw wi run`/`aw capability run` - the single agent-first project-iteration surface.
 EC Dimensions:
-- behavior: shared WorkItem-first artifact admission, client boundary, and rollup semantics from the AW Core TD set.
-Root WI: #3894
+- behavior: WorkItem-first artifact admission, agent-first CLI ownership, strict validation/phase transitions, codegen, and evidence-backed rollup semantics.
+Root WI: #1496
 Status: verified
 Required Verification: smoke
 Promise:
-AW Core defines the client-independent workflow and domain protocol shared by `aw CLI`, Cue, and future clients, with WorkItem-first artifact admission and evidence-backed rollup.
+Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding agents. It owns next-action guidance, durable artifact skeletons, strict format and phase validation, and code generation, with WorkItem-first admission and evidence-backed rollup.
 Gate Inventory:
 - apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md; apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md; apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md
 
@@ -42,7 +41,12 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Core concept model and invariants | change | #3894 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md |
 | WorkItem artifact admission gate | change | #3895 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md |
-| Client boundary model | change | #3896 | implemented | verified | smoke | apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md |
+| Agent-first CLI product model | change | #1496 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md |
+| META-doc ownership matrix | change | #1497 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib meta_doc_ownership -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests root_doc_ -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-meta-doc-ownership-matrix.md; one serializable repo/project matrix drives placement, required headings, inheritance documentation, root allowlists, and actionable project-agent-doc diagnostics |
+| META-doc init/sync/check producers | change | #1498 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cli::meta::tests:: -- --nocapture`; `cargo test -p agentic-workflow --lib leaf_verb_paths_are_all_classified -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-meta-doc-producer.md; one producer registry owns skeleton creation, marker-only synchronization, read-only drift diagnostics, chainable output, and legacy `aw new` delegation |
+| Shared artifact skeleton-fill protocol | change | #1499 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cli::artifact_producer::tests:: -- --nocapture`; `cargo test -p agentic-workflow --test artifact_producer_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-artifact-skeleton-fill-protocol.md; WI, EC, and TD expose one internal contract for CLI-owned skeletons, currently allowed bounded slots, payload schemas, apply/validate/generate commands, evidence, next transitions, and TD CODEGEN/HANDWRITE outputs |
+| Repo View command and desktop product removal | change | #1502 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-view-removal.md |
+| Cross-checkout chat command and shared-channel removal | change | #1503 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; `cargo test -p agentic-workflow --lib test_install_skills_prunes_aw_chat_listen -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-chat-removal.md |
 | Agent orientation surface | change | #178 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib llm_outline_uses_cli_std_and_standard_commands`; apps/agentic-workflow/tech-design/logic/aw-llm-offline-agent-orientation-command.md |
 | WorkItem loop-state model | change | #189 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib loop_state_round_trips`; apps/agentic-workflow/tech-design/logic/workitem-loop-state-model-additive-foundation.md |
 | AW epic project label dispatch | change | #1518 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md |
@@ -59,7 +63,7 @@ Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-`aw wi run`/`aw capability run` emit a CLI workflow chain from project, capability, epic, or change roots and keep rolling work upward until the project root is complete or blocked.
+`aw wi run`/`aw capability run` emit one EC-first CLI workflow chain from project, capability, epic, or change roots: a fresh bounded WI authors and generates a project-local EC contract before TD/codegen; EC red returns to adaptation, EC green permits terminal code-check, then the runner rolls work upward until the project root is complete or blocked. Capability remains the META-doc goal ledger and `aw health` remains read-only.
 Gate Inventory:
 - apps/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
 
@@ -69,6 +73,9 @@ Gate Inventory:
 | Root envelope completion contract | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib create_wi_blocks_on_pending_epicize_artifact` |
 | Parent rollup routing | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection` |
 | Runtime Envelope Backward Compatibility | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib envelope_profile -- --nocapture`; apps/agentic-workflow/tech-design/specs/3903.md |
+| Self-hosting root-runner policy | change | #1501 | implemented | verified | smoke | `cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md; AW rejects its own WI/capability/project root runners before mutation and uses sanctioned direct commits plus focused health/TD/EC verification instead |
+| EC-first WI root loop | change | #1500 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib phase_less_project_wi_enters_ec_before_td -- --nocapture`; `cargo test -p agentic-workflow --lib ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md; fresh WI roots persist EC draft/fill/review/gen transitions, enter TD only after successful EC generation, and route EC red/green to adaptation/code-check |
+| Closed workflow lock release | change | #1755 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib issue_lock_view_ignores_closed_issue_with_stale_lock_projection -- --nocapture`; lock discovery reads the configured tracker so closed/rejected items cannot retain a stale local projection that blocks unrelated TD/CB work |
 
 ### Capability Control Plane
 
@@ -92,6 +99,7 @@ Gate Inventory:
 | Capability readiness reporting | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib fixture_reference_can_verify_required_claim` |
 | Capability project sweep | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib capability_sweep`; human sweep queue output reviewed through aw capability sweep |
 | Missing README initialization | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib capability_init`; README shell init behavior only, no runtime project mutation gate |
+| Agent-facing DX baseline trait | change | #1481 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib agent_facing_trait_requires_developer_agent_experience_with_remediation -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-dx-trait-derivation.md; the explicit agent_facing profile trait derives developer-agent-experience, names the CONTRIBUTING DX convention as its enforced contract, and reports the normal missing-baseline remediation |
 
 ### Work Item Planning
 
@@ -117,6 +125,7 @@ Gate Inventory:
 | Wi Create Remote Flag Tests | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_create_remote -- --nocapture`; apps/agentic-workflow/tech-design/specs/3909.md |
 | Wi Remove Agent Estimate Unit Command | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib wi_remove_agent_estimate -- --nocapture`; apps/agentic-workflow/tech-design/specs/3910.md |
 | WI close remote rehydration | change | #1551 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests wi_close_remote_ -- --nocapture`; apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md; #1583 is a duplicate field reproducer |
+| Linear WI authoring without CRRR | change | #1504 | implemented | verified | smoke | `cargo test -p agentic-workflow --test cli_tests legacy_cli_removal_test -- --nocapture`; `cargo test -p agentic-workflow --lib runtime::session -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md; WI and draft authoring terminate at validation, with generic review/arbitration/runtime roles removed and older tracker review fields retained only for compatibility |
 
 ### TD/CB Lifecycle Automation
 
@@ -153,10 +162,11 @@ Gate Inventory:
 | Terminal EC process liveness | change | #1579 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_verify_ -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_gate_rejects_a_duplicate_inflight_inventory -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_code_check_fast_green_stale_reader_rechecks_phase_before_ec -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture`; apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md |
 | Default TD target-plan queue | change | #1598 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib target_plan -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_default_changes_queue_applies_both_passes_then_gen_uses_explicit_target -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; fresh TD applicability and contract passes dispatch an editable Logic -> Changes -> Unit Test queue whose explicit target plan reaches code generation |
 | Rebased TD lifecycle recovery | change | #1602 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib rebased_td_lifecycle -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_rebased_lifecycle -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_create_on_project_branch_stays_on_current_branch -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_code_check_refuses_unchanged_hand_written_modify_paths -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; apps/agentic-workflow/tech-design/semantic/agentic-workflow-tests-cli-tests.md; active authoring state without a reachable exact Td-Init is reset and safely re-provisioned, while a reachable baseline resumes unchanged and code-check evidence remains fail-closed |
-| Canonical app/lib TD fill scope reconciliation | bug | #1638 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib canonical_td_changes_path_queues_app_marker`; `cargo test -p agentic-workflow --lib whole_worktree_walk_includes_apps_and_libs`; canonical `apps/<name>` and `libs/<name>` Changes paths queue their HANDWRITE markers and zero-marker re-entry records the normal filled lifecycle phase |
-| TD generation project-root precedence | bug | #1705 | implemented | verified | smoke | `cargo test -p agentic-workflow td_gen_prefers_project_default_over_foreign_legacy_spec --lib -- --nocapture`; a hydrated project-labelled issue selects its configured project TD root before foreign legacy `.aw/tech-design` discovery |
-| Scoped TD fill marker completion | bug | #1717 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture`; post-apply marker queues remain bounded to the active TD Changes paths, so foreign HANDWRITE gaps cannot block this work item's code-check |
+| Canonical app/lib TD fill scope reconciliation | change | #1638 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib canonical_td_changes_path_queues_app_marker`; `cargo test -p agentic-workflow --lib whole_worktree_walk_includes_apps_and_libs`; canonical `apps/<name>` and `libs/<name>` Changes paths queue their HANDWRITE markers and zero-marker re-entry records the normal filled lifecycle phase |
+| TD generation project-root precedence | change | #1705 | implemented | verified | smoke | `cargo test -p agentic-workflow td_gen_prefers_issue_scope_over_foreign_legacy_discovery --lib -- --nocapture`; a hydrated project-labelled issue selects its configured project TD root before foreign legacy `.aw/tech-design` discovery |
+| Scoped TD fill marker completion | change | #1717 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_fill_apply_scopes_remaining_markers_to_active_changes -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_apply_marker_replaces_block -- --nocapture`; post-apply marker queues remain bounded to the active TD Changes paths, so foreign HANDWRITE gaps cannot block this work item's code-check |
 | Ambiguous multi-target generation preflight | change | #1633 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib generation_plan -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests td_gen_no_changes_single_inferred_schema_target_remains_compatible -- --nocapture`; apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md; Schema/CLI whole-section plans require exactly one explicit or read-only inferred CODEGEN destination before issue hydration, branch activation, source/lifecycle/tracker/index/HEAD mutation, emit typed remediation for zero or sorted ambiguous targets, preserve single, inferred-single, and mixed CODEGEN/HANDWRITE plans, and leave canonical multi-target `generates:` ownership to #1634 |
+| Terminal touched CODEGEN drift gate | change | #1635 | implemented | verified | smoke | `cargo test -p agentic-workflow touched_codegen_claims_select_changed_accepted_codegen_only -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry -- --nocapture`; apps/agentic-workflow/tech-design/semantic/td-code-check-touched-codegen-drift.md; numeric/slug terminal code-check resolves accepted CODEGEN claims changed since the exact Td-Init baseline, reuses path-mode deterministic block comparison before EC or mutation, ignores unrelated drift, and emits phase-safe exact-target `aw td gen <slug>` repair |
 | Quality Primitive Metadata Contract Test | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib quality_primitives -- --nocapture`; apps/agentic-workflow/tech-design/specs/3905.md |
 | Missing Source Review Fails | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib source_reference_missing_required_source -- --nocapture`; apps/agentic-workflow/tech-design/specs/3907.md |
 | Api Contract Source Passes | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib source_reference_api_contract_source_backed -- --nocapture`; apps/agentic-workflow/tech-design/specs/3907.md |
@@ -192,6 +202,7 @@ Gate Inventory:
 | EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_inventory`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen writes the project aw.toml EC inventory plus generated tests and rig/meter/guard/vat tool configs; arena is retained as a legacy compatibility import |
 | EC tool binding dispatch | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_binding_command`; `cargo test -p agentic-workflow --lib resolve_ec_command_dispatches_bound_category`; apps/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md; apps/agentic-workflow/tech-design/logic/aw-ec-add-vat-binding-command-support.md |
 | EC false-green guard | change | #694 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_verify_rejects_zero_test_false_green -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-zero-test-false-green.md |
+| EC-only independent semantic approval | change | #1504 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_review_ -- --nocapture`; `cargo test -p agentic-workflow --lib terminal_ec_missing_semantic_review_routes_to_hitl -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md; production EC generation and verification require current digest-bound human acceptance after dimension, claim, assertion, oracle-independence, loophole, and false-green inspection |
 
 ### Manual Evidence Artifacts
 
@@ -213,36 +224,6 @@ Gate Inventory:
 | Generated manual EC evidence schema | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_generated_manual_artifact` |
 | Manual runner output convention | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_doc_gen_writes_manual_from_inventory`; apps/agentic-workflow/src/tools/common_change_spec.rs |
 
-### Repo View Desktop App
-
-ID: repo-view-desktop-app
-Type: DeveloperTool
-Surfaces:
-- CLI: `aw view` + `aw view --layout left-right|top-bottom` + `aw view --snapshot` + `aw view --check` + `aw view --screenshot <png>` + `aw view --app <app>` - native desktop repo reader with fixed project list, in-app terminal/detail layout toggle, stable JSON/surface snapshot, quick headless contract check, app-level visual debug capture, and macOS app bundle generation for agents and EC gates.
-EC Dimensions:
-- behavior: `./target/debug/aw view --snapshot` - repo catalog, terminal status, focused README brief, capability map detail, EC inventory, TD summary, and renderer-neutral surface snapshot are present.
-- behavior: `./target/debug/aw view --check` - headless contract check contains the terminal pane, repo catalog, semantic layout toggle, selected README brief, capability map, EC, and TD detail panes.
-- behavior: `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png` - app-level PNG capture is rendered from the same surface tree without a browser or desktop screen capture.
-- behavior: `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png` - repo list stays fixed while the terminal/detail region can switch to top-bottom layout with a visible toggle control.
-- behavior: `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app` - native macOS app bundle is produced and launches the repo-built desktop view.
-Root WI: -
-Status: verified
-Required Verification: smoke
-Promise:
-AW presents the repository as a visual-reader model: repo navigation is the root, selected repo items expose README brief text, configured capability-map detail, EC contract status, and TD relation summary, and the desktop artifact has stable semantic surface IDs so tests do not depend on a toolkit-private tree. The repo list stays fixed on the left; the right-side workspace can place terminal/status and current EC/capability detail either left-right or top-bottom, defaulting to left-right. A native toggle button switches that workspace layout in the running desktop app.
-Gate Inventory:
-- `cargo test -p agentic-workflow --lib view_repo_snapshot -- --nocapture`
-- `./target/debug/aw view --snapshot`
-- `./target/debug/aw view --check`
-- `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png`
-- `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png`
-- `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app`
-- apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Repo desktop reader | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib view_repo_snapshot -- --nocapture`; `./target/debug/aw view --snapshot`; `./target/debug/aw view --check`; `./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png`; `./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png`; `./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app` |
-
 ### Existing Project Standardization
 
 ID: existing-project-standardization
@@ -255,7 +236,7 @@ Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-Existing projects can be adopted one bounded tick at a time: capability readiness stays in `aw capability`, takeover runs through managed/semantic/traceability, and generator gaps route back into normal WI/TD/CB work.
+Existing projects can be adopted one bounded tick at a time: capability readiness stays in `aw capability`, takeover runs through managed/semantic/traceability, and generator gaps route back into normal WI/EC/TD-codegen work.
 Gate Inventory:
 - apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md
 
@@ -266,7 +247,9 @@ Gate Inventory:
 | Authoritative source-snapshot projection | change | #1548 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib legacy_source_snapshot -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture`; apps/agentic-workflow/tech-design/semantic/td-gen-source-source-snapshot-projection.md |
 | Traceability closure gate | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib traceability` covers command, TD, source, and CB closure |
 | CB and cold verification gates | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_cold_rebuild_targets_include_codegen_changes` |
+| Force-regeneration project-root llms projection | change | #1591 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_force_regen_public_path_emits_td_first_project_root_llms -- --nocapture`; `cargo test -p agentic-workflow --lib cb_gen_project_root_llms -- --nocapture`; `cargo test -p agentic-workflow --lib cb_gen_force_regen_specs_do_not_format_handwritten_skips -- --nocapture`; apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md; the public force-regeneration path shares the TD-first project-root llms emitter used by replay/cold verification, replaces generic placeholders with one canonical CODEGEN document, and preserves HANDWRITE siblings byte-for-byte |
 | Shared service kit substrate | change | #1241 | implemented | verified | smoke | `cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http`; apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md |
+| Service workload profile derivation | change | #1546 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib stateful_storage_selects_the_statefulset_service_profile`; `cargo test -p agentic-workflow --lib known_traits_include_every_doc_mirror_trait_def`; `cargo test -p agentic-workflow --test cli_tests root_trait_coverage` |
 | Regenerability maturity loop (optional) | epic | - | out_of_scope | none | none | - |
 | Authoritative Fixture Blocks On Regenerability Gap | change | - | implemented | verified | smoke | `bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_authoritative_blocker.sh`; apps/agentic-workflow/tech-design/specs/3901.md |
 | External Fixture Reports Advisory Gap | change | - | implemented | verified | smoke | `bash apps/agentic-workflow/tests/fixtures/regenerability_authority/assert_external_advisory.sh`; apps/agentic-workflow/tech-design/specs/3901.md |

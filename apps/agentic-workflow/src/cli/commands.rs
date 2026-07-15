@@ -4,7 +4,6 @@ use crate::Result;
 use clap::Subcommand;
 
 use crate::cli::capability;
-use crate::cli::chat;
 use crate::cli::conf;
 use crate::cli::drift;
 use crate::cli::ec;
@@ -13,9 +12,9 @@ use crate::cli::guard;
 use crate::cli::init;
 use crate::cli::issues;
 use crate::cli::llm;
+use crate::cli::meta;
 use crate::cli::project;
 use crate::cli::standard_cli;
-use crate::cli::view;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
@@ -38,19 +37,16 @@ pub enum Commands {
     /// Agent-runtime direct edit/create guard for Codex and Claude Code.
     Guard(guard::GuardArgs),
 
-    /// Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app.
-    View(view::ViewArgs),
-
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
     Conf(conf::ConfArgs),
+
+    /// Initialize, synchronize, and check repository/project META-docs.
+    Meta(meta::MetaArgs),
 
     /// Manage work-items — list/show/create/validate across local + GitHub backends.
     // @spec apps/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
     #[command(name = "wi")]
     Issues(issues::IssuesArgs),
-
-    /// Cross-checkout agent messaging via shared plain-text channel
-    Chat(chat::ChatArgs),
 
     /// Offline agent orientation: outline + capability/td/ec pillars + loop.
     Llm(llm::LlmArgs),
@@ -68,7 +64,7 @@ pub enum Commands {
     /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
 
-    /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
+    /// External-contract lifecycle: draft/fill, independent semantic review, generate, and verify.
     Ec(ec::EcArgs),
 }
 
@@ -95,17 +91,14 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Guard(args) => {
             guard::run(args).await?;
         }
-        Commands::View(args) => {
-            view::run(args).await?;
-        }
         Commands::Conf(args) => {
             conf::run(args)?;
         }
+        Commands::Meta(args) => {
+            meta::run(args)?;
+        }
         Commands::Issues(args) => {
             issues::run(args).await?;
-        }
-        Commands::Chat(args) => {
-            chat::run_chat(args)?;
         }
         Commands::Llm(args) => {
             llm::run(args)?;

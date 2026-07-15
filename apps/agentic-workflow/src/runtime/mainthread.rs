@@ -3,11 +3,11 @@
 //! Mainthread agent — the orchestrator that translates dev intent
 //! into lifecycle actions.
 //!
-//! Why a separate role: per-phase agents (Author / Reviewer / Reviser)
-//! are workers triggered by score dispatch envelopes. The
-//! **mainthread agent** is what the dev actually talks to: it receives
+//! Why a separate role: the Author worker is triggered by AW dispatch
+//! envelopes. The
+//! **mainthread agent** is what the developer actually talks to: it receives
 //! free-form chat input, decides what to do, and dispatches the
-//! per-phase workers. Without it, cue can only "submit title → run
+//! per-phase workers. Without it, AW can only "submit title → run
 //! lifecycle" — no conversation, no override, no status reply.
 //!
 //! ## Wire protocol
@@ -27,7 +27,7 @@
 //! Slice 1 ships two variants (`NewIssue`, `Reply`); future variants
 //! land alongside the corresponding runner / app handlers:
 //!   - `ContextInject { text }` — augment current Author turn's prompt
-//!   - `Override { decision }`  — bypass reviewer verdict
+//!   - `Override { decision }`  — replace the next authoring action
 //!   - `Pause`                  — suspend in-flight lifecycle
 //!   - `Status`                 — render current phase / progress
 

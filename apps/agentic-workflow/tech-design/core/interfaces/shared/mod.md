@@ -7,7 +7,7 @@ capability_refs:
     gap: core-concept-model-and-invariants
     claim: core-concept-model-and-invariants
     coverage: full
-    rationale: "Shared workflow utilities are part of the AW Core protocol support surface used across clients and lifecycle phases."
+    rationale: "Shared workflow utilities support the single AW CLI across lifecycle phases."
 ---
 
 # Standardized apps/agentic-workflow/src/shared/mod.rs

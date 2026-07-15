@@ -55,9 +55,7 @@ pub trait ScoreProcess: Send + Sync {
         section: &str,
         body: &str,
     ) -> Result<Envelope, ScoreProcessError>;
-    async fn review_apply(&self, slug: &str, body: &str) -> Result<Envelope, ScoreProcessError>;
     async fn validate(&self, slug: &str) -> Result<Envelope, ScoreProcessError>;
-    async fn merge(&self, slug: &str) -> Result<Envelope, ScoreProcessError>;
 }
 
 /// Real impl — shells out to the `aw` binary on PATH.
@@ -152,17 +150,6 @@ impl ScoreProcess for RealScoreProcess {
     async fn validate(&self, slug: &str) -> Result<Envelope, ScoreProcessError> {
         self.run(&["issues", "validate", slug]).await
     }
-
-    async fn review_apply(&self, slug: &str, body: &str) -> Result<Envelope, ScoreProcessError> {
-        self.run(&[
-            "issues", "review", "--apply", "--slug", slug, "--body", body,
-        ])
-        .await
-    }
-
-    async fn merge(&self, slug: &str) -> Result<Envelope, ScoreProcessError> {
-        self.run(&["issues", "merge", slug]).await
-    }
 }
 
 /// Mock impl — feed it canned envelopes and assert on recorded calls.
@@ -177,14 +164,7 @@ pub enum ScoreCall {
         section: String,
         body: String,
     },
-    ReviewApply {
-        slug: String,
-        body: String,
-    },
     Validate {
-        slug: String,
-    },
-    Merge {
         slug: String,
     },
 }
@@ -193,15 +173,12 @@ pub enum ScoreCall {
 impl ScoreCall {
     /// Stable verb token matching the CLI subcommand path. Lifecycle harness
     /// uses this to wait for "the next time MockScoreProcess sees `validate`".
-    /// Tokens: `"create"`, `"fill_section"`, `"review_apply"`, `"validate"`,
-    /// `"merge"`.
+    /// Tokens: `"create"`, `"fill_section"`, `"validate"`.
     pub fn verb(&self) -> &'static str {
         match self {
             ScoreCall::Create { .. } => "create",
             ScoreCall::FillSectionApply { .. } => "fill_section",
-            ScoreCall::ReviewApply { .. } => "review_apply",
             ScoreCall::Validate { .. } => "validate",
-            ScoreCall::Merge { .. } => "merge",
         }
     }
 }
@@ -211,9 +188,7 @@ impl ScoreCall {
 pub struct MockScoreProcess {
     create_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
     fill_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
-    review_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
     validate_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
-    merge_responses: Mutex<Vec<Result<Envelope, ScoreProcessError>>>,
     calls: Mutex<Vec<ScoreCall>>,
 }
 
@@ -238,18 +213,8 @@ impl MockScoreProcess {
         self
     }
 
-    pub fn enqueue_review(&self, env: Envelope) -> &Self {
-        self.review_responses.lock().unwrap().push(Ok(env));
-        self
-    }
-
     pub fn enqueue_validate(&self, env: Envelope) -> &Self {
         self.validate_responses.lock().unwrap().push(Ok(env));
-        self
-    }
-
-    pub fn enqueue_merge(&self, env: Envelope) -> &Self {
-        self.merge_responses.lock().unwrap().push(Ok(env));
         self
     }
 
@@ -302,29 +267,6 @@ impl ScoreProcess for MockScoreProcess {
         let mut q = self.validate_responses.lock().unwrap();
         if q.is_empty() {
             return Err(ScoreProcessError::MockExhausted("validate".into()));
-        }
-        q.remove(0)
-    }
-
-    async fn review_apply(&self, slug: &str, body: &str) -> Result<Envelope, ScoreProcessError> {
-        self.calls.lock().unwrap().push(ScoreCall::ReviewApply {
-            slug: slug.to_string(),
-            body: body.to_string(),
-        });
-        let mut q = self.review_responses.lock().unwrap();
-        if q.is_empty() {
-            return Err(ScoreProcessError::MockExhausted("review_apply".into()));
-        }
-        q.remove(0)
-    }
-
-    async fn merge(&self, slug: &str) -> Result<Envelope, ScoreProcessError> {
-        self.calls.lock().unwrap().push(ScoreCall::Merge {
-            slug: slug.to_string(),
-        });
-        let mut q = self.merge_responses.lock().unwrap();
-        if q.is_empty() {
-            return Err(ScoreProcessError::MockExhausted("merge".into()));
         }
         q.remove(0)
     }

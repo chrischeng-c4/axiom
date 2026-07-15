@@ -40,8 +40,8 @@ fn legacy_top_level_commands_are_removed() {
         // folded into `aw health`'s takeover-audit axis, `audit record`
         // rehomed to `aw td audit-record`.
         "standardize",
-        // "view" was re-added by the repo-view desktop app capability
-        // (Commands::View in src/cli/commands.rs) — no longer removed.
+        // #1502: the Repo View desktop product has no replacement inside AW.
+        "view",
         "changes",
         "fillback",
         "sdd",
@@ -82,6 +82,9 @@ fn legacy_top_level_commands_are_removed() {
         "cb",
         "init",
         "sync",
+        // #1503: the shared cross-checkout transport is retired without an
+        // alias; future subagent design has no aw-chat compatibility burden.
+        "chat",
     ] {
         assert!(
             cmd.find_subcommand(name).is_none(),
@@ -93,15 +96,7 @@ fn legacy_top_level_commands_are_removed() {
 #[test]
 fn workflow_protocol_commands_remain_registered() {
     let cmd = Cli::command();
-    for name in [
-        "health",
-        "capability",
-        "wi",
-        "td",
-        "generator",
-        "conf",
-        "chat",
-    ] {
+    for name in ["health", "capability", "wi", "td", "generator", "conf"] {
         assert!(
             cmd.find_subcommand(name).is_some(),
             "{name} should remain registered"
@@ -136,6 +131,8 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
         "workflow",
         "revise-artifact",
         "artifact",
+        "view",
+        "chat",
         "validate-spec-structure",
         "check-alignment",
         "iss",
@@ -175,9 +172,14 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         .parent()
         .and_then(Path::parent)
         .expect("repo root");
-    let mut docs = vec![repo_root.join("AGENTS.md")];
+    let mut docs = vec![
+        repo_root.join("AGENTS.md"),
+        repo_root.join("CLAUDE.md"),
+        manifest_dir.join("CONTRIBUTING.md"),
+    ];
     collect_markdown_files(&manifest_dir.join("templates/cli"), &mut docs);
     collect_markdown_files(&repo_root.join(".agents/skills"), &mut docs);
+    collect_markdown_files(&repo_root.join(".claude/skills"), &mut docs);
 
     let deleted = [
         // #918: `aw run` fully removed from the clap tree (superseded by
@@ -191,6 +193,8 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw workflow",
         "aw revise-artifact",
         "aw artifact",
+        "aw view",
+        "aw chat",
         "aw validate-spec-structure",
         "aw check-alignment",
         // Trailing space (like `standardize.rs`'s `DELETED_COMMAND_PATHS`
@@ -200,7 +204,6 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         // `` `aw issue` `` verbatim).
         "aw iss ",
         "aw issues",
-        "aw chat agents",
         "aw handoff",
         "aw takeoff",
         "aw platform",
@@ -233,6 +236,10 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         // note above re: `templates/cli/mainthread/skills/aw-wi/SKILL.md`).
         // #1277 (epic #1270 R3): `aw td validate` folded into `aw td check`.
         "aw td validate",
+        // #1504: WI authoring is linear; semantic approval belongs only to EC.
+        "aw wi review",
+        "aw wi arbitrate",
+        "aw wi draft review",
     ];
     for doc in docs {
         let Ok(content) = std::fs::read_to_string(&doc) else {
@@ -245,6 +252,33 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
                 doc.display()
             );
         }
+    }
+}
+
+#[test]
+fn wi_crrr_commands_are_removed() {
+    let cmd = Cli::command();
+    let wi = cmd.find_subcommand("wi").expect("wi namespace registered");
+    assert!(wi.find_subcommand("review").is_none());
+    assert!(wi.find_subcommand("arbitrate").is_none());
+    let draft = wi
+        .find_subcommand("draft")
+        .expect("wi draft namespace registered");
+    assert!(draft.find_subcommand("review").is_none());
+
+    for invocation in [
+        vec!["aw", "wi", "review", "1504"],
+        vec!["aw", "wi", "arbitrate", "1504"],
+        vec!["aw", "wi", "draft", "review", "1504"],
+    ] {
+        let error = match Cli::try_parse_from(invocation) {
+            Ok(_) => panic!("retired WI command unexpectedly parsed"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("unrecognized subcommand"),
+            "unexpected parse error: {error}"
+        );
     }
 }
 

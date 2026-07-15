@@ -18,26 +18,21 @@ capability_refs:
 This spec introduces two new primitive vocabulary entries to the Mermaid Plus
 flowchart code generation system: `parse_jsonl_str` and `serialize_jsonl_line`.
 
-`parse_jsonl_str` reads a JSONL string (e.g. the full contents of a channel
-file already loaded into memory) and deserialises each non-empty line via
+`parse_jsonl_str` reads a JSONL string (for example, an event log already
+loaded into memory) and deserialises each non-empty line via
 `serde_json::from_str`, silently dropping malformed lines. Output is
 `Vec<T>` where T is the target struct. This is infallible at the primitive
-level — parse errors per-line are swallowed, matching the existing
-`parse_channel_jsonl` behaviour.
+level — parse errors are isolated to their individual records and skipped.
 
 `serialize_jsonl_line` serialises a single value to a JSON string with a
 trailing newline character, suitable for POSIX-atomic `O_APPEND` writes to a
-JSONL channel file. It is fallible (`serde_json::to_string` returns `Result`)
+JSONL log file. It is fallible (`serde_json::to_string` returns `Result`)
 and the `?` operator propagates `serde_json::Error` to the enclosing function.
 
-Adding these two entries closes the primitive vocabulary gap that blocked a
-future generated implementation of `parse_channel_jsonl` and
-`serialize_message_jsonl` in `apps/agentic-workflow/src/cli/chat_members.rs`.
-The functions still remain tracked hand-written code today because the logic
-generator cannot yet emit anchored multi-function replacements from this
-primitive-bound flowchart shape. That remaining generator gap must close before
-their `HANDWRITE-BEGIN`/`END` markers can be replaced with `CODEGEN-BEGIN`/`END`
-+ `SPEC-REF` annotations.
+These entries are transport-neutral generator vocabulary for any structured
+JSONL record stream. They remain canonical even when an individual consumer is
+removed because Mermaid Plus diagrams can bind their own record type through
+`type_args`.
 
 The PrimitiveKind enum in `flowchart_plus/schema.rs` gains two new variants
 (`ParseJsonlStr`, `SerializeJsonlLine`) and the static `REGISTRY` in
@@ -52,8 +47,8 @@ $id: jsonl-str-primitives#schema
 title: JSONL String Primitive Entries
 description: >
   Schema additions for two new PrimitiveKind variants and their PrimitiveEntry
-  rows in the static REGISTRY. These close the vocabulary gap that blocked
-  parse_channel_jsonl and serialize_message_jsonl from being codegen-driven.
+  rows in the static REGISTRY. They support generated parsing and serialization
+  for typed JSONL record streams without coupling the vocabulary to a transport.
 
 definitions:
   ParseJsonlStrEntry:
@@ -113,7 +108,7 @@ definitions:
           - ParseJsonlStr
           - SerializeJsonlLine
 ```
-## Logic: parse_channel_jsonl and serialize_message_jsonl
+## Logic: parse and serialize JSONL records
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
@@ -130,24 +125,24 @@ nodes:
     primitive: parse_jsonl_str
     inputs:
       content: content
-    output_binding: messages
+    output_binding: records
     type_args:
-      T: ChannelMessage
+      T: EventRecord
   parse_done:
     kind: terminal
-    label: "Return Vec<ChannelMessage>"
+    label: "Return Vec<EventRecord>"
   serialize_start:
     kind: start
     label: "Begin"
   serialize_line:
     kind: process
-    label: "serialize_jsonl_line(msg)"
+    label: "serialize_jsonl_line(record)"
     primitive: serialize_jsonl_line
     inputs:
-      value: msg
+      value: record
     output_binding: line
     type_args:
-      T: ChannelMessage
+      T: EventRecord
   serialize_done:
     kind: terminal
     label: "Return line: String"
@@ -162,10 +157,10 @@ edges:
     to: serialize_done
 ---
 flowchart TD
-    start([Begin]) --> parse_lines["parse_jsonl_str(content)\nprimitive: parse_jsonl_str\noutput: messages: Vec<ChannelMessage>"]
-    parse_lines --> parse_done([Return Vec<ChannelMessage>])
+    start([Begin]) --> parse_lines["parse_jsonl_str(content)\nprimitive: parse_jsonl_str\noutput: records: Vec<EventRecord>"]
+    parse_lines --> parse_done([Return Vec<EventRecord>])
 
-    serialize_start([Begin]) --> serialize_line["serialize_jsonl_line(msg)\nprimitive: serialize_jsonl_line\noutput: line: String"]
+    serialize_start([Begin]) --> serialize_line["serialize_jsonl_line(record)\nprimitive: serialize_jsonl_line\noutput: line: String"]
     serialize_line --> serialize_done([Return line: String])
 ```
 ## Tests: primitive registry coverage
@@ -223,9 +218,8 @@ tests:
     name: test_registry_has_seventeen_entries
     kind: unit
     description: >
-      REGISTRY has exactly 17 entries: 15 from the previous registry
-      (score-chat-jsonl-migration bootstrap) plus 2 new entries
-      (parse_jsonl_str, serialize_jsonl_line).
+      REGISTRY has exactly 17 canonical entries, including parse_jsonl_str and
+      serialize_jsonl_line.
     setup:
       import: crate::generate::generators::primitive_registry
     assertions:
@@ -260,18 +254,6 @@ changes:
       T2 (test_lookup_serialize_jsonl_line_returns_entry), and T3
       (test_registry_has_seventeen_entries) in the existing tests module.
 
-  - path: apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    description: >
-      Append a Logic: parse_channel_jsonl block with a primitive-bound flowchart
-      referencing primitive: parse_jsonl_str and type_arg T: ChannelMessage.
-      Append a Logic: serialize_message_jsonl block referencing primitive:
-      serialize_jsonl_line and type_arg T: ChannelMessage. Update the changes
-      section to record that the HANDWRITE-BEGIN/END markers are replaced by
-      CODEGEN-BEGIN/END + SPEC-REF annotations after running aw td gen-code.
-
   - path: apps/agentic-workflow/tech-design/surface/specs/mermaid-plus-primitive-vocabulary.md
     action: modify
     section: schema
@@ -283,15 +265,6 @@ changes:
       Add full PrimitiveEntry rows for both new primitives in the serde
       category x-entries block.
 
-  - path: apps/agentic-workflow/src/cli/chat_members.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    description: >
-      Keep parse_channel_jsonl and serialize_message_jsonl as tracked
-      hand-written logic until the logic generator can emit anchored
-      multi-function replacements for primitive-bound flowcharts. A stale
-      unattached CODEGEN start() skeleton must not claim this section.
   - action: annotate
     section: unit-test
     impl_mode: hand-written
@@ -308,6 +281,6 @@ changes:
 
 - [schema] `serialize_jsonl_line` correctly has `fallible: true` and the emit template uses `format!("{}\n", serde_json::to_string(&{value})?)` — semantically equivalent to the R4 formulation and unambiguous for codegen.
 - [schema] `parse_jsonl_str` emit template correctly chains `.lines()`, blank-line filter, and `.filter_map(...ok())` into `Vec<{T}>` — matches the infallible contract.
-- [changes] `chat_members.rs` entry records the current remaining generator gap as `impl_mode: hand-written`; the primitive vocabulary is ready, but the function-anchored CODEGEN swap is still blocked by logic generator routing.
+- [changes] The primitive registry and vocabulary spec remain the canonical owners of the transport-neutral JSONL entries.
 - [tests] T1–T3 cover registration, fallibility flag, output_type, and template content for both primitives plus the registry-size assertion bump to 17 — sufficient for R9/R10 gate.
-- [logic] Two-flow Mermaid Plus diagram correctly encodes primitive-bound nodes with `type_args: T: ChannelMessage` for both functions, satisfying R5 and R6.
+- [logic] Two-flow Mermaid Plus diagram correctly encodes primitive-bound nodes with `type_args: T: EventRecord` for both operations.

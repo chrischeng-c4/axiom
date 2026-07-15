@@ -4,10 +4,10 @@ fill_sections: [overview, schema, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "Config and platform TDs define AW Core client boundary behavior."
+    rationale: "Config and platform TDs support the agent-first CLI project boundary."
 ---
 
 # Platform Sync Config Types

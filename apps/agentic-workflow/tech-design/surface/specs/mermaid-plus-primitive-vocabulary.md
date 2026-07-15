@@ -35,11 +35,11 @@ definitions:
       - write_file
       - append_file
       - path_exists
-      # JSONL stream IO + subprocess (added by score-chat-jsonl-migration self-bootstrap)
+      # Generic JSONL stream IO + subprocess primitives
       - parse_jsonl_stream
       - append_line_atomic
       - run_subprocess
-      # JSONL string variants (added by enhancement-swap-handwrite-codegen-on-parse-channel-jsonl-seri):
+      # Generic JSONL string variants:
       # parse_jsonl_str takes &str (in-memory); serialize_jsonl_line returns String (no file write).
       - parse_jsonl_str
       - serialize_jsonl_line

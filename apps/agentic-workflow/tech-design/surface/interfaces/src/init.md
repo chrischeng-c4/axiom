@@ -71,8 +71,6 @@ const SKILL_CB_CLAIM: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-cb-claim/SKILL.md");
 const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
-const SKILL_CHAT_LISTEN: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-chat-listen/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
 const SKILL_GUARD: &str = include_str!("../../templates/cli/mainthread/skills/aw-guard/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
@@ -101,9 +99,6 @@ const AGENT_AW_HW_FILLER: &str =
 // Claude Code settings.json template
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R9
 const SETTINGS_JSON_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/settings.json");
-
-// CLAUDE.md Template for target projects
-const CLAUDE_TEMPLATE: &str = include_str!("../../templates/cli/mainthread/CLAUDE.md.tmpl");
 
 /// Arguments for `aw new`.
 ///
@@ -811,16 +806,8 @@ fn run_fresh_install(
     // Install system files
     install_system_files(project_root, sdd_dir, claude_dir)?;
 
-    // Generate CLAUDE.md and AGENTS.md with project context (issue #984: both
-    // root docs project from the same template + shared whitelist).
-    generate_claude_md(project_root, sdd_dir)?;
-    generate_agents_md(project_root)?;
-    // Regenerate the repo-root README's Projects table when opted in
-    // (issue #985; no-op when README.md is absent or has no markers).
-    update_readme_projects_table(project_root)?;
-    // Regenerate the repo-root CONTRIBUTING's trait table when opted in
-    // (issue #1077; no-op when CONTRIBUTING.md is absent or has no markers).
-    update_contributing_trait_table(project_root)?;
+    // The public `aw meta` registry is the sole META-doc producer.
+    crate::cli::meta::sync_repository_product_docs(project_root)?;
 
     Ok(())
 }
@@ -899,16 +886,8 @@ fn run_update(project_root: &Path, sdd_dir: &Path, claude_dir: &Path, force: boo
     // Install/update system files
     install_system_files(project_root, sdd_dir, claude_dir)?;
 
-    // Regenerate CLAUDE.md and AGENTS.md with project context (issue #984:
-    // both root docs project from the same template + shared whitelist).
-    generate_claude_md(project_root, sdd_dir)?;
-    generate_agents_md(project_root)?;
-    // Regenerate the repo-root README's Projects table when opted in
-    // (issue #985; no-op when README.md is absent or has no markers).
-    update_readme_projects_table(project_root)?;
-    // Regenerate the repo-root CONTRIBUTING's trait table when opted in
-    // (issue #1077; no-op when CONTRIBUTING.md is absent or has no markers).
-    update_contributing_trait_table(project_root)?;
+    // The public `aw meta` registry is the sole META-doc producer.
+    crate::cli::meta::sync_repository_product_docs(project_root)?;
 
     // Clean up legacy .version file (version now lives in config.toml)
     let legacy_version_file = sdd_dir.join(".version");
@@ -962,254 +941,6 @@ fn install_system_files(project_root: &Path, _sdd_dir: &Path, claude_dir: &Path)
     println!("{}", "🐚 Installing shell completions...".cyan());
     install_shell_completions()?;
 
-    Ok(())
-}
-
-// Score section markers (must match templates/mainthread/CLAUDE.md.tmpl)
-const GENESIS_START_MARKER: &str = "<!-- aw:start -->";
-const GENESIS_END_MARKER: &str = "<!-- aw:end -->";
-
-// Split the raw CLAUDE.md template into (before, `aw:start`..`aw:end`
-// section, after) around the genesis markers, so both the section-only and
-// whole-document projections below slice at exactly the same offsets.
-fn split_claude_template() -> (&'static str, &'static str, &'static str) {
-    let start = CLAUDE_TEMPLATE.find(GENESIS_START_MARKER).unwrap_or(0);
-    let end = CLAUDE_TEMPLATE
-        .find(GENESIS_END_MARKER)
-        .map(|i| i + GENESIS_END_MARKER.len())
-        .unwrap_or(CLAUDE_TEMPLATE.len());
-    (
-        &CLAUDE_TEMPLATE[..start],
-        &CLAUDE_TEMPLATE[start..end],
-        &CLAUDE_TEMPLATE[end..],
-    )
-}
-
-// Extract the SDD section from the template (between markers) and render its
-// fine-grained generated CLI tables (issue #985, init-projector slice 2/3).
-// Rendering happens here before any document upsert sees the section text, so
-// fresh and updated root docs use the same generated CLI tables.
-fn get_sdd_section() -> String {
-    let (_, section, _) = split_claude_template();
-    doc_mirror::render_cli_tables(section)
-}
-
-// The full CLAUDE.md document with its CLI tables rendered, for the
-// fresh-install path (no CLAUDE.md exists yet). The raw `CLAUDE_TEMPLATE`
-// constant is NOT a valid substitute once `get_sdd_section` performs real
-// rendering, since the raw template still carries unrendered markers/seed rows
-// (issue #985 fresh-install regression).
-fn rendered_claude_doc() -> String {
-    let (before, section, after) = split_claude_template();
-    format!(
-        "{}{}{}",
-        before,
-        doc_mirror::render_cli_tables(section),
-        after
-    )
-}
-
-// Remove old SDD sections (without markers) from content
-fn remove_old_sdd_sections(content: &str) -> String {
-    let mut result = content.to_string();
-
-    // Pattern 1: "## SDD Workflow" section (old format)
-    if let Some(start) = result.find("## SDD Workflow") {
-        // Find the next ## heading or end of file
-        let after_start = &result[start + 18..]; // skip "## SDD Workflow"
-        if let Some(next_heading) = after_start.find("\n## ") {
-            let end = start + 18 + next_heading + 1; // +1 to keep the newline before next heading
-            result = format!("{}{}", &result[..start], &result[end..]);
-        } else {
-            // No next heading - remove to end
-            result = result[..start].trim_end().to_string();
-        }
-    }
-
-    // Pattern 2: "## File Structure" section with genesis paths (old format)
-    if let Some(start) = result.find("## File Structure") {
-        let section_content = &result[start..];
-        // Only remove if it contains genesis-specific content
-        if section_content.contains("cclab/project.md")
-            || section_content.contains(".aw/tech-design/")
-        {
-            let after_start = &result[start + 17..]; // skip "## File Structure"
-            if let Some(next_heading) = after_start.find("\n## ") {
-                let end = start + 17 + next_heading + 1;
-                result = format!("{}{}", &result[..start], &result[end..]);
-            } else if let Some(next_heading) = after_start.find("\n# ") {
-                let end = start + 17 + next_heading + 1;
-                result = format!("{}{}", &result[..start], &result[end..]);
-            } else {
-                result = result[..start].trim_end().to_string();
-            }
-        }
-    }
-
-    // Clean up multiple consecutive newlines
-    while result.contains("\n\n\n") {
-        result = result.replace("\n\n\n", "\n\n");
-    }
-
-    result
-}
-
-// Outcome of upserting a managed `aw:start`/`aw:end` section into a root doc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UpsertOutcome {
-    Created,
-    Updated,
-    UpToDate,
-}
-
-// Compute the new full-file content for `existing_content` after upserting
-// `section` between the `aw:start`/`aw:end` markers (or inserting it per the
-// no-markers fallback rules). Shared by the CLAUDE.md and AGENTS.md
-// projections (issue #984) so both root docs upsert identically.
-fn compute_upserted_doc(existing_content: &str, section: &str) -> String {
-    // First, remove old format sections (without markers)
-    let cleaned_content = remove_old_sdd_sections(existing_content);
-
-    if let (Some(start), Some(end)) = (
-        cleaned_content.find(GENESIS_START_MARKER),
-        cleaned_content.find(GENESIS_END_MARKER),
-    ) {
-        // Markers exist - replace content between them
-        let before = &cleaned_content[..start];
-        let after = &cleaned_content[end + GENESIS_END_MARKER.len()..];
-        format!("{}{}{}", before, section, after)
-    } else if let Some(first_newline) = cleaned_content.find('\n') {
-        let first_line = &cleaned_content[..first_newline];
-        if first_line.starts_with('#') {
-            // Insert after the first heading
-            let after_heading = &cleaned_content[first_newline..];
-            format!("{}\n\n{}{}", first_line, section, after_heading)
-        } else {
-            // Prepend at top
-            format!("{}\n\n{}", section, cleaned_content)
-        }
-    } else {
-        format!("{}\n\n{}", section, cleaned_content)
-    }
-}
-
-// Generate-or-update `doc_path` with `section` upserted between the
-// `aw:start`/`aw:end` markers, using `full_doc_if_missing` when the file does
-// not exist yet. Shared by the CLAUDE.md and AGENTS.md projections (issue
-// #984) so the two root docs can never upsert differently.
-fn upsert_managed_section(
-    doc_path: &Path,
-    section: &str,
-    full_doc_if_missing: &str,
-    label: &str,
-) -> Result<UpsertOutcome> {
-    if doc_path.exists() {
-        let existing_content = std::fs::read_to_string(doc_path)?;
-        let new_content = compute_upserted_doc(&existing_content, section);
-
-        if new_content.trim() == existing_content.trim() {
-            println!("   {} {} (up to date)", "✓".green(), label);
-            Ok(UpsertOutcome::UpToDate)
-        } else {
-            std::fs::write(doc_path, new_content)?;
-            println!("   {} {} (updated)", "✓".green(), label);
-            Ok(UpsertOutcome::Updated)
-        }
-    } else {
-        std::fs::write(doc_path, full_doc_if_missing)?;
-        println!("   {} {} (created)", "✓".green(), label);
-        Ok(UpsertOutcome::Created)
-    }
-}
-
-// Generate or update CLAUDE.md with SDD section (upsert mode)
-fn generate_claude_md(project_root: &Path, _sdd_dir: &Path) -> Result<()> {
-    let claude_md_path = project_root.join("CLAUDE.md");
-    let sdd_section = get_sdd_section();
-    let full_doc_if_missing = rendered_claude_doc();
-    upsert_managed_section(
-        &claude_md_path,
-        &sdd_section,
-        &full_doc_if_missing,
-        "CLAUDE.md",
-    )?;
-    Ok(())
-}
-
-// AGENTS.md's managed `aw:start` section is CLAUDE.md's section plus the
-// fixed Codex-only slash-command translation paragraph — see
-// `doc_mirror::agents_block_from_claude_block` (issue #984, the one shared
-// whitelist consumed by both this projection and `root_doc_mirror_test`).
-fn get_agents_sdd_section() -> String {
-    doc_mirror::agents_block_from_claude_block(&get_sdd_section())
-}
-
-// Generate or update AGENTS.md with the same SDD-managed section as
-// CLAUDE.md, plus the Codex-only insertions (issue #984). AGENTS.md's
-// `## Codex Operational Rules` section sits OUTSIDE the `aw:start` block and
-// is hand-authored — when AGENTS.md does not exist yet, seed only the title
-// and the managed section, never inventing that section's content.
-fn generate_agents_md(project_root: &Path) -> Result<()> {
-    let agents_md_path = project_root.join("AGENTS.md");
-    let sdd_section = get_agents_sdd_section();
-    let full_doc_if_missing = format!("{}\n\n{}\n", doc_mirror::AGENTS_TITLE, sdd_section);
-    upsert_managed_section(
-        &agents_md_path,
-        &sdd_section,
-        &full_doc_if_missing,
-        "AGENTS.md",
-    )?;
-    Ok(())
-}
-
-// Regenerate the repo-root README.md's generated Projects table between
-// `<!-- aw:projects-table:start/end -->` markers from `aw.toml`
-// (issue #985, init-projector slice 2/3). Only touches README.md when it
-// exists AND already carries the markers: the table is opt-in per document
-// (project scaffolds created via `aw new` have no README yet, and existing
-// non-marker READMEs are left alone rather than force-inserting a table
-// nobody asked for).
-fn update_readme_projects_table(project_root: &Path) -> Result<()> {
-    let readme_path = project_root.join("README.md");
-    let Ok(existing) = std::fs::read_to_string(&readme_path) else {
-        return Ok(());
-    };
-    if !existing.contains(doc_mirror::PROJECTS_TABLE_START) {
-        return Ok(());
-    }
-    let updated = doc_mirror::upsert_projects_table(project_root, &existing)?;
-    if updated.trim() == existing.trim() {
-        println!("   {} README.md (Projects table up to date)", "✓".green());
-    } else {
-        std::fs::write(&readme_path, updated)?;
-        println!("   {} README.md (Projects table updated)", "✓".green());
-    }
-    Ok(())
-}
-
-// Regenerate the repo-root CONTRIBUTING.md's generated trait table between
-// `<!-- aw:trait-table:start/end -->` markers from `doc_mirror::TRAITS` (issue
-// #1077, archetype-as-traits slice 1/3). Only touches CONTRIBUTING.md when it
-// exists AND already carries the markers: the table is opt-in per document,
-// mirroring [`update_readme_projects_table`]'s contract exactly.
-fn update_contributing_trait_table(project_root: &Path) -> Result<()> {
-    let contributing_path = project_root.join("CONTRIBUTING.md");
-    let Ok(existing) = std::fs::read_to_string(&contributing_path) else {
-        return Ok(());
-    };
-    if !existing.contains(doc_mirror::TRAIT_TABLE_START) {
-        return Ok(());
-    }
-    let updated = doc_mirror::upsert_trait_table(&existing);
-    if updated.trim() == existing.trim() {
-        println!(
-            "   {} CONTRIBUTING.md (trait table up to date)",
-            "✓".green()
-        );
-    } else {
-        std::fs::write(&contributing_path, updated)?;
-        println!("   {} CONTRIBUTING.md (trait table updated)", "✓".green());
-    }
     Ok(())
 }
 
@@ -1282,7 +1013,6 @@ fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
         ("aw-cb-fill", SKILL_CB_FILL),
         ("aw-cb-claim", SKILL_CB_CLAIM),
         ("aw-build-release", SKILL_BUILD_RELEASE),
-        ("aw-chat-listen", SKILL_CHAT_LISTEN),
         ("aw-health", SKILL_HEALTH),
         ("aw-guard", SKILL_GUARD),
     ]
@@ -1389,6 +1119,9 @@ fn deprecated_skill_names() -> Vec<&'static str> {
         "score-build-release",
         "score-chat-listen",
         "score-fillback-main-specs",
+        // #1503: the cross-checkout chat transport and its listener skill are
+        // retired without a compatibility alias or subagent replacement.
+        "aw-chat-listen",
         // Removed: `aw td merge` no longer exists (LINEAR lifecycle;
         // `aw td code-check` is the terminal step).
         "aw-merge",
@@ -2093,7 +1826,11 @@ mod tests {
         assert!(outcome.assets_installed);
         assert!(target.join("aw.toml").exists());
         assert!(target.join("tech-design").is_dir());
+        assert!(target.join("AGENTS.md").exists());
         assert!(target.join("CLAUDE.md").exists());
+        assert!(target.join("README.md").exists());
+        assert!(target.join("CONTRIBUTING.md").exists());
+        assert!(target.join("CAPABILITIES.md").exists());
         assert!(
             target.join(".claude/skills/aw-health/SKILL.md").exists(),
             "aw new should install current projected skills"
@@ -2284,6 +2021,29 @@ auth_method = "cli"
             !skills_dir.join("aw-standardize").exists(),
             "removed aw-standardize skill should be pruned"
         );
+    }
+
+    // #1503: both skill-tree installers share the same deprecated-skill
+    // pruning path, so a previous aw-chat-listen install cannot survive.
+    #[test]
+    fn test_install_skills_prunes_aw_chat_listen() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            let retired = skills_dir.join("aw-chat-listen");
+            fs::create_dir_all(&retired).unwrap();
+            fs::write(retired.join("SKILL.md"), "# retired chat listener").unwrap();
+
+            install(&skills_dir).unwrap();
+
+            assert!(
+                !retired.exists(),
+                "removed aw-chat-listen skill should be pruned"
+            );
+        }
     }
 
     #[test]

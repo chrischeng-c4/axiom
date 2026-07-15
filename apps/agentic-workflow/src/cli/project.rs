@@ -846,7 +846,7 @@ fn resolve_health_project_name(project_root: &std::path::Path, requested: &str) 
 ///   an advisory note like the other axes and never routes `next.command` to
 ///   `--verify-ec` (see `apply_ec_to_report` and `build_claim_closure_report`).
 pub(crate) fn project_health_caps_ec_only(project: &str) -> bool {
-    matches!(project, "agentic-workflow" | "aw")
+    crate::cli::run::is_self_hosting_project(project)
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -1899,18 +1899,21 @@ const HEALTH_COMPACT_PREVIEW_LIMIT: usize = 5;
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn project_health_compact_summary(report: &ProjectHealthReport) -> serde_json::Value {
-    serde_json::json!({
-        "schema_version": "aw.cli.v1",
-        "event": "result",
-        "status": project_health_loop_status(report),
-        "action": "health",
-        "project": &report.project,
-        "completion": project_health_compact_completion(report),
-        "next": project_health_next(report),
-        "readiness": project_health_compact_readiness(report),
-        "axes": project_health_axes_summary(report),
-        "blockers": project_health_compact_blockers(report),
-    })
+    add_self_hosting_policy_fields(
+        report,
+        serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "event": "result",
+            "status": project_health_loop_status(report),
+            "action": "health",
+            "project": &report.project,
+            "completion": project_health_compact_completion(report),
+            "next": project_health_next(report),
+            "readiness": project_health_compact_readiness(report),
+            "axes": project_health_axes_summary(report),
+            "blockers": project_health_compact_blockers(report),
+        }),
+    )
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -2064,18 +2067,49 @@ pub fn project_health_section_summary_with_payload_path(
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value {
-    serde_json::json!({
-        "schema_version": "aw.cli.v1",
-        "event": "result",
-        "status": project_health_loop_status(report),
-        "action": "health",
-        "project": &report.project,
-        "completion": project_health_completion(report),
-        "next": project_health_next(report),
-        "readiness": project_health_readiness_summary(report),
-        "axes": project_health_axes_summary(report),
-        "blockers": project_health_compact_blockers(report),
-    })
+    add_self_hosting_policy_fields(
+        report,
+        serde_json::json!({
+            "schema_version": "aw.cli.v1",
+            "event": "result",
+            "status": project_health_loop_status(report),
+            "action": "health",
+            "project": &report.project,
+            "completion": project_health_completion(report),
+            "next": project_health_next(report),
+            "readiness": project_health_readiness_summary(report),
+            "axes": project_health_axes_summary(report),
+            "blockers": project_health_compact_blockers(report),
+        }),
+    )
+}
+
+/// Self-AW health is a read-only policy report. Expose its gate partition in
+/// the compact and full envelopes so an agent cannot mistake advisory
+/// implementation coverage for an admission requirement to run AW itself.
+fn add_self_hosting_policy_fields(
+    report: &ProjectHealthReport,
+    mut summary: serde_json::Value,
+) -> serde_json::Value {
+    if !project_health_caps_ec_only(&report.project) {
+        return summary;
+    }
+    let object = summary
+        .as_object_mut()
+        .expect("health summary must serialize as an object");
+    object.insert(
+        "policy_mode".to_string(),
+        serde_json::Value::String(crate::cli::run::SELF_HOSTING_POLICY_MODE.to_string()),
+    );
+    object.insert(
+        "hard_gates".to_string(),
+        serde_json::json!(crate::cli::run::self_hosting_hard_gates()),
+    );
+    object.insert(
+        "advisory_axes".to_string(),
+        serde_json::json!(crate::cli::run::self_hosting_advisory_axes()),
+    );
+    summary
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -2717,10 +2751,14 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         ) {
             return None;
         }
-        return Some(format!(
-            "aw capability run --project {} --non-interactive --max-ticks 1",
-            report.project
-        ));
+        return Some(if caps_ec_only {
+            format!("aw capability check --project {} --verify", report.project)
+        } else {
+            format!(
+                "aw capability run --project {} --non-interactive --max-ticks 1",
+                report.project
+            )
+        });
     }
     if caps_ec_only {
         return report

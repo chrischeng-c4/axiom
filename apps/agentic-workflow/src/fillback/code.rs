@@ -2319,18 +2319,18 @@ enum InternalEnum {
         fs::create_dir_all(&output_dir).unwrap();
 
         // Two files with the same basename in different subdirs.
-        let ui_dir = project_root.join("apps/agentic-workflow/src/ui");
-        let viewer_dir = project_root.join("apps/agentic-workflow/src/ui/viewer");
+        let ui_dir = project_root.join("apps/demo/src/ui");
+        let panel_dir = ui_dir.join("panel");
         fs::create_dir_all(&ui_dir).unwrap();
-        fs::create_dir_all(&viewer_dir).unwrap();
+        fs::create_dir_all(&panel_dir).unwrap();
         fs::write(
             ui_dir.join("mod.rs"),
             "pub fn ui_root() {}\npub struct UiRoot;\n",
         )
         .unwrap();
         fs::write(
-            viewer_dir.join("mod.rs"),
-            "pub fn viewer_mod() {}\npub struct ViewerMod;\n",
+            panel_dir.join("mod.rs"),
+            "pub fn panel_mod() {}\npub struct PanelMod;\n",
         )
         .unwrap();
 
@@ -2345,24 +2345,24 @@ enum InternalEnum {
             .unwrap();
 
         // Both subdirs must be present, mirrored under output_dir.
-        let ui_spec = output_dir.join("apps/agentic-workflow/src/ui/mod.md");
-        let viewer_spec = output_dir.join("apps/agentic-workflow/src/ui/viewer/mod.md");
+        let ui_spec = output_dir.join("apps/demo/src/ui/mod.md");
+        let panel_spec = output_dir.join("apps/demo/src/ui/panel/mod.md");
         assert!(
             ui_spec.exists(),
             "ui/mod.md should exist; created={:?}",
             created
         );
         assert!(
-            viewer_spec.exists(),
-            "ui/viewer/mod.md should exist; created={:?}",
+            panel_spec.exists(),
+            "ui/panel/mod.md should exist; created={:?}",
             created
         );
         // The two files must be distinct (no flatten-overwrite).
         let a = fs::read_to_string(&ui_spec).unwrap();
-        let b = fs::read_to_string(&viewer_spec).unwrap();
+        let b = fs::read_to_string(&panel_spec).unwrap();
         assert_ne!(a, b, "mirrored specs must contain distinct content");
         assert!(a.contains("UiRoot") || a.contains("ui_root"));
-        assert!(b.contains("ViewerMod") || b.contains("viewer_mod"));
+        assert!(b.contains("PanelMod") || b.contains("panel_mod"));
     }
 
     /// #1313: `project_root_from_tech_design_output` must recover the

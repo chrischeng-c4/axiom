@@ -115,7 +115,16 @@ pub fn run_apply(
     project_root: &Path,
     dry_run: bool,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, project_root, dry_run, None, None, None, false)
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        None,
+        None,
+        None,
+        false,
+        false,
+    )
 }
 
 /// Run codegen apply for a spec file, skipping change entries whose targets
@@ -138,6 +147,7 @@ pub fn run_apply_scoped(
         None,
         None,
         false,
+        false,
     )
 }
 
@@ -159,6 +169,7 @@ pub fn run_apply_scoped_sections(
         Some(allowed_sections),
         None,
         false,
+        false,
     )
 }
 
@@ -176,6 +187,7 @@ pub fn run_apply_scoped_targets(
         Some(allowed_target_roots),
         None,
         None,
+        false,
         false,
     )
 }
@@ -198,6 +210,37 @@ pub fn run_apply_scoped_targets_quiet(
         Some(allowed_target_roots),
         None,
         None,
+        true,
+        false,
+    )
+}
+
+/// Replay only the supplied target files and suppress project-wide sibling,
+/// README, and marker-inventory post-passes. Terminal code-check remediation
+/// uses this to repair the exact claim set it just audited without widening
+/// the write scope.
+// @spec apps/agentic-workflow/tech-design/core/generate/apply.md#source
+pub fn run_apply_terminal_targets(
+    spec_path: &Path,
+    project_root: &Path,
+    dry_run: bool,
+    targets: &[PathBuf],
+) -> crate::generate::Result<ApplyReport> {
+    validate_exact_apply_path(project_root, spec_path, true)
+        .and_then(|_| {
+            targets
+                .iter()
+                .try_for_each(|target| validate_exact_apply_path(project_root, target, false))
+        })
+        .map_err(crate::generate::GenerateError::InvalidValue)?;
+    run_apply_inner(
+        spec_path,
+        project_root,
+        dry_run,
+        Some(targets),
+        None,
+        None,
+        false,
         true,
     )
 }
@@ -226,6 +269,7 @@ pub fn run_apply_exact_source_target(
         Some(&["source", "rust-source-unit", "text-source-unit"]),
         Some(exact_target),
         false,
+        true,
     )
 }
 
@@ -316,7 +360,7 @@ pub fn run_apply_worktree(
     spec_path: &Path,
     worktree: &Path,
 ) -> crate::generate::Result<ApplyReport> {
-    run_apply_inner(spec_path, worktree, false, None, None, None, false)
+    run_apply_inner(spec_path, worktree, false, None, None, None, false, false)
 }
 
 fn run_apply_inner(
@@ -327,6 +371,7 @@ fn run_apply_inner(
     allowed_sections: Option<&[&str]>,
     exact_target: Option<&Path>,
     quiet: bool,
+    suppress_global_postpasses: bool,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
     use crate::generate::marker::{parse_codegen_blocks, replace_codegen_block};
@@ -863,7 +908,7 @@ fn run_apply_inner(
                     &mermaid_blocks,
                     &spec_content,
                     td_ast.as_ref(),
-                ),
+                )?,
             }
         };
 
@@ -1117,7 +1162,7 @@ fn run_apply_inner(
     // Post-pass: dedupe `use` statements across CODEGEN blocks in the same file.
     // Each generator emits imports inside its own block; at module scope that
     // produces E0252 (name defined multiple times). Keep the first occurrence.
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         let mut unique_paths: std::collections::BTreeSet<PathBuf> =
             std::collections::BTreeSet::new();
         for f in files.iter().filter(|file| file.processed) {
@@ -1139,7 +1184,7 @@ fn run_apply_inner(
     // update two CODEGEN blocks — `mamba-mod-decls` at crate root with
     // `pub mod X;` and `mamba-register-body` inside the register() body with
     // `X::register(r);`.
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         let generated_paths: Vec<PathBuf> = files
             .iter()
             .filter(|f| f.updated)
@@ -1154,7 +1199,7 @@ fn run_apply_inner(
     }
 
     // R5: Write the ephemeral codegen marker inventory with all emitted SPEC-REF markers
-    if !dry_run && exact_target.is_none() {
+    if !dry_run && exact_target.is_none() && !suppress_global_postpasses {
         write_markers_yaml(root, &files)?;
     }
 
@@ -1871,6 +1916,11 @@ pub(crate) struct ChangeEntry {
     /// full braced body. The CODEGEN block is then inserted at the
     /// position of the first removed item.
     pub(crate) replaces: Vec<String>,
+    /// Canonical generated-unit IDs owned by this target. Schema units use
+    /// `schema:<name>` and top-level CLI command units use `cli:<name>`.
+    /// Empty preserves the legacy single-target whole-section contract;
+    /// multi-target plans must declare an exhaustive `generates:` partition.
+    pub(crate) generates: Vec<String>,
     /// Optional module-facade declaration consumed by the `exports` section
     /// generator. Each entry emits `pub mod <module>;` followed by the listed
     /// `pub use <module>::<symbol>;` re-exports.
@@ -2012,6 +2062,7 @@ fn infer_change_entries_in_dir(
                     section_id: Some(section_id.clone()),
                     impl_mode: ImplMode::Codegen,
                     replaces: Vec::new(),
+                    generates: Vec::new(),
                     exports: Vec::new(),
                     preamble: None,
                     pub_uses: Vec::new(),
@@ -2182,10 +2233,10 @@ pub fn is_all_hand_written(spec_content: &str) -> bool {
 /// entry set immediately before writes. Keeping one predicate prevents the
 /// lifecycle and executor safety boundaries from drifting.
 ///
-/// Until canonical per-unit `generates:` ownership lands (#1634), more than
-/// one selected CODEGEN target for a Schema or CLI section is ambiguous. A
-/// HANDWRITE sibling is not a generated destination and therefore remains a
-/// valid mixed plan.
+/// Schema/CLI plans use stable generated-unit IDs and an exhaustive
+/// `Changes.generates` ownership map. Legacy single-target plans keep their
+/// implicit whole-section ownership; legacy multi-target plans still receive
+/// the deterministic migration diagnostic introduced by #1633.
 /// @spec apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#logic
 pub(crate) fn preflight_generation_plan(
     spec_content: &str,
@@ -2251,6 +2302,32 @@ fn validate_ambiguous_generation_plan(
     exact_target: Option<&Path>,
     rerun_command: Option<&str>,
 ) -> crate::generate::Result<()> {
+    let next_command = rerun_command.unwrap_or("aw td gen");
+    validate_generated_unit_ownership_syntax(spec_content, next_command)?;
+
+    // A canonical owner must resolve to one generated section and must itself
+    // be a CODEGEN destination. Reject malformed ownership declarations even
+    // when another filter would otherwise hide the entry from a section loop.
+    for entry in entries.iter().filter(|entry| !entry.generates.is_empty()) {
+        let section = entry.section_id.as_deref().unwrap_or("unresolved");
+        if !matches!(entry.action.as_str(), "create" | "modify")
+            || !matches!(section, "schema" | "cli")
+            || entry.impl_mode != ImplMode::Codegen
+        {
+            return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                section: section.to_string(),
+                reason: "owner_unresolved".to_string(),
+                unit_ids: entry.generates.clone(),
+                targets: vec![entry.path.clone()],
+                remediation: format!(
+                    "`generates:` is valid only on a create/modify CODEGEN target with `section: schema` or `section: cli`; fix `{}` and rerun `{next_command}`",
+                    entry.path
+                ),
+                next_command: next_command.to_string(),
+            });
+        }
+    }
+
     for section in ["schema", "cli"] {
         let section_present = entries
             .iter()
@@ -2267,7 +2344,7 @@ fn validate_ambiguous_generation_plan(
             continue;
         }
 
-        let targets: std::collections::BTreeSet<String> = entries
+        let targets: Vec<&ChangeEntry> = entries
             .iter()
             .filter(|entry| {
                 matches!(entry.action.as_str(), "create" | "modify")
@@ -2287,15 +2364,48 @@ fn validate_ambiguous_generation_plan(
                             .any(|allowed_root| root.join(&entry.path).starts_with(allowed_root))
                     })
             })
-            .map(|entry| entry.path.clone())
             .collect();
+        let target_paths: std::collections::BTreeSet<String> =
+            targets.iter().map(|entry| entry.path.clone()).collect();
+        let has_explicit_ownership = targets.iter().any(|entry| !entry.generates.is_empty());
 
-        if targets.len() > 1 {
+        if has_explicit_ownership {
+            let mut target_counts = std::collections::BTreeMap::<String, usize>::new();
+            for entry in &targets {
+                *target_counts.entry(entry.path.clone()).or_default() += 1;
+            }
+            let duplicate_targets = target_counts
+                .into_iter()
+                .filter(|(_, count)| *count > 1)
+                .map(|(path, _)| path)
+                .collect::<Vec<_>>();
+            if !duplicate_targets.is_empty() {
+                let duplicate_units = targets
+                    .iter()
+                    .filter(|entry| duplicate_targets.contains(&entry.path))
+                    .flat_map(|entry| entry.generates.iter().cloned())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                    section: section.to_string(),
+                    reason: "duplicate_target_owner".to_string(),
+                    unit_ids: duplicate_units,
+                    targets: duplicate_targets,
+                    remediation: format!(
+                        "declare each `{section}` target path exactly once and combine all of its unit IDs into that entry's `generates:` list, then rerun `{next_command}`"
+                    ),
+                    next_command: next_command.to_string(),
+                });
+            }
+        }
+
+        if target_paths.len() > 1 && !has_explicit_ownership {
             return Err(crate::generate::GenerateError::AmbiguousGenerationPlan {
                 section: section.to_string(),
-                targets: targets.into_iter().collect(),
+                targets: target_paths.into_iter().collect(),
                 remediation: format!(
-                    "edit `## Changes` so exactly one `{section}` target uses `impl_mode: codegen` and mark every other `{section}` target `impl_mode: hand-written`, then rerun {}; multiple generated targets require canonical `generates:` unit ownership from WI #1634",
+                    "add an exhaustive canonical `generates: [{section}:<unit>, ...]` list to every `{section}` CODEGEN target (or keep exactly one CODEGEN target and mark siblings hand-written), then rerun {}",
                     rerun_command
                         .map(|command| format!("`{command}`"))
                         .unwrap_or_else(|| "the same `aw td gen` command".to_string())
@@ -2303,6 +2413,286 @@ fn validate_ambiguous_generation_plan(
                 next_command: rerun_command.unwrap_or("aw td gen").to_string(),
             });
         }
+
+        // A single target without `generates` is the backward-compatible
+        // implicit owner of the whole section. Once any target opts into the
+        // exact contract, every selected target must participate.
+        if !has_explicit_ownership {
+            continue;
+        }
+
+        let missing_owner_lists = targets
+            .iter()
+            .filter(|entry| entry.generates.is_empty())
+            .map(|entry| entry.path.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        if !missing_owner_lists.is_empty() {
+            return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                section: section.to_string(),
+                reason: "missing_owner_list".to_string(),
+                unit_ids: Vec::new(),
+                targets: missing_owner_lists.into_iter().collect(),
+                remediation: format!(
+                    "every selected `{section}` CODEGEN target must declare a non-empty canonical `generates:` list; complete the partition and rerun `{next_command}`"
+                ),
+                next_command: next_command.to_string(),
+            });
+        }
+
+        let units = generated_units_for_section(spec_content, section);
+        if units.is_empty() {
+            return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                section: section.to_string(),
+                reason: "unit_inventory_unavailable".to_string(),
+                unit_ids: targets
+                    .iter()
+                    .flat_map(|entry| entry.generates.iter().cloned())
+                    .collect(),
+                targets: target_paths.into_iter().collect(),
+                remediation: format!(
+                    "the typed `{section}` IR exposes no generated units; author a supported typed unit or remove the CODEGEN ownership declaration, then rerun `{next_command}`"
+                ),
+                next_command: next_command.to_string(),
+            });
+        }
+
+        let mut inventory_counts = std::collections::BTreeMap::<String, usize>::new();
+        for unit in &units {
+            *inventory_counts.entry(unit.id.clone()).or_default() += 1;
+        }
+        let duplicate_inventory = inventory_counts
+            .iter()
+            .filter(|(_, count)| **count > 1)
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        if !duplicate_inventory.is_empty() {
+            return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                section: section.to_string(),
+                reason: "duplicate_unit_id".to_string(),
+                unit_ids: duplicate_inventory,
+                targets: target_paths.into_iter().collect(),
+                remediation: format!(
+                    "rename duplicate typed `{section}` units so every stable ID is unique, then rerun `{next_command}`"
+                ),
+                next_command: next_command.to_string(),
+            });
+        }
+
+        let known_ids = inventory_counts
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut owners = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for entry in &targets {
+            let mut local_ids = std::collections::BTreeSet::new();
+            let duplicate_claims = entry
+                .generates
+                .iter()
+                .filter(|id| !local_ids.insert((*id).clone()))
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            if !duplicate_claims.is_empty() {
+                return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                    section: section.to_string(),
+                    reason: "duplicate_owner_claim".to_string(),
+                    unit_ids: duplicate_claims.into_iter().collect(),
+                    targets: vec![entry.path.clone()],
+                    remediation: format!(
+                        "remove duplicate IDs from `{}`'s `generates:` list and rerun `{next_command}`",
+                        entry.path
+                    ),
+                    next_command: next_command.to_string(),
+                });
+            }
+
+            let unknown = entry
+                .generates
+                .iter()
+                .filter(|id| !known_ids.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !unknown.is_empty() {
+                return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                    section: section.to_string(),
+                    reason: "unknown_unit_id".to_string(),
+                    unit_ids: unknown,
+                    targets: vec![entry.path.clone()],
+                    remediation: format!(
+                        "use only stable IDs exposed by the typed `{section}` IR ({}) and rerun `{next_command}`",
+                        known_ids.iter().cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                    next_command: next_command.to_string(),
+                });
+            }
+            for id in &entry.generates {
+                owners
+                    .entry(id.clone())
+                    .or_default()
+                    .push(entry.path.clone());
+            }
+        }
+
+        let missing_units = known_ids
+            .iter()
+            .filter(|id| !owners.contains_key(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_units.is_empty() {
+            return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                section: section.to_string(),
+                reason: "missing_unit_owner".to_string(),
+                unit_ids: missing_units,
+                targets: target_paths.into_iter().collect(),
+                remediation: format!(
+                    "assign every typed `{section}` unit to exactly one target and rerun `{next_command}`"
+                ),
+                next_command: next_command.to_string(),
+            });
+        }
+
+        let multiply_owned = owners
+            .iter()
+            .filter(|(_, paths)| {
+                paths
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    > 1
+            })
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        if !multiply_owned.is_empty() {
+            let mut owner_targets = owners
+                .iter()
+                .filter(|(id, _)| multiply_owned.contains(id))
+                .flat_map(|(_, paths)| paths.iter().cloned())
+                .collect::<Vec<_>>();
+            owner_targets.sort();
+            owner_targets.dedup();
+            return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                section: section.to_string(),
+                reason: "multiply_owned_unit".to_string(),
+                unit_ids: multiply_owned,
+                targets: owner_targets,
+                remediation: format!(
+                    "remove overlapping `{section}` unit claims so every ID has exactly one target, then rerun `{next_command}`"
+                ),
+                next_command: next_command.to_string(),
+            });
+        }
+
+        let unsupported_units = units
+            .iter()
+            .filter(|unit| !unit.supported && owners.contains_key(&unit.id))
+            .map(|unit| unit.id.clone())
+            .collect::<Vec<_>>();
+        let unsupported_targets = targets
+            .iter()
+            .filter(|entry| !is_rust_source(&root.join(&entry.path)))
+            .map(|entry| entry.path.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        if !unsupported_units.is_empty() || !unsupported_targets.is_empty() {
+            let mut affected_units = unsupported_units;
+            if affected_units.is_empty() {
+                affected_units = targets
+                    .iter()
+                    .filter(|entry| unsupported_targets.contains(&entry.path))
+                    .flat_map(|entry| entry.generates.iter().cloned())
+                    .collect();
+                affected_units.sort();
+                affected_units.dedup();
+            }
+            let affected_targets = if unsupported_targets.is_empty() {
+                affected_units
+                    .iter()
+                    .flat_map(|id| owners.get(id).into_iter().flatten().cloned())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect()
+            } else {
+                unsupported_targets.into_iter().collect()
+            };
+            return Err(crate::generate::GenerateError::OwnedGeneratedUnitUnsupported {
+                section: section.to_string(),
+                unit_ids: affected_units,
+                targets: affected_targets,
+                remediation: format!(
+                    "record a concrete generator gap and change the affected target to `impl_mode: hand-written`, or add a generator for the owned `{section}` unit/target language; then rerun `{next_command}`"
+                ),
+                next_command: next_command.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate the wire shape before `extract_change_entries` performs its
+/// backwards-compatible lossy projection. Otherwise an explicit empty,
+/// scalar, or mixed-type `generates` value could disappear and accidentally
+/// regain legacy whole-section ownership.
+fn validate_generated_unit_ownership_syntax(
+    spec_content: &str,
+    next_command: &str,
+) -> crate::generate::Result<()> {
+    let Some(yaml_content) = extract_section_yaml(spec_content, "Changes")
+        .or_else(|| extract_typed_section_yaml(spec_content, "changes"))
+    else {
+        return Ok(());
+    };
+    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&yaml_content) else {
+        return Ok(());
+    };
+    let entries = yaml
+        .get("changes")
+        .and_then(serde_yaml::Value::as_sequence)
+        .or_else(|| yaml.get("files").and_then(serde_yaml::Value::as_sequence))
+        .or_else(|| yaml.as_sequence());
+    let Some(entries) = entries else {
+        return Ok(());
+    };
+
+    for entry in entries {
+        let Some(raw_generates) = entry.get("generates") else {
+            continue;
+        };
+        let values = raw_generates.as_sequence();
+        let valid = values.is_some_and(|values| {
+            !values.is_empty()
+                && values.iter().all(|value| {
+                    value
+                        .as_str()
+                        .is_some_and(|unit_id| !unit_id.trim().is_empty())
+                })
+        });
+        if valid {
+            continue;
+        }
+
+        let section = entry
+            .get("section")
+            .and_then(serde_yaml::Value::as_str)
+            .unwrap_or("unresolved");
+        let target = entry
+            .get("path")
+            .and_then(serde_yaml::Value::as_str)
+            .or_else(|| entry.get("file").and_then(serde_yaml::Value::as_str))
+            .unwrap_or("unresolved");
+        let unit_ids = values
+            .into_iter()
+            .flatten()
+            .filter_map(serde_yaml::Value::as_str)
+            .map(str::to_string)
+            .collect();
+        return Err(crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+            section: section.to_string(),
+            reason: "invalid_owner_list".to_string(),
+            unit_ids,
+            targets: vec![target.to_string()],
+            remediation: format!(
+                "`{target}` must declare `generates:` as a non-empty list of non-empty canonical strings such as `[schema:Widget]` or `[cli:build]`; fix the Changes entry and rerun `{next_command}`"
+            ),
+            next_command: next_command.to_string(),
+        });
     }
     Ok(())
 }
@@ -2472,6 +2862,11 @@ pub(crate) fn should_emit_section_to_entry(
     all_entries: &[ChangeEntry],
     anchors: &[String],
 ) -> bool {
+    // `generates:` is the canonical exact ownership route. Legacy
+    // `replaces:` anchor heuristics must not suppress a validated partition.
+    if !entry.generates.is_empty() {
+        return true;
+    }
     if anchors.is_empty() {
         return true;
     }
@@ -2526,6 +2921,15 @@ pub(crate) fn extract_change_entries(spec_content: &str) -> Vec<ChangeEntry> {
                         .unwrap_or(ImplMode::Codegen);
                     let replaces: Vec<String> = change
                         .get("replaces")
+                        .and_then(|v| v.as_sequence())
+                        .map(|seq| {
+                            seq.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let generates: Vec<String> = change
+                        .get("generates")
                         .and_then(|v| v.as_sequence())
                         .map(|seq| {
                             seq.iter()
@@ -2604,6 +3008,7 @@ pub(crate) fn extract_change_entries(spec_content: &str) -> Vec<ChangeEntry> {
                             .map(|s| s.to_string()),
                         impl_mode,
                         replaces,
+                        generates,
                         exports,
                         preamble,
                         pub_uses,
@@ -4396,6 +4801,7 @@ changes:
             section_id: None,
             impl_mode: ImplMode::HandWritten,
             replaces: vec![],
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -4434,6 +4840,7 @@ changes:
             section_id: None,
             impl_mode: ImplMode::HandWritten,
             replaces: vec![],
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -4458,6 +4865,7 @@ changes:
             section_id: Some("unit-test".to_string()),
             impl_mode: ImplMode::HandWritten,
             replaces: vec![],
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -4490,10 +4898,10 @@ changes:
     #[test]
     fn test_source_template_supports_typescript_targets() {
         for path in [
-            "apps/agentic-workflow/packages/@sdd/ui/src/App.tsx",
-            "apps/agentic-workflow/packages/@sdd/core/src/index.ts",
-            "apps/agentic-workflow/packages/@sdd/core/src/worker.mjs",
-            "apps/agentic-workflow/packages/@sdd/core/src/legacy.cjs",
+            "apps/demo/web/src/App.tsx",
+            "apps/demo/web/src/index.ts",
+            "apps/demo/web/src/worker.mjs",
+            "apps/demo/web/src/legacy.cjs",
         ] {
             assert_eq!(
                 target_language(std::path::Path::new(path), Some("source")),
@@ -4581,9 +4989,9 @@ rust_type: Option<Option<u16>>
 <!-- type: source lang: rust -->
 
 ```rust
-pub struct Viewer;
+pub struct Renderer;
 
-impl Viewer {
+impl Renderer {
     pub fn new() -> Self {
         Self
     }
@@ -4594,15 +5002,17 @@ pub fn render() {}
 "#;
         let source = generate_source_section_code(
             spec,
-            "apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md",
-            Some("apps/agentic-workflow/src/ui/viewer/render.rs"),
+            "apps/demo/tech-design/interfaces/render/renderer.md",
+            Some("apps/demo/src/render/renderer.rs"),
             std::path::Path::new("."),
         );
 
-        assert!(source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\npub struct Viewer;"));
-        assert!(source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\nimpl Viewer {"));
-        assert!(source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\npub fn render() {}"));
-        assert!(!source.contains("/// @spec apps/agentic-workflow/tech-design/interfaces/ui/viewer/render.md#source\n    pub fn new()"));
+        assert!(source.contains("/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\npub struct Renderer;"));
+        assert!(source.contains(
+            "/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\nimpl Renderer {"
+        ));
+        assert!(source.contains("/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\npub fn render() {}"));
+        assert!(!source.contains("/// @spec apps/demo/tech-design/interfaces/render/renderer.md#source\n    pub fn new()"));
     }
 
     #[test]
@@ -6596,6 +7006,7 @@ changes:
             section_id: None,
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6606,7 +7017,7 @@ changes:
             handwrite_reason: None,
             handwrite_anchor: None,
         };
-        let code = generate_code_for_entry(&entry, "test-spec.md", &[], spec, None);
+        let code = generate_code_for_entry(&entry, "test-spec.md", &[], spec, None).unwrap();
         assert!(
             code.contains("struct Issue"),
             "Should generate struct from schema"
@@ -6636,6 +7047,7 @@ changes:
             section_id: None,
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6646,7 +7058,7 @@ changes:
             handwrite_reason: None,
             handwrite_anchor: None,
         };
-        let code = generate_code_for_entry(&entry, "test-spec.md", &[], spec, None);
+        let code = generate_code_for_entry(&entry, "test-spec.md", &[], spec, None).unwrap();
         assert!(
             code.contains("SPEC-REF"),
             "Should fall back to SPEC-REF marker without schema"
@@ -6692,6 +7104,7 @@ changes:
             section_id: Some("schema".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6703,7 +7116,8 @@ changes:
             handwrite_anchor: None,
         };
 
-        let code = generate_code_for_entry(&entry, "typed-spec.md", &[], spec, Some(&td_ast));
+        let code =
+            generate_code_for_entry(&entry, "typed-spec.md", &[], spec, Some(&td_ast)).unwrap();
 
         assert!(
             code.contains("struct TypedWidget"),
@@ -6749,6 +7163,7 @@ pydantic_models:
             section_id: Some("models".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6760,7 +7175,8 @@ pydantic_models:
             handwrite_anchor: None,
         };
 
-        let code = generate_code_for_entry(&entry, "widget/api_models.md", &[], spec, None);
+        let code =
+            generate_code_for_entry(&entry, "widget/api_models.md", &[], spec, None).unwrap();
 
         assert!(code.starts_with("\"\"\"Widget API models."));
         assert!(code.contains("import pydantic"));
@@ -6808,6 +7224,7 @@ pydantic_models:
             section_id: Some("models".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6820,7 +7237,8 @@ pydantic_models:
         };
 
         let code =
-            generate_code_for_entry(&entry, "widget/api_models.md", &[], spec, Some(&td_ast));
+            generate_code_for_entry(&entry, "widget/api_models.md", &[], spec, Some(&td_ast))
+                .unwrap();
 
         assert!(code.contains("import pydantic"));
         assert!(code.contains("class TypedWidget(pydantic.BaseModel):"));
@@ -6865,6 +7283,7 @@ python_modules:
             section_id: Some("schema".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6876,7 +7295,8 @@ python_modules:
             handwrite_anchor: None,
         };
 
-        let code = generate_code_for_entry(&entry, "migrations.md", &[], spec, Some(&td_ast));
+        let code =
+            generate_code_for_entry(&entry, "migrations.md", &[], spec, Some(&td_ast)).unwrap();
 
         assert!(code.contains("class Forward:"));
         assert!(code.contains("    @free_fall_migration(document_models=[])"));
@@ -6923,6 +7343,7 @@ changes:
             section_id: Some("runtime-image".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6934,7 +7355,8 @@ changes:
             handwrite_anchor: None,
         };
 
-        let code = generate_code_for_entry(&entry, "runtime-image.md", &[], spec, Some(&td_ast));
+        let code =
+            generate_code_for_entry(&entry, "runtime-image.md", &[], spec, Some(&td_ast)).unwrap();
 
         assert_eq!(code, "FROM python:3.12\nCMD [\"python\"]\n");
     }
@@ -6977,6 +7399,7 @@ changes:
             section_id: Some("deployment".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -6988,7 +7411,8 @@ changes:
             handwrite_anchor: None,
         };
 
-        let code = generate_code_for_entry(&entry, "deployment.md", &[], spec, Some(&td_ast));
+        let code =
+            generate_code_for_entry(&entry, "deployment.md", &[], spec, Some(&td_ast)).unwrap();
 
         assert_eq!(code, "resources:\n  - deployment.yaml\n");
     }
@@ -7002,6 +7426,7 @@ changes:
             section_id: Some("exports".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: vec![MODULE_PREAMBLE_REPLACE.to_string()],
+            generates: Vec::new(),
             exports: vec![crate::generate::generators::ExportEntry {
                 module: "cli".to_string(),
                 symbols: Vec::new(),
@@ -7022,7 +7447,8 @@ changes:
             &[],
             "",
             None,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             code,
@@ -7039,6 +7465,7 @@ changes:
             section_id: Some("schema".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: vec![WHOLE_FILE_REPLACE.to_string()],
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -7056,7 +7483,8 @@ changes:
             &[],
             "",
             None,
-        );
+        )
+        .unwrap();
 
         assert_eq!(code, "use cap::cli;\n\nfn main() {}");
     }
@@ -7106,6 +7534,7 @@ changes:
             section_id: Some("logic".to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -7117,7 +7546,8 @@ changes:
             handwrite_anchor: None,
         };
 
-        let code = generate_code_for_entry(&entry, "typed-logic.md", &mermaid, spec, Some(&td_ast));
+        let code = generate_code_for_entry(&entry, "typed-logic.md", &mermaid, spec, Some(&td_ast))
+            .unwrap();
 
         assert!(
             code.contains("pub fn typed_logic() -> bool"),
@@ -7778,6 +8208,261 @@ definitions:
 "#
     }
 
+    fn two_unit_schema_section() -> &'static str {
+        r#"## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Alpha:
+    type: object
+    properties:
+      alpha: { type: string }
+  Beta:
+    type: object
+    properties:
+      beta: { type: integer }
+```
+"#
+    }
+
+    fn write_rust_plan_fixture(root: &Path, paths: &[&str]) {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"ownership-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for path in paths {
+            std::fs::write(root.join(path), format!("// {path} sentinel\n")).unwrap();
+        }
+    }
+
+    /// #1634 AC1/AC3: stable typed unit IDs partition one shared Schema IR
+    /// into two targets, and target/list order does not affect repeat bytes.
+    #[test]
+    fn generated_unit_ownership_partitions_schema_targets_idempotently() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_rust_plan_fixture(root, &["src/alpha.rs", "src/beta.rs"]);
+        let spec = write_plan_spec(
+            root,
+            "partitioned-schema",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/beta.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n    generates: [schema:Beta]\n  - path: src/alpha.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n    generates: [schema:Alpha]\n```\n",
+                two_unit_schema_section()
+            ),
+        );
+
+        let parsed = extract_change_entries(&std::fs::read_to_string(&spec).unwrap());
+        assert_eq!(parsed[0].generates, ["schema:Beta"]);
+        assert_eq!(parsed[1].generates, ["schema:Alpha"]);
+
+        run_apply(&spec, root, false).unwrap();
+        let alpha = std::fs::read(root.join("src/alpha.rs")).unwrap();
+        let beta = std::fs::read(root.join("src/beta.rs")).unwrap();
+        let alpha_text = String::from_utf8_lossy(&alpha);
+        let beta_text = String::from_utf8_lossy(&beta);
+        assert!(alpha_text.contains("pub struct Alpha"));
+        assert!(!alpha_text.contains("pub struct Beta"));
+        assert!(beta_text.contains("pub struct Beta"));
+        assert!(!beta_text.contains("pub struct Alpha"));
+
+        run_apply(&spec, root, false).unwrap();
+        assert_eq!(std::fs::read(root.join("src/alpha.rs")).unwrap(), alpha);
+        assert_eq!(std::fs::read(root.join("src/beta.rs")).unwrap(), beta);
+
+        let reordered_tmp = tempfile::tempdir().unwrap();
+        let reordered_root = reordered_tmp.path();
+        write_rust_plan_fixture(reordered_root, &["src/alpha.rs", "src/beta.rs"]);
+        let reordered_spec = write_plan_spec(
+            reordered_root,
+            "partitioned-schema",
+            &format!(
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/alpha.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n    generates: [schema:Alpha]\n  - path: src/beta.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n    generates: [schema:Beta]\n```\n",
+                two_unit_schema_section()
+            ),
+        );
+        run_apply(&reordered_spec, reordered_root, false).unwrap();
+        assert_eq!(
+            std::fs::read(reordered_root.join("src/alpha.rs")).unwrap(),
+            alpha,
+            "Changes target order must not affect Alpha bytes",
+        );
+        assert_eq!(
+            std::fs::read(reordered_root.join("src/beta.rs")).unwrap(),
+            beta,
+            "Changes target order must not affect Beta bytes",
+        );
+    }
+
+    /// #1634 AC1: top-level CLI command IDs form the same exact partition
+    /// contract as Schema definitions.
+    #[test]
+    fn generated_unit_ownership_partitions_cli_targets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_rust_plan_fixture(root, &["src/build.rs", "src/test.rs"]);
+        let spec = write_plan_spec(
+            root,
+            "partitioned-cli",
+            r#"## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+name: AwCommands
+commands:
+  - name: build
+    description: Build artifacts
+  - name: test
+    description: Test artifacts
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/test.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    generates: [cli:test]
+  - path: src/build.rs
+    action: modify
+    section: cli
+    impl_mode: codegen
+    generates: [cli:build]
+```
+"#,
+        );
+
+        run_apply(&spec, root, false).unwrap();
+        let build = std::fs::read_to_string(root.join("src/build.rs")).unwrap();
+        let test = std::fs::read_to_string(root.join("src/test.rs")).unwrap();
+        assert!(build.contains("Build,"));
+        assert!(!build.contains("Test,"));
+        assert!(test.contains("Test,"));
+        assert!(!test.contains("Build,"));
+    }
+
+    /// #1634 AC2: incomplete, duplicate, unknown, and overlapping claims all
+    /// fail as typed plan errors before either sentinel target changes.
+    #[test]
+    fn generated_unit_ownership_invalid_claims_fail_before_write() {
+        let cases = [
+            (
+                "invalid-list",
+                "  - path: src/a.rs\n    action: modify\n    section: schema\n    generates: schema:Alpha\n",
+                "invalid_owner_list",
+            ),
+            (
+                "missing",
+                "  - path: src/a.rs\n    action: modify\n    section: schema\n    generates: [schema:Alpha]\n",
+                "missing_unit_owner",
+            ),
+            (
+                "duplicate",
+                "  - path: src/a.rs\n    action: modify\n    section: schema\n    generates: [schema:Alpha, schema:Alpha, schema:Beta]\n",
+                "duplicate_owner_claim",
+            ),
+            (
+                "unknown",
+                "  - path: src/a.rs\n    action: modify\n    section: schema\n    generates: [schema:Alpha, schema:Beta, schema:Gamma]\n",
+                "unknown_unit_id",
+            ),
+            (
+                "multiply-owned",
+                "  - path: src/a.rs\n    action: modify\n    section: schema\n    generates: [schema:Alpha]\n  - path: src/b.rs\n    action: modify\n    section: schema\n    generates: [schema:Alpha, schema:Beta]\n",
+                "multiply_owned_unit",
+            ),
+            (
+                "duplicate-target",
+                "  - path: src/a.rs\n    action: modify\n    section: schema\n    generates: [schema:Alpha]\n  - path: src/a.rs\n    action: modify\n    section: schema\n    generates: [schema:Beta]\n",
+                "duplicate_target_owner",
+            ),
+            (
+                "delete-owner",
+                "  - path: src/a.rs\n    action: delete\n    section: schema\n    generates: [schema:Alpha, schema:Beta]\n",
+                "owner_unresolved",
+            ),
+        ];
+
+        for (name, changes, expected_reason) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            write_rust_plan_fixture(root, &["src/a.rs", "src/b.rs"]);
+            let a_before = std::fs::read(root.join("src/a.rs")).unwrap();
+            let b_before = std::fs::read(root.join("src/b.rs")).unwrap();
+            let spec = write_plan_spec(
+                root,
+                name,
+                &format!(
+                    "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n{changes}```\n",
+                    two_unit_schema_section()
+                ),
+            );
+
+            let error = run_apply(&spec, root, false).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+                        ref reason,
+                        ..
+                    } if reason == expected_reason
+                ),
+                "case {name} returned {error}"
+            );
+            assert_eq!(std::fs::read(root.join("src/a.rs")).unwrap(), a_before);
+            assert_eq!(std::fs::read(root.join("src/b.rs")).unwrap(), b_before);
+        }
+    }
+
+    /// #1634 AC4: an explicitly owned alias has identity but no Rust schema
+    /// emitter. It returns a typed HITL/generator-gap outcome, never a marker.
+    #[test]
+    fn generated_unit_ownership_unsupported_unit_fails_before_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_rust_plan_fixture(root, &["src/alias.rs"]);
+        let before = std::fs::read(root.join("src/alias.rs")).unwrap();
+        let spec = write_plan_spec(
+            root,
+            "unsupported-owned-unit",
+            r#"## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Alias:
+    $ref: '#/definitions/Other'
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/alias.rs
+    action: modify
+    section: schema
+    generates: [schema:Alias]
+```
+"#,
+        );
+
+        let error = run_apply(&spec, root, false).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::generate::GenerateError::OwnedGeneratedUnitUnsupported {
+                ref unit_ids,
+                ..
+            } if unit_ids == &["schema:Alias"]
+        ));
+        assert_eq!(std::fs::read(root.join("src/alias.rs")).unwrap(), before);
+    }
+
     /// #1633: two whole-section Schema destinations are rejected as one
     /// typed, sorted plan error before either existing target changes.
     #[test]
@@ -7806,8 +8491,8 @@ definitions:
             } => {
                 assert_eq!(section, "schema");
                 assert_eq!(targets, vec!["src/a_schema.rs", "src/z_schema.rs"]);
-                assert!(remediation.contains("impl_mode: hand-written"));
-                assert!(remediation.contains("WI #1634"));
+                assert!(remediation.contains("generates: [schema:<unit>"));
+                assert!(remediation.contains("mark siblings hand-written"));
             }
             other => panic!("expected typed ambiguous plan error, got {other}"),
         }
@@ -8220,6 +8905,7 @@ flowchart TD
             section_id: section.map(String::from),
             impl_mode: ImplMode::Codegen,
             replaces: replaces.iter().map(|s| s.to_string()).collect(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -8402,6 +9088,45 @@ changes:
 // Schema extraction from spec content
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone)]
+struct PlannedGeneratedUnit {
+    id: String,
+    value: serde_yaml::Value,
+    supported: bool,
+}
+
+/// Enumerate the typed generated-unit inventory used by both admission and
+/// executor partitioning. IDs come from the typed Schema/CLI payload names,
+/// never from target filenames.
+fn generated_units_for_section(spec_content: &str, section: &str) -> Vec<PlannedGeneratedUnit> {
+    let td_ast = crate::td_ast::parse::parse_td_str(spec_content).ok();
+    match section {
+        "schema" => {
+            let mut units = schema_units_from_td_ast(td_ast.as_ref());
+            if units.is_empty() {
+                units = extract_schema_documents(spec_content)
+                    .into_iter()
+                    .flat_map(schema_units_from_value)
+                    .collect();
+            }
+            units.sort_by(|left, right| left.id.cmp(&right.id));
+            units
+        }
+        "cli" => {
+            let mut units = cli_units_from_td_ast(td_ast.as_ref());
+            if units.is_empty() {
+                units = extract_section_yaml(spec_content, "CLI")
+                    .and_then(|yaml| serde_yaml::from_str::<serde_yaml::Value>(&yaml).ok())
+                    .map(cli_units_from_value)
+                    .unwrap_or_default();
+            }
+            units.sort_by(|left, right| left.id.cmp(&right.id));
+            units
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Extract JSON Schema YAML blocks from the `## Schema` section of a spec.
 ///
 /// Looks for `## Schema` (or `### Schema`) headings, then collects YAML code fences
@@ -8437,7 +9162,7 @@ fn is_payload_enum(yaml: &serde_yaml::Value) -> bool {
     })
 }
 
-fn extract_schema_yaml(spec_content: &str) -> Vec<serde_yaml::Value> {
+fn extract_schema_documents(spec_content: &str) -> Vec<serde_yaml::Value> {
     let mut results = Vec::new();
     let mut in_schema_section = false;
     let mut in_yaml = false;
@@ -8490,7 +9215,7 @@ fn extract_schema_yaml(spec_content: &str) -> Vec<serde_yaml::Value> {
                 }
             }
             if let Ok(yaml) = parsed {
-                results.extend(expand_schema_value(yaml));
+                results.push(yaml);
             }
             in_yaml = false;
             continue;
@@ -8505,9 +9230,9 @@ fn extract_schema_yaml(spec_content: &str) -> Vec<serde_yaml::Value> {
     results
 }
 
-fn schema_blocks_from_td_ast(
+fn schema_units_from_td_ast(
     td_ast: Option<&crate::td_ast::types::TDAst>,
-) -> Vec<serde_yaml::Value> {
+) -> Vec<PlannedGeneratedUnit> {
     let Some(td_ast) = td_ast else {
         return Vec::new();
     };
@@ -8521,50 +9246,109 @@ fn schema_blocks_from_td_ast(
             }
             _ => None,
         })
-        .flat_map(expand_schema_value)
+        .flat_map(schema_units_from_value)
         .collect()
 }
 
-fn expand_schema_value(yaml: serde_yaml::Value) -> Vec<serde_yaml::Value> {
-    let mut results = Vec::new();
-    if yaml.get("properties").is_some() || is_string_enum(&yaml) || is_payload_enum(&yaml) {
-        results.push(yaml);
-    } else if let Some(defs) = yaml.get("definitions").and_then(|v| v.as_mapping()) {
-        // Expand `definitions` into per-type flat schemas. Includes both
-        // object types (have `properties`) and string enums (`type: string` +
-        // `enum: [...]`). Skips aliases and anything the schema generator
-        // can't render.
-        for (name, def) in defs {
-            let (Some(name_str), Some(def_map)) = (name.as_str(), def.as_mapping()) else {
+fn schema_value_has_x_rust_enum_variants(yaml: &serde_yaml::Value) -> bool {
+    yaml.get("x-rust-enum")
+        .and_then(|value| value.get("variants"))
+        .and_then(|value| value.as_sequence())
+        .is_some_and(|variants| !variants.is_empty())
+}
+
+fn schema_value_is_supported(yaml: &serde_yaml::Value) -> bool {
+    yaml.get("properties").is_some()
+        || is_string_enum(yaml)
+        || is_payload_enum(yaml)
+        || schema_value_has_x_rust_enum_variants(yaml)
+}
+
+fn schema_unit_id(name: &str) -> String {
+    crate::td_ast::payloads::GeneratedUnitId::schema(name).to_string()
+}
+
+fn cli_unit_id(name: &str) -> String {
+    crate::td_ast::payloads::GeneratedUnitId::cli(name).to_string()
+}
+
+fn schema_units_from_value(yaml: serde_yaml::Value) -> Vec<PlannedGeneratedUnit> {
+    if schema_value_is_supported(&yaml) {
+        let name = yaml
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or("$root");
+        return vec![PlannedGeneratedUnit {
+            id: schema_unit_id(name),
+            value: yaml,
+            supported: true,
+        }];
+    }
+
+    let mut units = Vec::new();
+    for defs_key in ["definitions", "$defs"] {
+        let Some(defs) = yaml.get(defs_key).and_then(|value| value.as_mapping()) else {
+            continue;
+        };
+        for (name, definition) in defs {
+            let Some(name) = name.as_str() else {
                 continue;
             };
-            let merged_value = serde_yaml::Value::Mapping(def_map.clone());
-            let is_object =
-                def_map.contains_key(&serde_yaml::Value::String("properties".to_string()));
-            let is_enum = is_string_enum(&merged_value);
-            let is_payload = is_payload_enum(&merged_value);
-            if !is_object && !is_enum && !is_payload {
-                continue;
+            let mut value = definition.clone();
+            if let Some(mapping) = value.as_mapping_mut() {
+                mapping
+                    .entry(serde_yaml::Value::String("title".to_string()))
+                    .or_insert_with(|| serde_yaml::Value::String(name.to_string()));
             }
-            let mut merged = def_map.clone();
-            let title_key = serde_yaml::Value::String("title".to_string());
-            merged
-                .entry(title_key)
-                .or_insert(serde_yaml::Value::String(name_str.to_string()));
-            results.push(serde_yaml::Value::Mapping(merged));
+            units.push(PlannedGeneratedUnit {
+                id: schema_unit_id(name),
+                supported: schema_value_is_supported(&value),
+                value,
+            });
         }
     }
-    results
+    if units.is_empty() && !yaml.is_null() {
+        let name = yaml
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or("$root");
+        units.push(PlannedGeneratedUnit {
+            id: schema_unit_id(name),
+            value: yaml,
+            supported: false,
+        });
+    }
+    units
+}
+
+#[cfg(test)]
+fn extract_schema_yaml(spec_content: &str) -> Vec<serde_yaml::Value> {
+    extract_schema_documents(spec_content)
+        .into_iter()
+        .flat_map(schema_units_from_value)
+        .filter(|unit| unit.supported)
+        .map(|unit| unit.value)
+        .collect()
 }
 
 /// Try to generate Rust struct code from `## Schema` section's JSON Schema YAML.
 ///
 /// Returns `Some(code)` if the spec contains a `## Schema` section with a parseable
 /// JSON Schema (YAML dialect). Returns `None` otherwise.
+#[cfg(test)]
 fn try_generate_schema(
     spec_content: &str,
     spec_path: &str,
     td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Option<String> {
+    try_generate_schema_owned(spec_content, spec_path, td_ast, &[])
+}
+
+fn try_generate_schema_owned(
+    spec_content: &str,
+    spec_path: &str,
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+    owned_unit_ids: &[String],
 ) -> Option<String> {
     // Helper: strip the optional worktree prefix so the emitted @spec marker
     // always resolves from the repo root. The aggregator below uses this to
@@ -8573,10 +9357,21 @@ fn try_generate_schema(
         p.trim_start_matches('/').to_string()
     }
     let spec_path_norm = normalize_spec_path(spec_path);
-    let mut schema_blocks = schema_blocks_from_td_ast(td_ast);
-    if schema_blocks.is_empty() {
-        schema_blocks = extract_schema_yaml(spec_content);
+    let mut schema_units = schema_units_from_td_ast(td_ast);
+    if schema_units.is_empty() {
+        schema_units = extract_schema_documents(spec_content)
+            .into_iter()
+            .flat_map(schema_units_from_value)
+            .collect();
     }
+    schema_units.retain(|unit| {
+        unit.supported && (owned_unit_ids.is_empty() || owned_unit_ids.contains(&unit.id))
+    });
+    schema_units.sort_by(|left, right| left.id.cmp(&right.id));
+    let schema_blocks = schema_units
+        .into_iter()
+        .map(|unit| unit.value)
+        .collect::<Vec<_>>();
     if schema_blocks.is_empty() {
         return None;
     }
@@ -8697,7 +9492,7 @@ pub(crate) fn generate_code_for_entry(
     mermaid_blocks: &[crate::generate::frontmatter::MermaidPlusBlock],
     spec_content: &str,
     td_ast: Option<&crate::td_ast::types::TDAst>,
-) -> String {
+) -> crate::generate::Result<String> {
     use crate::generate::marker::{emit_spec_ref, Lang};
 
     let target_section = entry.section_id.as_deref();
@@ -8708,7 +9503,7 @@ pub(crate) fn generate_code_for_entry(
     // into TD-owned Changes metadata while keeping the semantic section type
     // (usually `schema`) intact for traceability.
     if let Some(source) = entry.rust_source.as_deref() {
-        return source.trim_end().to_string();
+        return Ok(source.trim_end().to_string());
     }
 
     // rust-source-unit (td_ast): regenerate the whole file through the
@@ -8722,23 +9517,23 @@ pub(crate) fn generate_code_for_entry(
         Some("source" | "rust-source-unit" | "text-source-unit")
     ) && (source_is_rust_source_unit(spec_content) || source_is_text_source_unit(spec_content))
     {
-        return generate_source_section_code(
+        return Ok(generate_source_section_code(
             spec_content,
             spec_path,
             Some(&entry.path),
             Path::new("."),
-        );
+        ));
     }
 
     if matches!(target_section, Some("runtime-image" | "deployment")) {
         if let Some(code) = try_generate_operations_artifact(spec_content, entry, td_ast) {
-            return code;
+            return Ok(code);
         }
     }
 
     if matches!(target_section, Some("wireframe")) {
         if let Some(code) = try_generate_react_wireframe_file(spec_content, entry, td_ast) {
-            return code;
+            return Ok(code);
         }
     }
 
@@ -8746,18 +9541,18 @@ pub(crate) fn generate_code_for_entry(
         if let Some(code) =
             try_generate_python_router_module(spec_content, spec_path, entry, td_ast)
         {
-            return code;
+            return Ok(code);
         }
     }
 
     if matches!(target_section, Some("models") | Some("schema")) {
         if let Some(code) = try_generate_python_module(spec_content, spec_path, entry, td_ast) {
-            return code;
+            return Ok(code);
         }
         if let Some(code) =
             try_generate_python_pydantic_module(spec_content, spec_path, entry, td_ast)
         {
-            return code;
+            return Ok(code);
         }
     }
 
@@ -8807,14 +9602,16 @@ pub(crate) fn generate_code_for_entry(
 
     // 1. Schema (JSON Schema YAML → Rust structs)
     if target_is_rust && matches!(target_section, None | Some("schema")) {
-        if let Some(code) = try_generate_schema(spec_content, spec_path, td_ast) {
+        if let Some(code) =
+            try_generate_schema_owned(spec_content, spec_path, td_ast, &entry.generates)
+        {
             code_parts.push(code);
         }
     }
 
     // 2. CLI (CLI YAML → clap Subcommand enum)
     if target_is_rust && matches!(target_section, None | Some("cli")) {
-        if let Some(code) = try_generate_cli(spec_content, td_ast) {
+        if let Some(code) = try_generate_cli_owned(spec_content, td_ast, &entry.generates) {
             code_parts.push(code);
         }
     }
@@ -8914,7 +9711,20 @@ pub(crate) fn generate_code_for_entry(
     }
 
     if !code_parts.is_empty() {
-        return code_parts.join("\n\n");
+        return Ok(code_parts.join("\n\n"));
+    }
+
+    if !entry.generates.is_empty() {
+        return Err(crate::generate::GenerateError::OwnedGeneratedUnitUnsupported {
+            section: target_section.unwrap_or("unresolved").to_string(),
+            unit_ids: entry.generates.clone(),
+            targets: vec![entry.path.clone()],
+            remediation: format!(
+                "the validated owned partition produced no code; record a concrete generator gap and make `{}` hand-written, or implement the missing generator before rerunning `aw td gen`",
+                entry.path
+            ),
+            next_command: "aw td gen".to_string(),
+        });
     }
 
     // Fallback: marker-only SPEC-REF + TODO
@@ -8935,7 +9745,7 @@ pub(crate) fn generate_code_for_entry(
         Lang::Rust
     };
 
-    emit_spec_ref(
+    Ok(emit_spec_ref(
         spec_path,
         section,
         entry
@@ -8943,7 +9753,7 @@ pub(crate) fn generate_code_for_entry(
             .as_deref()
             .unwrap_or(&format!("Implement {}", entry.path)),
         fallback_lang,
-    )
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -9199,12 +10009,10 @@ fn python_section_yaml(spec_content: &str, section: &str) -> Option<String> {
         .or_else(|| extract_section_yaml(spec_content, "Schema"))
 }
 
-/// Try CLI generator: prefer typed TD AST payload, fall back to raw `## CLI` YAML.
-fn try_generate_cli(
-    spec_content: &str,
+fn cli_document_from_td_ast(
     td_ast: Option<&crate::td_ast::types::TDAst>,
-) -> Option<String> {
-    let parsed = typed_section_value(
+) -> Option<serde_yaml::Value> {
+    typed_section_value(
         td_ast,
         crate::models::spec_rules::SectionType::Cli,
         |body| match body {
@@ -9214,10 +10022,112 @@ fn try_generate_cli(
             _ => None,
         },
     )
-    .or_else(|| {
+}
+
+fn cli_units_from_td_ast(
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Vec<PlannedGeneratedUnit> {
+    cli_document_from_td_ast(td_ast)
+        .map(cli_units_from_value)
+        .unwrap_or_default()
+}
+
+fn cli_units_from_value(value: serde_yaml::Value) -> Vec<PlannedGeneratedUnit> {
+    for key in ["commands", "subcommands"] {
+        if let Some(sequence) = value.get(key).and_then(|item| item.as_sequence()) {
+            return sequence
+                .iter()
+                .enumerate()
+                .map(|(index, command)| {
+                    let name = command
+                        .get("name")
+                        .and_then(|item| item.as_str())
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("$invalid-{index}"));
+                    PlannedGeneratedUnit {
+                        id: cli_unit_id(&name),
+                        value: command.clone(),
+                        supported: !name.starts_with("$invalid-"),
+                    }
+                })
+                .collect();
+        }
+        if let Some(mapping) = value.get(key).and_then(|item| item.as_mapping()) {
+            return mapping
+                .iter()
+                .filter_map(|(name, command)| {
+                    let name = name.as_str()?;
+                    Some(PlannedGeneratedUnit {
+                        id: cli_unit_id(name),
+                        value: command.clone(),
+                        supported: false,
+                    })
+                })
+                .collect();
+        }
+    }
+
+    let root_name = value
+        .get("name")
+        .and_then(|item| item.as_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string);
+    match root_name {
+        Some(name) => vec![PlannedGeneratedUnit {
+            id: cli_unit_id(&name),
+            value,
+            // The current CLI generator emits top-level command lists;
+            // a root-only command is inventoried but is a typed gap.
+            supported: false,
+        }],
+        None => Vec::new(),
+    }
+}
+
+fn filter_cli_document_to_owned_units(
+    mut document: serde_yaml::Value,
+    owned_unit_ids: &[String],
+) -> serde_yaml::Value {
+    if owned_unit_ids.is_empty() {
+        return document;
+    }
+    let owned = owned_unit_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let Some(mapping) = document.as_mapping_mut() else {
+        return document;
+    };
+    for key in ["commands", "subcommands"] {
+        let yaml_key = serde_yaml::Value::String(key.to_string());
+        let Some(sequence) = mapping
+            .get_mut(&yaml_key)
+            .and_then(|item| item.as_sequence_mut())
+        else {
+            continue;
+        };
+        sequence.retain(|command| {
+            command
+                .get("name")
+                .and_then(|item| item.as_str())
+                .is_some_and(|name| owned.contains(cli_unit_id(name).as_str()))
+        });
+        break;
+    }
+    document
+}
+
+fn try_generate_cli_owned(
+    spec_content: &str,
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+    owned_unit_ids: &[String],
+) -> Option<String> {
+    let parsed = cli_document_from_td_ast(td_ast).or_else(|| {
         let yaml = extract_section_yaml(spec_content, "CLI")?;
         serde_yaml::from_str(&yaml).ok()
     })?;
+    let parsed = filter_cli_document_to_owned_units(parsed, owned_unit_ids);
 
     use crate::generate::gen::rust::generate_cli;
     use crate::generate::types::RustConfig;

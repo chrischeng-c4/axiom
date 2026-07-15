@@ -4,11 +4,10 @@
 //!
 //! Operates during SDD phases 4 (reference-context) and 5 (post-clarification).
 //! Searches the `SpecStore`, reads full spec content, scores each spec's relevance,
-//! extracts key requirements, detects contradictions, and runs an internal CRR cycle
-//! (max_revisions=1, auto-approve semantics) via `ReviewAgent` before finalizing.
+//! extracts key requirements and detects contradictions in one structured-output
+//! pass. Semantic approval belongs to EC, not META-doc context.
 
 use crate::agents::restructure::{SpecExcerpt, SpecStore};
-use crate::agents::review::{ReviewIssue, ReviewVerdict, Reviewer};
 use crate::agents::Agent;
 use agent::error::{NovaError, NovaResult};
 use agent::llm::{CompletionRequest, LLMProvider};
@@ -98,8 +97,6 @@ pub struct ReferenceSpecContextAgent {
     provider: Arc<dyn LLMProvider>,
     /// Spec store.
     spec_store: Arc<dyn SpecStore>,
-    /// Reviewer for output validation.
-    reviewer: Arc<dyn Reviewer>,
 }
 
 /// Builder for ReferenceSpecContextAgent.
@@ -111,8 +108,6 @@ pub struct ReferenceSpecContextAgentBuilder {
     provider: Option<Arc<dyn LLMProvider>>,
     /// Optional spec store.
     spec_store: Option<Arc<dyn SpecStore>>,
-    /// Optional reviewer.
-    reviewer: Option<Arc<dyn Reviewer>>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/agents/reference_spec_context.md#changes
@@ -161,13 +156,9 @@ impl Agent for ReferenceSpecContextAgent {
             full_specs.push((excerpt.clone(), content));
         }
 
-        // 3. Generate initial reference context
-        let artifact = self.generate_context(input, &full_specs).await?;
-
-        // 4. CRR cycle (max_revisions=1, auto-approve)
-        let final_artifact = self.crr_cycle(input, &full_specs, artifact).await?;
-
-        Ok(final_artifact)
+        // 3. Generate structurally validated reference context. Product
+        // ambiguity remains HITL; no generic review/revise cycle runs here.
+        self.generate_context(input, &full_specs).await
     }
 
     async fn run_with_handler(
@@ -197,38 +188,6 @@ impl ReferenceSpecContextAgent {
             .complete_structured_output(vec![system_msg, user_msg])
             .await?;
         Ok(artifact_json)
-    }
-
-    /// Run an internal CRR cycle with max_revisions=1 and auto-approve semantics.
-    ///
-    /// If the reviewer flags issues, we revise once and accept the result regardless
-    /// of the second verdict (auto-approve). If the artifact is `Rejected`, we still
-    /// return it rather than failing.
-    async fn crr_cycle(
-        &self,
-        input: &str,
-        full_specs: &[(SpecExcerpt, String)],
-        initial_artifact: String,
-    ) -> NovaResult<String> {
-        let verdict = self.reviewer.review(&initial_artifact).await?;
-
-        match verdict {
-            // Accept immediately — approved or auto-approve on rejection
-            ReviewVerdict::Approved | ReviewVerdict::Rejected { .. } => Ok(initial_artifact),
-
-            // Revise once, then auto-approve regardless of the second verdict
-            ReviewVerdict::NeedsRevision { issues } => {
-                let revision_prompt =
-                    build_revision_prompt(input, full_specs, &initial_artifact, &issues);
-                let revised = self
-                    .complete_structured_output(vec![
-                        Message::system(SYSTEM_PROMPT),
-                        Message::user(revision_prompt),
-                    ])
-                    .await?;
-                Ok(revised)
-            }
-        }
     }
 
     /// Call the LLM with structured output and return the pretty-printed JSON string.
@@ -302,49 +261,6 @@ fn build_prompt(input: &str, full_specs: &[(SpecExcerpt, String)]) -> (Message, 
     (system_msg, Message::user(content))
 }
 
-fn build_revision_prompt(
-    input: &str,
-    full_specs: &[(SpecExcerpt, String)],
-    artifact: &str,
-    issues: &[ReviewIssue],
-) -> String {
-    let mut prompt = format!(
-        "## Change Requirements\n\n{}\n\n\
-         ## Original Reference Context\n\n{}\n\n\
-         ## Review Issues\n",
-        input, artifact
-    );
-
-    for (i, issue) in issues.iter().enumerate() {
-        prompt.push_str(&format!(
-            "\n{}. [{}] {}\n   Suggestion: {}\n",
-            i + 1,
-            issue.severity,
-            issue.description,
-            issue.suggestion,
-        ));
-        if let Some(ref loc) = issue.location {
-            prompt.push_str(&format!("   Location: {}\n", loc));
-        }
-    }
-
-    if !full_specs.is_empty() {
-        prompt.push_str("\n## Existing Specifications (for reference)\n\n");
-        for (excerpt, full_content) in full_specs {
-            prompt.push_str(&format!(
-                "### `{}`\n\n```\n{}\n```\n\n",
-                excerpt.path, full_content
-            ));
-        }
-    }
-
-    prompt.push_str(
-        "\nAddress every review issue above and return \
-         the fully revised reference context JSON.",
-    );
-    prompt
-}
-
 // ============================================================
 // JSON Schema for structured output
 // ============================================================
@@ -404,7 +320,6 @@ impl ReferenceSpecContextAgentBuilder {
             config: ReferenceSpecContextAgentConfig::default(),
             provider: None,
             spec_store: None,
-            reviewer: None,
         }
     }
 
@@ -425,16 +340,6 @@ impl ReferenceSpecContextAgentBuilder {
 
     pub fn with_spec_store_arc(mut self, store: Arc<dyn SpecStore>) -> Self {
         self.spec_store = Some(store);
-        self
-    }
-
-    pub fn with_reviewer<R: Reviewer + 'static>(mut self, reviewer: R) -> Self {
-        self.reviewer = Some(Arc::new(reviewer));
-        self
-    }
-
-    pub fn with_reviewer_arc(mut self, reviewer: Arc<dyn Reviewer>) -> Self {
-        self.reviewer = Some(reviewer);
         self
     }
 
@@ -470,14 +375,10 @@ impl ReferenceSpecContextAgentBuilder {
         let spec_store = self
             .spec_store
             .ok_or_else(|| NovaError::ConfigError("SpecStore is required".to_string()))?;
-        let reviewer = self
-            .reviewer
-            .ok_or_else(|| NovaError::ConfigError("Reviewer is required".to_string()))?;
         Ok(ReferenceSpecContextAgent {
             config: self.config,
             provider,
             spec_store,
-            reviewer,
         })
     }
 }
@@ -579,38 +480,6 @@ mod tests {
         }
     }
 
-    // ---- Mock Reviewer ----
-
-    struct ScriptedReviewer {
-        verdicts: Mutex<Vec<ReviewVerdict>>,
-    }
-
-    impl ScriptedReviewer {
-        fn always_approve() -> Self {
-            Self {
-                verdicts: Mutex::new(vec![]),
-            }
-        }
-
-        fn sequence(verdicts: Vec<ReviewVerdict>) -> Self {
-            Self {
-                verdicts: Mutex::new(verdicts),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl Reviewer for ScriptedReviewer {
-        async fn review(&self, _artifact: &str) -> NovaResult<ReviewVerdict> {
-            let mut v = self.verdicts.lock().unwrap();
-            if v.is_empty() {
-                Ok(ReviewVerdict::Approved)
-            } else {
-                Ok(v.remove(0))
-            }
-        }
-    }
-
     // ---- Helpers ----
 
     fn valid_context_json() -> String {
@@ -628,26 +497,15 @@ mod tests {
         .to_string()
     }
 
-    fn make_review_issue(msg: &str) -> ReviewIssue {
-        use crate::agents::review::Severity;
-        ReviewIssue {
-            severity: Severity::Medium,
-            description: msg.to_string(),
-            suggestion: "Fix it.".to_string(),
-            location: None,
-        }
-    }
-
     // ---- Tests ----
 
     #[tokio::test]
-    async fn test_run_approved_on_first_review() {
+    async fn test_run_generates_structured_context() {
         let agent = ReferenceSpecContextAgent::builder()
             .with_provider(MockProvider {
                 response_json: valid_context_json(),
             })
             .with_spec_store(EmptySpecStore)
-            .with_reviewer(ScriptedReviewer::always_approve())
             .build()
             .unwrap();
 
@@ -656,47 +514,6 @@ mod tests {
         assert_eq!(output.specs.len(), 1);
         assert_eq!(output.specs[0].relevance, RelevanceLevel::High);
         assert!(output.contradictions.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_run_triggers_revision_on_needs_revision() {
-        // Reviewer returns NeedsRevision once, then auto-approve kicks in.
-        let agent = ReferenceSpecContextAgent::builder()
-            .with_provider(MockProvider {
-                response_json: valid_context_json(),
-            })
-            .with_spec_store(EmptySpecStore)
-            .with_reviewer(ScriptedReviewer::sequence(vec![
-                ReviewVerdict::NeedsRevision {
-                    issues: vec![make_review_issue("Missing medium-relevance spec")],
-                },
-            ]))
-            .build()
-            .unwrap();
-
-        // Should succeed (auto-approve after one revision attempt)
-        let result = agent.run("Add OAuth2 support").await.unwrap();
-        let output: ReferenceContextOutput = serde_json::from_str(&result).unwrap();
-        assert_eq!(output.specs.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_run_auto_approves_on_rejection() {
-        // Rejected verdict → auto-approve, returns initial artifact
-        let agent = ReferenceSpecContextAgent::builder()
-            .with_provider(MockProvider {
-                response_json: valid_context_json(),
-            })
-            .with_spec_store(EmptySpecStore)
-            .with_reviewer(ScriptedReviewer::sequence(vec![ReviewVerdict::Rejected {
-                reason: "fundamentally wrong".to_string(),
-            }]))
-            .build()
-            .unwrap();
-
-        let result = agent.run("Add OAuth2 support").await.unwrap();
-        let output: ReferenceContextOutput = serde_json::from_str(&result).unwrap();
-        assert_eq!(output.specs.len(), 1);
     }
 
     #[tokio::test]
@@ -721,7 +538,6 @@ mod tests {
                 response_json: valid_context_json(),
             })
             .with_spec_store(store)
-            .with_reviewer(ScriptedReviewer::always_approve())
             .build()
             .unwrap();
 
@@ -750,7 +566,6 @@ mod tests {
                 response_json: valid_context_json(),
             })
             .with_spec_store(store)
-            .with_reviewer(ScriptedReviewer::always_approve())
             .with_max_spec_excerpts(3) // limit to 3
             .build()
             .unwrap();
@@ -806,7 +621,6 @@ mod tests {
     fn test_builder_missing_provider() {
         let err = ReferenceSpecContextAgent::builder()
             .with_spec_store(EmptySpecStore)
-            .with_reviewer(ScriptedReviewer::always_approve())
             .build()
             .unwrap_err();
         assert!(err.to_string().contains("provider"));
@@ -818,22 +632,9 @@ mod tests {
             .with_provider(MockProvider {
                 response_json: "{}".to_string(),
             })
-            .with_reviewer(ScriptedReviewer::always_approve())
             .build()
             .unwrap_err();
         assert!(err.to_string().contains("SpecStore"));
-    }
-
-    #[test]
-    fn test_builder_missing_reviewer() {
-        let err = ReferenceSpecContextAgent::builder()
-            .with_provider(MockProvider {
-                response_json: "{}".to_string(),
-            })
-            .with_spec_store(EmptySpecStore)
-            .build()
-            .unwrap_err();
-        assert!(err.to_string().contains("Reviewer"));
     }
 
     #[test]

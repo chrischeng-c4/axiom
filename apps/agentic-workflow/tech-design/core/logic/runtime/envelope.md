@@ -30,10 +30,13 @@ Public API manifest for `apps/agentic-workflow/src/runtime/envelope.rs` generate
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/envelope.rs -->
 ```rust
-//! SDD CLI envelope protocol — shared by all frontends (score, cue, conductor).
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/envelope.md#source
+// CODEGEN-BEGIN
+//! AW CLI envelope protocol for the agent-first project-iteration surface.
 //!
 //! Mirrors the schema in `apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md`.
 
+use crate::models::artifact_quality::ArtifactQualityProfile;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -47,6 +50,8 @@ pub enum Envelope {
         slug: String,
         #[serde(default)]
         invoke: Option<Invoke>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_quality_profile: Option<ArtifactQualityProfile>,
     },
     Done {
         slug: String,
@@ -88,6 +93,7 @@ mod tests {
                 agent,
                 slug,
                 invoke,
+                ..
             } => {
                 assert_eq!(agent.as_deref(), Some("score-issue-author"));
                 assert_eq!(slug, "foo");
@@ -135,7 +141,48 @@ mod tests {
             _ => panic!("expected Batch"),
         }
     }
+
+    #[test]
+    fn envelope_profile_deserializes_without_profile() {
+        let raw =
+            r#"{"action":"dispatch","slug":"foo","invoke":{"command":"aw td create","args":{}}}"#;
+        let env = parse(raw).unwrap();
+        match env {
+            Envelope::Dispatch {
+                artifact_quality_profile,
+                ..
+            } => assert!(artifact_quality_profile.is_none()),
+            _ => panic!("expected Dispatch"),
+        }
+    }
+
+    #[test]
+    fn envelope_profile_roundtrips_when_present() {
+        let profile = ArtifactQualityProfile::default_for_kind(
+            crate::models::artifact_quality::ArtifactKind::CliSurface,
+        );
+        let env = Envelope::Dispatch {
+            agent: None,
+            slug: "3903".to_string(),
+            invoke: Some(Invoke {
+                command: "aw run".to_string(),
+                args: serde_json::json!({ "wi": "3903" }),
+            }),
+            artifact_quality_profile: Some(profile.clone()),
+        };
+        let encoded = serde_json::to_string(&env).unwrap();
+        let decoded = parse(&encoded).unwrap();
+        match decoded {
+            Envelope::Dispatch {
+                artifact_quality_profile,
+                ..
+            } => assert_eq!(artifact_quality_profile, Some(profile)),
+            _ => panic!("expected Dispatch"),
+        }
+    }
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

@@ -291,20 +291,6 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "apps/agentic-workflow/tests"
-      - path: "apps/agentic-workflow/tests/sdd_viewer_test.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["test_case"]
-        symbols:
-          - name: "sdd_viewer_tests"
-            kind: "module"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "test"
-          section_type: "tests"
-          domain: "apps/agentic-workflow/tests"
       - path: "apps/agentic-workflow/tests/python_backend_emitter.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -682,7 +668,6 @@ tests:
       - path: "apps/agentic-workflow/tests/codegen_full_test.rs"
       - path: "apps/agentic-workflow/tests/project_discovery_test.rs"
       - path: "apps/agentic-workflow/tests/spec_alignment_tests.rs"
-      - path: "apps/agentic-workflow/tests/sdd_viewer_test.rs"
       - path: "apps/agentic-workflow/tests/python_backend_emitter.rs"
       - path: "apps/agentic-workflow/tests/github_backend_tests.rs"
       - path: "apps/agentic-workflow/tests/project_registry_test.rs"
@@ -780,12 +765,6 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/spec_alignment_tests.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - path: "apps/agentic-workflow/tests/sdd_viewer_test.rs"
     action: modify
     section: schema
     description: |

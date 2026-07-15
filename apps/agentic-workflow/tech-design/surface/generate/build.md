@@ -7,7 +7,7 @@ capability_refs:
     gap: core-concept-model-and-invariants
     claim: core-concept-model-and-invariants
     coverage: full
-    rationale: "Build identity is part of the AW Core CLI runtime invariant exposed to clients and release workflows."
+    rationale: "Build identity is part of the AW CLI runtime invariant exposed to agents and release workflows."
 ---
 
 # Standardized apps/agentic-workflow/build.rs

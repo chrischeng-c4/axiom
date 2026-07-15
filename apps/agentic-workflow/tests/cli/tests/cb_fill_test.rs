@@ -396,11 +396,13 @@ fn test_collision_enumerate_returns_both_entries() {
 
 // ── e2e gates (require real worktree + payload + check pipeline) ────────
 
-/// AC1 (#1096): a real `aw td fill` brief + apply round trip writes and
+/// AC1 (#1096, #1559, #1717): a real `aw td fill` brief + apply round trip writes and
 /// reads the marker payload under `/tmp/aw/workspaces/<workspace>/payloads/`
 /// (never under the repo's `.aw/payloads/`), quoting the absolute path in
 /// the dispatch envelope, and the apply step actually reads that file back
-/// into the HANDWRITE block.
+/// into app- and lib-root HANDWRITE blocks even when a root `crates/` exists.
+/// A foreign marker outside the active TD Changes paths remains untouched and
+/// cannot replace terminal code-check dispatch.
 #[tokio::test]
 async fn test_apply_marker_replaces_block() {
     use agentic_workflow::issues::types::{td_phase, IssueType};
@@ -444,26 +446,54 @@ async fn test_apply_marker_replaces_block() {
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw")).unwrap();
     std::fs::write(root.join("aw.toml"), "").unwrap();
+    let existing_crate = root.join("crates/existing/src/lib.rs");
+    std::fs::create_dir_all(existing_crate.parent().unwrap()).unwrap();
+    std::fs::write(existing_crate, "pub fn existing_crate() {}\n").unwrap();
 
-    // Seed a TD spec whose Changes section names the marker's source file
-    // (so brief mode's spec-scoped enumeration includes it).
+    // Seed a TD spec whose Changes section names app- and lib-root markers
+    // (so brief mode's spec-scoped enumeration must include both even though
+    // this checkout also has a root crates/ directory).
     let spec_rel = ".aw/tech-design/specs/demo.md";
-    let spec_content = "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n\
-         ## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  \
-         - path: src/demo.rs\n    action: create\n    impl_mode: hand-written\n```\n";
+    let app_marker_rel = "apps/vat/tests/vat_microvm_published_port.rs";
+    let lib_marker_rel = "libs/openapi-codegen/src/target.rs";
+    let spec_content = format!(
+        "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {app_marker_rel}\n    action: create\n    impl_mode: hand-written\n  - path: {lib_marker_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
+    );
     let spec_dir = root.join(".aw/tech-design/specs");
     std::fs::create_dir_all(&spec_dir).unwrap();
     std::fs::write(spec_dir.join("demo.md"), spec_content).unwrap();
 
-    // Seed the unfilled HANDWRITE marker source file.
-    let marker_rel = "src/demo.rs";
-    let marker_path = root.join(marker_rel);
-    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    // Seed both active markers without embedding marker-shaped literals in
+    // this test source itself.
+    for (path, id) in [
+        (app_marker_rel, "app-marker"),
+        (lib_marker_rel, "lib-marker"),
+    ] {
+        let marker_path = root.join(path);
+        std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            marker_path,
+            format!(
+                "{}\n// TODO: hand-write content for `{path}`.\n{}\n",
+                handwrite_begin(&format!(
+                    "gap=\"{id}\" tracker=\"none\" reason=\"unfilled\""
+                )),
+                handwrite_end(),
+            ),
+        )
+        .unwrap();
+    }
+
+    let foreign_marker_rel = "projects/mamba/src/foreign.rs";
+    let foreign_marker_path = root.join(foreign_marker_rel);
+    std::fs::create_dir_all(foreign_marker_path.parent().unwrap()).unwrap();
     std::fs::write(
-        &marker_path,
-        "// HANDWRITE-BEGIN gap=\"demo-marker\" tracker=\"none\" reason=\"unfilled\"\n\
-         // TODO: hand-write content for `src/demo.rs`.\n\
-         // HANDWRITE-END\n",
+        &foreign_marker_path,
+        format!(
+            "{}\n// TODO: hand-write content for `{foreign_marker_rel}`.\n{}\n",
+            handwrite_begin("gap=\"foreign-marker\" tracker=\"none\" reason=\"unrelated\""),
+            handwrite_end(),
+        ),
     )
     .unwrap();
 
@@ -560,53 +590,122 @@ async fn test_apply_marker_replaces_block() {
         "payload path must not reference the retired repo-root .aw/payloads/, got: {}",
         payload_path
     );
-    let marker_id = envelope["invoke"]["args"]["marker_list"][0]["id"]
+    let first_marker_id = envelope["invoke"]["args"]["marker_list"][0]["id"]
         .as_str()
         .expect("marker_list[0].id present")
         .to_string();
+    let marker_list = envelope["invoke"]["args"]["marker_list"]
+        .as_array()
+        .expect("marker_list is an array");
+    assert_eq!(
+        marker_list.len(),
+        2,
+        "brief queue must include app/lib markers and exclude the foreign marker"
+    );
+    let mut queued_paths: Vec<&str> = marker_list
+        .iter()
+        .map(|marker| marker["source_path"].as_str().unwrap())
+        .collect();
+    queued_paths.sort_unstable();
+    assert_eq!(queued_paths, vec![app_marker_rel, lib_marker_rel]);
+    assert_eq!(first_marker_id, "app-marker");
 
     // The CLI already initialized the payload template at that absolute
     // path; overwrite it with the marker's real fill content, proving the
     // apply step reads back from /tmp, not from the repo tree.
-    let payload_body = "// filled by test_apply_marker_replaces_block\n";
-    std::fs::write(&payload_path, payload_body).expect("write payload at /tmp/aw path");
+    let app_payload_body = "// filled app marker\n";
+    std::fs::write(&payload_path, app_payload_body).expect("write app payload at /tmp/aw path");
 
-    // Apply: read the /tmp payload and merge it into the HANDWRITE block.
-    let apply_output = Command::new(&aw_bin)
+    // Apply the app marker. The continuation must remain in fill and point at
+    // the lib marker rather than skipping straight to code-check.
+    let app_apply_output = Command::new(&aw_bin)
         .arg("td")
         .arg("fill")
         .arg(slug)
         .arg("--apply")
         .arg("--marker")
-        .arg(&marker_id)
+        .arg(&first_marker_id)
         .current_dir(root)
         .output()
-        .expect("run aw td fill --apply");
-    let apply_stdout = String::from_utf8_lossy(&apply_output.stdout);
-    let apply_stderr = String::from_utf8_lossy(&apply_output.stderr);
+        .expect("run aw td fill --apply for app marker");
+    let app_apply_stdout = String::from_utf8_lossy(&app_apply_output.stdout);
+    let app_apply_stderr = String::from_utf8_lossy(&app_apply_output.stderr);
     assert!(
-        apply_output.status.success(),
-        "apply should exit 0:\nstdout:\n{}\nstderr:\n{}",
-        apply_stdout,
-        apply_stderr
+        app_apply_output.status.success(),
+        "app apply should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        app_apply_stdout,
+        app_apply_stderr
+    );
+    let app_apply_envelope: serde_json::Value =
+        serde_json::from_str(app_apply_stdout.trim()).expect("app apply envelope is valid JSON");
+    assert!(
+        app_apply_envelope["next"]["command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("aw td fill")),
+        "first apply must dispatch to the remaining lib marker, got:\n{}",
+        app_apply_stdout
+    );
+    assert_eq!(app_apply_envelope["invoke"]["args"]["marker"], "lib-marker");
+    let lib_payload_path = app_apply_envelope["next"]["payload_path"]
+        .as_str()
+        .expect("lib payload path present");
+    std::fs::write(lib_payload_path, "// filled lib marker\n")
+        .expect("write lib payload at /tmp/aw path");
+
+    let lib_apply_output = Command::new(&aw_bin)
+        .args(["td", "fill", slug, "--apply", "--marker", "lib-marker"])
+        .current_dir(root)
+        .output()
+        .expect("run aw td fill --apply for lib marker");
+    let lib_apply_stdout = String::from_utf8_lossy(&lib_apply_output.stdout);
+    let lib_apply_stderr = String::from_utf8_lossy(&lib_apply_output.stderr);
+    assert!(
+        lib_apply_output.status.success(),
+        "lib apply should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        lib_apply_stdout,
+        lib_apply_stderr
     );
     assert!(
-        apply_stdout.contains("\"command\":\"aw td code-check\""),
-        "last marker apply should dispatch to terminal code-check, got:\n{}",
-        apply_stdout
+        lib_apply_stdout.contains("\"command\":\"aw td code-check"),
+        "last active marker must dispatch to terminal code-check, got:\n{}",
+        lib_apply_stdout
+    );
+    assert!(
+        !lib_apply_stdout.contains("foreign-marker"),
+        "post-apply dispatch must not leak a foreign marker, got:\n{}",
+        lib_apply_stdout
     );
 
-    let updated_source = std::fs::read_to_string(&marker_path).expect("read updated source");
+    let updated_app =
+        std::fs::read_to_string(root.join(app_marker_rel)).expect("read updated app source");
     assert!(
-        updated_source.contains("filled by test_apply_marker_replaces_block"),
-        "source file must contain the payload body in place of the stub, got:\n{}",
-        updated_source
+        updated_app.contains("filled app marker") && !updated_app.contains("TODO: hand-write"),
+        "app source must contain its payload body in place of the stub, got:\n{}",
+        updated_app
     );
+    let updated_lib =
+        std::fs::read_to_string(root.join(lib_marker_rel)).expect("read updated lib source");
     assert!(
-        !updated_source.contains("TODO: hand-write content"),
-        "the unfilled stub text must be gone after apply, got:\n{}",
-        updated_source
+        updated_lib.contains("filled lib marker") && !updated_lib.contains("TODO: hand-write"),
+        "lib source must contain its payload body in place of the stub, got:\n{}",
+        updated_lib
     );
+    let foreign_source =
+        std::fs::read_to_string(&foreign_marker_path).expect("read foreign marker source");
+    assert!(
+        foreign_source.contains(&format!(
+            "TODO: hand-write content for `{foreign_marker_rel}`"
+        )),
+        "foreign marker must remain untouched, got:\n{}",
+        foreign_source
+    );
+
+    let filled_issue = backend
+        .get(slug)
+        .await
+        .expect("read filled issue")
+        .expect("filled issue remains");
+    assert_eq!(filled_issue.phase.as_deref(), Some(td_phase::CB_FILLED));
 
     // The payload directory itself must never have been created inside the
     // repo tree.

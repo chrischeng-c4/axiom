@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/envelope.md#source
 // CODEGEN-BEGIN
-//! SDD CLI envelope protocol — shared by all frontends (score, cue, conductor).
+//! AW CLI envelope protocol for the agent-first project-iteration surface.
 //!
 //! Mirrors the schema in `apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md`.
 

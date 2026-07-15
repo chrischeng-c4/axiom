@@ -2719,6 +2719,61 @@ pub(crate) fn default_spec_path_for_issue_in_project(
     ))
 }
 
+/// Resolve the TD documents owned by an existing issue without consulting
+/// checkout-global legacy discovery. Exact `Issue.implements` paths win;
+/// issues created before that field was populated recover through the same
+/// configured project-qualified default used by `aw td create`.
+pub(crate) fn resolve_issue_td_spec_paths(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    fallback_slug: &str,
+) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for raw in issue.implements.iter().filter(|path| path.ends_with(".md")) {
+        let normalized = normalize_checkout_rel_path(raw);
+        let rel = std::path::Path::new(&normalized);
+        if normalized.is_empty()
+            || rel.is_absolute()
+            || rel
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            anyhow::bail!(
+                "issue '{fallback_slug}' has a non-normalized TD reference in implements: `{raw}`"
+            );
+        }
+        if !paths.contains(&normalized) {
+            paths.push(normalized);
+        }
+    }
+    if paths.is_empty() {
+        paths.push(default_spec_path_for_issue_in_project(
+            project_root,
+            issue,
+            fallback_slug,
+        )?);
+    }
+    Ok(paths)
+}
+
+/// Generation is singular: if an issue owns several accepted TDs, the agent
+/// must select one explicitly rather than allowing repository discovery to
+/// choose a foreign or arbitrary document.
+pub(crate) fn resolve_issue_td_generation_spec_path(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    fallback_slug: &str,
+) -> Result<String> {
+    let paths = resolve_issue_td_spec_paths(project_root, issue, fallback_slug)?;
+    match paths.as_slice() {
+        [path] => Ok(path.clone()),
+        _ => anyhow::bail!(
+            "issue '{fallback_slug}' owns multiple TD specs ({}); rerun with --spec-path <repo-relative-spec.md>",
+            paths.join(", ")
+        ),
+    }
+}
+
 fn slash_path(path: std::path::PathBuf) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -3765,6 +3820,13 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         let payload_path = first_section
             .as_ref()
             .map(|section| section_payload_path(&project_root, &slug, pass, section));
+        let artifact_slots = first_section
+            .iter()
+            .zip(payload_path.iter())
+            .map(|(section, payload)| (section.clone(), payload.clone()))
+            .collect::<Vec<_>>();
+        let artifact =
+            super::artifact_producer::td_contract(&slug, &spec_path, pass, &artifact_slots, true)?;
         let next = if let (Some(section), Some(payload)) =
             (first_section.as_ref(), payload_path.as_ref())
         {
@@ -3794,6 +3856,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
             "agent": null,
             "slug": slug,
             "next": next,
+            "artifact": artifact,
             "payload_initialized": first_payload_created.unwrap_or(false),
             "target": {
                 "spec_path": spec_path,
@@ -3828,6 +3891,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         spec_path
     );
     println!("Fill exactly one initialized section payload at a time as directed below.");
+    println!(
+        "Artifact protocol: {}.",
+        super::artifact_producer::ARTIFACT_PROTOCOL_VERSION
+    );
     println!();
     println!("## Spec format");
     println!();
@@ -4004,6 +4071,13 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         let pass = td_authoring_pass(args.phase.as_deref());
         let payload_path = section_payload_path(&project_root, slug, pass, section);
         let payload_abs = std::path::Path::new(&payload_path);
+        let artifact = super::artifact_producer::td_contract(
+            slug,
+            spec_path,
+            pass,
+            &[(section.to_string(), payload_path.clone())],
+            true,
+        )?;
 
         let base_body_opt = if spec_abs.exists() {
             Some(std::fs::read_to_string(&spec_abs).context("failed to read base spec")?)
@@ -4034,23 +4108,26 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
             }
             std::fs::write(payload_abs, &payload_json)
                 .context("failed to reseed section payload")?;
-            let msg = format!(
-                "section '{}' already has authored content; the payload was missing or still a \
-                 placeholder, so it was (re)seeded from the existing section at {}. Review/edit \
-                 that file, then rerun this command.",
-                section, payload_path
+            let msg = artifact.schema_violation(
+                section,
+                format!(
+                    "section already has authored content; payload was missing or placeholder and was reseeded at {payload_path}"
+                ),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         }
 
         let Some(payload_body_raw) = payload_raw_opt else {
             initialize_td_payload_file(&payload_path, &td_section_payload_template(section)?)?;
-            let msg = format!(
-                "section payload was missing; initialized {}. Fill that file, then rerun this command.",
-                payload_path
+            let msg = artifact.schema_violation(
+                section,
+                format!("section payload was missing; initialized {payload_path}"),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         };
+        if let Err(error) = artifact.validate_slot_payload(section, &payload_body_raw) {
+            return td_error(slug, error.to_string());
+        }
         // TD section payloads are always JSON. Generic sections carry a
         // `body` field containing the complete section markdown; structured
         // sections such as `unit-test` use a section-specific schema and are
@@ -4058,7 +4135,12 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         let payload_body = match render_td_json_section_payload(section, &payload_body_raw) {
             Ok(rendered) => rendered,
             Err(e) => {
-                return td_error(slug, e.to_string());
+                return td_error(
+                    slug,
+                    artifact
+                        .schema_violation(section, e.to_string())
+                        .to_string(),
+                );
             }
         };
         let base_body = if let Some(body) = base_body_opt {
@@ -4069,12 +4151,11 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
             // by mainthread from the brief printed by `aw td create
             // <slug>` (no flags). If this file is missing we bail loud
             // rather than invent a header.
-            let msg = format!(
-                "spec file not found: {} (write the frontmatter skeleton first; see `aw td create {}`)",
-                spec_abs.display(),
-                slug
+            let msg = artifact.schema_violation(
+                section,
+                format!("spec skeleton not found: {}", spec_abs.display()),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         };
 
         // Generic JSON payloads accept either the initialized complete
@@ -4087,14 +4168,26 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         } else {
             match normalize_generic_td_section_payload(section, &payload_body, &spec_abs) {
                 Ok(normalized) => normalized,
-                Err(error) => return td_error(slug, error.to_string()),
+                Err(error) => {
+                    return td_error(
+                        slug,
+                        artifact
+                            .schema_violation(section, error.to_string())
+                            .to_string(),
+                    )
+                }
             }
         };
 
         let merged = match merge_spec_section(&base_body, section, &payload_body) {
             Ok(m) => m,
             Err(e) => {
-                return td_error(slug, format!("section merge failed: {}", e));
+                return td_error(
+                    slug,
+                    artifact
+                        .schema_violation(section, format!("section merge failed: {e}"))
+                        .to_string(),
+                );
             }
         };
 
@@ -4106,12 +4199,15 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         if report.has_errors() {
             let errors = td_content_error_messages(&report);
             print_td_content_errors("TD content validation errors", &report);
-            let msg = format!(
-                "td content validation failed ({} errors): {}",
-                errors.len(),
-                errors.join("; ")
+            let msg = artifact.schema_violation(
+                section,
+                format!(
+                    "td content validation failed ({} errors): {}",
+                    errors.len(),
+                    errors.join("; ")
+                ),
             );
-            return td_error(slug, msg);
+            return td_error(slug, msg.to_string());
         }
 
         std::fs::write(&spec_abs, merged).context("failed to write merged spec")?;
@@ -4461,7 +4557,17 @@ fn shell_quote_td_arg(value: &str) -> String {
 }
 
 fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateError) -> Result<()> {
-    let (error_kind, section, targets, spec_path, remediation, next_command) = match error {
+    let (
+        error_kind,
+        reason,
+        section,
+        unit_ids,
+        targets,
+        spec_path,
+        remediation,
+        next_command,
+        requires_hitl,
+    ) = match error {
         crate::generate::GenerateError::AmbiguousGenerationPlan {
             section,
             targets,
@@ -4469,11 +4575,49 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
             next_command,
         } => (
             "ambiguous_generation_plan",
+            None,
             Some(section.as_str()),
+            &[][..],
             targets.as_slice(),
             None,
             remediation.as_str(),
             next_command.as_str(),
+            false,
+        ),
+        crate::generate::GenerateError::InvalidGeneratedUnitOwnership {
+            section,
+            reason,
+            unit_ids,
+            targets,
+            remediation,
+            next_command,
+        } => (
+            "invalid_generated_unit_ownership",
+            Some(reason.as_str()),
+            Some(section.as_str()),
+            unit_ids.as_slice(),
+            targets.as_slice(),
+            None,
+            remediation.as_str(),
+            next_command.as_str(),
+            false,
+        ),
+        crate::generate::GenerateError::OwnedGeneratedUnitUnsupported {
+            section,
+            unit_ids,
+            targets,
+            remediation,
+            next_command,
+        } => (
+            "owned_generated_unit_unsupported",
+            Some("generator_gap"),
+            Some(section.as_str()),
+            unit_ids.as_slice(),
+            targets.as_slice(),
+            None,
+            remediation.as_str(),
+            next_command.as_str(),
+            true,
         ),
         crate::generate::GenerateError::GenerationPlanUnavailable {
             spec_path,
@@ -4482,10 +4626,13 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
         } => (
             "generation_plan_unavailable",
             None,
+            None,
+            &[][..],
             &[][..],
             Some(spec_path.as_str()),
             remediation.as_str(),
             next_command.as_str(),
+            false,
         ),
         _ => return Ok(()),
     };
@@ -4494,7 +4641,9 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
             "action": "error",
             "slug": slug,
             "error_kind": error_kind,
+            "reason": reason,
             "section": section,
+            "unit_ids": unit_ids,
             "targets": targets,
             "spec_path": spec_path,
             "message": error.to_string(),
@@ -4503,15 +4652,15 @@ fn print_generation_plan_error(slug: &str, error: &crate::generate::GenerateErro
                 "kind": "remediation",
                 "command": next_command,
                 "reason": remediation,
-                "requires_hitl": false,
+                "requires_hitl": requires_hitl,
                 "payload_path": null,
             },
             "completion": {
                 "root_complete": false,
                 "workflow_complete": false,
-                "requires_hitl": false,
+                "requires_hitl": requires_hitl,
                 "criteria": [],
-                "missing": ["unambiguous complete TD generation plan"],
+                "missing": ["valid complete TD generated-unit ownership plan"],
             },
         }),
         true,
@@ -4538,14 +4687,16 @@ async fn prepare_td_generation_before_lifecycle(
     let spec_path = if let Some(explicit) = explicit_spec_path {
         explicit.to_string()
     } else if let Some(issue) = local_issue.as_ref() {
-        default_spec_path_for_issue_in_project(project_root, issue, &workflow_slug).map_err(
+        resolve_issue_td_generation_spec_path(project_root, issue, &workflow_slug).map_err(
             |error| {
                 anyhow::anyhow!(
-                    "td gen must resolve its spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+                    "td gen must resolve its issue-owned spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
                 )
             },
         )?
     } else if let Some(discovered) = discover_worktree_spec(project_root) {
+        // Legacy no-issue utility mode only. Existing WIs must never consult
+        // a checkout-global diff because that can belong to another project.
         discovered
     } else {
         anyhow::bail!(
@@ -5610,7 +5761,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn td_gen_prefers_project_default_over_foreign_legacy_spec() {
+    async fn td_gen_prefers_issue_scope_over_foreign_legacy_discovery() {
         if !git_available() {
             return;
         }
@@ -5637,7 +5788,10 @@ mod tests {
         let foreign = root.join(".aw/tech-design/projects/mamba/logic/foreign.md");
         std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
         std::fs::write(&foreign, "# foreign legacy TD\n").unwrap();
-        for args in [["add", "."].as_slice(), ["commit", "-qm", "foreign legacy TD"].as_slice()] {
+        for args in [
+            ["add", "."].as_slice(),
+            ["commit", "-qm", "foreign legacy TD"].as_slice(),
+        ] {
             let status = std::process::Command::new("git")
                 .args(args)
                 .current_dir(root)
@@ -5645,12 +5799,22 @@ mod tests {
                 .unwrap();
             assert!(status.success());
         }
-        LocalBackend::from_project_root(root).create(&issue).await.unwrap();
+        LocalBackend::from_project_root(root)
+            .create(&issue)
+            .await
+            .unwrap();
 
         let prepared = prepare_td_generation_before_lifecycle(root, &issue.slug, None)
             .await
             .unwrap();
         assert_eq!(prepared.spec_path, expected);
+
+        let mut exact = issue.clone();
+        exact.implements = vec!["apps/lumen/tech-design/logic/custom.md".to_string()];
+        assert_eq!(
+            resolve_issue_td_generation_spec_path(root, &exact, &exact.slug).unwrap(),
+            exact.implements[0]
+        );
     }
 
     #[test]

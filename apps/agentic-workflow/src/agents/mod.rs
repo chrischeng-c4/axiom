@@ -8,12 +8,10 @@ pub mod change_spec;
 pub mod code_agent;
 pub mod codebase_to_spec;
 mod coding;
-pub mod crr;
 pub mod reference_codebase_context;
 pub mod reference_spec_context;
 pub mod restructure;
 pub mod restructure_codebase;
-pub mod review;
 
 // Keep the old module path accessible so existing code compiles without changes.
 // `reference_context` is now an alias for `reference_spec_context`.
@@ -32,7 +30,6 @@ pub use codebase_to_spec::{
     CodebaseToSpecAgent, CodebaseToSpecAgentBuilder, CodebaseToSpecAgentConfig, CodebaseToSpecInput,
 };
 pub use coding::{CodingAgent, CodingAgentBuilder, CodingAgentConfig};
-pub use crr::{CRRCycle, CRRCycleBuilder, CRREvent, CRRResult, CRRVerdictType};
 pub use reference_codebase_context::{
     CodebaseDependency, ComponentRelationship, KeyFile, ReferenceCodebaseArtifact,
     ReferenceCodebaseContextAgent, ReferenceCodebaseContextAgentBuilder,
@@ -49,10 +46,6 @@ pub use restructure::{
 };
 pub use restructure_codebase::{
     RestructureCodebaseAgent, RestructureCodebaseAgentBuilder, RestructureCodebaseAgentConfig,
-};
-pub use review::{
-    ReviewAgent, ReviewAgentBuilder, ReviewAgentConfig, ReviewIssue, ReviewType, ReviewVerdict,
-    Reviewer, Severity,
 };
 
 use agent::error::NovaResult;

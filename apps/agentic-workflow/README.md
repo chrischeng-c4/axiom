@@ -2,8 +2,9 @@
 
 ## Brief
 
-Workflow protocol and CLI chain for capability-driven project takeover,
-work-item planning, TD/CB lifecycle execution, and production-readiness rollup.
+Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding
+agents. It owns next-action guidance, durable artifact skeletons, strict format
+and phase validation, and code generation.
 
 ## Contributing
 
@@ -19,21 +20,17 @@ Machine-readable capability contract for Agentic Workflow. Full contract:
 
 ## Overview
 
-Agentic Workflow (`aw`) coordinates bounded project work through a CLI workflow
-chain from product capabilities down through work items, tech designs, code
-artifacts, verification gates, and parent-root rollup.
+Agentic Workflow (`aw`) coordinates bounded project work through one CLI chain
+from project META-doc goals through work items, external contracts, tech
+design/codegen, verification evidence, and parent-root rollup. Its public nouns
+are Project, Capability, WorkItem, Artifact, Gate, Evidence, and Rollup. The CLI
+is the product boundary; there is no separate product-client architecture.
 
-AW Core is the client-independent model underneath `aw CLI`, Cue, and future
-clients. Its canonical nouns are Project, Capability, WorkItem, Artifact, Gate,
-Evidence, HITL, Rollup, and Client; CLI commands and Cue product workflows are
-client adapters over those shared semantics. See
-`apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md`.
-Client boundary: `aw CLI` is the standalone repo-local developer and
-coding-agent client; Cue is the enterprise team collaboration web
-frontend/backend client. Both sit over AW Core, and Cue is not an `aw CLI`
-wrapper. See
+The canonical product model lives in
+`apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md`, and
+the single CLI boundary lives in
 `apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md`.
-Core artifact admission is WorkItem-first: no artifact is created before an
+Artifact admission is WorkItem-first: no durable artifact is created before an
 accepted WorkItem, and the requested artifact type must be allowed by that
 WorkItem's target artifact route. See
 `apps/agentic-workflow/tech-design/surface/specs/aw-workitem-artifact-gate.md`.
@@ -62,12 +59,21 @@ work. Agents must re-run the same root command after each child command
 completes and stop only when the envelope reports workflow completion, HITL,
 blocker, or error.
 
+For every accepted bounded WI, the root order is fixed: `WI -> EC skeleton /
+fill / independent review / generation -> TD/codegen -> EC verify -> terminal
+code-check -> parent rollup`. A new WI therefore never starts `aw td create`
+until its project-local EC inventory has generated successfully. Capability is
+the META-doc goal ledger and scheduler for these WIs; it does not create a
+second implementation lifecycle. `aw health` observes the resulting rollup
+and never becomes an authoring step.
+
 ## Lifecycle Surface
 
 AW uses canonical agent-facing command names for the main lifecycle:
 
 | CLI | Long name | Role |
 |---|---|---|
+| `aw meta` | META-doc control plane | Initialize repo/project skeletons, refresh only AW-owned marker blocks, and fail read-only checks with exact remediation. |
 | `aw capability` | Product capabilities | Define the project capability tree, claims, maturity, release scope, and required external contracts. |
 | `aw ec` | External Contracts | Define behavior, efficiency, security, and stability contracts; generate tests and tool configs. |
 | `aw td` | Tech Design + code artifacts | Describe implementation design and own generated-code verbs: `gen`, `gen-source`, `fill`, `code-check`, and `create --from-source`. TD output is a candidate implementation that iterates until EC and health gates pass. |
@@ -76,17 +82,18 @@ AW uses canonical agent-facing command names for the main lifecycle:
 The canonical flow for greenfield projects is:
 
 ```text
-aw capability report/next/migrate/check -> aw ec draft/fill -> aw ec gen -> aw td create/gen/fill/code-check/merge -> aw health
+aw meta init/check -> aw capability report/next -> aw wi -> aw ec draft/fill/review/gen -> aw td create/gen/fill -> aw ec verify -> aw td code-check -> parent rollup -> aw health
 ```
 
-Greenfield starts by defining capabilities and required external contracts. EC
+Greenfield starts by creating the repo/project META-doc control plane, then
+defining capabilities and required external contracts. EC
 contracts may begin red: `aw ec gen` materializes the tests, runner stubs, and
 tool manifests first, then TD/CB/code work drives those contracts green.
 
 The canonical flow for brownfield projects is:
 
 ```text
-aw capability check -> aw ec check/gen -> aw td claim/create --from-source/gen/fill -> aw health
+aw meta check -> aw capability check -> aw ec check/gen -> aw td claim/create --from-source/gen/fill/code-check -> aw health
 ```
 
 Brownfield starts by adding capabilities around existing behavior, then
@@ -147,12 +154,11 @@ The quick map below points to the canonical entries in
 
 | Capability | Product promise | Production | Full contract |
 |---|---|---|---|
-| AW Core Client Model | Shared AW Core nouns, WorkItem-first artifact admission, and client boundary semantics for `aw CLI`, Cue, and future clients. | ready | [CAPABILITIES.md](CAPABILITIES.md#aw-core-client-model) |
+| AW Agent-First CLI Model | One coding-agent CLI that owns next-action guidance, artifact skeletons, strict validation/phases, codegen, WorkItem-first admission, and evidence-backed rollup. | ready | [CAPABILITIES.md](CAPABILITIES.md#aw-agent-first-cli-model) |
 | Workflow Root Runner | Root-scoped project, capability, and WI workflow envelopes with child-command rollup. | ready | [CAPABILITIES.md](CAPABILITIES.md#workflow-root-runner) |
 | Capability Control Plane | Markdown capability contracts, readiness reporting, project sweep, and contract field setters. | ready | [CAPABILITIES.md](CAPABILITIES.md#capability-control-plane) |
 | Work Item Planning | Capability roots can become epic/subepic candidates, then bounded change WIs. | ready | [CAPABILITIES.md](CAPABILITIES.md#work-item-planning) |
-| TD/CB Lifecycle Automation | Atomic WIs move through TD, code generation/fill, code-check, and merge gates. | ready | [CAPABILITIES.md](CAPABILITIES.md#tdcb-lifecycle-automation) |
+| TD/CB Lifecycle Automation | EC-ready atomic WIs move through TD, code generation/fill, EC verification, and terminal code-check. | ready | [CAPABILITIES.md](CAPABILITIES.md#tdcb-lifecycle-automation) |
 | Project-Local TD and EC Gates | Project-local TD roots, external contracts, generated gates, and dirty-scope protections. | ready | [CAPABILITIES.md](CAPABILITIES.md#project-local-td-and-ec-gates) |
 | Manual Evidence Artifacts | EC-derived product manuals are tracked as generated evidence artifacts. | ready | [CAPABILITIES.md](CAPABILITIES.md#manual-evidence-artifacts) |
-| Repo View Desktop App | Native repo reader for repo/project selection, Caps/EC detail, terminal context, screenshots, and app bundle generation. | ready | [CAPABILITIES.md](CAPABILITIES.md#repo-view-desktop-app) |
 | Existing Project Standardization | Brownfield takeover guidance, readiness rollup, and generator-gap routing. | ready | [CAPABILITIES.md](CAPABILITIES.md#existing-project-standardization) |

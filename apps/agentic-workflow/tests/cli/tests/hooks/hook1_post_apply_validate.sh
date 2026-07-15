@@ -39,7 +39,7 @@ run_hook() {
 }
 
 # Assertion (a): validate invoked with the correct slug.
-mk_stub 0 "{\"action\":\"dispatch\",\"slug\":\"$SLUG\",\"invoke\":{\"command\":\"aw wi review\"}}"
+mk_stub 0 "{\"action\":\"dispatch\",\"slug\":\"$SLUG\",\"invoke\":{\"command\":\"aw wi validate $SLUG\"}}"
 out="$(run_hook "aw wi fill-section --apply --slug $SLUG --section requirements")"
 grep -q "STUB-CALLED: wi validate $SLUG" "$TMP/calls.log" \
   || { echo "FAIL (a): validate not invoked with slug $SLUG"; cat "$TMP/calls.log"; exit 1; }

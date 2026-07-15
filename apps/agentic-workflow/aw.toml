@@ -5,7 +5,7 @@ name = "agentic-workflow"
 [aw.ec.generated]
 version = 1
 project = "agentic-workflow"
-generated_from_td_digest = "sha256:83fde7b6ce7bcd811ef32990cef251e9ee273224c99fdc61407a511f80d3355a"
+generated_from_td_digest = "sha256:5f0b05c04585c9ad1af2f3d26559b93de816c18208a7823d37eb2a80bd162de3"
 
 [[aw.ec.generated.cases]]
 id = "api-contract-source-passes"
@@ -63,6 +63,18 @@ required_for_production = true
 assertions = []
 
 [[aw.ec.generated.cases]]
+id = "aw-core-client-agent-first-cli-product-model"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "agent-first-cli-product-model"
+contract_id = "aw-core-client-agent-first-cli-product-model"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-agent-first-cli-product-model"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs"
+command = "cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+required_for_production = true
+assertions = ["binary orientation, README, capability contract, and canonical product TDs share one agent-first CLI model and reject removed architecture prose"]
+
+[[aw.ec.generated.cases]]
 id = "aw-core-client-agent-orientation-surface"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 claim_id = "agent-orientation-surface"
@@ -75,18 +87,6 @@ required_for_production = true
 assertions = ["agent-facing llm outline lists the registered command surface"]
 
 [[aw.ec.generated.cases]]
-id = "aw-core-client-client-boundary-model"
-capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
-claim_id = "client-boundary-model"
-contract_id = "aw-core-client-client-boundary-model"
-category = "behavior"
-td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-client-boundary-model"
-test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_client_boundary_model.rs"
-command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md"
-required_for_production = true
-assertions = ["client boundary TD validates as the shared client boundary claim"]
-
-[[aw.ec.generated.cases]]
 id = "aw-core-client-core-concept-model-and-invariants"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 claim_id = "core-concept-model-and-invariants"
@@ -96,7 +96,7 @@ td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-cl
 test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_and_invariants.rs"
 command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md"
 required_for_production = true
-assertions = ["core client model TD validates as the source claim for AW core invariants"]
+assertions = ["agent-first project iteration model TD validates as the source claim for AW invariants"]
 
 [[aw.ec.generated.cases]]
 id = "aw-core-client-workitem-artifact-admission-gate"
@@ -139,6 +139,38 @@ assertions = [
 ]
 
 [[aw.ec.generated.cases]]
+id = "aw-epic-project-label-dispatch-chain"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "aw-epic-project-label-dispatch"
+contract_id = "aw-epic-project-label-dispatch-chain"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#aw-epic-project-label-dispatch-chain"
+test_path = "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_chain.rs"
+command = "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
+required_for_production = true
+assertions = [
+    "run.rs:open_epic_envelope is present in EMIT_REGISTRY",
+    "aw wi atomize --project pgpool parses through the real CLI tree",
+]
+
+[[aw.ec.generated.cases]]
+id = "aw-epic-project-label-dispatch-focused"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "aw-epic-project-label-dispatch"
+contract_id = "aw-epic-project-label-dispatch-focused"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#aw-epic-project-label-dispatch-focused"
+test_path = "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_focused.rs"
+command = "cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture"
+required_for_production = true
+assertions = [
+    "the #1511 project:pgpool fixture emits exactly aw wi atomize --project pgpool",
+    "app:mamba and lib:pg retain their existing atomize commands",
+    "missing, empty, and whitespace-only project labels return blocked/HITL remediation",
+    "no tested envelope contains --project PROJECT",
+]
+
+[[aw.ec.generated.cases]]
 id = "aw-health-default-full-verification-smoke"
 capability_id = "existing-project-standardization"
 claim_id = "aw-health-default-full-verification-smoke"
@@ -155,89 +187,21 @@ assertions = [
 ]
 
 [[aw.ec.generated.cases]]
-id = "aw-view-repo-app-bundle"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-app-bundle"
+id = "aw-td-apply-section-lookup-parity-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "td-apply-section-lookup-parity"
+contract_id = "aw-td-apply-section-lookup-parity-real-cli"
 category = "behavior"
-td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-app-bundle"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_app_bundle.rs"
-command = "./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app"
+td_ref = "apps/agentic-workflow/tech-design/semantic/aw-td-apply-section-lookup-parity.md#aw-td-apply-section-lookup-parity-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_aw_td_apply_section_lookup_parity_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test -- --nocapture"
 required_for_production = true
 assertions = [
-    "native desktop bundle is produced as a macOS .app launcher",
-    "app bundle launches the repo-built aw view desktop surface",
-    "app bundle is produced without a browser or web runtime dependency",
-]
-
-[[aw.ec.generated.cases]]
-id = "aw-view-repo-check"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-check"
-category = "behavior"
-td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-check"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_check.rs"
-command = "./target/debug/aw view --check"
-required_for_production = true
-assertions = [
-    "headless repo view check contains a projects/libs catalog",
-    "headless repo view check contains a terminal pane",
-    "headless repo view check contains README, capability, EC, and TD detail panes",
-    "headless repo view check exposes a semantic layout toggle button",
-    "headless repo view check preserves stable semantic IDs for e2e assertions",
-]
-
-[[aw.ec.generated.cases]]
-id = "aw-view-repo-layout-option"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-layout-option"
-category = "behavior"
-td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-layout-option"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_layout_option.rs"
-command = "./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png"
-required_for_production = true
-assertions = [
-    "project list stays fixed while the terminal/detail region can switch layout",
-    "top-bottom layout screenshot is rendered without changing the default left-right layout",
-    "layout is an explicit CLI option for the native repo view renderer",
-    "app screenshot includes the visible layout toggle control",
-]
-
-[[aw.ec.generated.cases]]
-id = "aw-view-repo-screenshot"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-screenshot"
-category = "behavior"
-td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-screenshot"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_screenshot.rs"
-command = "./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png"
-required_for_production = true
-assertions = [
-    "app screenshot is produced without a browser or desktop screen capture",
-    "app screenshot is rendered from the same renderer-neutral surface tree",
-    "app screenshot contains project list, terminal status, and selected README, capability, EC, and TD detail panes",
-]
-
-[[aw.ec.generated.cases]]
-id = "aw-view-repo-snapshot"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-snapshot"
-category = "behavior"
-td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-snapshot"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_snapshot.rs"
-command = "./target/debug/aw view --snapshot"
-required_for_production = true
-assertions = [
-    "snapshot root is the repository, not a single project",
-    "snapshot includes the projects/libs catalog",
-    "snapshot includes terminal status for watching agent-side changes",
-    "snapshot includes selected README detail and capability rows",
-    "snapshot includes selected EC inventory and TD summary",
-    "snapshot includes a renderer-neutral surface tree for renderer-independent tests",
+    "the already-valid fixture passes aw td check with zero findings",
+    "missing and malformed payload attempts leave the spec byte-identical",
+    "body-only Logic applies with exactly one typed Logic wrapper",
+    "the next initialized payload is applicability/unit-test.json",
+    "structured Unit Test applies and dispatches contract Logic",
 ]
 
 [[aw.ec.generated.cases]]
@@ -660,6 +624,211 @@ test_path = "apps/agentic-workflow/tests/behavior_td_cb_lifecycle_automation_td_
 command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
 required_for_production = true
 assertions = ["the epic's terminal EC-gated fixture-loop proof (#1270 children"]
+
+[[aw.ec.generated.cases]]
+id = "td-default-section-queue-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "td-default-section-queue-preservation"
+contract_id = "td-default-section-queue-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/logic/td-default-section-queue-preservation.md#td-default-section-queue-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_default_section_queue_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_create_replay_does_not_clobber_authored_logic_section -- --nocapture"
+required_for_production = true
+assertions = [
+    "the fresh skeleton contains logic followed by unit-test",
+    "logic applicability emits an applicability unit-test dispatch",
+    "contract authoring does not start before unit-test applicability",
+]
+
+[[aw.ec.generated.cases]]
+id = "td-gen-source-source-snapshot-projection-real-cli"
+capability_id = "existing-project-standardization"
+claim_id = "authoritative-source-snapshot-projection"
+contract_id = "td-gen-source-source-snapshot-projection-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/td-gen-source-source-snapshot-projection.md#td-gen-source-source-snapshot-projection-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_gen_source_source_snapshot_projection_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture"
+required_for_production = true
+assertions = [
+    "a const changes from before to after in the exact requested target",
+    "a uniquely named generated Rust test is present in exact target bytes",
+    "cargo test with that unique filter reports running 1 test and 1 passed",
+    "siblings and an unmatched existing target remain byte-identical",
+    "a second replay reports summary.wrote_files=false",
+    "the unmatched target error names the snapshot target and runnable --target remediation",
+]
+
+[[aw.ec.generated.cases]]
+id = "td-generation-target-exact-partition-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "exact-generated-unit-target-ownership"
+contract_id = "td-generation-target-exact-partition-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-exact-partition-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_exact_partition_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_exact_schema_unit_ownership_partitions_real_targets -- --nocapture"
+required_for_production = true
+assertions = [
+    "a cold public TD generation accepts two exact Schema owners",
+    "Alpha and Beta appear only in their declared target files",
+    "the admitted lifecycle advances to cb_genned",
+]
+
+[[aw.ec.generated.cases]]
+id = "td-generation-target-generator-gap-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "exact-generated-unit-target-ownership"
+contract_id = "td-generation-target-generator-gap-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-generator-gap-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_generator_gap_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation -- --nocapture"
+required_for_production = true
+assertions = [
+    "the public binary emits a typed owned_generated_unit_unsupported HITL envelope",
+    "the stable unit ID, target, remediation command, and generator_gap reason are explicit",
+    "HEAD, branch, index, status, issue, and target bytes remain unchanged",
+]
+
+[[aw.ec.generated.cases]]
+id = "td-generation-target-ownership-inferred-single-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "ambiguous-multi-target-generation-preflight"
+contract_id = "td-generation-target-ownership-inferred-single-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-ownership-inferred-single-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_inferred_single_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_no_changes_single_inferred_schema_target_remains_compatible -- --nocapture"
+required_for_production = true
+assertions = [
+    "a no-Changes Schema TD with one exact managed spec ref passes caller admission",
+    "the executor selects the same inferred target and generates Widget",
+    "the lifecycle advances to cb_genned on the persistent project branch",
+]
+
+[[aw.ec.generated.cases]]
+id = "td-generation-target-ownership-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "ambiguous-multi-target-generation-preflight"
+contract_id = "td-generation-target-ownership-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-ownership-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation -- --nocapture"
+required_for_production = true
+assertions = [
+    "the public binary emits exactly one stdout JSON error envelope and no second stderr error",
+    "error_kind, section, sorted targets, completion, and executable next.command are stable",
+    "HEAD, symbolic branch, index tree, porcelain-z status, issue bytes, and TD branch ref are unchanged",
+    "the prepared spec and every target blob remain byte-identical",
+]
+
+[[aw.ec.generated.cases]]
+id = "terminal-ec-cross-process-single-flight-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-cross-process-single-flight-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-cross-process-single-flight-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_cross_process_single_flight_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch -- --nocapture"
+required_for_production = true
+assertions = [
+    "the first aw process owns the project lock while its EC command runs",
+    "the second same-slug aw process returns terminal_ec_single_flight promptly",
+    "both refusal envelopes point to exact aw td code-check slug retry commands",
+    "the append-only EC launch marker contains exactly one line",
+    "the work item remains open in cb_filled and no terminal commit is created",
+]
+
+[[aw.ec.generated.cases]]
+id = "terminal-ec-fast-green-stale-reader-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-fast-green-stale-reader-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-fast-green-stale-reader-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_fast_green_stale_reader_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_fast_green_stale_reader_rechecks_phase_before_ec -- --nocapture"
+required_for_production = true
+assertions = [
+    "a debug-only bounded barrier proves process B read cb_filled before process A completes",
+    "process A executes the fast-green inventory and completes the terminal transition",
+    "process B acquires afterward, re-reads td_merged, and reports terminal retry without EC",
+    "the EC launch marker contains one line and git contains one Cb-CodeCheck terminal commit",
+]
+
+[[aw.ec.generated.cases]]
+id = "terminal-ec-no-child-wrapper-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-no-child-wrapper-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-no-child-wrapper-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_no_child_wrapper_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture"
+required_for_production = true
+assertions = [
+    "the real aw binary returns within the configured one-second deadline plus bounded cleanup grace",
+    "the helper confirms its external child exited before the wrapper timed out",
+    "the wrapper PID no longer exists after aw returns",
+    "the envelope has terminal_ec_timeout and exact aw td code-check slug next.command",
+    "the work item remains open in cb_filled and no terminal commit is created",
+]
+
+[[aw.ec.generated.cases]]
+id = "terminal-ec-retry-transition-lease-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-retry-transition-lease-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-retry-transition-lease-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_retry_transition_lease_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture"
+required_for_production = true
+assertions = [
+    "a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held",
+    "the second process reads retry phase and promptly receives terminal_ec_single_flight",
+    "the refusal points to the exact same-slug aw td code-check retry",
+    "after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit",
+]
+
+[[aw.ec.generated.cases]]
+id = "terminal-touched-codegen-red-repair-green"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-touched-codegen-drift-gate"
+contract_id = "terminal-touched-codegen-red-repair-green"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/td-code-check-touched-codegen-drift.md#terminal-touched-codegen-red-repair-green"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_touched_codegen_red_repair_green.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry -- --nocapture"
+required_for_production = true
+assertions = [
+    "committed accepted CODEGEN drift refuses before EC and leaves phase, state, issue bytes, HEAD, index tree, cached diff, status, and target bytes unchanged",
+    "the finding names only the accepted target and exact spec section while a second unaccepted generated target remains drifted",
+    "the emitted aw td gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command",
+    "restored parity runs EC once, closes the WI, and a td_merged retry neither reruns EC nor duplicates the terminal commit",
+]
+
+[[aw.ec.generated.cases]]
+id = "wi-close-remote-real-cli"
+capability_id = "work-item-planning"
+claim_id = "wi-close-remote-rehydration"
+contract_id = "wi-close-remote-real-cli"
+category = "behavior"
+td_ref = "apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#wi-close-remote-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_wi_close_remote_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests wi_close_remote_ -- --nocapture"
+required_for_production = true
+assertions = [
+    "the repo-built aw binary resolves a tracker-only numeric issue through the configured GitHub backend",
+    "--repo selects every remote read and mutation",
+    "the optional reason and close mutation each occur exactly once across a retry",
+    "a missing remote names its backend and repository and emits an executable recovery command",
+    "a local-only issue still moves from open to closed",
+]
 
 [[aw.ec.generated.cases]]
 id = "wi-create-help-command"

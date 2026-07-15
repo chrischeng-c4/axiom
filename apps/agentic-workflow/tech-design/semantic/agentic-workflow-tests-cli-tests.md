@@ -53,6 +53,18 @@ capability_refs:
     rationale: "Real CLI fixtures prove an ambiguous Schema plan is rejected on main before TD branch activation or mutation, while one existing inferred Schema target remains fully generatable on a project branch."
   - id: td-cb-lifecycle-automation
     role: primary
+    gap: exact-generated-unit-target-ownership
+    claim: exact-generated-unit-target-ownership
+    coverage: full
+    rationale: "Real CLI fixtures prove cold exact Schema partitioning and typed unsupported-owned-unit HITL rejection before Git, issue, lifecycle, or source mutation."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-touched-codegen-drift-gate
+    claim: terminal-touched-codegen-drift-gate
+    coverage: full
+    rationale: "A real CLI regression proves accepted touched CODEGEN drift refuses without mutation, emits and executes scoped repair, ignores unrelated drift, then closes through EC exactly once with retry idempotency."
+  - id: td-cb-lifecycle-automation
+    role: primary
     gap: terminal-ec-process-liveness
     claim: terminal-ec-process-liveness
     coverage: full
@@ -166,6 +178,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "test_code_check_retry_contends_while_terminal_transition_holds_lease"
+            kind: "function"
+            public: false
+          - name: "test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry"
             kind: "function"
             public: false
         source_evidence_node:
@@ -1269,6 +1284,22 @@ changes:
       persistent project branch, proving the caller and executor share exact
       read-only spec-ref inference for one managed target and advance the
       lifecycle to `cb_genned` after replacing the stale symbol.
+      Issue #1634 then cold-generates two Schema targets whose canonical
+      `generates:` lists own disjoint stable IDs, proving Alpha and Beta never
+      leak across files and the admitted lifecycle reaches `cb_genned`. Its
+      negative fixture owns an unsupported alias and compares HEAD, branch,
+      index, status, issue, and target bytes around the typed
+      `owned_generated_unit_unsupported` HITL envelope, proving generator gaps
+      cannot degrade into marker-only CODEGEN or mutate lifecycle state.
+      Issue #1635 creates one accepted and one unrelated generated target,
+      commits drift in both, and stages an unrelated index sentinel. Real
+      terminal code-check refuses only the accepted target before EC while
+      preserving issue bytes, phase/state, HEAD, index tree, cached diff,
+      porcelain status, and both worktree targets. The emitted `aw td gen`
+      command repairs and commits only the accepted target without advancing
+      phase; the unrelated path remains red under the shared audit. The next
+      code-check runs EC once and closes, while a `td_merged` retry neither
+      reruns EC nor duplicates the terminal commit.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/cli/tests/cb_review_revise_test.rs"
     action: modify

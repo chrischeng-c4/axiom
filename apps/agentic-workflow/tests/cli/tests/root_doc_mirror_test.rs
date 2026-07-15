@@ -16,6 +16,7 @@
 use agentic_workflow::cli::doc_mirror::{
     AGENTS_TITLE, CLAUDE_TITLE, CODEX_RULES_HEADING, CODEX_TRANSLATE_PREFIX,
 };
+use agentic_workflow::cli::meta_docs::{meta_doc_contract, MetaDocLayer};
 use std::fs;
 use std::path::PathBuf;
 
@@ -83,6 +84,16 @@ fn strip_codex_only_blocks(agents: &str) -> String {
 
 #[test]
 fn agents_md_is_claude_md_plus_codex_whitelist() {
+    for filename in ["AGENTS.md", "CLAUDE.md"] {
+        assert!(
+            meta_doc_contract(MetaDocLayer::Repository, filename).is_some(),
+            "{filename} must be owned by the repository layer"
+        );
+        assert!(
+            meta_doc_contract(MetaDocLayer::Project, filename).is_none(),
+            "{filename} must not acquire a project-layer owner"
+        );
+    }
     let root = repo_root();
     let claude = fs::read_to_string(root.join("CLAUDE.md")).expect("read CLAUDE.md");
     let agents = fs::read_to_string(root.join("AGENTS.md")).expect("read AGENTS.md");

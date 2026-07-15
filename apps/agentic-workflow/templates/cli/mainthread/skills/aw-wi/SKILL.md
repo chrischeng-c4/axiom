@@ -113,14 +113,6 @@ When `aw wi validate` rejects mainthread's output, it emits an
 - `[retry=N]` (N >= 3) → terminal. Surface the error to the
   user and stop. Don't auto-retry further.
 
-### Manual escalation: review / arbitrate
-
-`aw wi review --slug <slug> [--apply]` and
-`aw wi arbitrate --slug <slug> [--send-back]` still exist as CLI commands,
-but no envelope in the create/validate loop above ever dispatches to them —
-they are manual-only escalation verbs for a human to invoke directly against
-a stalled work-item, not steps the mainthread loop drives on its own.
-
 ## update
 
 Currently non-envelope (legacy). Run `aw wi update <slug> --body-file -`

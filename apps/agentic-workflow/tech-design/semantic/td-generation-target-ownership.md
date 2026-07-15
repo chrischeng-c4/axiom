@@ -1,6 +1,6 @@
 ---
 id: td-generation-target-ownership
-summary: Fail closed on ambiguous whole-section Schema and CLI generation plans before any lifecycle or repository mutation.
+summary: Validate stable Schema/CLI generated-unit ownership and pass only each target's exact IR partition before lifecycle or source mutation.
 fill_sections: [logic, unit-test, e2e-test, changes]
 capability_refs:
   - id: td-cb-lifecycle-automation
@@ -9,6 +9,12 @@ capability_refs:
     claim: ambiguous-multi-target-generation-preflight
     coverage: full
     rationale: "TD generation must establish one exact whole-section Schema or CLI CODEGEN destination before issue hydration, branch activation, source writes, index updates, or lifecycle commits."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: exact-generated-unit-target-ownership
+    claim: exact-generated-unit-target-ownership
+    coverage: full
+    rationale: "Schema definitions and top-level CLI commands have stable section-qualified IDs; canonical Changes.generates ownership is exhaustive, unique, generator-supported, and partitioned before mutation."
 ---
 
 # TD generation target ownership
@@ -30,11 +36,17 @@ nodes:
   unavailable: { kind: terminal, label: "typed unavailable-plan envelope and runnable remediation" }
   group: { kind: process, label: "group selected CODEGEN destinations by section" }
   ambiguous: { kind: decision, label: "Schema or CLI group has more than one target?" }
-  reject: { kind: terminal, label: "typed ambiguity envelope with sorted targets" }
+  exact: { kind: decision, label: "any target declares generates?" }
+  inventory: { kind: process, label: "enumerate stable schema:name or cli:name typed units" }
+  ownership: { kind: decision, label: "every unit owned exactly once and every owner resolves?" }
+  reject: { kind: terminal, label: "typed ambiguity or invalid ownership envelope" }
+  supported: { kind: decision, label: "every owned unit and target language has a generator?" }
+  gap: { kind: terminal, label: "typed generator-gap HITL envelope before mutation" }
   lifecycle: { kind: process, label: "hydrate issue and activate lifecycle workspace" }
   stable: { kind: decision, label: "execution spec bytes equal prepared bytes?" }
   drift: { kind: terminal, label: "reject concurrent plan drift" }
-  execute: { kind: terminal, label: "repeat shared validator and generate" }
+  partition: { kind: process, label: "filter typed IR to the current target's owned unit IDs" }
+  execute: { kind: terminal, label: "repeat shared validator and generate partition only" }
 edges:
   - { from: request, to: prepare }
   - { from: prepare, to: changes }
@@ -46,11 +58,19 @@ edges:
   - { from: shared, to: unavailable, label: "yes" }
   - { from: shared, to: lifecycle, label: "no legacy Logic/source inference" }
   - { from: group, to: ambiguous }
-  - { from: ambiguous, to: reject, label: "yes" }
-  - { from: ambiguous, to: lifecycle, label: "no" }
+  - { from: ambiguous, to: exact }
+  - { from: exact, to: reject, label: "no and multiple targets" }
+  - { from: exact, to: lifecycle, label: "no and one target legacy" }
+  - { from: exact, to: inventory, label: "yes" }
+  - { from: inventory, to: ownership }
+  - { from: ownership, to: reject, label: "no" }
+  - { from: ownership, to: supported, label: "yes" }
+  - { from: supported, to: gap, label: "no" }
+  - { from: supported, to: lifecycle, label: "yes" }
   - { from: lifecycle, to: stable }
   - { from: stable, to: drift, label: "no" }
-  - { from: stable, to: execute, label: "yes" }
+  - { from: stable, to: partition, label: "yes" }
+  - { from: partition, to: execute }
 ---
 flowchart TD
   request([aw td gen slug spec]) --> prepare[read issue and exact spec bytes without mutation]
@@ -63,21 +83,45 @@ flowchart TD
   shared -->|yes| unavailable([typed unavailable-plan envelope and runnable remediation])
   shared -->|no legacy Logic/source inference| lifecycle[hydrate issue and activate lifecycle workspace]
   group --> ambiguous{Schema or CLI group has more than one target?}
-  ambiguous -->|yes| reject([typed ambiguity envelope with sorted targets])
-  ambiguous -->|no| lifecycle
+  ambiguous --> exact{any target declares generates?}
+  exact -->|no and multiple targets| reject([typed ambiguity or invalid ownership envelope])
+  exact -->|no and one target legacy| lifecycle
+  exact -->|yes| inventory[enumerate stable schema:name or cli:name typed units]
+  inventory --> ownership{every unit owned exactly once and every owner resolves?}
+  ownership -->|no| reject
+  ownership -->|yes| supported{every owned unit and target language has a generator?}
+  supported -->|no| gap([typed generator-gap HITL envelope before mutation])
+  supported -->|yes| lifecycle
   lifecycle --> stable{execution spec bytes equal prepared bytes?}
   stable -->|no| drift([reject concurrent plan drift])
-  stable -->|yes| execute([repeat shared validator and generate])
+  stable -->|yes| partition[filter typed IR to current target owned IDs]
+  partition --> execute([repeat shared validator and generate partition only])
 ```
 
 The admission boundary is the complete selected generation plan, not each
-target as it is visited. For Schema and CLI, every selected create/modify
-entry using `impl_mode: codegen` consumes shared whole-section IR unless it is
-an entry-local `rust_source` generator. More than one such destination is
-therefore ambiguous and returns `GenerateError::AmbiguousGenerationPlan` with
-the section, deterministically sorted paths, and the exact shell-safe rerun
-command. A HANDWRITE sibling is not a generated destination, so single-target
-and CODEGEN-plus-HANDWRITE plans stay valid.
+target as it is visited. Typed Schema definitions receive stable
+`schema:<name>` IDs and top-level CLI commands receive stable `cli:<name>` IDs;
+nested CLI commands remain inside their top-level owner. A Changes target opts
+into exact ownership with a canonical string list such as `generates:
+[schema:Alpha, schema:Beta]`. Once any selected target opts in, every selected
+CODEGEN target for that section must declare a non-empty list, every typed unit
+must be present exactly once, every claim must resolve, and duplicate, unknown,
+missing, or multiply-owned IDs fail as
+`GenerateError::InvalidGeneratedUnitOwnership` before mutation.
+The declaration itself must be a non-empty list of non-empty strings on one
+unique create/modify CODEGEN entry per target path; scalar/empty lists,
+delete/HANDWRITE owners, and duplicate target entries fail before the lossy
+legacy Changes projection can reinterpret them.
+
+For admitted exact plans the executor filters the typed Schema/CLI value by the
+current entry's IDs before invoking the generator. Schema aggregation,
+imports, and Mamba registration therefore see only owned definitions; CLI
+generation sees only owned top-level commands. Unit inventory and generation
+order are sorted by stable ID, so Changes target order and repeated cold
+generation produce byte-identical files. An owned alias/shape or target
+language without a generator returns
+`GenerateError::OwnedGeneratedUnitUnsupported`, sets HITL/generator-gap state,
+and never reaches marker-only CODEGEN fallback.
 
 The caller runs the same pure predicate before remote issue hydration, branch
 activation, index writes, lifecycle state updates, or source generation. From
@@ -89,8 +133,10 @@ ambiguity error, and no target returns `GenerationPlanUnavailable` with an
 explicit Changes remediation. The prepared bytes are compared exactly after
 activation, and the executor repeats the shared validator over its final
 scoped/inferred plan just before its first write. Legacy Logic/source inference
-remains compatible. Canonical multi-target unit partitioning through
-`generates:` is deliberately owned by WI #1634, not this safety fix.
+remains compatible. A valid legacy single-target Schema/CLI plan without
+`generates` keeps implicit whole-section ownership; a legacy multi-target plan
+receives the deterministic migration diagnostic introduced by #1633. A
+HANDWRITE sibling and entry-local `rust_source` are not generated destinations.
 
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -123,6 +169,24 @@ requirements:
     kind: security
     risk: high
     verify: "cargo test -p agentic-workflow --lib generation_plan -- --nocapture"
+  exact_partition:
+    id: R5
+    text: "Stable Schema and CLI IDs route only each target-owned typed IR partition and remain byte-identical across target order and repeat generation."
+    kind: contract
+    risk: high
+    verify: "cargo test -p agentic-workflow --lib generated_unit_ownership -- --nocapture"
+  exhaustive_ownership:
+    id: R6
+    text: "Missing, duplicate, unknown, and multiply-owned IDs fail as typed plan errors before any target write."
+    kind: regression
+    risk: high
+    verify: "cargo test -p agentic-workflow --lib generated_unit_ownership_invalid_claims_fail_before_write -- --nocapture"
+  typed_generator_gap:
+    id: R7
+    text: "An explicitly owned unsupported unit produces a typed HITL generator-gap before lifecycle or source mutation, never marker-only CODEGEN."
+    kind: safety
+    risk: high
+    verify: "cargo test -p agentic-workflow --test cli_tests td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation -- --nocapture"
 elements:
   ambiguous_generation_plan_rejects_two_schema_targets_before_any_write:
     kind: test
@@ -148,6 +212,21 @@ elements:
   ambiguous_generation_plan_rejects_multiple_inferred_schema_targets:
     kind: test
     type: "rs/#[test]"
+  generated_unit_ownership_partitions_schema_targets_idempotently:
+    kind: test
+    type: "rs/#[test]"
+  generated_unit_ownership_partitions_cli_targets:
+    kind: test
+    type: "rs/#[test]"
+  generated_unit_ownership_invalid_claims_fail_before_write:
+    kind: test
+    type: "rs/#[test]"
+  generated_unit_ownership_unsupported_unit_fails_before_write:
+    kind: test
+    type: "rs/#[test]"
+  generated_unit_ids_are_section_qualified_and_order_stable:
+    kind: test
+    type: "rs/#[test]"
 relations:
   - { from: ambiguous_generation_plan_rejects_two_schema_targets_before_any_write, verifies: complete_plan }
   - { from: ambiguous_generation_plan_rejects_sequence_cli_targets_before_any_write, verifies: complete_plan }
@@ -158,6 +237,11 @@ relations:
   - { from: generation_plan_preserves_legacy_no_changes_logic_inference, verifies: compatibility }
   - { from: ambiguous_generation_plan_rejects_multiple_inferred_schema_targets, verifies: complete_plan }
   - { from: ambiguous_generation_plan_does_not_follow_external_target_symlink, verifies: containment }
+  - { from: generated_unit_ownership_partitions_schema_targets_idempotently, verifies: exact_partition }
+  - { from: generated_unit_ownership_partitions_cli_targets, verifies: exact_partition }
+  - { from: generated_unit_ids_are_section_qualified_and_order_stable, verifies: exact_partition }
+  - { from: generated_unit_ownership_invalid_claims_fail_before_write, verifies: exhaustive_ownership }
+  - { from: generated_unit_ownership_unsupported_unit_fails_before_write, verifies: typed_generator_gap }
 ---
 requirementDiagram
   requirement R1 {
@@ -181,6 +265,24 @@ requirementDiagram
   requirement R4 {
     id: R4
     text: "external bytes untouched"
+    risk: high
+    verifymethod: test
+  }
+  requirement R5 {
+    id: R5
+    text: "stable exact IR partition"
+    risk: high
+    verifymethod: test
+  }
+  requirement R6 {
+    id: R6
+    text: "exhaustive unique ownership"
+    risk: high
+    verifymethod: test
+  }
+  requirement R7 {
+    id: R7
+    text: "typed generator gap before mutation"
     risk: high
     verifymethod: test
   }
@@ -208,6 +310,21 @@ requirementDiagram
   element ambiguous_generation_plan_rejects_multiple_inferred_schema_targets {
     type: "rs/#[test]"
   }
+  element generated_unit_ownership_partitions_schema_targets_idempotently {
+    type: "rs/#[test]"
+  }
+  element generated_unit_ownership_partitions_cli_targets {
+    type: "rs/#[test]"
+  }
+  element generated_unit_ownership_invalid_claims_fail_before_write {
+    type: "rs/#[test]"
+  }
+  element generated_unit_ownership_unsupported_unit_fails_before_write {
+    type: "rs/#[test]"
+  }
+  element generated_unit_ids_are_section_qualified_and_order_stable {
+    type: "rs/#[test]"
+  }
 ```
 
 ## E2E Test
@@ -232,6 +349,22 @@ e2e_tests:
       - "a no-Changes Schema TD with one exact managed spec ref passes caller admission"
       - "the executor selects the same inferred target and generates Widget"
       - "the lifecycle advances to cb_genned on the persistent project branch"
+  - id: td-generation-target-exact-partition-real-cli
+    capability_id: td-cb-lifecycle-automation
+    claim_id: exact-generated-unit-target-ownership
+    command: cargo test -p agentic-workflow --test cli_tests td_gen_exact_schema_unit_ownership_partitions_real_targets -- --nocapture
+    assertions:
+      - "a cold public TD generation accepts two exact Schema owners"
+      - "Alpha and Beta appear only in their declared target files"
+      - "the admitted lifecycle advances to cb_genned"
+  - id: td-generation-target-generator-gap-real-cli
+    capability_id: td-cb-lifecycle-automation
+    claim_id: exact-generated-unit-target-ownership
+    command: cargo test -p agentic-workflow --test cli_tests td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation -- --nocapture
+    assertions:
+      - "the public binary emits a typed owned_generated_unit_unsupported HITL envelope"
+      - "the stable unit ID, target, remediation command, and generator_gap reason are explicit"
+      - "HEAD, branch, index, status, issue, and target bytes remain unchanged"
 ```
 
 ## Changes
@@ -243,22 +376,37 @@ changes:
     action: modify
     section: schema
     impl_mode: hand-written
-    description: Add typed ambiguous and unavailable generation-plan errors with structured remediation data.
+    description: Add typed ambiguous, invalid generated-unit ownership, unsupported owned-unit, and unavailable plan errors with structured remediation data.
   - path: apps/agentic-workflow/src/generate/apply.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Share a complete-plan Schema/CLI ownership predicate between caller preflight and the executor write boundary, with focused compatibility and containment tests.
+    description: Parse canonical generates lists, validate exhaustive Schema/CLI ownership, partition typed IR per target, and refuse unsupported owned units before marker fallback or mutation.
+  - path: apps/agentic-workflow/src/generate/audit.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Carry exact generated-unit ownership through read-only per-block regeneration and surface typed generator failure as audit drift.
   - path: apps/agentic-workflow/src/cli/td.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Prepare exact spec bytes before lifecycle mutation and emit one structured plan-error envelope with a shell-safe next command.
+    description: Prepare exact spec bytes before lifecycle mutation and emit structured ownership/generator-gap envelopes with a shell-safe next command and HITL state.
+  - path: apps/agentic-workflow/src/td_ast/payloads.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: Define section-qualified GeneratedUnitId and deterministic Schema/CLI typed-payload unit inventories.
+  - path: apps/agentic-workflow/src/td_ast/mod.rs
+    action: modify
+    section: exports
+    impl_mode: hand-written
+    description: Re-export GeneratedUnitId on the public typed TD AST surface.
   - path: apps/agentic-workflow/tests/cli/tests/inplace_mode_test.rs
     action: modify
     section: e2e-test
     impl_mode: hand-written
-    description: Prove main-to-existing-TD-branch admission failure leaves repository, lifecycle, issue, spec, and target bytes untouched.
+    description: Prove exact cold partition success and unsupported owned-unit admission failure, alongside the existing ambiguity/compatibility lifecycle evidence.
   - path: apps/agentic-workflow/tech-design/core/generate/mod_types.md
     action: modify
     section: source
@@ -269,6 +417,21 @@ changes:
     section: source
     impl_mode: hand-written
     description: Synchronize the apply pipeline contract and authoritative source snapshot.
+  - path: apps/agentic-workflow/tech-design/core/generate/audit.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document read-only regeneration compatibility with the fallible exact-ownership dispatcher.
+  - path: apps/agentic-workflow/tech-design/core/interfaces/td_ast/payloads.md
+    action: modify
+    section: source
+    impl_mode: hand-written
+    description: Document stable Schema/CLI unit identity and synchronize the typed payload source snapshot.
+  - path: apps/agentic-workflow/tech-design/core/interfaces/td_ast/types.md
+    action: modify
+    section: exports
+    impl_mode: hand-written
+    description: Register GeneratedUnitId in the generated TD AST facade manifest.
   - path: apps/agentic-workflow/tech-design/surface/interfaces/src/td.md
     action: modify
     section: source
@@ -293,5 +456,5 @@ changes:
     action: modify
     section: capability
     impl_mode: hand-written
-    description: Register WI #1633 as the target-ownership preflight work root.
+    description: Register WI #1634 as the exact generated-unit ownership work root and retain #1633 migration compatibility.
 ```

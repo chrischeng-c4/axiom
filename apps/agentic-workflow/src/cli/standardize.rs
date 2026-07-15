@@ -40,6 +40,8 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw artifact",
     "aw validate-spec-structure",
     "aw check-alignment",
+    "aw chat",
+    "aw view",
     "aw iss ",
     "aw issues",
     "aw chat agents",
@@ -54,6 +56,9 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw td review",
     "aw td revise",
     "aw wi merge",
+    "aw wi review",
+    "aw wi arbitrate",
+    "aw wi draft review",
     "aw cb ",
     // #1278 (epic #1270 R7): `aw standardize` is fully retired -- reporting
     // folded into `aw health`'s takeover-audit axis, `audit record` rehomed

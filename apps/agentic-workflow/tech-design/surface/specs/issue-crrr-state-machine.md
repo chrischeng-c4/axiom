@@ -19,10 +19,10 @@ capability_refs:
 > Revise -> Reset/Arbitrate) state machine, its `Lifecycle-Stage` trailers,
 > and the `aw wi merge` verb that closed a CRRR loop and handed off into the
 > change/TD lifecycle (`parse_phase("merged") -> ChangeInited`). `aw wi merge`
-> has been removed; there is no merge verb on `aw wi`. `aw wi review` and
-> `aw wi arbitrate` remain as standalone, manual-only escalation verbs an
-> operator can invoke, but nothing auto-dispatches a merge or hands a CRRR
-> terminal state off to a change lifecycle anymore.
+> has been removed; there is no merge verb on `aw wi`. The former `aw wi
+> review`, `aw wi arbitrate`, and `aw wi draft review` commands are also
+> removed. This file is historical input only; current WI authoring is
+> skeleton -> fill -> validate, with ambiguity routed to HITL.
 >
 > Work-items now feed the tech-design lifecycle directly and linearly:
 > `aw wi` -> `aw td create` (td_inited -> td_created) -> `aw td gen`

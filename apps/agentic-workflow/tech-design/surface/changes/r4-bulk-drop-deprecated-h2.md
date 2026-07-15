@@ -81,31 +81,6 @@ changes:
     section: changes
     impl_mode: hand-written
     description: Drop deprecated `## Overview`; clean fill_sections.
-  - path: apps/agentic-workflow/tech-design/surface/specs/score-chat-cli-contract.md
-    action: modify
-    section: changes
-    impl_mode: hand-written
-    description: Drop deprecated `## Overview`; clean fill_sections.
-  - path: apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md
-    action: modify
-    section: changes
-    impl_mode: hand-written
-    description: Drop deprecated `## Overview`; clean fill_sections.
-  - path: apps/agentic-workflow/tech-design/surface/specs/score-chat-listen-filter.md
-    action: modify
-    section: changes
-    impl_mode: hand-written
-    description: Drop deprecated `## Overview`; clean fill_sections.
-  - path: apps/agentic-workflow/tech-design/surface/specs/score-chat-msg-members-schema.md
-    action: modify
-    section: changes
-    impl_mode: hand-written
-    description: Drop deprecated `## Overview`; clean fill_sections.
-  - path: apps/agentic-workflow/tech-design/surface/specs/score-chat.md
-    action: modify
-    section: changes
-    impl_mode: hand-written
-    description: Drop deprecated `## Overview`; clean fill_sections.
   - path: apps/agentic-workflow/tech-design/surface/specs/score-td-validate-lifecycle-extension.md
     action: modify
     section: changes

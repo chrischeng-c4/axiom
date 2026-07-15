@@ -3,10 +3,42 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-12T10:52:12.355923+00:00"
-ir_digest = "sha256:9c4b189a85f1d98afe5e5a9b7861cf29246c990da194b40f6d6b2b5507db30a7"
-source_digest = "sha256:5b28d00698d725b143bfdb85a29ac1caae0f2dba576116ea2fad38e79daffa36"
+generated_at = "2026-07-15T03:04:31.442989+00:00"
+ir_digest = "sha256:cd98619aa665b08286477acf289b6450f5e71493e30e89cd04dacbabff949544"
+source_digest = "sha256:da3e8ff04d48162c59c5f6bcc8be4ca58f142e50c4561f4d29aa044b722f8827"
 tool_contracts = []
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/logic/td-default-section-queue-preservation.md"
+digest = "sha256:164cba99eeee56d2b3823ee672df3934c5ffb74aeb6202822254e4bf6c3cf1f8"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md"
+digest = "sha256:9f57a56779b332145485f8c273883a0efc0e7944599bde554af714875f38a407"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/semantic/aw-td-apply-section-lookup-parity.md"
+digest = "sha256:be921e05fab14ccd3f2a49e6baae658adc2a4debded8e2a1475781279d6413bd"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md"
+digest = "sha256:2baf41e41deec057d4672fb8b7cf37ebf3a12c9f961e044738784c673d7a275e"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/semantic/td-code-check-touched-codegen-drift.md"
+digest = "sha256:c8b27ae204f52994f8736261028a92db91fd8cf9db317a62f113280dd5308890"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/semantic/td-gen-source-source-snapshot-projection.md"
+digest = "sha256:fc8ea0a9bb0b31fd016efd1e1806239fbebf93735240b5030528799d5e40c25d"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md"
+digest = "sha256:0e90c7b3279b275d22409d0169c8de2e094904e5f67789ef24c5ee77b483f681"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md"
+digest = "sha256:8c1c64cb8a08ae594f713b2f3b59e1ccd3fed6ab76efa4f666093470b27da883"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/specs/3901.md"
@@ -53,8 +85,12 @@ path = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-prof
 digest = "sha256:6672b3ac235f7b4431ce32551d88da9fd1cd546554039976eab8faeb87ab09f2"
 
 [[sources]]
+path = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-skeleton-fill-protocol.md"
+digest = "sha256:37923e6a0f05e640d2190cb952777f0ace78dc7faa77af0783efd4653d14ffc5"
+
+[[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md"
-digest = "sha256:dc804bee691b563774345bf94b0b7144bff5838f34e19882d14a82be0ae2fafc"
+digest = "sha256:6dc575aecbfab1e010c00d7f609c5f235077c9d90125c844d351ce5ac525247f"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-completeness-placeholder-gate.md"
@@ -65,8 +101,8 @@ path = "apps/agentic-workflow/tech-design/surface/specs/aw-ec-zero-test-false-gr
 digest = "sha256:a974a00e9d89a389a17b4beaf911b471a01c5d2b006578ac34b57c6dae911f42"
 
 [[sources]]
-path = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md"
-digest = "sha256:d37c58764f35b998ba9ba401d4c503263966629e6d10fb7f5158cb6e7e428776"
+path = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md"
+digest = "sha256:833663181a363c4fef6513b3b0e6f35a922963815f0e79730438a4ad29dbda63"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md"
@@ -148,6 +184,21 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:caf822666d128c68812c2ad5e3c9704c5a9186a9fbf62d0e248415227389074b"
 
 [[cases]]
+id = "aw-core-client-agent-first-cli-product-model"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "agent-first-cli-product-model"
+contract_id = "aw-core-client-agent-first-cli-product-model"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-agent-first-cli-product-model"
+test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_agent_first_cli_product_model.rs"
+command = "cargo test -p agentic-workflow --lib agent_first_product_contracts_reject_removed_architecture -- --nocapture"
+required_for_production = true
+assertions = ["binary orientation, README, capability contract, and canonical product TDs share one agent-first CLI model and reject removed architecture prose"]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:4523063760cae43294304b129ce05ab4be8c87d0c653598c8bd2e65ec06dac1c"
+
+[[cases]]
 id = "aw-core-client-agent-orientation-surface"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 claim_id = "agent-orientation-surface"
@@ -163,21 +214,6 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:a1a14f1b865aa29d14167c1f630bd577040bcf7a338ba85fde18396b90ee2c25"
 
 [[cases]]
-id = "aw-core-client-client-boundary-model"
-capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
-claim_id = "client-boundary-model"
-contract_id = "aw-core-client-client-boundary-model"
-dimension = "behavior"
-source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#aw-core-client-client-boundary-model"
-test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_client_boundary_model.rs"
-command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-client-boundaries.md"
-required_for_production = true
-assertions = ["client boundary TD validates as the shared client boundary claim"]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d410b15152c2afc1d858845d553b88ef72426a39410f149991211d661ed0d04d"
-
-[[cases]]
 id = "aw-core-client-core-concept-model-and-invariants"
 capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
 claim_id = "core-concept-model-and-invariants"
@@ -187,10 +223,10 @@ source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-clai
 test_path = "apps/agentic-workflow/tests/behavior_aw_core_client_core_concept_model_and_invariants.rs"
 command = "./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md"
 required_for_production = true
-assertions = ["core client model TD validates as the source claim for AW core invariants"]
+assertions = ["agent-first project iteration model TD validates as the source claim for AW invariants"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:11c99d6e68afecab5cdd625759c1e2b897131318e0b9425e5ec82b0f8a2196d0"
+digest = "sha256:4dd7c3ceb054d647af643272cf65898d26cd045ee8314fd333a09e758022bad5"
 
 [[cases]]
 id = "aw-core-client-workitem-artifact-admission-gate"
@@ -242,6 +278,44 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:eb3564e7a984594f90c8b93da170f3c2e6d1d494e24c79ebaee434897d27b5d3"
 
 [[cases]]
+id = "aw-epic-project-label-dispatch-chain"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "aw-epic-project-label-dispatch"
+contract_id = "aw-epic-project-label-dispatch-chain"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#aw-epic-project-label-dispatch-chain"
+test_path = "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_chain.rs"
+command = "cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture"
+required_for_production = true
+assertions = [
+    "run.rs:open_epic_envelope is present in EMIT_REGISTRY",
+    "aw wi atomize --project pgpool parses through the real CLI tree",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:94c14068d21241d29de5922b8e0be8947c531db91833d1f60bbe5985d79f03a0"
+
+[[cases]]
+id = "aw-epic-project-label-dispatch-focused"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "aw-epic-project-label-dispatch"
+contract_id = "aw-epic-project-label-dispatch-focused"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/aw-epic-project-label-dispatch.md#aw-epic-project-label-dispatch-focused"
+test_path = "apps/agentic-workflow/tests/behavior_aw_epic_project_label_dispatch_focused.rs"
+command = "cargo test -p agentic-workflow --lib epic_project_label_dispatch_ -- --nocapture"
+required_for_production = true
+assertions = [
+    "the #1511 project:pgpool fixture emits exactly aw wi atomize --project pgpool",
+    "app:mamba and lib:pg retain their existing atomize commands",
+    "missing, empty, and whitespace-only project labels return blocked/HITL remediation",
+    "no tested envelope contains --project PROJECT",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:e900c61d840695b5558efe5dbc93a164c84164e9a0deb340e82daeeaf44c4ce9"
+
+[[cases]]
 id = "aw-health-default-full-verification-smoke"
 capability_id = "existing-project-standardization"
 claim_id = "aw-health-default-full-verification-smoke"
@@ -261,105 +335,25 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:1d76f00f4e1088e54648b0c4221bbdc5ab294fa53e58ee8f7a72a4aab609ca04"
 
 [[cases]]
-id = "aw-view-repo-app-bundle"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-app-bundle"
+id = "aw-td-apply-section-lookup-parity-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "td-apply-section-lookup-parity"
+contract_id = "aw-td-apply-section-lookup-parity-real-cli"
 dimension = "behavior"
-source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-app-bundle"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_app_bundle.rs"
-command = "./target/debug/aw view --app /tmp/aw/agentic-workflow/view/AWRepoView.app"
+source_ref = "apps/agentic-workflow/tech-design/semantic/aw-td-apply-section-lookup-parity.md#aw-td-apply-section-lookup-parity-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_aw_td_apply_section_lookup_parity_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_create_apply_normalizes_body_only_logic_then_advances_structured_unit_test -- --nocapture"
 required_for_production = true
 assertions = [
-    "native desktop bundle is produced as a macOS .app launcher",
-    "app bundle launches the repo-built aw view desktop surface",
-    "app bundle is produced without a browser or web runtime dependency",
+    "the already-valid fixture passes aw td check with zero findings",
+    "missing and malformed payload attempts leave the spec byte-identical",
+    "body-only Logic applies with exactly one typed Logic wrapper",
+    "the next initialized payload is applicability/unit-test.json",
+    "structured Unit Test applies and dispatches contract Logic",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:19368a92e050a59b497c09fbb275033911355ddf91ffdb9b1245533595d5369d"
-
-[[cases]]
-id = "aw-view-repo-check"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-check"
-dimension = "behavior"
-source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-check"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_check.rs"
-command = "./target/debug/aw view --check"
-required_for_production = true
-assertions = [
-    "headless repo view check contains a projects/libs catalog",
-    "headless repo view check contains a terminal pane",
-    "headless repo view check contains README, capability, EC, and TD detail panes",
-    "headless repo view check exposes a semantic layout toggle button",
-    "headless repo view check preserves stable semantic IDs for e2e assertions",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:752c65f265f328a38c6af8e56af3ebbe61ee760fc84a5201a1edac5394690b6b"
-
-[[cases]]
-id = "aw-view-repo-layout-option"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-layout-option"
-dimension = "behavior"
-source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-layout-option"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_layout_option.rs"
-command = "./target/debug/aw view --layout top-bottom --screenshot /tmp/aw/agentic-workflow/view/aw-view-app-top-bottom.png"
-required_for_production = true
-assertions = [
-    "project list stays fixed while the terminal/detail region can switch layout",
-    "top-bottom layout screenshot is rendered without changing the default left-right layout",
-    "layout is an explicit CLI option for the native repo view renderer",
-    "app screenshot includes the visible layout toggle control",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:0c8addc5f0d82affc090b2fb3a15042b4b923443f6c4cc2bf41c91ae9163912f"
-
-[[cases]]
-id = "aw-view-repo-screenshot"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-screenshot"
-dimension = "behavior"
-source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-screenshot"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_screenshot.rs"
-command = "./target/debug/aw view --screenshot /tmp/aw/agentic-workflow/view/aw-view-app.png"
-required_for_production = true
-assertions = [
-    "app screenshot is produced without a browser or desktop screen capture",
-    "app screenshot is rendered from the same renderer-neutral surface tree",
-    "app screenshot contains project list, terminal status, and selected README, capability, EC, and TD detail panes",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b8a6647ff857919e42a95ed994595d8bb72dafaae580d15f76793d23a5ad2b9d"
-
-[[cases]]
-id = "aw-view-repo-snapshot"
-capability_id = "repo-view-desktop-app"
-claim_id = "repo-desktop-reader"
-contract_id = "aw-view-repo-snapshot"
-dimension = "behavior"
-source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-repo-view-desktop-app.md#aw-view-repo-snapshot"
-test_path = "apps/agentic-workflow/tests/behavior_aw_view_repo_snapshot.rs"
-command = "./target/debug/aw view --snapshot"
-required_for_production = true
-assertions = [
-    "snapshot root is the repository, not a single project",
-    "snapshot includes the projects/libs catalog",
-    "snapshot includes terminal status for watching agent-side changes",
-    "snapshot includes selected README detail and capability rows",
-    "snapshot includes selected EC inventory and TD summary",
-    "snapshot includes a renderer-neutral surface tree for renderer-independent tests",
-]
-evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:16592b2eb44cc46a462620ad5548be6a1eaf3e26985ea2927078c418a64a585f"
+digest = "sha256:b03aee2403a62c0db0e4e9b24eaf9b0b19e3e0609594e6c0766970cd00c6920a"
 
 [[cases]]
 id = "capability-control-plane-capability-project-sweep"
@@ -439,6 +433,25 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:6569adcea5031fa2f5d9070c9bc345e35dc2e7ed3d5d00eefafc2f1c942d9a10"
+
+[[cases]]
+id = "ec-artifact-producer-cli-fixture"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "shared-artifact-producer-contract"
+contract_id = "ec-artifact-producer-cli-fixture"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-skeleton-fill-protocol.md#ec-artifact-producer-cli-fixture"
+test_path = "apps/agentic-workflow/tests/behavior_ec_artifact_producer_cli_fixture.rs"
+command = "cargo test -p agentic-workflow --test artifact_producer_cli_test ec_draft_emits_cli_owned_skeleton_and_structured_slots -- --nocapture"
+required_for_production = true
+assertions = [
+    "aw ec draft creates the durable EC and JSON payload skeletons",
+    "every EC fill slot is json_schema and names its exact apply command",
+    "EC validation advances through independent semantic review before generation",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ad481d959133b09f9b68a543dfb23aca68f2ee1aaa2b66cd51448aa6408de055"
 
 [[cases]]
 id = "existing-project-standardization-brownfield-takeover-surface"
@@ -773,6 +786,60 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:71eb3505b81dc27d94c255f13bfa441d066d1fed9803f0db88a218ec65da55aa"
 
 [[cases]]
+id = "self-hosting-capability-admission"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-capability-admission"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-capability-admission"
+test_path = "apps/agentic-workflow/tests/behavior_self_hosting_capability_admission.rs"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_and_capability_roots_are_rejected_before_mutation -- --nocapture"
+required_for_production = true
+assertions = [
+    "project and capability root commands emit aw.cli.v1 blocked policy envelopes",
+    "the fixture tree is byte-for-byte unchanged",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:03748d4690388545b6242965a7494f8d97a698c1a783c5a30c875028b09703a9"
+
+[[cases]]
+id = "self-hosting-health-policy"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-health-policy"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-health-policy"
+test_path = "apps/agentic-workflow/tests/behavior_self_hosting_health_policy.rs"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture"
+required_for_production = true
+assertions = [
+    "health emits policy_mode, hard_gates, and advisory_axes",
+    "health next never re-enters aw capability run for the self project",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:f7741e0da91698829a8aaa6cc96e6b5672d9adde64d232c190a754e48aea27c9"
+
+[[cases]]
+id = "self-hosting-wi-admission"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
+contract_id = "self-hosting-wi-admission"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-wi-admission"
+test_path = "apps/agentic-workflow/tests/behavior_self_hosting_wi_admission.rs"
+command = "cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture"
+required_for_production = true
+assertions = [
+    "a locally resolved app:agentic-workflow work item is rejected before loop-state access or dispatch",
+    "the local issue store is unchanged",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:158faa9b54a77126187243f6b57de7451de3ff41a6cca38649620d20c2d98119"
+
+[[cases]]
 id = "standardize-audit-first-contract-test"
 capability_id = "existing-project-standardization"
 claim_id = "standardize-audit-first-contract-test"
@@ -790,6 +857,26 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:a93eefd1fdc63f8bbc9b4dcb1406eb07dab37842461471a81c01a7a62c90ad55"
+
+[[cases]]
+id = "td-artifact-producer-cli-fixture"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "shared-artifact-producer-contract"
+contract_id = "td-artifact-producer-cli-fixture"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-skeleton-fill-protocol.md#td-artifact-producer-cli-fixture"
+test_path = "apps/agentic-workflow/tests/behavior_td_artifact_producer_cli_fixture.rs"
+command = "cargo test -p agentic-workflow --test artifact_producer_cli_test td_create_emits_cli_owned_skeleton_structured_slots_and_ownership -- --nocapture"
+required_for_production = true
+assertions = [
+    "aw td create creates the durable TD skeleton and one JSON payload for the current queued section",
+    "the TD contract exposes validation, generation, evidence, and a runnable next transition",
+    "CODEGEN-BEGIN/END and HANDWRITE-BEGIN/END ownership outputs are explicit",
+    "HANDWRITE requires gap, tracker, and reason fields",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:bc767115f19676b85cfa322630c3c327b970f9028aa516d3fff5ec7f58858469"
 
 [[cases]]
 id = "td-cb-lifecycle-automation-chain-liveness-proof"
@@ -880,6 +967,266 @@ assertions = ["the epic's terminal EC-gated fixture-loop proof (#1270 children"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:7d8429540fd08eb0be16f9476e6d5a0a595012857a1c262ca1a199384c984638"
+
+[[cases]]
+id = "td-default-section-queue-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "td-default-section-queue-preservation"
+contract_id = "td-default-section-queue-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/logic/td-default-section-queue-preservation.md#td-default-section-queue-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_default_section_queue_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_create_replay_does_not_clobber_authored_logic_section -- --nocapture"
+required_for_production = true
+assertions = [
+    "the fresh skeleton contains logic followed by unit-test",
+    "logic applicability emits an applicability unit-test dispatch",
+    "contract authoring does not start before unit-test applicability",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:450b7e9a9bb45bfc005dd2a2e16f94e238bdefbd9d32ebf84783a66965d6accd"
+
+[[cases]]
+id = "td-gen-source-source-snapshot-projection-real-cli"
+capability_id = "existing-project-standardization"
+claim_id = "authoritative-source-snapshot-projection"
+contract_id = "td-gen-source-source-snapshot-projection-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/td-gen-source-source-snapshot-projection.md#td-gen-source-source-snapshot-projection-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_gen_source_source_snapshot_projection_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_gen_source_projects_legacy_snapshot_and_runs_generated_test -- --nocapture"
+required_for_production = true
+assertions = [
+    "a const changes from before to after in the exact requested target",
+    "a uniquely named generated Rust test is present in exact target bytes",
+    "cargo test with that unique filter reports running 1 test and 1 passed",
+    "siblings and an unmatched existing target remain byte-identical",
+    "a second replay reports summary.wrote_files=false",
+    "the unmatched target error names the snapshot target and runnable --target remediation",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9c5b6b9ff2839c2a0891c88070e8d0b7f57fa14faafe2623cd25e97c4846c175"
+
+[[cases]]
+id = "td-generation-target-exact-partition-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "exact-generated-unit-target-ownership"
+contract_id = "td-generation-target-exact-partition-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-exact-partition-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_exact_partition_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_exact_schema_unit_ownership_partitions_real_targets -- --nocapture"
+required_for_production = true
+assertions = [
+    "a cold public TD generation accepts two exact Schema owners",
+    "Alpha and Beta appear only in their declared target files",
+    "the admitted lifecycle advances to cb_genned",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:54d86bb3ceeb3e73129147cc96747d57681c2bf7df3b7ff12334053bcd7e9154"
+
+[[cases]]
+id = "td-generation-target-generator-gap-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "exact-generated-unit-target-ownership"
+contract_id = "td-generation-target-generator-gap-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-generator-gap-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_generator_gap_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation -- --nocapture"
+required_for_production = true
+assertions = [
+    "the public binary emits a typed owned_generated_unit_unsupported HITL envelope",
+    "the stable unit ID, target, remediation command, and generator_gap reason are explicit",
+    "HEAD, branch, index, status, issue, and target bytes remain unchanged",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:91b8850e66097fbc1ff1923e888c86d427bb388b41cdd0bffb73d49eaf2b438a"
+
+[[cases]]
+id = "td-generation-target-ownership-inferred-single-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "ambiguous-multi-target-generation-preflight"
+contract_id = "td-generation-target-ownership-inferred-single-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-ownership-inferred-single-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_inferred_single_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_no_changes_single_inferred_schema_target_remains_compatible -- --nocapture"
+required_for_production = true
+assertions = [
+    "a no-Changes Schema TD with one exact managed spec ref passes caller admission",
+    "the executor selects the same inferred target and generates Widget",
+    "the lifecycle advances to cb_genned on the persistent project branch",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2831aad52f0cf471b2c85d8af57d2df6f00f6aeb43ef217a931f8762f52e5782"
+
+[[cases]]
+id = "td-generation-target-ownership-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "ambiguous-multi-target-generation-preflight"
+contract_id = "td-generation-target-ownership-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/td-generation-target-ownership.md#td-generation-target-ownership-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_td_generation_target_ownership_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests td_gen_ambiguous_schema_plan_fails_before_any_lifecycle_mutation -- --nocapture"
+required_for_production = true
+assertions = [
+    "the public binary emits exactly one stdout JSON error envelope and no second stderr error",
+    "error_kind, section, sorted targets, completion, and executable next.command are stable",
+    "HEAD, symbolic branch, index tree, porcelain-z status, issue bytes, and TD branch ref are unchanged",
+    "the prepared spec and every target blob remain byte-identical",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:eef1068d00ae5d7dec865520c939d80de91e537dff5d1e9db783fd00a13977f8"
+
+[[cases]]
+id = "terminal-ec-cross-process-single-flight-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-cross-process-single-flight-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-cross-process-single-flight-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_cross_process_single_flight_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_cross_process_single_flight_prevents_duplicate_ec_launch -- --nocapture"
+required_for_production = true
+assertions = [
+    "the first aw process owns the project lock while its EC command runs",
+    "the second same-slug aw process returns terminal_ec_single_flight promptly",
+    "both refusal envelopes point to exact aw td code-check slug retry commands",
+    "the append-only EC launch marker contains exactly one line",
+    "the work item remains open in cb_filled and no terminal commit is created",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2439254ab2b1312e9840f5daa7590d5d2a97303f1f4958740e9443ef843ff6f6"
+
+[[cases]]
+id = "terminal-ec-fast-green-stale-reader-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-fast-green-stale-reader-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-fast-green-stale-reader-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_fast_green_stale_reader_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_fast_green_stale_reader_rechecks_phase_before_ec -- --nocapture"
+required_for_production = true
+assertions = [
+    "a debug-only bounded barrier proves process B read cb_filled before process A completes",
+    "process A executes the fast-green inventory and completes the terminal transition",
+    "process B acquires afterward, re-reads td_merged, and reports terminal retry without EC",
+    "the EC launch marker contains one line and git contains one Cb-CodeCheck terminal commit",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:eac3c09c597772c477597a50921ffd2e3fefdb1a6d6b4339e3623b1a5bca2765"
+
+[[cases]]
+id = "terminal-ec-no-child-wrapper-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-no-child-wrapper-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-no-child-wrapper-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_no_child_wrapper_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_bounds_no_child_ec_wrapper_and_preserves_phase -- --nocapture"
+required_for_production = true
+assertions = [
+    "the real aw binary returns within the configured one-second deadline plus bounded cleanup grace",
+    "the helper confirms its external child exited before the wrapper timed out",
+    "the wrapper PID no longer exists after aw returns",
+    "the envelope has terminal_ec_timeout and exact aw td code-check slug next.command",
+    "the work item remains open in cb_filled and no terminal commit is created",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:47501df6954f52b6779b1ccf7cade302877bcddc82544f24ddb7b8d563af47d5"
+
+[[cases]]
+id = "terminal-ec-retry-transition-lease-real-cli"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-ec-process-liveness"
+contract_id = "terminal-ec-retry-transition-lease-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/aw-terminal-vat-ec-process-lifecycle.md#terminal-ec-retry-transition-lease-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_ec_retry_transition_lease_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_retry_contends_while_terminal_transition_holds_lease -- --nocapture"
+required_for_production = true
+assertions = [
+    "a bounded debug-only barrier pauses the owner after td_merged is written while its lease remains held",
+    "the second process reads retry phase and promptly receives terminal_ec_single_flight",
+    "the refusal points to the exact same-slug aw td code-check retry",
+    "after releasing the owner there is one EC launch and one Cb-CodeCheck terminal commit",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:557665f7ce111a19dd0bc19234ba256cbbd008eb46f8f5b1c89602682976cf09"
+
+[[cases]]
+id = "terminal-touched-codegen-red-repair-green"
+capability_id = "td-cb-lifecycle-automation"
+claim_id = "terminal-touched-codegen-drift-gate"
+contract_id = "terminal-touched-codegen-red-repair-green"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/td-code-check-touched-codegen-drift.md#terminal-touched-codegen-red-repair-green"
+test_path = "apps/agentic-workflow/tests/behavior_terminal_touched_codegen_red_repair_green.rs"
+command = "cargo test -p agentic-workflow --test cli_tests test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry -- --nocapture"
+required_for_production = true
+assertions = [
+    "committed accepted CODEGEN drift refuses before EC and leaves phase, state, issue bytes, HEAD, index tree, cached diff, status, and target bytes unchanged",
+    "the finding names only the accepted target and exact spec section while a second unaccepted generated target remains drifted",
+    "the emitted aw td gen slug command regenerates and commits only the accepted target, preserves terminal phase, and emits the exact retry command",
+    "restored parity runs EC once, closes the WI, and a td_merged retry neither reruns EC nor duplicates the terminal commit",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2f7b4eb3ba762068103513ff409dc94eec74f9bfab9ac876cb349c0cb135ba65"
+
+[[cases]]
+id = "wi-artifact-producer-cli-fixture"
+capability_id = "aw-core-client-model-workitem-first-artifact-lifecycle"
+claim_id = "shared-artifact-producer-contract"
+contract_id = "wi-artifact-producer-cli-fixture"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-artifact-skeleton-fill-protocol.md#wi-artifact-producer-cli-fixture"
+test_path = "apps/agentic-workflow/tests/behavior_wi_artifact_producer_cli_fixture.rs"
+command = "cargo test -p agentic-workflow --test artifact_producer_cli_test wi_create_emits_cli_owned_skeleton_and_bounded_markdown_slot -- --nocapture"
+required_for_production = true
+assertions = [
+    "aw wi create creates the durable work-item and payload skeletons before dispatch",
+    "stdout carries aw.artifact-producer.v1 and a bounded markdown_fragment slot",
+    "the slot names its schema, payload path, apply command, validation, evidence, and next transition",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:22e76214d4b7517e754e8984d67813daf4429f9a6047177f0e0f6e2ea7804dd1"
+
+[[cases]]
+id = "wi-close-remote-real-cli"
+capability_id = "work-item-planning"
+claim_id = "wi-close-remote-rehydration"
+contract_id = "wi-close-remote-real-cli"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/semantic/wi-close-remote-rehydration.md#wi-close-remote-real-cli"
+test_path = "apps/agentic-workflow/tests/behavior_wi_close_remote_real_cli.rs"
+command = "cargo test -p agentic-workflow --test cli_tests wi_close_remote_ -- --nocapture"
+required_for_production = true
+assertions = [
+    "the repo-built aw binary resolves a tracker-only numeric issue through the configured GitHub backend",
+    "--repo selects every remote read and mutation",
+    "the optional reason and close mutation each occur exactly once across a retry",
+    "a missing remote names its backend and repository and emits an executable recovery command",
+    "a local-only issue still moves from open to closed",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:84b21d2c83b0fc61617adf8ae6b9cd16a911b690cb3e1787c046eb97a6c3fe30"
 
 [[cases]]
 id = "wi-create-help-command"
