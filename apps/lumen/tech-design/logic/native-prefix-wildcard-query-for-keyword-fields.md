@@ -40,7 +40,6 @@ flowchart TD
     union --> compose[boolean + sort composition]
     compose --> done([exact prefix matches])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
