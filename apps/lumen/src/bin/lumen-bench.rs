@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-bench-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-bench-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // @spec apps/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#logic
 use std::collections::BTreeMap;

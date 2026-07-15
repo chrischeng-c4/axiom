@@ -63,7 +63,7 @@ deterministic `ClusterState` without a running raft cluster.
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-raft-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Per-shard replication surface.
 //!

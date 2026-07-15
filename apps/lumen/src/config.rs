@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Runtime config — sourced from env so it can be wired through the K8s
 //! ConfigMap without any rebuild.

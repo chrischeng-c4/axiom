@@ -23,7 +23,7 @@ No public AST symbols.
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-tests-generated_clients_crud_e2e-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-tests-generated_clients_crud_e2e-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // @contract spec-gen-generated-clients-public-api-journey
 //! Generated-client delivery gate for Lumen itself.

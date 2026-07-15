@@ -31,7 +31,7 @@ Public API manifest for `apps/lumen/src/rdb.rs` generated from AST during Score 
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-rdb-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! RDB — point-in-time snapshots of the materialized index, tagged with
 //! the WAL sequence they correspond to.

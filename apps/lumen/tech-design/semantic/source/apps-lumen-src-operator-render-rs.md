@@ -50,7 +50,7 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Pure rendering: a [`Lumen`] spec → the set of child Kubernetes objects that
 //! realize it. No cluster, no I/O — every object is a self-contained

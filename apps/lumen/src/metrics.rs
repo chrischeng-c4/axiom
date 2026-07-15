@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-metrics-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Lightweight in-process Prometheus exposition.
 //!

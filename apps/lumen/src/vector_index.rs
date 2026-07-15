@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Vector index backends for `FieldType::Vector`.
 //!

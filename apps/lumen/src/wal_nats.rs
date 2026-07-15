@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-wal_nats-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-wal_nats-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! NATS JetStream backend for [`WalLog`].
 //!

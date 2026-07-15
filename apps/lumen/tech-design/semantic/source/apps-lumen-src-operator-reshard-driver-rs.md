@@ -139,7 +139,7 @@ parts of.
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reshard-driver-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Autonomous reshard phase driver (#1319 R2 executor; #1381).
 //!

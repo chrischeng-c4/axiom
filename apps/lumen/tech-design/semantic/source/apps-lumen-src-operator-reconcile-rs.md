@@ -32,7 +32,7 @@ Public API manifest for `apps/lumen/src/operator/reconcile.rs` generated from AS
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-reconcile-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen's operator wiring onto the shared `libs/service-k8s` controller.
 //!

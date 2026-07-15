@@ -35,7 +35,7 @@ Public API manifest for `apps/lumen/src/reshard.rs` generated from AST during Lu
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-reshard-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-reshard-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Snapshot-level resharding primitives.
 //!

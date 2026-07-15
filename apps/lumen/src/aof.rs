@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Local append-only log (Stage 2 Phase 2f-3) — the binary's "AOF".
 //!

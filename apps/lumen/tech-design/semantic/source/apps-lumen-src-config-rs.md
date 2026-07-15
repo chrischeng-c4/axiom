@@ -36,7 +36,7 @@ Public API manifest for `apps/lumen/src/config.rs` generated from AST during Sco
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Runtime config — sourced from env so it can be wired through the K8s
 //! ConfigMap without any rebuild.

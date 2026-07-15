@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-tokenize-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Tokenizers for `text` fields.
 //!

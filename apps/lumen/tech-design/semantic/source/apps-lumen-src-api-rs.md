@@ -52,7 +52,7 @@ Public API manifest for `apps/lumen/src/api.rs` generated from AST during Score 
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTTP/2 API surface.
 //!

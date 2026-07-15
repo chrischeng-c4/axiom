@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-types-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Wire types for the public HTTP API.
 //!

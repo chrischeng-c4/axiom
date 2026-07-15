@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-log_entry-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-log_entry-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The write-log entry vocabulary: the committed-mutation enum that flows
 //! through the active write path (broker/embedded WAL → `WriteCoordinator` →

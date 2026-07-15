@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-routing_remote-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-routing_remote-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3).
 //!

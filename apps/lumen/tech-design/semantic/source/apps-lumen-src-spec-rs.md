@@ -39,7 +39,7 @@ Public API manifest for `apps/lumen/src/spec.rs` generated from AST during Score
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Offline, machine-readable self-description for agent integration.
 //!

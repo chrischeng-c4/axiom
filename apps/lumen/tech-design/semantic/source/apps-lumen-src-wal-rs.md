@@ -34,7 +34,7 @@ Public API manifest for `apps/lumen/src/wal.rs` generated from AST during Score 
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Write-ahead log abstraction — the data-plane backbone.
 //!

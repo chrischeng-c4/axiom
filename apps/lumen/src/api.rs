@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! HTTP/2 API surface.
 //!

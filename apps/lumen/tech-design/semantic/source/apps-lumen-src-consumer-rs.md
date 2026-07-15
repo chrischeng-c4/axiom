@@ -26,7 +26,7 @@ Public API manifest for `apps/lumen/src/consumer.rs` generated from AST during S
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-consumer-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-consumer-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Consumer adapter glue.
 //!

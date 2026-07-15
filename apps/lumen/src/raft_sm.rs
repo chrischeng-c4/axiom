@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-raft_sm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `EngineSm` — lumen's [`Engine`] as a [`raft_runtime::RaftStateMachine`].
 //!

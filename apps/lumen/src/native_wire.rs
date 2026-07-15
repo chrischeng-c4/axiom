@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-native_wire-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Native binary search wire.
 //!

@@ -31,7 +31,7 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
 //! loop ([`reconcile`]) that renders ([`render`]) and applies the serving
