@@ -1,3 +1,18 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:2d4c7478" tracker="pending-tracker" reason="scaffold for libs/storage-durable/Cargo.toml — fill in by hand and update tracker when codegen is ready"
-// TODO: hand-write content for `libs/storage-durable/Cargo.toml`.
-// HANDWRITE-END
+[package]
+name = "storage-durable"
+version = "0.1.0"
+edition = "2021"
+description = "Shared durable local-storage primitives: fsync policy, atomic replacement, CRC-framed logs, and sequence-named snapshot file stores."
+
+[lib]
+name = "storage_durable"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+crc32fast = "1.4"
+
+[dev-dependencies]
+tempfile = "3"
+
+<!-- marker: missing-generator:logic:2d4c7478 path: libs/storage-durable/Cargo.toml reason: scaffold for libs/storage-durable/Cargo.toml — fill in by hand and update tracker when codegen is ready -->
