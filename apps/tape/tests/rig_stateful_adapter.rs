@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:e2e-test:6ec544eb" tracker="pending-tracker" reason="Bind Tape replay and checkpoint continuity assertions to the shared Rig stateful lifecycle. generator gap: missing-generator:tape-stateful-adapter (#1645)."
+// HANDWRITE-BEGIN gap="missing-generator:e2e-test:6ec544eb" tracker="#1645" reason="Bind Tape replay and checkpoint continuity assertions to the shared Rig stateful lifecycle. generator gap: missing-generator:tape-stateful-adapter (#1645)."
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

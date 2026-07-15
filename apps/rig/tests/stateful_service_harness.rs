@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:6e483bd5" tracker="pending-tracker" reason="Exercise the runner against a real bounded local HTTP stateful fixture and prove failure evidence plus teardown behavior. generator gap: missing-generator:stateful-harness-test (#1645)."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:6e483bd5" tracker="#1645" reason="Exercise the runner against a real bounded local HTTP stateful fixture and prove failure evidence plus teardown behavior. generator gap: missing-generator:stateful-harness-test (#1645)."
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

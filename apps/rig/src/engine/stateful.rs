@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:09145022" tracker="pending-tracker" reason="Add the reusable typed warmup/observe/fault/recover/verify/teardown runner with bounded actions, retained evidence, and deterministic reports. generator gap: missing-generator:stateful-harness (#1645)."
+// HANDWRITE-BEGIN gap="missing-generator:logic:09145022" tracker="#1645" reason="Add the reusable typed warmup/observe/fault/recover/verify/teardown runner with bounded actions, retained evidence, and deterministic reports. generator gap: missing-generator:stateful-harness (#1645)."
 //! Reusable bounded lifecycle for stateful-service soak and fault scenarios.
 //!
 //! Rig owns phase ordering, time budgets, evidence retention, and cleanup. A
