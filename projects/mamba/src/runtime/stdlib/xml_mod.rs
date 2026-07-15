@@ -2374,7 +2374,14 @@ pub fn mb_xml_iselement(val: MbValue) -> MbValue {
         .map(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                map.contains_key("tag") && map.contains_key("_children")
+                // #1631/#1028: bare `.contains_key("tag")` hashes the query via
+                // Rust's `str` Hash, which diverges from `DictKey::Str`'s hash
+                // domain — it silently misses a present key (see
+                // stdlib/ARCHITECTURE.md "DictKey hash-domain mismatch").
+                // Probe via dict_get_exact_str like every other reader in this
+                // file (`dict_get_key`, line ~841).
+                super::super::dict_ops::dict_get_exact_str(&map, "tag").is_some()
+                    && super::super::dict_ops::dict_get_exact_str(&map, "_children").is_some()
             } else {
                 false
             }
@@ -3258,10 +3265,11 @@ mod tests {
         let tag_of = |v: MbValue| -> Option<String> {
             v.as_ptr().and_then(|ptr| unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
-                    lock.read()
-                        .unwrap()
-                        .get("tag")
-                        .and_then(|t| extract_str(*t))
+                    // #1631/#1028: bare `.get("tag")` hashes via Rust's `str`
+                    // Hash, which diverges from `DictKey::Str`'s hash domain —
+                    // use dict_get_exact_str like the production readers do.
+                    super::super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), "tag")
+                        .and_then(|t| extract_str(t))
                 } else {
                     None
                 }
@@ -3302,7 +3310,11 @@ mod tests {
         let tag = unsafe {
             if let ObjData::Dict(ref lock) = (*elem.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                extract_str(*map.get("tag").unwrap())
+                // #1631/#1028: bare `.get("tag")` misses the DictKey hash
+                // domain — use dict_get_exact_str (see test_fromstring_parses_real_xml).
+                extract_str(
+                    super::super::super::dict_ops::dict_get_exact_str(&map, "tag").unwrap(),
+                )
             } else {
                 None
             }
@@ -3316,7 +3328,10 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*elem.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                let children = map.get("_children").copied().unwrap();
+                // #1631/#1028: bare `.get("_children")` misses the DictKey
+                // hash domain — use dict_get_exact_str (see test_fromstring_parses_real_xml).
+                let children =
+                    super::super::super::dict_ops::dict_get_exact_str(&map, "_children").unwrap();
                 if let ObjData::List(ref list_lock) = (*children.as_ptr().unwrap()).data {
                     let items = list_lock.read().unwrap();
                     assert_eq!(items.len(), 2);

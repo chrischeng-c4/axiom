@@ -1210,7 +1210,10 @@ unsafe extern "C" fn userlist_init(self_v: MbValue, args: MbValue) -> MbValue {
     MbValue::none()
 }
 
-fn register_userlist_class() {
+// #1631: pub(crate) so sibling stdlib test modules (weakref_mod) can seed
+// this thread's CLASS_REGISTRY too — see collections_mod's own
+// test_userlist_empty for the same thread_local-registration rationale.
+pub(crate) fn register_userlist_class() {
     use std::collections::HashMap as Map;
     let var = |addr: usize| {
         super::super::module::register_variadic_func(addr as u64);
@@ -2601,9 +2604,20 @@ mod tests {
         ]));
         let counter = mb_counter_new(items);
         let data = counter_get_data(counter);
-        assert_eq!(data.get("a").and_then(|v| v.as_int()), Some(3));
-        assert_eq!(data.get("b").and_then(|v| v.as_int()), Some(2));
-        assert_eq!(data.get("c").and_then(|v| v.as_int()), Some(1));
+        // #1566: MbDictMap is keyed by DictKey, whose Str hash domain diverges
+        // from Rust's `str` Hash — use dict_get_exact_str, not a bare `.get()`.
+        assert_eq!(
+            dict_ops::dict_get_exact_str(&data, "a").and_then(|v| v.as_int()),
+            Some(3)
+        );
+        assert_eq!(
+            dict_ops::dict_get_exact_str(&data, "b").and_then(|v| v.as_int()),
+            Some(2)
+        );
+        assert_eq!(
+            dict_ops::dict_get_exact_str(&data, "c").and_then(|v| v.as_int()),
+            Some(1)
+        );
     }
 
     #[test]
@@ -2790,9 +2804,19 @@ mod tests {
         let counter = mb_counter_new(items);
         assert!(counter.is_ptr());
         let data = counter_get_data(counter);
-        assert_eq!(data.get("a").and_then(|v| v.as_int()), Some(3));
-        assert_eq!(data.get("b").and_then(|v| v.as_int()), Some(1));
-        assert_eq!(data.get("c").and_then(|v| v.as_int()), Some(1));
+        // #1566: same hash-domain caveat as test_counter_new above.
+        assert_eq!(
+            dict_ops::dict_get_exact_str(&data, "a").and_then(|v| v.as_int()),
+            Some(3)
+        );
+        assert_eq!(
+            dict_ops::dict_get_exact_str(&data, "b").and_then(|v| v.as_int()),
+            Some(1)
+        );
+        assert_eq!(
+            dict_ops::dict_get_exact_str(&data, "c").and_then(|v| v.as_int()),
+            Some(1)
+        );
     }
 
     #[test]
@@ -2963,6 +2987,10 @@ mod tests {
 
     #[test]
     fn test_userdict_empty() {
+        // #1631: CLASS_REGISTRY is thread_local; register the native class
+        // in THIS test thread before `user_wrapper_data`'s MRO lookup needs
+        // it (mirrors test_userlist_subclass_init_sets_backing_data below).
+        register_userdict_class();
         let d = mb_userdict_new(&[]);
         let backing = wrapper_backing(d);
         unsafe {
@@ -2977,6 +3005,8 @@ mod tests {
 
     #[test]
     fn test_userdict_copies_initial() {
+        // #1631: see test_userdict_empty — thread-local CLASS_REGISTRY setup.
+        register_userdict_class();
         let src = MbObject::new_dict();
         unsafe {
             if let ObjData::Dict(ref lock) = (*src).data {
@@ -2992,8 +3022,16 @@ mod tests {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let m = lock.read().unwrap();
                 assert_eq!(m.len(), 2);
-                assert_eq!(m.get("k").and_then(|v| v.as_int()), Some(7));
-                assert_eq!(m.get("k2").and_then(|v| v.as_int()), Some(8));
+                // #1566: bare `.get("k")` misses the DictKey hash domain —
+                // use dict_get_exact_str, like the Counter tests above.
+                assert_eq!(
+                    dict_ops::dict_get_exact_str(&m, "k").and_then(|v| v.as_int()),
+                    Some(7)
+                );
+                assert_eq!(
+                    dict_ops::dict_get_exact_str(&m, "k2").and_then(|v| v.as_int()),
+                    Some(8)
+                );
             } else {
                 panic!("expected Dict backing");
             }
@@ -3008,6 +3046,8 @@ mod tests {
 
     #[test]
     fn test_userlist_empty() {
+        // #1631: see test_userdict_empty — thread-local CLASS_REGISTRY setup.
+        register_userlist_class();
         let l = mb_userlist_new(MbValue::none());
         let backing = wrapper_backing(l);
         unsafe {
@@ -3022,6 +3062,8 @@ mod tests {
 
     #[test]
     fn test_userlist_copies_initial() {
+        // #1631: see test_userdict_empty — thread-local CLASS_REGISTRY setup.
+        register_userlist_class();
         let src = MbValue::from_ptr(MbObject::new_list(vec![
             MbValue::from_int(1),
             MbValue::from_int(2),
@@ -3077,6 +3119,8 @@ mod tests {
 
     #[test]
     fn test_userstring_from_str() {
+        // #1631: see test_userdict_empty — thread-local CLASS_REGISTRY setup.
+        register_userstring_class();
         let s = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
         let r = mb_userstring_new(s);
         assert_eq!(extract_str(wrapper_backing(r)), Some("hello".to_string()));
@@ -3084,12 +3128,16 @@ mod tests {
 
     #[test]
     fn test_userstring_from_int_coerces() {
+        // #1631: see test_userdict_empty — thread-local CLASS_REGISTRY setup.
+        register_userstring_class();
         let r = mb_userstring_new(MbValue::from_int(42));
         assert_eq!(extract_str(wrapper_backing(r)), Some("42".to_string()));
     }
 
     #[test]
     fn test_userstring_from_none_empty() {
+        // #1631: see test_userdict_empty — thread-local CLASS_REGISTRY setup.
+        register_userstring_class();
         let r = mb_userstring_new(MbValue::none());
         assert_eq!(extract_str(wrapper_backing(r)), Some(String::new()));
     }
