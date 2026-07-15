@@ -20,68 +20,67 @@ Public API manifest for `apps/lumen/src/storage.rs` generated from AST during Sc
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApplyOutcome` | apps/lumen/src/storage.rs | enum | pub | 5005 |  |
-| `CollectionSnapshot` | apps/lumen/src/storage.rs | struct | pub | 9174 |  |
+| `ApplyOutcome` | apps/lumen/src/storage.rs | enum | pub | 5016 |  |
+| `CollectionSnapshot` | apps/lumen/src/storage.rs | struct | pub | 9248 |  |
 | `DropOutcome` | apps/lumen/src/storage.rs | enum | pub | 66 |  |
-| `Engine` | apps/lumen/src/storage.rs | struct | pub | 2951 |  |
-| `FieldIndexSnapshot` | apps/lumen/src/storage.rs | enum | pub | 9216 |  |
+| `Engine` | apps/lumen/src/storage.rs | struct | pub | 2953 |  |
+| `FieldIndexSnapshot` | apps/lumen/src/storage.rs | enum | pub | 9290 |  |
 | `MAX_INDEX_ITEMS` | apps/lumen/src/storage.rs | constant | pub | 57 |  |
 | `MAX_SORT_KEYS` | apps/lumen/src/storage.rs | constant | pub | 62 |  |
-| `Postings` | apps/lumen/src/storage.rs | struct | pub(crate) | 336 |  |
-| `ReshardApplyOutcome` | apps/lumen/src/storage.rs | struct | pub | 9184 | #1380 R1 / #1443 R2: response summary for `POST /admin/reshard:apply`, now including `documents_pruned` from the authoritative-replace pass. |
-| `ReshardEvictOutcome` | apps/lumen/src/storage.rs | struct | pub | 9196 | #1380 R3: response summary for `POST /admin/reshard:evict`. |
-| `ReshardPruneOutcome` | apps/lumen/src/storage.rs | struct | pub | 9208 | #1457 R1: response summary for `POST /admin/reshard:prune`; `complete` is `false` while the receiver is still accumulating chunks for a `(to_map_version, bucket, collection_id, total_chunks)` group, `documents_pruned` is only meaningful once `complete` is `true`. |
-| `SnapshotV1` | apps/lumen/src/storage.rs | struct | pub | 9165 |  |
-| `SortableF64` | apps/lumen/src/storage.rs | struct | pub | 127 |  |
+| `Postings` | apps/lumen/src/storage.rs | struct | pub | 338 |  |
+| `ReshardApplyOutcome` | apps/lumen/src/storage.rs | struct | pub | 9258 |  |
+| `ReshardEvictOutcome` | apps/lumen/src/storage.rs | struct | pub | 9270 |  |
+| `ReshardPruneOutcome` | apps/lumen/src/storage.rs | struct | pub | 9282 |  |
+| `SnapshotV1` | apps/lumen/src/storage.rs | struct | pub | 9239 |  |
+| `SortableF64` | apps/lumen/src/storage.rs | struct | pub | 129 |  |
 | `StorageError` | apps/lumen/src/storage.rs | enum | pub | 79 |  |
-| `__collection_schema` | apps/lumen/src/storage.rs | function | pub(crate) | 10728 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>>  |
-| `__field_forward_probe` | apps/lumen/src/storage.rs | function | pub(crate) | 10765 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)>  |
-| `__open_collection_from_segments` | apps/lumen/src/storage.rs | function | pub(crate) | 10744 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>>  |
-| `__seal_collection_to_segments` | apps/lumen/src/storage.rs | function | pub(crate) | 10712 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()>  |
-| `__seal_hash_field_to_segment` | apps/lumen/src/storage.rs | function | pub(crate) | 10648 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_keyword_field_to_segment` | apps/lumen/src/storage.rs | function | pub(crate) | 10458 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_number_field_to_segment` | apps/lumen/src/storage.rs | function | pub(crate) | 10395 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_set_field_to_segment` | apps/lumen/src/storage.rs | function | pub(crate) | 10524 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_text_field_to_segment` | apps/lumen/src/storage.rs | function | pub(crate) | 10592 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `__seal_vector_field_to_segment` | apps/lumen/src/storage.rs | function | pub(crate) | 10685 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32>  |
-| `add_field` | apps/lumen/src/storage.rs | function | pub | 3212 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
-| `apply_raft_entry` | apps/lumen/src/storage.rs | function | pub | 4963 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
-| `apply_reshard_batch` | apps/lumen/src/storage.rs | function | pub | 4577 | #1380 R1 / #1443 R2, reworked #1457 R1: additively merge one `ReshardBatch`'s snapshot into the live engine (upsert semantics, idempotent on retry), then — when `replace` is `Some` — prune any document this shard holds that routes to `replace.bucket` but is absent from `replace.replace_ids`, closing delete-during-split resurrection. Callers reach the `replace`-scoped branch through `apply_reshard_prune_chunk`'s receiver-side chunk accumulator, not directly from a wire `ReshardBatch` (#1457 R1 split the authoritative-replace scope out of that now purely-additive type). apply_reshard_batch(&self, delta: SnapshotV1, replace: Option<crate::reshard::ReshardBatchReplaceScope>) -> Result<ReshardApplyOutcome> |
-| `apply_reshard_prune_chunk` | apps/lumen/src/storage.rs | function | pub | 4735 | #1457 R1: `POST /admin/reshard:prune` receiver — accumulate one `ReshardPruneChunk` of a final migration pass's authoritative "keep" set for one `(bucket, collection_id)` pair, keyed by `(to_map_version, bucket, collection_id, total_chunks)`, and prune once every chunk in `0..total_chunks` has arrived by delegating to `apply_reshard_batch`. Idempotent: re-sending any subset (413 retry) only re-inserts identical set members, and re-sending a completed group re-runs the same accumulate-then-apply sequence, which is itself idempotent. apply_reshard_prune_chunk(&self, chunk: crate::reshard::ReshardPruneChunk) -> Result<ReshardPruneOutcome> |
-| `bits` | apps/lumen/src/storage.rs | function | pub(crate) | 164 | bits(self) -> u64 |
-| `create_collection` | apps/lumen/src/storage.rs | function | pub | 3068 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
-| `delete` | apps/lumen/src/storage.rs | function | pub | 3442 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
-| `docids` | apps/lumen/src/storage.rs | function | pub(crate) | 353 | docids(&self) -> &[u32] |
-| `drop_collection` | apps/lumen/src/storage.rs | function | pub | 3137 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
-| `drop_field` | apps/lumen/src/storage.rs | function | pub | 3157 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
-| `duplicates` | apps/lumen/src/storage.rs | function | pub | 4351 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
-| `evict_not_owned` | apps/lumen/src/storage.rs | function | pub | 4833 | #1380 R3: source-side post-cutover eviction under a newer `VirtualBucketShardMap` (idempotent). evict_not_owned(         &self,         to: &VirtualBucketShardMap,         this_shard: u32,     ) -> Result<ReshardEvictOutcome> |
-| `flush_to_segments` | apps/lumen/src/storage.rs | function | pub | 10245 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()>  |
-| `from_bits` | apps/lumen/src/storage.rs | function | pub(crate) | 172 | from_bits(bits: u64) -> Self |
-| `from_sorted` | apps/lumen/src/storage.rs | function | pub(crate) | 347 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
-| `index` | apps/lumen/src/storage.rs | function | pub | 3251 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
-| `is_draining` | apps/lumen/src/storage.rs | function | pub | 3047 | is_draining(&self) -> bool |
-| `list_collections` | apps/lumen/src/storage.rs | function | pub | 3239 | list_collections(&self) -> Result<Vec<String>> |
-| `metrics` | apps/lumen/src/storage.rs | function | pub | 3035 | metrics(&self) -> &Metrics |
-| `new` | apps/lumen/src/storage.rs | function | pub | 133 | new(x: f64) -> Result<Self> |
-| `new` | apps/lumen/src/storage.rs | function | pub | 3031 | new() -> Self  |
-| `number_value_for_external_id` | apps/lumen/src/storage.rs | function | pub | 3795 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
-| `open_from_segments` | apps/lumen/src/storage.rs | function | pub | 10055 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self>  |
-| `reopen_from_segment_dir` | apps/lumen/src/storage.rs | function | pub | 10289 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64>  |
-| `replace_docs` | apps/lumen/src/storage.rs | function | pub | 3501 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
-| `restore` | apps/lumen/src/storage.rs | function | pub | 4522 | restore(&self, snap: SnapshotV1) -> Result<()> |
-| `seal_to_segments` | apps/lumen/src/storage.rs | function | pub | 10020 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()>  |
-| `search` | apps/lumen/src/storage.rs | function | pub | 3823 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
-| `search_fast_string_term` | apps/lumen/src/storage.rs | function | pub(crate) | 4292 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
-| `segment_field_probe` | apps/lumen/src/storage.rs | function | pub | 10331 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)>  |
-| `snapshot` | apps/lumen/src/storage.rs | function | pub | 4507 | snapshot(&self) -> Result<SnapshotV1> |
-| `start_drain` | apps/lumen/src/storage.rs | function | pub | 3043 | start_drain(&self) |
-| `stats` | apps/lumen/src/storage.rs | function | pub | 4895 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
-| `sweep_deleted` | apps/lumen/src/storage.rs | function | pub | 3187 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
-| `tfs` | apps/lumen/src/storage.rs | function | pub(crate) | 357 | tfs(&self) -> &[u32] |
-| `to_f64` | apps/lumen/src/storage.rs | function | pub | 149 | to_f64(self) -> f64 |
-| `validate_query` | apps/lumen/src/storage.rs | function | pub | 5294 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
-
+| `__collection_schema` | apps/lumen/src/storage.rs | function | pub | 10802 | __collection_schema(         &self,         collection_id: &str,     ) -> Result<BTreeMap<String, FieldSpec>> |
+| `__field_forward_probe` | apps/lumen/src/storage.rs | function | pub | 10839 | __field_forward_probe(         &self,         collection_id: &str,         field: &str,     ) -> Result<(usize, usize, bool)> |
+| `__open_collection_from_segments` | apps/lumen/src/storage.rs | function | pub | 10818 | __open_collection_from_segments(         collection_id: &str,         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<std::sync::Arc<Engine>> |
+| `__seal_collection_to_segments` | apps/lumen/src/storage.rs | function | pub | 10786 | __seal_collection_to_segments(         &self,         collection_id: &str,         dir: &std::path::Path,         applied_seq: u64,     ) -> Result<()> |
+| `__seal_hash_field_to_segment` | apps/lumen/src/storage.rs | function | pub | 10722 | __seal_hash_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_keyword_field_to_segment` | apps/lumen/src/storage.rs | function | pub | 10532 | __seal_keyword_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_number_field_to_segment` | apps/lumen/src/storage.rs | function | pub | 10469 | __seal_number_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_set_field_to_segment` | apps/lumen/src/storage.rs | function | pub | 10598 | __seal_set_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_text_field_to_segment` | apps/lumen/src/storage.rs | function | pub | 10666 | __seal_text_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `__seal_vector_field_to_segment` | apps/lumen/src/storage.rs | function | pub | 10759 | __seal_vector_field_to_segment(         &self,         collection_id: &str,         field: &str,         dir: &std::path::Path,     ) -> Result<u32> |
+| `add_field` | apps/lumen/src/storage.rs | function | pub | 3214 | add_field(&self, collection_id: &str, field_name: &str, spec: FieldSpec) -> Result<u32> |
+| `apply_raft_entry` | apps/lumen/src/storage.rs | function | pub | 4974 | apply_raft_entry(&self, entry: crate::log_entry::RaftLogEntry) -> Result<ApplyOutcome> |
+| `apply_reshard_batch` | apps/lumen/src/storage.rs | function | pub | 4588 | apply_reshard_batch(         &self,         delta: SnapshotV1,         replace: Option<crate::reshard::ReshardBatchReplaceScope>,     ) -> Result<ReshardApplyOutcome> |
+| `apply_reshard_prune_chunk` | apps/lumen/src/storage.rs | function | pub | 4746 | apply_reshard_prune_chunk(         &self,         chunk: crate::reshard::ReshardPruneChunk,     ) -> Result<ReshardPruneOutcome> |
+| `bits` | apps/lumen/src/storage.rs | function | pub | 166 | bits(self) -> u64 |
+| `create_collection` | apps/lumen/src/storage.rs | function | pub | 3070 | create_collection(         &self,         collection_id: &str,         req: CreateCollectionRequest,     ) -> Result<CreateCollectionResponse> |
+| `delete` | apps/lumen/src/storage.rs | function | pub | 3444 | delete(         &self,         collection_id: &str,         external_id: &str,         field: Option<&str>,     ) -> Result<()> |
+| `docids` | apps/lumen/src/storage.rs | function | pub | 355 | docids(&self) -> &[u32] |
+| `drop_collection` | apps/lumen/src/storage.rs | function | pub | 3139 | drop_collection(&self, collection_id: &str, force: bool) -> Result<DropOutcome> |
+| `drop_field` | apps/lumen/src/storage.rs | function | pub | 3159 | drop_field(&self, collection_id: &str, field_name: &str) -> Result<u32> |
+| `duplicates` | apps/lumen/src/storage.rs | function | pub | 4362 | duplicates(         &self,         collection_id: &str,         req: DuplicatesRequest,     ) -> Result<DuplicatesResponse> |
+| `evict_not_owned` | apps/lumen/src/storage.rs | function | pub | 4844 | evict_not_owned(         &self,         to: &VirtualBucketShardMap,         this_shard: u32,     ) -> Result<ReshardEvictOutcome> |
+| `flush_to_segments` | apps/lumen/src/storage.rs | function | pub | 10319 | flush_to_segments(&self, dir: &std::path::Path, up_to_seq: u64) -> Result<()> |
+| `from_bits` | apps/lumen/src/storage.rs | function | pub | 174 | from_bits(bits: u64) -> Self |
+| `from_sorted` | apps/lumen/src/storage.rs | function | pub | 349 | from_sorted(docids: Vec<u32>, tfs: Vec<u32>) -> Self |
+| `index` | apps/lumen/src/storage.rs | function | pub | 3253 | index(&self, collection_id: &str, req: IndexRequest) -> Result<IndexResponse> |
+| `is_draining` | apps/lumen/src/storage.rs | function | pub | 3049 | is_draining(&self) -> bool |
+| `list_collections` | apps/lumen/src/storage.rs | function | pub | 3241 | list_collections(&self) -> Result<Vec<String>> |
+| `metrics` | apps/lumen/src/storage.rs | function | pub | 3037 | metrics(&self) -> &Metrics |
+| `new` | apps/lumen/src/storage.rs | function | pub | 135 | new(x: f64) -> Result<Self> |
+| `new` | apps/lumen/src/storage.rs | function | pub | 3033 | new() -> Self |
+| `number_value_for_external_id` | apps/lumen/src/storage.rs | function | pub | 3797 | number_value_for_external_id(         &self,         collection_id: &str,         external_id: &str,         field: &str,     ) -> Result<Option<f64>> |
+| `open_from_segments` | apps/lumen/src/storage.rs | function | pub | 10129 | open_from_segments(         dir: &std::path::Path,         schema: BTreeMap<String, FieldSpec>,         version: u32,     ) -> Result<Self> |
+| `reopen_from_segment_dir` | apps/lumen/src/storage.rs | function | pub | 10363 | reopen_from_segment_dir(&self, dir: &std::path::Path) -> Result<u64> |
+| `replace_docs` | apps/lumen/src/storage.rs | function | pub | 3503 | replace_docs(         &self,         collection_id: &str,         req: ReplaceDocsRequest,     ) -> Result<ReplaceDocsResponse> |
+| `restore` | apps/lumen/src/storage.rs | function | pub | 4533 | restore(&self, snap: SnapshotV1) -> Result<()> |
+| `seal_to_segments` | apps/lumen/src/storage.rs | function | pub | 10094 | seal_to_segments(&mut self, dir: &std::path::Path, applied_seq: u64) -> Result<()> |
+| `search` | apps/lumen/src/storage.rs | function | pub | 3825 | search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> |
+| `search_fast_string_term` | apps/lumen/src/storage.rs | function | pub | 4303 | search_fast_string_term(         &self,         collection_id: &str,         field: &str,         value: &str,         limit: u32,     ) -> Result<SearchResponse> |
+| `segment_field_probe` | apps/lumen/src/storage.rs | function | pub | 10405 | segment_field_probe(&self, collection_id: &str, field: &str) -> Result<(usize, bool)> |
+| `snapshot` | apps/lumen/src/storage.rs | function | pub | 4518 | snapshot(&self) -> Result<SnapshotV1> |
+| `start_drain` | apps/lumen/src/storage.rs | function | pub | 3045 | start_drain(&self) |
+| `stats` | apps/lumen/src/storage.rs | function | pub | 4906 | stats(&self, collection_id: &str) -> Result<StatsResponse> |
+| `sweep_deleted` | apps/lumen/src/storage.rs | function | pub | 3189 | sweep_deleted(&self, grace: Duration) -> Result<usize> |
+| `tfs` | apps/lumen/src/storage.rs | function | pub | 359 | tfs(&self) -> &[u32] |
+| `to_f64` | apps/lumen/src/storage.rs | function | pub | 151 | to_f64(self) -> f64 |
+| `validate_query` | apps/lumen/src/storage.rs | function | pub | 5305 | validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 <!-- aw-source-partitions: version=1 count=21 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:0fc0973e703dc95ec1e3fd241824ac7e56825542a0c889028de8177332454543 -->

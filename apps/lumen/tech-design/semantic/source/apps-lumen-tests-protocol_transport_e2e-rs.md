@@ -14,7 +14,7 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/lumen/tests/protocol_transport_e2e.rs` generated from AST during Lumen AW health remediation.
+Public API manifest for `apps/lumen/tests/protocol_transport_e2e.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 

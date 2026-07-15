@@ -15,15 +15,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/lumen/src/routing_remote.rs` generated from AST during Lumen AW health remediation.
+Public API manifest for `apps/lumen/src/routing_remote.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `RoutedRouter` | apps/lumen/src/routing_remote.rs | struct | pub | 118 |  |
-| `new` | apps/lumen/src/routing_remote.rs | function | pub | 134 | new(engine: Arc<Engine>, local_write: Arc<dyn WriteBackend>, shard_map: VirtualBucketShardMap, local_shard: u32, shard_urls: Vec<String>) -> Result<Self> |
-
+| `RoutedRouter` | apps/lumen/src/routing_remote.rs | struct | pub | 121 |  |
+| `new` | apps/lumen/src/routing_remote.rs | function | pub | 137 | new(         engine: Arc<Engine>,         local_write: Arc<dyn WriteBackend>,         shard_map: VirtualBucketShardMap,         local_shard: u32,         shard_urls: Vec<String>,     ) -> Result<Self> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

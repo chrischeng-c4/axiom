@@ -20,18 +20,17 @@ Public API manifest for `apps/lumen/src/aof.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AofReader` | apps/lumen/src/aof.rs | struct | pub | 337 |  |
-| `AofWriter` | apps/lumen/src/aof.rs | struct | pub | 97 |  |
-| `FsyncPolicy` | apps/lumen/src/aof.rs | enum | pub | 79 |  |
-| `append` | apps/lumen/src/aof.rs | function | pub | 198 | append(&mut self, seq: u64, record: &WalRecord) -> Result<()> |
-| `flush` | apps/lumen/src/aof.rs | function | pub | 220 | flush(&mut self) -> Result<()> |
-| `maybe_sync` | apps/lumen/src/aof.rs | function | pub | 238 | maybe_sync(&mut self) -> Result<()> |
-| `open` | apps/lumen/src/aof.rs | function | pub | 113 | open(path: impl Into<PathBuf>) -> Result<Self> |
-| `open_with_policy` | apps/lumen/src/aof.rs | function | pub | 120 | open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> |
-| `replay` | apps/lumen/src/aof.rs | function | pub | 349 | replay(         path: impl AsRef<Path>,         from_seq: u64,         mut apply: impl FnMut(u64, WalRecord),     ) -> Result<u64> |
-| `replay_aof_into` | apps/lumen/src/aof.rs | function | pub | 410 | replay_aof_into(     engine: &std::sync::Arc<crate::storage::Engine>,     path: impl AsRef<Path>,     from_seq: u64, ) -> Result<u64> |
-| `sync` | apps/lumen/src/aof.rs | function | pub | 226 | sync(&mut self) -> Result<()> |
-| `truncate_through` | apps/lumen/src/aof.rs | function | pub | 257 | truncate_through(&mut self, through: u64) -> Result<()> |
+| `AofReader` | apps/lumen/src/aof.rs | struct | pub | 149 |  |
+| `AofWriter` | apps/lumen/src/aof.rs | struct | pub | 84 |  |
+| `append` | apps/lumen/src/aof.rs | function | pub | 108 | append(&mut self, seq: u64, record: &WalRecord) -> Result<()> |
+| `flush` | apps/lumen/src/aof.rs | function | pub | 115 | flush(&mut self) -> Result<()> |
+| `maybe_sync` | apps/lumen/src/aof.rs | function | pub | 128 | maybe_sync(&mut self) -> Result<()> |
+| `open` | apps/lumen/src/aof.rs | function | pub | 92 | open(path: impl Into<PathBuf>) -> Result<Self> |
+| `open_with_policy` | apps/lumen/src/aof.rs | function | pub | 99 | open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> |
+| `replay` | apps/lumen/src/aof.rs | function | pub | 161 | replay(         path: impl AsRef<Path>,         from_seq: u64,         mut apply: impl FnMut(u64, WalRecord),     ) -> Result<u64> |
+| `replay_aof_into` | apps/lumen/src/aof.rs | function | pub | 184 | replay_aof_into(     engine: &std::sync::Arc<crate::storage::Engine>,     path: impl AsRef<Path>,     from_seq: u64, ) -> Result<u64> |
+| `sync` | apps/lumen/src/aof.rs | function | pub | 120 | sync(&mut self) -> Result<()> |
+| `truncate_through` | apps/lumen/src/aof.rs | function | pub | 141 | truncate_through(&mut self, through: u64) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

@@ -21,17 +21,17 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/lumen/src/raft_sm.rs` generated from AST during Lumen AW health remediation.
+Public API manifest for `apps/lumen/src/raft_sm.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `EngineSm` | apps/lumen/src/raft_sm.rs | struct | pub | 33 |  |
-| `new` | apps/lumen/src/raft_sm.rs | function | pub | 40 | new(engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
-| `take_outcome` | apps/lumen/src/raft_sm.rs | function | pub | 53 | take_outcome(&self, index: u64) -> Result<ApplyOutcome> |
-| `RaftWriteSink` | apps/lumen/src/raft_sm.rs | struct | pub | 101 |  |
-| `new` | apps/lumen/src/raft_sm.rs | function | pub | 107 | new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self |
+| `EngineSm` | apps/lumen/src/raft_sm.rs | struct | pub | 34 |  |
+| `RaftWriteSink` | apps/lumen/src/raft_sm.rs | struct | pub | 105 |  |
+| `new` | apps/lumen/src/raft_sm.rs | function | pub | 44 | new(engine: Arc<Engine>, from_seq: u64) -> Arc<Self> |
+| `new` | apps/lumen/src/raft_sm.rs | function | pub | 112 | new(host: Arc<RaftHost>, sm: Arc<EngineSm>) -> Self |
+| `take_outcome` | apps/lumen/src/raft_sm.rs | function | pub | 54 | take_outcome(&self, index: u64) -> Result<ApplyOutcome> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

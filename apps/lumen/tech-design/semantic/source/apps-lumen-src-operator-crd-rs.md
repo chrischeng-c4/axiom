@@ -21,15 +21,15 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `AuthMode` | apps/lumen/src/operator/crd.rs | enum | pub | 320 |  |
-| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 461 |  |
+| `Autoscaling` | apps/lumen/src/operator/crd.rs | struct | pub | 459 |  |
 | `LogFormat` | apps/lumen/src/operator/crd.rs | enum | pub | 297 |  |
-| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 513 | adds `convergence_remediation_restart_count: u32` (#1485 R1); adds `convergence_remediation_restarted_at: Option<u64>` (#1485 R1) |
+| `LumenReshardStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 511 |  |
 | `LumenSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 39 |  |
-| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 485 |  |
+| `LumenStatus` | apps/lumen/src/operator/crd.rs | struct | pub | 483 |  |
 | `ReshardPhase` | apps/lumen/src/operator/crd.rs | enum | pub | 264 |  |
 | `ReshardPolicy` | apps/lumen/src/operator/crd.rs | struct | pub | 163 |  |
-| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 198 | adds `converged_shard_map_version: Option<u64>` (#1458 R1); adds `last_cutover_shard_map_version: Option<u64>` (#1467 R7); adds `convergence_wait_started_at: Option<u64>` (#1485 R2); adds `convergence_remediation_restart_count: u32` (#1485 R1); adds `convergence_remediation_restarted_at: Option<u64>` (#1485 R1) |
-| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 438 |  |
+| `ReshardWorkflowSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 198 |  |
+| `ServingBackupSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 434 |  |
 | `ServingBootstrapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 415 |  |
 | `ServingSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 347 |  |
 | `ShardMapSpec` | apps/lumen/src/operator/crd.rs | struct | pub | 135 |  |
@@ -37,9 +37,9 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 | `as_env` | apps/lumen/src/operator/crd.rs | function | pub | 335 | as_env(self) -> &'static str |
 | `as_str` | apps/lumen/src/operator/crd.rs | function | pub | 274 | as_str(self) -> &'static str |
 | `progress_percent` | apps/lumen/src/operator/crd.rs | function | pub | 283 | progress_percent(self) -> u8 |
-| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 590 | reshard_status(&self) -> LumenReshardStatus |
-| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 675 | reshard_status_with_usage(&self, shard_usage_bytes: &BTreeMap<u32, u64>, measured_at_map_version: u64) -> LumenReshardStatus |
-| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 571 | storage_pod_count(&self) -> i32 |
+| `reshard_status` | apps/lumen/src/operator/crd.rs | function | pub | 588 | reshard_status(&self) -> LumenReshardStatus |
+| `reshard_status_with_usage` | apps/lumen/src/operator/crd.rs | function | pub | 673 | reshard_status_with_usage(         &self,         shard_usage_bytes: &BTreeMap<u32, u64>,         measured_at_map_version: u64,     ) -> LumenReshardStatus |
+| `storage_pod_count` | apps/lumen/src/operator/crd.rs | function | pub | 569 | storage_pod_count(&self) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

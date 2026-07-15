@@ -21,12 +21,12 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `crd` | apps/lumen/src/operator/mod.rs | module | pub | 15 |  |
+| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 27 | crd_yaml() -> String |
 | `lease` | apps/lumen/src/operator/mod.rs | module | pub | 16 |  |
 | `reconcile` | apps/lumen/src/operator/mod.rs | module | pub | 17 |  |
 | `render` | apps/lumen/src/operator/mod.rs | module | pub | 18 |  |
 | `reshard_driver` | apps/lumen/src/operator/mod.rs | module | pub | 19 |  |
 | `resize` | apps/lumen/src/operator/mod.rs | module | pub | 20 |  |
-| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 26 | crd_yaml() -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

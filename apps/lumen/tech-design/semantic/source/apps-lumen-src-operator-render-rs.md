@@ -45,7 +45,9 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `render` | apps/lumen/src/operator/render.rs | function | pub | 148 | render(lumen: &Lumen) -> Vec<Value> |
+| `hpa_labels` | apps/lumen/src/operator/render.rs | function | pub | 121 | hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> |
+| `render` | apps/lumen/src/operator/render.rs | function | pub | 146 | render(lumen: &Lumen) -> Vec<Value> |
+| `wants_hpa` | apps/lumen/src/operator/render.rs | function | pub | 110 | wants_hpa(_lumen: &Lumen) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

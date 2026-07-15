@@ -27,38 +27,21 @@ Public API manifest for `apps/lumen/src/raft.rs` generated from AST during Score
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ReadConsistency` | raft_runtime (re-export) | enum | pub use | 45 |  |
 | `ClusterState` | apps/lumen/src/raft.rs | struct | pub | 193 |  |
 | `ClusterStateView` | apps/lumen/src/raft.rs | struct | pub | 359 |  |
 | `PeerAddr` | apps/lumen/src/raft.rs | struct | pub | 97 |  |
 | `RaftGroup` | apps/lumen/src/raft.rs | struct | pub | 90 |  |
 | `RaftRole` | apps/lumen/src/raft.rs | enum | pub | 50 |  |
 | `from_config` | apps/lumen/src/raft.rs | function | pub | 120 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
+| `from_snapshot` | apps/lumen/src/raft.rs | function | pub | 254 | from_snapshot(         pod_name: String,         shard_index: u32,         replica_index: u32,         role: RaftRole,         group: RaftGroup,         applied_index: u64,         leader_term: u64,         replication_lag_ms: u64,     ) -> Self |
 | `leader` | apps/lumen/src/raft.rs | function | pub | 178 | leader(&self) -> Option<&PeerAddr> |
-| `new` | apps/lumen/src/raft.rs | function | pub | 215 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
-| `from_snapshot` | apps/lumen/src/raft.rs | function | pub | 254 | from_snapshot(pod_name: String, shard_index: u32, replica_index: u32, role: RaftRole, group: RaftGroup, applied_index: u64, leader_term: u64, replication_lag_ms: u64) -> Self |
-| `role` | apps/lumen/src/raft.rs | function | pub | 289 | role(&self) -> RaftRole |
-| `set_role` | apps/lumen/src/raft.rs | function | pub | 294 | set_role(&self, role: RaftRole) |
 | `leader_index` | apps/lumen/src/raft.rs | function | pub | 300 | leader_index(&self) -> Option<u32> |
-| `set_leader_index` | apps/lumen/src/raft.rs | function | pub | 309 | set_leader_index(&self, leader: Option<u32>) |
 | `leader_peer` | apps/lumen/src/raft.rs | function | pub | 317 | leader_peer(&self) -> Option<&PeerAddr> |
+| `new` | apps/lumen/src/raft.rs | function | pub | 215 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
+| `role` | apps/lumen/src/raft.rs | function | pub | 289 | role(&self) -> RaftRole |
+| `set_leader_index` | apps/lumen/src/raft.rs | function | pub | 309 | set_leader_index(&self, leader: Option<u32>) |
+| `set_role` | apps/lumen/src/raft.rs | function | pub | 294 | set_role(&self, role: RaftRole) |
 | `snapshot` | apps/lumen/src/raft.rs | function | pub | 322 | snapshot(&self) -> ClusterStateView |
-
-`ReadConsistency` (header name + `from_header` parsing) and the
-`RaftRole`/`PeerAddr`/`ClusterStateView` shapes are now canonically defined
-in `libs/raft-runtime` (`read_consistency.rs` / `view.rs`, #1003); this file
-re-exports `ReadConsistency` directly and keeps `utoipa::ToSchema`-deriving
-wrappers with `From<raft_runtime::*>` conversions for the other three so
-`/openapi.json` stays byte-identical.
-
-`ClusterState::role`/`leader_index` are private `AtomicU8`/`AtomicU32`
-fields updated in place (not replaced) by a background poller for the
-process lifetime (`spawn_cluster_state_poller` in `src/bin/lumen.rs`,
-#1349); `role()`/`set_role()`/`leader_index()`/`set_leader_index()`/
-`leader_peer()` are the read/write accessors, and `from_snapshot()` is an
-explicit-initial-state constructor used by both `lumen serve --wal raft`'s
-bootstrap default (before the poller's first tick) and by tests that need a
-deterministic `ClusterState` without a running raft cluster.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

@@ -20,14 +20,14 @@ Public API manifest for `apps/lumen/src/wal.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `MemWal` | apps/lumen/src/wal.rs | struct | pub | 361 |  |
-| `SharedWal` | apps/lumen/src/wal.rs | type | pub | 340 |  |
-| `WAL_FORMAT_VERSION` | apps/lumen/src/wal.rs | constant | pub | 45 |  |
-| `WalRecord` | apps/lumen/src/wal.rs | struct | pub | 59 |  |
-| `WalStream` | apps/lumen/src/wal.rs | type | pub | 320 |  |
-| `decode` | apps/lumen/src/wal.rs | function | pub | 84 | decode(bytes: &[u8]) -> Result<Self> |
-| `encode` | apps/lumen/src/wal.rs | function | pub | 74 | encode(&self) -> Result<Vec<u8>> |
-| `new` | apps/lumen/src/wal.rs | function | pub | 66 | new(entry: RaftLogEntry) -> Self |
+| `MemWal` | apps/lumen/src/wal.rs | struct | pub | 359 |  |
+| `SharedWal` | apps/lumen/src/wal.rs | type | pub | 338 |  |
+| `WAL_FORMAT_VERSION` | apps/lumen/src/wal.rs | constant | pub | 43 |  |
+| `WalRecord` | apps/lumen/src/wal.rs | struct | pub | 57 |  |
+| `WalStream` | apps/lumen/src/wal.rs | type | pub | 318 |  |
+| `decode` | apps/lumen/src/wal.rs | function | pub | 82 | decode(bytes: &[u8]) -> Result<Self> |
+| `encode` | apps/lumen/src/wal.rs | function | pub | 72 | encode(&self) -> Result<Vec<u8>> |
+| `new` | apps/lumen/src/wal.rs | function | pub | 64 | new(entry: RaftLogEntry) -> Self |
 | `new` | apps/lumen/src/wal.rs | function | pub | 414 | new() -> Self |
 | `starting_at` | apps/lumen/src/wal.rs | function | pub | 429 | starting_at(base_seq: u64) -> Self |
 ## Source

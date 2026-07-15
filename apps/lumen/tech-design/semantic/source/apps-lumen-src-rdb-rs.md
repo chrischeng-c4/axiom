@@ -20,13 +20,13 @@ Public API manifest for `apps/lumen/src/rdb.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `LocalFsRdbStore` | apps/lumen/src/rdb.rs | struct | pub | 88 |  |
-| `RdbSnapshot` | apps/lumen/src/rdb.rs | struct | pub | 29 |  |
-| `capture` | apps/lumen/src/rdb.rs | function | pub | 41 | capture(engine: &Engine, up_to_seq: u64) -> Result<Self> |
-| `decode` | apps/lumen/src/rdb.rs | function | pub | 62 | decode(bytes: &[u8]) -> Result<Self> |
-| `encode` | apps/lumen/src/rdb.rs | function | pub | 55 | encode(&self) -> Result<Vec<u8>> |
-| `new` | apps/lumen/src/rdb.rs | function | pub | 94 | new(root: impl Into<PathBuf>) -> Result<Self> |
-| `restore_into` | apps/lumen/src/rdb.rs | function | pub | 49 | restore_into(self, engine: &Engine) -> Result<()> |
+| `LocalFsRdbStore` | apps/lumen/src/rdb.rs | struct | pub | 89 |  |
+| `RdbSnapshot` | apps/lumen/src/rdb.rs | struct | pub | 30 |  |
+| `capture` | apps/lumen/src/rdb.rs | function | pub | 42 | capture(engine: &Engine, up_to_seq: u64) -> Result<Self> |
+| `decode` | apps/lumen/src/rdb.rs | function | pub | 63 | decode(bytes: &[u8]) -> Result<Self> |
+| `encode` | apps/lumen/src/rdb.rs | function | pub | 56 | encode(&self) -> Result<Vec<u8>> |
+| `new` | apps/lumen/src/rdb.rs | function | pub | 95 | new(root: impl Into<PathBuf>) -> Result<Self> |
+| `restore_into` | apps/lumen/src/rdb.rs | function | pub | 50 | restore_into(self, engine: &Engine) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

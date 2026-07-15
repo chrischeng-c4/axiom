@@ -21,17 +21,17 @@ Public API manifest for `apps/lumen/src/config.rs` generated from AST during Sco
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ClusterConfig` | apps/lumen/src/config.rs | struct | pub | 27 |  |
+| `check_fan_in_shard_count` | apps/lumen/src/config.rs | function | pub | 161 | check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> |
+| `fan_in_shard_count` | apps/lumen/src/config.rs | function | pub | 144 | fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 |
 | `from_env` | apps/lumen/src/config.rs | function | pub | 60 | from_env() -> Result<Self> |
 | `is_voter` | apps/lumen/src/config.rs | function | pub | 76 | is_voter(&self) -> Result<bool> |
 | `pod_ordinal` | apps/lumen/src/config.rs | function | pub | 64 | pod_ordinal(&self) -> Result<u32> |
 | `replica_index` | apps/lumen/src/config.rs | function | pub | 72 | replica_index(&self) -> Result<u32> |
-| `shard_index` | apps/lumen/src/config.rs | function | pub | 68 | shard_index(&self) -> Result<u32> |
-| `shard_map_from_env` | apps/lumen/src/config.rs | function | pub | 95 | shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> |
-| `fan_in_shard_count` | apps/lumen/src/config.rs | function | pub | 144 | fan_in_shard_count(explicit: Option<u32>, loaded_dirs: usize) -> u32 |
-| `check_fan_in_shard_count` | apps/lumen/src/config.rs | function | pub | 161 | check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize) -> Result<()> |
+| `routed_activation_shard_count` | apps/lumen/src/config.rs | function | pub | 257 | routed_activation_shard_count(search_shard_segment_dirs_empty: bool) -> Result<Option<u32>> |
 | `routed_pod_topology` | apps/lumen/src/config.rs | function | pub | 188 | routed_pod_topology(shard_count: u32) -> Result<(String, u32)> |
 | `routed_shard_count_from_env` | apps/lumen/src/config.rs | function | pub | 223 | routed_shard_count_from_env() -> Result<Option<u32>> |
-| `routed_activation_shard_count` | apps/lumen/src/config.rs | function | pub | 257 | routed_activation_shard_count(search_shard_segment_dirs_empty: bool) -> Result<Option<u32>> |
+| `shard_index` | apps/lumen/src/config.rs | function | pub | 68 | shard_index(&self) -> Result<u32> |
+| `shard_map_from_env` | apps/lumen/src/config.rs | function | pub | 95 | shard_map_from_env(shard_count: u32) -> Result<VirtualBucketShardMap> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

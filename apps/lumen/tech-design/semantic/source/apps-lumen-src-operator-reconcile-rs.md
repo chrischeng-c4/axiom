@@ -27,7 +27,8 @@ Public API manifest for `apps/lumen/src/operator/reconcile.rs` generated from AS
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `run` | apps/lumen/src/operator/reconcile.rs | function | pub | 603 | run() -> anyhow::Result<()> |
+| `parse_metric` | apps/lumen/src/operator/reconcile.rs | function | pub | 142 | parse_metric(body: &str, metric: &str) -> Option<u64> |
+| `run` | apps/lumen/src/operator/reconcile.rs | function | pub | 598 | run() -> anyhow::Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 <!-- aw-source-partitions: version=1 count=2 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:41211979262021d7c4b1ea13b47373dbe272e6638e1be4886c80964891f71017 -->

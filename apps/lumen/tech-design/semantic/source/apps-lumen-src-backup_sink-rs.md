@@ -18,10 +18,7 @@ Public API manifest for `apps/lumen/src/backup_sink.rs` generated from AST durin
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `LocalFsSink` | apps/lumen/src/backup_sink.rs | struct | pub | 48 |  |
-| `new` | apps/lumen/src/backup_sink.rs | function | pub | 55 | new(root: impl Into<PathBuf>, prefix: impl Into<String>) -> Result<Self> |
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

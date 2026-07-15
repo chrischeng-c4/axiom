@@ -15,126 +15,33 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/lumen/src/operator/reshard_driver.rs`.
+Public API manifest for `apps/lumen/src/operator/reshard_driver.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 820 | #1458 R1: gained `AwaitingTopologyConvergence { map_version: u64 }` and `TopologyConverged { map_version: u64 }` variants, returned by the new `Complete`-phase `advance_convergence` step. |
-| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 638 |  |
-| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 264 | #1444 R2: distinguishes an apply failure caused by exactly one document's batch serializing past `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (the `snapshot_reshard_batches`/`byte_cap_chunk` floor case) from any other reason `POST /admin/reshard:apply` can fail — surfaced as a distinct `status.reshard` blocking condition and used to skip re-arming the write-pause fence on a tick already known to fail identically. |
-| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 935 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
-| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 448 | #1485 R2: the production [`CONVERGENCE_STALL_SECS`] wall-clock stall-budget value, exposed so `reconcile.rs`'s tests and `reshard_driver_e2e.rs` can back-date `workflow.convergenceWaitStartedAt` past the real budget without sleeping. convergence_stall_budget_secs() -> u64 |
-| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 541 | #1485 R2: whether an `awaitingTopologyConvergence` wait that began at the given `workflow.convergenceWaitStartedAt` value has run longer than [`CONVERGENCE_STALL_SECS`] — computed purely from that one persisted CR timestamp (not driver memory), so `reconcile.rs`'s `status_patch` reports the same `topologyConvergenceStalled` condition whether or not the driver process has restarted since the wait began. convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
-| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 920 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
-| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 234 | #1443 R1/AC1: the production default [`ClusterControl::write_fence_ttl_secs`] value, exposed so integration tests can fall back to the real default from a `fence_ttl_secs: Option<u64>`-style override field without needing the private `WRITE_FENCE_TTL_SECS` const itself to be `pub`. default_write_fence_ttl_secs() -> u64 |
-| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2348 | #1458 R1: the `Complete`-phase branch now calls `clear_oversize_block` then `advance_convergence` before falling through to `should_start_split`/`NoOp`, so a completed cutover keeps driving `AwaitingTopologyConvergence`/`TopologyConverged` outcomes until every serving pod is confirmed Ready on the new topology. drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
-| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 644 | new(client: Client) -> Self |
-| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 399 | #1444 R2 / #1458 R4: now keyed by `(namespace, name, uid)` — the oversized-document block currently recorded for the live CR identified by its `metadata.uid`, if any, so a deleted-and-recreated same-name CR never inherits a stale wedge cached under the old uid. `reconcile.rs`'s `status_patch` calls this to layer a distinct `status.reshard` blocking condition + remediation message onto the policy/usage-derived status. oversize_block_condition(namespace: &str, name: &str, uid: &str) -> Option<OversizedDocumentBlock> |
-| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1411 | One migration pass: every bucket `bucket_moves` says moved, fetched via `POST /admin/backup:scoped` and applied to its new owner via `POST /admin/reshard:apply` (`snapshot_reshard_batches` builds the bounded, purely-additive batches — #1457 R1). Thin wrapper over the shared `run_migration_pass_impl(..., final_pass: bool, moving_buckets: Option<&BTreeSet<u32>>)`, called here with `final_pass=false`; the final fenced `CatchingUp` pass calls `run_migration_pass_impl` directly with `final_pass=true` to additionally send each moved bucket's authoritative-replace scope via `POST /admin/reshard:prune` (`snapshot_reshard_prune_chunks`). #1458 R3: `run_migration_pass_impl` now re-arms the write-pause fence on a time basis (whenever more than TTL/4 has elapsed since the last arm) rather than a fixed batch-count interval. run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
-| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 857 | #1396 R5: also requires `status.reshard.usage_measured_at_map_version == spec.shardMap.version` — a lagging/stale status subresource can never start a split. should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2395 | #1458 R4: the live-CR listing now also drives `prune_oversize_cache`, dropping any cached oversize-block entry whose uid is no longer among the live CRs' `metadata.uid`s. spawn_reshard_driver_loop(client: Client) |
-
-Not listed above (matching this project's existing mirrors' convention of
-only capturing top-level `pub` structs/enums/consts/modules and inherent-impl
-`pub fn`s, never trait definitions, trait methods, or trait-impl methods):
-the `pub trait ClusterControl` definition and its methods (including
-`shard_base_url`, the #1443 R1 `write_fence_ttl_secs` default-impl method,
-which returns the private `WRITE_FENCE_TTL_SECS` const unless a test fake
-overrides it, and the new #1458 R1 `serving_topology_converged` method,
-which reports whether every serving pod is confirmed `Ready` on the current
-shard-map topology), and `KubeClusterControl`'s `impl ClusterControl for
-KubeClusterControl` block. Also not listed (private): `checkpoint_shard`
-(#1389, rewritten #1396 R3 to require `persisted == true`) and
-`checkpoint_shards` (#1389 as `checkpoint_touched_shards`, generalized and
-renamed by #1396 R1 to take an explicit shard set — called once for just
-the target shard right after migration, and again for every source shard
-after eviction; #1458 R3 adds an in-loop time-based re-arm check via
-`maybe_rearm_fence` around each shard's checkpoint/prune step), plus three
-#1396 R1/R2 private helpers: `reshard_fence_call`, `set_write_fence`
-(arm/clear `POST /admin/reshard:fence` on every current source shard;
-rewritten by #1443 R4 to track which shards it has successfully armed and
-best-effort clear them before returning an error, so a mid-sequence arm
-failure never leaves a partially-fenced cluster), and
-`advance_catching_up_fenced` (the actual migrate -> checkpoint(target) ->
-evict -> checkpoint(sources) -> cutover sequence `advance_catching_up`
-brackets with a fence arm/clear; #1443 R1 adds intra-sequence re-arm calls
-before each of those steps so a slow real pass — checkpoints, evictions —
-never outlives a single TTL window, and a failed re-arm aborts to `Blocked`
-before the next step runs rather than silently reopening the write window).
-Also not listed (private, new, #1458 R3): `FENCE_REARM_FRACTION` const
-(replaces the retired `FENCE_REARM_BATCH_INTERVAL` count-based const — a
-re-arm now fires whenever more than `write_fence_ttl_secs() /
-FENCE_REARM_FRACTION` has elapsed since the last arm, checked between batch
-applies in `run_migration_pass_impl` and around each fetch/checkpoint/prune
-step in `checkpoint_shards`), `maybe_rearm_fence` (the shared elapsed-time
-re-arm helper both call), and the `default_write_fence_ttl_secs`-backing
-`WRITE_FENCE_TTL_SECS` const itself. Also not listed (private, new, #1458
-R1): `buckets_on_newest_shard` (reads `buckets_on_newest_shard` off a
-`VirtualBucketShardMap` for the `serving_topology_converged` desired-replica
-math) and `advance_convergence` (the `Complete`-phase driver: returns `None`
-when there is nothing to converge or convergence already landed; otherwise
-re-arms/clears the write-pause fence around a
-`ClusterControl::serving_topology_converged` probe and, on success, patches
-`status.reshard.convergedShardMapVersion`/`spec.reshardPolicy.workflow.convergedShardMapVersion`
-so convergence state is derived from persisted state, not driver memory, and
-is resumable across a driver restart). Also not listed (private/`pub(crate)`,
-#1444 R2, re-keyed by #1458 R4): `OVERSIZE_RECHECK_TICKS` const, the
-`OversizeBlockCache` type alias (`pub(crate) fn prune_oversize_cache`, new
-#1458 R4, drops any cached entry whose uid is absent from a live-CR
-`BTreeSet<String>` of uids, called from `spawn_reshard_driver_loop`'s
-per-tick live-CR listing and whenever a workflow returns to phase
-`Complete`), `oversize_block_cache`, `oversize_cache_key` (private, now
-keyed by `(namespace, name)` with the uid carried as the cached tuple's
-first element so a uid mismatch is detected without changing the cache's
-key shape), `record_oversize_block` and `clear_oversize_block`
-(`pub(crate)` rather than private so `reconcile.rs`'s `status_patch` tests
-can drive the exact cache `oversize_block_condition` reads, without
-widening either past crate-internal visibility; `record_oversize_block`
-now takes the CR's `uid` as an explicit argument), `should_skip_for_oversize`
-(private; the mutating cache read/write helpers backing
-`oversize_block_condition`, now uid-aware), and `detect_oversized_batch`
-(pre-flight oversize check called from `apply_reshard_batch`, which now
-returns the downcastable `OversizedDocumentBlock` error instead of only a
-generic `bail!` on both the pre-flight miss and a live 413 response). Also
-not listed (private, #1457 R1/R2, new): `run_migration_pass_impl` (the
-shared `final_pass: bool` implementation `run_migration_pass` now wraps),
-`fetch_all_collection_ids` (fetches a source shard's complete `GET
-/collections` id list independently of the bucket-scoped snapshot, so
-`snapshot_reshard_prune_chunks` can seed an empty `keep_ids` scope for a
-collection a moved bucket emptied entirely — #1457 R2), and
-`apply_reshard_prune_chunk` (this driver's `POST /admin/reshard:prune`
-caller for one `ReshardPruneChunk`, mirroring `apply_reshard_batch`'s
-existing `POST /admin/reshard:apply` caller). Also not listed (#1467 R5/R7,
-new): the `ClusterControl::serving_pods_report_map_version` trait method
-(default-impl `Ok(true)`; `KubeClusterControl`'s impl scrapes every serving
-pod's `/metrics` for `lumen_shard_map_version == map_version`, gated behind
-`rollout_converged` so it only scrapes once the StatefulSet rollout itself
-has finished), `advance_convergence`'s now-two-stage check (`rollout_converged`
-from `serving_topology_converged`, then `converged` from
-`serving_pods_report_map_version`) and its `workflow.
-lastCutoverShardMapVersion`-gated engagement (the only writer is
-`advance_catching_up_fenced`'s cutover patch, closing the gap where
-convergence would otherwise fence indefinitely over a hand-authored/restored
-`spec.shardMap`), `evict_old_shards`'s new `moving_buckets`/`last_armed_at`
-parameters (an in-loop time-based fence re-arm via `maybe_rearm_fence` before
-every old-shard eviction call, not just once at the phase boundary), and
-(private/`pub(crate)`) `CONVERGENCE_STALL_TICKS` const, `ConvergenceStallCache`
-type alias, `convergence_stall_cache`/`convergence_stall_key`, and
-`pub(crate) record_convergence_await`/`clear_convergence_stall`/
-`prune_convergence_stall_cache` (the driver-memory-only consecutive-tick
-budget tracker `reconcile.rs`'s tests previously drove directly; #1485 R2
-keeps this cache as a fast-path/logging-only signal). Also not listed
-(#1485 R1/R2, new): (private) `now_epoch_secs` (the `SystemTime::now()`
-epoch-seconds helper backing every durable timestamp this module stamps),
-and the `workflow.convergenceWaitStartedAt`/`convergenceRemediationRestartCount`/
-`convergenceRemediationRestartedAt` read/patch logic `advance_convergence`
-now threads through its not-yet-converged branch — the durable stall budget
-and bounded one-shot remediation-restart re-trigger both `convergence_stall_
-budget_secs` and `convergence_stall_condition` (table above) expose the pure
-parts of.
-
+| `CONVERGENCE_STALL_SECS` | apps/lumen/src/operator/reshard_driver.rs | constant | pub | 439 |  |
+| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 833 |  |
+| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 651 |  |
+| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 264 |  |
+| `clear_convergence_stall` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 513 | clear_convergence_stall(namespace: &str, name: &str) |
+| `clear_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 345 | clear_oversize_block(namespace: &str, name: &str) |
+| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 948 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
+| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 448 | convergence_stall_budget_secs() -> u64 |
+| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 541 | convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
+| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 933 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
+| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 234 | default_write_fence_ttl_secs() -> u64 |
+| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2370 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 657 | new(client: Client) -> Self |
+| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 399 | oversize_block_condition(     namespace: &str,     name: &str,     uid: &str, ) -> Option<OversizedDocumentBlock> |
+| `prune_convergence_stall_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 523 | prune_convergence_stall_cache(live_uids: &BTreeSet<String>) |
+| `prune_oversize_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 358 | prune_oversize_cache(live_uids: &BTreeSet<String>) |
+| `record_convergence_await` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 489 | record_convergence_await(     namespace: &str,     name: &str,     uid: &str,     map_version: u64, ) -> bool |
+| `record_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 325 | record_oversize_block(     namespace: &str,     name: &str,     uid: &str,     block: OversizedDocumentBlock, ) |
+| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1424 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 870 | should_start_split(lumen: &Lumen) -> bool |
+| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2417 | spawn_reshard_driver_loop(client: Client) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 <!-- aw-source-partitions: version=1 count=4 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:4ac439aadd0ea0d19e3747a70910fcd71efc6a6457e7929a2809c35c9d8b267f -->

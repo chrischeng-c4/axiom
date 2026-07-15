@@ -34,30 +34,30 @@ Public API manifest for `apps/lumen/src/routing.rs` generated from AST during Sc
 | `ShardRoute` | apps/lumen/src/routing.rs | struct | pub | 63 |  |
 | `VirtualBucketShardMap` | apps/lumen/src/routing.rs | struct | pub | 80 |  |
 | `assignment_for_bucket` | apps/lumen/src/routing.rs | function | pub | 142 | assignment_for_bucket(&self, bucket: u32) -> Option<u32> |
-| `balanced` | apps/lumen/src/routing.rs | function | pub | 88 | balanced(version: u64, virtual_bucket_count: u32, physical_shard_count: u32) -> Result<Self> |
+| `balanced` | apps/lumen/src/routing.rs | function | pub | 88 | balanced(         version: u64,         virtual_bucket_count: u32,         physical_shard_count: u32,     ) -> Result<Self> |
 | `document_shard_index` | apps/lumen/src/routing.rs | function | pub | 46 | document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize |
 | `is_empty` | apps/lumen/src/routing.rs | function | pub | 247 | is_empty(&self) -> bool |
 | `is_empty` | apps/lumen/src/routing.rs | function | pub | 315 | is_empty(&self) -> bool |
 | `len` | apps/lumen/src/routing.rs | function | pub | 243 | len(&self) -> usize |
 | `len` | apps/lumen/src/routing.rs | function | pub | 311 | len(&self) -> usize |
-| `merge_shard_search_responses` | apps/lumen/src/routing.rs | function | pub | 623 | merge_shard_search_responses(     req: &SearchRequest,     responses: impl IntoIterator<Item = SearchResponse>,     took_us: u64,     sort_value: K, ) -> SearchResponse |
-| `new_with_shard_map` | apps/lumen/src/routing.rs | function | pub | 236 | new_with_shard_map(shards: Vec<Arc<Engine>>, shard_map: VirtualBucketShardMap) -> Self |
-| `new_with_shard_map` | apps/lumen/src/routing.rs | function | pub | 301 | new_with_shard_map(     writers: Vec<Arc<WriteCoordinator>>,     shard_map: VirtualBucketShardMap, ) -> Self |
+| `merge_shard_search_responses` | apps/lumen/src/routing.rs | function | pub | 624 | merge_shard_search_responses(     req: &SearchRequest,     responses: impl IntoIterator<Item = SearchResponse>,     took_us: u64,     sort_value: K, ) -> SearchResponse |
 | `new` | apps/lumen/src/routing.rs | function | pub | 105 | new(version: u64, assignments: Vec<u32>, physical_shard_count: u32) -> Result<Self> |
 | `new` | apps/lumen/src/routing.rs | function | pub | 228 | new(shards: Vec<Arc<Engine>>) -> Self |
 | `new` | apps/lumen/src/routing.rs | function | pub | 293 | new(writers: Vec<Arc<WriteCoordinator>>) -> Self |
+| `new_with_shard_map` | apps/lumen/src/routing.rs | function | pub | 236 | new_with_shard_map(shards: Vec<Arc<Engine>>, shard_map: VirtualBucketShardMap) -> Self |
+| `new_with_shard_map` | apps/lumen/src/routing.rs | function | pub | 301 | new_with_shard_map(         writers: Vec<Arc<WriteCoordinator>>,         shard_map: VirtualBucketShardMap,     ) -> Self |
 | `physical_shard_count` | apps/lumen/src/routing.rs | function | pub | 138 | physical_shard_count(&self) -> u32 |
-| `route_document` | apps/lumen/src/routing.rs | function | pub | 146 | route_document(&self, collection_id: &str, routing_key: Option<&str>, external_id: &str) -> ShardRoute |
+| `route_document` | apps/lumen/src/routing.rs | function | pub | 146 | route_document(         &self,         collection_id: &str,         routing_key: Option<&str>,         external_id: &str,     ) -> ShardRoute |
 | `route_key` | apps/lumen/src/routing.rs | function | pub | 155 | route_key(&self, collection_id: &str, routing_key: &str) -> ShardRoute |
-| `search_target` | apps/lumen/src/routing.rs | function | pub | 167 | search_target(&self, collection_id: &str, routing_key: Option<&str>) -> SearchShardTarget |
+| `search_request_offset` | apps/lumen/src/routing.rs | function | pub | 702 | search_request_offset(req: &SearchRequest) -> Result<usize> |
 | `search_shards_parallel` | apps/lumen/src/routing.rs | function | pub | 585 | search_shards_parallel(     collection_id: &str,     req: SearchRequest,     shards: &[S],     search: F,     sort_value: K, ) -> Result<SearchResponse> |
+| `search_target` | apps/lumen/src/routing.rs | function | pub | 167 | search_target(         &self,         collection_id: &str,         routing_key: Option<&str>,     ) -> SearchShardTarget |
 | `shard_host` | apps/lumen/src/routing.rs | function | pub | 215 | shard_host(prefix: &str, shard: u32, headless_service: &str) -> String |
 | `shard_index` | apps/lumen/src/routing.rs | function | pub | 35 | shard_index(collection_id: &str, shard_count: u32) -> u32 |
 | `single` | apps/lumen/src/routing.rs | function | pub | 126 | single() -> Self |
 | `split_one_shard` | apps/lumen/src/routing.rs | function | pub | 187 | split_one_shard(&self, new_version: u64) -> Result<Self> |
 | `version` | apps/lumen/src/routing.rs | function | pub | 130 | version(&self) -> u64 |
 | `virtual_bucket_count` | apps/lumen/src/routing.rs | function | pub | 134 | virtual_bucket_count(&self) -> u32 |
-
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

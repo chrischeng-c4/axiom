@@ -29,10 +29,10 @@ Public API manifest for `apps/lumen/src/tls.rs` generated from AST during Score 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `PeerTlsConfig` | apps/lumen/src/tls.rs | struct | pub | 37 |  |
-| `from_env` | apps/lumen/src/tls.rs | function | pub | 70 | from_env() -> Result<Option<Self>> |
-| `rustls_client_config` | apps/lumen/src/tls.rs | function | pub | 80 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
-| `rustls_server_config` | apps/lumen/src/tls.rs | function | pub | 75 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
-| `install_default_crypto_provider` | apps/lumen/src/tls.rs | function | pub use (re-export) | 85 | re-exported from `peer_tls::install_default_crypto_provider` |
+| `from_env` | apps/lumen/src/tls.rs | function | pub | 72 | from_env() -> Result<Option<Self>> |
+| `peer_transport` | apps/lumen/src/tls.rs | function | pub | 89 | peer_transport(&self) -> Result<raft_runtime::PeerTransport> |
+| `rustls_client_config` | apps/lumen/src/tls.rs | function | pub | 82 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
+| `rustls_server_config` | apps/lumen/src/tls.rs | function | pub | 77 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

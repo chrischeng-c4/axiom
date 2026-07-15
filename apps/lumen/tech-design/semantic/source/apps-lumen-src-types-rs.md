@@ -20,60 +20,65 @@ Public API manifest for `apps/lumen/src/types.rs` generated from AST during Scor
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Analyzer` | apps/lumen/src/types.rs | enum | pub | 147 |  |
-| `ApiError` | apps/lumen/src/types.rs | struct | pub | 808 |  |
-| `BatchSearchItem` | apps/lumen/src/types.rs | struct | pub | 565 |  |
-| `BatchSearchRequest` | apps/lumen/src/types.rs | struct | pub | 553 |  |
-| `BatchSearchResponse` | apps/lumen/src/types.rs | struct | pub | 576 |  |
-| `BatchSearchResult` | apps/lumen/src/types.rs | enum | pub | 588 |  |
-| `CacheStats` | apps/lumen/src/types.rs | struct | pub | 787 |  |
+| `Analyzer` | apps/lumen/src/types.rs | enum | pub | 240 |  |
+| `ApiError` | apps/lumen/src/types.rs | struct | pub | 946 |  |
+| `BatchSearchItem` | apps/lumen/src/types.rs | struct | pub | 703 |  |
+| `BatchSearchRequest` | apps/lumen/src/types.rs | struct | pub | 691 |  |
+| `BatchSearchResponse` | apps/lumen/src/types.rs | struct | pub | 714 |  |
+| `BatchSearchResult` | apps/lumen/src/types.rs | enum | pub | 726 |  |
+| `CacheStats` | apps/lumen/src/types.rs | struct | pub | 925 |  |
 | `CreateCollectionRequest` | apps/lumen/src/types.rs | struct | pub | 21 |  |
 | `CreateCollectionResponse` | apps/lumen/src/types.rs | struct | pub | 28 |  |
-| `DuplicateGroup` | apps/lumen/src/types.rs | struct | pub | 722 |  |
-| `DuplicatedQuery` | apps/lumen/src/types.rs | struct | pub | 375 |  |
-| `DuplicatesRequest` | apps/lumen/src/types.rs | struct | pub | 703 |  |
-| `DuplicatesResponse` | apps/lumen/src/types.rs | struct | pub | 729 |  |
-| `ExistsQuery` | apps/lumen/src/types.rs | struct | pub | 367 |  |
+| `DuplicateGroup` | apps/lumen/src/types.rs | struct | pub | 860 |  |
+| `DuplicatedQuery` | apps/lumen/src/types.rs | struct | pub | 480 |  |
+| `DuplicatesRequest` | apps/lumen/src/types.rs | struct | pub | 841 |  |
+| `DuplicatesResponse` | apps/lumen/src/types.rs | struct | pub | 867 |  |
+| `ExistsQuery` | apps/lumen/src/types.rs | struct | pub | 472 |  |
+| `FieldCapabilities` | apps/lumen/src/types.rs | struct | pub | 91 |  |
 | `FieldSpec` | apps/lumen/src/types.rs | struct | pub | 41 |  |
-| `FieldStats` | apps/lumen/src/types.rs | struct | pub | 765 |  |
+| `FieldStats` | apps/lumen/src/types.rs | struct | pub | 903 |  |
 | `FieldType` | apps/lumen/src/types.rs | enum | pub | 74 |  |
-| `FieldValue` | apps/lumen/src/types.rs | enum | pub | 193 |  |
-| `HammingQuery` | apps/lumen/src/types.rs | struct | pub | 400 |  |
-| `HasChildQuery` | apps/lumen/src/types.rs | struct | pub | 411 |  |
-| `IdsQuery` | apps/lumen/src/types.rs | struct | pub | 460 |  |
-| `IndexItem` | apps/lumen/src/types.rs | struct | pub | 170 |  |
-| `IndexRequest` | apps/lumen/src/types.rs | struct | pub | 160 |  |
-| `IndexResponse` | apps/lumen/src/types.rs | struct | pub | 202 |  |
-| `KnnQuery` | apps/lumen/src/types.rs | struct | pub | 469 |  |
-| `MAX_BATCH_REPLACE_SIZE` | apps/lumen/src/types.rs | constant | pub | 600 |  |
-| `MAX_BATCH_SEARCH_SIZE` | apps/lumen/src/types.rs | constant | pub | 539 |  |
-| `MatchOp` | apps/lumen/src/types.rs | enum | pub | 431 |  |
-| `MatchQuery` | apps/lumen/src/types.rs | struct | pub | 421 |  |
-| `QueryNode` | apps/lumen/src/types.rs | enum | pub | 317 |  |
-| `RangeBound` | apps/lumen/src/types.rs | enum | pub | 490 |  |
-| `RangeQuery` | apps/lumen/src/types.rs | struct | pub | 497 |  |
-| `ReplaceDocBody` | apps/lumen/src/types.rs | struct | pub | 691 |  |
-| `ReplaceDocItem` | apps/lumen/src/types.rs | struct | pub | 625 |  |
-| `ReplaceDocResult` | apps/lumen/src/types.rs | enum | pub | 663 |  |
-| `ReplaceDocsRequest` | apps/lumen/src/types.rs | struct | pub | 616 |  |
-| `ReplaceDocsResponse` | apps/lumen/src/types.rs | struct | pub | 644 |  |
-| `RrfQuery` | apps/lumen/src/types.rs | struct | pub | 385 |  |
-| `SearchHit` | apps/lumen/src/types.rs | struct | pub | 511 |  |
-| `SearchRequest` | apps/lumen/src/types.rs | struct | pub | 215 |  |
-| `SearchResponse` | apps/lumen/src/types.rs | struct | pub | 518 |  |
-| `SortMissing` | apps/lumen/src/types.rs | enum | pub | 287 |  |
-| `SortOrder` | apps/lumen/src/types.rs | enum | pub | 300 |  |
-| `SortSpec` | apps/lumen/src/types.rs | struct | pub | 270 |  |
-| `StatsResponse` | apps/lumen/src/types.rs | struct | pub | 748 |  |
-| `StorageStats` | apps/lumen/src/types.rs | struct | pub | 781 |  |
-| `TermQuery` | apps/lumen/src/types.rs | struct | pub | 442 |  |
-| `TermsQuery` | apps/lumen/src/types.rs | struct | pub | 449 |  |
-| `VectorBackend` | apps/lumen/src/types.rs | enum | pub | 101 |  |
-| `VectorMetric` | apps/lumen/src/types.rs | enum | pub | 90 |  |
-| `VectorQuantize` | apps/lumen/src/types.rs | enum | pub | 127 |  |
-| `VectorSpec` | apps/lumen/src/types.rs | struct | pub | 136 |  |
-| `normalize` | apps/lumen/src/types.rs | function | pub | 822 | normalize(mut self) -> Self |
-| `vector_spec` | apps/lumen/src/types.rs | function | pub | 840 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
+| `FieldValue` | apps/lumen/src/types.rs | enum | pub | 286 |  |
+| `HammingQuery` | apps/lumen/src/types.rs | struct | pub | 505 |  |
+| `HasChildQuery` | apps/lumen/src/types.rs | struct | pub | 516 |  |
+| `IdsQuery` | apps/lumen/src/types.rs | struct | pub | 573 |  |
+| `IndexItem` | apps/lumen/src/types.rs | struct | pub | 263 |  |
+| `IndexRequest` | apps/lumen/src/types.rs | struct | pub | 253 |  |
+| `IndexResponse` | apps/lumen/src/types.rs | struct | pub | 295 |  |
+| `KnnQuery` | apps/lumen/src/types.rs | struct | pub | 582 |  |
+| `MAX_BATCH_REPLACE_SIZE` | apps/lumen/src/types.rs | constant | pub | 738 |  |
+| `MAX_BATCH_SEARCH_SIZE` | apps/lumen/src/types.rs | constant | pub | 677 |  |
+| `MatchOp` | apps/lumen/src/types.rs | enum | pub | 536 |  |
+| `MatchQuery` | apps/lumen/src/types.rs | struct | pub | 526 |  |
+| `PrefixQuery` | apps/lumen/src/types.rs | struct | pub | 562 |  |
+| `QueryNode` | apps/lumen/src/types.rs | enum | pub | 419 |  |
+| `RangeBound` | apps/lumen/src/types.rs | enum | pub | 603 |  |
+| `RangeQuery` | apps/lumen/src/types.rs | struct | pub | 610 |  |
+| `ReplaceDocBody` | apps/lumen/src/types.rs | struct | pub | 829 |  |
+| `ReplaceDocItem` | apps/lumen/src/types.rs | struct | pub | 763 |  |
+| `ReplaceDocResult` | apps/lumen/src/types.rs | enum | pub | 801 |  |
+| `ReplaceDocsRequest` | apps/lumen/src/types.rs | struct | pub | 754 |  |
+| `ReplaceDocsResponse` | apps/lumen/src/types.rs | struct | pub | 782 |  |
+| `RrfQuery` | apps/lumen/src/types.rs | struct | pub | 490 |  |
+| `SearchAllRequest` | apps/lumen/src/types.rs | struct | pub | 649 |  |
+| `SearchAllResponse` | apps/lumen/src/types.rs | struct | pub | 662 |  |
+| `SearchHit` | apps/lumen/src/types.rs | struct | pub | 624 |  |
+| `SearchRequest` | apps/lumen/src/types.rs | struct | pub | 308 |  |
+| `SearchResponse` | apps/lumen/src/types.rs | struct | pub | 631 |  |
+| `SortMissing` | apps/lumen/src/types.rs | enum | pub | 389 |  |
+| `SortOrder` | apps/lumen/src/types.rs | enum | pub | 402 |  |
+| `SortSpec` | apps/lumen/src/types.rs | struct | pub | 372 |  |
+| `StatsResponse` | apps/lumen/src/types.rs | struct | pub | 886 |  |
+| `StorageStats` | apps/lumen/src/types.rs | struct | pub | 919 |  |
+| `TermQuery` | apps/lumen/src/types.rs | struct | pub | 547 |  |
+| `TermsQuery` | apps/lumen/src/types.rs | struct | pub | 554 |  |
+| `VectorBackend` | apps/lumen/src/types.rs | enum | pub | 194 |  |
+| `VectorMetric` | apps/lumen/src/types.rs | enum | pub | 183 |  |
+| `VectorQuantize` | apps/lumen/src/types.rs | enum | pub | 220 |  |
+| `VectorSpec` | apps/lumen/src/types.rs | struct | pub | 229 |  |
+| `capabilities` | apps/lumen/src/types.rs | function | pub | 113 | capabilities(self) -> FieldCapabilities |
+| `normalize` | apps/lumen/src/types.rs | function | pub | 960 | normalize(mut self) -> Self |
+| `vector_spec` | apps/lumen/src/types.rs | function | pub | 978 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

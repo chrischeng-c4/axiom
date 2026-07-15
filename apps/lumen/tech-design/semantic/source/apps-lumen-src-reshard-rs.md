@@ -14,23 +14,23 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/lumen/src/reshard.rs` generated from AST during Lumen AW health remediation.
+Public API manifest for `apps/lumen/src/reshard.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ADMIN_ROUTE_BODY_LIMIT_BYTES` | apps/lumen/src/reshard.rs | const | pub | 28 | #1444 R2: the hard body-size limit `POST /admin/reshard:apply` (and every other admin route) enforces at the HTTP layer via `api.rs`'s `DefaultBodyLimit::max(..)`, shared verbatim so the two can never drift; `crate::operator::reshard_driver`'s oversize-wedge detection also compares against this constant. |
-| `MAX_BATCH_BYTES` | apps/lumen/src/reshard.rs | const | pub | 40 | #1396 R4: upper bound on one batch's serialized `snapshot` payload — half of `ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2, was a hardcoded `4 * 1024 * 1024`). |
+| `ADMIN_ROUTE_BODY_LIMIT_BYTES` | apps/lumen/src/reshard.rs | constant | pub | 28 |  |
 | `BucketMove` | apps/lumen/src/reshard.rs | struct | pub | 44 |  |
-| `ReshardBatch` | apps/lumen/src/reshard.rs | struct | pub | 68 | #1380: `Serialize`/`Deserialize` make a batch postable to `POST /admin/reshard:apply` as-is. #1457 R1: reverted to purely additive (`from_map_version, to_map_version, bucket, from_shard, to_shard, external_ids, snapshot`) — the #1443 R2 `virtual_bucket_count`/`replace_ids` fields moved to the independently-chunked `ReshardPruneChunk`. |
-| `ReshardBatchReplaceScope` | apps/lumen/src/reshard.rs | struct | pub | 90 | #1443 R2 / #1457 R1: the authoritative-subset-replace scope one applying shard must enforce for a `bucket`+collection, now derived from one or more `ReshardPruneChunk`s accumulated by `crate::storage::Engine::apply_reshard_prune_chunk` rather than stamped directly onto a `ReshardBatch`. |
-| `ReshardPruneChunk` | apps/lumen/src/reshard.rs | struct | pub | 131 | #1457 R1: one byte-capped chunk of the authoritative "keep" id set for a single `(bucket, collection_id)` pair under the final migration pass's `to` map; receiver accumulates by `(to_map_version, bucket, collection_id, total_chunks)` and prunes once every `chunk_index` has arrived. |
+| `MAX_BATCH_BYTES` | apps/lumen/src/reshard.rs | constant | pub | 40 |  |
+| `ReshardBatch` | apps/lumen/src/reshard.rs | struct | pub | 68 |  |
+| `ReshardBatchReplaceScope` | apps/lumen/src/reshard.rs | struct | pub | 90 |  |
+| `ReshardPruneChunk` | apps/lumen/src/reshard.rs | struct | pub | 131 |  |
 | `bucket_moves` | apps/lumen/src/reshard.rs | function | pub | 145 | bucket_moves(     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap, ) -> Result<Vec<BucketMove>> |
-| `snapshot_reshard_batches` | apps/lumen/src/reshard.rs | function | pub | 187 | #1396 R4: batches are also byte-capped (`MAX_BATCH_BYTES`), splitting an id-chunk further via `byte_cap_chunk` when its serialized snapshot would exceed the cap. #1457 R1: dropped the #1443 R2 `replace_mode: bool` parameter — every pass, including the final `CatchingUp` pass, is now purely additive; the authoritative prune scope is emitted separately by `snapshot_reshard_prune_chunks`. snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize, ) -> Result<Vec<ReshardBatch>> |
-| `snapshot_reshard_prune_chunks` | apps/lumen/src/reshard.rs | function | pub | 288 | #1457 R1/R2: builds the final migration pass's authoritative "keep" chunks for every `(bucket, collection_id)` pair in `buckets` × `collection_ids`, byte-capped independently per pair via the private `chunk_ids_by_bytes` helper; a pair with zero matching docs still emits exactly one chunk with empty `keep_ids` (closes the #1443-disclosed delete-resurrection edge on an emptied collection). snapshot_reshard_prune_chunks(     snapshot: &SnapshotV1,     to: &VirtualBucketShardMap,     buckets: &BTreeSet<u32>,     collection_ids: &BTreeSet<String>,     max_chunk_bytes: usize, ) -> Result<Vec<ReshardPruneChunk>> |
 | `merge_snapshot_delta` | apps/lumen/src/reshard.rs | function | pub | 400 | merge_snapshot_delta(mut base: SnapshotV1, delta: SnapshotV1) -> Result<SnapshotV1> |
-| `snapshot_bucket_subset` | apps/lumen/src/reshard.rs | function | pub | 428 | #1380 R2: bucket-scoped export subset, routed with the same `route_document` hash `snapshot_reshard_batches` uses. snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
+| `snapshot_bucket_subset` | apps/lumen/src/reshard.rs | function | pub | 428 | snapshot_bucket_subset(     snapshot: &SnapshotV1,     virtual_bucket_count: u32,     buckets: &BTreeSet<u32>, ) -> Result<SnapshotV1> |
+| `snapshot_reshard_batches` | apps/lumen/src/reshard.rs | function | pub | 187 | snapshot_reshard_batches(     snapshot: &SnapshotV1,     from: &VirtualBucketShardMap,     to: &VirtualBucketShardMap,     max_external_ids_per_batch: usize, ) -> Result<Vec<ReshardBatch>> |
+| `snapshot_reshard_prune_chunks` | apps/lumen/src/reshard.rs | function | pub | 288 | snapshot_reshard_prune_chunks(     snapshot: &SnapshotV1,     to: &VirtualBucketShardMap,     buckets: &BTreeSet<u32>,     collection_ids: &BTreeSet<String>,     max_chunk_bytes: usize, ) -> Result<Vec<ReshardPruneChunk>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 <!-- aw-source-partitions: version=1 count=2 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:8b86b8c3de7f9d8e6183215f3eb8f4ee19a5fc156ccf98aaf75a2c21dac5fabd -->

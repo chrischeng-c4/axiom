@@ -20,16 +20,16 @@ Public API manifest for `apps/lumen/src/spec.rs` generated from AST during Score
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `field_catalog` | apps/lumen/src/spec.rs | function | pub | 208 | field_catalog() -> Value |
+| `field_catalog` | apps/lumen/src/spec.rs | function | pub | 217 | field_catalog() -> Value |
 | `json_schema_json` | apps/lumen/src/spec.rs | function | pub | 47 | json_schema_json() -> String |
-| `llm_auth_md` | apps/lumen/src/spec.rs | function | pub | 412 | llm_auth_md() -> String |
-| `llm_deployment_md` | apps/lumen/src/spec.rs | function | pub | 277 | llm_deployment_md() -> String |
-| `llm_integration_md` | apps/lumen/src/spec.rs | function | pub | 730 | llm_integration_md() -> String |
-| `llm_outline_md` | apps/lumen/src/spec.rs | function | pub | 237 | llm_outline_md() -> String |
-| `llm_quickstart_md` | apps/lumen/src/spec.rs | function | pub | 770 | llm_quickstart_md() -> String |
-| `llm_recipes_md` | apps/lumen/src/spec.rs | function | pub | 845 | llm_recipes_md() -> String |
-| `llm_storage_md` | apps/lumen/src/spec.rs | function | pub | 871 | llm_storage_md() -> String |
-| `llm_workflow_md` | apps/lumen/src/spec.rs | function | pub | 486 | llm_workflow_md() -> String |
+| `llm_auth_md` | apps/lumen/src/spec.rs | function | pub | 400 | llm_auth_md() -> String |
+| `llm_deployment_md` | apps/lumen/src/spec.rs | function | pub | 265 | llm_deployment_md() -> String |
+| `llm_integration_md` | apps/lumen/src/spec.rs | function | pub | 718 | llm_integration_md() -> String |
+| `llm_outline_md` | apps/lumen/src/spec.rs | function | pub | 225 | llm_outline_md() -> String |
+| `llm_quickstart_md` | apps/lumen/src/spec.rs | function | pub | 758 | llm_quickstart_md() -> String |
+| `llm_recipes_md` | apps/lumen/src/spec.rs | function | pub | 833 | llm_recipes_md() -> String |
+| `llm_storage_md` | apps/lumen/src/spec.rs | function | pub | 859 | llm_storage_md() -> String |
+| `llm_workflow_md` | apps/lumen/src/spec.rs | function | pub | 474 | llm_workflow_md() -> String |
 | `openapi_json` | apps/lumen/src/spec.rs | function | pub | 16 | openapi_json() -> String |
 | `openapi_yaml` | apps/lumen/src/spec.rs | function | pub | 22 | openapi_yaml() -> String |
 | `query_shapes` | apps/lumen/src/spec.rs | function | pub | 130 | query_shapes() -> Value |

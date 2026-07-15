@@ -20,18 +20,18 @@ Public API manifest for `apps/lumen/src/auth.rs` generated from AST during Score
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthConfig` | apps/lumen/src/auth.rs | struct | pub | 53 |  |
-| `AuthContext` | apps/lumen/src/auth.rs | struct | pub | 124 | AuthContext(RoleMapPrincipal) — newtype over `service_auth::RoleMapPrincipal` |
-| `AuthErr` | apps/lumen/src/auth.rs | enum | pub | 148 |  |
-| `LumenVerifier` | apps/lumen/src/auth.rs | struct | pub | 94 | LumenVerifier(service_auth::StaticRoleMapVerifier) — newtype over the shared verifier |
-| `Role` | apps/lumen/src/auth.rs | re-export | pub | 44 | pub use service_auth::Role |
-| `TokenClaims` | apps/lumen/src/auth.rs | re-export | pub | 44 | pub use service_auth::TokenClaims |
-| `auth_middleware` | apps/lumen/src/auth.rs | function | pub | 138 | auth_middleware(     State(verifier): State<Arc<LumenVerifier>>,     req: Request,     next: Next, ) -> Response |
-| `ensure` | apps/lumen/src/auth.rs | function | pub | 128 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
-| `from_env` | apps/lumen/src/auth.rs | function | pub | 67 | from_env() -> Result<Self> |
-| `new` | apps/lumen/src/auth.rs | function | pub | 98 | new(cfg: Arc<AuthConfig>) -> Self |
-| `open` | apps/lumen/src/auth.rs | function | pub | 60 | open() -> Self |
-| `subject` | apps/lumen/src/auth.rs | function | pub | 132 | subject(&self) -> Option<&str> |
+| `AuthConfig` | apps/lumen/src/auth.rs | struct | pub | 57 |  |
+| `AuthContext` | apps/lumen/src/auth.rs | struct | pub | 140 |  |
+| `AuthErr` | apps/lumen/src/auth.rs | enum | pub | 164 |  |
+| `LumenVerifier` | apps/lumen/src/auth.rs | struct | pub | 98 |  |
+| `auth_middleware` | apps/lumen/src/auth.rs | function | pub | 154 | auth_middleware(     State(verifier): State<Arc<LumenVerifier>>,     req: Request,     next: Next, ) -> Response |
+| `ensure` | apps/lumen/src/auth.rs | function | pub | 144 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
+| `from_env` | apps/lumen/src/auth.rs | function | pub | 71 | from_env() -> Result<Self> |
+| `new` | apps/lumen/src/auth.rs | function | pub | 102 | new(cfg: Arc<AuthConfig>) -> Self |
+| `open` | apps/lumen/src/auth.rs | function | pub | 64 | open() -> Self |
+| `reload_file` | apps/lumen/src/auth.rs | function | pub | 113 | reload_file(&self, path: impl AsRef<Path>) -> Result<u64> |
+| `reload_json` | apps/lumen/src/auth.rs | function | pub | 117 | reload_json(&self, json: &str) -> Result<u64> |
+| `subject` | apps/lumen/src/auth.rs | function | pub | 148 | subject(&self) -> Option<&str> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

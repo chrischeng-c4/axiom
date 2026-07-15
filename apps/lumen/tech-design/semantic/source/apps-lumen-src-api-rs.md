@@ -27,19 +27,19 @@ Public API manifest for `apps/lumen/src/api.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | apps/lumen/src/api.rs | struct | pub | 614 |  |
-| `ApiErr` | apps/lumen/src/api.rs | struct | pub | 2368 |  |
+| `ApiDoc` | apps/lumen/src/api.rs | struct | pub | 618 |  |
+| `ApiErr` | apps/lumen/src/api.rs | struct | pub | 2467 |  |
 | `AppState` | apps/lumen/src/api.rs | struct | pub | 64 |  |
-| `RoutedBackend` | apps/lumen/src/api.rs | trait | pub | 278 | Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3); `AppState::routed` is `None` for every non-routed deployment. |
-| `ShardForwardMisrouted` | apps/lumen/src/api.rs | struct | pub | 2459 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
-| `ShardForwardRemoteError` | apps/lumen/src/api.rs | struct | pub | 2407 | The owning shard was reached and answered, but with a non-2xx status. |
-| `ShardForwardUnavailable` | apps/lumen/src/api.rs | struct | pub | 2389 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
-| `ShardMapVersionMismatch` | apps/lumen/src/api.rs | struct | pub | 2431 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
-| `WriteFence` | apps/lumen/src/api.rs | struct | pub | 173 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. #1443 R3: `arm` now returns `bool` (false on `Instant + Duration` overflow instead of panicking) and the internal mutex is poison-proof (`unwrap_or_else(poisoned -> into_inner)`), so an overflowed/panicked prior caller can never wedge the fence permanently. |
+| `ShardForwardMisrouted` | apps/lumen/src/api.rs | struct | pub | 2558 |  |
+| `ShardForwardRemoteError` | apps/lumen/src/api.rs | struct | pub | 2506 |  |
+| `ShardForwardUnavailable` | apps/lumen/src/api.rs | struct | pub | 2488 |  |
+| `ShardMapVersionMismatch` | apps/lumen/src/api.rs | struct | pub | 2530 |  |
+| `WriteFence` | apps/lumen/src/api.rs | struct | pub | 173 |  |
 | `new` | apps/lumen/src/api.rs | function | pub | 461 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | apps/lumen/src/api.rs | function | pub | 499 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | apps/lumen/src/api.rs | function | pub | 2296 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | apps/lumen/src/api.rs | function | pub | 653 | router(state: AppState) -> Router |
+| `openapi` | apps/lumen/src/api.rs | function | pub | 2395 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | apps/lumen/src/api.rs | function | pub | 657 | router(state: AppState) -> Router |
+| `router_with_admission` | apps/lumen/src/api.rs | function | pub | 666 | router_with_admission(     state: AppState,     admission: Option<service_http::AdmissionController>, ) -> Router |
 | `with_checkpoint` | apps/lumen/src/api.rs | function | pub | 483 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
 | `with_cluster` | apps/lumen/src/api.rs | function | pub | 465 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
 | `with_components` | apps/lumen/src/api.rs | function | pub | 437 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
@@ -47,7 +47,6 @@ Public API manifest for `apps/lumen/src/api.rs` generated from AST during Score 
 | `with_search_backend` | apps/lumen/src/api.rs | function | pub | 470 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
 | `with_wal` | apps/lumen/src/api.rs | function | pub | 429 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
 | `with_write_backend` | apps/lumen/src/api.rs | function | pub | 475 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
-
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 <!-- aw-source-partitions: version=1 count=3 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:21f564bc4403efad7777123eee55ee12fe1643711774482bea2d52bab00d02bd -->
