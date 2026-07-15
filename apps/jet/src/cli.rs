@@ -4899,12 +4899,17 @@ fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
     !m.get_flag("no-minify")
 }
 
-/// Run the project's TypeScript checker from its project root.
+/// Run TypeScript checks for a project or every project in an Nx workspace.
 ///
-/// `ScriptRunner` prefers `<root>/node_modules/.bin/tsc`, injects the local
-/// binary directory into `PATH`, and runs the child with `root_dir` as its
-/// working directory.
+/// A standalone project can invoke `tsc --noEmit` from its root. An Nx root
+/// commonly has only `tsconfig.base.json`, though: invoking bare `tsc` there
+/// prints its help instead of checking any source. Detect that layout and run
+/// each leaf project config with the workspace-local compiler instead.
 async fn handle_check(root_dir: &Path) -> Result<()> {
+    if let Some(nx_workspace) = crate::pkg_manager::nx::NxWorkspaceManager::discover(root_dir)? {
+        return handle_nx_check(&nx_workspace).await;
+    }
+
     let runner = crate::runner::ScriptRunner::new(root_dir.to_path_buf());
     let args = [String::from("--noEmit")];
     let result = runner.exec_command("tsc", &args).await.with_context(|| {
@@ -4918,6 +4923,131 @@ async fn handle_check(root_dir: &Path) -> Result<()> {
     print!("{}", result.stdout);
     eprint!("{}", result.stderr);
     ensure_check_success(result.exit_code)
+}
+
+/// Run every leaf TypeScript config declared by an Nx project graph.
+///
+/// The compiler is rooted at the workspace so its shared
+/// `node_modules/.bin/tsc` is used, while `--project` keeps each invocation
+/// scoped to the project that owns the config. Continue after failed configs
+/// so users receive all real type errors in one run.
+async fn handle_nx_check(nx_workspace: &crate::pkg_manager::nx::NxWorkspaceManager) -> Result<()> {
+    let graph = nx_workspace
+        .build_project_graph_from_files()
+        .or_else(|_| nx_workspace.get_project_graph())
+        .context("Failed to discover Nx projects for `jet check`")?;
+    let configs = nx_typecheck_configs(nx_workspace, &graph)?;
+
+    if configs.is_empty() {
+        anyhow::bail!(
+            "`jet check` found an Nx workspace at {} but no project TypeScript configs. \\
+             Add a tsconfig.<target>.json (for example tsconfig.app.json) to a project, \\
+             or run `tsc --project <path>` directly.",
+            nx_workspace.root.display()
+        );
+    }
+
+    println!("Nx workspace detected at {}", nx_workspace.root.display());
+    let runner = crate::runner::ScriptRunner::new(nx_workspace.root.clone());
+    let mut failures = Vec::new();
+
+    for (project_name, config_path) in configs {
+        let relative_config = config_path
+            .strip_prefix(&nx_workspace.root)
+            .expect("Nx project config must be under its workspace root");
+        let relative_config = relative_config.to_string_lossy().into_owned();
+        println!("Checking Nx project `{project_name}` ({relative_config})");
+
+        let args = [
+            String::from("--project"),
+            relative_config.clone(),
+            String::from("--noEmit"),
+        ];
+        let result = runner.exec_command("tsc", &args).await.with_context(|| {
+            format!(
+                "Failed to start workspace-local `tsc --project {relative_config} --noEmit`. \\
+                 Install workspace dependencies with `jet install` and retry."
+            )
+        })?;
+
+        print!("{}", result.stdout);
+        eprint!("{}", result.stderr);
+        if result.exit_code != 0 {
+            failures.push(format!(
+                "`{project_name}` ({relative_config}) exited with code {}",
+                result.exit_code
+            ));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "`jet check` failed for {} Nx project typecheck config(s): {}. \\
+             Fix the reported TypeScript errors and rerun `jet check`.",
+            failures.len(),
+            failures.join("; ")
+        )
+    }
+}
+
+/// Find the leaf configs a single Nx project can typecheck directly.
+///
+/// Nx's `tsconfig.json` usually contains only project references, while
+/// `tsconfig.app.json`, `tsconfig.lib.json`, and `tsconfig.spec.json` own the
+/// actual source inputs. Prefer every such leaf config and fall back to a
+/// plain `tsconfig.json` for projects that use a single-config layout.
+fn nx_typecheck_configs(
+    nx_workspace: &crate::pkg_manager::nx::NxWorkspaceManager,
+    graph: &crate::pkg_manager::nx::NxProjectGraph,
+) -> Result<Vec<(String, PathBuf)>> {
+    let mut configs = Vec::new();
+
+    for project_name in graph.project_names() {
+        let Some(project_root) = graph.project_root(&project_name) else {
+            continue;
+        };
+        let project_root = nx_workspace.root.join(project_root);
+        let entries = std::fs::read_dir(&project_root).with_context(|| {
+            format!(
+                "Failed to read Nx project `{project_name}` at {} while discovering tsconfig files",
+                project_root.display()
+            )
+        })?;
+
+        let mut leaf_configs = entries
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("tsconfig.")
+                            && name.ends_with(".json")
+                            && name != "tsconfig.json"
+                            && name != "tsconfig.base.json"
+                    })
+            })
+            .collect::<Vec<_>>();
+        leaf_configs.sort();
+
+        if leaf_configs.is_empty() {
+            let fallback = project_root.join("tsconfig.json");
+            if fallback.is_file() {
+                leaf_configs.push(fallback);
+            }
+        }
+
+        configs.extend(
+            leaf_configs
+                .into_iter()
+                .map(|config_path| (project_name.clone(), config_path)),
+        );
+    }
+
+    Ok(configs)
 }
 
 /// Convert a failed TypeScript check into an actionable CLI error after its
@@ -5135,8 +5265,8 @@ mod build_index_html_tests {
 
 #[cfg(test)]
 mod check_handler_tests {
-    //! Regression for #1648: `jet check` delegates to the project's local
-    //! TypeScript compiler and fails clearly when that compiler fails.
+    //! Regressions for #1648 and #1745: `jet check` delegates to the project's
+    //! local TypeScript compiler and understands Nx project configs.
     use super::*;
 
     #[cfg(unix)]
@@ -5209,6 +5339,92 @@ exit 17
             msg.contains("Fix the reported TypeScript errors") && msg.contains("jet install"),
             "diagnostic must explain how to recover: {msg}"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_runs_each_nx_leaf_tsconfig_with_the_workspace_compiler() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("nx.json"), "{}\n").unwrap();
+
+        for (project_root, project_name, configs) in [
+            (
+                "apps/dashboard",
+                "dashboard",
+                ["tsconfig.app.json", "tsconfig.spec.json"].as_slice(),
+            ),
+            ("libs/shared", "shared", ["tsconfig.lib.json"].as_slice()),
+        ] {
+            let project_dir = temp.path().join(project_root);
+            std::fs::create_dir_all(&project_dir).unwrap();
+            std::fs::write(
+                project_dir.join("project.json"),
+                format!(r#"{{"name":"{project_name}"}}"#),
+            )
+            .unwrap();
+            std::fs::write(project_dir.join("tsconfig.json"), "{}\n").unwrap();
+            for config in configs {
+                std::fs::write(project_dir.join(config), "{}\n").unwrap();
+            }
+        }
+
+        write_fake_tsc(
+            temp.path(),
+            r#"#!/bin/sh
+: > .jet-check-ran-from-workspace-root
+printf '%s\n' "$@" >> .jet-check-args
+printf '\n' >> .jet-check-args
+"#,
+        );
+
+        handle_check(temp.path()).await.unwrap();
+
+        assert!(
+            temp.path()
+                .join(".jet-check-ran-from-workspace-root")
+                .exists(),
+            "Nx checks must use the workspace root so shared tsc is available"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(".jet-check-args")).unwrap(),
+            "--project\napps/dashboard/tsconfig.app.json\n--noEmit\n\n\
+             --project\napps/dashboard/tsconfig.spec.json\n--noEmit\n\n\
+             --project\nlibs/shared/tsconfig.lib.json\n--noEmit\n\n",
+            "jet check must use each Nx leaf config and skip reference-only tsconfig.json"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_reports_every_failed_nx_typecheck_config() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("nx.json"), "{}\n").unwrap();
+
+        for (project_root, project_name) in [("apps/first", "first"), ("apps/second", "second")] {
+            let project_dir = temp.path().join(project_root);
+            std::fs::create_dir_all(&project_dir).unwrap();
+            std::fs::write(
+                project_dir.join("project.json"),
+                format!(r#"{{"name":"{project_name}"}}"#),
+            )
+            .unwrap();
+            std::fs::write(project_dir.join("tsconfig.app.json"), "{}\n").unwrap();
+        }
+        write_fake_tsc(
+            temp.path(),
+            r#"#!/bin/sh
+printf '%s\n' "simulated Nx compiler failure" >&2
+exit 13
+"#,
+        );
+
+        let err = handle_check(temp.path())
+            .await
+            .expect_err("every failing Nx config must be reported after the sweep");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("2 Nx project typecheck config(s)"), "{msg}");
+        assert!(msg.contains("first") && msg.contains("second"), "{msg}");
+        assert!(msg.contains("code 13"), "{msg}");
     }
 }
 
