@@ -631,23 +631,46 @@ struct SnapshotImportArgs {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
-    /// Topic map for agent context selection (default).
+    /// Typed task map for agent context selection (default).
     Outline,
-    /// Product model, declare → ingest → search → hydrate, and non-goals.
-    Workflow,
-    /// Recommended database/pubsub adapter boundary.
-    Integration,
-    /// A copy-paste create → index → search walkthrough.
-    Quickstart,
-    /// Bearer-token auth, token registry schema, and Secret projection.
-    Auth,
-    /// Kubernetes-native deployment topology, shard/replica knobs, and bootstrap.
-    Deployment,
-    /// Operator storage/ops contract: StatefulSet + durable PVC-backed WAL,
-    /// including at `replicasPerShard: 1`.
-    Storage,
-    /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
-    Recipes,
+    /// Inspect the offline search contract before issuing a request.
+    LocalSearch,
+    /// Declare or review a collection schema.
+    ModelSchema,
+    /// Select a supported search, filter, range, sort, kNN, or duplicate query.
+    SelectQuery,
+    /// Connect a source database, CDC stream, or outbox to Lumen.
+    IntegrateSourceDb,
+    /// Configure or inspect bearer-token authentication.
+    Authenticate,
+    /// Use a bounded Kubernetes port-forward connection.
+    ConnectKubernetes,
+    /// Render image, CRD, operator, or instance deployment artifacts.
+    DeployKubernetes,
+    /// Create or restore an administrative backup.
+    BackupRestore,
+    /// Generate a typed Rust, Python, or TypeScript client.
+    GenerateClient,
+    /// Inspect standard operational evidence from a running service.
+    Diagnose,
+}
+
+impl LlmTopic {
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Outline => "outline",
+            Self::LocalSearch => "local-search",
+            Self::ModelSchema => "model-schema",
+            Self::SelectQuery => "select-query",
+            Self::IntegrateSourceDb => "integrate-source-db",
+            Self::Authenticate => "authenticate",
+            Self::ConnectKubernetes => "connect-kubernetes",
+            Self::DeployKubernetes => "deploy-kubernetes",
+            Self::BackupRestore => "backup-restore",
+            Self::GenerateClient => "generate-client",
+            Self::Diagnose => "diagnose",
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -898,47 +921,11 @@ async fn main() -> Result<()> {
         }
         Command::Llm(args) => {
             // Offline: no engine, no server, no I/O beyond stdout.
-            let md = match args.topic {
-                LlmTopic::Outline => lumen::spec::llm_outline_md(),
-                LlmTopic::Workflow => lumen::spec::llm_workflow_md(),
-                LlmTopic::Integration => lumen::spec::llm_integration_md(),
-                LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
-                LlmTopic::Auth => lumen::spec::llm_auth_md(),
-                LlmTopic::Deployment => lumen::spec::llm_deployment_md(),
-                LlmTopic::Storage => lumen::spec::llm_storage_md(),
-                LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
+            let format = match args.format {
+                LlmFormat::Md => cli_std::llm::Format::Md,
+                LlmFormat::Json => cli_std::llm::Format::Json,
             };
-            let out = match args.format {
-                LlmFormat::Md => md,
-                LlmFormat::Json => match args.topic {
-                    // Recipes are inherently structured → emit the canonical
-                    // cookbook JSON (single source with `spec --shapes`).
-                    LlmTopic::Recipes => {
-                        serde_json::to_string_pretty(&lumen::spec::query_shapes())?
-                    }
-                    LlmTopic::Outline => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "outline", "markdown": md }),
-                    )?,
-                    LlmTopic::Workflow => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "workflow", "markdown": md }),
-                    )?,
-                    LlmTopic::Integration => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "integration", "markdown": md }),
-                    )?,
-                    LlmTopic::Quickstart => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "quickstart", "markdown": md }),
-                    )?,
-                    LlmTopic::Auth => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "auth", "markdown": md }),
-                    )?,
-                    LlmTopic::Deployment => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "deployment", "markdown": md }),
-                    )?,
-                    LlmTopic::Storage => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "storage", "markdown": md }),
-                    )?,
-                },
-            };
+            let out = lumen::dx::render_llm(args.topic.id(), format)?;
             println!("{out}");
             Ok(())
         }

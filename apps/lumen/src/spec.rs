@@ -206,28 +206,7 @@ pub fn query_shapes() -> Value {
 /// `FieldType` / `Analyzer` / `VectorMetric` enums.
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn field_catalog() -> Value {
-    json!({
-        "schema_endpoint": "PUT /collections/{collection}",
-        "field_types": [
-            { "type": "text", "purpose": "BM25 lexical ranking; tokenized at index time", "analyzers": ["whitespace_lower", "ngram", "jieba"] },
-            { "type": "keyword", "purpose": "exact term / set membership / enum path; byte/lexicographic range (e.g. ISO-8601 date/datetime strings) via `range` with string bounds; roaring postings" },
-            { "type": "number", "purpose": "numeric range (via `range` with numeric bounds) + sort (dates as epoch)" },
-            { "type": "set", "purpose": "multi-valued keyword membership" },
-            { "type": "vector", "purpose": "semantic kNN over a caller-supplied embedding (HNSW)", "metrics": ["cosine", "dot", "l2"] },
-            {
-                "type": "hash",
-                "purpose": "perceptual/structural near-dup search — caller-supplied 64-bit hex hash, queried by Hamming distance (pHash / SimHash / b-bit MinHash)",
-                "value": "16-hex-character string; optional 0x prefix accepted",
-                "queries": ["hamming"],
-                "schema": { "type": "hash" }
-            }
-        ],
-        "analyzers": [
-            { "name": "whitespace_lower", "purpose": "split on whitespace, lowercase (default lexical)" },
-            { "name": "ngram", "purpose": "character n-grams — substring and CJK matching" },
-            { "name": "jieba", "purpose": "Chinese word segmentation (requires the `jieba` build feature)" }
-        ]
-    })
+    crate::dx::field_catalog()
 }
 
 /// The agent-facing LLM topic outline (`lumen llm --topic outline`) as

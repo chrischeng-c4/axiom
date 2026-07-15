@@ -723,6 +723,9 @@ fn section_fill_guidance(section: &str) -> &'static str {
                 "Declare AW-managed native tool manifests for vat, rig, meter, guard, or arena.\n\
                  Shape: `tool_contracts: [{ id, tool, manifest, command?, native? | toml? }]`.\n\
                  Begin with `<!-- type: tool-contract lang: yaml -->`.",
+            SectionType::DxContract =>
+                "Declare offline developer/agent task-navigation decisions: task ids, typed inputs, command templates, produced artifacts, and contract references.\n\
+                 This is not an EC tool manifest. Begin with `<!-- type: dx-contract lang: yaml -->`.",
             SectionType::RustSourceUnit =>
                 "Write a full Rust source unit in a rust fence for lossless CST-backed regeneration.\n\
                  Begin with `<!-- type: rust-source-unit lang: rust -->`.",

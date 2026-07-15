@@ -35,6 +35,7 @@ pub mod backup_sink;
 pub mod config;
 pub mod consumer;
 pub mod coordinator;
+pub mod dx;
 /// Write-log entry vocabulary (always compiled; the active write path uses it).
 pub mod log_entry;
 pub mod metrics;

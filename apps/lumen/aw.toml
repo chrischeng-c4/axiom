@@ -14,7 +14,7 @@ dir = "apps/lumen/tests/rig/cases/resilience"
 command = "cd apps/lumen && ../../target/debug/vat run rig-resilience"
 
 [capability.profile]
-traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "stateful_storage"]
+traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "stateful_storage", "agent_facing"]
 
 [[workspaces]]
 name = "lumen"
@@ -31,15 +31,15 @@ generated_from_td_digest = "sha256:5b27bcb24cfbc31a02ee0ca75d1262b6971dd8b2c668b
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
-capability_id = "developer-agent-experience"
-claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-contract_id = "agent-llm-topics"
+capability_id = "agent-task-navigation"
+claim_id = "lumen-llm-v2-task-navigation"
+contract_id = "agent-llm-v2-task-navigation"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-agent-llm-topics"
 test_path = "apps/lumen/tests/behavior_lumen_claim_agent_llm_topics.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
-assertions = ["The offline LLM outline, workflow, integration, quickstart, and recipe topics remain available."]
+assertions = ["The offline cclab.llm.v2 outline publishes every typed Lumen task and each task emits a source-backed Markdown/JSON runbook."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-offline-spec"
@@ -792,17 +792,17 @@ assertions = [
 
 [[aw.ec.generated.cases]]
 id = "lumen-cli-interface-llm-playbook"
-capability_id = "cli-interface"
-claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-contract_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+capability_id = "agent-task-navigation"
+claim_id = "lumen-llm-v2-task-navigation"
+contract_id = "lumen-llm-v2-task-navigation"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md#lumen-cli-interface-llm-playbook"
 test_path = "apps/lumen/tests/behavior_lumen_cli_interface_llm_playbook.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
 required_for_production = true
 assertions = [
-    "lumen llm outline, workflow, integration, quickstart, and recipes preserve the agent-facing topic set.",
-    "lumen llm integration preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
+    "lumen llm outline publishes the cclab.llm.v2 typed task manifest and every advertised topic parses through the binary.",
+    "lumen llm integrate-source-db preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
     "agent-facing playbook output remains deterministic and offline.",
 ]
 
@@ -819,8 +819,8 @@ required_for_production = true
 assertions = [
     "lumen spec emits valid OpenAPI JSON, OpenAPI YAML, and JSON-schema output offline.",
     "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
-    "lumen llm outline, workflow, integration, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals.",
-    "lumen llm integration recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL.",
+    "lumen llm outline publishes a cclab.llm.v2 task manifest and each advertised topic preserves the task-navigation contract.",
+    "lumen llm integrate-source-db recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL.",
 ]
 
 [[aw.ec.generated.cases]]

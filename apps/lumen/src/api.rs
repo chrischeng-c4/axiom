@@ -731,7 +731,11 @@ pub fn router(state: AppState) -> Router {
         ));
 
     let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
-    let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
+    let probes = service_http::standard_probe_routes_canonical_json(
+        state.engine.clone(),
+        Some(metrics),
+        crate::spec::openapi_json,
+    );
     let admin = Router::new()
         .route("/version", get(version))
         .route("/debug/cluster", get(debug_cluster));

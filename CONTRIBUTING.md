@@ -878,11 +878,9 @@ Experience` (`developer-agent-experience`, `AgentFirst`) with
 `lumen spec --format openapi`), `agent-onboarding` (`lumen llm` topics
 test-asserted by `tests/spec_cli.rs`), `interactive-tooling` (`lumen
 connect`, `lumen query`), and `integration-contract` (the routed
-multi-shard retry-code contract, test-asserted). Wiring this convention
-into `[capability.profile].traits` derivation (so it becomes a
-trait-derived baseline capability like `cli-interface`) is tracked
-separately as agentic-workflow work item #1481 — not implemented by this
-section.
+multi-shard retry-code contract, test-asserted). A project that declares
+the `agent_facing` trait derives the `agent-task-navigation` baseline; the
+trait does not imply Kubernetes, HA, backup, or performance traits.
 
 ## Meta-doc content contract
 

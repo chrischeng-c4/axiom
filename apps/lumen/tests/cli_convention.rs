@@ -1,7 +1,7 @@
 // SPEC-MANAGED: apps/lumen/tech-design/interfaces/cli/lumen-issue-search-view-create-shared-cli-standard.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:lumen-cli-convention" tracker="standardize-gap-projects-lumen-tests-cli-convention-rs" reason="CLI convention smoke test for the shared llm/upgrade/issue surface until the test generator owns binary-help assertions."
 use cli_std::chainable::assert_chainable;
-use lumen::spec::llm_outline_md;
+use serde_json::Value;
 use std::process::Command;
 
 /// #963: the deterministic `next:` tail line. Exactly one line, matching
@@ -65,13 +65,16 @@ fn run_lumen_chainable(args: &[&str]) -> String {
 }
 
 fn outline_llm_topic_commands() -> Vec<String> {
-    llm_outline_md()
-        .lines()
-        .filter_map(|line| {
-            let start = line.find("`lumen llm --topic ")?;
-            let command = &line[start + 1..];
-            let end = command.find('`')?;
-            Some(command[..end].to_string())
+    let output = run_lumen(&["llm", "--topic", "outline", "--format", "json"]);
+    let document: Value = serde_json::from_str(&output).expect("LLM outline JSON parses");
+    assert_eq!(document["protocol"], "cclab.llm.v2");
+    document["tasks"]
+        .as_array()
+        .expect("outline includes typed tasks")
+        .iter()
+        .map(|task| {
+            let topic = task["topic"].as_str().expect("task topic is a string");
+            format!("lumen llm --topic {topic}")
         })
         .collect()
 }
@@ -118,16 +121,16 @@ fn help_ships_snapshot_data_movement_verbs() {
     }
 }
 
-/// #824: every topic command shown by `llm_outline_md()` must parse through
-/// the actual lumen binary.
+/// Every topic advertised by the typed task manifest must parse through the
+/// actual lumen binary.
 /// @spec apps/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#unit-test
 #[test]
 fn llm_outline_advertised_topic_commands_parse() {
     let commands = outline_llm_topic_commands();
     assert_eq!(
         commands.len(),
-        7,
-        "outline should advertise the seven detail topics: {commands:?}"
+        10,
+        "outline should advertise the ten DX task topics: {commands:?}"
     );
 
     for command in commands {
@@ -138,6 +141,34 @@ fn llm_outline_advertised_topic_commands_parse() {
             "unexpected command: {command}"
         );
         run_lumen(&parts[1..]);
+    }
+}
+
+#[test]
+fn llm_v2_executes_only_fully_bound_advertised_commands() {
+    let outline = outline_llm_topic_commands();
+    for topic_command in outline {
+        let parts: Vec<&str> = topic_command.split_whitespace().collect();
+        let mut args = parts[1..].to_vec();
+        args.extend(["--format", "json"]);
+        let detail = run_lumen(&args);
+        let value: Value = serde_json::from_str(&detail).expect("LLM detail JSON parses");
+        assert!(
+            value.get("next").is_none(),
+            "task navigation cannot emit `next`"
+        );
+        for step in value["runbook"]["steps"].as_array().unwrap() {
+            let inputs = step.get("inputs").and_then(Value::as_array);
+            if let Some(command) = step.get("command").and_then(Value::as_str) {
+                assert!(inputs.map_or(true, Vec::is_empty));
+                let command_parts: Vec<&str> = command.split_whitespace().collect();
+                assert_eq!(command_parts.first(), Some(&"lumen"));
+                run_lumen(&command_parts[1..]);
+            } else {
+                assert!(step.get("command_template").is_some());
+                assert!(inputs.is_some_and(|inputs| !inputs.is_empty()));
+            }
+        }
     }
 }
 

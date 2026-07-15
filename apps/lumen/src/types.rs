@@ -83,6 +83,90 @@ pub enum FieldType {
     Hash,
 }
 
+/// Operations a field type can truthfully expose to clients. This is shared by
+/// runtime validation and `lumen spec --fields`, so a documentation update
+/// cannot quietly advertise a query or sort the engine rejects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldCapabilities {
+    pub bm25: bool,
+    pub exact: bool,
+    pub range: bool,
+    pub sort: bool,
+    pub set_membership: bool,
+    pub vector_search: bool,
+    pub hamming: bool,
+}
+
+impl FieldType {
+    pub const ALL: [Self; 6] = [
+        Self::Text,
+        Self::Keyword,
+        Self::Number,
+        Self::Set,
+        Self::Vector,
+        Self::Hash,
+    ];
+
+    pub const fn capabilities(self) -> FieldCapabilities {
+        match self {
+            Self::Text => FieldCapabilities {
+                bm25: true,
+                exact: false,
+                range: false,
+                sort: false,
+                set_membership: false,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Keyword => FieldCapabilities {
+                bm25: false,
+                exact: true,
+                range: true,
+                sort: true,
+                set_membership: false,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Number => FieldCapabilities {
+                bm25: false,
+                exact: true,
+                range: true,
+                sort: true,
+                set_membership: false,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Set => FieldCapabilities {
+                bm25: false,
+                exact: true,
+                range: false,
+                sort: false,
+                set_membership: true,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Vector => FieldCapabilities {
+                bm25: false,
+                exact: false,
+                range: false,
+                sort: false,
+                set_membership: false,
+                vector_search: true,
+                hamming: false,
+            },
+            Self::Hash => FieldCapabilities {
+                bm25: false,
+                exact: false,
+                range: false,
+                sort: false,
+                set_membership: false,
+                vector_search: false,
+                hamming: true,
+            },
+        }
+    }
+}
+
 /// Distance metric for `FieldType::Vector`. Wire form is snake_case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

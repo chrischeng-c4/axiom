@@ -15,7 +15,7 @@ use std::sync::Arc;
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{Html, IntoResponse, Json},
+    response::{Html, IntoResponse, Json, Response},
     routing::get,
     Router,
 };
@@ -29,7 +29,18 @@ use crate::readiness::ReadinessHook;
 struct ProbeState {
     readiness: Arc<dyn ReadinessHook>,
     metrics: Option<Arc<dyn MetricsProvider>>,
-    openapi: fn() -> utoipa::openapi::OpenApi,
+    openapi: OpenapiSource,
+}
+
+/// The public OpenAPI source used by standard probes.
+///
+/// Most services hand the helper an `utoipa` document. Services that require
+/// one byte-identical document for an offline CLI, a committed snapshot, and
+/// the live route use [`OpenapiSource::CanonicalJson`] instead.
+#[derive(Clone, Copy)]
+enum OpenapiSource {
+    Typed(fn() -> utoipa::openapi::OpenApi),
+    CanonicalJson(fn() -> String),
 }
 
 /// Build the five standard probe routes:
@@ -54,7 +65,32 @@ pub fn standard_probe_routes<R: ReadinessHook + 'static>(
     let state = ProbeState {
         readiness,
         metrics,
-        openapi,
+        openapi: OpenapiSource::Typed(openapi),
+    };
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics_handler))
+        .route("/openapi.json", get(openapi_spec))
+        .route("/docs", get(docs_swagger))
+        .with_state(state)
+}
+
+/// Build standard probe routes with a canonical OpenAPI JSON producer.
+///
+/// The returned `/openapi.json` body is exactly the producer's bytes. This is
+/// intentionally additive: existing services keep the typed-`utoipa` API,
+/// while a service with a committed client snapshot can prove all public
+/// OpenAPI surfaces share one canonical serialization.
+pub fn standard_probe_routes_canonical_json<R: ReadinessHook + 'static>(
+    readiness: Arc<R>,
+    metrics: Option<Arc<dyn MetricsProvider>>,
+    openapi_json: fn() -> String,
+) -> Router {
+    let state = ProbeState {
+        readiness,
+        metrics,
+        openapi: OpenapiSource::CanonicalJson(openapi_json),
     };
     Router::new()
         .route("/healthz", get(healthz))
@@ -97,8 +133,13 @@ async fn metrics_handler(
 }
 
 /// `GET /openapi.json` — the live OpenAPI 3 document for external consumers.
-async fn openapi_spec(State(state): State<ProbeState>) -> Json<utoipa::openapi::OpenApi> {
-    Json((state.openapi)())
+async fn openapi_spec(State(state): State<ProbeState>) -> Response {
+    match state.openapi {
+        OpenapiSource::Typed(openapi) => Json(openapi()).into_response(),
+        OpenapiSource::CanonicalJson(openapi_json) => {
+            ([("content-type", "application/json")], openapi_json()).into_response()
+        }
+    }
 }
 
 /// `GET /docs` — interactive Swagger UI (FastAPI convention). The page pulls the
@@ -223,6 +264,18 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["info"]["title"], "test");
+    }
+
+    #[tokio::test]
+    async fn canonical_openapi_keeps_producer_bytes() {
+        fn canonical() -> String {
+            "{\n  \"openapi\": \"3.2.0\"\n}".into()
+        }
+        let router =
+            standard_probe_routes_canonical_json(Arc::new(Draining(false)), None, canonical);
+        let (status, body) = get(router, "/openapi.json").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, canonical());
     }
 
     #[tokio::test]

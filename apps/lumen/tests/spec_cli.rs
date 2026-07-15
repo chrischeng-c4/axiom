@@ -9,6 +9,7 @@ use lumen::spec::{
     llm_outline_md, llm_quickstart_md, llm_recipes_md, llm_storage_md, llm_workflow_md,
     openapi_json, openapi_yaml, query_shapes,
 };
+use lumen::{dx, types::FieldType};
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 
@@ -984,6 +985,108 @@ fn openapi_committed_snapshot_matches_live_generation() {
          `./target/debug/lumen spec --format openapi > clients/openapi.json` \
          (CONTRIBUTING.md DX convention: offline-contract must not lag the live surface)"
     );
+}
+
+#[test]
+fn dx_field_catalog_matches_runtime_field_capabilities() {
+    let catalog = dx::field_catalog();
+    let fields = catalog["field_types"]
+        .as_array()
+        .expect("field catalogue is an array");
+    assert_eq!(fields.len(), FieldType::ALL.len());
+
+    for field_type in FieldType::ALL {
+        let name = match field_type {
+            FieldType::Text => "text",
+            FieldType::Keyword => "keyword",
+            FieldType::Number => "number",
+            FieldType::Set => "set",
+            FieldType::Vector => "vector",
+            FieldType::Hash => "hash",
+        };
+        let entry = fields
+            .iter()
+            .find(|entry| entry["type"] == name)
+            .unwrap_or_else(|| panic!("catalogue omits {name}"));
+        let operations = &entry["operations"];
+        let expected = field_type.capabilities();
+        assert_eq!(operations["bm25"], expected.bm25);
+        assert_eq!(operations["exact"], expected.exact);
+        assert_eq!(operations["range"], expected.range);
+        assert_eq!(operations["sort"], expected.sort);
+        assert_eq!(operations["set_membership"], expected.set_membership);
+        assert_eq!(operations["vector_search"], expected.vector_search);
+        assert_eq!(operations["hamming"], expected.hamming);
+    }
+
+    let text = fields.iter().find(|entry| entry["type"] == "text").unwrap();
+    assert_eq!(text["operations"]["bm25"], true);
+    assert_eq!(text["operations"]["range"], false);
+    assert_eq!(text["operations"]["sort"], false);
+    for field in ["keyword", "number"] {
+        let entry = fields.iter().find(|entry| entry["type"] == field).unwrap();
+        assert_eq!(entry["operations"]["range"], true);
+        assert_eq!(entry["operations"]["sort"], true);
+    }
+}
+
+#[test]
+fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
+    let protocol = dx::llm_protocol();
+    assert_eq!(protocol.topics().len(), 10);
+    for topic in protocol.topics() {
+        let json = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Json).unwrap();
+        let value: Value = serde_json::from_str(&json).expect("runbook JSON parses");
+        let markdown = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Md).unwrap();
+        assert_eq!(value["protocol"], "cclab.llm.v2");
+        assert_eq!(value["topic"], topic.task.topic);
+        assert!(value["markdown"].is_string());
+        assert!(value["runbook"]["purpose"].is_string());
+        assert_eq!(
+            value["markdown"].as_str(),
+            Some(markdown.as_str()),
+            "Markdown must be rendered from the JSON runbook model"
+        );
+        assert!(
+            value.get("next").is_none(),
+            "LLM output never advertises an unbound next command"
+        );
+        for step in &topic.runbook.steps {
+            assert_ne!(step.command.is_some(), step.command_template.is_some());
+            if let Some(command) = &step.command {
+                assert!(step.inputs.is_empty());
+                assert!(!command.contains('{') && !command.contains('<'));
+            }
+            if step.command_template.is_some() {
+                assert!(!step.inputs.is_empty());
+            }
+        }
+    }
+
+    let outline: Value =
+        serde_json::from_str(&dx::render_llm("outline", cli_std::llm::Format::Json).unwrap())
+            .unwrap();
+    for required in [
+        "local-search",
+        "model-schema",
+        "select-query",
+        "integrate-source-db",
+        "authenticate",
+        "connect-kubernetes",
+        "deploy-kubernetes",
+        "backup-restore",
+        "generate-client",
+        "diagnose",
+    ] {
+        assert!(
+            outline["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["id"] == required),
+            "outline omits {required}"
+        );
+    }
 }
 
 /// #1480 R2: the reshard admin verbs section must cover all six
