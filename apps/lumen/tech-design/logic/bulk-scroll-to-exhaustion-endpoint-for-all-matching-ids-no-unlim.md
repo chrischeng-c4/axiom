@@ -64,3 +64,35 @@ changes:
     impl_mode: hand-written
     description: "Lock offline search-all and canonical OpenAPI metadata."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: search-all-external-ids-verification
+requirements:
+  complete_ids:
+    id: R1
+    text: "search:all returns every matching external ID exactly once beyond the normal page size."
+    kind: functional
+    risk: high
+    verify: cargo test -p lumen --test search_all_e2e -- --nocapture
+  generated_client_operation:
+    id: R3
+    text: "Canonical OpenAPI exposes a typed search_all operation for generated clients."
+    kind: contract
+    risk: medium
+    verify: cargo test -p lumen --test spec_cli -- --nocapture
+  semantic_parity:
+    id: R2
+    text: "Filter and sort results match ordinary exact search semantics and disclose local versus routed snapshot boundaries."
+    kind: integration
+    risk: high
+    verify: cargo test -p lumen --test search_all_e2e -- --nocapture
+---
+flowchart TD
+    r1[R1 complete ids] --> cargo_test_p_lumen_test_search_all_e2e_nocapture[cargo test -p lumen --test search_all_e2e -- --nocapture]
+    r2[R2 semantic parity] --> cargo_test_p_lumen_test_search_all_e2e_nocapture
+    r3[R3 generated client operation] --> cargo_test_p_lumen_test_spec_cli_nocapture[cargo test -p lumen --test spec_cli -- --nocapture]
+```
