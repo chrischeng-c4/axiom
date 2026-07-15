@@ -48,3 +48,21 @@ changes:
     impl_mode: "hand-written"
     description: "Keep fallback punctuation tokens on UTF-8 boundaries and cover collision-renaming output with multi-byte text."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 1784-verification
+requirements:
+  utf8_collision_mangle:
+    id: R1
+    text: "Collision renaming preserves complete UTF-8 codepoints in JSX text and emits an uncorrupted result."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::mangle::tests::test_utf8_jsx_text_survives_collision_mangling -- --nocapture
+---
+flowchart TD
+    r1[R1 utf8 collision mangle] --> cargo_test_p_jet_lib_bundler_mangle_tests_test_utf8_jsx_text_survives_collision_mangling_nocapture[cargo test -p jet --lib bundler::mangle::tests::test_utf8_jsx_text_survives_collision_mangling -- --nocapture]
+```
