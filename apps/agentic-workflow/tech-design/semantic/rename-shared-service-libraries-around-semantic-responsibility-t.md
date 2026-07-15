@@ -158,3 +158,42 @@ changes:
     impl_mode: hand-written
     description: Reject retired paths, package identities, and Rust crate identifiers in active source and docs.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: shared-service-library-semantic-names-verification
+requirements:
+  all_active_references_migrate:
+    id: R2
+    text: "Cargo manifests, Rust source, tests, scripts, TDs, EC fixtures, and active documentation contain no retired library path or crate identity."
+    kind: regression
+    risk: high
+    verify: bash apps/agentic-workflow/tests/fixtures/shared_service_library_names/assert_semantic_names.sh
+  documentation_projects_taxonomy:
+    id: R3
+    text: "Root README inventories the new identities and CONTRIBUTING defines the stable responsibility prefixes and service-kit boundaries."
+    kind: functional
+    risk: medium
+    verify: bash apps/agentic-workflow/tests/fixtures/shared_service_library_names/assert_semantic_names.sh
+  semantic_identity_map:
+    id: R1
+    text: "Every ambiguous shared service library is renamed as one atomic directory, package, and Rust crate identity using the responsibility-family map."
+    kind: regression
+    risk: high
+    verify: bash apps/agentic-workflow/tests/fixtures/shared_service_library_names/assert_semantic_names.sh
+  workspace_and_adopters_preserve_behavior:
+    id: R4
+    text: "Cargo resolves the renamed workspace and focused shared-library plus representative service adopter tests pass without public behavior changes."
+    kind: regression
+    risk: high
+    verify: cargo metadata --no-deps && cargo test -p service-k8s -p raft-runtime -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p storage-durable -p metrics-prometheus -p peer-tls -p claim-token
+---
+flowchart TD
+    r1[R1 semantic identity map] --> bash_apps_agentic_workflow_tests_fixtures_shared_service_library_names_assert_semantic_names_sh[bash apps/agentic-workflow/tests/fixtures/shared_service_library_names/assert_semantic_names.sh]
+    r2[R2 all active references migrate] --> bash_apps_agentic_workflow_tests_fixtures_shared_service_library_names_assert_semantic_names_sh
+    r3[R3 documentation projects taxonomy] --> bash_apps_agentic_workflow_tests_fixtures_shared_service_library_names_assert_semantic_names_sh
+    r4[R4 workspace and adopters preserve behavior] --> cargo_metadata_no_deps_cargo_test_p_service_k8s_p_raft_runtime_p_server_lifecycle_p_server_tcp_p_server_http_p_transport_h2c_p_storage_durable_p_metrics_prometheus_p_peer_tls_p_claim_token[cargo metadata --no-deps && cargo test -p service-k8s -p raft-runtime -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p storage-durable -p metrics-prometheus -p peer-tls -p claim-token]
+```
