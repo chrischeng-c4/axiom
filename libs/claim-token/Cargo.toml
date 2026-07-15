@@ -1,3 +1,19 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:ebe63011" tracker="pending-tracker" reason="scaffold for libs/claim-token/Cargo.toml — fill in by hand and update tracker when codegen is ready"
-// TODO: hand-write content for `libs/claim-token/Cargo.toml`.
-// HANDWRITE-END
+[package]
+name = "claim-token"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Scoped claim-check access tokens (HMAC-SHA256). Loom's schema layer signs; Keep verifies, so a worker reaches Keep directly only within its key scope."
+
+[lib]
+name = "claim_token"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+sha2 = "0.10"
+
+<!-- marker: missing-generator:logic:ebe63011 path: libs/claim-token/Cargo.toml reason: scaffold for libs/claim-token/Cargo.toml — fill in by hand and update tracker when codegen is ready -->
