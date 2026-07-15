@@ -139,7 +139,6 @@ changes:
     impl_mode: hand-written
     description: "Ephemeral CA/certificate tests for mutual success, hostname mismatch, untrusted client rejection, and explicit reload preservation."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
