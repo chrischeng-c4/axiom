@@ -76,7 +76,6 @@ changes:
     impl_mode: hand-written
     description: "Lock OpenAPI and offline-spec offset metadata."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
