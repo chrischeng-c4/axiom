@@ -61,3 +61,28 @@ changes:
     impl_mode: hand-written
     description: Add the canonical stateful-service-workload capability root that links existing durable acknowledgement, stable StatefulSet identity, raft topology, backup and restore, peer security, and deployment evidence without copying the domain roots.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: relay-stateful-service-workload-verification
+requirements:
+  baseline_links_authoritative_evidence:
+    id: R2
+    text: "The projected root links existing shared mechanisms and Relay-local durable, topology, backup, security, and deployment evidence without duplicating domain capability prose."
+    kind: regression
+    risk: low
+    verify: apps/relay/README.md stateful-service-workload capability contract
+  stateful_workload_root_is_projected:
+    id: R1
+    text: "Relay exposes the stateful-service-workload capability derived from its stateful_storage trait."
+    kind: functional
+    risk: low
+    verify: aw capability check --project relay --skip-issue-inventory
+---
+flowchart TD
+    r1[R1 stateful workload root is projected] --> aw_capability_check_project_relay_skip_issue_inventory[aw capability check --project relay --skip-issue-inventory]
+    r2[R2 baseline links authoritative evidence] --> apps_relay_readme_md_stateful_service_workload_capability_contract[apps/relay/README.md stateful-service-workload capability contract]
+```
