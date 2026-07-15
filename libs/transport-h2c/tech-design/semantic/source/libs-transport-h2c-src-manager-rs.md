@@ -1,5 +1,5 @@
 ---
-id: libs-h2c-src-manager-rs
+id: libs-transport-h2c-src-manager-rs
 summary: Lossless rust-source-unit coverage for `libs/transport-h2c/src/manager.rs`.
 capability_refs:
   - id: http2-cleartext-client-helpers

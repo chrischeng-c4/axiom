@@ -1,5 +1,5 @@
 ---
-id: libs-h2c-examples-conn-sweep-rs
+id: libs-transport-h2c-examples-conn-sweep-rs
 summary: Lossless rust-source-unit coverage for `libs/transport-h2c/examples/conn_sweep.rs`.
 capability_refs:
   - id: http2-cleartext-client-helpers

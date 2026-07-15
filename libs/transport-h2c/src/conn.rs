@@ -1,4 +1,4 @@
-// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-h2c-src-conn-rs.md#rust-source-unit
+// SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-conn-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `ManagedConn` — one frame-level h2c connection and its live health/stats.
 //!
@@ -24,7 +24,7 @@ use crate::error::{H2cError, Result};
 
 /// h2 handshake tunables for one connection.
 #[derive(Clone, Copy, Debug)]
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-h2c-src-conn-rs.md#source
+/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-conn-rs.md#source
 pub(crate) struct ConnConfig {
     pub stream_window: u32,
     pub conn_window: u32,
@@ -32,7 +32,7 @@ pub(crate) struct ConnConfig {
 }
 
 /// One managed frame-level h2c connection. Cheap to share via `Arc`.
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-h2c-src-conn-rs.md#source
+/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-conn-rs.md#source
 pub(crate) struct ManagedConn {
     pub(crate) id: usize,
     /// The multiplexing handle. `SendRequest` is `Clone`; we clone it per
@@ -53,7 +53,7 @@ pub(crate) struct ManagedConn {
     last_used_ms: AtomicU64,
 }
 
-/// @spec libs/transport-h2c/tech-design/semantic/source/libs-h2c-src-conn-rs.md#source
+/// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-conn-rs.md#source
 impl ManagedConn {
     /// Open a new connection: TCP connect → h2c prior-knowledge handshake →
     /// spawn the connection driver. The driver owns the socket I/O; when it

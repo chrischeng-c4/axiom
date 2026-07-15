@@ -1,5 +1,5 @@
 ---
-id: semantic-operator-libs-operator
+id: semantic-service-k8s-libs-service-k8s
 summary: Semantic coverage for the operator library source, manifest, tests, and project-root context artifact.
 capability_refs:
   - id: shared-kubernetes-operator-scaffold
@@ -127,7 +127,7 @@ changes:
     Existing manifest behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-cargo-toml>"
+    - "<handwrite-tracker:libs-service-k8s-cargo-toml>"
 - path: "libs/service-k8s/src/controller.rs"
   action: modify
   section: schema
@@ -135,7 +135,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-src-controller-rs>"
+    - "<handwrite-tracker:libs-service-k8s-src-controller-rs>"
 - path: "libs/service-k8s/src/lease.rs"
   action: modify
   section: schema
@@ -143,7 +143,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-src-lease-rs>"
+    - "<handwrite-tracker:libs-service-k8s-src-lease-rs>"
 - path: "libs/service-k8s/src/lib.rs"
   action: modify
   section: schema
@@ -151,7 +151,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-src-lib-rs>"
+    - "<handwrite-tracker:libs-service-k8s-src-lib-rs>"
 - path: "libs/service-k8s/src/llm.rs"
   action: modify
   section: schema
@@ -159,7 +159,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-src-llm-rs>"
+    - "<handwrite-tracker:libs-service-k8s-src-llm-rs>"
 - path: "libs/service-k8s/src/render.rs"
   action: modify
   section: schema
@@ -167,7 +167,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-src-render-rs>"
+    - "<handwrite-tracker:libs-service-k8s-src-render-rs>"
 - path: "libs/service-k8s/src/resize.rs"
   action: modify
   section: schema
@@ -175,7 +175,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-src-resize-rs>"
+    - "<handwrite-tracker:libs-service-k8s-src-resize-rs>"
 - path: "libs/service-k8s/src/service.rs"
   action: modify
   section: schema
@@ -183,7 +183,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-operator-src-service-rs>"
+    - "<handwrite-tracker:libs-service-k8s-src-service-rs>"
 - path: "libs/service-k8s/llms.txt"
   action: modify
   section: schema
