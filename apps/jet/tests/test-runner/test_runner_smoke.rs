@@ -900,6 +900,58 @@ test("facades an emitted test module's rewritten CommonJS file URL", () => {
 }
 
 #[tokio::test]
+async fn test_worker_preserves_trailing_named_exports_from_physical_esm_packages() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let package = tmp.path().join("node_modules/@testing-library/react");
+    fs::create_dir_all(package.join("dist/@testing-library")).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"@testing-library/react","type":"module","exports":{".":"./dist/@testing-library/react.esm.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        package.join("dist/@testing-library/react.esm.js"),
+        r#"
+const act = (callback) => callback();
+const render = (value) => `render:${value}`;
+const renderHook = (callback) => callback();
+export { act, render, renderHook };
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("physical-esm-named-exports.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { act, render, renderHook } from "@testing-library/react";
+
+test("keeps named exports from a physical ESM package", () => {
+  expect(render("jet")).toBe("render:jet");
+  expect(act(() => "acted")).toBe("acted");
+  expect(renderHook(() => "hooked")).toBe("hooked");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "physical ESM named exports must remain available: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
 async fn test_worker_strips_class_field_ts_syntax_in_imported_modules() {
     if which::which("node").is_err() {
         eprintln!("skipping: node not on PATH");
