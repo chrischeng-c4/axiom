@@ -83,7 +83,7 @@ requirements:
     verify: cargo test -p server-tcp
   service_consumer_regression:
     id: R4
-    text: "Lumen, Tape, Keep, Relay, Courier, and Pgpool preserve their existing HTTP and drain contracts after the shared runtime convergence."
+    text: "Current service consumers preserve their existing HTTP, probe, and drain behavior after shared runtime convergence."
     kind: regression
     risk: high
     verify: cargo test -p lumen --features operator --test operator_render; cargo test -p tape --test http_transport; cargo test -p keep; cargo test -p relay --test http2_transport; cargo test -p courier; cargo test -p pgpool --test admin_plane
