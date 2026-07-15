@@ -1,5 +1,5 @@
 ---
-id: libs-operator-src-service-rs
+id: libs-service-k8s-src-service-rs
 summary: Lossless rust-source-unit coverage for `libs/service-k8s/src/service.rs`.
 capability_refs:
   - id: shared-kubernetes-operator-scaffold
