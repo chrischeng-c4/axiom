@@ -37,7 +37,6 @@ flowchart TD
     hpa -->|no| preserve([Preserve distinct CRDs and domain policy])
     render_hpa --> preserve
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
