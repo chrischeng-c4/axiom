@@ -2,10 +2,10 @@ version = 2
 project = "service-backup"
 ir_kind = "td"
 td_path = "libs/service-backup/tech-design"
-generated_at = "2026-07-15T09:57:48.769047+00:00"
-digest = "sha256:f1808b7df859902fc894307c68ace1c330e605d784b8528fe63cefe11f976670"
-source_digest = "sha256:f1808b7df859902fc894307c68ace1c330e605d784b8528fe63cefe11f976670"
-ir_digest = "sha256:6cd893853d7d02ddaa63d4a6942f88e2edf0892ce0478d4c4600007da0081584"
+generated_at = "2026-07-15T10:05:59.446060+00:00"
+digest = "sha256:7672456958a722e88877c3bcaaaf1ac45023c900445dac29d02553a5cb4d150d"
+source_digest = "sha256:7672456958a722e88877c3bcaaaf1ac45023c900445dac29d02553a5cb4d150d"
+ir_digest = "sha256:422d0922cba8f7f5febe917994c9d69a5c57232fd47eb28adfde1be8c3e52512"
 
 [[files]]
 path = "logic/provide-a-crd-safe-shared-scheduled-backup-policy.md"
@@ -26,8 +26,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-backup-src-lib-rs.md"
-digest = "sha256:22588afede9ee5aae0292be1636a5e7ee0ca5f3b1ec5a7400eaef5757abf087b"
-ir_digest = "sha256:a72a2d9a31640cf802a1cd180f1533eff9043bc5a29941fdfe64db58d6ce6960"
+digest = "sha256:621688a60d58f3fdd8792a834ce9985cff411b98f950a6d91055e6da6383484b"
+ir_digest = "sha256:7987dfecf7ad0cfdb699c3fef03bf30be3f53f3dd5e8d6186fca6efb858cca8f"
 section_count = 3
 
 [[files]]
@@ -38,8 +38,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-backup-src-policy-rs.md"
-digest = "sha256:cf102bf1869f15bfd08ad911b613540d0d61259fb1d974299a5f46bed6973e70"
-ir_digest = "sha256:551343e562a71a18ff9c34f9cb3abde76fd868ba7e824bfcd5775d39b82322fe"
+digest = "sha256:1db7563592f93e7c52d3c718c4d5a7f487faeb1c2071cac0d88ddc6a391cd2cb"
+ir_digest = "sha256:8455848cf76f319f6a6f79d31db1031c3d93b01154fc86cb87a00430d246a328"
 section_count = 3
 
 [[files]]
