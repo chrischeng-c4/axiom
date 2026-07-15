@@ -312,7 +312,7 @@ contract_id = "existing-project-standardization-shared-service-kit-substrate"
 category = "behavior"
 td_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md#existing-project-standardization-shared-service-kit-substrate"
 test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_substrate.rs"
-command = "cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http"
+command = "cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http"
 required_for_production = true
 assertions = ["the shared server substrate crates (server-core, tcp-server, http-server, h2c, service-http) build and pass their unit and doc tests (#1241)"]
 

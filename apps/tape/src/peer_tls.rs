@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 
-pub use raft_host::PeerTlsConfig;
+pub use peer_tls::PeerTlsConfig;
 
 /// Prefix for Tape's peer TLS deployment contract.
 pub const ENV_PREFIX: &str = "TAPE_PEER";

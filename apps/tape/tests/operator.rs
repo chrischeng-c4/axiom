@@ -118,7 +118,7 @@ fn render_emits_expected_child_objects() {
 
     let env = env_of(sts);
     let keys: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
-    // The exact contract serve reads: raft_host::cluster (quartet) +
+    // The exact contract serve reads: raft_runtime::cluster (quartet) +
     // --peer-service (TAPE_PEER_SERVICE) + bind/data-dir/grace.
     for k in [
         "POD_NAME",
