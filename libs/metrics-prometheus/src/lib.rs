@@ -9,8 +9,9 @@
 //! crate holds only those primitives: no registry side-table, no
 //! macros, no dependencies. Callers own their metric structs (typically
 //! one field per metric, as plain `Counter`/`Gauge`/`Latency` values)
-//! and hand a slice of [`Sample`]s to [`render`] to produce the scrape
-//! body.
+//! and hand a slice of [`Sample`]s to [`render`] to produce an unlabeled
+//! scrape body, or [`SampleGroup`]s to [`render_labeled`] when one HELP/TYPE
+//! declaration owns multiple labeled rows.
 //!
 //! Lifted from lumen's `src/metrics.rs` (#974): lumen's `Metrics`
 //! reimplements on top of these primitives with byte-identical
@@ -23,10 +24,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `Ordering::Relaxed` (counters have no other state to stay consistent
 /// with, so relaxed ordering is sufficient).
 #[derive(Debug, Default)]
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 pub struct Counter(AtomicU64);
 
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 impl Counter {
     pub const fn new() -> Self {
         Self(AtomicU64::new(0))
@@ -51,7 +50,6 @@ impl Counter {
 /// Deref to the underlying `AtomicU64` for callers that need raw
 /// atomic ops (e.g. an observable-instrument callback holding only a
 /// `&Counter`); `get`/`add`/`incr` above cover the common paths.
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 impl std::ops::Deref for Counter {
     type Target = AtomicU64;
 
@@ -63,10 +61,8 @@ impl std::ops::Deref for Counter {
 /// A point-in-time Prometheus gauge: a single `AtomicU64` set with
 /// `Ordering::Relaxed`.
 #[derive(Debug, Default)]
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 pub struct Gauge(AtomicU64);
 
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 impl Gauge {
     pub const fn new() -> Self {
         Self(AtomicU64::new(0))
@@ -85,7 +81,6 @@ impl Gauge {
 
 /// Deref to the underlying `AtomicU64`, mirroring [`Counter`]'s escape
 /// hatch for raw atomic ops.
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 impl std::ops::Deref for Gauge {
     type Target = AtomicU64;
 
@@ -99,13 +94,11 @@ impl std::ops::Deref for Gauge {
 /// boundaries. `observe` records one duration in whatever unit the
 /// caller's metric name promises (lumen uses milliseconds).
 #[derive(Debug, Default)]
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 pub struct Latency {
     pub sum: Counter,
     pub count: Counter,
 }
 
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 impl Latency {
     pub const fn new() -> Self {
         Self {
@@ -125,7 +118,6 @@ impl Latency {
 /// `name`, its `kind` token (`"counter"` or `"gauge"`), the `# HELP`
 /// text, and the current `value`.
 #[derive(Debug, Clone, Copy)]
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 pub struct Sample<'a> {
     pub name: &'a str,
     pub kind: &'a str,
@@ -144,11 +136,63 @@ impl<'a> Sample<'a> {
     }
 }
 
+/// One Prometheus label name/value pair. The renderer canonicalizes label
+/// order and escapes values, so callers only own label semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Label<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+}
+
+impl<'a> Label<'a> {
+    pub const fn new(name: &'a str, value: &'a str) -> Self {
+        Self { name, value }
+    }
+}
+
+/// One value row within a labeled metric family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabeledSample<'a> {
+    pub labels: Vec<Label<'a>>,
+    pub value: u64,
+}
+
+impl<'a> LabeledSample<'a> {
+    pub fn new(labels: Vec<Label<'a>>, value: u64) -> Self {
+        Self { labels, value }
+    }
+}
+
+/// A metric family whose HELP and TYPE declarations are shared by one or more
+/// labeled value rows.
+#[derive(Debug, Clone, Copy)]
+pub struct SampleGroup<'a> {
+    pub name: &'a str,
+    pub kind: &'a str,
+    pub help: &'a str,
+    pub samples: &'a [LabeledSample<'a>],
+}
+
+impl<'a> SampleGroup<'a> {
+    pub const fn new(
+        name: &'a str,
+        kind: &'a str,
+        help: &'a str,
+        samples: &'a [LabeledSample<'a>],
+    ) -> Self {
+        Self {
+            name,
+            kind,
+            help,
+            samples,
+        }
+    }
+}
+
 /// Render `samples` as Prometheus text format (0.0.4 compatible): each
 /// sample emits `# HELP <name> <help>`, `# TYPE <name> <kind>`, then
 /// `<name> <value>`, in the order given. Always emits the same set of
 /// lines for the same input so scrape configs stay stable.
-/// @spec libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md#source
 pub fn render(samples: &[Sample<'_>]) -> String {
     let mut out = String::new();
     for sample in samples {
@@ -157,6 +201,53 @@ pub fn render(samples: &[Sample<'_>]) -> String {
         let _ = writeln!(out, "{} {}", sample.name, sample.value);
     }
     out
+}
+
+/// Render labeled metric families as Prometheus text format 0.0.4.
+///
+/// Groups and rows preserve caller order. Labels within a row are sorted by
+/// name then value, and label values escape backslash, double quote, and
+/// newline as required by the Prometheus exposition format.
+pub fn render_labeled(groups: &[SampleGroup<'_>]) -> String {
+    let mut out = String::new();
+    for group in groups {
+        let _ = writeln!(out, "# HELP {} {}", group.name, group.help);
+        let _ = writeln!(out, "# TYPE {} {}", group.name, group.kind);
+        for sample in group.samples {
+            let _ = write!(out, "{}", group.name);
+            if !sample.labels.is_empty() {
+                let mut labels = sample.labels.iter().collect::<Vec<_>>();
+                labels.sort_unstable_by(|left, right| {
+                    left.name
+                        .cmp(right.name)
+                        .then_with(|| left.value.cmp(right.value))
+                });
+                out.push('{');
+                for (index, label) in labels.into_iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    let _ = write!(out, "{}=\"", label.name);
+                    write_escaped_label_value(&mut out, label.value);
+                    out.push('"');
+                }
+                out.push('}');
+            }
+            let _ = writeln!(out, " {}", sample.value);
+        }
+    }
+    out
+}
+
+fn write_escaped_label_value(out: &mut String, value: &str) {
+    for character in value.chars() {
+        match character {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            other => out.push(other),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -215,6 +306,28 @@ mod tests {
              # TYPE demo_bytes gauge\n\
              demo_bytes 100\n"
         );
+    }
+
+    #[test]
+    fn labeled_render_sorts_and_escapes_labels() {
+        let rows = [LabeledSample::new(
+            vec![Label::new("zone", "a\\b\nc"), Label::new("pool", "x\"y")],
+            7,
+        )];
+        let groups = [SampleGroup::new(
+            "demo_active",
+            "gauge",
+            "Active demo resources.",
+            &rows,
+        )];
+
+        assert_eq!(
+            render_labeled(&groups),
+            "# HELP demo_active Active demo resources.\n\
+# TYPE demo_active gauge\n\
+demo_active{pool=\"x\\\"y\",zone=\"a\\\\b\\nc\"} 7\n"
+        );
+        assert_eq!(rows[0].labels[0].name, "zone");
     }
 
     /// Golden-render test derived from lumen's `src/metrics.rs` (#974):
