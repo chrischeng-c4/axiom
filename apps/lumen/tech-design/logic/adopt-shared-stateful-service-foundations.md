@@ -51,7 +51,6 @@ flowchart TD
     app --> workload[Operator projects public and raft ports through shared StatefulSet primitives]
     workload --> verify([Run app adoption gates for auth admission TLS workload Rig and OTLP ownership])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
