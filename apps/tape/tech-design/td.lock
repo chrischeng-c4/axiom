@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-14T11:12:17.697887+00:00"
-digest = "sha256:9637a73ec0dfd645dc58ebd034278441b1bc739cf15a6daf89cd099764e58574"
-source_digest = "sha256:9637a73ec0dfd645dc58ebd034278441b1bc739cf15a6daf89cd099764e58574"
-ir_digest = "sha256:d1f2d85090f011a2c1f918b9ce27616ce823bf5cbc224a19aa451cf7d794558a"
+generated_at = "2026-07-15T02:45:30.017991+00:00"
+digest = "sha256:ac2ce521a5caea94a8471144e77679518a850e02ed4e99f48bdeb77b62e897fd"
+source_digest = "sha256:ac2ce521a5caea94a8471144e77679518a850e02ed4e99f48bdeb77b62e897fd"
+ir_digest = "sha256:048366a3ff13fdd356c8759301c130a9149287bb3570445c2dcc039e757a71f6"
 
 [[files]]
 path = "README.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "interfaces/rest/tape-service-auth.md"
 digest = "sha256:6153519a5ea3e6d405cba97558e66850b627b0a61cabfc02402612a8e25444d2"
 ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd538f"
+section_count = 3
+
+[[files]]
+path = "logic/adopt-shared-service-http-otlp-tracing.md"
+digest = "sha256:b427225b5b5f5544827dc6a91708e809b1afe45bc6d53f745a26fb7418092bf9"
+ir_digest = "sha256:c781cd0dc875cede456724ccc224c41599571d23684f9f7e2eb6d92e8b9d1e12"
 section_count = 3
 
 [[files]]
@@ -81,8 +87,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-src-bin-tape-rs.md"
-digest = "sha256:3fca4343e6490d0f2d87f3873895a12b158e6dbf7943937dd3fb1d6639387349"
-ir_digest = "sha256:c58365ea609344e35a3eda59d04850751d7d718a44e88f4802bb40ac9159c6b4"
+digest = "sha256:c73310d4348958639b7894c8e768f0dd8346ab1314fb96c9187efcac625fc883"
+ir_digest = "sha256:d436416b1bb970ce00d330bccf344dde58dd052d3d6babc4a202aadf9036fd6a"
 section_count = 4
 
 [[files]]
