@@ -440,13 +440,16 @@ if [[ "$DUP_GROUPS" -le 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Kill all serving pods. The replacement pod uses embedded WAL, so this
-#    proves k8s rollout/recovery and fresh-write readiness for the single-node
-#    dogfood path.
+# 5. Kill all serving pods and wait until the old pod objects are gone before
+#    looking for replacements. Without `--wait=true`, `kubectl wait` can bind
+#    to an old Ready pod during its termination race and then fail by name.
+#    The replacement pod uses embedded WAL, so this proves k8s
+#    rollout/recovery and fresh-write readiness for the single-node dogfood
+#    path.
 # ---------------------------------------------------------------------------
 
 step "5. kubectl delete pod -l $APP_LABEL (serving-pod restart)" \
-  kubectl -n "$NAMESPACE" delete pod -l "$APP_LABEL" --wait=false
+  kubectl -n "$NAMESPACE" delete pod -l "$APP_LABEL" --wait=true
 
 # ---------------------------------------------------------------------------
 # 6. Wait for the replacement serving pods to come back and catch up
