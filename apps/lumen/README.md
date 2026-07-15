@@ -74,6 +74,7 @@ agent integration remain first-class domain roots.
 | Replica Sync & Bootstrap | 1181 | implemented | passing | conformance | ready | domain: raft replica sync semantics plus empty-PVC snapshot/object seed before raft catch-up |
 | Observability | - | implemented | verified | conformance | ready | domain: Prometheus metrics, ServiceMonitor/alerts, and opt-in OTLP |
 | Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
+| Stateful Service Workload | #1553 | implemented | verified | smoke | ready | mandatory stateful profile: composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots |
 | Developer & Agent Experience | 4143 | implemented | verified | conformance | ready | domain: installed binary teaches offline (spec/llm topics, committed OpenAPI contract) and interactive (connect/query) integration, with client-visible contracts test-asserted against drift |
 
 ### CLI Interface
@@ -615,6 +616,39 @@ Gate Inventory:
 | operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
 | single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs (live kind pod-delete-and-recreate proof) |
 | topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator (live kind proof: stale single-member HPA deleted on split) |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Service
+Root WI: #1553
+Status: verified
+Surfaces: Durable index and checkpoint state plus stateful deployment:
+`apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-host`,
+`apps/lumen/src/backup.rs`, and the operator-owned StatefulSet rendering
+surface under `apps/lumen/src/operator/` and `apps/lumen/k8s/`.
+EC Dimensions: behavior: `aw capability check --project lumen
+--skip-issue-inventory` confirms the `stateful_storage` profile has its
+required root; stability: existing replica recovery, snapshot/restore, and
+kind operator gates remain authoritative, while their unfinished dogfood or
+security work remains explicit in those linked capability roots.
+Required Verification: smoke
+Promise:
+Lumen projects the shared stateful-service workload baseline without a duplicate
+service implementation. Durable index/checkpoint state, stable shard and PVC
+identity, raft replica recovery, snapshot/backup/bootstrap, observability,
+security, and StatefulSet lifecycle remain owned by the linked capability roots
+below; this baseline does not turn their remaining planned work into a completed
+claim.
+Gate Inventory:
+- `aw capability check --project lumen --skip-issue-inventory`
+- apps/lumen/tests/{backup_restore_e2e,api_e2e,operator_render}.rs
+- apps/lumen/scripts/kind-e2e.sh
+- apps/lumen/k8s/components/observability
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| stateful-service-workload-projection | change | #1553 | implemented | passing | smoke | `aw capability check --project lumen --skip-issue-inventory`; composes Backup & Restore, Replica Sync & Bootstrap, Dynamic Shard Topology, Observability, Security Hardening, and Kubernetes-Native Deployment without duplicating their claims |
 
 ### Developer & Agent Experience
 

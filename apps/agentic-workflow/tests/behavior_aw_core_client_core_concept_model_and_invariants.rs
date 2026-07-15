@@ -10,7 +10,7 @@
 // @command ./target/debug/aw td check apps/agentic-workflow/tech-design/surface/specs/aw-core-client-model.md
 // AW-EC-END
 
-// Contract: core client model TD validates as the source claim for AW core invariants
+// Contract: agent-first project iteration model TD validates as the source claim for AW invariants
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn aw_core_client_core_concept_model_and_invariants() {

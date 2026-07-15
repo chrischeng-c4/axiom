@@ -1,6 +1,6 @@
 ---
 id: aw-llm-offline-agent-orientation-command
-summary: Add `aw llm`, an offline binary-emitted agent-orientation surface (outline + capability/td/ec/loop topics) that complements aw's aw.cli.v1 machine-schema envelope without invoking any model.
+summary: Add `aw llm`, an offline binary-emitted agent-orientation surface (outline + model/capability/td/ec/wi topics) that complements aw's aw.cli.v1 machine-schema envelope without invoking any model.
 fill_sections: [logic, unit-test]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -8,7 +8,7 @@ capability_refs:
     gap: agent-orientation-surface
     claim: agent-orientation-surface
     coverage: partial
-    rationale: "Adds a binary-owned agent-orientation entrypoint over the same client workflow protocol surfaced by aw wi/td/run."
+    rationale: "Adds a binary-owned orientation entrypoint for the single agent-first CLI workflow surfaced by aw wi/ec/td and the root runners."
 ---
 
 # TD: aw llm offline agent-orientation command
@@ -24,6 +24,7 @@ nodes:
   start: { kind: start, label: "llm::run(args)" }
   topic: { kind: decision, label: "args.topic" }
   outline: { kind: process, label: "outline_md(): axiom + crown/two-axes + topic map; verb list sourced from Commands enum" }
+  model: { kind: process, label: "model_md(): single agent-first CLI boundary + four owned responsibilities + public nouns" }
   capability: { kind: process, label: "capability_md(): capability roots + completion loop + readiness" }
   td: { kind: process, label: "td_md(): spec-is-truth + td->gen + regenerable + CODEGEN/HANDWRITE" }
   ec: { kind: process, label: "ec_md(): external contract 4 dims + generated gates + config opt-in" }
@@ -34,11 +35,13 @@ nodes:
 edges:
   - { from: start, to: topic }
   - { from: topic, to: outline, label: "outline (default)" }
+  - { from: topic, to: model, label: "model" }
   - { from: topic, to: capability, label: "capability" }
   - { from: topic, to: td, label: "td" }
   - { from: topic, to: ec, label: "ec" }
   - { from: topic, to: looptopic, label: "loop" }
   - { from: outline, to: fmt }
+  - { from: model, to: fmt }
   - { from: capability, to: fmt }
   - { from: td, to: fmt }
   - { from: ec, to: fmt }
@@ -49,11 +52,13 @@ edges:
 flowchart TD
   start([llm::run args]) --> topic{topic}
   topic -->|outline| outline[outline_md]
+  topic -->|model| model[model_md]
   topic -->|capability| capability[capability_md]
   topic -->|td| td[td_md]
   topic -->|ec| ec[ec_md]
   topic -->|loop| looptopic[loop_md]
   outline --> fmt{format}
+  model --> fmt
   capability --> fmt
   td --> fmt
   ec --> fmt
@@ -76,7 +81,7 @@ requirements:
     verify: test
   every_topic_emits:
     id: R2
-    text: "each topic (outline, capability, td, ec, loop) emits non-empty orientation markdown."
+    text: "each topic (outline, model, capability, td, ec, wi) emits non-empty orientation markdown."
     kind: functional
     risk: high
     verify: test
@@ -92,6 +97,12 @@ requirements:
     kind: functional
     risk: medium
     verify: test
+  agent_first_product_contract:
+    id: R5
+    text: "binary orientation plus active README, capability, and product-model TDs share the canonical agent-first CLI definition and reject removed architecture prose."
+    kind: functional
+    risk: high
+    verify: test
 elements:
   llm_outline_lists_registered_verbs:
     kind: test
@@ -105,11 +116,15 @@ elements:
   llm_topics_are_deterministic:
     kind: test
     type: "rs/#[test]"
+  agent_first_product_contracts_reject_removed_architecture:
+    kind: test
+    type: "rs/#[test]"
 relations:
   - { from: llm_outline_lists_registered_verbs, verifies: outline_lists_verbs }
   - { from: llm_every_topic_emits_markdown, verifies: every_topic_emits }
   - { from: llm_format_json_wraps_markdown, verifies: json_wraps_markdown }
   - { from: llm_topics_are_deterministic, verifies: offline_deterministic }
+  - { from: agent_first_product_contracts_reject_removed_architecture, verifies: agent_first_product_contract }
 ---
 requirementDiagram
     requirement R1 {
@@ -136,6 +151,12 @@ requirementDiagram
       risk: medium
       verifymethod: test
     }
+    requirement R5 {
+      id: R5
+      text: "active contracts teach one agent-first CLI product"
+      risk: high
+      verifymethod: test
+    }
     element llm_outline_lists_registered_verbs {
       type: "rs/#[test]"
     }
@@ -146,6 +167,9 @@ requirementDiagram
       type: "rs/#[test]"
     }
     element llm_topics_are_deterministic {
+      type: "rs/#[test]"
+    }
+    element agent_first_product_contracts_reject_removed_architecture {
       type: "rs/#[test]"
     }
 ```

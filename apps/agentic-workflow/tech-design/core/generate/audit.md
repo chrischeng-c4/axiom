@@ -38,6 +38,13 @@ Public API manifest for `apps/agentic-workflow/src/generate/audit.rs` generated 
 | `is_clean` | apps/agentic-workflow/src/generate/audit.rs | function | pub | 853 | is_clean(&self) -> bool |
 | `parse_handwrite_markers` | apps/agentic-workflow/src/generate/audit.rs | function | pub | 1048 | parse_handwrite_markers(     content: &str,     file_path: &str, ) -> std::result::Result<Vec<HandwriteMarker>, Vec<HandwriteParseError>> |
 | `status` | apps/agentic-workflow/src/generate/audit.rs | function | pub | 876 | status(&self) -> &'static str |
+
+Read-only block regeneration preserves each Changes entry's canonical
+`generates:` list before calling the shared dispatcher. The dispatcher is
+fallible for exact ownership: an unexpected unsupported owned partition is
+rendered as deterministic audit mismatch text rather than a marker-only
+success, so audit remains fail-closed without mutating the target.
+
 ## Logic
 <!-- type: logic lang: mermaid -->
 

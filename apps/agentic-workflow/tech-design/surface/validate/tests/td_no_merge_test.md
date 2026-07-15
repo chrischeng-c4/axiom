@@ -14,6 +14,12 @@ capability_refs:
     claim: terminal-ec-process-liveness
     coverage: full
     rationale: "Real CLI regressions prove bounded no-child wrapper cleanup, pre-mutation timeout refusal, and cross-process single-flight with one EC launch."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-touched-codegen-drift-gate
+    claim: terminal-touched-codegen-drift-gate
+    coverage: full
+    rationale: "The real CLI regression proves immutable red refusal, executable exact-target repair, unrelated-drift exclusion, green EC closure, and terminal retry idempotency."
 ---
 
 # Standardized apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs
@@ -22,6 +28,11 @@ capability_refs:
 <!-- type: overview lang: markdown -->
 
 Public API manifest for `apps/agentic-workflow/tests/cli/tests/td_no_merge_test.rs`.
+
+The #1635 terminal regression creates accepted and unrelated CODEGEN owners,
+drifts both, and proves only the accepted touched claim blocks before EC while
+HEAD, index, issue, status, and target bytes stay unchanged. It executes the
+emitted scoped repair, then proves green closure and one-launch retry behavior.
 
 ### Symbols
 
@@ -1810,6 +1821,62 @@ fn write_847_changes_spec(root: &std::path::Path, entries: &[(&str, &str)]) {
     std::fs::write(spec_dir.join("demo.md"), content).unwrap();
 }
 
+/// #1635 fixture: one deterministic Schema CODEGEN claim. The production
+/// path and terminal path both compare its generated block through
+/// `generate::audit::audit_file`.
+fn write_1635_codegen_spec(root: &std::path::Path, spec_rel: &str, target: &str, type_name: &str) {
+    let spec = format!(
+        r#"---
+id: {type_name}-spec
+fill_sections: [schema, changes]
+---
+
+# {type_name}
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  {type_name}:
+    type: object
+    required: [value]
+    properties:
+      value: {{ type: string }}
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: {target}
+    action: create
+    section: schema
+    impl_mode: codegen
+```
+"#
+    );
+    let path = root.join(spec_rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, spec).unwrap();
+}
+
+fn git_bytes_1635(git: &std::path::Path, root: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    let output = std::process::Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
 /// Seed an open issue at `phase` with no `td-<slug>` branch — the shape of a
 /// real `cb_genned`/`cb_filled` WI walking into `aw td code-check` for the
 /// first time (fresh entry, not the #846 retry path). `spec_rel` is recorded
@@ -3582,6 +3649,227 @@ async fn test_code_check_touched_scope_ignores_unrelated_unmarked_file() {
         Some(td_phase::TD_MERGED),
         "code-check must still advance phase to td_merged"
     );
+}
+
+/// #1635 AC1-AC6: a committed hand-edit in this WI's accepted CODEGEN block
+/// refuses before EC or lifecycle mutation, emits an executable scoped
+/// `aw td gen <slug>` repair, ignores a simultaneously drifted unrelated
+/// spec/target, then permits the normal EC/close path and its idempotent
+/// terminal retry once parity is restored.
+#[tokio::test]
+async fn test_code_check_terminal_touched_codegen_red_repair_green_unrelated_and_retry() {
+    use agentic_workflow::generate::audit::{audit_file, ReportKind};
+    use agentic_workflow::issues::types::td_phase;
+    use agentic_workflow::issues::{IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_847_seed_repo(&git, root);
+
+    let evidence = tempfile::tempdir().unwrap();
+    let ec_sentinel = evidence.path().join("terminal-codegen-ec");
+    let ec_command = format!("printf launch >> {}", ec_sentinel.display());
+    write_858_ec_configured_aw_toml(
+        root,
+        "demo",
+        &[("terminal-codegen-ec", ec_command.as_str(), true)],
+    );
+
+    // Establish a clean unrelated CODEGEN owner before this WI's baseline.
+    // It will drift later, but must never enter the accepted-TD claim set.
+    let unrelated_spec = ".aw/tech-design/specs/unrelated.md";
+    let unrelated_target = "src/unrelated_generated.rs";
+    write_1635_codegen_spec(root, unrelated_spec, unrelated_target, "UnrelatedModel");
+    agentic_workflow::generate::apply::run_apply(&root.join(unrelated_spec), root, false).unwrap();
+    commit_all(&git, root);
+
+    let slug = "terminal-touched-codegen-test";
+    let accepted_target = "src/accepted_generated.rs";
+    write_1635_codegen_spec(root, DEMO_SPEC_REL, accepted_target, "AcceptedModel");
+    commit_td_init(&git, root, slug);
+    agentic_workflow::generate::apply::run_apply(&root.join(DEMO_SPEC_REL), root, false).unwrap();
+    commit_all(&git, root);
+
+    let accepted_clean = std::fs::read_to_string(root.join(accepted_target)).unwrap();
+    let accepted_drift = accepted_clean.replace("AcceptedModel", "DriftedAcceptedModel");
+    assert_ne!(
+        accepted_clean, accepted_drift,
+        "accepted drift edit must hit"
+    );
+    std::fs::write(root.join(accepted_target), accepted_drift).unwrap();
+    let unrelated_clean = std::fs::read_to_string(root.join(unrelated_target)).unwrap();
+    let unrelated_drift = unrelated_clean.replace("UnrelatedModel", "DriftedUnrelatedModel");
+    assert_ne!(
+        unrelated_clean, unrelated_drift,
+        "unrelated drift edit must hit"
+    );
+    std::fs::write(root.join(unrelated_target), unrelated_drift).unwrap();
+    commit_all(&git, root);
+
+    seed_858_open_issue_with_project(root, slug, td_phase::CB_FILLED, DEMO_SPEC_REL, "demo").await;
+    let backend = LocalBackend::from_project_root(root);
+    let issue_path = backend.issues_dir().join("open").join(format!("{slug}.md"));
+
+    // A staged, unrelated sentinel makes AC1's index preservation visible.
+    let staged_sentinel = "unrelated-staged.txt";
+    std::fs::write(root.join(staged_sentinel), "keep staged\n").unwrap();
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "--", staged_sentinel])
+        .status()
+        .unwrap()
+        .success());
+    let head_before = git_bytes_1635(&git, root, &["rev-parse", "HEAD"]);
+    let index_before = git_bytes_1635(&git, root, &["write-tree"]);
+    let cached_before = git_bytes_1635(&git, root, &["diff", "--cached", "--raw", "-z"]);
+    let status_before = git_bytes_1635(&git, root, &["status", "--porcelain=v1", "-z"]);
+    let issue_before = std::fs::read(&issue_path).unwrap();
+    let accepted_before = std::fs::read(root.join(accepted_target)).unwrap();
+    let unrelated_before = std::fs::read(root.join(unrelated_target)).unwrap();
+
+    let red = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        red.status.success(),
+        "{}",
+        String::from_utf8_lossy(&red.stderr)
+    );
+    let red_json: serde_json::Value = serde_json::from_slice(&red.stdout).unwrap();
+    assert_eq!(red_json["error_kind"], "terminal_touched_codegen_drift");
+    assert_eq!(red_json["files"], serde_json::json!([accepted_target]));
+    assert_eq!(red_json["next"]["command"], format!("aw td gen {slug}"));
+    assert!(red_json["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|finding| {
+            finding["file"] == accepted_target
+                && finding["spec_ref"] == format!("{DEMO_SPEC_REL}#schema")
+                && finding["status"] == "drift"
+        }));
+    assert!(
+        !String::from_utf8_lossy(&red.stdout).contains(unrelated_target),
+        "unrelated drift leaked into terminal verdict: {}",
+        String::from_utf8_lossy(&red.stdout)
+    );
+    assert!(!ec_sentinel.exists(), "red CODEGEN gate launched EC");
+    assert_eq!(
+        head_before,
+        git_bytes_1635(&git, root, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(index_before, git_bytes_1635(&git, root, &["write-tree"]));
+    assert_eq!(
+        cached_before,
+        git_bytes_1635(&git, root, &["diff", "--cached", "--raw", "-z"])
+    );
+    assert_eq!(
+        status_before,
+        git_bytes_1635(&git, root, &["status", "--porcelain=v1", "-z"])
+    );
+    assert_eq!(issue_before, std::fs::read(&issue_path).unwrap());
+    assert_eq!(
+        accepted_before,
+        std::fs::read(root.join(accepted_target)).unwrap()
+    );
+    assert_eq!(
+        unrelated_before,
+        std::fs::read(root.join(unrelated_target)).unwrap()
+    );
+    let still_open = backend.get(slug).await.unwrap().unwrap();
+    assert_eq!(still_open.phase.as_deref(), Some(td_phase::CB_FILLED));
+    assert_ne!(still_open.state, IssueState::Closed);
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 0);
+
+    // Clear only the test sentinel, then execute the emitted repair command's
+    // exact argv. It must keep phase/state unchanged and leave unrelated
+    // drift red under the shared path-mode comparison.
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["reset", "-q", "HEAD", "--", staged_sentinel])
+        .status()
+        .unwrap()
+        .success());
+    std::fs::remove_file(root.join(staged_sentinel)).unwrap();
+    let repair = Command::new(&aw_bin)
+        .args(["td", "gen", slug])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        repair.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&repair.stdout),
+        String::from_utf8_lossy(&repair.stderr)
+    );
+    let repair_json: serde_json::Value = serde_json::from_slice(&repair.stdout).unwrap();
+    assert_eq!(repair_json["action"], "repair_complete");
+    assert_eq!(
+        repair_json["artifacts"],
+        serde_json::json!([accepted_target])
+    );
+    assert_eq!(
+        repair_json["next"]["command"],
+        format!("aw td code-check {slug}")
+    );
+    assert!(!ec_sentinel.exists(), "repair launched EC");
+    let after_repair = backend.get(slug).await.unwrap().unwrap();
+    assert_eq!(after_repair.phase.as_deref(), Some(td_phase::CB_FILLED));
+    assert_ne!(after_repair.state, IssueState::Closed);
+    assert!(audit_file(&root.join(accepted_target), root)
+        .unwrap()
+        .iter()
+        .all(|report| !matches!(report.kind, ReportKind::Drift { .. })));
+    assert!(audit_file(&root.join(unrelated_target), root)
+        .unwrap()
+        .iter()
+        .any(|report| matches!(report.kind, ReportKind::Drift { .. })));
+
+    let green = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        green.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&green.stdout),
+        String::from_utf8_lossy(&green.stderr)
+    );
+    let green_json: serde_json::Value = serde_json::from_slice(&green.stdout).unwrap();
+    assert_eq!(green_json["action"], "done");
+    assert!(ec_sentinel.exists(), "green path did not launch EC");
+    let closed = backend.get(slug).await.unwrap().unwrap();
+    assert_eq!(closed.phase.as_deref(), Some(td_phase::TD_MERGED));
+    assert_eq!(closed.state, IssueState::Closed);
+
+    let retry = Command::new(&aw_bin)
+        .args(["td", "code-check", slug])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(retry.status.success());
+    let retry_json: serde_json::Value = serde_json::from_slice(&retry.stdout).unwrap();
+    assert_eq!(retry_json["action"], "done");
+    assert_eq!(
+        std::fs::read_to_string(&ec_sentinel).unwrap(),
+        "launch",
+        "terminal retry reran EC"
+    );
+    assert_eq!(count_cb_code_check_trailer_commits(&git, root), 1);
 }
 
 // CODEGEN-END

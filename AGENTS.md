@@ -74,10 +74,11 @@ explicitly asks for Claude-specific behavior.
 <!-- aw:cli-table:workflow:start -->
 | Verb | About |
 |------|-------|
+| `aw meta` | Initialize, synchronize, and check repository/project META-docs |
 | `aw wi` | Manage work-items — list/show/create/validate across local + GitHub backends |
 | `aw capability` | Product capability completion loop: report/next/run/check |
 | `aw td` | Tech-design and generated-code lifecycle |
-| `aw ec` | External-contract lifecycle: generate tests/tool configs and verify EC gates |
+| `aw ec` | External-contract lifecycle: draft/fill, independent semantic review, generate, and verify |
 | `aw health` | Aggregate project readiness, production gates, and blocker status |
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
 <!-- aw:cli-table:workflow:end -->
@@ -88,9 +89,9 @@ explicitly asks for Claude-specific behavior.
 `agent_prompt` from either until `completion.workflow_complete=true` or
 `requires_hitl=true`. (The old top-level runner verb is retired.)
 
-`aw wi` is work-item inventory, planning, and CRRR: `draft`, `list`, `show`,
+`aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `show`,
 `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
-`enrich`, `validate`, `fill-section`, `review`, `arbitrate`, plus the `run`
+`enrich`, `validate`, `fill-section`, plus the `run`
 driver above. Planning commands write local artifacts under
 `/tmp/aw/workspaces/<workspace>/workitems/{project}/...` and do not publish tracker changes. There is no
 `estimate`/`sprintize`; use `aw capability run --project <name>` as the
@@ -109,10 +110,12 @@ specifically checks TD/spec files for structure, section-format rules, and
 logical consistency. TD defines candidate implementation structure;
 capability and EC gates remain the source of product truth.
 
-`aw ec` is the external-contract lifecycle: generate the tests/tool configs
-an EC-gated capability needs and verify its EC gates. `aw health`'s
-`next.command` names `aw ec gen --verify` when an EC gate is the top
-remaining production blocker.
+`aw ec` is the only semantic approval loop: `draft` -> `fill` -> structural
+`check` -> independent `review`; `needs_revision` returns to bounded `fill`,
+while `accepted` advances to `gen` and `verify`. Until subagent review exists,
+production-required EC review evidence must be human-backed; same-agent
+self-review is not accepted. `aw health` routes missing approval to `aw ec
+review` and accepted EC generation gaps to `aw ec gen --verify`.
 
 The former `aw standardize` namespace (including `audit check`/`audit
 record`) is retired (#1278, epic #1270). Existing-project takeover uses
@@ -155,29 +158,25 @@ deliberately separate commands.
 <!-- aw:cli-table:support:start -->
 | Verb | About |
 |------|-------|
-| `aw chat` | Cross-checkout agent messaging via shared plain-text channel |
 | `aw guard` | Agent-runtime direct edit/create guard for Codex and Claude Code |
 | `aw llm` | Offline agent orientation: outline + capability/td/ec pillars + loop |
 | `aw upgrade` | Self-update this binary from a published GitHub release |
 | `aw issue` | Search, view, or create Agentic Workflow issues |
-| `aw view` | Read-only repo reader: projects/libs catalog, README capabilities, EC, TD, and native desktop app |
 <!-- aw:cli-table:support:end -->
 
 `aw conf check` verifies `aw.toml`'s generated project registry block
 without writing; `aw conf sync` auto-discovers projects and refreshes that
 block. Other projected artifacts are owned by their own producer commands and
 should be routed through `aw health` once those health checks are wired.
-`aw chat post/list/read/members/listen` is cross-checkout coordination
-through the shared Agentic Workflow chat channel.
-
+`aw meta init|sync|check` is the sole producer/checker for repo/project
+META-doc skeletons and AW-owned marker blocks; `check` is read-only and names
+the exact `sync` remediation when drift exists.
 `aw llm`, `aw upgrade`, and `aw issue` are the CLI-convention trio every
 ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 `upgrade`, `issue`" below for the full contract.
 
 `aw guard` is the agent-runtime direct edit/create guard for Codex and
-Claude Code (live-denies out-of-lifecycle writes). `aw view` is the
-read-only repo reader: projects/libs catalog, README capabilities, EC, TD,
-and the native desktop app.
+Claude Code (live-denies out-of-lifecycle writes).
 
 When the user asks for `aw wi`, `sdd issues`, `sdd gh issue`, or similar
 wording after the merge, inspect Agentic Workflow-managed GitHub issues for the
@@ -228,7 +227,7 @@ Canonical verb: `aw wi`. Legacy work-item aliases are removed from the active
 CLI surface.
 
 - One issue-platform id is one workflow root; do not invent a second slug.
-- Draft/CRRR intermediate state lives under `/tmp/aw/workspaces/<workspace>/workitems/{project}`.
+- Draft/planning intermediate state lives under `/tmp/aw/workspaces/<workspace>/workitems/{project}`.
 - Published state is projected to the issue platform configured in
   `aw.toml`.
 - Repo-root `.aw/` is retired from the AW ecosystem. Do not create, read, or

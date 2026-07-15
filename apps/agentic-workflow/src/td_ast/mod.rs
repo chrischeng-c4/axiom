@@ -37,6 +37,7 @@ pub use payloads::CliCommandDef;
 pub use payloads::CliManifestPayload;
 pub use payloads::ConfigKeyDef;
 pub use payloads::ConfigManifestPayload;
+pub use payloads::GeneratedUnitId;
 pub use payloads::JsonSchemaPayload;
 pub use payloads::OpenApiOperation;
 pub use payloads::OpenApiPathItem;

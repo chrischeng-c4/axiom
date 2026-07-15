@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/session.md#source
 // CODEGEN-BEGIN
-//! `Session` — the per-issue agent loop, shared by all SDD frontends.
+//! `Session` — the per-issue loop used by AW's agent-first lifecycle.
 //!
 //! Slice 1 surface: `create_issue(title)` performs
 //!   1. `aw wi create <title>` → slug
@@ -48,11 +48,7 @@ const SESSION_CHANNEL_BUFFER: usize = 64;
 
 const REQUIREMENTS_SYSTEM_PROMPT: &str = "You are an SDD Requirements author. Produce a concise, machine-readable Requirements section in Markdown for the provided issue title. Focus on Problem statement, Goals, and Non-goals. Output Markdown only — no preamble, no fences.";
 
-const REVIEW_SYSTEM_PROMPT: &str = "You are an SDD section reviewer. For each filled section in the issue body, judge whether the content meets the bar (concrete, testable, no filler). Output one verdict per section, plus an overall `approve` or `needs-revision` decision. Markdown only.";
-
-const REVISE_SYSTEM_PROMPT: &str = "You are an SDD section reviser. Given the current issue body and reviewer feedback, rewrite the flagged sections so they address the feedback. Output the revised section(s) in Markdown only — no preamble, no fences.";
-
-const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are cue's mainthread agent — the dev's conversational counterpart. Classify each dev message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
+const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are AW's mainthread agent — the developer's project-iteration counterpart. Classify each developer message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
 
   {"action": "new_issue", "title": "<short slug-friendly title>"}
     when the dev wants to create a new SDD issue.
@@ -67,13 +63,11 @@ pub struct Session {
     provider: Arc<dyn LLMProvider>,
     score_process: Arc<dyn ScoreProcess>,
     /// Active issue backend selected at construction (per
-    /// `.cue/config.toml` `[issue].backend`). `Session::decide` /
+    /// repository issue-backend configuration). `Session::decide` /
     /// `run_create_issue` route `create` calls through this trait
     /// instead of `score_process.create` directly — that keeps the
     /// backend choice observable at runtime and avoids hardcoding
-    /// `local`. SDD lifecycle ops (fill_section_apply / review_apply /
-    /// validate / merge) still go via `score_process` since slice 1 keeps
-    /// CRRR fill semantics scoped to local (issue R9).
+    /// `local`. Deterministic lifecycle ops still go via `score_process`.
     issue_backend: Arc<dyn IssueBackend>,
     router: Arc<dyn ModelRouter>,
     binding: Option<IssueBinding>,
@@ -213,12 +207,9 @@ async fn run_create_issue(
     })
     .await;
 
-    // Branch on backend kind: SDD CRRR fill semantics are scoped to
-    // LOCAL in slice 1 (issue R9). Remote backends just create the
-    // issue and stop — the dev gets confirmation in chat, no
-    // author/reviewer/reviser dispatch runs. That keeps the trait
-    // abstraction honest while preserving the existing local-only
-    // CRRR contract.
+    // Branch on backend kind. The local backend can run the linear
+    // skeleton -> fill -> validate flow. Remote backends create the
+    // issue and stop because they do not expose local fill artifacts.
     match issue_backend.backend_kind() {
         BackendKind::Local => {
             // Local path: score_process.create returns the real Dispatch
@@ -267,9 +258,8 @@ async fn run_create_issue(
         }
         kind => {
             // Remote path (github / gitlab / jira): create only, no
-            // lifecycle loop. Per R9: SDD CRRR fill semantics stay
-            // scoped to local — remote backends return the issue id
-            // and the dev moves on.
+            // lifecycle loop. Remote backends return the issue id and
+            // the dev moves on.
             let issue_id = match issue_backend.create(&title).await {
                 Ok(id) => id,
                 Err(e) => {
@@ -405,8 +395,6 @@ async fn drive_lifecycle_loop(
             } => {
                 let next_env = if inv.command.contains("validate") {
                     score_process.validate(&slug).await
-                } else if inv.command.contains("merge") {
-                    score_process.merge(&slug).await
                 } else {
                     let _ = tx
                         .send(SessionEvent::Error {
@@ -450,12 +438,9 @@ async fn drive_lifecycle_loop(
 
                 // Author dispatches carry a `sections` list — the agent
                 // loops internally (LLM turn + fill_section per section).
-                // Reviewer / Reviser are single-step.
-                let sections = match plan.apply {
-                    ApplyVerb::FillSection { section } => extract_sections(maybe_invoke.as_ref())
-                        .unwrap_or_else(|| vec![section.to_string()]),
-                    ApplyVerb::Review => vec![String::new()], // section unused
-                };
+                let ApplyVerb::FillSection { section } = plan.apply;
+                let sections = extract_sections(maybe_invoke.as_ref())
+                    .unwrap_or_else(|| vec![section.to_string()]);
 
                 let mut last_apply_env: Option<Envelope> = None;
                 for section in &sections {
@@ -465,14 +450,9 @@ async fn drive_lifecycle_loop(
                             .await?;
                     last_body = body.clone();
 
-                    let apply_res = match plan.apply {
-                        ApplyVerb::FillSection { .. } => {
-                            score_process
-                                .fill_section_apply(&slug, section, &body)
-                                .await
-                        }
-                        ApplyVerb::Review => score_process.review_apply(&slug, &body).await,
-                    };
+                    let apply_res = score_process
+                        .fill_section_apply(&slug, section, &body)
+                        .await;
                     let next = match apply_res {
                         Ok(next) => {
                             let _ = tx.send(SessionEvent::Envelope(next.clone())).await;
@@ -513,8 +493,8 @@ async fn drive_lifecycle_loop(
     }
 }
 
-/// Per-subagent dispatch plan: which routing task, system prompt, and
-/// `*_apply` verb to use after the LLM turn. Slice-by-slice extensible.
+/// Per-agent dispatch plan: which routing task, system prompt, and
+/// fill verb to use after the LLM turn.
 struct DispatchPlan {
     task: Task,
     system_prompt: &'static str,
@@ -527,8 +507,6 @@ enum ApplyVerb {
     /// Slice 3 will read the section name from the dispatch envelope's
     /// `invoke.args.sections` array; for now we only handle requirements.
     FillSection { section: &'static str },
-    /// `aw wi review --apply --slug S --body Y`.
-    Review,
 }
 
 fn dispatch_plan(role: &str) -> Option<DispatchPlan> {
@@ -537,21 +515,6 @@ fn dispatch_plan(role: &str) -> Option<DispatchPlan> {
             task: Task::Author,
             system_prompt: REQUIREMENTS_SYSTEM_PROMPT,
             user_intro: "Draft the Requirements section.",
-            apply: ApplyVerb::FillSection {
-                section: "requirements",
-            },
-        }),
-        "score-issue-reviewer" => Some(DispatchPlan {
-            task: Task::Review,
-            system_prompt: REVIEW_SYSTEM_PROMPT,
-            user_intro:
-                "Return one verdict per filled section plus an overall approve/needs-revision.",
-            apply: ApplyVerb::Review,
-        }),
-        "score-issue-reviser" => Some(DispatchPlan {
-            task: Task::Revise,
-            system_prompt: REVISE_SYSTEM_PROMPT,
-            user_intro: "Rewrite the flagged sections to address the reviewer feedback.",
             apply: ApplyVerb::FillSection {
                 section: "requirements",
             },

@@ -4,10 +4,10 @@ fill_sections: [overview, source, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "Issue and platform-sync tool TDs expose AW Core workflow state through configured external clients."
+    rationale: "Issue and platform-sync tool TDs expose AW workflow state through configured issue platforms."
 ---
 
 # Standardized apps/agentic-workflow/src/tools/fetch_issues.rs

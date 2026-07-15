@@ -1107,11 +1107,15 @@ fn project_health_next_command_stays_off_verify_ec_for_self_health_without_confi
     let summary = project_health_summary(&report);
 
     assert_eq!(summary["axes"]["ec"]["status"].as_str(), Some("advisory"));
+    assert_eq!(summary["policy_mode"], "sanctioned_direct_commit");
+    assert!(summary["hard_gates"].as_array().is_some_and(|gates| gates
+        .iter()
+        .any(|gate| gate == "capability_work_root_alignment")));
     let next_command = summary["next"]["command"].as_str().unwrap_or_default();
     assert!(!next_command.contains("--verify-ec"));
     assert_eq!(
         next_command,
-        "aw capability run --project agentic-workflow --non-interactive --max-ticks 1"
+        "aw capability check --project agentic-workflow --verify"
     );
 }
 

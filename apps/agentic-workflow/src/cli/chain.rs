@@ -249,6 +249,21 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "project-root envelope's work-item queue gate command",
     },
     EmitSite {
+        source: "run.rs:ec_draft_command (EC-first fresh WI admission)",
+        sample: "aw ec draft 1500 --project agentic-workflow --wi 1500",
+        note: "a fresh bounded WI creates its project-local EC skeleton before TD/codegen",
+    },
+    EmitSite {
+        source: "ec.rs:EC-first WI transition",
+        sample: "aw ec gen --project agentic-workflow --verify --wi 1500",
+        note: "only a successful EC generation may unlock the owning WI's TD create act",
+    },
+    EmitSite {
+        source: "run.rs:ec_verify_command (EC verdict transition)",
+        sample: "aw ec verify --project agentic-workflow --wi 1500",
+        note: "a completed TD/codegen candidate records its EC verdict before root dispatch",
+    },
+    EmitSite {
         source: "run.rs:loop_state_envelope (converged)",
         sample: "aw td code-check 915",
         note: "loop engine's terminal act, sourced from LoopState.next_action \
@@ -260,9 +275,9 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "project health's next-remediation command for a stale TD lock",
     },
     EmitSite {
-        source: "project.rs:project_health_next_command (capability run)",
-        sample: "aw capability run --project agentic-workflow --non-interactive --max-ticks 1",
-        note: "project health's next-remediation command for capability readiness",
+        source: "project.rs:project_health_next_command (self-hosting capability verification)",
+        sample: "aw capability check --project agentic-workflow --verify",
+        note: "self-hosting health verifies capability work roots without re-entering a root runner",
     },
     EmitSite {
         source: "standardize.rs:takeover_audit_health_worker_command (unrecorded)",
@@ -331,15 +346,16 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "run.rs:capability_run_command",
-        sample: "aw capability run work-item-planning --project agentic-workflow",
+        sample: "aw capability run work-item-planning --project jet",
         note: "#917: canonical `aw capability run <capability-id> --project <project>` \
-               replacement for the deprecated `aw run --root capability:<project>:<id>` forms",
+               replacement for the deprecated `aw run --root capability:<project>:<id>` forms; \
+               Agentic Workflow self-hosting is rejected at admission",
     },
     EmitSite {
         source: "run.rs:project_capability_rollup_command",
-        sample: "aw capability run --project agentic-workflow --non-interactive --max-ticks 1",
-        note: "#917: canonical replacement for the deprecated bare `aw run --project <project>` \
-               form; subsumes the project root via the existing project-scoped capability loop",
+        sample: "aw health --project agentic-workflow claims",
+        note: "self-hosting rollup is a read-only health inspection; other projects use the \
+               project-scoped capability loop",
     },
     EmitSite {
         source: "cb.rs:bare_code_check_guidance_envelope",
@@ -366,8 +382,8 @@ const EMIT_REGISTRY: &[EmitSite] = &[
 ///     `gen` -> `fill` -> `code-check`) and its sibling ec/capability/health
 ///     loops actually dispatch through.
 ///   - `Utility`: support tooling that is not itself a lifecycle-loop step —
-///     the CLI-convention trio (`llm`/`upgrade`/`issue`), `chat`/`guard`/
-///     `view`/`new`/`report-issue`/`generator`, and the read-only/debug `td`
+///     the CLI-convention trio (`llm`/`upgrade`/`issue`), `guard`/`new`/
+///     `report-issue`/`generator`, and the read-only/debug `td`
 ///     verbs (`ast`, `check`, `lock`, `promote`,
 ///     `audit-record` -- the former `standardize audit record`, rehomed by
 ///     #1278).
@@ -428,12 +444,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "new",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "view",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     VerbLifecycle {
@@ -506,7 +516,26 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         mutates_lifecycle: true,
         sunset_criterion: "",
     },
-    // -- wi (core loop: work-item inventory, planning, CRRR, run) -------
+    // -- meta (core: repository/project iteration control plane) -------
+    VerbLifecycle {
+        path: "meta.init",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "meta.sync",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "meta.check",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    // -- wi (core loop: work-item inventory, linear authoring, run) -----
     VerbLifecycle {
         path: "wi.draft.init",
         class: VerbLifecycleClass::Core,
@@ -515,12 +544,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.draft.fill",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.draft.review",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: false,
         sunset_criterion: "",
@@ -613,49 +636,6 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "wi.fill-section",
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.review",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "wi.arbitrate",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
-    },
-    // -- chat (support: cross-checkout agent messaging) -----------------
-    VerbLifecycle {
-        path: "chat.post",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.list",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.read",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.members",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
-        sunset_criterion: "",
-    },
-    VerbLifecycle {
-        path: "chat.listen",
-        class: VerbLifecycleClass::Utility,
-        mutates_lifecycle: false,
         sunset_criterion: "",
     },
     // -- issue (support: CLI-convention trio's issue verb) ---------------
@@ -800,7 +780,7 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     VerbLifecycle {
         path: "ec.review",
         class: VerbLifecycleClass::Core,
-        mutates_lifecycle: false,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     VerbLifecycle {
@@ -1375,8 +1355,6 @@ mod tests {
             "wi.update",
             "wi.close",
             "wi.fill-section",
-            "wi.review",
-            "wi.arbitrate",
             "td.create",
             "td.gen",
             "td.gen-source",
@@ -1410,7 +1388,6 @@ mod tests {
             "wi.show",
             "wi.find",
             "health",
-            "view",
             "llm",
             "upgrade",
             "td.check",
@@ -1422,7 +1399,6 @@ mod tests {
             "capability.next",
             "capability.check",
             "conf.check",
-            "chat.list",
         ];
         for path in read_only {
             assert_eq!(
@@ -1639,10 +1615,7 @@ mod tests {
     fn legacy_aw_run_project_only_normalizes_to_capability_rollup() {
         assert_eq!(
             normalize_legacy_next_action("aw run --project agentic-workflow", "irrelevant"),
-            Some(
-                "aw capability run --project agentic-workflow --non-interactive --max-ticks 1"
-                    .to_string()
-            )
+            Some("aw health --project agentic-workflow claims".to_string())
         );
     }
 

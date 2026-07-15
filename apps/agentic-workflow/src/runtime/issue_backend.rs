@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#source
 // CODEGEN-BEGIN
-//! Issue subsystem abstraction. cue's runtime talks to issues via this
+//! Issue subsystem abstraction. The AW runtime talks to configured issue state via this
 //! trait; concrete impls back it with local SDD files, GitHub Issues
 //! (gh CLI), GitLab Issues (glab CLI), or Jira REST API.
 //!
@@ -9,8 +9,8 @@
 //! Slice-1 contract:
 //! - `create / list / read` MUST work on every backend
 //! - `update / close` are required for `local`; remote backends MAY return
-//!   `BackendError::Unsupported` (per issue R8 — full SDD CRRR fill
-//!   semantics stay scoped to local in slice 1).
+//!   `BackendError::Unsupported` because local artifact mutation is not
+//!   projected to remote backends in slice 1.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ use thiserror::Error;
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#schema
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/issue_backend.md#changes
 /// Selects which backend `Session` constructs at startup. Matches the
-/// `[issue].backend` key in `.cue/config.toml`.
+/// repository configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendKind {

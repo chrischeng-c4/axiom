@@ -1,6 +1,6 @@
 ---
 id: sdd-runtime-session
-title: SDD runtime session — envelope-driven lifecycle loop
+title: AW runtime session linear WI lifecycle
 status: draft
 parent_cluster: path-b-missing-generator-logic
 fixture: apps/agentic-workflow/src/runtime/session.rs::drive_lifecycle_loop
@@ -14,461 +14,97 @@ capability_refs:
     rationale: "Runtime envelope and session logic define the root-runner completion and HITL contract."
 ---
 
-# agentic_workflow::runtime::session — envelope-driven lifecycle loop
-
-This spec is the LogicEmitter Pattern-3b fixture target. The hand-written
-function `drive_lifecycle_loop` in `apps/agentic-workflow/src/runtime/session.rs`
-implements the SDD CRRR/merge state machine on top of the score
-envelope protocol. It is heavy on `Result<_, _>` + `?` propagation and
-match-dispatch on `Envelope` variants — exactly the shape Pattern 3b
-needs to absorb.
-
-The function is the runtime engine cue / conductor consume to drive
-issue authoring → reviewer → reviser → merge end-to-end. 100% test
-coverage: 4 e2e TDD contracts in `projects/cue/tests/e2e_lifecycle.rs`
-exercise create-then-author, validate dispatching reviewer, full
-needs-revision branch, and full happy-path through merge.
+# Runtime Session Linear WI Lifecycle
 
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/agentic-workflow/src/runtime/session.rs` generated from AST during Score force-regeneration standardization.
+The runtime session turns a mainthread decision into a bounded WI authoring
+flow. Local work items run `create -> fill-section -> validate`; remote issue
+backends stop after creation. Only the Author routing task is accepted. Unknown
+roles or unsupported mainthread verbs fail explicitly instead of entering a
+generic review/revise cycle.
 
-### Symbols
-
-| Name | Target | Kind | Visibility | Line | Signature |
-|------|--------|------|------------|------|-----------|
-| `IssueBinding` | apps/agentic-workflow/src/runtime/session.rs | struct | pub | 42 |  |
-| `Phase` | apps/agentic-workflow/src/runtime/session.rs | enum | pub | 32 |  |
-| `Session` | apps/agentic-workflow/src/runtime/session.rs | struct | pub | 66 |  |
-| `SessionBuilder` | apps/agentic-workflow/src/runtime/session.rs | struct | pub | 684 |  |
-| `binding` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 89 | binding(&self) -> Option<&IssueBinding> |
-| `binding` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 714 | binding(mut self, b: IssueBinding) -> Self |
-| `build` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 718 | build(self) -> Result<Session> |
-| `builder` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 85 | builder() -> SessionBuilder |
-| `close_issue` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 184 | close_issue(&self, id: &IssueId, message: Option<&str>) -> Result<()> |
-| `create_issue` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 101 | create_issue(&mut self, title: &str) -> Result<mpsc::Receiver<SessionEvent>> |
-| `decide` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 133 | decide(&mut self, user_input: &str) -> Result<mpsc::Receiver<SessionEvent>> |
-| `issue_backend` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 706 | issue_backend(mut self, b: Arc<dyn IssueBackend>) -> Self |
-| `list_issues` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 170 | list_issues(&self, filter: &ListFilter) -> Result<Vec<IssueRef>> |
-| `provider` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 694 | provider(mut self, p: Arc<dyn LLMProvider>) -> Self |
-| `read_issue` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 177 | read_issue(&self, id: &IssueId) -> Result<IssueBody> |
-| `router` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 710 | router(mut self, r: Arc<dyn ModelRouter>) -> Self |
-| `score_process` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 698 | score_process(mut self, s: Arc<dyn ScoreProcess>) -> Self |
-| `set_binding` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 191 | set_binding(&mut self, binding: IssueBinding) |
-| `turn` | apps/agentic-workflow/src/runtime/session.rs | function | pub | 160 | turn(&mut self, _prompt: &str) -> Result<mpsc::Receiver<SessionEvent>> |
 ## Schema
 <!-- type: schema lang: yaml -->
 
-The loop consumes envelopes (defined in `apps/agentic-workflow/src/runtime/envelope.rs`)
-and dispatches via per-role plans. Local types:
-
 ```yaml
-$schema: "https://json-schema.org/draft/2020-12/schema"
-$id: "sdd-runtime-session-schema"
 definitions:
-  DispatchPlan:
-    description: "Per-subagent-role lookup table: which routing task, system prompt, user-intro, and apply verb to use after the LLM turn."
-    type: object
-    required: [task, system_prompt, user_intro, apply]
-    properties:
-      task:
-        $ref: "#/definitions/Task"
-      system_prompt:
-        type: string
-        description: "&'static str — the system prompt text for this role's LLM turn."
-      user_intro:
-        type: string
-        description: "&'static str — appended to the user message after slug + last_body context."
-      apply:
-        $ref: "#/definitions/ApplyVerb"
   Task:
     type: string
-    enum: [Author, Review, Revise]
-    description: "Routing key into ModelRouter — picks Gemini / GPT / Claude per team strengths."
+    enum: [Mainthread, Author]
   ApplyVerb:
-    description: "Which score *_apply verb to call after the LLM turn produces a body."
-    oneOf:
-      - type: object
-        required: [kind, section]
-        properties:
-          kind: { const: FillSection }
-          section:
-            type: string
-            description: "&'static str — section name (requirements / scope / reference_context). Default per role; overridden when Author dispatch carries an `invoke.args.sections` list."
-      - type: object
-        required: [kind]
-        properties:
-          kind: { const: Review }
-        description: "Calls `aw wi review --apply --slug S --body Y`."
-  RolePlanTable:
-    description: "Compile-time mapping from agent name to DispatchPlan. Extends slice-by-slice as new roles land."
     type: object
+    required: [kind, section]
     additionalProperties: false
     properties:
-      "score-issue-author":
-        $ref: "#/definitions/DispatchPlan"
-        x-defaults:
-          task: Author
-          apply: { kind: FillSection, section: requirements }
-      "score-issue-reviewer":
-        $ref: "#/definitions/DispatchPlan"
-        x-defaults:
-          task: Review
-          apply: { kind: Review }
-      "score-issue-reviser":
-        $ref: "#/definitions/DispatchPlan"
-        x-defaults:
-          task: Revise
-          apply: { kind: FillSection, section: requirements }
+      kind:
+        type: string
+        const: FillSection
+      section:
+        type: string
+        minLength: 1
+  DispatchPlan:
+    type: object
+    required: [task, agent_role, apply]
+    additionalProperties: false
+    properties:
+      task:
+        type: string
+        const: Author
+      agent_role:
+        type: string
+        const: score-issue-author
+      apply:
+        $ref: "#/definitions/ApplyVerb"
 ```
-
-The `Envelope` variants that drive the loop (referenced from
-`envelope.rs`):
-
-| Variant | Loop disposition |
-|---|---|
-| `Done {..}` | Terminate with `Ok(())`. |
-| `Error { message, .. }` | Send `SessionEvent::Error`, terminate with `Ok(())` (graceful, error already surfaced). |
-| `Batch {..}` | Unsupported in lifecycle context — send Error event, terminate with `Ok(())`. |
-| `Dispatch { agent: None, invoke: Some(inv), .. }` | Mainthread CLI invoke. Switch on `inv.command` (validate / merge today; extends slice-by-slice). |
-| `Dispatch { agent: Some(role), invoke, .. }` | Subagent dispatch. Look up `dispatch_plan(role)`; iterate sections (Author has multi); LLM turn + apply per section; last apply envelope drives next iteration. |
-| `Dispatch { agent: None, invoke: None, .. }` | Malformed — send Error event, terminate. |
 
 ## Logic
 <!-- type: logic lang: mermaid -->
 
 ```mermaid
 ---
-id: drive-lifecycle-loop
-description: |-
-  LogicEmitter Pattern-3b fixture. The flowchart below mirrors
-  `drive_lifecycle_loop` byte-for-byte intent. Edges marked
-  `fallible: true` are `?`-propagation points; arms that explicitly send
-  an error event before returning use Pattern-2 statement-position match
-  (no `?`, just a return-Err arm).
-signature: |-
-  async fn drive_lifecycle_loop(
-      initial_env: Envelope,
-      slug: String,
-      initial_body: String,
-      provider: Arc<dyn LLMProvider>,
-      score_process: Arc<dyn ScoreProcess>,
-      router: Arc<dyn ModelRouter>,
-      tx: mpsc::Sender<SessionEvent>,
-  ) -> Result<()>
-entry: init
+id: runtime-session-linear-wi
+entry: create
 nodes:
-  init:
-    kind: process
-    code: |-
-      let mut env = initial_env;
-      let mut last_body = initial_body;
-
-  outer_loop:
-    kind: loop
-    over: "iter::repeat(())"          # `loop { }` in source — modeled as infinite for-loop; 3b should add `kind: forever_loop` to drop the synthetic over/as.
-    as: "_unused"
-
-  match_env:
-    kind: match
-    expr: env
-    arms:
-      "Envelope::Done { .. }": arm_done
-      "Envelope::Error { ref message, .. }": arm_error
-      "Envelope::Batch { .. }": arm_batch
-      "Envelope::Dispatch { agent: None, invoke: Some(ref inv), .. }": arm_mainthread_invoke
-      "Envelope::Dispatch { agent: Some(ref role), invoke: ref maybe_invoke, .. }": arm_subagent
-      "Envelope::Dispatch { agent: None, invoke: None, .. }": arm_malformed
-
-  # ── Terminal arms (Pattern-1 + Pattern-2)
-  arm_done:
-    kind: terminal
-    value: "Ok(())"
-
-  arm_error:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Error { message: message.clone() }).await;
-  arm_error_return:
-    kind: terminal
-    value: "Ok(())"
-
-  arm_batch:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Error {
-          message: "lifecycle loop got Batch envelope (unsupported)".into(),
-      }).await;
-  arm_batch_return:
-    kind: terminal
-    value: "Ok(())"
-
-  arm_malformed:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Error {
-          message: "Dispatch envelope missing both agent and invoke".into(),
-      }).await;
-  arm_malformed_return:
-    kind: terminal
-    value: "Ok(())"
-
-  # ── Mainthread invoke arm (Pattern 2.5 expression-position decision; Pattern 3b error fan-in)
-  arm_mainthread_invoke:
-    kind: decision_expr
-    cond: "inv.command.contains(\"validate\")"
-    bind: next_env
-    true_value: "score_process.validate(&slug).await"
-    false_value: "if inv.command.contains(\"merge\") { score_process.merge(&slug).await } else { let _ = tx.send(SessionEvent::Error { message: format!(\"unsupported mainthread verb: {}\", inv.command) }).await; return Ok(()); }"
-    # NOTE for Pattern 3b: the false-branch's inner-else returns early without `?` — it's a side-effect-then-return, not bare propagation. Pattern 2-style. The whole bind-result is then matched below.
-  match_mainthread_result:
-    kind: match
-    expr: next_env
-    arms:
-      "Ok(next)": mainthread_ok
-      "Err(e)": mainthread_err
-  mainthread_ok:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Envelope(next.clone())).await;
-      env = next;
-    after: continue_outer   # back-edge to outer_loop head
-  mainthread_err:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Error {
-          message: format!("score invoke failed: {e}"),
-      }).await;
-  mainthread_err_return:
-    kind: terminal
-    value: "Err(anyhow!(e))"
-
-  # ── Subagent dispatch arm (Pattern 1 inner loop + Pattern 2 + Pattern 3b `?`)
-  arm_subagent:
-    kind: process
-    code: "let role = role.clone();"
-  lookup_plan:
-    kind: match
-    expr: "dispatch_plan(&role)"
-    arms:
-      "Some(p)": have_plan
-      "None": unknown_role
-  unknown_role:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Error {
-          message: format!("unknown agent role: {role}"),
-      }).await;
-  unknown_role_return:
-    kind: terminal
-    value: "Ok(())"
-
-  have_plan:
-    kind: process
-    code: "let plan = p;"           # rebound from the `Some(p)` arm
-  resolve_sections:
-    kind: match
-    expr: "plan.apply"
-    arms:
-      "ApplyVerb::FillSection { section }": sections_for_fill
-      "ApplyVerb::Review": sections_for_review
-  sections_for_fill:
-    kind: process
-    code: |-
-      let sections = extract_sections(maybe_invoke.as_ref())
-          .unwrap_or_else(|| vec![section.to_string()]);
-  sections_for_review:
-    kind: process
-    code: |-
-      let sections = vec![String::new()];
-
-  init_last_apply:
-    kind: process
-    code: "let mut last_apply_env: Option<Envelope> = None;"
-
-  per_section_loop:
-    kind: loop
-    over: "&sections"
-    as: section
-  build_msgs:
-    kind: process
-    code: |-
-      let prompt_messages =
-          build_prompt(&plan, &slug, &last_body, Some(section));
-
-  # ── Pattern 3b candidate: `let body = run_llm_turn(...).await?;` ──
-  llm_turn:
-    kind: process
-    fallible: true
-    bind: body
-    code: |-
-      run_llm_turn(&provider, &router, plan.task, prompt_messages, &tx).await
-    # 3b: `fallible: true` + `bind: body` → emits `let body = <code>?;`
-    # On `?`-propagation the surrounding fn must return `Result<_, _>` matching the inner Err. Already true here (signature returns `Result<()>`).
-
-  capture_body:
-    kind: process
-    code: "last_body = body.clone();"
-
-  apply_dispatch:
-    kind: match_expr
-    expr: "plan.apply"
-    bind: apply_res
-    arms_value:
-      "ApplyVerb::FillSection { .. }": "score_process.fill_section_apply(&slug, section, &body).await"
-      "ApplyVerb::Review": "score_process.review_apply(&slug, &body).await"
-    # NOTE: this is a Pattern-2.5 match_expr — value-returning match arms.
-    # arm `target_value` is a bare expression (no walking needed).
-    # 3b option: a `fallible: true` flag here would auto-`?`; but we want to
-    # preserve the side-effect (send Error event) before Err propagation, so
-    # we leave the `?` off and use an explicit match below.
-
-  match_apply_result:
-    kind: match
-    expr: apply_res
-    arms:
-      "Ok(next)": apply_ok
-      "Err(e)": apply_err
-  apply_ok:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Envelope(next.clone())).await;
-  apply_ok_set:
-    kind: process
-    code: "last_apply_env = Some(next);"
-    after: per_section_loop_continue
-
-  apply_err:
-    kind: process
-    code: |-
-      let _ = tx.send(SessionEvent::Error {
-          message: format!("score apply failed: {e}"),
-      }).await;
-  apply_err_return:
-    kind: terminal
-    value: "Err(anyhow!(e))"
-
-  per_section_loop_after:
-    kind: process
-    code: |-
-      env = last_apply_env
-          .expect("dispatch_plan always produces at least one section");
-    after: continue_outer
-
+  create: { kind: start, label: "Create work item" }
+  backend: { kind: decision, label: "Local artifact backend?" }
+  remote_done: { kind: terminal, label: "Return created remote issue" }
+  author: { kind: process, label: "Run score-issue-author for queued sections" }
+  fill: { kind: process, label: "Apply each fill-section result" }
+  validate: { kind: process, label: "Run aw wi validate" }
+  done: { kind: terminal, label: "Return terminal envelope" }
+  error: { kind: terminal, label: "Emit explicit unsupported-role or verb error" }
 edges:
-  - { from: init,                       to: outer_loop,                    kind: next }
-  - { from: outer_loop,                 to: match_env,                     kind: body }
-
-  - { from: match_env,                  to: arm_done,                      kind: branch, label: "Done" }
-  - { from: match_env,                  to: arm_error,                     kind: branch, label: "Error" }
-  - { from: match_env,                  to: arm_batch,                     kind: branch, label: "Batch" }
-  - { from: match_env,                  to: arm_mainthread_invoke,         kind: branch, label: "Dispatch (mainthread)" }
-  - { from: match_env,                  to: arm_subagent,                  kind: branch, label: "Dispatch (subagent)" }
-  - { from: match_env,                  to: arm_malformed,                 kind: branch, label: "Dispatch (malformed)" }
-
-  - { from: arm_error,                  to: arm_error_return,              kind: next }
-  - { from: arm_batch,                  to: arm_batch_return,              kind: next }
-  - { from: arm_malformed,              to: arm_malformed_return,          kind: next }
-
-  - { from: arm_mainthread_invoke,      to: match_mainthread_result,       kind: next }
-  - { from: match_mainthread_result,    to: mainthread_ok,                 kind: branch, label: "Ok" }
-  - { from: match_mainthread_result,    to: mainthread_err,                kind: branch, label: "Err" }
-  - { from: mainthread_err,             to: mainthread_err_return,         kind: next }
-  # mainthread_ok loops back to outer_loop head via `after: continue_outer` annotation.
-
-  - { from: arm_subagent,               to: lookup_plan,                   kind: next }
-  - { from: lookup_plan,                to: have_plan,                     kind: branch, label: "Some(p)" }
-  - { from: lookup_plan,                to: unknown_role,                  kind: branch, label: "None" }
-  - { from: unknown_role,               to: unknown_role_return,           kind: next }
-
-  - { from: have_plan,                  to: resolve_sections,              kind: next }
-  - { from: resolve_sections,           to: sections_for_fill,             kind: branch, label: "FillSection" }
-  - { from: resolve_sections,           to: sections_for_review,           kind: branch, label: "Review" }
-  - { from: sections_for_fill,          to: init_last_apply,               kind: next }
-  - { from: sections_for_review,        to: init_last_apply,               kind: next }
-
-  - { from: init_last_apply,            to: per_section_loop,              kind: next }
-  - { from: per_section_loop,           to: build_msgs,                    kind: body }
-  - { from: build_msgs,                 to: llm_turn,                      kind: next }
-  - { from: llm_turn,                   to: capture_body,                  kind: next }
-  - { from: capture_body,               to: apply_dispatch,                kind: next }
-  - { from: apply_dispatch,             to: match_apply_result,            kind: next }
-  - { from: match_apply_result,         to: apply_ok,                      kind: branch, label: "Ok" }
-  - { from: match_apply_result,         to: apply_err,                     kind: branch, label: "Err" }
-  - { from: apply_ok,                   to: apply_ok_set,                  kind: next }
-  - { from: apply_err,                  to: apply_err_return,              kind: next }
-  - { from: per_section_loop,           to: per_section_loop_after,        kind: after }
+  - { from: create, to: backend }
+  - { from: backend, to: remote_done, label: "no" }
+  - { from: backend, to: author, label: "yes" }
+  - { from: author, to: fill }
+  - { from: fill, to: validate }
+  - { from: validate, to: done }
+  - { from: author, to: error, label: "unknown role" }
+  - { from: validate, to: error, label: "unsupported verb" }
 ---
 flowchart TD
-    init --> outer_loop
-    outer_loop --> match_env
-    match_env -->|Done| arm_done
-    match_env -->|Error| arm_error
-    match_env -->|Batch| arm_batch
-    match_env -->|Dispatch mainthread| arm_mainthread_invoke
-    match_env -->|Dispatch subagent| arm_subagent
-    match_env -->|Dispatch malformed| arm_malformed
-    arm_mainthread_invoke --> match_mainthread_result
-    arm_subagent --> lookup_plan
-    lookup_plan --> have_plan
-    have_plan --> resolve_sections
-    resolve_sections --> init_last_apply
-    init_last_apply --> per_section_loop
-    per_section_loop --> build_msgs
-    build_msgs --> llm_turn
-    llm_turn --> capture_body
-    capture_body --> apply_dispatch
-    apply_dispatch --> match_apply_result
-    match_apply_result --> apply_ok
-    match_apply_result --> apply_err
+    create([Create work item]) --> backend{Local artifact backend?}
+    backend -->|no| remote_done([Return created remote issue])
+    backend -->|yes| author[Run score-issue-author]
+    author --> fill[Apply queued fill sections]
+    fill --> validate[Run aw wi validate]
+    validate --> done([Return terminal envelope])
+    author -->|unknown role| error([Emit explicit error])
+    validate -->|unsupported verb| error
 ```
-
-### 3b emitter notes (for main)
-
-1. `kind: process` + `fallible: true` + `bind: <name>` → emit
-   `let <name> = <code>?;`. The `?` requires the surrounding fn signature
-   declares `Result<_, _>`; emitter should validate this against the
-   `signature:` field.
-2. `kind: terminal` + `value: "Err(<expr>)"` already works under
-   Pattern 1 (terminal emits the value verbatim, `Err(...)` is a valid
-   value expression). No new emitter logic needed for explicit Err
-   terminals — the `?` shorthand at (1) is the only structural addition.
-3. The `loop { match X { ... } }` shape (outer `loop` keyword in source,
-   not `for`) is currently modeled as `kind: loop` over a synthetic
-   iterator. Pattern 3b is a good slice to add `kind: forever_loop`
-   (no `over` / `as`), which emits a bare `loop { walk(body) }`. Out of
-   scope for 3b core but a tiny adjacent win.
-4. `match_expr` with arms whose `target_value` is a bare expression
-   (Pattern 2.5) should be sufficient for the inner `apply_dispatch` —
-   the spike's expression-position match handler already covers it.
-5. Back-edges (`after: continue_outer`) — the emitter already implicitly
-   loops bodies; the outer `loop` here is just a forever-loop, so any
-   "continue" annotation on a process node should resolve to "fall
-   through to the next iteration of the enclosing loop". Verify against
-   the existing edge-walker before relying on it.
-
-### Test plan reference
-
-The 4 e2e contracts in `projects/cue/tests/e2e_lifecycle.rs` form the
-behavioral oracle. Once 3b ships and `drive_lifecycle_loop` becomes a
-`CODEGEN-BEGIN/END` block, these tests are the byte-equivalence proxy:
-
-- `slice1_step_through_create_then_fill_section` — single-section happy path
-- `slice2_fill_section_dispatch_chains_into_validate` — mainthread invoke
-- `slice2_reviewer_turn_uses_review_route` — subagent + GPT routing
-- `slice2_review_needs_revision_dispatches_reviser` — full needs-revision
-- `slice3_full_crrr_happy_path_terminates_on_done` — multi-section + merge
-
-All five must pass byte-for-byte after CODEGEN conversion.
 
 ## Source
 <!-- type: source lang: rust -->
-<!-- source-from-target: strip-handwrite -->
+<!-- source-from-target: strip-managed-markers -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/session.rs -->
-```rust
-//! `Session` — the per-issue agent loop, shared by all SDD frontends.
+~~~~~rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/session.md#source
+// CODEGEN-BEGIN
+//! `Session` — the per-issue loop used by AW's agent-first lifecycle.
 //!
 //! Slice 1 surface: `create_issue(title)` performs
 //!   1. `aw wi create <title>` → slug
@@ -516,11 +152,7 @@ const SESSION_CHANNEL_BUFFER: usize = 64;
 
 const REQUIREMENTS_SYSTEM_PROMPT: &str = "You are an SDD Requirements author. Produce a concise, machine-readable Requirements section in Markdown for the provided issue title. Focus on Problem statement, Goals, and Non-goals. Output Markdown only — no preamble, no fences.";
 
-const REVIEW_SYSTEM_PROMPT: &str = "You are an SDD section reviewer. For each filled section in the issue body, judge whether the content meets the bar (concrete, testable, no filler). Output one verdict per section, plus an overall `approve` or `needs-revision` decision. Markdown only.";
-
-const REVISE_SYSTEM_PROMPT: &str = "You are an SDD section reviser. Given the current issue body and reviewer feedback, rewrite the flagged sections so they address the feedback. Output the revised section(s) in Markdown only — no preamble, no fences.";
-
-const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are cue's mainthread agent — the dev's conversational counterpart. Classify each dev message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
+const MAINTHREAD_SYSTEM_PROMPT: &str = r#"You are AW's mainthread agent — the developer's project-iteration counterpart. Classify each developer message into a structured action. Output JSON ONLY (no preamble, no markdown fence) matching one of:
 
   {"action": "new_issue", "title": "<short slug-friendly title>"}
     when the dev wants to create a new SDD issue.
@@ -535,13 +167,11 @@ pub struct Session {
     provider: Arc<dyn LLMProvider>,
     score_process: Arc<dyn ScoreProcess>,
     /// Active issue backend selected at construction (per
-    /// `.cue/config.toml` `[issue].backend`). `Session::decide` /
+    /// repository issue-backend configuration). `Session::decide` /
     /// `run_create_issue` route `create` calls through this trait
     /// instead of `score_process.create` directly — that keeps the
     /// backend choice observable at runtime and avoids hardcoding
-    /// `local`. SDD lifecycle ops (fill_section_apply / review_apply /
-    /// validate / merge) still go via `score_process` since slice 1 keeps
-    /// CRRR fill semantics scoped to local (issue R9).
+    /// `local`. Deterministic lifecycle ops still go via `score_process`.
     issue_backend: Arc<dyn IssueBackend>,
     router: Arc<dyn ModelRouter>,
     binding: Option<IssueBinding>,
@@ -570,7 +200,7 @@ impl Session {
         let (tx, rx) = mpsc::channel(SESSION_CHANNEL_BUFFER);
 
         let provider = self.provider.clone();
-        let score_process = self.aw_process.clone();
+        let score_process = self.score_process.clone();
         let issue_backend = self.issue_backend.clone();
         let router = self.router.clone();
         let _turn_id = self.next_turn_id();
@@ -602,7 +232,7 @@ impl Session {
         let (tx, rx) = mpsc::channel(SESSION_CHANNEL_BUFFER);
 
         let provider = self.provider.clone();
-        let score_process = self.aw_process.clone();
+        let score_process = self.score_process.clone();
         let issue_backend = self.issue_backend.clone();
         let router = self.router.clone();
         let _turn_id = self.next_turn_id();
@@ -681,12 +311,9 @@ async fn run_create_issue(
     })
     .await;
 
-    // Branch on backend kind: SDD CRRR fill semantics are scoped to
-    // LOCAL in slice 1 (issue R9). Remote backends just create the
-    // issue and stop — the dev gets confirmation in chat, no
-    // author/reviewer/reviser dispatch runs. That keeps the trait
-    // abstraction honest while preserving the existing local-only
-    // CRRR contract.
+    // Branch on backend kind. The local backend can run the linear
+    // skeleton -> fill -> validate flow. Remote backends create the
+    // issue and stop because they do not expose local fill artifacts.
     match issue_backend.backend_kind() {
         BackendKind::Local => {
             // Local path: score_process.create returns the real Dispatch
@@ -735,9 +362,8 @@ async fn run_create_issue(
         }
         kind => {
             // Remote path (github / gitlab / jira): create only, no
-            // lifecycle loop. Per R9: SDD CRRR fill semantics stay
-            // scoped to local — remote backends return the issue id
-            // and the dev moves on.
+            // lifecycle loop. Remote backends return the issue id and
+            // the dev moves on.
             let issue_id = match issue_backend.create(&title).await {
                 Ok(id) => id,
                 Err(e) => {
@@ -873,8 +499,6 @@ async fn drive_lifecycle_loop(
             } => {
                 let next_env = if inv.command.contains("validate") {
                     score_process.validate(&slug).await
-                } else if inv.command.contains("merge") {
-                    score_process.merge(&slug).await
                 } else {
                     let _ = tx
                         .send(SessionEvent::Error {
@@ -918,12 +542,9 @@ async fn drive_lifecycle_loop(
 
                 // Author dispatches carry a `sections` list — the agent
                 // loops internally (LLM turn + fill_section per section).
-                // Reviewer / Reviser are single-step.
-                let sections = match plan.apply {
-                    ApplyVerb::FillSection { section } => extract_sections(maybe_invoke.as_ref())
-                        .unwrap_or_else(|| vec![section.to_string()]),
-                    ApplyVerb::Review => vec![String::new()], // section unused
-                };
+                let ApplyVerb::FillSection { section } = plan.apply;
+                let sections = extract_sections(maybe_invoke.as_ref())
+                    .unwrap_or_else(|| vec![section.to_string()]);
 
                 let mut last_apply_env: Option<Envelope> = None;
                 for section in &sections {
@@ -933,14 +554,9 @@ async fn drive_lifecycle_loop(
                             .await?;
                     last_body = body.clone();
 
-                    let apply_res = match plan.apply {
-                        ApplyVerb::FillSection { .. } => {
-                            score_process
-                                .fill_section_apply(&slug, section, &body)
-                                .await
-                        }
-                        ApplyVerb::Review => score_process.review_apply(&slug, &body).await,
-                    };
+                    let apply_res = score_process
+                        .fill_section_apply(&slug, section, &body)
+                        .await;
                     let next = match apply_res {
                         Ok(next) => {
                             let _ = tx.send(SessionEvent::Envelope(next.clone())).await;
@@ -981,8 +597,8 @@ async fn drive_lifecycle_loop(
     }
 }
 
-/// Per-subagent dispatch plan: which routing task, system prompt, and
-/// `*_apply` verb to use after the LLM turn. Slice-by-slice extensible.
+/// Per-agent dispatch plan: which routing task, system prompt, and
+/// fill verb to use after the LLM turn.
 struct DispatchPlan {
     task: Task,
     system_prompt: &'static str,
@@ -995,8 +611,6 @@ enum ApplyVerb {
     /// Slice 3 will read the section name from the dispatch envelope's
     /// `invoke.args.sections` array; for now we only handle requirements.
     FillSection { section: &'static str },
-    /// `aw wi review --apply --slug S --body Y`.
-    Review,
 }
 
 fn dispatch_plan(role: &str) -> Option<DispatchPlan> {
@@ -1005,21 +619,6 @@ fn dispatch_plan(role: &str) -> Option<DispatchPlan> {
             task: Task::Author,
             system_prompt: REQUIREMENTS_SYSTEM_PROMPT,
             user_intro: "Draft the Requirements section.",
-            apply: ApplyVerb::FillSection {
-                section: "requirements",
-            },
-        }),
-        "score-issue-reviewer" => Some(DispatchPlan {
-            task: Task::Review,
-            system_prompt: REVIEW_SYSTEM_PROMPT,
-            user_intro:
-                "Return one verdict per filled section plus an overall approve/needs-revision.",
-            apply: ApplyVerb::Review,
-        }),
-        "score-issue-reviser" => Some(DispatchPlan {
-            task: Task::Revise,
-            system_prompt: REVISE_SYSTEM_PROMPT,
-            user_intro: "Rewrite the flagged sections to address the reviewer feedback.",
             apply: ApplyVerb::FillSection {
                 section: "requirements",
             },
@@ -1164,7 +763,7 @@ impl SessionBuilder {
         self
     }
     pub fn score_process(mut self, s: Arc<dyn ScoreProcess>) -> Self {
-        self.aw_process = Some(s);
+        self.score_process = Some(s);
         self
     }
     /// Override the active issue backend. Defaults to a
@@ -1185,7 +784,7 @@ impl SessionBuilder {
     }
     pub fn build(self) -> Result<Session> {
         let score_process = self
-            .aw_process
+            .score_process
             .ok_or_else(|| anyhow!("SessionBuilder: score_process is required"))?;
         // Default the issue backend to LocalIssueBackend over the
         // provided ScoreProcess — keeps tests that only set score_process
@@ -1292,6 +891,7 @@ mod tests {
                     "sections": ["requirements"],
                 }),
             }),
+            artifact_quality_profile: None,
         });
         mock.enqueue_fill_section(Envelope::Done {
             slug: "add-metrics-dashboard".into(),
@@ -1305,7 +905,7 @@ mod tests {
 
         let mut session = Session::builder()
             .provider(provider)
-            .aw_process(mock.clone())
+            .score_process(mock.clone())
             .router(Arc::new(StaticRouter::empty().with_route(
                 Task::Author,
                 ModelChoice {
@@ -1366,7 +966,7 @@ mod tests {
 
         let mut session = Session::builder()
             .provider(provider)
-            .aw_process(mock.clone())
+            .score_process(mock.clone())
             .router(Arc::new(StaticRouter::defaults()))
             .build()
             .unwrap();
@@ -1392,7 +992,7 @@ mod tests {
             id: IssueId::new("alpha"),
             title: "Alpha".into(),
             state: IssueState::Open,
-            labels: vec!["app:cue".into()],
+            labels: vec!["app:jet".into()],
         }]);
         mock_backend.enqueue_read(IssueBody {
             id: IssueId::new("alpha"),
@@ -1402,7 +1002,7 @@ mod tests {
         });
         let session = Session::builder()
             .provider(Arc::new(ScriptedProvider::new(vec![])))
-            .aw_process(mock_score)
+            .score_process(mock_score)
             .issue_backend(mock_backend.clone())
             .router(Arc::new(StaticRouter::defaults()))
             .build()
@@ -1437,31 +1037,26 @@ mod tests {
         );
     }
 }
-```
+
+// CODEGEN-END
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
-files:
+changes:
   - path: apps/agentic-workflow/src/runtime/session.rs
     action: modify
     section: source
     impl_mode: codegen
-    note: |-
-      Codegen owns the complete session source through a source template.
-      LogicEmitter Pattern 3b can later narrow ownership around
-      `drive_lifecycle_loop`; until then the source template preserves the
-      async orchestration behavior and tests as the regenerable artifact.
-    spec_anchor: "#logic-drive-lifecycle-loop"
+    description: Preserve the bounded create, author-fill, and validate runtime.
   - action: annotate
     section: logic
     impl_mode: hand-written
-    description: "Traceability metadata edge for the logic section."
-
+    description: Traceability edge for the linear runtime state machine.
   - action: annotate
     section: schema
     impl_mode: hand-written
-    description: "Traceability metadata edge for the schema section."
-
+    description: Traceability edge for the runtime role contract.
 ```

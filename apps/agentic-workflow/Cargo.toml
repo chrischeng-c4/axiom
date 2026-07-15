@@ -17,8 +17,6 @@ path = "src/bin/aw.rs"
 [dependencies]
 # Code intelligence (extracted to separate crate in #1164)
 cclab-compass = { path = "../../libs/compass" }
-cclab-surface = { path = "../../libs/surface" }
-cclab-ui-runtime = { path = "../../libs/ui-runtime" }
 
 # LLM agent framework
 agent = { path = "../../projects/mamba/mambalibs/agentkit/core" }
@@ -69,8 +67,6 @@ ignore = "0.4"
 dirs = "5"
 fs2 = "0.4"
 libc = "0.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
-fontdue = "0.9.3"
 
 # AST parsing (tree-sitter)
 tree-sitter = "0.25"
@@ -102,9 +98,6 @@ tokio.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 
-# HTTP server (UI viewer)
-axum.workspace = true
-
 # HTTP client for platform sync (GitHub/GitLab) + Jira REST API backend
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 
@@ -121,20 +114,12 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tempfile = "3"
 
 [features]
-default = ["self-update", "report-issue", "ui"]
+default = ["self-update", "report-issue"]
 self-update = ["cli-std/online"]
 report-issue = ["cli-std/online"]
-ui = ["objc", "open"]
-
-[dependencies.objc]
-version = "0.2"
-optional = true
-
-[dependencies.open]
-version = "5"
-optional = true
 
 [dev-dependencies]
+axum.workspace = true
 tempfile = "3"
 # Used by tests/regen_syntax.rs to validate that rust/* codegen output
 # parses as syntactically valid Rust — cheaper than a full cargo check

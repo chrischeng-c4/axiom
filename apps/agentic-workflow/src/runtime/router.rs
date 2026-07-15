@@ -3,9 +3,8 @@
 //! Model routing — which `(provider, model)` to use for a given task type.
 //!
 //! Slice 1 ships a `StaticRouter` (in-memory map) sufficient for tests and
-//! a default routing table aligned with the team's per-task model strengths
-//! (Gemini for authoring, GPT for review, Claude for revise/default).
-//! Cue's `.cue/config.toml` lookup wraps this trait via its own impl.
+//! a default routing table aligned with the team's per-task model strengths.
+//! The AW host selects this trait implementation from repository configuration.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -29,8 +28,6 @@ pub enum Task {
     /// mis-classified intent makes the product feel broken.
     Mainthread,
     Author,
-    Review,
-    Revise,
 }
 
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
@@ -39,8 +36,6 @@ impl Task {
         match self {
             Task::Mainthread => "mainthread",
             Task::Author => "author",
-            Task::Review => "review",
-            Task::Revise => "revise",
         }
     }
 }
@@ -54,7 +49,7 @@ pub trait ModelRouter: Send + Sync {
 }
 
 /// In-memory router used by tests and as a sensible default. Production code
-/// (cue TUI, conductor) wraps `ConfigRouter` (in cue::config) over user TOML.
+/// A repository host may wrap `ConfigRouter` over its configured model policy.
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
 pub struct StaticRouter {
     table: BTreeMap<&'static str, ModelChoice>,
@@ -64,7 +59,7 @@ pub struct StaticRouter {
 impl StaticRouter {
     /// Default routing aligned with the team's per-task strengths memo:
     ///   mainthread → Claude (orchestration / conversational),
-    ///   author → Gemini, review → GPT, revise → Claude.
+    ///   author → Gemini.
     pub fn defaults() -> Self {
         let mut table = BTreeMap::new();
         table.insert(
@@ -79,20 +74,6 @@ impl StaticRouter {
             ModelChoice {
                 provider: "gemini".into(),
                 model: "gemini-2.5-pro".into(),
-            },
-        );
-        table.insert(
-            "review",
-            ModelChoice {
-                provider: "openai".into(),
-                model: "gpt-5".into(),
-            },
-        );
-        table.insert(
-            "revise",
-            ModelChoice {
-                provider: "anthropic".into(),
-                model: "claude-opus-4-7".into(),
             },
         );
         Self { table }
@@ -128,20 +109,6 @@ mod tests {
         let choice = r.route(Task::Author).await.unwrap();
         assert_eq!(choice.provider, "gemini");
         assert!(choice.model.starts_with("gemini-"));
-    }
-
-    #[tokio::test]
-    async fn defaults_route_review_to_openai() {
-        let r = StaticRouter::defaults();
-        let choice = r.route(Task::Review).await.unwrap();
-        assert_eq!(choice.provider, "openai");
-    }
-
-    #[tokio::test]
-    async fn defaults_route_revise_to_anthropic() {
-        let r = StaticRouter::defaults();
-        let choice = r.route(Task::Revise).await.unwrap();
-        assert_eq!(choice.provider, "anthropic");
     }
 
     #[tokio::test]

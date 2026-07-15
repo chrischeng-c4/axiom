@@ -94,13 +94,13 @@ pub struct Issue {
     /// Session ID for agent resume-by-index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    /// CRR validation errors — set by aw wi validate, cleared on pass.
+    /// WI validation errors — set by aw wi validate, cleared on pass.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validation_errors: Vec<String>,
-    /// CRRR review count — number of score-issue-reviewer runs on this issue.
+    /// Legacy review count retained only for decoding and round-tripping older trackers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_count: Option<u8>,
-    /// Sections flagged by the most recent needs-revision review.
+    /// Legacy flagged sections retained only for older tracker compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flagged_sections: Option<Vec<IssueSection>>,
     /// Loop-fill retry counter. Reset to None on successful phase advance.

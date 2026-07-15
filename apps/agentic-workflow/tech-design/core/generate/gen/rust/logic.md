@@ -194,7 +194,7 @@ fn emit_loop_opening(node: &FlowNode, pad: &str) -> Vec<String> {
 /// emitted code (one or more lines). Returns `None` if no primitive is bound
 /// or the name isn't registered.
 ///
-/// /// @spec apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md#logic (gap-blocker #flowchart-to-fn)
+/// @spec apps/agentic-workflow/tech-design/surface/specs/mermaid-plus-primitive-vocabulary.md#logic
 fn emit_primitive_for_node(node: &FlowNode) -> Option<String> {
     let prim_name = node.primitive.as_deref()?;
     let entry = lookup_by_name(prim_name)?;
@@ -1091,7 +1091,7 @@ mod tests {
 
     /// Process node with `primitive: parse_jsonl_stream` should emit the
     /// registry's substituted emit_template instead of a method call.
-    /// REQ apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md#logic — gap-blocker #flowchart-to-fn
+    /// REQ apps/agentic-workflow/tech-design/surface/specs/mermaid-plus-primitive-vocabulary.md#logic
     #[test]
     fn test_process_node_with_primitive_emits_template() {
         let mut nodes = HashMap::new();
@@ -1103,16 +1103,16 @@ mod tests {
             },
         );
         let mut inputs = HashMap::new();
-        inputs.insert("path".to_string(), "CHANNEL_PATH".to_string());
+        inputs.insert("path".to_string(), "EVENT_LOG_PATH".to_string());
         nodes.insert(
             "read_msgs".to_string(),
             FlowNode {
                 kind: FlowNodeKind::Process,
-                label: Some("Parse channel".to_string()),
+                label: Some("Parse event log".to_string()),
                 primitive: Some("parse_jsonl_stream".to_string()),
                 inputs,
                 output: Some("msgs".to_string()),
-                type_param: Some("ChannelMessage".to_string()),
+                type_param: Some("EventRecord".to_string()),
                 ..Default::default()
             },
         );
@@ -1145,12 +1145,12 @@ mod tests {
         let config = crate::generate::types::RustConfig::default();
         let out = generate_logic(&content, "spec.md", &config);
         assert!(
-            out.code.contains("let msgs: Vec<ChannelMessage>"),
+            out.code.contains("let msgs: Vec<EventRecord>"),
             "primitive should substitute {{out}} and {{T}}, got:\n{}",
             out.code,
         );
         assert!(
-            out.code.contains("CHANNEL_PATH"),
+            out.code.contains("EVENT_LOG_PATH"),
             "primitive should substitute {{path}} input binding, got:\n{}",
             out.code,
         );
@@ -1161,7 +1161,7 @@ mod tests {
         );
         // Crucially: must NOT fall back to label_to_process todo!()
         assert!(
-            !out.code.contains("todo!(\"process: Parse channel\")"),
+            !out.code.contains("todo!(\"process: Parse event log\")"),
             "primitive node must not emit todo! placeholder, got:\n{}",
             out.code,
         );
@@ -1169,7 +1169,7 @@ mod tests {
 
     /// Process node with `primitive: append_line_atomic` substitutes the
     /// O_APPEND emit template via `{path}` and `{value}`.
-    /// REQ apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md#logic — gap-blocker #flowchart-to-fn
+    /// REQ apps/agentic-workflow/tech-design/surface/specs/mermaid-plus-primitive-vocabulary.md#logic
     #[test]
     fn test_process_node_primitive_append_line_atomic() {
         let mut nodes = HashMap::new();
@@ -1181,7 +1181,7 @@ mod tests {
             },
         );
         let mut inputs = HashMap::new();
-        inputs.insert("path".to_string(), "CHANNEL_PATH".to_string());
+        inputs.insert("path".to_string(), "EVENT_LOG_PATH".to_string());
         inputs.insert("value".to_string(), "msg".to_string());
         nodes.insert(
             "write_msg".to_string(),
@@ -1232,14 +1232,14 @@ mod tests {
             out.code,
         );
         assert!(
-            out.code.contains("CHANNEL_PATH"),
+            out.code.contains("EVENT_LOG_PATH"),
             "primitive must substitute {{path}} into open call, got:\n{}",
             out.code,
         );
     }
 
     /// Unknown primitive name falls back to label_to_process (no panic).
-    /// REQ apps/agentic-workflow/tech-design/surface/specs/score-chat-jsonl-migration.md#logic — defensive
+    /// REQ apps/agentic-workflow/tech-design/surface/specs/mermaid-plus-primitive-vocabulary.md#logic — defensive
     #[test]
     fn test_process_node_unknown_primitive_falls_back_to_todo() {
         let mut nodes = HashMap::new();

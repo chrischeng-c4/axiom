@@ -127,6 +127,9 @@ Supported profile traits include `cli_facing`, `competitive_replacement`,
 derives an API-list baseline, not an OpenAPI-completeness requirement. Use
 `primary_replicas` only when the product is expected to expose a primary /
 replica topology; do not select it for single-primary products such as Lumen.
+For a `service` profile, absence of `stateful_storage` selects the Deployment
+workload contract; declaring `stateful_storage` selects the StatefulSet
+contract and derives `stateful-service-workload`.
 
 ```md
 # Jet

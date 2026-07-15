@@ -145,13 +145,14 @@ pub fn agents_block_from_claude_block(block: &str) -> String {
 /// `aw health`'s takeover-audit axis (already covered by the `health` row
 /// below) and `audit record` rehomed as `aw td audit-record` (covered by the
 /// `td` row).
-pub const WORKFLOW_TABLE_VERBS: &[&str] = &["wi", "capability", "td", "ec", "health", "conf"];
+pub const WORKFLOW_TABLE_VERBS: &[&str] =
+    &["meta", "wi", "capability", "td", "ec", "health", "conf"];
 
 /// Top-level `Commands` verbs rendered into the generated "Support CLI"
 /// table: the CLI-convention trio (`llm`/`upgrade`/`issue` — see "CLI
 /// Convention: every CLI ships `llm`, `upgrade`, `issue`") plus the
 /// remaining agent-support verbs.
-pub const SUPPORT_TABLE_VERBS: &[&str] = &["chat", "guard", "llm", "upgrade", "issue", "view"];
+pub const SUPPORT_TABLE_VERBS: &[&str] = &["guard", "llm", "upgrade", "issue"];
 
 /// Marker pair around the generated Workflow CLI table, nested inside the
 /// `aw:start`/`aw:end` managed block.
@@ -312,78 +313,18 @@ pub fn agents_skill_body_from_claude_skill_body(body: &str) -> String {
 // Repo-root Projects table (issue #985, init-projector slice 2/3)
 // ---------------------------------------------------------------------------
 
-/// One row of the repo-root README's generated Projects table: a top-level
-/// `projects/<name>` entry sourced from `aw.toml`'s `[[projects]]`
-/// registry.
-struct ConfigProjectRow {
-    name: String,
-    path: String,
-}
-
-/// The TOML value of a `key = "value"` line, given the text right after
-/// `key`. Returns `None` when `after_key` doesn't start with `=` — including
-/// when `after_key` actually came from a different key that merely shares
-/// `key` as a textual prefix (e.g. matching `"name"` against a
-/// `named_thing = ...` line leaves `"d_thing = ..."`, which does not start
-/// with `=`).
-fn strip_toml_string_value(after_key: &str) -> Option<String> {
-    let val = after_key.trim().strip_prefix('=')?.trim();
-    let val = val.trim_matches('"').trim_matches('\'');
-    (!val.is_empty()).then(|| val.to_string())
-}
-
-/// True if `path` is a direct `projects/<single-segment>` entry — the root
-/// Projects table lists top-level projects only, not nested library crates
-/// (`projects/mamba/mambalibs/...`) or `crates/`/`libs/` entries.
+/// True if `path` is a direct `apps/<single-segment>` or
+/// `projects/<single-segment>` entry — the root Projects table lists product
+/// roots only, not nested library crates (`projects/mamba/mambalibs/...`) or
+/// `crates/`/`libs/` entries.
 fn is_top_level_project_path(path: &str) -> bool {
-    match path.strip_prefix("projects/") {
+    match path
+        .strip_prefix("apps/")
+        .or_else(|| path.strip_prefix("projects/"))
+    {
         Some(rest) => !rest.is_empty() && !rest.contains('/'),
         None => false,
     }
-}
-
-/// Scan `aw.toml`'s text for every top-level `[[projects]]` entry —
-/// both the hand-written registry and the auto-generated `# BEGIN/END AW
-/// SYNC` block, since the Projects table's source of truth is "registered
-/// in config.toml", not which section registered it. Nested array tables
-/// such as `[[projects.workspaces]]` are skipped: only a literal
-/// `[[projects]]` header line opens a top-level entry. When a name is
-/// registered more than once (a hand-written entry and its `AW SYNC`
-/// duplicate), the first occurrence in file order wins, so the hand-written
-/// section always takes priority.
-fn parse_top_level_project_rows(config_text: &str) -> Vec<ConfigProjectRow> {
-    let mut rows = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut in_projects_table = false;
-    let mut current_name: Option<String> = None;
-
-    for line in config_text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_projects_table = trimmed == "[[projects]]";
-            current_name = None;
-            continue;
-        }
-        if !in_projects_table {
-            continue;
-        }
-        if let Some(name) = trimmed
-            .strip_prefix("name")
-            .and_then(strip_toml_string_value)
-        {
-            current_name = Some(name);
-        } else if let Some(path) = trimmed
-            .strip_prefix("path")
-            .and_then(strip_toml_string_value)
-        {
-            if let Some(name) = current_name.clone() {
-                if is_top_level_project_path(&path) && seen.insert(name.clone()) {
-                    rows.push(ConfigProjectRow { name, path });
-                }
-            }
-        }
-    }
-    rows
 }
 
 /// Extract the first full sentence of a project README's `## Brief` section
@@ -412,10 +353,10 @@ fn first_brief_sentence(readme_text: &str) -> Option<String> {
     })
 }
 
-/// Render the repo-root README's generated Projects table from
-/// `<project_root>/aw.toml`'s top-level `[[projects]]` registry, one
-/// row per entry in scan order, with each row's one-liner sourced from that
-/// project's own `README.md` `## Brief` first sentence (see
+/// Render the repo-root README's generated Projects table from the shared AW
+/// project registry (root `aw.toml` plus configured project-local discovery),
+/// one row per top-level app/project root, with each row's one-liner sourced
+/// from that project's own `README.md` `## Brief` first sentence (see
 /// [`first_brief_sentence`]).
 ///
 /// # Errors
@@ -424,11 +365,13 @@ fn first_brief_sentence(readme_text: &str) -> Option<String> {
 /// project's `README.md` cannot be read or has no `## Brief` sentence — both
 /// indicate a genuinely broken registry entry, not optional input.
 pub fn render_projects_table(project_root: &std::path::Path) -> anyhow::Result<String> {
-    let config_text = std::fs::read_to_string(project_root.join("aw.toml"))?;
-    let rows = parse_top_level_project_rows(&config_text);
+    let rows = crate::services::project_registry::load_project_config_rows(project_root)?;
 
     let mut out = String::from("| Project | What it is |\n|---------|------------|\n");
-    for row in rows {
+    for row in rows
+        .into_iter()
+        .filter(|row| is_top_level_project_path(&row.path))
+    {
         let readme_path = project_root.join(&row.path).join("README.md");
         let readme_text = std::fs::read_to_string(&readme_path).map_err(|e| {
             anyhow::anyhow!(
@@ -496,8 +439,8 @@ pub fn upsert_projects_table(
 ///
 /// `contributing_anchor` is `None` for traits with no settled CONTRIBUTING.md
 /// doc anchor (issue #1078, archetype-as-traits slice 2/3: `cli_facing`,
-/// `competitive_replacement`, `long_running`, `network_exposed`,
-/// `agent_facing`, `stateful_storage` — carried over from
+/// `competitive_replacement`, `long_running`, and `network_exposed` — carried
+/// over from
 /// `capability::other_known_trait_baseline_caps`, now folded into this one
 /// registry with no anchor rather than a second lookup table). Anchored
 /// traits render a working `Enforces` link and participate in
@@ -592,15 +535,19 @@ pub const TRAITS: &[TraitDef] = &[
     },
     TraitDef {
         id: "agent_facing",
-        baseline_caps: &[],
-        contributing_anchor: None,
-        about: "Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet.",
+        baseline_caps: &["developer-agent-experience"],
+        contributing_anchor: Some(
+            "## DX convention: every service and CLI ships a Developer & Agent Experience capability",
+        ),
+        about: "Project is primarily driven by agents rather than humans and must own the Developer & Agent Experience capability baseline.",
     },
     TraitDef {
         id: "stateful_storage",
-        baseline_caps: &[],
-        contributing_anchor: None,
-        about: "Project owns durable stateful storage; prompt-only, no enforced baseline capability yet.",
+        baseline_caps: &["stateful-service-workload"],
+        contributing_anchor: Some(
+            "### Service workload profiles — common, StatefulSet, Deployment",
+        ),
+        about: "Service owns durable application state, so it selects the StatefulSet profile: stable identity, PVC/storage durability, peer topology, backup/restore, and an explicit workload-kind migration handoff.",
     },
 ];
 
@@ -615,11 +562,13 @@ pub struct TraitExpansion {
     pub about: &'static str,
 }
 
-/// The umbrella-trait expansion registry. `service` is the full
-/// service-archetype adopter: every trait with a settled CONTRIBUTING.md
+/// The umbrella-trait expansion registry. `service` is the common
+/// service-archetype baseline: every trait with a settled CONTRIBUTING.md
 /// "Service archetype" or "CLI convention" doc home, excluding
-/// `primary_replicas` (topology-dependent, stays opt-in per the archetype's
-/// own HA row -- not every service needs sharded HA).
+/// `primary_replicas` and `stateful_storage` because topology and durable
+/// state ownership stay opt-in. A service without `stateful_storage` uses the
+/// Deployment workload profile; declaring `stateful_storage` selects the
+/// StatefulSet workload profile and its additional baseline capability.
 pub const TRAIT_EXPANSIONS: &[TraitExpansion] = &[TraitExpansion {
     id: "service",
     members: &[
@@ -630,7 +579,7 @@ pub const TRAIT_EXPANSIONS: &[TraitExpansion] = &[TraitExpansion {
         "cli_std",
         "chainable_output",
     ],
-    about: "Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly.",
+    about: "Umbrella for the common service baseline; expands to transport, deploy artifacts, operational endpoints, EC gates, and CLI conventions. Without stateful_storage the primary workload is a Deployment; stateful_storage selects the StatefulSet profile.",
 }];
 
 /// Expand `traits` into the trait-id set actually used for baseline-cap
@@ -860,56 +809,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_top_level_project_rows_dedupes_and_skips_nested_tables() {
-        let config = r#"
-[[projects]]
-name = "aw"
-path = "projects/aw"
-
-[[projects.workspaces]]
-name = "aw-workspace"
-paths = ["projects/aw/**"]
-
-[[projects]]
-name = "nested-lib"
-path = "projects/mamba/mambalibs/pgkit"
-
-[[projects]]
-name = "aw"
-path = "projects/aw-duplicate"
-"#;
-        let rows = parse_top_level_project_rows(config);
-        assert_eq!(
-            rows.len(),
-            1,
-            "nested table + non-top-level path must be skipped"
-        );
-        assert_eq!(rows[0].name, "aw");
-        assert_eq!(
-            rows[0].path, "projects/aw",
-            "first occurrence in file order must win over the duplicate"
-        );
-    }
-
-    #[test]
-    fn render_projects_table_reads_config_and_project_readmes() {
+    fn render_projects_table_reads_discovered_config_and_project_readmes() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        std::fs::create_dir_all(root.join(".aw")).unwrap();
         std::fs::write(
             root.join("aw.toml"),
-            "[[projects]]\nname = \"demo\"\npath = \"projects/demo\"\n",
+            "[agentic_workflow.projects]\ndiscover = [\"apps/*/aw.toml\"]\n",
         )
         .unwrap();
-        std::fs::create_dir_all(root.join("projects/demo")).unwrap();
+        std::fs::create_dir_all(root.join("apps/demo")).unwrap();
         std::fs::write(
-            root.join("projects/demo/README.md"),
+            root.join("apps/demo/aw.toml"),
+            "[project]\nname = \"demo\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("apps/demo/README.md"),
             "# demo\n\n## Brief\n\nDemo project one-liner here.\n",
         )
         .unwrap();
 
         let table = render_projects_table(root).unwrap();
-        assert!(table.contains("[demo](projects/demo/README.md)"));
+        assert!(table.contains("[demo](apps/demo/README.md)"));
         assert!(table.contains("Demo project one-liner here."));
     }
 
@@ -1061,6 +982,27 @@ path = "projects/aw-duplicate"
                 .map(str::to_string)
                 .collect()
         );
+    }
+
+    #[test]
+    fn stateful_storage_selects_the_statefulset_service_profile() {
+        let stateful = TRAITS
+            .iter()
+            .find(|def| def.id == "stateful_storage")
+            .expect("stateful_storage trait");
+        assert_eq!(stateful.baseline_caps, &["stateful-service-workload"]);
+        assert_eq!(
+            stateful.contributing_anchor,
+            Some("### Service workload profiles — common, StatefulSet, Deployment")
+        );
+
+        let service = TRAIT_EXPANSIONS
+            .iter()
+            .find(|expansion| expansion.id == "service")
+            .expect("service umbrella");
+        assert!(!service.members.contains(&"stateful_storage"));
+        assert!(service.about.contains("Deployment"));
+        assert!(service.about.contains("StatefulSet"));
     }
 }
 // CODEGEN-END

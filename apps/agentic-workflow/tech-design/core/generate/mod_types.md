@@ -240,6 +240,27 @@ pub enum GenerateError {
         next_command: String,
     },
     #[error(
+        "invalid generated-unit ownership for section `{section}` ({reason}): units {unit_ids:?}, targets {targets:?}; {remediation}"
+    )]
+    InvalidGeneratedUnitOwnership {
+        section: String,
+        reason: String,
+        unit_ids: Vec<String>,
+        targets: Vec<String>,
+        remediation: String,
+        next_command: String,
+    },
+    #[error(
+        "owned generated units have no supported generator for section `{section}`: units {unit_ids:?}, targets {targets:?}; {remediation}"
+    )]
+    OwnedGeneratedUnitUnsupported {
+        section: String,
+        unit_ids: Vec<String>,
+        targets: Vec<String>,
+        remediation: String,
+        next_command: String,
+    },
+    #[error(
         "generation plan unavailable for `{spec_path}` before lifecycle mutation; {remediation}"
     )]
     GenerationPlanUnavailable {

@@ -86,7 +86,7 @@ definitions:
       highest model-strength requirement because a mis-classified intent makes
       the product feel broken. The default route targets claude-opus-4-7.
     type: string
-    enum: [mainthread, author, review, revise]
+    enum: [mainthread, author]
     x-rust-variants:
       mainthread:
         description: >
@@ -96,13 +96,6 @@ definitions:
         description: >
           Per-phase Requirements/Scope/ReferenceContext authoring.
           Routes to provider=gemini, model=gemini-2.5-pro by default.
-      review:
-        description: >
-          Section reviewer. Routes to provider=openai, model=gpt-5 by default.
-      revise:
-        description: >
-          Section reviser after needs-revision verdict.
-          Routes to provider=anthropic, model=claude-opus-4-7 by default.
 
   SessionEventMainthreadDecision:
     description: >
@@ -148,7 +141,7 @@ scenarios:
       - App::apply rewrites the JSON bubble to "Creating issue: metrics dashboard"
       - run_create_issue is called with title="metrics dashboard"
       - aw wi create is invoked and returns a slug
-      - drive_lifecycle_loop runs Author / Reviewer / Reviser phases without further dev input
+      - drive_lifecycle_loop runs the Author fill queue and validates without further dev input
     acceptance:
       - test: e2e_lifecycle.rs::slice1_step_through_create_then_fill_section
       - assertion: first llm call model starts_with("claude-")
@@ -186,7 +179,9 @@ scenarios:
 <!-- source-from-target: strip-handwrite -->
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/event.rs -->
-```rust
+~~~~~rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
+// CODEGEN-BEGIN
 //! Session-level events that flow from `Session::create_issue` / `Session::turn`
 //! to consumers (TUI, web, CLI).
 //!
@@ -210,7 +205,7 @@ pub enum SessionEvent {
         content: String,
     },
     /// Emitted right before an LLM turn opens. Carries the SDD agent role
-    /// (`score-issue-author` / `-reviewer` / `-reviser`) and the routed
+    /// (`score-issue-author`) and the routed
     /// model name so the TUI can open a correctly-labeled chat bubble
     /// before any deltas arrive.
     TurnStart {
@@ -243,18 +238,22 @@ pub enum SessionEvent {
         message: String,
     },
 }
-```
+
+// CODEGEN-END
+~~~~~
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/mainthread.rs -->
-````rust
+~~~~~rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
+// CODEGEN-BEGIN
 //! Mainthread agent — the orchestrator that translates dev intent
 //! into lifecycle actions.
 //!
-//! Why a separate role: per-phase agents (Author / Reviewer / Reviser)
-//! are workers triggered by score dispatch envelopes. The
-//! **mainthread agent** is what the dev actually talks to: it receives
+//! Why a separate role: the Author worker is triggered by AW dispatch
+//! envelopes. The
+//! **mainthread agent** is what the developer actually talks to: it receives
 //! free-form chat input, decides what to do, and dispatches the
-//! per-phase workers. Without it, cue can only "submit title → run
+//! per-phase workers. Without it, AW can only "submit title → run
 //! lifecycle" — no conversation, no override, no status reply.
 //!
 //! ## Wire protocol
@@ -274,7 +273,7 @@ pub enum SessionEvent {
 //! Slice 1 ships two variants (`NewIssue`, `Reply`); future variants
 //! land alongside the corresponding runner / app handlers:
 //!   - `ContextInject { text }` — augment current Author turn's prompt
-//!   - `Override { decision }`  — bypass reviewer verdict
+//!   - `Override { decision }`  — replace the next authoring action
 //!   - `Pause`                  — suspend in-flight lifecycle
 //!   - `Status`                 — render current phase / progress
 
@@ -400,16 +399,19 @@ mod tests {
         );
     }
 }
-````
+
+// CODEGEN-END
+~~~~~
 
 <!-- source-snapshot: path=apps/agentic-workflow/src/runtime/router.rs -->
-```rust
+~~~~~rust
+// SPEC-MANAGED: apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
+// CODEGEN-BEGIN
 //! Model routing — which `(provider, model)` to use for a given task type.
 //!
 //! Slice 1 ships a `StaticRouter` (in-memory map) sufficient for tests and
-//! a default routing table aligned with the team's per-task model strengths
-//! (Gemini for authoring, GPT for review, Claude for revise/default).
-//! Cue's `.cue/config.toml` lookup wraps this trait via its own impl.
+//! a default routing table aligned with the team's per-task model strengths.
+//! The AW host selects this trait implementation from repository configuration.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -433,8 +435,6 @@ pub enum Task {
     /// mis-classified intent makes the product feel broken.
     Mainthread,
     Author,
-    Review,
-    Revise,
 }
 
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
@@ -443,8 +443,6 @@ impl Task {
         match self {
             Task::Mainthread => "mainthread",
             Task::Author => "author",
-            Task::Review => "review",
-            Task::Revise => "revise",
         }
     }
 }
@@ -458,7 +456,7 @@ pub trait ModelRouter: Send + Sync {
 }
 
 /// In-memory router used by tests and as a sensible default. Production code
-/// (cue TUI, conductor) wraps `ConfigRouter` (in cue::config) over user TOML.
+/// A repository host may wrap `ConfigRouter` over its configured model policy.
 /// @spec apps/agentic-workflow/tech-design/core/logic/runtime/mainthread.md#source
 pub struct StaticRouter {
     table: BTreeMap<&'static str, ModelChoice>,
@@ -468,7 +466,7 @@ pub struct StaticRouter {
 impl StaticRouter {
     /// Default routing aligned with the team's per-task strengths memo:
     ///   mainthread → Claude (orchestration / conversational),
-    ///   author → Gemini, review → GPT, revise → Claude.
+    ///   author → Gemini.
     pub fn defaults() -> Self {
         let mut table = BTreeMap::new();
         table.insert(
@@ -483,20 +481,6 @@ impl StaticRouter {
             ModelChoice {
                 provider: "gemini".into(),
                 model: "gemini-2.5-pro".into(),
-            },
-        );
-        table.insert(
-            "review",
-            ModelChoice {
-                provider: "openai".into(),
-                model: "gpt-5".into(),
-            },
-        );
-        table.insert(
-            "revise",
-            ModelChoice {
-                provider: "anthropic".into(),
-                model: "claude-opus-4-7".into(),
             },
         );
         Self { table }
@@ -535,20 +519,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn defaults_route_review_to_openai() {
-        let r = StaticRouter::defaults();
-        let choice = r.route(Task::Review).await.unwrap();
-        assert_eq!(choice.provider, "openai");
-    }
-
-    #[tokio::test]
-    async fn defaults_route_revise_to_anthropic() {
-        let r = StaticRouter::defaults();
-        let choice = r.route(Task::Revise).await.unwrap();
-        assert_eq!(choice.provider, "anthropic");
-    }
-
-    #[tokio::test]
     async fn empty_returns_none() {
         let r = StaticRouter::empty();
         assert!(r.route(Task::Author).await.is_none());
@@ -566,7 +536,9 @@ mod tests {
         assert_eq!(r.route(Task::Author).await.unwrap().model, "m");
     }
 }
-```
+
+// CODEGEN-END
+~~~~~
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -678,8 +650,8 @@ changes:
     description: >
       Adds slice1_step_through_create_then_fill_section: the acceptance
       test for the new_issue_path scenario. Asserts that a NewIssue
-      decision triggers run_create_issue and drives the full lifecycle
-      loop through Author / Reviewer / Reviser phases.
+      decision triggers run_create_issue and drives the linear Author
+      fill queue through validation.
   - action: annotate
     section: scenarios
     impl_mode: hand-written
@@ -691,23 +663,3 @@ changes:
     description: "Traceability metadata edge for the schema section."
 
 ```
-
-# Reviews
-
-## Review 2
-<!-- type: review lang: markdown -->
-
-**Verdict:** approved
-
-- [changes] All three previously flagged entries are present and correct: `apps/agentic-workflow/src/runtime/mod.rs` (registers `pub mod mainthread` and re-exports), `projects/cue/tests/e2e_lifecycle_ux.rs` (adds `scenario_mainthread_reply_no_lifecycle`), and `projects/cue/tests/e2e_lifecycle.rs` (adds `slice1_step_through_create_then_fill_section`). All carry `impl_mode: hand-written`. Traceability from scenarios to changes is now complete.
-- [schema] Untouched and correct. No regressions.
-- [scenarios] Untouched and correct. No regressions.
-
-## Review 1
-<!-- type: review lang: markdown -->
-
-**Verdict:** needs-revision
-
-- [changes] `apps/agentic-workflow/src/runtime/mod.rs` is missing from the changes list. The commit f01d776e7 modifies this file to register `pub mod mainthread;`. Without this entry the spec does not fully account for how the new module is wired into the crate. Add an entry: `path: apps/agentic-workflow/src/runtime/mod.rs, action: modify, impl_mode: hand-written, description: "Registers the new mainthread module (pub mod mainthread) and re-exports MainthreadDecision."`.
-- [changes] `projects/cue/tests/e2e_lifecycle_ux.rs` is missing from the changes list despite being modified in f01d776e7 (51 lines added). This file contains `scenario_mainthread_reply_no_lifecycle`, the primary acceptance-criterion test cited in the `reply_path` scenario. Add an entry: `path: projects/cue/tests/e2e_lifecycle_ux.rs, action: modify, impl_mode: hand-written, description: "Adds scenario_mainthread_reply_no_lifecycle asserting Reply decision produces no lifecycle dispatch."`.
-- [changes] `projects/cue/tests/e2e_lifecycle.rs` is modified in f01d776e7 (54 lines changed) and is cited as the acceptance test for the `new_issue_path` scenario (`slice1_step_through_create_then_fill_section`), yet it is absent from the changes list. Add an entry to close the traceability gap between scenarios and changes.

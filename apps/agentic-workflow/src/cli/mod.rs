@@ -6,13 +6,12 @@
 //! this library exposes the `Commands` enum and `run_command` dispatch for
 //! programmatic consumers and for the binary itself.
 
+pub(crate) mod artifact_producer;
 pub mod capability;
 pub mod capability_type;
 pub mod cb;
 pub mod cb_fill;
 pub(crate) mod chain;
-#[path = "chat.rs"]
-pub mod chat;
 pub mod check_alignment;
 pub mod commands;
 pub mod conf;
@@ -28,6 +27,8 @@ pub mod init;
 pub mod issues;
 pub mod llm;
 pub mod loop_state;
+pub mod meta;
+pub mod meta_docs;
 pub mod production;
 pub mod project;
 pub mod regenerability_policy;
@@ -43,7 +44,6 @@ pub mod td_lock;
 pub mod td_migrate;
 pub mod update;
 pub mod validate_spec_structure;
-pub mod view;
 pub mod workflow_guard;
 
 // Legacy modules kept for init.rs / update.rs dependencies

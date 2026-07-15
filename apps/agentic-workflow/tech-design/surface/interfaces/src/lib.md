@@ -7,7 +7,7 @@ capability_refs:
     gap: core-concept-model-and-invariants
     claim: core-concept-model-and-invariants
     coverage: full
-    rationale: "Support CLI surfaces expose AW Core bootstrap, chat, hook, project, and workspace invariants."
+    rationale: "Support CLI surfaces expose AW Core bootstrap, hook, project, META-doc, and workspace invariants."
 ---
 
 # Standardized apps/agentic-workflow/src/cli/mod.rs
@@ -21,47 +21,48 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `capability` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 9 |  |
-| `capability_type` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 10 |  |
-| `cb` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 11 |  |
-| `cb_fill` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 12 |  |
-| `chain` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 13 |  |
-| `chat` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 15 |  |
-| `check_alignment` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 16 |  |
-| `commands` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 17 |  |
+| `artifact_producer` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 9 |  |
+| `capability` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 10 |  |
+| `capability_type` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 11 |  |
+| `cb` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 12 |  |
+| `cb_fill` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 13 |  |
+| `chain` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 14 |  |
+| `check_alignment` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 15 |  |
+| `commands` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 16 |  |
+| `conf` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 17 |  |
 | `doc_mirror` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 18 |  |
-| `drift` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
-| `ec` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 19 |  |
-| `fillback` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
-| `find_project_root` | apps/agentic-workflow/src/cli/mod.rs | function | pub | 76 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
-| `generator` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
-| `guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
-| `guard_sanction` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
-| `hook` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
-| `init` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
-| `issues` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
-| `llm` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 26 |  |
-| `loop_state` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 27 |  |
-| `merge_target` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 53 |  |
-| `migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 48 |  |
-| `production` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 28 |  |
-| `project` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 29 |  |
-| `regenerability_policy` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 30 |  |
-| `remote_push` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 31 |  |
-| `run` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 32 |  |
-| `shell_env` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 33 |  |
-| `slug_workspace` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 34 |  |
-| `standard_cli` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 35 |  |
-| `standardize` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 36 |  |
-| `sync` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 37 |  |
-| `td` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 38 |  |
-| `td_check_section_type` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 39 |  |
-| `td_lock` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 40 |  |
-| `td_migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
-| `update` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
-| `validate_spec_structure` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
-| `view` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
-| `workflow_guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 45 |  |
+| `drift` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 19 |  |
+| `ec` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 20 |  |
+| `fillback` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 21 |  |
+| `find_project_root` | apps/agentic-workflow/src/cli/mod.rs | function | pub | 78 | find_project_root() -> anyhow::Result<std::path::PathBuf> |
+| `generator` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 22 |  |
+| `guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 23 |  |
+| `guard_sanction` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 24 |  |
+| `hook` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 25 |  |
+| `init` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 26 |  |
+| `issues` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 27 |  |
+| `llm` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 28 |  |
+| `loop_state` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 29 |  |
+| `merge_target` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 55 |  |
+| `meta` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 30 |  |
+| `meta_docs` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 31 |  |
+| `migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 50 |  |
+| `production` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 32 |  |
+| `project` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 33 |  |
+| `regenerability_policy` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 34 |  |
+| `remote_push` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 35 |  |
+| `run` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 36 |  |
+| `shell_env` | apps/agentic-workflow/src/cli/mod.rs | module | pub(crate) | 37 |  |
+| `slug_workspace` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 38 |  |
+| `standard_cli` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 39 |  |
+| `standardize` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 40 |  |
+| `td` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 41 |  |
+| `td_check_section_type` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 42 |  |
+| `td_lock` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 43 |  |
+| `td_migrate` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 44 |  |
+| `update` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 45 |  |
+| `validate_spec_structure` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 46 |  |
+| `workflow_guard` | apps/agentic-workflow/src/cli/mod.rs | module | pub | 47 |  |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -76,13 +77,12 @@ Public API manifest for `apps/agentic-workflow/src/cli/mod.rs` generated from AS
 //! this library exposes the `Commands` enum and `run_command` dispatch for
 //! programmatic consumers and for the binary itself.
 
+pub(crate) mod artifact_producer;
 pub mod capability;
 pub mod capability_type;
 pub mod cb;
 pub mod cb_fill;
 pub(crate) mod chain;
-#[path = "chat.rs"]
-pub mod chat;
 pub mod check_alignment;
 pub mod commands;
 pub mod conf;
@@ -98,6 +98,8 @@ pub mod init;
 pub mod issues;
 pub mod llm;
 pub mod loop_state;
+pub mod meta;
+pub mod meta_docs;
 pub mod production;
 pub mod project;
 pub mod regenerability_policy;
@@ -113,7 +115,6 @@ pub mod td_lock;
 pub mod td_migrate;
 pub mod update;
 pub mod validate_spec_structure;
-pub mod view;
 pub mod workflow_guard;
 
 // Legacy modules kept for init.rs / update.rs dependencies
@@ -342,7 +343,7 @@ changes:
     description: |
       Issue #848: whole-file resync to the current module list (adds
       capability_type, chain, ec, guard, llm, loop_state, shell_env,
-      standard_cli, sync, td_lock, view; drops the removed cb_arbitrate,
+      standard_cli, sync, td_lock; drops the removed cb_arbitrate,
       cb_review, cb_revise modules) and current find_project_root body.
   - path: apps/agentic-workflow/src/cli/mod.rs
     action: modify
@@ -360,4 +361,12 @@ changes:
       Issue #1309: registers the new `drift` module (stale
       installed-binary-vs-checkout-source version-skew warning invoked from
       `commands::run_command`).
+  - path: apps/agentic-workflow/src/cli/mod.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1497: registers `meta_docs`, the shared ownership-matrix and
+      validation library consumed by current checks and the dependent META-doc
+      producer surface.
 ```

@@ -292,6 +292,7 @@ fn regenerate_for_block(
             section_id: e.section_id.clone(),
             impl_mode: e.impl_mode,
             replaces: e.replaces.clone(),
+            generates: e.generates.clone(),
             exports: e.exports.clone(),
             preamble: e.preamble.clone(),
             pub_uses: e.pub_uses.clone(),
@@ -309,6 +310,7 @@ fn regenerate_for_block(
             section_id: Some(section_id.to_string()),
             impl_mode: ImplMode::Codegen,
             replaces: Vec::new(),
+            generates: Vec::new(),
             exports: Vec::new(),
             preamble: None,
             pub_uses: Vec::new(),
@@ -337,6 +339,7 @@ fn regenerate_for_block(
                 .map(crate::generate::apply::mermaid_blocks_from_td_ast)
                 .unwrap_or_else(|| extract_mermaid_plus_blocks(spec_content));
             generate_code_for_entry(&entry, spec_path, &mermaid, spec_content, td_ast)
+                .unwrap_or_else(|error| format!("/* generation failed: {error} */"))
         }
     }
 }

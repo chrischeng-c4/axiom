@@ -3217,4 +3217,278 @@ definitions:
     );
 }
 
+/// #1634 AC1/AC3: the public lifecycle accepts an exhaustive `generates:`
+/// partition, cold-generates both targets, and never leaks a sibling unit.
+#[test]
+fn td_gen_exact_schema_unit_ownership_partitions_real_targets() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap exact ownership fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let slug = "1634-exact-schema-ownership";
+    let spec_path = "tech-design/schema/exact-ownership.md";
+    std::fs::create_dir_all(root.join("tech-design/schema")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join(spec_path),
+        r#"---
+id: 1634-exact-schema-ownership
+fill_sections: [schema, changes]
+capability_refs:
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: exact-generated-unit-target-ownership
+    claim: exact-generated-unit-target-ownership
+    coverage: full
+    rationale: "Cold real-CLI proof of exact Schema ownership."
+---
+
+# Exact generated-unit ownership
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Alpha:
+    type: object
+    properties:
+      alpha: { type: string }
+  Beta:
+    type: object
+    properties:
+      beta: { type: integer }
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/beta.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    generates: [schema:Beta]
+  - path: src/alpha.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    generates: [schema:Alpha]
+```
+"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("src/alpha.rs"), "// alpha cold sentinel\n").unwrap();
+    std::fs::write(root.join("src/beta.rs"), "// beta cold sentinel\n").unwrap();
+    commit_all_with_message(&git, root, "add exact #1634 ownership plan");
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: partition exact generated units\n\
+             state: open\n\
+             type: refactor\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             phase: td_created\n\
+             branch: app/fixture\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let lock = Command::new(&bin)
+        .args(["td", "lock", "--project", "agentic-workflow"])
+        .current_dir(root)
+        .output()
+        .expect("lock exact ownership TD");
+    assert!(
+        lock.status.success(),
+        "TD lock should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&lock.stdout),
+        String::from_utf8_lossy(&lock.stderr),
+    );
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("generate exact Schema partitions");
+    let envelope = td_dispatch_envelope(&gen, "exact Schema ownership td gen");
+    assert_ne!(envelope["action"], "error", "{envelope:#}");
+
+    let alpha = std::fs::read_to_string(root.join("src/alpha.rs")).unwrap();
+    let beta = std::fs::read_to_string(root.join("src/beta.rs")).unwrap();
+    assert!(alpha.contains("pub struct Alpha"), "{alpha}");
+    assert!(!alpha.contains("pub struct Beta"), "{alpha}");
+    assert!(beta.contains("pub struct Beta"), "{beta}");
+    assert!(!beta.contains("pub struct Alpha"), "{beta}");
+    assert!(read_issue_fixture(root, slug).contains("phase: cb_genned"));
+}
+
+/// #1634 AC4: an owned unit without a generator is a typed HITL result at
+/// caller admission, before issue hydration, lifecycle state, Git, or source
+/// bytes can change.
+#[test]
+fn td_gen_unsupported_owned_unit_fails_before_lifecycle_mutation() {
+    let Some((git, bin)) = skip_unless_ready() else {
+        eprintln!("skipping: git or CARGO_BIN_EXE_aw missing");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    bootstrap_repo(&git, root);
+    std::fs::write(
+        root.join("aw.toml"),
+        r#"
+[agentic_workflow.workspace]
+mode = "in_place"
+
+[[projects]]
+name = "agentic-workflow"
+path = "."
+"#,
+    )
+    .unwrap();
+    commit_all_with_message(&git, root, "bootstrap unsupported ownership fixture");
+    assert!(Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["switch", "-c", "app/fixture"])
+        .status()
+        .unwrap()
+        .success());
+
+    let slug = "1634-unsupported-owned-unit";
+    let spec_path = "tech-design/schema/unsupported-owned-unit.md";
+    std::fs::create_dir_all(root.join("tech-design/schema")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join(spec_path),
+        r#"---
+id: 1634-unsupported-owned-unit
+fill_sections: [schema, changes]
+---
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  Alias:
+    $ref: '#/definitions/Other'
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/alias.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+    generates: [schema:Alias]
+```
+"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("src/alias.rs"), "// alias sentinel\n").unwrap();
+    commit_all_with_message(&git, root, "add unsupported #1634 ownership plan");
+    write_issue_fixture(
+        root,
+        slug,
+        format!(
+            "---\n\
+             slug: {slug}\n\
+             title: reject unsupported owned unit\n\
+             state: open\n\
+             type: refactor\n\
+             labels: [\"app:agentic-workflow\"]\n\
+             phase: td_created\n\
+             branch: app/fixture\n\
+             ---\n\n# Body\n"
+        ),
+    );
+
+    let head_before = git_stdout_bytes(&git, root, &["rev-parse", "HEAD"]);
+    let branch_before =
+        git_stdout_bytes(&git, root, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let index_before = git_stdout_bytes(&git, root, &["write-tree"]);
+    let status_before = git_stdout_bytes(
+        &git,
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    );
+    let issue_before = std::fs::read(issue_path(root, slug)).unwrap();
+    let target_before = std::fs::read(root.join("src/alias.rs")).unwrap();
+
+    let gen = Command::new(&bin)
+        .args(["td", "gen", slug, "--spec-path", spec_path])
+        .current_dir(root)
+        .output()
+        .expect("reject unsupported owned unit");
+    let envelope = td_dispatch_envelope(&gen, "unsupported owned unit td gen");
+    assert_eq!(envelope["action"], "error");
+    assert_eq!(envelope["error_kind"], "owned_generated_unit_unsupported");
+    assert_eq!(envelope["reason"], "generator_gap");
+    assert_eq!(envelope["section"], "schema");
+    assert_eq!(envelope["unit_ids"], serde_json::json!(["schema:Alias"]));
+    assert_eq!(envelope["targets"], serde_json::json!(["src/alias.rs"]));
+    assert_eq!(envelope["completion"]["requires_hitl"], true);
+    assert_eq!(
+        envelope["next"]["command"],
+        format!("aw td gen {slug} --spec-path {spec_path}"),
+    );
+
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["rev-parse", "HEAD"]),
+        head_before
+    );
+    assert_eq!(
+        git_stdout_bytes(&git, root, &["symbolic-ref", "--quiet", "--short", "HEAD"]),
+        branch_before,
+    );
+    assert_eq!(git_stdout_bytes(&git, root, &["write-tree"]), index_before);
+    assert_eq!(
+        git_stdout_bytes(
+            &git,
+            root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ),
+        status_before,
+    );
+    assert_eq!(std::fs::read(issue_path(root, slug)).unwrap(), issue_before);
+    assert_eq!(
+        std::fs::read(root.join("src/alias.rs")).unwrap(),
+        target_before
+    );
+}
+
 // CODEGEN-END

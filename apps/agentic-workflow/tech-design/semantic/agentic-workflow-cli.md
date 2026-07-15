@@ -8,12 +8,30 @@ capability_refs:
     claim: "core-concept-model-and-invariants"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `apps/agentic-workflow/src/cli`."
+  - id: aw-core-client-model-workitem-first-artifact-lifecycle
+    role: primary
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
+    coverage: full
+    rationale: "The CLI semantic domain owns binary product orientation and the regression that keeps README, CAPABILITIES, and canonical product TDs aligned on the single agent-first CLI model."
+  - id: existing-project-standardization
+    role: primary
+    gap: force-regeneration-project-root-llms-projection
+    claim: force-regeneration-project-root-llms-projection
+    coverage: full
+    rationale: "The public force-regeneration command uses the shared TD-first runner and project_root_llms emitter after source application, so one canonical CODEGEN context replaces generic fallback output while HANDWRITE siblings remain untouched."
   - id: "aw-core-client-model-workitem-first-artifact-lifecycle"
     role: primary
     gap: "aw-epic-project-label-dispatch"
     claim: "aw-epic-project-label-dispatch"
     coverage: full
     rationale: "The CLI semantic domain owns run.rs project-label resolution, epic atomize dispatch, and the unresolved-label HITL envelope."
+  - id: workflow-root-runner
+    role: primary
+    gap: self-hosting-root-runner-policy
+    claim: self-hosting-root-runner-policy
+    coverage: full
+    rationale: "Runner admission rejects Agentic Workflow's own project, capability, and WI roots before mutation, while self-health exposes the sanctioned direct-commit gate partition."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: ec-evidence-documentation
@@ -74,6 +92,18 @@ capability_refs:
     claim: ambiguous-multi-target-generation-preflight
     coverage: full
     rationale: "The CLI semantic domain owns read-only exact-spec preparation before TD lifecycle mutation, stable plan-error envelopes, and prepared-byte revalidation in src/cli/td.rs."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: exact-generated-unit-target-ownership
+    claim: exact-generated-unit-target-ownership
+    coverage: full
+    rationale: "The CLI admission surface emits structured invalid-ownership and unsupported-owned-unit envelopes before lifecycle mutation, including stable IDs, targets, remediation, and HITL state."
+  - id: td-cb-lifecycle-automation
+    role: primary
+    gap: terminal-touched-codegen-drift-gate
+    claim: terminal-touched-codegen-drift-gate
+    coverage: full
+    rationale: "The CLI semantic domain resolves accepted Td-Init-scoped CODEGEN claims, invokes the shared deterministic audit before EC or mutation, and routes drift through phase-safe exact-target regeneration."
   - id: td-cb-lifecycle-automation
     role: primary
     gap: terminal-ec-process-liveness
@@ -681,6 +711,15 @@ semantic_domain:
           - name: "run_gen"
             kind: "function"
             public: true
+          - name: "run_terminal_codegen_repair"
+            kind: "function"
+            public: false
+          - name: "terminal_touched_codegen_claims"
+            kind: "function"
+            public: false
+          - name: "terminal_touched_codegen_findings"
+            kind: "function"
+            public: false
           - name: "run_force_regen"
             kind: "function"
             public: false
@@ -767,98 +806,6 @@ semantic_domain:
             public: false
           - name: "workspace_source_roots"
             kind: "function"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "apps/agentic-workflow/src/cli"
-      - path: "apps/agentic-workflow/src/cli/chat_members.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method"]
-        symbols:
-          - name: "ChannelMessage"
-            kind: "struct"
-            public: true
-          - name: "MessageFrontmatter"
-            kind: "struct"
-            public: true
-          - name: "Member"
-            kind: "struct"
-            public: true
-          - name: "MembersFile"
-            kind: "struct"
-            public: true
-          - name: "default"
-            kind: "function"
-            public: false
-          - name: "resolve_identity"
-            kind: "function"
-            public: true
-          - name: "git_toplevel_from"
-            kind: "function"
-            public: false
-          - name: "git_branch_from"
-            kind: "function"
-            public: false
-          - name: "detect_team_identity"
-            kind: "function"
-            public: true
-          - name: "detect_git_branch"
-            kind: "function"
-            public: true
-          - name: "detect_git_toplevel"
-            kind: "function"
-            public: true
-          - name: "lookup_member_name_by_branch"
-            kind: "function"
-            public: true
-          - name: "read_config_team_name"
-            kind: "function"
-            public: true
-          - name: "is_old_pipe_format"
-            kind: "function"
-            public: true
-          - name: "parse_pipe_line"
-            kind: "function"
-            public: true
-          - name: "parse_pipe_format"
-            kind: "function"
-            public: true
-          - name: "serialize_message_block"
-            kind: "function"
-            public: true
-          - name: "rewrite_channel_as_frontmatter"
-            kind: "function"
-            public: true
-          - name: "parse_channel_markdown"
-            kind: "function"
-            public: true
-          - name: "looks_like_jsonl"
-            kind: "function"
-            public: false
-          - name: "parse_channel_jsonl"
-            kind: "function"
-            public: true
-          - name: "serialize_message_jsonl"
-            kind: "function"
-            public: true
-          - name: "parse_frontmatter_blocks"
-            kind: "function"
-            public: true
-          - name: "read_members_file"
-            kind: "function"
-            public: true
-          - name: "write_members_file"
-            kind: "function"
-            public: true
-          - name: "run_members_register"
-            kind: "function"
-            public: true
-          - name: "tests"
-            kind: "module"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -1233,6 +1180,24 @@ semantic_domain:
           - name: "GOAL_INLINE_LIMIT_BYTES"
             kind: "constant"
             public: false
+          - name: "SELF_HOSTING_POLICY_MODE"
+            kind: "constant"
+            public: true
+          - name: "SELF_HOSTING_HARD_GATES"
+            kind: "constant"
+            public: false
+          - name: "SELF_HOSTING_ADVISORY_AXES"
+            kind: "constant"
+            public: false
+          - name: "is_self_hosting_project"
+            kind: "function"
+            public: true
+          - name: "self_hosting_hard_gates"
+            kind: "function"
+            public: true
+          - name: "self_hosting_advisory_axes"
+            kind: "function"
+            public: true
           - name: "RunArgs"
             kind: "struct"
             public: true
@@ -1293,6 +1258,15 @@ semantic_domain:
           - name: "WorkflowGoalEnvelope"
             kind: "struct"
             public: false
+          - name: "SelfHostingPolicyEnvelope"
+            kind: "struct"
+            public: false
+          - name: "self_hosting_policy_envelope"
+            kind: "function"
+            public: false
+          - name: "emit_self_hosting_policy_error"
+            kind: "function"
+            public: true
           - name: "RunPrintOptions"
             kind: "struct"
             public: true
@@ -1381,6 +1355,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "project_from_labels"
+            kind: "function"
+            public: false
+          - name: "issue_is_self_hosting"
             kind: "function"
             public: false
         source_evidence_node:
@@ -2726,110 +2703,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/agentic-workflow/src/cli"
-      - path: "apps/agentic-workflow/src/cli/chat.rs"
-        language: "rust"
-        ownership_state: "codegen"
-        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method", "ts_type_surface"]
-        symbols:
-          - name: "chat_members"
-            kind: "module"
-            public: true
-          - name: "CHANNEL_PATH"
-            kind: "constant"
-            public: false
-          - name: "MEMBERS_PATH"
-            kind: "constant"
-            public: false
-          - name: "ChatArgs"
-            kind: "struct"
-            public: true
-          - name: "ChatCommand"
-            kind: "enum"
-            public: true
-          - name: "PostArgs"
-            kind: "struct"
-            public: true
-          - name: "ListArgs"
-            kind: "struct"
-            public: true
-          - name: "ReadArgs"
-            kind: "struct"
-            public: true
-          - name: "MembersArgs"
-            kind: "struct"
-            public: true
-          - name: "ListenArgs"
-            kind: "struct"
-            public: true
-          - name: "AgentLastSeen"
-            kind: "struct"
-            public: true
-          - name: "ListenState"
-            kind: "type"
-            public: true
-          - name: "OutputFormat"
-            kind: "enum"
-            public: false
-          - name: "run_chat"
-            kind: "function"
-            public: true
-          - name: "detect_output_format"
-            kind: "function"
-            public: false
-          - name: "parse_channel"
-            kind: "function"
-            public: false
-          - name: "format_terse"
-            kind: "function"
-            public: false
-          - name: "format_listen"
-            kind: "function"
-            public: false
-          - name: "format_human"
-            kind: "function"
-            public: false
-          - name: "render"
-            kind: "function"
-            public: false
-          - name: "run_post"
-            kind: "function"
-            public: false
-          - name: "run_list"
-            kind: "function"
-            public: false
-          - name: "run_read"
-            kind: "function"
-            public: false
-          - name: "run_members"
-            kind: "function"
-            public: false
-          - name: "run_members_list"
-            kind: "function"
-            public: false
-          - name: "TailGuard"
-            kind: "struct"
-            public: false
-          - name: "drop"
-            kind: "function"
-            public: false
-          - name: "run_listen"
-            kind: "function"
-            public: false
-          - name: "should_emit"
-            kind: "function"
-            public: false
-          - name: "thread_root_of"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "apps/agentic-workflow/src/cli"
       - path: "apps/agentic-workflow/src/cli/generator.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -3426,329 +3299,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/agentic-workflow/src/cli"
-      - path: "apps/agentic-workflow/src/cli/view.rs"
-        language: "rust"
-        ownership_state: "handwrite"
-        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
-        symbols:
-          - name: "ViewArgs"
-            kind: "struct"
-            public: true
-          - name: "ViewLayout"
-            kind: "enum"
-            public: true
-          - name: "fmt"
-            kind: "function"
-            public: false
-          - name: "toggled_view_layout"
-            kind: "function"
-            public: true
-          - name: "layout_toggle_button_label"
-            kind: "function"
-            public: true
-          - name: "RepoViewSnapshot"
-            kind: "struct"
-            public: true
-          - name: "RepoViewRepo"
-            kind: "struct"
-            public: true
-          - name: "RepoCatalogItem"
-            kind: "struct"
-            public: true
-          - name: "UserRepoRegistry"
-            kind: "struct"
-            public: false
-          - name: "UserRepoRegistryEntry"
-            kind: "struct"
-            public: false
-          - name: "TerminalSnapshot"
-            kind: "struct"
-            public: true
-          - name: "RepoViewItemSnapshot"
-            kind: "struct"
-            public: true
-          - name: "ProjectViewProject"
-            kind: "struct"
-            public: true
-          - name: "ProjectCatalogItem"
-            kind: "struct"
-            public: true
-          - name: "ReadmeSnapshot"
-            kind: "struct"
-            public: true
-          - name: "CapabilitySnapshot"
-            kind: "struct"
-            public: true
-          - name: "CapabilitySnapshotItem"
-            kind: "struct"
-            public: true
-          - name: "EcSnapshot"
-            kind: "struct"
-            public: true
-          - name: "EcCaseSnapshot"
-            kind: "struct"
-            public: true
-          - name: "TdSnapshot"
-            kind: "struct"
-            public: true
-          - name: "run"
-            kind: "function"
-            public: true
-          - name: "build_repo_view_snapshot"
-            kind: "function"
-            public: true
-          - name: "build_repo_view_snapshot_with_repo_registry_path"
-            kind: "function"
-            public: false
-          - name: "build_repo_view_item_snapshot"
-            kind: "function"
-            public: false
-          - name: "empty_repo_view_item_snapshot"
-            kind: "function"
-            public: false
-          - name: "select_catalog_item"
-            kind: "function"
-            public: false
-          - name: "project_view_project"
-            kind: "function"
-            public: false
-          - name: "project_catalog"
-            kind: "function"
-            public: false
-          - name: "project_kind"
-            kind: "function"
-            public: false
-          - name: "user_repo_registry_path"
-            kind: "function"
-            public: false
-          - name: "load_or_update_repo_catalog"
-            kind: "function"
-            public: false
-          - name: "read_user_repo_registry"
-            kind: "function"
-            public: false
-          - name: "write_user_repo_registry"
-            kind: "function"
-            public: false
-          - name: "upsert_user_repo_entry"
-            kind: "function"
-            public: false
-          - name: "repo_catalog_item_from_entry"
-            kind: "function"
-            public: false
-          - name: "repo_counts_for_path"
-            kind: "function"
-            public: false
-          - name: "canonical_repo_path"
-            kind: "function"
-            public: false
-          - name: "load_ec_snapshot"
-            kind: "function"
-            public: false
-          - name: "empty_ec_snapshot"
-            kind: "function"
-            public: false
-          - name: "td_snapshot"
-            kind: "function"
-            public: false
-          - name: "capability_snapshot"
-            kind: "function"
-            public: false
-          - name: "build_terminal_snapshot"
-            kind: "function"
-            public: false
-          - name: "build_surface_snapshot"
-            kind: "function"
-            public: false
-          - name: "RepoSurfaceProps"
-            kind: "struct"
-            public: false
-          - name: "render_repo_surface"
-            kind: "function"
-            public: false
-          - name: "build_surface_element"
-            kind: "function"
-            public: false
-          - name: "headless_contract_check"
-            kind: "function"
-            public: true
-          - name: "selected_item"
-            kind: "function"
-            public: false
-          - name: "extract_h1"
-            kind: "function"
-            public: false
-          - name: "extract_brief"
-            kind: "function"
-            public: false
-          - name: "relative_to"
-            kind: "function"
-            public: false
-          - name: "APP_SCREENSHOT_WIDTH"
-            kind: "constant"
-            public: true
-          - name: "APP_SCREENSHOT_HEIGHT"
-            kind: "constant"
-            public: true
-          - name: "APP_SCREENSHOT_FONT_CANDIDATES"
-            kind: "constant"
-            public: false
-          - name: "render_app_screenshot_image"
-            kind: "function"
-            public: true
-          - name: "render_app_screenshot_image_at_scale"
-            kind: "function"
-            public: true
-          - name: "render_app_screenshot_image_at_scale_with_options"
-            kind: "function"
-            public: false
-          - name: "AppScreenshotPaintOptions"
-            kind: "struct"
-            public: false
-          - name: "full"
-            kind: "function"
-            public: false
-          - name: "native_backdrop"
-            kind: "function"
-            public: false
-          - name: "normalized_screenshot_scale"
-            kind: "function"
-            public: false
-          - name: "scaled_screenshot_dimension"
-            kind: "function"
-            public: false
-          - name: "load_app_screenshot_font"
-            kind: "function"
-            public: false
-          - name: "ScaledScreenshotPainter"
-            kind: "struct"
-            public: false
-          - name: "new"
-            kind: "function"
-            public: false
-          - name: "px"
-            kind: "function"
-            public: false
-          - name: "fill_rect"
-            kind: "function"
-            public: false
-          - name: "draw_text_line"
-            kind: "function"
-            public: false
-          - name: "measure_text_width"
-            kind: "function"
-            public: false
-          - name: "FontdueScreenshotPainter"
-            kind: "struct"
-            public: false
-          - name: "new"
-            kind: "function"
-            public: false
-          - name: "into_image"
-            kind: "function"
-            public: false
-          - name: "fill_rect"
-            kind: "function"
-            public: false
-          - name: "draw_text_line"
-            kind: "function"
-            public: false
-          - name: "measure_text_width"
-            kind: "function"
-            public: false
-          - name: "macos_screenshot"
-            kind: "module"
-            public: false
-          - name: "render_app_screenshot_png"
-            kind: "function"
-            public: true
-          - name: "render_app_screenshot_png_at_scale"
-            kind: "function"
-            public: true
-          - name: "render_native_app_backdrop_png_at_scale"
-            kind: "function"
-            public: true
-          - name: "render_app_screenshot"
-            kind: "function"
-            public: true
-          - name: "build_desktop_app_bundle"
-            kind: "function"
-            public: true
-          - name: "build_macos_app_bundle"
-            kind: "function"
-            public: false
-          - name: "macos_app_info_plist"
-            kind: "function"
-            public: false
-          - name: "shell_quote"
-            kind: "function"
-            public: false
-          - name: "paint_repo_view_screenshot"
-            kind: "function"
-            public: false
-          - name: "paint_layout_toggle_button"
-            kind: "function"
-            public: false
-          - name: "DetailPaintDensity"
-            kind: "struct"
-            public: false
-          - name: "standard"
-            kind: "function"
-            public: false
-          - name: "compact"
-            kind: "function"
-            public: false
-          - name: "paint_detail_panel"
-            kind: "function"
-            public: false
-          - name: "paint_catalog"
-            kind: "function"
-            public: false
-          - name: "paint_project_selector"
-            kind: "function"
-            public: false
-          - name: "paint_terminal"
-            kind: "function"
-            public: false
-          - name: "paint_detail"
-            kind: "function"
-            public: false
-          - name: "paint_stat_card"
-            kind: "function"
-            public: false
-          - name: "paint_list_panel"
-            kind: "function"
-            public: false
-          - name: "draw_wrapped_text"
-            kind: "function"
-            public: false
-          - name: "truncate_for_width"
-            kind: "function"
-            public: false
-          - name: "estimate_fontdue_text_width"
-            kind: "function"
-            public: false
-          - name: "draw_fontdue_text_line"
-            kind: "function"
-            public: false
-          - name: "fill_rect_pixels"
-            kind: "function"
-            public: false
-          - name: "blend_pixel"
-            kind: "function"
-            public: false
-          - name: "rgba"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
-            public: false
-        source_evidence_node:
-          layer: "backend"
-          ecosystem: "rust"
-          role: "source"
-          section_type: "schema"
-          domain: "apps/agentic-workflow/src/cli"
 ```
 
 ## Changes
@@ -3884,12 +3434,21 @@ changes:
       its prior distinction: no slug history stays legacy-compatible, while
       same-slug lifecycle history without an exact Td-Init remains a hard
       verification error rather than becoming implementation evidence.
-    impl_mode: hand-written
-  - path: "apps/agentic-workflow/src/cli/chat_members.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
+      Issue #1635 reuses that exact baseline to intersect committed paths with
+      current CODEGEN rows from the WI's accepted TDs. The fresh terminal path
+      sends each exact target/spec-section claim through `audit_file` before
+      EC or mutation, ignores reports owned by other specs or sections, and
+      emits `aw td gen <slug>` on drift. In a terminal phase that command
+      preflights and regenerates only the selected target-file scopes without
+      project-wide post-passes, commits those paths, preserves WI phase, and
+      returns the exact code-check retry. Issue #1591 routes the public
+      force-regeneration entry point through the same shared spec runner used
+      by replay and cold verification. Source application still honors
+      hand-written skips, then `project_root_llms` targets are deterministically
+      replaced by the TD-first project context emitter before formatting and
+      lifecycle commit; a real Git fixture proves the output is one canonical
+      CODEGEN document with no generic TODO and preserves a HANDWRITE sibling
+      byte-for-byte.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/capability_type.rs"
     action: modify
@@ -4001,6 +3560,23 @@ changes:
       label shape, app/lib compatibility, invalid values, and real-CLI chain
       parsing.
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1501 adds a single self-hosting admission policy. Root capability
+      and work-item runners reject Agentic Workflow identity before a lifecycle
+      tick, return a terminal aw.cli.v1 policy envelope with no next command or
+      invoke, and route self rollup to read-only health claims instead of a
+      project root runner.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1501 rejects the project-scoped capability runner before its
+      report or next-action loop can mutate local planning or tracker state.
+    impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chain.rs"
     action: modify
     section: schema
@@ -4083,6 +3659,13 @@ changes:
       unavailable and multiple are ambiguous. Only an admitted plan may enter
       lifecycle mutation, and its bytes are compared exactly again after
       activation before execution.
+      Issue #1634 extends that same admission boundary with stable
+      `schema:<name>` and `cli:<name>` unit IDs. Canonical Changes
+      `generates:` lists must form an exhaustive, unique partition before
+      lifecycle mutation; invalid ownership emits a structured remediation
+      envelope, while an owned unit without a generator emits a typed HITL
+      generator-gap envelope. The executor repeats the predicate and passes
+      only the current target's typed IR partition to Schema or CLI codegen.
       Issue #1602 activates an existing TD branch before inspecting reachable
       history. An exact slug plus Td-Init resumes normally; missing or
       same-slug-without-init history clears the stale authoring phase, branch,
@@ -4183,12 +3766,6 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/standardize.rs"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - path: "apps/agentic-workflow/src/cli/chat.rs"
     action: modify
     section: schema
     description: |
@@ -4343,7 +3920,10 @@ changes:
     description: |
       Issue #848: added the `source_units` evidence block for llm.rs (the
       live `aw llm` offline agent-orientation surface), missing from this
-      semantic domain's evidence list.
+      semantic domain's evidence list. Issue #1496 adds the `model` topic with
+      the canonical agent-first CLI definition and a compile-time contract
+      regression that rejects removed product architecture from active
+      README, CAPABILITIES, and product-model TD prose.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/loop_state.rs"
     action: add
@@ -4360,14 +3940,6 @@ changes:
       Issue #848: added the `source_units` evidence block for
       standard_cli.rs (the shared `llm`/`upgrade`/`issue` CLI-convention
       surface), missing from this semantic domain's evidence list.
-    impl_mode: hand-written
-  - path: "apps/agentic-workflow/src/cli/view.rs"
-    action: add
-    section: schema
-    description: |
-      Issue #848: added the `source_units` evidence block for view.rs (the
-      read-only repo visual-reader snapshot and desktop app surface),
-      missing from this semantic domain's evidence list.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/guard.rs"
     action: modify

@@ -32,6 +32,7 @@ pub struct IssuesArgs {
 
 // Available subcommands for `aw wi`.
 // @spec apps/agentic-workflow/tech-design/surface/issues_top.md#schema
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#cli
 #[derive(Debug, Subcommand)]
 pub enum IssuesCommand {
     /// Work with local draft work-items before creating a tracker issue.
@@ -60,14 +61,10 @@ pub enum IssuesCommand {
     Prioritize(PrioritizeArgs),
     /// Fill the Reference Context section via agent exploration.
     Enrich(EnrichArgs),
-    /// Validate work-item quality (CRR gate).
+    /// Validate work-item quality and boundedness.
     Validate(ValidateArgs),
     /// Fill work-item sections via structured round-trip.
     FillSection(FillSectionArgs),
-    /// Review the filled work-item via reviewer round-trip.
-    Review(ReviewArgs),
-    /// Arbitrate a stalled CRRR loop after second needs-revision.
-    Arbitrate(ArbitrateArgs),
 }
 #[derive(Debug, Args)]
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
@@ -83,8 +80,6 @@ pub enum DraftCommand {
     Init(DraftInitArgs),
     /// Fill sections in a local draft work-item.
     Fill(DraftFillArgs),
-    /// Append a review bullet to a local draft work-item.
-    Review(DraftReviewArgs),
     /// Validate a local draft work-item.
     Validate(DraftValidateArgs),
 }
@@ -157,25 +152,6 @@ pub struct DraftFillArgs {
 pub struct DraftValidateArgs {
     /// Draft markdown file created by `aw wi draft init`.
     pub draft_path: PathBuf,
-
-    /// Output machine-readable JSON.
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Args)]
-// @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
-pub struct DraftReviewArgs {
-    /// Draft markdown file created by `aw wi draft init`.
-    pub draft_path: PathBuf,
-
-    /// Inline review bullet. Mutually exclusive with --body-file.
-    #[arg(long, conflicts_with = "body_file")]
-    pub body: Option<String>,
-
-    /// Read review bullet from a file path, or `-` for stdin.
-    #[arg(long)]
-    pub body_file: Option<String>,
 
     /// Output machine-readable JSON.
     #[arg(long)]
@@ -525,9 +501,10 @@ pub struct EnrichArgs {
     pub slug: String,
 }
 
-// REQ: R3, R4 — Work-item CRR loop
+// Deterministic admission gate for bounded work-items.
 #[derive(Debug, Args)]
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/issues.md#source
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#cli
 pub struct ValidateArgs {
     /// Work-item slug.
     pub slug: String,
@@ -550,6 +527,7 @@ pub struct ValidateArgs {
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R4 #R5
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#cli
 #[derive(Debug, Args)]
 pub struct FillSectionArgs {
     /// Work-item slug.
@@ -565,49 +543,6 @@ pub struct FillSectionArgs {
     /// `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/body.md` into the
     /// checkout issue and emit the next validate envelope. Without this
     /// flag the CLI prints a plain-text brief.
-    #[arg(long)]
-    pub apply: bool,
-
-    /// Deprecated transcript metrics accepted for older hook payloads.
-    #[arg(long)]
-    pub duration_ms: Option<u64>,
-    #[arg(long)]
-    pub tokens_in: Option<u64>,
-    #[arg(long)]
-    pub tokens_out: Option<u64>,
-    #[arg(long)]
-    pub cache_read_tokens: Option<u64>,
-    #[arg(long)]
-    pub tool_calls: Option<u64>,
-    #[arg(long)]
-    pub model: Option<String>,
-}
-
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R12
-#[derive(Debug, Args)]
-pub struct ArbitrateArgs {
-    /// Work-item slug.
-    #[arg(long)]
-    pub slug: String,
-
-    /// Send the work-item back for one more author pass — commits
-    /// `Lifecycle-Stage: Reset`, resets `phase=created` and `review_count=0`,
-    /// dispatches author to refill Requirements. Bounded once per slug; a
-    /// second `--send-back` is rejected.
-    #[arg(long)]
-    pub send_back: bool,
-}
-
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R9 #R10
-#[derive(Debug, Args)]
-pub struct ReviewArgs {
-    /// Work-item slug.
-    #[arg(long)]
-    pub slug: String,
-
-    /// Apply mode: append
-    /// `/tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/review.md` under
-    /// `# Reviews` and emit the next validate envelope.
     #[arg(long)]
     pub apply: bool,
 
@@ -1051,8 +986,6 @@ pub async fn run(args: IssuesArgs) -> Result<()> {
         IssuesCommand::Enrich(a) => run_enrich(a).await,
         IssuesCommand::Validate(a) => run_validate(a).await,
         IssuesCommand::FillSection(a) => run_fill_section(a).await,
-        IssuesCommand::Review(a) => run_review(a).await,
-        IssuesCommand::Arbitrate(a) => run_arbitrate(a).await,
     }
 }
 
@@ -1060,7 +993,6 @@ async fn run_draft(args: DraftArgs) -> Result<()> {
     match args.command {
         DraftCommand::Init(a) => run_draft_init(a).await,
         DraftCommand::Fill(a) => run_draft_fill(a).await,
-        DraftCommand::Review(a) => run_draft_review(a).await,
         DraftCommand::Validate(a) => run_draft_validate(a).await,
     }
 }
@@ -1648,6 +1580,8 @@ enum IssueEnvelope<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         agent: Option<&'a str>,
         slug: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        artifact: Option<super::artifact_producer::ArtifactProducerContract>,
         invoke: Invoke<'a>,
     },
     #[allow(dead_code)] // emitted by `aw wi merge` (Phase D)
@@ -1704,7 +1638,6 @@ fn render_draft_issue_markdown(issue: &Issue, project: &str, tmp_id: &str) -> St
     if let Some(phase) = &issue.phase {
         out.push_str(&format!("phase: {}\n", yaml_quote(phase)));
     }
-    out.push_str("review_count: 0\n");
     if let Some(created_at) = &issue.created_at {
         out.push_str(&format!("created_at: {}\n", yaml_quote(created_at)));
     }
@@ -2056,82 +1989,6 @@ async fn run_draft_fill(args: DraftFillArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_draft_review(args: DraftReviewArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let (mut issue, meta) = read_draft_issue(&args.draft_path)?;
-    let tmp_id = draft_tmp_id(&args.draft_path, &meta)?;
-    resolve_project_label(&project_root, &meta.project)
-        .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
-
-    let review_body = match (&args.body, &args.body_file) {
-        (Some(body), None) => Some(body.clone()),
-        (None, Some(path)) => Some(read_body_file(path)?),
-        (None, None) => None,
-        (Some(_), Some(_)) => unreachable!("clap enforces body/body-file conflict"),
-    };
-
-    let Some(review_body) = review_body else {
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M").to_string();
-        println!("# score-wi-draft-review brief");
-        println!();
-        println!("Draft:   {}", args.draft_path.display());
-        println!("Project: {}", meta.project);
-        println!("Title:   {}", issue.title);
-        println!();
-        println!("## Task");
-        println!("Review the draft work-item and decide whether it is ready to publish.");
-        println!();
-        println!("## Output contract");
-        println!("Write ONE top-level list item, then run:");
-        println!(
-            "  aw wi draft review {} --body-file <file>",
-            args.draft_path.display()
-        );
-        println!();
-        println!("Format:");
-        println!(
-            "- **{} · score-issue-reviewer** — <approved|needs-revision>",
-            now
-        );
-        println!("  - [Requirements] <finding>");
-        return Ok(());
-    };
-
-    let review_body = review_body.trim_end_matches('\n').to_string();
-    let verdict = parse_review_bullet(&review_body)
-        .map_err(|e| anyhow::anyhow!("invalid draft review bullet: {}", e))?;
-    issue.body = append_review_bullet(&issue.body, &review_body);
-    issue.review_count = Some(issue.review_count.unwrap_or(0) + 1);
-    if matches!(verdict, ReviewVerdict::NeedsRevision) {
-        let flagged = extract_section_tags(&issue.body);
-        if !flagged.is_empty() {
-            issue.flagged_sections = Some(flagged);
-        }
-    }
-
-    let content = render_draft_issue_markdown(&issue, &meta.project, &tmp_id);
-    write_file_atomically(&args.draft_path, &content)?;
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "action": "draft_reviewed",
-                "project": meta.project,
-                "tmp_id": tmp_id,
-                "path": args.draft_path,
-                "verdict": match verdict {
-                    ReviewVerdict::Approved => "approved",
-                    ReviewVerdict::NeedsRevision => "needs-revision",
-                },
-                "review_count": issue.review_count,
-            }))?
-        );
-    } else {
-        println!("Draft reviewed: {}", args.draft_path.display());
-    }
-    Ok(())
-}
-
 async fn run_draft_init(args: DraftInitArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let project = resolve_single_project_name(&project_root, args.project.as_deref())
@@ -2188,7 +2045,7 @@ async fn run_draft_init(args: DraftInitArgs) -> Result<()> {
         last_action: None,
         session_id: None,
         validation_errors: vec![],
-        review_count: Some(0),
+        review_count: None,
         flagged_sections: None,
         fill_retry_count: None,
         ship_status: None,
@@ -2307,9 +2164,8 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         body,
         related: vec![],
         implements: vec![],
-        // CRRR phase starts at `created` so validate can route the first
-        // author dispatch to fill Requirements next.
-        // @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R2
+        // WI authoring is linear: create a bounded skeleton, fill it, then
+        // validate. The phase remains for downstream TD lifecycle routing.
         phase: Some(crate::issues::IssuePhase::Created.as_str().to_string()),
         branch: None,
         target_branch: None,
@@ -2432,20 +2288,33 @@ async fn run_create_inner(args: CreateArgs, emit_output: bool) -> Result<()> {
         // `--json` flag is retained above only as a deprecated no-op for
         // callers that still pass it. Mainthread reads this envelope and
         // dispatches the named subagent per CLAUDE.md protocol.
-        // CRRR loop-fill dispatch: the create envelope kicks off ONE
+        // Linear fill dispatch: the create envelope kicks off ONE
         // author invocation that fills the full structured body, including
         // capability alignment, scope, and reference context gates. The
         // mainthread runs `--apply --section all`, then runs `validate` once
         // after the full-body merge.
-        // @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R3
+        let payload = fill_section_payload_path(&active_path, &created.slug);
+        let payload_initialized =
+            initialize_payload_file(&payload, &fill_section_payload_template("all")?)?;
+        let issue_path = backend.issue_path(&created);
+        let artifact = super::artifact_producer::wi_contract(
+            &created.slug,
+            &issue_path.to_string_lossy(),
+            &payload.to_string_lossy(),
+            "all",
+            true,
+        )?;
         let envelope = IssueEnvelope::Dispatch {
             agent: None,
             slug: &created.slug,
+            artifact: Some(artifact),
             invoke: Invoke {
                 command: "aw wi fill-section",
                 args: serde_json::json!({
                     "slug": created.slug,
                     "sections": ["all"],
+                    "payload_path": payload,
+                    "payload_initialized": payload_initialized,
                 }),
             },
         };
@@ -2564,6 +2433,7 @@ fn fill_section_fragment_template(section: crate::issues::IssueSection) -> &'sta
 }
 
 // @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R4 #R5 #R8
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
 async fn run_fill_section(args: FillSectionArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = args.slug.clone();
@@ -2661,7 +2531,7 @@ async fn run_fill_section_brief(
 // Reference Context). A comma-separated value like `"requirements,scope"`
 // returns `[Requirements, Scope]`. Returns an error on unknown names.
 ///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R6
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
 fn parse_section_arg(s: &str) -> Result<Vec<crate::issues::IssueSection>> {
     use crate::issues::IssueSection;
     let trimmed = s.trim();
@@ -2704,7 +2574,7 @@ fn section_arg_is_all(s: &str) -> bool {
 // first H2 (e.g. `# Title` H1) are returned under the empty-string key so
 // callers can re-emit them verbatim at the top.
 ///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R7
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
 fn split_body_by_h2(body: &str) -> Vec<(String, String)> {
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut current_heading = String::new();
@@ -2750,7 +2620,7 @@ fn join_body_from_sections(sections: &[(String, String)]) -> String {
 // (the agent omitted what it was asked to fill — refuse to silently leave
 // stale content).
 ///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R7
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
 fn merge_sections(
     base_body: &str,
     payload_body: &str,
@@ -2831,6 +2701,57 @@ fn merge_all_sections(base_body: &str, payload_body: &str) -> String {
     join_body_from_sections(&merged)
 }
 
+fn validate_wi_fill_payload_scope(
+    section_arg: &str,
+    payload_body: &str,
+    targets: &[crate::issues::IssueSection],
+) -> Result<()> {
+    let parsed = split_body_by_h2(payload_body);
+    if parsed
+        .first()
+        .is_some_and(|(heading, prefix)| heading.is_empty() && !prefix.trim().is_empty())
+    {
+        anyhow::bail!("payload contains content outside an allowed H2 fill slot");
+    }
+    let allowed = if section_arg_is_all(section_arg) {
+        [
+            "## Problem",
+            "## Capability Alignment",
+            "## Requirements",
+            "## Scope",
+            "## Acceptance Criteria",
+            "## Reference Context",
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    } else {
+        targets
+            .iter()
+            .map(|target| target.heading())
+            .collect::<BTreeSet<_>>()
+    };
+    let mut present = BTreeSet::new();
+    for (heading, _) in parsed.iter().filter(|(heading, _)| !heading.is_empty()) {
+        if !allowed.contains(heading.as_str()) {
+            anyhow::bail!(
+                "payload heading `{heading}` is outside requested slot `{section_arg}`; allowed headings: {}",
+                allowed.iter().copied().collect::<Vec<_>>().join(", ")
+            );
+        }
+        if !present.insert(heading.as_str()) {
+            anyhow::bail!("payload contains duplicate fill-slot heading `{heading}`");
+        }
+    }
+    let missing = allowed.difference(&present).copied().collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "payload is missing requested fill-slot heading(s): {}",
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
 // Apply mode: read the subagent's payload, merge ONLY the requested sections
 // into the issue file, delete the payload, and dispatch mainthread to run
 // `aw wi validate` next.
@@ -2839,7 +2760,7 @@ fn merge_all_sections(base_body: &str, payload_body: &str) -> String {
 // backend. Format checks run before the merge reaches the issue body.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R5 #R8 #R9
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R7
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
 async fn run_fill_section_apply(
     _project_root: &std::path::Path,
     slug: &str,
@@ -2879,6 +2800,29 @@ async fn run_fill_section_apply(
         .get(slug)
         .await?
         .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
+
+    let artifact = super::artifact_producer::wi_contract(
+        slug,
+        &backend.issue_path(&existing).to_string_lossy(),
+        &payload.to_string_lossy(),
+        section_arg,
+        true,
+    )?;
+    let payload_error = artifact
+        .validate_slot_payload(section_arg, &payload_body)
+        .err()
+        .or_else(|| {
+            validate_wi_fill_payload_scope(section_arg, &payload_body, &targets)
+                .err()
+                .map(|error| artifact.schema_violation(section_arg, error.to_string()))
+        });
+    if let Some(error) = payload_error {
+        print_envelope(&IssueEnvelope::Error {
+            slug,
+            message: &error.to_string(),
+        })?;
+        return Ok(());
+    }
 
     let merged_body = if is_all {
         merge_all_sections(&existing.body, &payload_body)
@@ -2935,258 +2879,13 @@ async fn run_fill_section_apply(
     print_envelope(&IssueEnvelope::Dispatch {
         agent: None,
         slug,
+        artifact: None,
         invoke: Invoke {
             command: "aw wi validate",
             args: serde_json::json!({ "slug": slug }),
         },
     })?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Review (envelope loop: reviewer round-trip via
-// /tmp/aw/workspaces/<workspace>/payloads/wi/<slug>/review.md)
-// ---------------------------------------------------------------------------
-
-// Payload path where the reviewer writes its single bullet for CLI to merge.
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R10
-fn review_payload_path(project_root: &std::path::Path, slug: &str) -> std::path::PathBuf {
-    crate::shared::workspace::payloads_path(project_root)
-        .join("wi")
-        .join(slug)
-        .join("review.md")
-}
-
-fn review_payload_template(now: &str) -> String {
-    format!(
-        "- **{} · score-issue-reviewer** — <verdict>\n  - [<section>] (fill)\n",
-        now
-    )
-}
-
-// Entry point for `aw wi review`.
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R9 #R10 #R11
-async fn run_review(args: ReviewArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = args.slug.clone();
-    let worktree_abs = project_root.clone();
-
-    if args.apply {
-        run_review_apply(&slug, &worktree_abs).await
-    } else {
-        run_review_brief(&slug, &worktree_abs).await
-    }
-}
-
-// Brief mode: print a plain-text review brief for mainthread to consume
-// directly (post-Phase-2 mainthread-only model — no reviewer subagent).
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R9
-async fn run_review_brief(slug: &str, worktree_abs: &std::path::Path) -> Result<()> {
-    let backend = LocalBackend::from_project_root(worktree_abs);
-    let issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
-
-    let payload = review_payload_path(worktree_abs, slug);
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M").to_string();
-    let payload_created = initialize_payload_file(&payload, &review_payload_template(&now))?;
-
-    println!("# score-issue-reviewer brief");
-    println!();
-    println!("Issue:      {}  ({})", issue.slug, issue.title);
-    println!("Checkout:   {}", worktree_abs.display());
-    println!("Issue file: {}", backend.issue_path(&issue).display());
-    println!("Output:     {}", payload.display());
-    println!(
-        "Payload:    {}",
-        if payload_created {
-            "initialized"
-        } else {
-            "existing"
-        }
-    );
-    println!();
-    println!("## Task");
-    println!();
-    println!("Review the filled work-item and judge whether:");
-    println!(
-        "1. Each section (Problem / Requirements / Scope / Reference Context) is clear and concrete."
-    );
-    println!(
-        "2. Every spec listed in `### Related Specs` is **highly relevant** to the Problem — low-relevance entries should be flagged for replacement or removal."
-    );
-    println!();
-    println!(
-        "Do NOT hunt for specs that *should* have been linked but weren't — that is out of scope for this review. Only evaluate what the author already listed."
-    );
-    println!();
-    println!("## Output contract");
-    println!();
-    println!("Write ONE top-level list item to:");
-    println!("  {}", payload.display());
-    println!();
-    println!("Format (exact):");
-    println!();
-    println!("```markdown");
-    println!("- **{} · score-issue-reviewer** — <verdict>", now);
-    println!("  - [<section>] <finding — observation + concrete suggestion>");
-    println!("  - [<section>] <finding>");
-    println!("```");
-    println!();
-    println!("Where `<verdict>` is one of: `approved` or `needs-revision`.");
-    println!();
-    println!("Rules:");
-    println!("- `approved` → zero findings OR only stylistic nits; sub-bullets are optional.");
-    println!("- `needs-revision` → MUST include at least one finding sub-bullet.");
-    println!("- `<section>` is one of: `Problem`, `Requirements`, `Scope`, `Reference Context`.");
-    println!(
-        "- Write ONE bullet only — the CLI appends it to the `# Reviews` list in the issue body."
-    );
-    println!();
-    println!("Do NOT run `aw wi review --apply` yourself — the workflow hook/mainthread");
-    println!("invokes it after you return.");
-
-    Ok(())
-}
-
-// Apply mode: read the reviewer's payload, validate its shape, append under
-// `# Reviews` in the checkout issue body, delete the payload, and dispatch
-// mainthread to run `aw wi validate` next.
-///
-// Apply does not commit; WI state is projected through the configured issue
-// backend.
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R10 #R11 #R12
-async fn run_review_apply(slug: &str, worktree_abs: &std::path::Path) -> Result<()> {
-    let payload = review_payload_path(worktree_abs, slug);
-    if !payload.exists() {
-        print_envelope(&IssueEnvelope::Error {
-            slug,
-            message: &format!("review payload not found: {}", payload.display()),
-        })?;
-        return Ok(());
-    }
-
-    let review_md = std::fs::read_to_string(&payload)
-        .with_context(|| format!("failed to read review payload: {}", payload.display()))?;
-    let review_md = review_md.trim_end_matches('\n').to_string();
-
-    // Validate structure: first line must match
-    //   `- **<ts> · score-issue-reviewer** — <verdict>`
-    if let Err(e) = parse_review_bullet(&review_md) {
-        print_envelope(&IssueEnvelope::Error { slug, message: &e })?;
-        return Ok(());
-    }
-
-    let backend = LocalBackend::from_project_root(worktree_abs);
-    let existing = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
-
-    let new_body = append_review_bullet(&existing.body, &review_md);
-
-    let patch = IssuePatch {
-        body: Some(new_body),
-        ..Default::default()
-    };
-    backend.update(slug, &patch).await?;
-
-    let _ = std::fs::remove_file(&payload);
-    if let Some(parent) = payload.parent() {
-        let _ = std::fs::remove_dir(parent);
-    }
-
-    print_envelope(&IssueEnvelope::Dispatch {
-        agent: None,
-        slug,
-        invoke: Invoke {
-            command: "aw wi validate",
-            args: serde_json::json!({ "slug": slug }),
-        },
-    })?;
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReviewVerdict {
-    Approved,
-    NeedsRevision,
-}
-
-// Validate the reviewer's single-bullet payload.
-///
-// Expected shape:
-// ```text
-// - **<iso-timestamp> · score-issue-reviewer** — <verdict>
-//   - [<section>] <finding>        (optional when verdict=approved)
-//   - [<section>] <finding>
-// ```
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R11
-fn parse_review_bullet(payload: &str) -> std::result::Result<ReviewVerdict, String> {
-    let first = payload.lines().next().unwrap_or("").trim_end();
-    if first.is_empty() {
-        return Err("review payload is empty".into());
-    }
-    if !first.starts_with("- **") {
-        return Err(format!(
-            "review payload must start with `- **<ts> · score-issue-reviewer** — <verdict>`, got: {}",
-            first.chars().take(120).collect::<String>()
-        ));
-    }
-    let verdict_part = match first.rsplit_once(" — ") {
-        Some((_, v)) => v.trim(),
-        None => {
-            return Err(format!(
-                "review payload header missing ` — <verdict>` separator: {}",
-                first
-            ));
-        }
-    };
-    let verdict = match verdict_part {
-        "approved" => ReviewVerdict::Approved,
-        "needs-revision" => ReviewVerdict::NeedsRevision,
-        other => {
-            return Err(format!(
-                "invalid verdict '{}'; expected 'approved' or 'needs-revision'",
-                other
-            ));
-        }
-    };
-
-    if verdict == ReviewVerdict::NeedsRevision {
-        let has_finding = payload
-            .lines()
-            .skip(1)
-            .any(|l| l.trim_start().starts_with("- ["));
-        if !has_finding {
-            return Err(
-                "needs-revision verdict requires at least one finding sub-bullet of the form `  - [<section>] ...`".into(),
-            );
-        }
-    }
-
-    Ok(verdict)
-}
-
-// Append a single review bullet under a `# Reviews` H1 at the tail of the
-// issue body. Creates the H1 if it doesn't exist, else appends the bullet
-// to the existing list in a canonical shape.
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-cli-envelope.md#R11
-fn append_review_bullet(body: &str, review_bullet: &str) -> String {
-    let trimmed_body = body.trim_end_matches('\n');
-    let bullet = review_bullet.trim_end_matches('\n');
-    if trimmed_body.contains("\n# Reviews\n") || trimmed_body.starts_with("# Reviews\n") {
-        format!("{}\n\n{}\n", trimmed_body, bullet)
-    } else {
-        format!("{}\n\n---\n\n# Reviews\n\n{}\n", trimmed_body, bullet)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3582,8 +3281,8 @@ pub struct CapabilityWiPlanReport {
     pub reconciliation_count: usize,
     pub resolved_wi_ref_count: usize,
     pub warnings: Vec<String>,
-    pub agent_review_required: bool,
-    pub review_status: &'static str,
+    pub requires_hitl: bool,
+    pub hitl_status: &'static str,
     pub plan_command: String,
 }
 
@@ -3766,8 +3465,8 @@ pub(crate) async fn build_capability_wi_plan_report(
         reconciliation_count: reconciliations.len(),
         resolved_wi_ref_count: resolved_wi_refs.len(),
         warnings,
-        agent_review_required: true,
-        review_status: "pending",
+        requires_hitl: true,
+        hitl_status: "pending",
         plan_command,
     })
 }
@@ -3826,8 +3525,8 @@ async fn run_epicize(args: EpicizeArgs) -> Result<()> {
                     .map(|document| document.capabilities.len())
                     .unwrap_or(0),
                 "title": title,
-                "agent_review_required": true,
-                "review_status": "pending",
+                "requires_hitl": true,
+                "hitl_status": "pending",
             }))?
         );
     } else {
@@ -3881,8 +3580,8 @@ async fn run_atomize(args: AtomizeArgs) -> Result<()> {
                 "path": path,
                 "issue_count": issues.len(),
                 "candidate_count": candidates.len(),
-                "agent_review_required": true,
-                "review_status": "pending",
+                "requires_hitl": true,
+                "hitl_status": "pending",
             }))?
         );
     } else {
@@ -3905,7 +3604,7 @@ async fn run_prioritize(args: PrioritizeArgs) -> Result<()> {
     let title = args
         .title
         .clone()
-        .unwrap_or_else(|| format!("{} priority review", project));
+        .unwrap_or_else(|| format!("{} priority plan", project));
     let body = render_prioritize_plan(&project, &title, &backend_name, &lanes, &issues);
     let path = write_planning_artifact(
         &project_root,
@@ -3936,8 +3635,8 @@ async fn run_prioritize(args: PrioritizeArgs) -> Result<()> {
                 "deferred_count": lanes.deferred.len(),
                 "epic_count": epic_count,
                 "issue_count": issues.len(),
-                "agent_review_required": true,
-                "review_status": "pending",
+                "requires_hitl": true,
+                "hitl_status": "pending",
             }))?
         );
     } else {
@@ -4629,7 +4328,7 @@ fn has_active_wi_ref(row: &CapabilityRow) -> bool {
 fn active_wi_refs_text(row: &CapabilityRow) -> String {
     let refs = capability_wi_summary_refs(row);
     if refs.is_empty() {
-        review_summary_cell(&row.active_wi)
+        summary_cell(&row.active_wi)
     } else {
         refs.join(", ")
     }
@@ -4658,7 +4357,7 @@ fn capability_tracker_reconciliations(
                 tracker_lookup: tracker_lookup_summary(&missing_refs, resolved_wi_refs),
                 capability_gap: row.gaps.clone(),
                 next_action:
-                    "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human review"
+                    "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human confirmation"
                         .to_string(),
             })
         })
@@ -4705,7 +4404,7 @@ async fn resolve_capability_tracker_ref_lookups(
                 Err(err) => CapabilityTrackerRefLookup {
                     reference: reference.clone(),
                     status: "lookup_error".to_string(),
-                    title: review_summary_cell(&err.to_string()),
+                    title: summary_cell(&err.to_string()),
                     labels: "-".to_string(),
                     url: "-".to_string(),
                 },
@@ -4847,7 +4546,7 @@ fn capability_plan_summary_rows(
                 } else if has_actionable_gap(row) {
                     summary.first_action = row.gaps.clone();
                 } else if !summary.existing_wi_refs.is_empty() {
-                    summary.first_action = "review existing WI linkage".to_string();
+                    summary.first_action = "confirm existing WI linkage".to_string();
                 }
             }
         }
@@ -4899,7 +4598,7 @@ fn wi_summary_refs_from_text(text: &str) -> Vec<String> {
     }
     numbers.sort_unstable();
     if numbers.is_empty() {
-        vec![review_summary_cell(text)]
+        vec![summary_cell(text)]
     } else {
         numbers
             .into_iter()
@@ -4949,7 +4648,7 @@ fn merge_capability_plan_operator(current: &str, next: &str) -> String {
     }
 }
 
-fn review_summary_cell(text: &str) -> String {
+fn summary_cell(text: &str) -> String {
     const LIMIT: usize = 140;
     let trimmed = text.trim();
     if trimmed.chars().count() <= LIMIT {
@@ -5210,8 +4909,8 @@ fn render_capability_wi_plan(
             out.push_str(&format!("  - {}\n", yaml_quote(warning)));
         }
     }
-    out.push_str("agent_review_required: true\n");
-    out.push_str("review_status: pending\n");
+    out.push_str("requires_hitl: true\n");
+    out.push_str("hitl_status: pending\n");
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
@@ -5238,7 +4937,7 @@ fn render_capability_wi_plan(
         out.push('\n');
     }
 
-    out.push_str("## Review Summary\n\n");
+    out.push_str("## Confirmation Summary\n\n");
     out.push_str("| Capability | Candidate WIs | Existing WI | Next operator | First action |\n");
     out.push_str("|------------|--------------:|-------------|---------------|--------------|\n");
     let summary_rows = capability_plan_summary_rows(&capability_map.rows, issues, candidates);
@@ -5257,7 +4956,7 @@ fn render_capability_wi_plan(
                 row.candidate_count,
                 markdown_table_cell(&refs),
                 row.next_operator,
-                markdown_table_cell(&review_summary_cell(&row.first_action))
+                markdown_table_cell(&summary_cell(&row.first_action))
             ));
         }
         out.push('\n');
@@ -5288,7 +4987,7 @@ fn render_capability_wi_plan(
 
     if !resolved_wi_refs.is_empty() {
         out.push_str("## Tracker WI Ref Lookups\n\n");
-        out.push_str("These lookups resolve README WI refs that were absent from the current open issue inventory. `not_found` and `lookup_error` entries still need human review before README refs or tracker state are changed.\n\n");
+        out.push_str("These lookups resolve README WI refs that were absent from the current open issue inventory. `not_found` and `lookup_error` entries still need human confirmation before README refs or tracker state are changed.\n\n");
         out.push_str("| WI | Lookup status | Title | Labels | URL |\n");
         out.push_str("|----|---------------|-------|--------|-----|\n");
         for lookup in resolved_wi_refs.values() {
@@ -5350,7 +5049,7 @@ fn render_capability_wi_plan(
 
     if !candidates.is_empty() {
         out.push_str("\n## Candidate WI Drafts\n\n");
-        out.push_str("Review these local draft bodies before publishing tracker issues. They are generated from the capability map and still need human acceptance.\n\n");
+        out.push_str("Confirm these local draft bodies before publishing tracker issues. They are generated from the capability map and still need human acceptance.\n\n");
         for (index, candidate) in candidates.iter().enumerate() {
             render_capability_candidate_wi_draft(&mut out, project, cap_path, index + 1, candidate);
         }
@@ -5377,7 +5076,7 @@ fn render_capability_wi_plan(
 
     out.push_str("\n## Recommended CLI Sequence\n\n");
     if candidates.is_empty() && !reconciliations.is_empty() {
-        out.push_str("1. Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref is closed, moved, mislabeled, or should be replaced.\n");
+        out.push_str("1. Confirm `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref is closed, moved, mislabeled, or should be replaced.\n");
         out.push_str("2. Update README WI refs or tracker state only after HITL reconciliation.\n");
         out.push_str(&format!("3. `aw wi plan --project {}`\n", project));
         out.push_str(&format!(
@@ -5386,7 +5085,7 @@ fn render_capability_wi_plan(
         ));
     } else if candidates.is_empty() {
         out.push_str(
-            "1. Review the capability planning matrix; no new WI candidates were generated.\n",
+            "1. Confirm the capability planning matrix; no new WI candidates were generated.\n",
         );
         out.push_str(&format!(
             "2. `aw run --project {} --max-ticks 1`\n",
@@ -5402,7 +5101,7 @@ fn render_capability_wi_plan(
             project, project
         ));
         out.push_str(&format!(
-            "3. `aw wi prioritize --project {} --title \"{} priority review\"`\n",
+            "3. `aw wi prioritize --project {} --title \"{} priority plan\"`\n",
             project, project
         ));
         out.push_str(&format!(
@@ -5411,7 +5110,7 @@ fn render_capability_wi_plan(
         ));
     }
 
-    out.push_str("\n## Review Guardrails\n\n");
+    out.push_str("\n## Confirmation Guardrails\n\n");
     out.push_str("- Treat README capability rows as the confirmed anchor; if the direction changed, rerun `/aw:capability` before publishing WIs.\n");
     out.push_str("- Convert each accepted candidate through `aw wi draft init` / `aw wi create`; this artifact does not mutate the tracker.\n");
     out.push_str(
@@ -5538,17 +5237,17 @@ fn render_epicize_plan(
     out.push_str(&format!("title: {}\n", yaml_quote(title)));
     out.push_str(&format!("backend: {}\n", yaml_quote(backend_name)));
     out.push_str(&format!("issue_count: {}\n", issues.len()));
-    out.push_str("agent_review_required: true\n");
-    out.push_str("review_status: pending\n");
+    out.push_str("requires_hitl: true\n");
+    out.push_str("hitl_status: pending\n");
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
     out.push_str("- Classify the project work-item inventory into epic candidates.\n");
-    out.push_str("- Convert README capability roots into reviewed epic/subepic candidates when a Markdown capability map is available.\n");
+    out.push_str("- Convert README capability roots into confirmed epic/subepic candidates when a Markdown capability map is available.\n");
     out.push_str(
         "- Identify duplicate, underspecified, or deferred requirements before prioritize.\n",
     );
-    out.push_str("- Keep this artifact local until the candidate epics are reviewed.\n\n");
+    out.push_str("- Keep this artifact local until a human confirms the candidate epics.\n\n");
     if let Some(document) = capability_document {
         push_capability_epic_candidates(&mut out, document);
     }
@@ -5599,14 +5298,18 @@ fn render_epicize_plan(
     {
         out.push_str("- none\n\n");
     }
-    out.push_str("## Required Agent Review Brief\n\n");
-    out.push_str("This epic draft requires agent review before publishing tracker changes.\n\n");
+    out.push_str("## Required HITL Brief\n\n");
+    out.push_str(
+        "This epic draft requires human confirmation before publishing tracker changes.\n\n",
+    );
     out.push_str(
         "- Merge groups that are clearly one outcome; split groups that mix unrelated goals.\n",
     );
     out.push_str("- Mark duplicate work-items and choose one canonical issue per duplicate set.\n");
     out.push_str("- For each accepted epic candidate, produce title, problem statement, acceptance criteria, included issues, deferred issues, and execution order.\n");
-    out.push_str("- Do not publish tracker changes from this artifact without human review.\n");
+    out.push_str(
+        "- Do not publish tracker changes from this artifact without human confirmation.\n",
+    );
     out
 }
 
@@ -5641,7 +5344,7 @@ fn push_capability_epic_candidates(
     out.push_str("- Every capability heading maps to an epic/subepic root candidate.\n");
     out.push_str("- Every capability work-root row maps to one WI root candidate, defaulting to epic/subepic granularity.\n");
     out.push_str(
-        "- Atomic change WIs are created by `aw wi atomize` after these roots are reviewed.\n\n",
+        "- Atomic change WIs are created by `aw wi atomize` after these roots are confirmed.\n\n",
     );
 }
 
@@ -5708,8 +5411,8 @@ fn render_atomize_plan(
     out.push_str(&format!("backend: {}\n", yaml_quote(backend_name)));
     out.push_str(&format!("issue_count: {}\n", issues.len()));
     out.push_str(&format!("candidate_count: {}\n", candidates.len()));
-    out.push_str("agent_review_required: true\n");
-    out.push_str("review_status: pending\n");
+    out.push_str("requires_hitl: true\n");
+    out.push_str("hitl_status: pending\n");
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
@@ -5757,7 +5460,7 @@ fn render_atomize_plan(
         }
     }
 
-    out.push_str("\n## Required Human Review\n\n");
+    out.push_str("\n## Required Human Confirmation\n\n");
     out.push_str("- Choose which candidates become local `aw wi draft` artifacts.\n");
     out.push_str("- Rewrite generic candidates into concrete titles before publishing.\n");
     out.push_str(
@@ -5797,16 +5500,14 @@ fn render_prioritize_plan(
         lanes.needs_triage.len()
     ));
     out.push_str(&format!("deferred_count: {}\n", lanes.deferred.len()));
-    out.push_str("agent_review_required: true\n");
-    out.push_str("review_status: pending\n");
+    out.push_str("requires_hitl: true\n");
+    out.push_str("hitl_status: pending\n");
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", title));
     out.push_str("## Purpose\n\n");
     out.push_str("- Re-rank issue backlog by priority, dependency, and readiness.\n");
     out.push_str("- Identify ready work, blocked dependencies, atomization needs, triage blockers, and deferred work before tracker updates.\n");
-    out.push_str(
-        "- Keep this artifact local until agent review approves the proposed ordering.\n\n",
-    );
+    out.push_str("- Keep this artifact local until a human confirms the proposed ordering.\n\n");
 
     push_prioritize_lane(&mut out, "Ready Now", &lanes.ready_now);
     push_prioritize_lane(
@@ -5818,7 +5519,7 @@ fn render_prioritize_plan(
     push_prioritize_lane(&mut out, "Needs Triage", &lanes.needs_triage);
     push_prioritize_lane(&mut out, "Deferred", &lanes.deferred);
 
-    out.push_str("\n## Priority Review Matrix\n\n");
+    out.push_str("\n## Priority Confirmation Matrix\n\n");
     out.push_str("| Work item | Current priority | Proposed priority | Reason |\n");
     out.push_str("|-----------|------------------|-------------------|--------|\n");
     if issues.is_empty() {
@@ -5826,16 +5527,16 @@ fn render_prioritize_plan(
     } else {
         for issue in issues {
             out.push_str(&format!(
-                "| {} | {} | TBD | Agent review required |\n",
+                "| {} | {} | TBD | Human confirmation required |\n",
                 issue_ref(issue),
                 priority_label(issue)
             ));
         }
     }
 
-    out.push_str("\n## Required Agent Review Brief\n\n");
+    out.push_str("\n## Required HITL Brief\n\n");
     out.push_str(
-        "This priority draft requires agent review before publishing tracker changes.\n\n",
+        "This priority draft requires human confirmation before publishing tracker changes.\n\n",
     );
     out.push_str("- Reorder ready work only when dependency or urgency overrides deterministic priority ordering.\n");
     out.push_str(
@@ -5844,7 +5545,9 @@ fn render_prioritize_plan(
     out.push_str(
         "- Recommend concrete priority label changes in the matrix with one short reason each.\n",
     );
-    out.push_str("- Do not publish tracker changes from this artifact without human review.\n");
+    out.push_str(
+        "- Do not publish tracker changes from this artifact without human confirmation.\n",
+    );
     out
 }
 
@@ -5910,7 +5613,7 @@ fn ensure_planning_output_path_is_explicit(
         .join(filename);
     anyhow::bail!(
         "ambiguous planning artifact output `{}`; write WI planning artifacts under \
-         /tmp/aw/workspaces/<workspace>/workitems/<project>/<kind>/ so agents can discover and review them. Use `{}`.",
+         /tmp/aw/workspaces/<workspace>/workitems/<project>/<kind>/ so agents can discover and confirm them. Use `{}`.",
         path.display(),
         suggested.display()
     );
@@ -6069,25 +5772,20 @@ async fn run_enrich(args: EnrichArgs) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Validate — CRR quality gate (R3, R4)
+// Validate — deterministic WI quality gate
 // ---------------------------------------------------------------------------
 
 // Validate work-item quality and commit the pending current-checkout change
-// with the right lifecycle stage and
-// emit the next-step dispatch envelope.
+// and emit the next-step dispatch envelope.
 ///
-// Validate is the **sole commit point** in the CRR loop. `--apply` (fill /
-// review) merges the subagent payload into the checkout issue but does not
-// commit; mainthread runs validate immediately afterwards. On pass, validate
-// commits + emits a dispatch envelope (next agent or mainthread step). On
-// fail, validate rolls back the checkout-staged issue file and emits an
-// Error envelope so mainthread can re-dispatch the same agent.
+// Fill applies the authored payload and validate deterministically admits or
+// rejects the bounded WI. Product ambiguity is HITL; there is no WI semantic
+// review, revise, or arbitration state machine.
 ///
 // When invoked outside a lifecycle branch (legacy CLI use, no pending changes), it
 // behaves as before — quality check + auto-promote draft→open + text/json
 // output, no commit, no envelope.
-// REQ: R3 — Issue CRR loop
-// REQ: R4 — Quality checks (R-id, scope, spec_plan, no ambiguity)
+// Quality checks cover R-id, scope, spec-plan, and ambiguity rules.
 async fn run_validate(mut args: ValidateArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let requested_slug = args.slug.clone();
@@ -6121,10 +5819,9 @@ fn resolve_validate_backend(
     }
 }
 
-// Legacy CRR path: global quality check + draft→open promotion. Used when
+// Global quality check + draft→open promotion. Used when
 // validate is invoked against the main repo (no worktree exists for this
 // slug). Preserved so older `/aw:issue update <slug>` flows still work.
-// REQ: R3, R4 — Issue CRR loop
 async fn run_validate_legacy(
     args: &ValidateArgs,
     backend: &dyn IssueBackend,
@@ -6197,39 +5894,10 @@ async fn run_validate_legacy(
     Ok(())
 }
 
-// Extract the last reviewer bullet (with its sub-bullets) from a `# Reviews`
-// block. Returns None if there's no `# Reviews` H1 or no bullets under it.
-fn last_review_bullet(body: &str) -> Option<String> {
-    let lines: Vec<&str> = body.lines().collect();
-    let reviews_idx = lines.iter().position(|l| l.trim() == "# Reviews")?;
-
-    let mut last_start: Option<usize> = None;
-    for (i, l) in lines.iter().enumerate().skip(reviews_idx + 1) {
-        if l.starts_with("- **") {
-            last_start = Some(i);
-        }
-    }
-    let start = last_start?;
-
-    let mut end = lines.len();
-    for (i, l) in lines.iter().enumerate().skip(start + 1) {
-        if l.starts_with("- **") {
-            end = i;
-            break;
-        }
-        // Stop if we hit a non-list, non-blank line (likely another section).
-        if !l.is_empty() && !l.starts_with(' ') && !l.starts_with("- ") && !l.starts_with("\t") {
-            end = i;
-            break;
-        }
-    }
-    Some(lines[start..end].join("\n"))
-}
-
-// Placeholder substrings that author/reviser stubs use to mark sections
+// Placeholder substrings that author skeletons use to mark sections
 // they haven't filled yet. `validate_section_format` rejects any section
 // whose content contains one of these markers — this prevents the
-// CRRR loop from advancing past a section that was structurally well-formed
+// linear authoring flow from advancing past a section that was structurally well-formed
 // but semantically empty.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/issue-validator-placeholder-rejection.md#R5
@@ -6243,7 +5911,7 @@ const PLACEHOLDER_MARKERS: &[&str] = &["(fill)", "(replace-this)"];
 // single section so intermediate Fill stages don't fail just because later
 // sections aren't filled yet.
 ///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R5
+// @spec apps/agentic-workflow/tech-design/surface/specs/aw-wi-crrr-removal.md#scenarios
 // @spec apps/agentic-workflow/tech-design/surface/specs/issue-validator-placeholder-rejection.md
 fn validate_section_format(body: &str, section: crate::issues::IssueSection) -> Vec<String> {
     use crate::issues::IssueSection;
@@ -6387,104 +6055,6 @@ fn validate_section_format(body: &str, section: crate::issues::IssueSection) -> 
             errors
         }
     }
-}
-
-// Extract `[Section]` tags from the last reviewer bullet's sub-bullets.
-// Returns the unique, sorted list of sections the reviewer flagged. Returns
-// empty if no reviewer bullet exists, no sub-bullets are present, or no
-// recognized tags are found.
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R9
-fn extract_section_tags(body: &str) -> Vec<crate::issues::IssueSection> {
-    use crate::issues::IssueSection;
-    let bullet = match last_review_bullet(body) {
-        Some(b) => b,
-        None => return Vec::new(),
-    };
-    let mut found: std::collections::BTreeSet<IssueSection> = std::collections::BTreeSet::new();
-    for line in bullet.lines() {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with("- [") {
-            continue;
-        }
-        let after_bracket = match trimmed.strip_prefix("- [") {
-            Some(s) => s,
-            None => continue,
-        };
-        let close = match after_bracket.find(']') {
-            Some(i) => i,
-            None => continue,
-        };
-        let tag = &after_bracket[..close];
-        if let Some(sec) = IssueSection::parse(tag) {
-            found.insert(sec);
-        }
-    }
-    found.into_iter().collect()
-}
-
-// ---------------------------------------------------------------------------
-// Arbitrate — manual decision after the second `needs-revision` (R12)
-// ---------------------------------------------------------------------------
-
-// Arbitrate a stalled CRRR loop. For now only `--send-back` is automated;
-// the bare command emits an error envelope with manual-decision instructions
-// so a human picks one of reject-close (`aw wi close <id>`) or send-back
-// (`--send-back`, one more author pass); there is no force-approve/merge
-// path (the LINEAR lifecycle has no `aw wi merge`).
-///
-// `--send-back` is bounded once per slug — a second invocation is rejected
-// to avoid infinite loops (R12). On accept it commits
-// `Lifecycle-Stage: Reset`, resets `phase=created`, `review_count=0`, clears
-// `flagged_sections`, and dispatches the author to refill Requirements.
-///
-// @spec apps/agentic-workflow/tech-design/surface/specs/issue-crrr-state-machine.md#R12
-async fn run_arbitrate(args: ArbitrateArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = args.slug.clone();
-    let worktree_path = project_root.clone();
-
-    if !args.send_back {
-        print_envelope(&IssueEnvelope::Error {
-            slug: &slug,
-            message: &format!(
-                "manual arbitration required for '{}'. Review the temp issue working copy's Reviews section and run one of: \
-                 `aw wi close <id>` (reject-close), or \
-                 `aw wi arbitrate --slug {} --send-back` (one more author pass). \
-                 There is no force-approve command yet; a human must edit the WI's phase/labels directly to force it forward.",
-                slug, slug
-            ),
-        })?;
-        return Ok(());
-    }
-
-    let backend = LocalBackend::from_project_root(&worktree_path);
-    if backend.get(&slug).await?.is_none() {
-        print_envelope(&IssueEnvelope::Error {
-            slug: &slug,
-            message: &format!("issue '{}' not found in current checkout", slug),
-        })?;
-        return Ok(());
-    }
-
-    let patch = IssuePatch {
-        phase: Some(crate::issues::IssuePhase::Created.as_str().to_string()),
-        review_count: Some(0),
-        flagged_sections: Some(vec![]),
-        validation_errors: Some(vec![]),
-        ..Default::default()
-    };
-    backend.update(&slug, &patch).await?;
-
-    print_envelope(&IssueEnvelope::Dispatch {
-        agent: None,
-        slug: &slug,
-        invoke: Invoke {
-            command: "aw wi fill-section",
-            args: serde_json::json!({ "slug": slug, "section": "requirements" }),
-        },
-    })?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -6633,7 +6203,7 @@ mod tests {
     }
 
     #[test]
-    fn epicize_artifact_requires_agent_review() {
+    fn epicize_artifact_requires_hitl() {
         let issues = vec![planning_issue(
             IssueType::Enhancement,
             "new capability",
@@ -6641,9 +6211,9 @@ mod tests {
             1,
         )];
         let body = render_epicize_plan("score", "Score phase", "github", &issues, None);
-        assert!(body.contains("agent_review_required: true"));
-        assert!(body.contains("review_status: pending"));
-        assert!(body.contains("## Required Agent Review Brief"));
+        assert!(body.contains("requires_hitl: true"));
+        assert!(body.contains("hitl_status: pending"));
+        assert!(body.contains("## Required HITL Brief"));
     }
 
     #[test]
@@ -6673,7 +6243,7 @@ mod tests {
     }
 
     #[test]
-    fn prioritize_artifact_requires_agent_review_and_orders_all_layers() {
+    fn prioritize_artifact_requires_hitl_and_orders_all_layers() {
         let issues = vec![
             planning_issue(IssueType::Epic, "phase", Some("p1"), 3),
             planning_issue(IssueType::Bug, "urgent", Some("p0"), 1),
@@ -6682,12 +6252,12 @@ mod tests {
         let lanes = prioritize_lanes(&issues);
         let body = render_prioritize_plan("score", "Score priorities", "github", &lanes, &issues);
         assert!(body.contains("kind: prioritize"));
-        assert!(body.contains("agent_review_required: true"));
+        assert!(body.contains("requires_hitl: true"));
         assert!(body.contains("## Ready Now"));
         assert!(body.contains("## Blocked By Dependency"));
         assert!(body.contains("## Needs Atomize"));
         assert!(body.contains("## Needs Triage"));
-        assert!(body.contains("## Priority Review Matrix"));
+        assert!(body.contains("## Priority Confirmation Matrix"));
     }
 
     #[test]
@@ -6829,7 +6399,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("capability_count: 2"));
         assert!(body.contains("planning_row_count: 2"));
         assert!(body.contains("reconciliation_count: 0"));
-        assert!(body.contains("## Review Summary"));
+        assert!(body.contains("## Confirmation Summary"));
         assert!(body.contains("| Package manager | 1 | none | epicize -> atomize | Close capability gap: Package manager |"));
         assert!(body.contains("| Capability | Type | Surfaces | EC Dimensions | Claim |"));
         assert!(body.contains("DeveloperTool"));
@@ -6945,7 +6515,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("| #3779 | closed | jet package manager readiness | app:jet, type:epic | https://github.example/issues/3779 |"));
         assert!(!body.contains("## Candidate WI Drafts"));
         assert!(body.contains(
-            "Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref"
+            "Confirm `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref"
         ));
         assert!(body.contains("`aw wi plan --project jet`"));
         assert!(!body.contains("`aw wi epicize --project jet"));
@@ -8058,6 +7628,27 @@ labels:\n\
     }
 
     #[test]
+    fn fill_section_payload_scope_accepts_only_declared_slots() {
+        let all = fill_section_payload_template("all").unwrap();
+        validate_wi_fill_payload_scope("all", &all, &[]).unwrap();
+
+        let extra = format!("{all}\n## Surprise\n\noutside the producer contract\n");
+        let error = validate_wi_fill_payload_scope("all", &extra, &[]).unwrap_err();
+        assert!(error.to_string().contains("outside requested slot `all`"));
+
+        let targets = parse_section_arg("requirements,scope").unwrap();
+        let specific = fill_section_payload_template("requirements,scope").unwrap();
+        validate_wi_fill_payload_scope("requirements,scope", &specific, &targets).unwrap();
+
+        let wrong = fill_section_payload_template("reference_context").unwrap();
+        let error =
+            validate_wi_fill_payload_scope("requirements,scope", &wrong, &targets).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("outside requested slot `requirements,scope`"));
+    }
+
+    #[test]
     fn initialize_payload_file_creates_parent_and_preserves_existing_content() {
         let tmp = tempfile::tempdir().unwrap();
         let path = crate::shared::workspace::payloads_path(tmp.path())
@@ -8070,75 +7661,6 @@ labels:\n\
 
         assert!(!initialize_payload_file(&path, "second\n").unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\n");
-    }
-
-    #[test]
-    fn review_payload_template_requires_agent_edit() {
-        let template = review_payload_template("2026-06-01T12:00");
-        assert!(template.contains("score-issue-reviewer"));
-        assert!(template.contains("<verdict>"));
-        assert!(template.contains("(fill)"));
-        assert!(parse_review_bullet(&template).is_err());
-    }
-
-    #[test]
-    fn append_review_bullet_marks_draft_review_metadata() {
-        let mut issue = Issue {
-            issue_type: IssueType::Enhancement,
-            title: "demo draft".to_string(),
-            state: IssueState::Draft,
-            id: None,
-            github_id: None,
-            gitlab_id: None,
-            url: None,
-            author: None,
-            labels: vec![
-                "type:enhancement".to_string(),
-                "app:agentic-workflow".to_string(),
-            ],
-            created_at: None,
-            updated_at: None,
-            slug: "wi-demo".to_string(),
-            body: "## Problem\n\nDemo\n".to_string(),
-            related: vec![],
-            implements: vec![],
-            phase: Some("created".to_string()),
-            branch: None,
-            target_branch: None,
-            git_workflow: None,
-            change_id: None,
-            iteration: None,
-            current_task_id: None,
-            impl_spec_phase: None,
-            task_revisions: None,
-            revision_counts: None,
-            last_action: None,
-            session_id: None,
-            validation_errors: vec![],
-            review_count: Some(0),
-            flagged_sections: None,
-            fill_retry_count: None,
-            ship_status: None,
-            ship_commit: None,
-            regen_verified_at: None,
-        };
-        let review = "- **2026-05-13T04:28 · score-issue-reviewer** — needs-revision\n  - [Requirements] Tighten R1.";
-        let verdict = parse_review_bullet(review).unwrap();
-        issue.body = append_review_bullet(&issue.body, review);
-        issue.review_count = Some(issue.review_count.unwrap_or(0) + 1);
-        if matches!(verdict, ReviewVerdict::NeedsRevision) {
-            let flagged = extract_section_tags(&issue.body);
-            if !flagged.is_empty() {
-                issue.flagged_sections = Some(flagged);
-            }
-        }
-
-        assert_eq!(issue.review_count, Some(1));
-        assert_eq!(
-            issue.flagged_sections,
-            Some(vec![IssueSection::Requirements])
-        );
-        assert!(issue.body.contains("# Reviews"));
     }
 
     #[test]

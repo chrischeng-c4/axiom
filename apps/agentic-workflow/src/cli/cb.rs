@@ -429,11 +429,120 @@ pub async fn run_gen(args: CbGenArgs) -> Result<()> {
     let Some(slug) = args.slug else {
         anyhow::bail!("Either specify a slug or use --force-regen --project <project>");
     };
+    if args.spec_path.is_none() && run_terminal_codegen_repair(&slug).await? {
+        return Ok(());
+    }
     let td_args = GenCodeArgs {
         slug,
         spec_path: args.spec_path,
     };
     td::run_gen_code(td_args).await
+}
+
+/// Re-run only the accepted TD's touched CODEGEN targets when `aw td gen`
+/// is invoked from a fresh terminal phase. Normal authoring still delegates
+/// to `td::run_gen_code`; this branch is the executable remediation emitted
+/// by terminal drift detection and deliberately leaves WI phase/state alone.
+async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
+    use crate::issues::types::td_phase;
+    use crate::issues::{IssueBackend, LocalBackend};
+
+    let project_root = crate::find_project_root()?;
+    let backend = LocalBackend::from_project_root(&project_root);
+    let Some(issue) = backend.get(slug).await? else {
+        return Ok(false);
+    };
+    let phase = issue.phase.as_deref().unwrap_or("");
+    if !td_phase::is_terminal_code_checkable(phase) {
+        return Ok(false);
+    }
+
+    let spec_paths = resolve_slug_spec_paths(&project_root, &issue)?;
+    let claims = terminal_touched_codegen_claims(&project_root, slug, &spec_paths)?;
+    if claims.is_empty() {
+        return Ok(false);
+    }
+
+    let mut targets_by_spec: BTreeMap<std::path::PathBuf, BTreeSet<std::path::PathBuf>> =
+        BTreeMap::new();
+    for claim in &claims {
+        targets_by_spec
+            .entry(claim.spec_path.clone())
+            .or_default()
+            .insert(project_root.join(&claim.target));
+    }
+
+    // Preflight every accepted TD before the first write, then replay only
+    // the exact target files selected by the terminal comparison contract.
+    for (spec, targets) in &targets_by_spec {
+        let targets = targets.iter().cloned().collect::<Vec<_>>();
+        crate::generate::apply::run_apply_terminal_targets(spec, &project_root, true, &targets)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "terminal CODEGEN repair preflight failed for {}: {error}",
+                    spec.display()
+                )
+            })?;
+    }
+
+    let mut changed_paths = Vec::new();
+    for (spec, targets) in &targets_by_spec {
+        let targets = targets.iter().cloned().collect::<Vec<_>>();
+        let report = crate::generate::apply::run_apply_terminal_targets(
+            spec,
+            &project_root,
+            false,
+            &targets,
+        )
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "terminal CODEGEN repair failed for {}: {error}",
+                spec.display()
+            )
+        })?;
+        changed_paths.extend(
+            report
+                .files
+                .into_iter()
+                .filter(|file| file.created || file.updated || file.blocks_updated > 0)
+                .map(|file| project_root.join(file.path)),
+        );
+    }
+    changed_paths.sort();
+    changed_paths.dedup();
+    format_rust_files(&changed_paths)?;
+
+    let message = format!(
+        "cb({slug}) - repair touched CODEGEN\n\n\
+         Lifecycle-Slug: {slug}\n\
+         Work-Item: {slug}\n\
+         Lifecycle-Stage: Cb-Repair"
+    );
+    let committed = crate::git::commit_scoped_paths(&project_root, &changed_paths, &message)?;
+    if !committed {
+        anyhow::bail!(
+            "terminal CODEGEN repair for `{slug}` produced no committed target change; inspect the accepted TD and retry `aw td code-check {slug}`"
+        );
+    }
+
+    let artifacts = changed_paths
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&project_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    let env = serde_json::json!({
+        "action": "repair_complete",
+        "slug": slug,
+        "artifacts": artifacts,
+        "message": "touched CODEGEN targets regenerated and committed; rerun terminal code-check",
+        "next": { "command": format!("aw td code-check {slug}") },
+    });
+    println!("{}", serde_json::to_string(&env)?);
+    Ok(true)
 }
 
 fn ensure_td_lock_clean_for_project(root: &std::path::Path, project: &str) -> Result<()> {
@@ -453,8 +562,6 @@ fn run_force_regen(
     workspace: Option<&str>,
     sync_public_api: bool,
 ) -> Result<()> {
-    use crate::generate::apply::run_apply_scoped_targets;
-
     let cwd = std::env::current_dir().context("failed to get current directory")?;
     let scope = resolve_project_force_regen_scope(&cwd, project, workspace)?;
     if !scope.td_root.exists() {
@@ -478,42 +585,14 @@ fn run_force_regen(
         return Ok(());
     }
 
-    let mut updated_files = 0usize;
-    let mut created_files = 0usize;
-    let mut blocks_updated = 0usize;
-    let mut changed_paths = Vec::new();
-
-    for spec in &specs {
-        let report = run_apply_scoped_targets(spec, &cwd, dry_run, &scope.source_roots)
-            .map_err(|e| anyhow::anyhow!("regeneration failed for {}: {}", spec.display(), e))?;
-        updated_files += report.files.iter().filter(|f| f.updated).count();
-        created_files += report.files_created();
-        blocks_updated += report.total_blocks_updated();
-        if !dry_run {
-            changed_paths.extend(
-                report
-                    .files
-                    .iter()
-                    .filter(|file| file.updated || file.created)
-                    .map(|file| cwd.join(&file.path)),
-            );
-        }
-        if dry_run {
-            println!(
-                "(dry-run) {}: {} block(s) would be updated",
-                spec.display(),
-                report.total_blocks_updated()
-            );
-        } else {
-            println!(
-                "Regenerated {}: {} file(s) updated ({} created, {} CODEGEN blocks)",
-                spec.display(),
-                report.files.len(),
-                report.files_created(),
-                report.total_blocks_updated(),
-            );
-        }
-    }
+    // Keep the public mutating path on the same TD-first runner used by
+    // replay and cold verification. In particular this applies source
+    // changes first, then replaces project_root_llms targets with their
+    // deterministic project-context document instead of leaving the generic
+    // marker fallback behind.
+    // @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+    let (updated_files, created_files, blocks_updated, mut changed_paths) =
+        run_force_regen_specs(&cwd, &scope, &specs, dry_run, false)?;
     if !dry_run {
         changed_paths.extend(public_api_update_paths);
         changed_paths.sort();
@@ -998,13 +1077,33 @@ fn run_force_regen_specs(
             run_apply_scoped_targets(&spec_path, root, dry_run, &scope.source_roots)
         }
         .map_err(|e| anyhow::anyhow!("regeneration failed for {}: {}", spec_path.display(), e))?;
+        let source_file_count = report.files.len();
+        let source_created = report.files_created();
+        let source_blocks = report.total_blocks_updated();
         updated_files += report.files.iter().filter(|f| f.updated).count();
-        created_files += report.files_created();
-        blocks_updated += report.total_blocks_updated();
+        created_files += source_created;
+        blocks_updated += source_blocks;
         let (llms_updated, llms_created, llms_paths) =
-            write_project_root_llms_targets(root, root, &[spec_path], dry_run)?;
+            write_project_root_llms_targets(root, root, std::slice::from_ref(&spec_path), dry_run)?;
         updated_files += llms_updated;
         created_files += llms_created;
+        if !quiet {
+            if dry_run {
+                println!(
+                    "(dry-run) {}: {} block(s) would be updated",
+                    spec_path.display(),
+                    source_blocks,
+                );
+            } else {
+                println!(
+                    "Regenerated {}: {} file(s) updated ({} created, {} CODEGEN blocks)",
+                    spec_path.display(),
+                    source_file_count + llms_updated + llms_created,
+                    source_created + llms_created,
+                    source_blocks,
+                );
+            }
+        }
         if !dry_run {
             changed_paths.extend(
                 report
@@ -3028,13 +3127,13 @@ mod tests {
         extract_spec_managed_ref, extract_spec_managed_refs, fillback_dispatch_next,
         fillback_hitl_next, format_rust_files, has_handwrite_ownership_marker,
         is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
-        run_force_regen_specs, sample_count, sample_semantic_review_units,
+        run_force_regen, run_force_regen_specs, sample_count, sample_semantic_review_units,
         spec_declares_source_section, td_public_symbol_semantic_coverage,
-        upsert_public_api_overview, upsert_public_api_overview_targets,
-        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
-        CbCommand, CbGenArgs, ClaimIssueRef, ForceRegenConformanceReport, ForceRegenScope,
-        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
-        SemanticReviewUnit,
+        terminal_ec_failure_envelope, upsert_public_api_overview,
+        upsert_public_api_overview_targets, verify_force_regen_conformance,
+        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
+        CwdGuard, ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
+        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -3813,6 +3912,129 @@ changes:
         assert!(generated.contains("`cargo test -p tool`"));
     }
 
+    /// #1591: the public force-regeneration path must finish with the same
+    /// TD-first project context emitter as replay/cold verification. The
+    /// generic source fallback may run first, but it can never survive the
+    /// command or widen into a HANDWRITE sibling.
+    #[test]
+    fn cb_gen_force_regen_public_path_emits_td_first_project_root_llms() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        std::fs::write(
+            root.join("aw.toml"),
+            r#"
+[[projects]]
+name = "tool"
+path = "apps/tool"
+td_path = "apps/tool/tech-design"
+cap_path = "apps/tool/README.md"
+label = "app:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["apps/tool/**"]
+target = "rust"
+test_cmd = "cargo test -p tool"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("apps/tool/src")).unwrap();
+        std::fs::create_dir_all(root.join("apps/tool/tech-design/semantic")).unwrap();
+        std::fs::write(
+            root.join("apps/tool/Cargo.toml"),
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("apps/tool/README.md"), "# Tool\n").unwrap();
+        let manual = "pub fn authored() { println!(\"keep spacing\"); }\n";
+        std::fs::write(root.join("apps/tool/src/manual.rs"), manual).unwrap();
+        let spec_rel = "apps/tool/tech-design/semantic/tool-apps-tool.md";
+        std::fs::write(
+            root.join(spec_rel),
+            r#"---
+id: tool-apps-tool
+fill_sections: [schema, changes]
+---
+
+# Tool semantic domain
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+semantic_domain:
+  evidence:
+    source_units:
+      - path: apps/tool/llms.txt
+        generator_primitives: [project_root_llms]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tool/llms.txt
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: apps/tool/src/manual.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+```
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("apps/tool/llms.txt"),
+            format!(
+                "<!-- SPEC-MANAGED: {spec_rel}#schema -->\n<!-- CODEGEN-BEGIN -->\nTODO: generic project context placeholder\n<!-- CODEGEN-END -->\n"
+            ),
+        )
+        .unwrap();
+        for args in [&["add", "."][..], &["commit", "-q", "-m", "fixture"][..]] {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+
+        {
+            let _cwd = CwdGuard::enter(root).unwrap();
+            run_force_regen(false, "tool", None, false).unwrap();
+        }
+
+        let generated = std::fs::read_to_string(root.join("apps/tool/llms.txt")).unwrap();
+        assert_eq!(generated.matches("<!-- CODEGEN-BEGIN -->").count(), 1);
+        assert_eq!(generated.matches("<!-- CODEGEN-END -->").count(), 1);
+        assert!(generated.contains("# tool Agent Context"), "{generated}");
+        assert!(generated.contains("## Tech Design"), "{generated}");
+        assert!(generated.contains("## Capability Map"), "{generated}");
+        assert!(
+            generated.find("## Tech Design") < generated.find("## Capability Map"),
+            "{generated}",
+        );
+        assert!(!generated.contains("TODO"), "{generated}");
+        assert_eq!(
+            std::fs::read_to_string(root.join("apps/tool/src/manual.rs")).unwrap(),
+            manual,
+        );
+        assert!(git_stdout(root, &["status", "--porcelain"]).is_empty());
+        assert!(git_stdout(root, &["log", "-1", "--pretty=%B"])
+            .contains("Lifecycle-Stage: Cb-Force-Regen"));
+    }
+
     #[test]
     fn cb_gen_force_regen_compare_source_roots_detects_byte_mismatch() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3944,15 +4166,15 @@ changes:
     }
 
     #[test]
-    fn cb_gen_force_regen_treats_minified_viewer_assets_as_non_source() {
+    fn cb_gen_force_regen_treats_minified_web_assets_as_non_source() {
         assert!(is_minified_asset_file(std::path::Path::new(
-            "apps/agentic-workflow/src/ui/viewer/assets/mermaid.min.js"
+            "apps/demo/web/assets/diagram.min.js"
         )));
         assert!(!is_minified_asset_file(std::path::Path::new(
-            "apps/agentic-workflow/src/ui/viewer/app.js"
+            "apps/demo/web/app.js"
         )));
         assert!(!is_minified_asset_file(std::path::Path::new(
-            "apps/agentic-workflow/src/ui/viewer/mermaid.min.js"
+            "apps/demo/web/diagram.min.js"
         )));
     }
 
@@ -4449,6 +4671,37 @@ pub fn signature_only() -> Result<()>
         assert!(message.contains("aw health --project demo"));
         assert!(message.contains("drift_marker"));
     }
+
+    #[test]
+    fn terminal_ec_missing_semantic_review_routes_to_hitl() {
+        let summary = crate::cli::ec::EcVerifySummary {
+            project: "demo".to_string(),
+            inventory_path: "projects/demo/aw.toml".to_string(),
+            clean: false,
+            command_count: 1,
+            passed_count: 0,
+            failed_count: 1,
+            results: vec![crate::cli::ec::EcVerifyCommandResult {
+                case_id: "ec-semantic-review".to_string(),
+                capability_id: String::new(),
+                claim_id: String::new(),
+                category: "review".to_string(),
+                command: "aw ec review --project demo".to_string(),
+                status: "failed".to_string(),
+                failure_kind: Some(crate::cli::ec::EcVerifyFailureKind::SemanticReviewRequired),
+                exit_code: None,
+                stdout_tail: String::new(),
+                stderr_tail: "independent evidence missing".to_string(),
+            }],
+        };
+
+        let env = terminal_ec_failure_envelope("demo-wi", &summary);
+
+        assert_eq!(env["action"], "hitl");
+        assert_eq!(env["requires_hitl"], true);
+        assert_eq!(env["error_kind"], "terminal_ec_semantic_review_required");
+        assert_eq!(env["next"]["command"], "aw ec review --project demo");
+    }
 }
 
 /// True if `target` (an `aw td code-check <target>` argument) does not
@@ -4559,31 +4812,42 @@ fn terminal_ec_failure_envelope(
             .iter()
             .any(|result| result.failure_kind == Some(kind))
     };
-    let (error_kind, remediation_detail) =
-        if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SingleFlight) {
-            (
-                "terminal_ec_single_flight",
-                "wait for the in-flight terminal EC evaluation to finish, then retry",
-            )
-        } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::Timeout) {
-            (
-                "terminal_ec_timeout",
-                "inspect or fix the timed-out EC command, then retry",
-            )
-        } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::RunnerError) {
-            (
-                "terminal_ec_runner_error",
-                "fix the EC runner or process-cleanup error, then retry",
-            )
-        } else {
-            (
-                "terminal_ec_failure",
-                "fix the failing EC command, then retry",
-            )
-        };
-    let remediation = format!("aw td code-check {slug}");
+    let semantic_review_required =
+        has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SemanticReviewRequired);
+    let (error_kind, remediation_detail) = if semantic_review_required {
+        (
+            "terminal_ec_semantic_review_required",
+            "obtain independent human-backed EC review evidence, then retry",
+        )
+    } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SingleFlight) {
+        (
+            "terminal_ec_single_flight",
+            "wait for the in-flight terminal EC evaluation to finish, then retry",
+        )
+    } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::Timeout) {
+        (
+            "terminal_ec_timeout",
+            "inspect or fix the timed-out EC command, then retry",
+        )
+    } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::RunnerError) {
+        (
+            "terminal_ec_runner_error",
+            "fix the EC runner or process-cleanup error, then retry",
+        )
+    } else {
+        (
+            "terminal_ec_failure",
+            "fix the failing EC command, then retry",
+        )
+    };
+    let remediation = if semantic_review_required {
+        format!("aw ec review --project {}", summary.project)
+    } else {
+        format!("aw td code-check {slug}")
+    };
     serde_json::json!({
-        "action": "error",
+        "action": if semantic_review_required { "hitl" } else { "error" },
+        "requires_hitl": semantic_review_required,
         "error_kind": error_kind,
         "slug": slug,
         "message": format!(
@@ -4851,7 +5115,22 @@ async fn run_check_lifecycle_terminal(
         // (the marker gate, the touched-scope standardization gate, and the
         // empty-implementation gate that follows all consume
         // `slug_spec_paths` / the scope it derives).
-        let slug_spec_paths = resolve_slug_spec_paths(project_root, &issue);
+        let slug_spec_paths = match resolve_slug_spec_paths(project_root, &issue) {
+            Ok(paths) => paths,
+            Err(error) => {
+                let env = serde_json::json!({
+                    "action": "error",
+                    "error_kind": "terminal_spec_scope_unresolved",
+                    "slug": slug,
+                    "message": format!(
+                        "td code-check refused before EC or lifecycle mutation because the work item's TD scope is unresolved: {error:#}"
+                    ),
+                    "next": { "command": format!("aw wi show {slug}") },
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
+        };
 
         // Issue #932: hoisted out of the `phase != CB_FILLED` marker-gate
         // guard below so it's always available — the touched-scope
@@ -4897,6 +5176,54 @@ async fn run_check_lifecycle_terminal(
                 "action": "error",
                 "slug": slug,
                 "message": message,
+            });
+            println!("{}", serde_json::to_string(&env)?);
+            return Ok(true);
+        }
+
+        // #1635: the numeric/slug terminal path must run the same
+        // deterministic per-block regeneration comparison used by
+        // `aw td code-check <path>`. Limit it to CODEGEN claims owned by
+        // this WI's accepted TD and touched since its Td-Init baseline, and
+        // run it before EC evaluation or any lifecycle/tracker mutation.
+        let codegen_findings = match terminal_touched_codegen_findings(
+            project_root,
+            slug,
+            &slug_spec_paths,
+        ) {
+            Ok(findings) => findings,
+            Err(error) => {
+                let env = serde_json::json!({
+                    "action": "error",
+                    "error_kind": "terminal_touched_codegen_unverifiable",
+                    "slug": slug,
+                    "message": format!(
+                        "td code-check refused because touched CODEGEN parity could not be verified: {error:#}"
+                    ),
+                    "next": { "command": format!("aw td gen {slug}") },
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
+        };
+        if !codegen_findings.is_empty() {
+            let files = codegen_findings
+                .iter()
+                .map(|finding| finding.file.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let env = serde_json::json!({
+                "action": "error",
+                "error_kind": "terminal_touched_codegen_drift",
+                "slug": slug,
+                "message": format!(
+                    "td code-check refused: {} touched CODEGEN claim(s) differ from deterministic TD replay; run `aw td gen {slug}`, then follow its emitted retry command",
+                    codegen_findings.len(),
+                ),
+                "files": files,
+                "findings": codegen_findings,
+                "next": { "command": format!("aw td gen {slug}") },
             });
             println!("{}", serde_json::to_string(&env)?);
             return Ok(true);
@@ -5147,53 +5474,182 @@ async fn run_check_lifecycle_terminal(
     Ok(true)
 }
 
-/// Resolve the completing slug's own TD spec file(s) (issue #854): every
-/// `.md` ref in `Issue.implements`; else the deterministic project-qualified
-/// path `aw td create` would have used for this issue
-/// (`td::default_spec_path_for_issue_in_project`); else the worktree's unique
-/// legacy branch-diff TD (`td::discover_worktree_spec`) as a last resort.
-/// The project default must precede legacy discovery because the local issue
-/// cache is ephemeral: a cache-loss retry with an `app:<name>` label must not
-/// inherit a foreign legacy TD merely because it is the sole `.aw` diff.
-/// Both terminal gates below scope to exactly this
-/// set instead of the whole `tech_design_path` tree / whole worktree, so an
-/// unrelated stale spec or inherited HANDWRITE marker elsewhere in a
-/// monorepo checkout can no longer block this WI's own completion.
-///
-/// An empty result — no source resolves a spec (a fresh issue with a title
-/// that derives no spec filename) — is a legitimate "nothing to scope
-/// against" outcome. Callers must treat it as pass vacuously, not fall back
-/// to a whole-tree scan (that whole-tree fallback is exactly the bug issue
-/// #854 fixes). A resolved path that does not exist on disk (the default
-/// guess was wrong, or the spec genuinely has no Changes section) is
-/// likewise harmless — callers below already skip unreadable spec files.
+/// Resolve the completing slug's issue-owned TD spec file(s). Exact
+/// `Issue.implements` refs win; older lifecycle entries recover through the
+/// configured project-qualified default. Existing issues never consult the
+/// checkout-global legacy branch diff: a stale local `main` can contain a
+/// sole Mamba TD while Tape is completing, and that candidate is not evidence
+/// for the Tape WI (#1679).
 fn resolve_slug_spec_paths(
     project_root: &std::path::Path,
     issue: &crate::issues::Issue,
-) -> Vec<std::path::PathBuf> {
-    let mut rels: Vec<String> = issue
-        .implements
-        .iter()
-        .filter(|s| s.ends_with(".md"))
-        .cloned()
-        .collect();
-    if rels.is_empty() {
-        // #1403: project-qualified derivation hard-errors on an
-        // unrecognized/unresolvable project label instead of falling back to
-        // an invented legacy path. That failure is not this gate's to raise:
-        // a real, branch-diff-discovered legacy TD remains a final fallback.
-        if let Ok(derived) =
-            crate::cli::td::default_spec_path_for_issue_in_project(project_root, issue, &issue.slug)
-        {
-            rels.push(derived);
+) -> Result<Vec<std::path::PathBuf>> {
+    Ok(
+        crate::cli::td::resolve_issue_td_spec_paths(project_root, issue, &issue.slug)?
+            .into_iter()
+            .map(|path| project_root.join(path))
+            .collect(),
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TerminalCodegenClaim {
+    spec_path: std::path::PathBuf,
+    spec_rel: String,
+    target: String,
+    section: Option<String>,
+}
+
+impl TerminalCodegenClaim {
+    fn display_ref(&self) -> String {
+        self.section
+            .as_deref()
+            .map(|section| format!("{}#{section}", self.spec_rel))
+            .unwrap_or_else(|| format!("{}#*", self.spec_rel))
+    }
+
+    fn owns_report(&self, spec_ref: &str) -> bool {
+        match self.section.as_deref() {
+            Some(section) => spec_ref == format!("{}#{section}", self.spec_rel),
+            None => spec_ref
+                .strip_prefix(&self.spec_rel)
+                .is_some_and(|suffix| suffix.starts_with('#')),
         }
     }
-    if rels.is_empty() {
-        if let Some(discovered) = crate::cli::td::discover_worktree_spec(project_root) {
-            rels.push(discovered);
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TerminalCodegenFinding {
+    file: String,
+    spec_ref: String,
+    status: String,
+    detail: String,
+}
+
+/// Resolve the exact accepted CODEGEN claims whose target or owning TD has a
+/// committed net change from the slug's Td-Init-parent baseline to HEAD.
+/// Synthetic legacy fixtures with no lifecycle history retain their existing
+/// vacuous behavior; real lifecycle history without a usable Td-Init fails
+/// closed through `committed_paths_since_td_init`.
+fn terminal_touched_codegen_claims(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_paths: &[std::path::PathBuf],
+) -> Result<Vec<TerminalCodegenClaim>> {
+    let Some(changed) = committed_paths_since_td_init(project_root, slug)? else {
+        return Ok(Vec::new());
+    };
+    accepted_codegen_claims_for_changed_paths(project_root, spec_paths, &changed)
+}
+
+fn accepted_codegen_claims_for_changed_paths(
+    project_root: &std::path::Path,
+    spec_paths: &[std::path::PathBuf],
+    changed: &BTreeSet<String>,
+) -> Result<Vec<TerminalCodegenClaim>> {
+    let mut claims = BTreeSet::new();
+    for spec_path in spec_paths {
+        let spec_rel = spec_path
+            .strip_prefix(project_root)
+            .with_context(|| {
+                format!(
+                    "accepted TD `{}` is outside project root `{}`",
+                    spec_path.display(),
+                    project_root.display()
+                )
+            })?
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let content = std::fs::read_to_string(spec_path)
+            .with_context(|| format!("read accepted TD `{spec_rel}`"))?;
+        for entry in crate::generate::apply::extract_change_entries(&content) {
+            if entry.impl_mode != crate::generate::apply::ImplMode::Codegen
+                || !(entry.action.eq_ignore_ascii_case("create")
+                    || entry.action.eq_ignore_ascii_case("modify"))
+            {
+                continue;
+            }
+            let target = normalize_touched_rel_path(&entry.path);
+            if changed.contains(&spec_rel) || changed.contains(&target) {
+                claims.insert(TerminalCodegenClaim {
+                    spec_path: spec_path.clone(),
+                    spec_rel: spec_rel.clone(),
+                    target,
+                    section: entry.section_id.clone(),
+                });
+            }
         }
     }
-    rels.into_iter().map(|r| project_root.join(r)).collect()
+    Ok(claims.into_iter().collect())
+}
+
+/// Compare the terminal claim set with the same `audit_file` primitive that
+/// backs path-mode `aw td code-check <path>`. Reports from other specs or
+/// sections in the same file are ignored, so unrelated repository drift does
+/// not broaden the WI verdict.
+fn terminal_touched_codegen_findings(
+    project_root: &std::path::Path,
+    slug: &str,
+    spec_paths: &[std::path::PathBuf],
+) -> Result<Vec<TerminalCodegenFinding>> {
+    use crate::generate::audit::ReportKind;
+
+    let claims = terminal_touched_codegen_claims(project_root, slug, spec_paths)?;
+    let mut findings = Vec::new();
+    for claim in claims {
+        let target = project_root.join(&claim.target);
+        let reports = match crate::generate::audit::audit_file(&target, project_root) {
+            Ok(reports) => reports,
+            Err(error) => {
+                findings.push(TerminalCodegenFinding {
+                    file: claim.target.clone(),
+                    spec_ref: claim.display_ref(),
+                    status: "unverifiable".to_string(),
+                    detail: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let owned = reports
+            .iter()
+            .filter(|report| claim.owns_report(&report.spec_ref))
+            .collect::<Vec<_>>();
+        if owned.is_empty() {
+            findings.push(TerminalCodegenFinding {
+                file: claim.target.clone(),
+                spec_ref: claim.display_ref(),
+                status: "missing_codegen_region".to_string(),
+                detail: "accepted CODEGEN claim has no matching SPEC-MANAGED/CODEGEN region"
+                    .to_string(),
+            });
+            continue;
+        }
+        for report in owned {
+            match &report.kind {
+                ReportKind::Clean | ReportKind::Aggregate => {}
+                ReportKind::Drift { diff } => findings.push(TerminalCodegenFinding {
+                    file: claim.target.clone(),
+                    spec_ref: report.spec_ref.clone(),
+                    status: "drift".to_string(),
+                    detail: diff.clone(),
+                }),
+                ReportKind::Unresolvable { reason } => findings.push(TerminalCodegenFinding {
+                    file: claim.target.clone(),
+                    spec_ref: report.spec_ref.clone(),
+                    status: "unresolvable".to_string(),
+                    detail: reason.clone(),
+                }),
+            }
+        }
+    }
+    findings.sort_by(|left, right| {
+        (&left.file, &left.spec_ref, &left.status).cmp(&(
+            &right.file,
+            &right.spec_ref,
+            &right.status,
+        ))
+    });
+    Ok(findings)
 }
 
 /// Clean-touched-scope precondition (issue #807 / #1275): find every entry
@@ -5504,7 +5960,11 @@ pub(crate) fn reachable_td_init_from_head(
 
 #[cfg(test)]
 mod td_init_reachability_tests {
-    use super::{committed_paths_since_td_init, reachable_td_init_from_head, TdInitReachability};
+    use super::{
+        accepted_codegen_claims_for_changed_paths, committed_paths_since_td_init,
+        reachable_td_init_from_head, TdInitReachability,
+    };
+    use std::collections::BTreeSet;
 
     fn git(root: &std::path::Path, args: &[&str]) {
         let status = std::process::Command::new("git")
@@ -5578,6 +6038,65 @@ mod td_init_reachability_tests {
             reachable_td_init_from_head(root, "1602").unwrap(),
             TdInitReachability::Found(_)
         ));
+    }
+
+    #[test]
+    fn touched_codegen_claims_select_changed_accepted_codegen_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let accepted = root.join("tech-design/accepted.md");
+        let unrelated = root.join("tech-design/unrelated.md");
+        std::fs::create_dir_all(accepted.parent().unwrap()).unwrap();
+        std::fs::write(
+            &accepted,
+            r#"---
+id: accepted
+---
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/generated.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+  - path: src/hand.rs
+    action: modify
+    section: source
+    impl_mode: hand-written
+```
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &unrelated,
+            r#"---
+id: unrelated
+---
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/unrelated.rs
+    action: modify
+    section: schema
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        let changed = BTreeSet::from(["tech-design/accepted.md".to_string()]);
+        let claims =
+            accepted_codegen_claims_for_changed_paths(root, &[accepted, unrelated], &changed)
+                .unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].target, "src/generated.rs");
+        assert_eq!(claims[0].display_ref(), "tech-design/accepted.md#schema");
     }
 }
 

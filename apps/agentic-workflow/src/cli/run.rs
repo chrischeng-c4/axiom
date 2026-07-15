@@ -33,6 +33,37 @@ use std::time::{Duration, Instant};
 
 const GOAL_INLINE_LIMIT_BYTES: usize = 4000;
 
+/// AW's own repository uses the sanctioned direct-commit mode rather than
+/// recursively invoking the root workflow that it implements.
+pub(crate) const SELF_HOSTING_POLICY_MODE: &str = "sanctioned_direct_commit";
+const SELF_HOSTING_HARD_GATES: &[&str] = &[
+    "capability_work_root_alignment",
+    "closing_work_item_and_td_refs",
+    "configured_ec_claim_verification",
+];
+const SELF_HOSTING_ADVISORY_AXES: &[&str] = &[
+    "managed",
+    "semantic",
+    "traceability",
+    "td_lock",
+    "cb_verify",
+    "cold_rebuild",
+    "tests",
+    "regenerable",
+];
+
+pub(crate) fn is_self_hosting_project(project: &str) -> bool {
+    matches!(project.trim(), "agentic-workflow" | "aw")
+}
+
+pub(crate) fn self_hosting_hard_gates() -> &'static [&'static str] {
+    SELF_HOSTING_HARD_GATES
+}
+
+pub(crate) fn self_hosting_advisory_axes() -> &'static [&'static str] {
+    SELF_HOSTING_ADVISORY_AXES
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedRunRoot {
     Capability {
@@ -265,6 +296,89 @@ struct WorkflowGoalEnvelope {
     goal_prompt: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct SelfHostingPolicyEnvelope {
+    schema_version: &'static str,
+    status: &'static str,
+    action: &'static str,
+    root: WorkflowNode,
+    completion: CanonicalWorkflowCompletion,
+    next: CanonicalWorkflowNext,
+    policy_mode: &'static str,
+    hard_gates: &'static [&'static str],
+    advisory_axes: &'static [&'static str],
+    remediation: Vec<&'static str>,
+    agent_prompt: String,
+}
+
+fn self_hosting_policy_envelope(
+    project: &str,
+    root_kind: &str,
+    root_id: &str,
+) -> SelfHostingPolicyEnvelope {
+    SelfHostingPolicyEnvelope {
+        schema_version: "aw.cli.v1",
+        status: "blocked",
+        action: "self_hosting_policy",
+        root: WorkflowNode {
+            kind: root_kind.to_string(),
+            id: root_id.to_string(),
+        },
+        completion: CanonicalWorkflowCompletion {
+            root_complete: false,
+            workflow_complete: false,
+            requires_hitl: false,
+            criteria: self_hosting_hard_gates()
+                .iter()
+                .map(|gate| gate.to_string())
+                .collect(),
+            missing: vec![format!(
+                "self-hosting policy forbids root workflow execution for `{project}`"
+            )],
+        },
+        next: CanonicalWorkflowNext {
+            kind: "policy".to_string(),
+            command: None,
+            reason: "Agentic Workflow must not require its own root lifecycle to repair the lifecycle implementation".to_string(),
+            payload_path: None,
+        },
+        policy_mode: SELF_HOSTING_POLICY_MODE,
+        hard_gates: self_hosting_hard_gates(),
+        advisory_axes: self_hosting_advisory_axes(),
+        remediation: vec![
+            "Apply a bounded direct change and commit it with a Refs #<issue> trailer.",
+            "Align the CAPABILITIES.md work root and its closing WI/TD references.",
+            "Use focused aw td check/code-check or aw ec commands when their artifacts are in scope.",
+            "Verify the resulting policy and capability evidence with aw health --project agentic-workflow.",
+        ],
+        agent_prompt: format!(
+            "Do not invoke `aw wi run` or `aw capability run` for `{project}`. Use sanctioned direct self-hosting work, then verify focused artifacts and health."
+        ),
+    }
+}
+
+pub(crate) fn emit_self_hosting_policy_error(
+    project: &str,
+    root_kind: &str,
+    root_id: &str,
+    print: RunPrintOptions,
+) -> Result<()> {
+    let envelope = self_hosting_policy_envelope(project, root_kind, root_id);
+    if print.human {
+        println!("blocked self-hosting policy for {root_kind}:{root_id}");
+        println!("policy_mode: {}", envelope.policy_mode);
+        println!("reason: {}", envelope.next.reason);
+        for remediation in &envelope.remediation {
+            println!("- {remediation}");
+        }
+    } else if print.pretty {
+        println!("{}", serde_json::to_string_pretty(&envelope)?);
+    } else {
+        println!("{}", serde_json::to_string(&envelope)?);
+    }
+    Ok(())
+}
+
 /// Print options shared by every thin runner shell (`aw wi run`,
 /// `aw capability run <id>`). Mirrors the human/pretty/goal subset that
 /// actually affects output shape.
@@ -337,10 +451,34 @@ pub(crate) fn wi_run_command(id: &str) -> String {
     format!("aw wi run {id}")
 }
 
+/// The first mutating act for a bounded WI without an EC verifier. EC owns the
+/// observable definition of done, so a fresh root must not create TD/codegen
+/// artifacts before this project-local skeleton exists.
+pub(crate) fn ec_draft_command(project: &str, wi: &str) -> String {
+    format!("aw ec draft {wi} --project {project} --wi {wi}")
+}
+
+/// The root-owned verdict act after TD/codegen reaches a terminal candidate.
+/// Its `--wi` projection makes EC red resumable as TD adaptation and EC green
+/// resumable as the bounded terminal code-check.
+pub(crate) fn ec_verify_command(project: &str, wi: &str) -> String {
+    format!("aw ec verify --project {project} --wi {wi}")
+}
+
 /// Thin shell: `aw wi run <id>` -- drive one work item's next lifecycle tick
 /// via the shared root loop.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
+    // Resolve the owning project before the shared runner can load loop state
+    // or dispatch a lifecycle command. A failed read falls through to the
+    // existing runner diagnostics unchanged.
+    if let Ok(project_root) = crate::find_project_root() {
+        if let Ok(Some(issue)) = resolve_issue(id, &project_root).await {
+            if issue_is_self_hosting(&issue) {
+                return emit_self_hosting_policy_error("agentic-workflow", "wi", id, print);
+            }
+        }
+    }
     let root = ResolvedRunRoot::Wi {
         wi: id.to_string(),
         command: wi_run_command(id),
@@ -363,6 +501,9 @@ pub(crate) async fn run_capability_root(
     capability_id: &str,
     print: RunPrintOptions,
 ) -> Result<()> {
+    if is_self_hosting_project(project) {
+        return emit_self_hosting_policy_error(project, "capability", capability_id, print);
+    }
     let root = ResolvedRunRoot::Capability {
         project: project.to_string(),
         capability_id: capability_id.to_string(),
@@ -375,6 +516,9 @@ pub(crate) async fn run_capability_root(
 /// subsumes a project root.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn project_capability_rollup_command(project: &str) -> String {
+    if is_self_hosting_project(project) {
+        return format!("aw health --project {project} claims");
+    }
     format!("aw capability run --project {project} --non-interactive --max-ticks 1")
 }
 
@@ -912,6 +1056,28 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
         return closed_wi_envelope(&issue);
     }
 
+    // EC-first child commands persist their next transition on the local
+    // lifecycle ledger. A GitHub/GitLab WI may be visible to the configured
+    // backend before it has a local copy, so seed that copy at root admission
+    // instead of emitting an `aw ec ... --wi` command that cannot resume.
+    if issue.issue_type != IssueType::Epic
+        && issue.phase.is_none()
+        && project_from_labels(&issue).is_some()
+    {
+        if let Err(err) = ensure_local_lifecycle_issue(&project_root, wi, &issue).await {
+            return blocked_envelope(
+                root.clone(),
+                WorkflowNode {
+                    kind: "change".to_string(),
+                    id: issue_ref(&issue),
+                },
+                format!("aw wi show {}", issue_cli_ref(&issue)),
+                format!("cannot initialize local EC-first lifecycle state: {err}"),
+                true,
+            );
+        }
+    }
+
     // #188 E1: when the WI carries an `<!-- aw:loop-state -->` block, the loop
     // engine drives the next act from the verifier result (decide_next_action),
     // not the CRRR phase machine. The block is authored on the LOCAL lifecycle
@@ -935,6 +1101,19 @@ async fn wi_envelope(wi: &str, progress: &RunProgressSink) -> WorkflowEnvelope {
     if issue.issue_type == IssueType::Epic {
         open_epic_envelope(&issue)
     } else {
+        if issue.phase.is_none() && project_from_labels(&issue).is_none() {
+            return blocked_envelope(
+                root.clone(),
+                WorkflowNode {
+                    kind: "change".to_string(),
+                    id: issue_ref(&issue),
+                },
+                format!("aw wi show {}", issue_cli_ref(&issue)),
+                "accepted WI has no project label, so AW cannot resolve the project-local EC root"
+                    .to_string(),
+                true,
+            );
+        }
         let (command, reason) = wi_change_lifecycle_step(&issue);
         WorkflowEnvelope {
             action: "dispatch".to_string(),
@@ -1022,14 +1201,16 @@ fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
 /// from its tracker-reported `phase:*` label (`issue.phase`, already
 /// normalized on read by the issue backend — see
 /// `crate::issues::types::td_phase::normalize`), instead of unconditionally
-/// dispatching `aw td create`. Mirrors the phase table
+/// dispatching `aw td create`. A phase-less accepted WI instead begins with
+/// an EC skeleton; its persisted EC loop-state owns the later TD handoff.
+/// The remaining phase table mirrors
 /// `capability::lifecycle_action_for_work_item` uses for `aw capability
 /// run` (issue #916) so both runner surfaces agree on the live linear
-/// lifecycle (`aw wi` -> `aw td create` -> `gen` -> `fill` -> `code-check`,
-/// no merge step per #842-#860): a WI already at `td_created` must route to
-/// `aw td gen`, not back through `aw td create`, which rejects it.
-/// `None`/`td_inited`/unrecognized phases keep the original bounded
-/// new-WI behavior (`aw td create`).
+/// lifecycle (`aw wi` -> `aw ec` -> `aw td create` -> `gen` -> `fill` ->
+/// EC verify -> `code-check`, no merge step per #842-#860): a WI already at
+/// `td_created` must route to `aw td gen`, not back through `aw td create`,
+/// which rejects it. `td_inited`/unrecognized legacy phases retain their
+/// established TD resume behavior.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
     let wi_id = issue_ref(issue).trim_start_matches('#').to_string();
@@ -1043,18 +1224,37 @@ fn wi_change_lifecycle_step(issue: &Issue) -> (String, String) {
             format!("aw td fill {wi_id}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
-        Some(td_phase::CB_FILLED) => (
-            format!("aw td code-check {wi_id}"),
-            "active WI has generated and checked implementation output; run terminal code-check"
-                .to_string(),
-        ),
+        Some(td_phase::CB_FILLED) => match project_from_labels(issue) {
+            Some(project) => (
+                ec_verify_command(&project, &wi_id),
+                "active WI has generated implementation output; record the EC verdict before terminal code-check"
+                    .to_string(),
+            ),
+            None => (
+                format!("aw td code-check {wi_id}"),
+                "active WI has no project label for EC verification; retry terminal code-check"
+                    .to_string(),
+            ),
+        },
         Some(td_phase::TD_MERGED) => (
             format!("aw td code-check {wi_id}"),
             "active WI's terminal code-check is resumable; retry terminal code-check".to_string(),
         ),
+        None => match project_from_labels(issue) {
+            Some(project) => (
+                ec_draft_command(&project, &wi_id),
+                "accepted WI has no EC verifier; author the EC skeleton before TD/codegen"
+                    .to_string(),
+            ),
+            None => (
+                format!("aw wi show {wi_id}"),
+                "accepted WI has no project label, so AW cannot resolve the project-local EC root"
+                    .to_string(),
+            ),
+        },
         _ => (
             format!("aw td create {wi_id}"),
-            "atomic change roots enter the WI -> TD -> CB -> code-check lifecycle".to_string(),
+            "existing TD lifecycle state resumes its bounded TD/codegen path".to_string(),
         ),
     }
 }
@@ -1222,6 +1422,19 @@ async fn resolve_issue(wi: &str, project_root: &std::path::Path) -> Result<Optio
     let (kind, repo, host) = resolve_default_backend(project_root)?;
     let backend = make_backend(&kind, project_root, repo, host)?;
     backend.get(wi).await
+}
+
+/// Ensure a remote-first work item has the local ledger required by EC-first
+/// lifecycle commands. Existing local copies are authoritative because they
+/// carry the loop-state block and are intentionally not pushed to the tracker.
+async fn ensure_local_lifecycle_issue(project_root: &Path, wi: &str, issue: &Issue) -> Result<()> {
+    use crate::issues::IssueBackend;
+
+    let backend = crate::issues::local_backend(project_root);
+    if backend.get(wi).await?.is_none() {
+        backend.write(issue).await?;
+    }
+    Ok(())
 }
 
 fn capability_action_envelope(
@@ -2273,6 +2486,12 @@ fn project_from_labels(issue: &Issue) -> Option<String> {
     })
 }
 
+fn issue_is_self_hosting(issue: &Issue) -> bool {
+    project_from_labels(issue)
+        .as_deref()
+        .is_some_and(is_self_hosting_project)
+}
+
 fn print_text(envelope: &WorkflowEnvelope) {
     println!(
         "{} {}:{}",
@@ -2547,6 +2766,72 @@ mod tests {
     }
 
     #[test]
+    fn phase_less_project_wi_enters_ec_before_td() {
+        let mut issue = open_issue(IssueType::Enhancement, 1500);
+        issue.labels = vec!["app:demo".to_string()];
+        issue.phase = None;
+
+        let (command, reason) = wi_change_lifecycle_step(&issue);
+
+        assert_eq!(command, "aw ec draft 1500 --project demo --wi 1500");
+        assert!(reason.contains("EC verifier"));
+        assert!(!command.contains("aw td"));
+    }
+
+    #[tokio::test]
+    async fn remote_wi_admission_seeds_the_local_ec_lifecycle_ledger() {
+        use crate::issues::IssueBackend;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let issue = open_issue(IssueType::Enhancement, 1500);
+
+        ensure_local_lifecycle_issue(tmp.path(), "1500", &issue)
+            .await
+            .unwrap();
+
+        let stored = crate::issues::local_backend(tmp.path())
+            .get("1500")
+            .await
+            .unwrap()
+            .expect("root admission writes a local lifecycle copy");
+        assert_eq!(stored.github_id, Some(1500));
+        assert_eq!(stored.body.trim(), issue.body.trim());
+    }
+
+    #[test]
+    fn ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check() {
+        use crate::cli::loop_state::{LastResult, LoopState, LoopStatus};
+
+        let issue = open_issue(IssueType::Enhancement, 1500);
+        let root = WorkflowNode {
+            kind: "change".to_string(),
+            id: issue_ref(&issue),
+        };
+        let red = LoopState {
+            issue_id: "1500".to_string(),
+            status: LoopStatus::Iterating,
+            last_result: LastResult::Red {
+                dimension: "behavior".to_string(),
+                why: "fixture failed".to_string(),
+            },
+            next_action: Some("aw td gen 1500".to_string()),
+            ..Default::default()
+        };
+        let red_envelope = loop_state_envelope(root.clone(), &issue, &red);
+        assert_eq!(red_envelope.next.command, "aw td gen 1500");
+
+        let green = LoopState {
+            issue_id: "1500".to_string(),
+            status: LoopStatus::Converged,
+            last_result: LastResult::Green,
+            next_action: Some("aw td code-check 1500".to_string()),
+            ..Default::default()
+        };
+        let green_envelope = loop_state_envelope(root, &issue, &green);
+        assert_eq!(green_envelope.next.command, "aw td code-check 1500");
+    }
+
+    #[test]
     fn loop_state_envelope_dispatches_or_blocks_on_next_action() {
         use crate::cli::loop_state::{LoopState, LoopStatus};
         let issue = open_issue(IssueType::Enhancement, 188);
@@ -2643,7 +2928,7 @@ mod tests {
 
         issue.phase = Some("cb_filled".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td code-check 937");
+        assert_eq!(command, "aw ec verify --project jet --wi 937");
 
         // A retired CRRR phase normalizes (td_phase::normalize, #916) before
         // routing, same as the capability.rs router.
@@ -2651,12 +2936,12 @@ mod tests {
         let (command, _reason) = wi_change_lifecycle_step(&issue);
         assert_eq!(command, "aw td gen 937");
 
-        // No phase label at all -- the original bounded new-WI behavior is
-        // preserved: still `aw td create`.
+        // No phase label at all means this bounded, project-labeled WI has no
+        // verifier yet, so the shared root table starts its EC skeleton.
         issue.phase = None;
         let (command, reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw td create 937");
-        assert!(reason.contains("WI -> TD -> CB -> code-check"));
+        assert_eq!(command, "aw ec draft 937 --project jet --wi 937");
+        assert!(reason.contains("EC verifier"));
         assert!(!reason.contains("TD merge"));
     }
 
@@ -2742,6 +3027,42 @@ mod tests {
         assert_eq!(json["next"]["kind"], "blocked");
         assert!(json["next"].get("command").is_none());
         assert!(json.get("hitl_question").is_none());
+    }
+
+    #[test]
+    fn self_hosting_policy_envelope_is_terminal_and_has_no_root_retry() {
+        let envelope =
+            self_hosting_policy_envelope("agentic-workflow", "project", "agentic-workflow");
+        let json = serde_json::to_value(&envelope).unwrap();
+
+        assert_eq!(json["status"], "blocked");
+        assert_eq!(json["action"], "self_hosting_policy");
+        assert_eq!(json["completion"]["workflow_complete"], false);
+        assert_eq!(json["next"]["kind"], "policy");
+        assert!(json["next"].get("command").is_none());
+        assert_eq!(json["policy_mode"], SELF_HOSTING_POLICY_MODE);
+        assert!(json["hard_gates"].as_array().is_some_and(|gates| gates
+            .iter()
+            .any(|gate| gate == "capability_work_root_alignment")));
+        assert!(json["advisory_axes"]
+            .as_array()
+            .is_some_and(|axes| axes.iter().any(|axis| axis == "traceability")));
+        assert!(!serde_json::to_string(&envelope)
+            .unwrap()
+            .contains("aw capability run"));
+    }
+
+    #[test]
+    fn self_hosting_wi_identity_and_rollup_never_reenter_root_runner() {
+        let mut issue = open_issue(IssueType::Bug, 1501);
+        issue.labels = vec!["app:agentic-workflow".to_string()];
+
+        assert!(issue_is_self_hosting(&issue));
+        assert!(is_self_hosting_project("aw"));
+        assert_eq!(
+            project_capability_rollup_command("agentic-workflow"),
+            "aw health --project agentic-workflow claims"
+        );
     }
 
     #[test]

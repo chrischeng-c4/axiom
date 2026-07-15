@@ -6,14 +6,9 @@
 //! [`ReferenceCodebaseArtifact`] produced by [`ReferenceCodebaseContextAgent`] and
 //! reverse-engineers a structured SDD-compliant specification from it.
 //!
-//! # CRR Integration
-//!
-//! Like [`ChangeSpecAgent`], this agent supports both creator and reviser roles:
-//!
-//! - **Creator**: `run()` receives a JSON-encoded [`CodebaseToSpecInput`] →
-//!   [`generate_spec`][CodebaseToSpecAgent::generate_spec].
-//! - **Reviser**: `run()` receives a plain-text CRR revision prompt →
-//!   calls the LLM directly with the SDD system prompt prepended.
+//! Generation is linear: `run()` receives a JSON-encoded
+//! [`CodebaseToSpecInput`] and produces one structurally validated candidate.
+//! Semantic acceptance belongs to EC rather than a generic review/revise loop.
 //!
 //! # SDD Format
 //!
@@ -24,7 +19,6 @@
 //! [`ChangeSpecAgent`]: crate::agents::change_spec::ChangeSpecAgent
 
 use crate::agents::reference_codebase_context::ReferenceCodebaseArtifact;
-use crate::agents::review::ReviewIssue;
 use crate::agents::Agent;
 use agent::error::{NovaError, NovaResult};
 use agent::llm::{CompletionRequest, LLMProvider};
@@ -125,16 +119,6 @@ impl CodebaseToSpecAgent {
         self.complete_text(vec![system_msg, user_msg]).await
     }
 
-    /// Revise an existing spec to address review issues.
-    pub async fn revise_spec(&self, spec: &str, issues: &[ReviewIssue]) -> NovaResult<String> {
-        let user_content = build_revise_prompt(spec, issues);
-        self.complete_text(vec![
-            Message::system(SYSTEM_PROMPT),
-            Message::user(user_content),
-        ])
-        .await
-    }
-
     // ---- private ----
 
     /// Call the LLM and return the text response, retrying on empty responses.
@@ -183,23 +167,14 @@ impl CodebaseToSpecAgent {
 #[async_trait]
 /// @spec apps/agentic-workflow/tech-design/core/interfaces/agents/codebase_to_spec.md#source
 impl Agent for CodebaseToSpecAgent {
-    /// Run in creator or reviser role.
-    ///
-    /// - **Creator**: input is JSON-encoded [`CodebaseToSpecInput`] →
-    ///   [`generate_spec`][CodebaseToSpecAgent::generate_spec].
-    /// - **Reviser**: input is a CRR revision prompt → `complete_text` with system prompt.
+    /// Run the linear creator path from JSON-encoded [`CodebaseToSpecInput`].
     async fn run(&self, input: &str) -> NovaResult<String> {
-        match serde_json::from_str::<CodebaseToSpecInput>(input) {
-            Ok(spec_input) => self.generate_spec(&spec_input).await,
-            Err(_) => {
-                // Reviser role: CRR built the revision prompt; prepend the SDD system prompt.
-                self.complete_text(vec![
-                    Message::system(SYSTEM_PROMPT),
-                    Message::user(input.to_string()),
-                ])
-                .await
-            }
-        }
+        let spec_input = serde_json::from_str::<CodebaseToSpecInput>(input).map_err(|error| {
+            NovaError::Other(anyhow::anyhow!(
+                "CodebaseToSpecAgent requires JSON CodebaseToSpecInput: {error}"
+            ))
+        })?;
+        self.generate_spec(&spec_input).await
     }
 
     async fn run_with_handler(
@@ -341,34 +316,6 @@ fn build_generate_prompt(input: &CodebaseToSpecInput) -> (Message, Message) {
     (system_msg, Message::user(content))
 }
 
-fn build_revise_prompt(spec: &str, issues: &[ReviewIssue]) -> String {
-    let mut prompt = format!(
-        "Revise the following specification to address all review issues listed below.\n\n\
-         ## Original Spec\n\n{}\n\n\
-         ## Review Issues\n",
-        spec
-    );
-
-    for (i, issue) in issues.iter().enumerate() {
-        prompt.push_str(&format!(
-            "\n{}. [{}] {}\n   Suggestion: {}\n",
-            i + 1,
-            issue.severity,
-            issue.description,
-            issue.suggestion,
-        ));
-        if let Some(ref loc) = issue.location {
-            prompt.push_str(&format!("   Location: {}\n", loc));
-        }
-    }
-
-    prompt.push_str(
-        "\nAddress every issue above. Return the fully revised specification, \
-         maintaining the artifact section structure and all SDD format rules.",
-    );
-    prompt
-}
-
 // ============================================================
 // Builder
 // ============================================================
@@ -440,7 +387,6 @@ mod tests {
     use crate::agents::reference_codebase_context::{
         CodebaseDependency, ComponentRelationship, KeyFile, ReferenceCodebaseArtifact,
     };
-    use crate::agents::review::{ReviewIssue, Severity};
     use agent::llm::{CompletionRequest, CompletionResponse, StreamResponse};
     use agent::types::TokenUsage;
     use async_trait::async_trait;
@@ -562,15 +508,6 @@ R1: The agent MUST generate specs.\n\
         }
     }
 
-    fn make_review_issue(msg: &str) -> ReviewIssue {
-        ReviewIssue {
-            severity: Severity::High,
-            description: msg.to_string(),
-            suggestion: "Fix it.".to_string(),
-            location: None,
-        }
-    }
-
     // ---- Tests ----
 
     #[tokio::test]
@@ -610,21 +547,6 @@ R1: The agent MUST generate specs.\n\
     }
 
     #[tokio::test]
-    async fn test_revise_spec_returns_revised_content() {
-        let revised = "## Overview\n\nRevised overview.\n\n## Requirements\n\nR1: Updated.";
-        let agent = CodebaseToSpecAgent::builder()
-            .with_provider(MockProvider {
-                response: revised.to_string(),
-            })
-            .build()
-            .unwrap();
-
-        let issues = vec![make_review_issue("Missing diagram section")];
-        let result = agent.revise_spec(DRAFT_SPEC, &issues).await.unwrap();
-        assert_eq!(result, revised.trim());
-    }
-
-    #[tokio::test]
     async fn test_run_creator_role_via_json_input() {
         let agent = CodebaseToSpecAgent::builder()
             .with_provider(MockProvider {
@@ -644,24 +566,20 @@ R1: The agent MUST generate specs.\n\
     }
 
     #[tokio::test]
-    async fn test_run_reviser_role_via_text_prompt() {
-        let revised = "## Overview\n\nRevised.\n\n## Requirements\n\nR1: Fixed.";
+    async fn test_run_rejects_non_json_revision_prompt() {
         let agent = CodebaseToSpecAgent::builder()
             .with_provider(MockProvider {
-                response: revised.to_string(),
+                response: DRAFT_SPEC.to_string(),
             })
             .build()
             .unwrap();
-
-        let prompt = format!(
-            "Revise the following artifact based on the review issues listed below.\n\n\
-             ## Original Artifact\n\n{}\n\n\
-             ## Review Issues\n\n\
-             1. [High] Missing diagrams\n   Suggestion: Add them",
-            DRAFT_SPEC
-        );
-        let result = agent.run(&prompt).await.unwrap();
-        assert_eq!(result, revised.trim());
+        let error = agent
+            .run("Revise this artifact")
+            .await
+            .expect_err("generic reviser role is retired");
+        assert!(error
+            .to_string()
+            .contains("requires JSON CodebaseToSpecInput"));
     }
 
     #[tokio::test]
@@ -705,26 +623,6 @@ R1: The agent MUST generate specs.\n\
             "expected agent error, got: {}",
             msg
         );
-    }
-
-    #[tokio::test]
-    async fn test_revise_spec_with_location_in_issue() {
-        let agent = CodebaseToSpecAgent::builder()
-            .with_provider(MockProvider {
-                response: DRAFT_SPEC.to_string(),
-            })
-            .build()
-            .unwrap();
-
-        let issues = vec![ReviewIssue {
-            severity: Severity::High,
-            description: "Missing classDiagram".to_string(),
-            suggestion: "Add a classDiagram for Agent hierarchy".to_string(),
-            location: Some("spec.md:Diagrams".to_string()),
-        }];
-
-        let result = agent.revise_spec(DRAFT_SPEC, &issues).await.unwrap();
-        assert!(!result.is_empty());
     }
 
     #[test]

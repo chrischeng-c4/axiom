@@ -355,7 +355,7 @@ definitions:
 //!   converted block back into the file.
 //!
 //! The verb never embeds an LLM call (per `feedback_score_no_embedded_llm`) —
-//! the LLM lives in the caller (Claude Code session, cue agent loop, or a human).
+//! the LLM lives in the caller (coding-agent session, embedded agent loop, or a human).
 //!
 //! The full module is source-template managed from `migrate.md#source` so the
 //! envelope controller, line-tracked block walking, render adapter, equivalence

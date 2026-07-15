@@ -4,10 +4,10 @@ fill_sections: [overview, tests, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
     role: primary
-    gap: client-boundary-model
-    claim: client-boundary-model
+    gap: agent-first-cli-product-model
+    claim: agent-first-cli-product-model
     coverage: full
-    rationale: "Issue/backend validation TDs verify AW Core client boundary behavior."
+    rationale: "Issue/backend validation TDs verify the single AW CLI project boundary."
 ---
 
 # Project Registry Integration Tests
