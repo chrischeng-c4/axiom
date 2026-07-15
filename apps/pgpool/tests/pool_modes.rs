@@ -891,4 +891,24 @@ async fn stats_api_reports_expected_counts_at_each_phase() {
 
     stop_proxy(server, shutdown_tx).await;
 }
+
+/// verify: pool_modes::reserve_policy_does_not_change_unconfigured_session_pooling (R5)
+#[test]
+fn reserve_policy_does_not_change_unconfigured_session_pooling() {
+    let pool = BackendPool::new(PoolConfig {
+        endpoint: BackendEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 5432,
+        },
+        max_backend_connections: 1,
+        acquire_timeout: Duration::from_millis(10),
+        backend_connect_timeout: Duration::from_millis(10),
+        wire: WireCodecConfig::default(),
+    });
+    let stats = pool.stats();
+    assert_eq!(stats.reserve_queued, 0);
+    assert_eq!(stats.reserve_granted, 0);
+    assert_eq!(stats.reserve_spent, 0);
+    assert!(pool.reserve_client().is_none());
+}
 // </HANDWRITE>

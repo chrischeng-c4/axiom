@@ -10,6 +10,7 @@
 use std::fmt::Write;
 
 use crate::admin::state::{AdminState, NamedPool};
+use crate::pool::{RESERVE_GRANTED_METRIC, RESERVE_QUEUED_METRIC, RESERVE_SPENT_METRIC};
 use metrics_prometheus::{render_labeled, Label, LabeledSample, SampleGroup};
 
 /// Content-type header value the TD's e2e test asserts verbatim.
@@ -20,6 +21,9 @@ pub fn render(state: &AdminState) -> String {
     let frontend_active = pool_samples(state, |pool| pool.budget.active());
     let backend_active = pool_samples(state, |pool| pool.pool.stats().backend_active);
     let backend_idle = pool_samples(state, |pool| pool.pool.stats().backend_idle);
+    let reserve_queued = pool_samples(state, |pool| pool.pool.stats().reserve_queued);
+    let reserve_granted = pool_samples(state, |pool| pool.pool.stats().reserve_granted);
+    let reserve_spent = pool_samples(state, |pool| pool.pool.stats().reserve_spent);
 
     let mut out = render_labeled(&[
         SampleGroup::new(
@@ -39,6 +43,24 @@ pub fn render(state: &AdminState) -> String {
             "gauge",
             "Backend connections currently sitting idle in the pool.",
             &backend_idle,
+        ),
+        SampleGroup::new(
+            RESERVE_QUEUED_METRIC,
+            "gauge",
+            "Reserve backend units waiting for asynchronous allocator admission.",
+            &reserve_queued,
+        ),
+        SampleGroup::new(
+            RESERVE_GRANTED_METRIC,
+            "gauge",
+            "Reserve backend units granted in the local lease cache.",
+            &reserve_granted,
+        ),
+        SampleGroup::new(
+            RESERVE_SPENT_METRIC,
+            "gauge",
+            "Reserve backend units currently spent by a physical backend lifecycle.",
+            &reserve_spent,
         ),
     ]);
     out.push_str(&render_transaction_phase_metrics(state));

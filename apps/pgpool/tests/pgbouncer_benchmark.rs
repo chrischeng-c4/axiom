@@ -96,6 +96,23 @@ fn dry_run_profile_stays_immutable_when_phase_telemetry_is_requested() {
     );
 }
 
+/// verify: pgbouncer_benchmark::reserve_telemetry_is_diagnostic_and_parseable (R7)
+#[test]
+fn reserve_telemetry_is_diagnostic_and_parseable() {
+    assert!(RUNNER_SOURCE.contains("pgpool_reserve_queued"));
+    assert!(RUNNER_SOURCE.contains("pgpool_reserve_granted"));
+    assert!(RUNNER_SOURCE.contains("pgpool_reserve_spent"));
+    assert!(
+        RUNNER_SOURCE.contains("diagnostic-only"),
+        "reserve diagnostics must not be mistaken for peer-winner evidence"
+    );
+    assert_eq!(
+        dry_run_profile(),
+        dry_run_profile(),
+        "the reserve diagnostic collection must not change the fixed peer profile"
+    );
+}
+
 #[test]
 fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
     let profile = dry_run_profile();

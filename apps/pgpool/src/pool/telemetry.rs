@@ -13,6 +13,13 @@ use std::time::Duration;
 const PHASES: usize = 3;
 const OUTCOMES: usize = 2;
 
+/// Fixed, identity-free reserve diagnostics. They deliberately describe the
+/// local cache only; a benchmark may report them for diagnosis but cannot use
+/// them as evidence of a peer-performance win.
+pub const RESERVE_QUEUED_METRIC: &str = "pgpool_reserve_queued";
+pub const RESERVE_GRANTED_METRIC: &str = "pgpool_reserve_granted";
+pub const RESERVE_SPENT_METRIC: &str = "pgpool_reserve_spent";
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TransactionPhase {
     Acquire = 0,

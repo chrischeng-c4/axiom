@@ -6,7 +6,7 @@ use kube::CustomResourceExt;
 use service_k8s::{ManagedService, ReadyFacts};
 use pgpool::k8s::{
     BackendPoolObservation, EndpointAllocator, EndpointCapacity, GlobalConnectionBudget,
-    PgpoolControlPlane,
+    PgpoolControlPlane, ReserveLeaseRequest,
 };
 use pgpool::operator::{
     self as pgpool_operator, Pgpool, PgpoolEndpointBudgetSpec, PgpoolEndpointProvider,
@@ -32,6 +32,7 @@ fn spec() -> PgpoolSpec {
                 safety_headroom: 10,
                 configured_ceiling: Some(200),
                 per_pod_quota: 40,
+                ..PgpoolEndpointBudgetSpec::default()
             },
             PgpoolEndpointBudgetSpec {
                 name: "alloy-read-pool".into(),
@@ -46,6 +47,7 @@ fn spec() -> PgpoolSpec {
                 safety_headroom: 10,
                 configured_ceiling: Some(300),
                 per_pod_quota: 40,
+                ..PgpoolEndpointBudgetSpec::default()
             },
         ],
         resources: PgpoolResources {
@@ -183,5 +185,71 @@ fn operator_assets_are_leader_elected_and_layered() {
     let yaml = pgpool_operator::operator_yaml("database-system");
     assert!(yaml.contains("coordination.k8s.io"));
     assert!(yaml.contains("namespace: database-system"));
+}
+
+/// verify: operator::concurrent_pods_cannot_overgrant_reserve_capacity (R4)
+#[test]
+fn concurrent_pods_cannot_overgrant_reserve_capacity() {
+    let mut budgets = GlobalConnectionBudget::default();
+    budgets.insert(EndpointAllocator::new(
+        "alloy-primary",
+        EndpointCapacity {
+            effective_limit: 100,
+            reserve: 0,
+            non_pgpool_usage: 0,
+            safety_headroom: 0,
+        },
+    ));
+    let mut control = PgpoolControlPlane::new(budgets);
+    control
+        .admit_scale(
+            "alloy-primary",
+            ["pool-a", "pool-b"],
+            Vec::<&str>::new(),
+            30,
+        )
+        .unwrap();
+    control
+        .grant_reserve(
+            "alloy-primary",
+            10,
+            [ReserveLeaseRequest {
+                pod: "pool-a".into(),
+                token: "first".into(),
+                units: 20,
+                expires_at_epoch_seconds: 20,
+            }],
+        )
+        .unwrap();
+    let denied = control.grant_reserve(
+        "alloy-primary",
+        10,
+        [
+            ReserveLeaseRequest {
+                pod: "pool-a".into(),
+                token: "too-many-a".into(),
+                units: 15,
+                expires_at_epoch_seconds: 20,
+            },
+            ReserveLeaseRequest {
+                pod: "pool-b".into(),
+                token: "too-many-b".into(),
+                units: 15,
+                expires_at_epoch_seconds: 20,
+            },
+        ],
+    );
+    assert!(denied.is_err(), "the concurrent chunk must be atomic");
+    let status = control.status();
+    assert_eq!(status.endpoints[0].reserve_granted, 20);
+    assert_eq!(status.endpoints[0].reserve_denials, 1);
+    assert_eq!(
+        control
+            .reserve_ledger("alloy-primary")
+            .unwrap()
+            .held_total(),
+        80,
+        "base allocation plus every granted reserve unit remains capped"
+    );
 }
 // </HANDWRITE>

@@ -13,7 +13,7 @@ use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
 use mio::net::TcpStream as MioTcpStream;
@@ -140,6 +140,19 @@ struct ReactorRuntime {
     startup_replays: Vec<StartupReplay>,
     startup_waiters: VecDeque<ClientId>,
     stats_dirty: bool,
+}
+
+impl ReactorRuntime {
+    /// The reactor owns FIFO deadlines. When reserve leasing is configured,
+    /// its queueWaitTimeout replaces the historical local acquire timeout;
+    /// reserve grants are still consumed only from the background-updated
+    /// pool cache and never by a readiness callback doing Kubernetes I/O.
+    fn queue_wait_timeout(&self) -> Duration {
+        self.pool
+            .reserve_policy()
+            .map(|policy| Duration::from_secs(policy.queue_wait_timeout_seconds))
+            .unwrap_or(self.config.acquire_timeout)
+    }
 }
 
 struct TokenSlots<T> {
@@ -1174,8 +1187,7 @@ impl ReactorRuntime {
                     _ => None,
                 });
             let has_pending = pending.is_some();
-            let deadline =
-                (pending.is_some()).then(|| Instant::now() + self.config.acquire_timeout);
+            let deadline = (pending.is_some()).then(|| Instant::now() + self.queue_wait_timeout());
             if let Some(entry) = self.clients.get_mut(&client_token) {
                 if let Some(next) = pending {
                     entry.pending_first = Some(next);
@@ -1281,7 +1293,7 @@ impl ReactorRuntime {
         });
         match mode {
             Some((0, _)) => {
-                let deadline = Instant::now() + self.config.acquire_timeout;
+                let deadline = Instant::now() + self.queue_wait_timeout();
                 if let Some(client) = self.clients.get_mut(&token) {
                     client.pending_first = Some(frame);
                     client.mode = ClientMode::Waiting;
@@ -1289,9 +1301,8 @@ impl ReactorRuntime {
                 self.set_client_deadline(token, Some(deadline));
                 let action = self.state.request_backend(id);
                 self.drive_action(action);
-                let resetting = self.state.resetting_len();
                 if self.backends.len() < self.config.max_backend_connections
-                    && self.state.waiting_len() > resetting
+                    && self.state.should_open_normal_backend()
                     && matches!(
                         self.clients.get(&token).map(|client| &client.mode),
                         Some(ClientMode::Waiting)
@@ -1399,7 +1410,7 @@ impl ReactorRuntime {
                 return;
             }
         }
-        let deadline = Instant::now() + self.config.acquire_timeout;
+        let deadline = Instant::now() + self.queue_wait_timeout();
         if let Some(entry) = self.clients.get_mut(&token) {
             entry.mode = ClientMode::StartupWaiting;
         }

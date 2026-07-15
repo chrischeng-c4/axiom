@@ -16,6 +16,7 @@ use tokio::sync::oneshot;
 
 use pgpool::pool::{
     BackendPool, LeaseDisposition, PoolConfig, PoolError, PoolRejectionReason, PoolStats,
+    ReserveLeasePolicy, ReserveLeaseRuntimeConfig,
 };
 use pgpool::proxy::BackendEndpointConfig;
 use pgpool::wire::{
@@ -940,5 +941,37 @@ async fn dropped_lease_without_explicit_release_does_not_leak_capacity_slot() {
         .expect("capacity was actually freed");
     assert_eq!(pool.stats().backend_active, 1);
     drop(second);
+}
+
+/// verify: pool::reserve_admission_waits_before_opening_reserve_backend (R2)
+#[tokio::test]
+async fn reserve_admission_waits_before_opening_reserve_backend() {
+    let mut config = pool_config(1, 0);
+    config.acquire_timeout = Duration::from_millis(25);
+    let pool = BackendPool::new_with_reserve(
+        config,
+        ReserveLeaseRuntimeConfig {
+            endpoint: "primary".into(),
+            pod: "pod-a".into(),
+            policy: ReserveLeasePolicy {
+                reserve_pool_timeout_seconds: 0,
+                queue_wait_timeout_seconds: 0,
+                reserve_idle_timeout_seconds: 1,
+                lease_ttl_seconds: 10,
+                request_chunk_size: 1,
+            },
+        },
+    );
+    assert!(matches!(
+        pool.acquire().await,
+        Err(PoolError::Saturated { .. })
+    ));
+    let stats = pool.stats();
+    assert_eq!(stats.backend_active, 0);
+    assert_eq!(stats.reserve_queued, 1);
+    assert_eq!(
+        stats.reserve_granted, 0,
+        "a queued demand cannot create a physical backend without an allocator grant"
+    );
 }
 // </HANDWRITE>

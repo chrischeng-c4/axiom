@@ -103,6 +103,12 @@ pub struct BackendPoolStats {
     pub backend_active: usize,
     /// Connections currently sitting in the shared idle set.
     pub backend_idle: usize,
+    /// Reserve capacity visible to this Pod's local cache. These values are
+    /// diagnostic only; the operator remains the endpoint-wide source of
+    /// truth for grants and denials.
+    pub reserve_queued: usize,
+    pub reserve_granted: usize,
+    pub reserve_spent: usize,
 }
 
 /// Composes `ConnectionBudget::active()` (frontend_active) with

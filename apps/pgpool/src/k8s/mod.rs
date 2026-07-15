@@ -5,6 +5,7 @@
 mod budget;
 mod control;
 mod instance;
+mod reserve;
 
 pub use budget::{
     AllocationError, AllocationState, EndpointAllocator, EndpointCapacity, GlobalConnectionBudget,
@@ -16,5 +17,9 @@ pub use control::{
 };
 pub use instance::{
     render_instance_yaml, render_manifests, spec_for_profile, InstanceProfile, PgpoolInstanceSpec,
+};
+pub use reserve::{
+    ReserveLeaseError, ReserveLeaseGrant, ReserveLeaseKey, ReserveLeaseLedger, ReserveLeaseRequest,
+    ReserveLeaseState,
 };
 // </HANDWRITE>

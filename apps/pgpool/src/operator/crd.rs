@@ -50,6 +50,18 @@ pub struct PgpoolEndpointBudgetSpec {
     pub configured_ceiling: Option<u32>,
     #[serde(default = "default_per_pod_quota")]
     pub per_pod_quota: u32,
+    /// Per-Pod normal-pool wait before an asynchronous reserve request may be
+    /// queued. Zero reserve capacity remains a safe disabled configuration.
+    #[serde(default = "default_reserve_pool_timeout_seconds")]
+    pub reserve_pool_timeout_seconds: u64,
+    #[serde(default = "default_queue_wait_timeout_seconds")]
+    pub queue_wait_timeout_seconds: u64,
+    #[serde(default = "default_reserve_idle_timeout_seconds")]
+    pub reserve_idle_timeout_seconds: u64,
+    #[serde(default = "default_reserve_lease_ttl_seconds")]
+    pub reserve_lease_ttl_seconds: u64,
+    #[serde(default = "default_reserve_request_chunk_size")]
+    pub reserve_request_chunk_size: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -75,6 +87,11 @@ impl Default for PgpoolEndpointBudgetSpec {
             safety_headroom: 10,
             configured_ceiling: None,
             per_pod_quota: default_per_pod_quota(),
+            reserve_pool_timeout_seconds: default_reserve_pool_timeout_seconds(),
+            queue_wait_timeout_seconds: default_queue_wait_timeout_seconds(),
+            reserve_idle_timeout_seconds: default_reserve_idle_timeout_seconds(),
+            reserve_lease_ttl_seconds: default_reserve_lease_ttl_seconds(),
+            reserve_request_chunk_size: default_reserve_request_chunk_size(),
         }
     }
 }
@@ -139,6 +156,14 @@ pub struct PgpoolEndpointBudgetStatus {
     pub usable: u32,
     pub allocated: u32,
     pub available: u32,
+    #[serde(default)]
+    pub reserve_granted: u32,
+    #[serde(default)]
+    pub reserve_available: u32,
+    #[serde(default)]
+    pub reserve_denials: u64,
+    #[serde(default)]
+    pub allocator_available: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_scale_reason: Option<String>,
 }
@@ -210,6 +235,10 @@ impl PgpoolStatus {
                     usable: item.usable,
                     allocated: item.allocated,
                     available: item.available,
+                    reserve_granted: item.reserve_granted,
+                    reserve_available: item.reserve_available,
+                    reserve_denials: item.reserve_denials,
+                    allocator_available: item.allocator_available,
                     blocked_scale_reason: item.blocked_scale_reason.clone(),
                 }
             })
@@ -269,6 +298,21 @@ fn default_postgres_port() -> u16 {
 }
 fn default_per_pod_quota() -> u32 {
     32
+}
+fn default_reserve_pool_timeout_seconds() -> u64 {
+    1
+}
+fn default_queue_wait_timeout_seconds() -> u64 {
+    5
+}
+fn default_reserve_idle_timeout_seconds() -> u64 {
+    30
+}
+fn default_reserve_lease_ttl_seconds() -> u64 {
+    60
+}
+fn default_reserve_request_chunk_size() -> u32 {
+    1
 }
 fn default_password_key() -> String {
     "password".into()

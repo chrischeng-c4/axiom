@@ -95,6 +95,14 @@ impl EndpointAllocator {
         self.capacity.usable().saturating_sub(self.held_quota())
     }
 
+    /// Shared cap predicate for static Pod allocations and any subsequently
+    /// admitted reserve ledger.  Callers must keep an unexpired reserve grant
+    /// held until its physical backend is closed; this method never treats a
+    /// failed probe or an expired token as free capacity by itself.
+    pub fn can_hold_additional(&self, requested: u32) -> bool {
+        self.held_quota().saturating_add(requested) <= self.capacity.usable()
+    }
+
     pub fn allocations(&self) -> impl Iterator<Item = &PodAllocation> {
         self.allocations.values()
     }
@@ -120,7 +128,7 @@ impl EndpointAllocator {
         let requested = quota_per_pod.saturating_mul(pods.len().try_into().unwrap_or(u32::MAX));
         let held = self.held_quota();
         let usable = self.capacity.usable();
-        if held.saturating_add(requested) > usable {
+        if !self.can_hold_additional(requested) {
             let error = AllocationError::InsufficientCapacity {
                 endpoint: self.endpoint.clone(),
                 held,

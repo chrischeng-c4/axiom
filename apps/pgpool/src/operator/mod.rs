@@ -50,6 +50,11 @@ pub fn instance_yaml(profile: InstanceProfile) -> String {
                 safety_headroom: deployment.max_backend_connections / 2,
                 configured_ceiling: None,
                 per_pod_quota: deployment.max_backend_connections,
+                reserve_pool_timeout_seconds: (deployment.reserve_pool_timeout_ms / 1_000).max(1),
+                queue_wait_timeout_seconds: (deployment.queue_wait_timeout_ms / 1_000).max(1),
+                reserve_idle_timeout_seconds: (deployment.reserve_idle_timeout_ms / 1_000).max(1),
+                reserve_lease_ttl_seconds: deployment.reserve_lease_ttl_seconds,
+                reserve_request_chunk_size: deployment.reserve_request_chunk_size,
             }],
             resources: PgpoolResources {
                 cpu: deployment.cpu,

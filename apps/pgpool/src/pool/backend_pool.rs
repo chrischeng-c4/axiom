@@ -27,6 +27,9 @@ use crate::pool::telemetry::{
 use crate::pool::types::{
     BackendConnectionId, BackendPoolStats, LeaseDisposition, PoolConfig, PoolError,
 };
+use crate::pool::{
+    ReserveLeaseClient, ReserveLeaseDemand, ReserveLeasePolicy, ReserveLeaseRuntimeConfig,
+};
 use crate::wire::{
     BackendMessage, FrameReader, FrontendMessage, Role, StartupMessage, WireCodecConfig,
     WireMessage,
@@ -115,7 +118,14 @@ struct PoolInner {
     state: Mutex<PoolState>,
     notify: Notify,
     telemetry: Option<Arc<TransactionPhaseTelemetry>>,
+    reserve: Option<ReserveRuntime>,
     reactor_stats: ReactorStats,
+}
+
+#[derive(Debug)]
+struct ReserveRuntime {
+    config: ReserveLeaseRuntimeConfig,
+    client: ReserveLeaseClient,
 }
 
 #[derive(Debug)]
@@ -138,17 +148,37 @@ pub struct BackendPool {
 
 impl BackendPool {
     pub fn new(config: PoolConfig) -> Self {
-        Self::new_inner(config, TransactionPhaseTelemetry::from_environment())
+        Self::new_inner(config, TransactionPhaseTelemetry::from_environment(), None)
     }
 
     /// Creates a pool with bounded phase telemetry for deterministic tests and
     /// explicitly diagnostic callers.  Ordinary construction remains off by
     /// default unless `PGPOOL_TRANSACTION_PHASE_TELEMETRY` enables it.
     pub fn new_with_transaction_phase_telemetry(config: PoolConfig) -> Self {
-        Self::new_inner(config, Some(TransactionPhaseTelemetry::new()))
+        Self::new_inner(config, Some(TransactionPhaseTelemetry::new()), None)
     }
 
-    fn new_inner(config: PoolConfig, telemetry: Option<Arc<TransactionPhaseTelemetry>>) -> Self {
+    /// Builds a pool with an endpoint-local reserve cache. The cache may only
+    /// ask a background worker for a grant after normal capacity has waited
+    /// through the configured reserve timeout; it never performs remote I/O
+    /// in `acquire` itself.
+    pub fn new_with_reserve(config: PoolConfig, reserve: ReserveLeaseRuntimeConfig) -> Self {
+        let client = ReserveLeaseClient::new(reserve.policy);
+        Self::new_inner(
+            config,
+            TransactionPhaseTelemetry::from_environment(),
+            Some(ReserveRuntime {
+                config: reserve,
+                client,
+            }),
+        )
+    }
+
+    fn new_inner(
+        config: PoolConfig,
+        telemetry: Option<Arc<TransactionPhaseTelemetry>>,
+        reserve: Option<ReserveRuntime>,
+    ) -> Self {
         let max = config.max_backend_connections;
         Self {
             config,
@@ -162,6 +192,7 @@ impl BackendPool {
                 }),
                 notify: Notify::new(),
                 telemetry,
+                reserve,
                 reactor_stats: ReactorStats {
                     enabled: AtomicBool::new(false),
                     active: AtomicUsize::new(0),
@@ -307,7 +338,17 @@ impl BackendPool {
     }
 
     async fn acquire_internal(&self, allow_idle_reuse: bool) -> Result<BackendLease, PoolError> {
-        let deadline = Instant::now() + self.config.acquire_timeout;
+        let queue_wait_timeout = self
+            .inner
+            .reserve
+            .as_ref()
+            .map(|runtime| Duration::from_secs(runtime.config.policy.queue_wait_timeout_seconds))
+            .unwrap_or(self.config.acquire_timeout);
+        let deadline = Instant::now() + queue_wait_timeout;
+        let reserve_deadline = self.inner.reserve.as_ref().map(|runtime| {
+            Instant::now() + Duration::from_secs(runtime.config.policy.reserve_pool_timeout_seconds)
+        });
+        let mut reserve_demanded = false;
         loop {
             if allow_idle_reuse {
                 if let Some(lease) = self.try_take_idle().await {
@@ -319,9 +360,20 @@ impl BackendPool {
                 return self.connect_fresh(permit).await;
             }
 
+            if !reserve_demanded && reserve_deadline.is_some_and(|at| Instant::now() >= at) {
+                if let Some(runtime) = &self.inner.reserve {
+                    runtime.client.queue_demand(ReserveLeaseDemand {
+                        endpoint: runtime.config.endpoint.clone(),
+                        pod: runtime.config.pod.clone(),
+                        units: 1,
+                    });
+                    reserve_demanded = true;
+                }
+            }
+
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(self.saturated());
+                return Err(self.saturated_after(queue_wait_timeout));
             }
 
             let notified = self.inner.notify.notified();
@@ -336,9 +388,13 @@ impl BackendPool {
     }
 
     fn saturated(&self) -> PoolError {
+        self.saturated_after(self.config.acquire_timeout)
+    }
+
+    fn saturated_after(&self, waited: Duration) -> PoolError {
         PoolError::Saturated {
             max: self.config.max_backend_connections,
-            waited: self.config.acquire_timeout,
+            waited,
         }
     }
 
@@ -414,17 +470,45 @@ impl BackendPool {
     }
 
     pub fn stats(&self) -> BackendPoolStats {
+        let reserve = self
+            .inner
+            .reserve
+            .as_ref()
+            .map(|runtime| runtime.client.stats())
+            .unwrap_or_default();
         if self.inner.reactor_stats.enabled.load(Ordering::Acquire) {
             return BackendPoolStats {
                 backend_active: self.inner.reactor_stats.active.load(Ordering::Relaxed),
                 backend_idle: self.inner.reactor_stats.idle.load(Ordering::Relaxed),
+                reserve_queued: reserve.queued_units as usize,
+                reserve_granted: reserve.granted_units as usize,
+                reserve_spent: reserve.spent_units as usize,
             };
         }
         let state = self.inner.state.lock().expect("pool state lock");
         BackendPoolStats {
             backend_active: state.outstanding.len(),
             backend_idle: state.idle.len(),
+            reserve_queued: reserve.queued_units as usize,
+            reserve_granted: reserve.granted_units as usize,
+            reserve_spent: reserve.spent_units as usize,
         }
+    }
+
+    /// Clone the reserve cache for the background control-plane worker. The
+    /// transaction reactor and legacy handler only share its local snapshot.
+    pub fn reserve_client(&self) -> Option<ReserveLeaseClient> {
+        self.inner
+            .reserve
+            .as_ref()
+            .map(|runtime| runtime.client.clone())
+    }
+
+    pub(crate) fn reserve_policy(&self) -> Option<ReserveLeasePolicy> {
+        self.inner
+            .reserve
+            .as_ref()
+            .map(|runtime| runtime.config.policy)
     }
 
     pub(crate) fn publish_reactor_stats(&self, active: usize, idle: usize) {

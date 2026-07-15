@@ -54,9 +54,9 @@ throughput. The default `tpcb` profile remains unchanged as the database-stress
 regression workload.
 
 `--phase-telemetry` starts pgpool with its opt-in aggregate phase telemetry,
-saves before/after Prometheus snapshots plus per-leg deltas, and marks the
-result diagnostic-only. It never changes the fixed workload profile or proves
-a competitor win.
+saves before/after Prometheus snapshots plus per-leg deltas, including the
+diagnostic reserve queue/grant/spend gauges. It never changes the fixed
+workload profile or proves a competitor win.
 
 An ordinary peer comparison runs two 30-second paired trials in opposite
 target orders. It prints raw samples and marks a pgpool candidate inconclusive
@@ -279,6 +279,9 @@ capture_pgpool_phase_metrics() {
     [[ "$PHASE_TELEMETRY" == true ]] || return 0
     curl --fail --silent --show-error "http://127.0.0.1:$ADMIN_PORT/metrics" >"$WORK_DIR/$label-phase-metrics.prom"
     grep -q '^pgpool_transaction_phase_seconds_count' "$WORK_DIR/$label-phase-metrics.prom" || fail "pgpool phase telemetry was enabled but metrics were absent"
+    grep -q '^pgpool_reserve_queued' "$WORK_DIR/$label-phase-metrics.prom" || fail "pgpool reserve diagnostics were absent"
+    grep -q '^pgpool_reserve_granted' "$WORK_DIR/$label-phase-metrics.prom" || fail "pgpool reserve grant diagnostics were absent"
+    grep -q '^pgpool_reserve_spent' "$WORK_DIR/$label-phase-metrics.prom" || fail "pgpool reserve spend diagnostics were absent"
 }
 
 write_pgpool_phase_delta() {
@@ -288,7 +291,7 @@ write_pgpool_phase_delta() {
     [[ "$PHASE_TELEMETRY" == true ]] || return 0
     awk '
         FNR == NR { before[$1] = $2; next }
-        /^pgpool_transaction_phase_seconds_(count|sum)/ {
+        /^pgpool_transaction_phase_seconds_(count|sum)|^pgpool_reserve_(queued|granted|spent)/ {
             printf "%s %.9f\n", $1, $2 - before[$1]
         }
     ' "$before" "$after" >"$output"

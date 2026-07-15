@@ -73,6 +73,14 @@ enum TransactionEngine {
 impl TransactionHandler {
     // @spec apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md#logic
     pub fn new(config: TransactionProxyConfig) -> Self {
+        if let Some(policy) = config.backend_pool.reserve_policy() {
+            tracing::info!(
+                reserve_pool_timeout_seconds = policy.reserve_pool_timeout_seconds,
+                queue_wait_timeout_seconds = policy.queue_wait_timeout_seconds,
+                reserve_idle_timeout_seconds = policy.reserve_idle_timeout_seconds,
+                "pgpool reserve lease cache enabled; control-plane exchange stays off the relay path"
+            );
+        }
         // The single-owner readiness reactor is the production transaction
         // data path. Keep an explicit legacy escape hatch for operational
         // rollback while the session-mode Tokio handler remains unchanged.

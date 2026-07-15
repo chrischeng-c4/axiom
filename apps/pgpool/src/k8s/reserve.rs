@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:f8226085" tracker="pending-tracker" reason="Define deterministic reserve grant requests, grant tokens, expiry and reconciliation transitions independently of Kubernetes transport."
+// HANDWRITE-BEGIN gap="missing-generator:logic:f8226085" tracker="#1731" reason="Define deterministic reserve grant requests, grant tokens, expiry and reconciliation transitions independently of Kubernetes transport."
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -243,7 +243,10 @@ mod tests {
                 [request("pod-b", "b", 10, 20), request("pod-c", "c", 10, 20)],
             )
             .unwrap_err();
-        assert!(matches!(error, ReserveLeaseError::InsufficientCapacity { .. }));
+        assert!(matches!(
+            error,
+            ReserveLeaseError::InsufficientCapacity { .. }
+        ));
         assert_eq!(ledger.held_total(), 85);
         assert_eq!(ledger.grants().count(), 1);
     }
@@ -279,5 +282,5 @@ mod tests {
     }
 }
 
-<!-- marker: missing-generator:logic:f8226085 path: apps/pgpool/src/k8s/reserve.rs reason: Define deterministic reserve grant requests, grant tokens, expiry and reconciliation transitions independently of Kubernetes transport. -->
+// marker: missing-generator:logic:f8226085 (filled for #1731)
 // HANDWRITE-END

@@ -5,7 +5,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{AllocationError, GlobalConnectionBudget};
+use super::{
+    AllocationError, GlobalConnectionBudget, ReserveLeaseError, ReserveLeaseGrant,
+    ReserveLeaseLedger, ReserveLeaseRequest,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendPoolObservation {
@@ -45,6 +48,10 @@ pub struct EndpointControlStatus {
     pub usable: u32,
     pub allocated: u32,
     pub available: u32,
+    pub reserve_granted: u32,
+    pub reserve_available: u32,
+    pub reserve_denials: u64,
+    pub allocator_available: bool,
     pub blocked_scale_reason: Option<String>,
 }
 
@@ -68,12 +75,22 @@ impl ControlPlaneStatus {
                 ("usable", endpoint.usable),
                 ("allocated", endpoint.allocated),
                 ("available", endpoint.available),
+                ("reserve_granted", endpoint.reserve_granted),
+                ("reserve_available", endpoint.reserve_available),
             ] {
                 output.push_str(&format!("pgpool_endpoint_{metric}{{{label}}} {value}\n"));
             }
             output.push_str(&format!(
+                "pgpool_endpoint_reserve_denials{{{label}}} {}\n",
+                endpoint.reserve_denials
+            ));
+            output.push_str(&format!(
                 "pgpool_endpoint_scale_blocked{{{label}}} {}\n",
                 u8::from(endpoint.blocked_scale_reason.is_some())
+            ));
+            output.push_str(&format!(
+                "pgpool_endpoint_allocator_available{{{label}}} {}\n",
+                u8::from(endpoint.allocator_available)
             ));
         }
         for pod in &self.pods {
@@ -116,18 +133,37 @@ pub enum ControlPlaneError {
     },
     #[error(transparent)]
     Allocation(#[from] AllocationError),
+    #[error(transparent)]
+    Reserve(#[from] ReserveLeaseError),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PgpoolControlPlane {
     pub budgets: GlobalConnectionBudget,
+    reserve_ledgers: BTreeMap<String, ReserveLeaseLedger>,
+    reserve_denials: BTreeMap<String, u64>,
     pods: BTreeMap<String, PodControlStatus>,
 }
 
 impl PgpoolControlPlane {
     pub fn new(budgets: GlobalConnectionBudget) -> Self {
+        let reserve_ledgers = budgets
+            .endpoints()
+            .map(|(name, allocator)| {
+                (
+                    name.to_owned(),
+                    ReserveLeaseLedger::new(
+                        name,
+                        allocator.capacity.usable(),
+                        allocator.held_quota(),
+                    ),
+                )
+            })
+            .collect();
         Self {
             budgets,
+            reserve_ledgers,
+            reserve_denials: BTreeMap::new(),
             pods: BTreeMap::new(),
         }
     }
@@ -152,11 +188,14 @@ impl PgpoolControlPlane {
             .map(Into::into)
             .chain(rollout_surge_pods.into_iter().map(Into::into))
             .collect();
-        let allocator = self
-            .budgets
-            .endpoint_mut(endpoint)
-            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?;
-        allocator.reserve_many(pods.clone(), quota_per_pod)?;
+        {
+            let allocator = self
+                .budgets
+                .endpoint_mut(endpoint)
+                .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?;
+            allocator.reserve_many(pods.clone(), quota_per_pod)?;
+        }
+        self.refresh_reserve_base(endpoint)?;
         for pod in pods {
             self.pods.insert(
                 pod.clone(),
@@ -243,6 +282,7 @@ impl PgpoolControlPlane {
             .endpoint_mut(&status.endpoint)
             .ok_or_else(|| ControlPlaneError::UnknownEndpoint(status.endpoint.clone()))?
             .release_after_drain(pod, true)?;
+        self.refresh_reserve_base(&status.endpoint)?;
         let status = self.pod_mut(pod)?;
         status.quota = 0;
         status.phase = PodControlPhase::Released;
@@ -255,16 +295,23 @@ impl PgpoolControlPlane {
         let endpoints: Vec<_> = self
             .budgets
             .endpoints()
-            .map(|(name, allocator)| EndpointControlStatus {
-                endpoint: name.into(),
-                effective_limit: allocator.capacity.effective_limit,
-                reserve: allocator.capacity.reserve,
-                non_pgpool_usage: allocator.capacity.non_pgpool_usage,
-                safety_headroom: allocator.capacity.safety_headroom,
-                usable: allocator.capacity.usable(),
-                allocated: allocator.held_quota(),
-                available: allocator.available_quota(),
-                blocked_scale_reason: allocator.blocked_reason().map(str::to_owned),
+            .map(|(name, allocator)| {
+                let reserve = self.reserve_ledgers.get(name);
+                EndpointControlStatus {
+                    endpoint: name.into(),
+                    effective_limit: allocator.capacity.effective_limit,
+                    reserve: allocator.capacity.reserve,
+                    non_pgpool_usage: allocator.capacity.non_pgpool_usage,
+                    safety_headroom: allocator.capacity.safety_headroom,
+                    usable: allocator.capacity.usable(),
+                    allocated: allocator.held_quota(),
+                    available: allocator.available_quota(),
+                    reserve_granted: reserve.map(ReserveLeaseLedger::held_reserve).unwrap_or(0),
+                    reserve_available: reserve.map(ReserveLeaseLedger::available).unwrap_or(0),
+                    reserve_denials: self.reserve_denials.get(name).copied().unwrap_or(0),
+                    allocator_available: reserve.is_some(),
+                    blocked_scale_reason: allocator.blocked_reason().map(str::to_owned),
+                }
             })
             .collect();
         let blocked_scale_reason = endpoints
@@ -287,6 +334,48 @@ impl PgpoolControlPlane {
         self.pods
             .get_mut(pod)
             .ok_or_else(|| ControlPlaneError::UnknownPod(pod.into()))
+    }
+
+    /// Atomically admit a reserve-grant chunk for one endpoint. This pure
+    /// control-plane model is used by the operator reconciliation fixture;
+    /// runtime Pods consume only the grants they receive from its background
+    /// exchange.
+    pub fn grant_reserve(
+        &mut self,
+        endpoint: &str,
+        now_epoch_seconds: u64,
+        requests: impl IntoIterator<Item = ReserveLeaseRequest>,
+    ) -> Result<Vec<ReserveLeaseGrant>, ControlPlaneError> {
+        let result = self
+            .reserve_ledgers
+            .get_mut(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?
+            .grant_many(now_epoch_seconds, requests);
+        match result {
+            Ok(grants) => Ok(grants),
+            Err(error) => {
+                *self.reserve_denials.entry(endpoint.into()).or_default() += 1;
+                Err(ControlPlaneError::Reserve(error))
+            }
+        }
+    }
+
+    pub fn reserve_ledger(&self, endpoint: &str) -> Option<&ReserveLeaseLedger> {
+        self.reserve_ledgers.get(endpoint)
+    }
+
+    fn refresh_reserve_base(&mut self, endpoint: &str) -> Result<(), ControlPlaneError> {
+        let allocator = self
+            .budgets
+            .endpoint(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?;
+        let ledger = self
+            .reserve_ledgers
+            .get_mut(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?;
+        ledger.usable = allocator.capacity.usable();
+        ledger.base_held = allocator.held_quota();
+        Ok(())
     }
 }
 

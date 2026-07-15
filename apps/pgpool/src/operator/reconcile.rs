@@ -250,6 +250,10 @@ fn plan_capacity(
                 usable: capacity.usable(),
                 allocated,
                 available: capacity.usable().saturating_sub(allocated),
+                reserve_granted: 0,
+                reserve_available: capacity.usable().saturating_sub(allocated),
+                reserve_denials: 0,
+                allocator_available: item.capacity.is_some(),
                 blocked_scale_reason,
             }
         })

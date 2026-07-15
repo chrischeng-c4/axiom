@@ -108,6 +108,30 @@ struct ServeArgs {
     /// Per-Pod backend connection quota admitted by the control plane.
     #[arg(long, env = "PGPOOL_MAX_BACKEND_CONNECTIONS", default_value_t = 512)]
     max_backend_connections: usize,
+    /// Endpoint name used by the asynchronous reserve-lease worker. Empty
+    /// disables reserve demand and keeps the historical local pool behavior.
+    #[arg(long, env = "PGPOOL_RESERVE_ENDPOINT", default_value = "")]
+    reserve_endpoint: String,
+    /// Stable Pod identity for the reserve grant. The Deployment renderer
+    /// supplies this from metadata.name through the Downward API.
+    #[arg(long, env = "PGPOOL_RESERVE_POD", default_value = "")]
+    reserve_pod: String,
+    /// Normal-pool wait before a saturated transaction is allowed to signal
+    /// a background reserve-grant request.
+    #[arg(long, env = "PGPOOL_RESERVE_POOL_TIMEOUT_MS", default_value_t = 1000)]
+    reserve_pool_timeout_ms: u64,
+    /// Terminal bounded wait for a normal or already granted reserve lease.
+    #[arg(long, env = "PGPOOL_QUEUE_WAIT_TIMEOUT_MS", default_value_t = 5000)]
+    queue_wait_timeout_ms: u64,
+    /// Idle reserve-grant release timeout, in milliseconds.
+    #[arg(long, env = "PGPOOL_RESERVE_IDLE_TIMEOUT_MS", default_value_t = 30000)]
+    reserve_idle_timeout_ms: u64,
+    /// Lease TTL requested by the background reserve worker, in seconds.
+    #[arg(long, env = "PGPOOL_RESERVE_LEASE_TTL_SECONDS", default_value_t = 60)]
+    reserve_lease_ttl_seconds: u64,
+    /// Maximum reserve units requested in one background allocator exchange.
+    #[arg(long, env = "PGPOOL_RESERVE_REQUEST_CHUNK_SIZE", default_value_t = 1)]
+    reserve_request_chunk_size: u32,
     /// Override the admin plane bind address (`host:port`); defaults to the
     /// `RuntimePlan`'s admin bind (`0.0.0.0:9080`) unchanged.
     #[arg(long, env = "PGPOOL_ADMIN_BIND")]
@@ -496,7 +520,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // through the same capacity-bounded `BackendPool` (R1), and the admin
     // plane's `NamedPool` holds a clone of this SAME pool for live stats
     // (R3) — cloned before the handler match arm below consumes it.
-    let backend_pool = pgpool::pool::BackendPool::new(pgpool::pool::PoolConfig {
+    let pool_config = pgpool::pool::PoolConfig {
         endpoint: pgpool::proxy::BackendEndpointConfig {
             host: args.backend_host.clone(),
             port: args.backend_port,
@@ -505,7 +529,25 @@ async fn serve(args: ServeArgs) -> Result<()> {
         acquire_timeout: std::time::Duration::from_millis(args.pool_acquire_timeout_ms),
         backend_connect_timeout,
         wire,
-    });
+    };
+    let backend_pool = if args.reserve_endpoint.is_empty() || args.reserve_pod.is_empty() {
+        pgpool::pool::BackendPool::new(pool_config)
+    } else {
+        pgpool::pool::BackendPool::new_with_reserve(
+            pool_config,
+            pgpool::pool::ReserveLeaseRuntimeConfig {
+                endpoint: args.reserve_endpoint.clone(),
+                pod: args.reserve_pod.clone(),
+                policy: pgpool::pool::ReserveLeasePolicy {
+                    reserve_pool_timeout_seconds: args.reserve_pool_timeout_ms / 1000,
+                    queue_wait_timeout_seconds: args.queue_wait_timeout_ms / 1000,
+                    reserve_idle_timeout_seconds: args.reserve_idle_timeout_ms / 1000,
+                    lease_ttl_seconds: args.reserve_lease_ttl_seconds,
+                    request_chunk_size: args.reserve_request_chunk_size,
+                },
+            },
+        )
+    };
     let admin_backend_pool = backend_pool.clone();
 
     // Called exactly once: the SAME `ConnectionBudget` is shared into

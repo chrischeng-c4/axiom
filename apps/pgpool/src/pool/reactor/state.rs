@@ -244,12 +244,24 @@ impl ReactorState {
         self.clean_idle.len()
     }
 
+    #[cfg(test)]
+    #[cfg(test)]
     pub(crate) fn waiting_len(&self) -> usize {
         self.waiting_count
     }
 
+    #[cfg(test)]
+    #[cfg(test)]
     pub(crate) fn resetting_len(&self) -> usize {
         self.resetting_count
+    }
+
+    /// A fresh normal backend is useful only when a live FIFO waiter remains
+    /// after accounting for reset-in-flight backends that will shortly become
+    /// clean. The readiness runtime uses this predicate before opening normal
+    /// capacity; reserve demand begins only after its separate bounded wait.
+    pub(crate) fn should_open_normal_backend(&self) -> bool {
+        self.waiting_count > self.resetting_count
     }
 
     fn assign_or_park(&mut self, backend: BackendId) -> TransactionAction {

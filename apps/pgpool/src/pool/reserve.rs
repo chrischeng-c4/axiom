@@ -1,5 +1,5 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:e42a1f61" tracker="pending-tracker" reason="Implement the asynchronous batched reserve lease cache/client, active-grant spend/reconcile rules, renewal, expiration, and diagnostic counters."
-use std::collections::BTreeMap;
+// HANDWRITE-BEGIN gap="missing-generator:logic:e42a1f61" tracker="#1731" reason="Implement the asynchronous batched reserve lease cache/client, active-grant spend/reconcile rules, renewal, expiration, and diagnostic counters."
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +30,16 @@ impl Default for ReserveLeasePolicy {
     }
 }
 
+/// Process identity and policy for one endpoint's reserve worker.  The Pod
+/// name is rendered through the Downward API so the allocator can make lease
+/// ownership explicit without requiring StatefulSet identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReserveLeaseRuntimeConfig {
+    pub endpoint: String,
+    pub pod: String,
+    pub policy: ReserveLeasePolicy,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReserveLeaseDemand {
     pub endpoint: String,
@@ -47,6 +57,7 @@ pub struct ReserveLeaseBatch {
 pub struct ReserveLeaseUse {
     pub endpoint: String,
     pub key: ReserveLeaseKey,
+    spend_token: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -62,7 +73,7 @@ pub struct ReserveLeaseClientStats {
 #[derive(Clone, Debug)]
 struct CachedGrant {
     grant: ReserveLeaseGrant,
-    spent_units: u32,
+    spent_tokens: BTreeSet<u64>,
     idle_since_epoch_seconds: Option<u64>,
 }
 
@@ -71,6 +82,7 @@ struct ReserveLeaseClientState {
     queued: BTreeMap<(String, String), u32>,
     grants: BTreeMap<String, BTreeMap<ReserveLeaseKey, CachedGrant>>,
     next_token: u64,
+    next_spend_token: u64,
     denials: u64,
     expirations: u64,
     unavailable: u64,
@@ -179,7 +191,7 @@ impl ReserveLeaseClient {
         for grant in grants {
             cached.entry(grant.key.clone()).or_insert(CachedGrant {
                 grant,
-                spent_units: 0,
+                spent_tokens: BTreeSet::new(),
                 idle_since_epoch_seconds: None,
             });
         }
@@ -189,20 +201,23 @@ impl ReserveLeaseClient {
     /// never refreshes, requests, or releases a Kubernetes resource.
     pub fn try_spend(&self, endpoint: &str, now_epoch_seconds: u64) -> Option<ReserveLeaseUse> {
         let mut state = self.state.lock().expect("reserve lease state lock");
+        state.next_spend_token = state.next_spend_token.saturating_add(1);
+        let spend_token = state.next_spend_token;
         let grants = state.grants.get_mut(endpoint)?;
         for (key, cached) in grants.iter_mut() {
             if cached.grant.expires_at_epoch_seconds <= now_epoch_seconds
                 || cached.grant.state == ReserveLeaseState::Expired
-                || cached.spent_units >= cached.grant.units
+                || cached.spent_tokens.len() >= cached.grant.units as usize
             {
                 continue;
             }
-            cached.spent_units = cached.spent_units.saturating_add(1);
+            cached.spent_tokens.insert(spend_token);
             cached.idle_since_epoch_seconds = None;
             cached.grant.state = ReserveLeaseState::Connecting;
             return Some(ReserveLeaseUse {
                 endpoint: endpoint.into(),
                 key: key.clone(),
+                spend_token,
             });
         }
         None
@@ -233,12 +248,17 @@ impl ReserveLeaseClient {
         else {
             return false;
         };
-        if cached.spent_units == 0 {
+        if !cached.spent_tokens.remove(&lease.spend_token) {
             return false;
         }
-        cached.spent_units -= 1;
-        cached.grant.state = ReserveLeaseState::Idle;
-        cached.idle_since_epoch_seconds.get_or_insert(now_epoch_seconds);
+        if cached.spent_tokens.is_empty() {
+            cached.grant.state = ReserveLeaseState::Idle;
+            cached
+                .idle_since_epoch_seconds
+                .get_or_insert(now_epoch_seconds);
+        } else {
+            cached.grant.state = ReserveLeaseState::Active;
+        }
         true
     }
 
@@ -270,7 +290,7 @@ impl ReserveLeaseClient {
             let keys: Vec<_> = grants
                 .iter()
                 .filter_map(|(key, cached)| {
-                    (cached.spent_units == 0
+                    (cached.spent_tokens.is_empty()
                         && cached.idle_since_epoch_seconds.is_some_and(|idle_since| {
                             now_epoch_seconds
                                 >= idle_since
@@ -311,7 +331,7 @@ impl ReserveLeaseClient {
                 .grants
                 .values()
                 .flat_map(|grants| grants.values())
-                .map(|cached| cached.spent_units)
+                .map(|cached| cached.spent_tokens.len() as u32)
                 .sum(),
             denials: state.denials,
             expirations: state.expirations,
@@ -322,7 +342,10 @@ impl ReserveLeaseClient {
     fn requeue_batch(&self, batch: ReserveLeaseBatch) {
         let mut state = self.state.lock().expect("reserve lease state lock");
         for request in batch.requests {
-            let pending = state.queued.entry((batch.endpoint.clone(), request.pod)).or_default();
+            let pending = state
+                .queued
+                .entry((batch.endpoint.clone(), request.pod))
+                .or_default();
             *pending = pending.saturating_add(request.units);
         }
     }
@@ -370,12 +393,26 @@ mod tests {
         let lease = client.try_spend("primary", 10).unwrap();
         assert!(client.return_spend(&lease, 11));
         assert!(!client.return_spend(&lease, 11));
-        assert_eq!(client.collect_idle_releases(40).len(), 1);
+        assert_eq!(client.collect_idle_releases(41).len(), 1);
         client.install_grants("primary", vec![grant("expired", 1, 20)]);
         assert_eq!(client.expire(20).len(), 1);
         assert!(client.try_spend("primary", 20).is_none());
     }
+
+    #[test]
+    fn each_spend_has_a_distinct_return_token() {
+        let client = ReserveLeaseClient::new(ReserveLeasePolicy::default());
+        client.install_grants("primary", vec![grant("g", 2, 20)]);
+        let first = client.try_spend("primary", 10).unwrap();
+        let second = client.try_spend("primary", 10).unwrap();
+
+        assert!(client.return_spend(&first, 11));
+        assert!(!client.return_spend(&first, 11));
+        assert_eq!(client.stats().spent_units, 1);
+        assert!(client.return_spend(&second, 11));
+        assert_eq!(client.stats().spent_units, 0);
+    }
 }
 
-<!-- marker: missing-generator:logic:e42a1f61 path: apps/pgpool/src/pool/reserve.rs reason: Implement the asynchronous batched reserve lease cache/client, active-grant spend/reconcile rules, renewal, expiration, and diagnostic counters. -->
+// marker: missing-generator:logic:e42a1f61 (filled for #1731)
 // HANDWRITE-END
