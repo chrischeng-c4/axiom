@@ -2705,25 +2705,29 @@ fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBu
         );
     }
 
-    if matches!(
+    let extension_candidates: &[&str] = if matches!(
         base.extension().and_then(|e| e.to_str()),
         Some("js" | "jsx" | "mjs")
     ) {
-        for ext in ["ts", "tsx"] {
-            let candidate = base.with_extension(ext);
-            if candidate.is_file() {
-                return Ok(Some(candidate));
-            }
+        // TypeScript commonly writes `import "./module.js"` while the
+        // source tree holds `module.ts` or `module.tsx`.
+        &["ts", "tsx"]
+    } else {
+        // A dotted basename is still extensionless from the importer's
+        // perspective: `../../app.config` must probe `app.config.ts`, rather
+        // than replacing `.config` with `.ts`.  The staging graph otherwise
+        // leaves the original relative specifier in place, and Node resolves
+        // it from `__jet_modules` instead of the source module's directory.
+        &["ts", "tsx", "js", "jsx", "mjs", "cjs"]
+    };
+    for ext in extension_candidates {
+        let candidate = append_test_module_extension(&base, ext);
+        if candidate.is_file() {
+            return Ok(Some(candidate));
         }
     }
 
     if base.extension().is_none() {
-        for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
-            let candidate = base.with_extension(ext);
-            if candidate.is_file() {
-                return Ok(Some(candidate));
-            }
-        }
         for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
             let candidate = base.join(format!("index.{ext}"));
             if candidate.is_file() {
@@ -2733,6 +2737,13 @@ fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBu
     }
 
     Ok(None)
+}
+
+fn append_test_module_extension(base: &Path, ext: &str) -> PathBuf {
+    let mut path = base.as_os_str().to_os_string();
+    path.push(".");
+    path.push(ext);
+    PathBuf::from(path)
 }
 
 fn is_test_source_module(path: &Path) -> bool {
@@ -2921,6 +2932,42 @@ mod tests {
         assert!(
             !code.contains("import('./')"),
             "dynamic directory import must point at the emitted index module: {code}"
+        );
+    }
+
+    #[test]
+    fn emitter_rewrites_dotted_basename_relative_imports() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("src").join("feature");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("api-item.ts");
+        std::fs::write(
+            &source,
+            "import config from '../../app.config';\nexport { config };\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("app.config.ts"),
+            "export default { endpoint: 'https://example.test' };\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
+        let emitted = emitter
+            .emit(
+                &source,
+                Some("import config from '../../app.config';\nexport { config };\n".to_string()),
+            )
+            .unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("file://"),
+            "dotted-basename import was not rewritten: {code}"
+        );
+        assert!(
+            !code.contains("../../app.config"),
+            "staged modules must not retain a source-relative dotted import: {code}"
         );
     }
 
