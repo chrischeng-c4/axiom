@@ -281,7 +281,10 @@ fn kwarg(a: &[MbValue], key: &str) -> Option<MbValue> {
     let ptr = kw.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock.read().unwrap().get(key).copied();
+            // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+            // not Rust's native `str` hash — a raw `.get(&str)` here would
+            // silently miss present keys (#1566).
+            return super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key);
         }
     }
     None

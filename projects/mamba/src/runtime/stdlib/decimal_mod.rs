@@ -3121,7 +3121,11 @@ unsafe extern "C" fn dispatch_decimal_localcontext(
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let guard = lock.read().unwrap();
                     for key in ["capitals", "clamp"] {
-                        if let Some(v) = guard.get(key) {
+                        // `DictKey::Str` hashes with the Python-semantic
+                        // domain (#1028), not Rust's native `str` hash — a
+                        // raw `.get(&str)` here would silently miss present
+                        // keys (#1566).
+                        if let Some(v) = super::super::dict_ops::dict_get_exact_str(&guard, key) {
                             let ok =
                                 matches!(v.as_int(), Some(0) | Some(1)) || v.as_bool().is_some();
                             if !ok {

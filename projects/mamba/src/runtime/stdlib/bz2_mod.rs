@@ -77,7 +77,12 @@ fn kwargs_index(args: &[MbValue], name: &str) -> Option<i64> {
     let ptr = last.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(name).copied().and_then(as_index)
+            // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+            // not Rust's native `str` hash — a raw `.get(&str)` here would
+            // silently miss present keys (#1566). Route through the
+            // hash-domain-safe helper.
+            super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), name)
+                .and_then(as_index)
         } else {
             None
         }
@@ -91,7 +96,7 @@ fn kwargs_str(args: &[MbValue], name: &str) -> Option<String> {
         .and_then(|v| v.as_ptr())
         .and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(name).copied()
+                super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), name)
             } else {
                 None
             }
@@ -104,7 +109,7 @@ fn kwargs_has(args: &[MbValue], name: &str) -> bool {
         .and_then(|v| v.as_ptr())
         .map(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(name).is_some()
+                super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), name).is_some()
             } else {
                 false
             }
