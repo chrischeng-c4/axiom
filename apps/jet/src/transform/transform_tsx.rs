@@ -208,6 +208,18 @@ pub(super) fn transform_node(
     let mut last_pos = node.start_byte();
 
     for child in node.children(&mut cursor) {
+        if child.end_byte() <= last_pos {
+            continue;
+        }
+
+        if is_typescript_this_parameter(&child) {
+            if child.start_byte() > last_pos {
+                result.push_str(&source[last_pos..child.start_byte()]);
+            }
+            last_pos = skip_typescript_this_parameter(source, &child);
+            continue;
+        }
+
         if is_type_only_field_marker(node, &child, source) {
             if child.start_byte() > last_pos {
                 result.push_str(&source[last_pos..child.start_byte()]);
@@ -409,6 +421,39 @@ fn should_skip_node(node: &Node) -> bool {
             | "protected"
             | "readonly"
     )
+}
+
+/// TypeScript permits a typed `this` pseudo-parameter as the first function
+/// parameter. It is type-system-only and must be removed together with the
+/// following separator before JavaScript reaches Node.
+fn is_typescript_this_parameter(node: &Node) -> bool {
+    if node.kind() != "required_parameter" {
+        return false;
+    }
+
+    let mut cursor = node.walk();
+    let mut has_this = false;
+    let mut has_type = false;
+    for child in node.children(&mut cursor) {
+        has_this |= child.kind() == "this";
+        has_type |= child.kind() == "type_annotation";
+    }
+    has_this && has_type
+}
+
+fn skip_typescript_this_parameter(source: &str, parameter: &Node) -> usize {
+    let bytes = source.as_bytes();
+    let mut position = parameter.end_byte();
+    while position < source.len() && bytes[position].is_ascii_whitespace() {
+        position += 1;
+    }
+    if position < source.len() && bytes[position] == b',' {
+        position += 1;
+        while position < source.len() && bytes[position].is_ascii_whitespace() {
+            position += 1;
+        }
+    }
+    position
 }
 
 fn is_type_only_field_marker(parent: &Node, child: &Node, source: &str) -> bool {

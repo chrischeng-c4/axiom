@@ -62,7 +62,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ASSET_EXTENSIONS = new Set([
   ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
   ".woff", ".woff2", ".ttf", ".otf",
-  ".css",
+  ".css", ".scss",
 ]);
 
 function isTemporaryJetModuleParent(parentURL) {
@@ -109,12 +109,22 @@ function namedCommonJsFacadeUrl(specifier, context, resolved) {
     const names = Object.keys(object).filter(
       (name) => name !== "default" && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name),
     );
+    let localBinding = "__jet_cjs_module";
+    while (names.includes(localBinding)) {
+      localBinding += "_";
+    }
     const source = [
       'import { createRequire } from "node:module";',
       `const require = createRequire(${JSON.stringify(resolved.url)});`,
-      `const object = require(${JSON.stringify(fileURLToPath(resolved.url))});`,
-      "export default object;",
-      ...names.map((name) => `export const ${name} = object[${JSON.stringify(name)}];`),
+      `const ${localBinding} = require(${JSON.stringify(fileURLToPath(resolved.url))});`,
+      `export default ${localBinding};`,
+      ...names.flatMap((name, index) => {
+        const localExport = `__jet_cjs_export_${index}`;
+        return [
+          `const ${localExport} = ${localBinding}[${JSON.stringify(name)}];`,
+          `export { ${localExport} as ${name} };`,
+        ];
+      }),
     ].join("\n");
     return `data:text/javascript,${encodeURIComponent(source)}`;
   } catch {
@@ -129,7 +139,8 @@ function isTestAssetUrl(url) {
 }
 
 function isTestStylesheetUrl(url) {
-  return url.startsWith("file:") && new URL(url).pathname.toLowerCase().endsWith(".css");
+  return url.startsWith("file:")
+    && [".css", ".scss"].some((extension) => new URL(url).pathname.toLowerCase().endsWith(extension));
 }
 
 export async function resolve(specifier, context, nextResolve) {
@@ -178,7 +189,7 @@ export async function load(url, context, nextLoad) {
 
 const TEST_ASSET_EXTENSIONS: &[&str] = &[
     "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp", "woff", "woff2", "ttf",
-    "otf", "css",
+    "otf", "css", "scss",
 ];
 
 /// Run a single spec file to completion. Returns a partial Summary for this
@@ -2705,25 +2716,34 @@ fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBu
         );
     }
 
-    if matches!(
+    let replaces_javascript_extension = matches!(
         base.extension().and_then(|e| e.to_str()),
         Some("js" | "jsx" | "mjs")
-    ) {
-        for ext in ["ts", "tsx"] {
-            let candidate = base.with_extension(ext);
-            if candidate.is_file() {
-                return Ok(Some(candidate));
-            }
+    );
+    let extension_candidates: &[&str] = if replaces_javascript_extension {
+        // TypeScript commonly writes `import "./module.js"` while the
+        // source tree holds `module.ts` or `module.tsx`.
+        &["ts", "tsx"]
+    } else {
+        // A dotted basename is still extensionless from the importer's
+        // perspective: `../../app.config` must probe `app.config.ts`, rather
+        // than replacing `.config` with `.ts`.  The staging graph otherwise
+        // leaves the original relative specifier in place, and Node resolves
+        // it from `__jet_modules` instead of the source module's directory.
+        &["ts", "tsx", "js", "jsx", "mjs", "cjs"]
+    };
+    for ext in extension_candidates {
+        let candidate = if replaces_javascript_extension {
+            base.with_extension(ext)
+        } else {
+            append_test_module_extension(&base, ext)
+        };
+        if candidate.is_file() {
+            return Ok(Some(candidate));
         }
     }
 
     if base.extension().is_none() {
-        for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
-            let candidate = base.with_extension(ext);
-            if candidate.is_file() {
-                return Ok(Some(candidate));
-            }
-        }
         for ext in ["ts", "tsx", "js", "jsx", "mjs", "cjs"] {
             let candidate = base.join(format!("index.{ext}"));
             if candidate.is_file() {
@@ -2733,6 +2753,13 @@ fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBu
     }
 
     Ok(None)
+}
+
+fn append_test_module_extension(base: &Path, ext: &str) -> PathBuf {
+    let mut path = base.as_os_str().to_os_string();
+    path.push(".");
+    path.push(ext);
+    PathBuf::from(path)
 }
 
 fn is_test_source_module(path: &Path) -> bool {
@@ -2925,6 +2952,78 @@ mod tests {
     }
 
     #[test]
+    fn emitter_rewrites_dotted_basename_relative_imports() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("src").join("feature");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("api-item.ts");
+        std::fs::write(
+            &source,
+            "import config from '../../app.config';\nexport { config };\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("app.config.ts"),
+            "export default { endpoint: 'https://example.test' };\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
+        let emitted = emitter
+            .emit(
+                &source,
+                Some("import config from '../../app.config';\nexport { config };\n".to_string()),
+            )
+            .unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("file://"),
+            "dotted-basename import was not rewritten: {code}"
+        );
+        assert!(
+            !code.contains("../../app.config"),
+            "staged modules must not retain a source-relative dotted import: {code}"
+        );
+    }
+
+    #[test]
+    fn emitter_rewrites_explicit_javascript_imports_to_typescript_sources() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("sum.test.ts");
+        std::fs::write(
+            &source,
+            "import { sum } from './sum.js';\nexport { sum };\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source_dir.join("sum.ts"),
+            "export const sum = (left: number, right: number) => left + right;\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
+        let emitted = emitter
+            .emit(
+                &source,
+                Some("import { sum } from './sum.js';\nexport { sum };\n".to_string()),
+            )
+            .unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("file://"),
+            "explicit JavaScript imports must resolve to emitted TypeScript sources: {code}"
+        );
+        assert!(
+            !code.contains("'./sum.js'"),
+            "staged modules must not retain an unresolved JavaScript source import: {code}"
+        );
+    }
+
+    #[test]
     fn worker_runtime_exposes_jest_globals_and_table_helpers() {
         assert!(
             WORKER_RUNTIME.contains("globalThis.jest = jest"),
@@ -2990,10 +3089,15 @@ mod tests {
         assert!(is_test_asset_module(Path::new("icon.svg")));
         assert!(is_test_asset_module(Path::new("avatar.JPEG")));
         assert!(is_test_asset_module(Path::new("styles.css")));
+        assert!(is_test_asset_module(Path::new("form-wrapper.scss")));
         assert!(!is_test_asset_module(Path::new("module.js")));
         assert!(TEST_ASSET_LOADER.contains("shortCircuit: true"));
         assert!(TEST_ASSET_LOADER.contains("export default"));
         assert!(TEST_ASSET_LOADER.contains("isTestStylesheetUrl"));
+        assert!(TEST_ASSET_LOADER.contains(".scss"));
+        assert!(TEST_ASSET_LOADER.contains("let localBinding = \"__jet_cjs_module\";"));
+        assert!(TEST_ASSET_LOADER.contains("const ${localBinding} = require"));
+        assert!(TEST_ASSET_LOADER.contains("export { ${localExport} as ${name} };"));
     }
 
     #[test]

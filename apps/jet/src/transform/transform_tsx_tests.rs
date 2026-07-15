@@ -1,6 +1,7 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 // CODEGEN-BEGIN
 use super::*;
+use crate::transform::typescript::transform_typescript;
 
 #[test]
 fn test_tsx_simple_component() {
@@ -1148,5 +1149,31 @@ createRoot(document.getElementById("root")!).render(<App />);"##;
         "must preserve styled-components default and named value imports: {}",
         result.code
     );
+}
+
+#[test]
+fn strips_typescript_this_parameters() {
+    let source = r#"
+const mockReader = {};
+const implementation = function (this: typeof mockReader, value: string) {
+  return value;
+};
+"#;
+    let options = TransformOptions::default();
+    for result in [
+        transform_tsx(source, &options).unwrap(),
+        transform_typescript(source, &options).unwrap(),
+    ] {
+        assert!(
+            result.code.contains("function (value)"),
+            "TypeScript this pseudo-parameters must not reach JavaScript: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("this:"),
+            "this-parameter type annotation must be stripped: {}",
+            result.code
+        );
+    }
 }
 // CODEGEN-END
