@@ -418,7 +418,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         "users".to_string(),
         models::SearchRequest {{
             collapse: None,
-            offset: 0,
+            offset: Some(0),
             cursor: None,
             limit: Some(10),
             query: query.clone(),
@@ -441,7 +441,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         "users".to_string(),
         models::SearchRequest {{
             collapse: None,
-            offset: 0,
+            offset: Some(0),
             cursor: None,
             limit: Some(10),
             query,
