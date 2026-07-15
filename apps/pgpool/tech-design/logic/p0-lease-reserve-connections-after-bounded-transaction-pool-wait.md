@@ -192,3 +192,63 @@ changes:
     impl_mode: hand-written
     reason: Pin benchmark telemetry field parsing and diagnostic-only labeling.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-bounded-global-reserve-leases-verification
+requirements:
+  atomic_multi_pod:
+    id: R4
+    text: "Concurrent saturated Pods are granted atomically or denied without partial allocation, and a Pod opens a reserve backend only after it spends an active grant."
+    kind: integration
+    risk: high
+    verify: cargo test -p pgpool --test operator concurrent_pods_cannot_overgrant_reserve_capacity
+  discovery_fallback:
+    id: R6
+    text: "Cloud SQL and AlloyDB use the same reserve-budget contract and configured ceilings remain safe when discovery cannot provide facts."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test operator reserve_policy_uses_discovery_or_safe_configured_ceiling
+  endpoint_cap:
+    id: R1
+    text: "Base allocations, pending and active reserve grants, connecting, active, idle, and draining reserve capacity never exceed discovered usable endpoint capacity."
+    kind: functional
+    risk: high
+    verify: cargo test -p pgpool --test operator reserve_grants_never_exceed_endpoint_usable_capacity
+  fail_closed:
+    id: R5
+    text: "Allocator unavailability, endpoint health failure, expired grants, failed connect, reset failure, and drain reconciliation never create unaccounted reserve capacity."
+    kind: negative
+    risk: high
+    verify: cargo test -p pgpool --test pool reserve_failures_reconcile_grant_once_and_fail_closed
+  fair_deadline:
+    id: R3
+    text: "Live transaction waiters are served FIFO by endpoint, cancellations do not block later waiters, and queueWaitTimeout returns the existing SQLSTATE 53300 saturation error."
+    kind: negative
+    risk: high
+    verify: cargo test -p pgpool --test pool reserve_waiters_are_fifo_and_expire_at_queue_deadline
+  idle_first:
+    id: R2
+    text: "A reset-clean idle backend is reused first, and normal-pool saturation cannot open a reserve backend before reservePoolTimeout."
+    kind: functional
+    risk: high
+    verify: cargo test -p pgpool --test pool reserve_admission_waits_before_opening_reserve_backend
+  observability:
+    id: R7
+    text: "Status and diagnostic benchmark telemetry distinguish queue wait, reuse, base open, reserve open, grant denial, expiry, and allocator unavailability without claiming a peer performance win."
+    kind: regression
+    risk: medium
+    verify: cargo test -p pgpool --test pgbouncer_benchmark reserve_telemetry_is_diagnostic_and_parseable
+---
+flowchart TD
+    r1[R1 endpoint cap] --> cargo_test_p_pgpool_test_operator_reserve_grants_never_exceed_endpoint_usable_capacity[cargo test -p pgpool --test operator reserve_grants_never_exceed_endpoint_usable_capacity]
+    r2[R2 idle first] --> cargo_test_p_pgpool_test_pool_reserve_admission_waits_before_opening_reserve_backend[cargo test -p pgpool --test pool reserve_admission_waits_before_opening_reserve_backend]
+    r3[R3 fair deadline] --> cargo_test_p_pgpool_test_pool_reserve_waiters_are_fifo_and_expire_at_queue_deadline[cargo test -p pgpool --test pool reserve_waiters_are_fifo_and_expire_at_queue_deadline]
+    r4[R4 atomic multi pod] --> cargo_test_p_pgpool_test_operator_concurrent_pods_cannot_overgrant_reserve_capacity[cargo test -p pgpool --test operator concurrent_pods_cannot_overgrant_reserve_capacity]
+    r5[R5 fail closed] --> cargo_test_p_pgpool_test_pool_reserve_failures_reconcile_grant_once_and_fail_closed[cargo test -p pgpool --test pool reserve_failures_reconcile_grant_once_and_fail_closed]
+    r6[R6 discovery fallback] --> cargo_test_p_pgpool_test_operator_reserve_policy_uses_discovery_or_safe_configured_ceiling[cargo test -p pgpool --test operator reserve_policy_uses_discovery_or_safe_configured_ceiling]
+    r7[R7 observability] --> cargo_test_p_pgpool_test_pgbouncer_benchmark_reserve_telemetry_is_diagnostic_and_parseable[cargo test -p pgpool --test pgbouncer_benchmark reserve_telemetry_is_diagnostic_and_parseable]
+```
