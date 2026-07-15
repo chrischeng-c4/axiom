@@ -9,38 +9,43 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: shared-http-runtime-lifecycle-ownership
-entry: start
+id: shared-http-runtime-contract
+entry: bind
 nodes:
-  start: { kind: start, label: "HTTP runtime request" }
-  lifecycle: { kind: process, label: "server-lifecycle owns bind, drain/readiness, shutdown, budgets, and connection metric events" }
-  tcp: { kind: process, label: "server-tcp owns listener admission, per-connection supervision, metric callbacks, and bounded drain" }
-  http: { kind: process, label: "server-http owns the only HTTP listener facade and maps each accepted TCP stream to HTTP/1.1+h2c" }
-  transport: { kind: process, label: "transport-h2c owns outbound clients/pools plus per-connection h2c protocol machinery, never a listener loop" }
-  service: { kind: process, label: "service-http owns probes, OpenAPI/docs, HTTP errors, and request-policy adapters" }
-  apps: { kind: terminal, label: "Lumen, Tape, Keep, Relay, Courier, and Pgpool compose one lifecycle contract without route changes" }
-  shutdown: { kind: terminal, label: "One shutdown signal flips shared drain state, stops admission, and drains supervised connections" }
+  bind: { kind: start, label: "server-http receives a bound TcpListener, Router, HttpServerOptions, and shutdown future" }
+  tcp_config: { kind: process, label: "server-http derives TcpServerConfig and carries caller budget, DrainController, metrics, socket options, and drain timeout" }
+  accept: { kind: decision, label: "server-tcp accepts a socket and attempts the shared ConnectionBudget" }
+  rejected: { kind: process, label: "Budget denial closes the socket and calls connection_rejected exactly once" }
+  admitted: { kind: process, label: "Admission calls connection_accepted exactly once and spawns one supervised handler task" }
+  protocol: { kind: process, label: "transport-h2c serves one accepted stream with hyper-util auto HTTP/1.1+h2c and configured stream limits" }
+  closed: { kind: process, label: "Handler completion or failure releases the permit and calls connection_closed exactly once" }
+  signal: { kind: process, label: "server-lifecycle waits for SIGINT/SIGTERM, flips the shared drain owner, and holds the configured readiness grace" }
+  stop: { kind: process, label: "server-tcp stops admission, waits for supervised tasks up to drain_timeout, then terminates remaining work" }
+  policy: { kind: terminal, label: "service-http merges probes and application routes but owns no listener, signal, or drain-state implementation" }
 edges:
-  - { from: start, to: lifecycle }
-  - { from: lifecycle, to: tcp }
-  - { from: tcp, to: http }
-  - { from: http, to: transport }
-  - { from: http, to: service }
-  - { from: service, to: apps }
-  - { from: lifecycle, to: shutdown }
-  - { from: tcp, to: shutdown }
+  - { from: bind, to: tcp_config }
+  - { from: tcp_config, to: accept }
+  - { from: accept, to: rejected, when: "budget exhausted" }
+  - { from: accept, to: admitted, when: "permit granted or unlimited" }
+  - { from: admitted, to: protocol }
+  - { from: protocol, to: closed }
+  - { from: tcp_config, to: signal }
+  - { from: signal, to: stop }
+  - { from: stop, to: closed }
+  - { from: protocol, to: policy }
 ---
 flowchart TD
-  start([HTTP runtime request]) --> lifecycle[server-lifecycle: bind, drain/readiness, shutdown, budgets, metric events]
-  lifecycle --> tcp[server-tcp: accept, admission, supervision, metric callbacks, bounded drain]
-  tcp --> http[server-http: sole listener facade and HTTP connection dispatch]
-  http --> transport[transport-h2c: outbound pools plus per-connection HTTP/1.1+h2c protocol]
-  http --> service[service-http: probes, OpenAPI/docs, errors, request policy]
-  service --> apps([service and tool consumers preserve public routes])
-  lifecycle --> shutdown([shared drain state stops admission])
-  tcp --> shutdown
+  bind([server-http listener + router + options]) --> tcp_config[derive lifecycle-aware TcpServerConfig]
+  tcp_config --> accept{server-tcp admission}
+  accept -->|budget denied| rejected[connection_rejected; close socket]
+  accept -->|admitted| admitted[connection_accepted; supervised task]
+  admitted --> protocol[transport-h2c per-connection HTTP/1.1+h2c]
+  protocol --> closed[release permit; connection_closed]
+  tcp_config --> signal[server-lifecycle SIGINT/SIGTERM and drain state]
+  signal --> stop[stop accept and bounded task drain]
+  stop --> closed
+  protocol --> policy([service-http route policy only])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
