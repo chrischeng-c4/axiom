@@ -742,20 +742,67 @@ impl TypeChecker {
                 self.set_binding_origins(symbol, None, None, None);
                 self.set_sym_type(symbol.0, enum_ty);
             }
-            Stmt::AugAssign { target, value, .. } => {
-                self.check_expr(target);
-                self.check_expr(value);
+            Stmt::AugAssign { target, op, value } => {
+                let lt = self.check_expr(target);
+                let rt = self.check_expr(value);
                 if let Expr::Ident(name) = &target.node {
                     let any_ty = self.tcx.any();
+                    // #1775: compute the real result type via check_binop's
+                    // int/float/dunder rules instead of blindly forcing `Any`.
+                    // Blindly forcing Any made ast_to_hir's AugAssign lowering
+                    // treat the target as non-primitive (its `lhs_primitive`
+                    // check reads this very symbol type back), so even plain
+                    // `int += int` was routed through the dynamic `mb_iadd`
+                    // dunder-dispatch helper — which corrupts the value:
+                    // hir_to_mir's `sym_to_vreg` cache holds the PRE-box raw
+                    // vreg for the target, but `mb_iadd` expects a boxed
+                    // MbValue argument, so the true LHS value is dropped
+                    // (`x=5; x+=3` printed `3.0` instead of `8`). Keeping the
+                    // static type concrete for the ordinary scalar case (and
+                    // still widening to Any for the cases that already always
+                    // went to Any — class-instance dunder dispatch, int/float
+                    // mixing, true division) makes ast_to_hir take its
+                    // existing fast native-BinOp path, which never touches
+                    // the boxed/unboxed mismatch.
+                    //
+                    // check_binop can register a compile error for a
+                    // genuinely mismatched pair (e.g. `x: int; x += "s"`);
+                    // AugAssign targets were never wall-checked before, so
+                    // any such diagnostic is discarded here and we fall back
+                    // to `Any` — the same permissive, runtime-deferred
+                    // behavior this statement always had for that case.
+                    let bin_op = match *op {
+                        AugOp::Add => BinOp::Add,
+                        AugOp::Sub => BinOp::Sub,
+                        AugOp::Mul => BinOp::Mul,
+                        AugOp::Div => BinOp::Div,
+                        AugOp::FloorDiv => BinOp::FloorDiv,
+                        AugOp::Mod => BinOp::Mod,
+                        AugOp::Pow => BinOp::Pow,
+                        AugOp::BitAnd => BinOp::BitAnd,
+                        AugOp::BitOr => BinOp::BitOr,
+                        AugOp::BitXor => BinOp::BitXor,
+                        AugOp::LShift => BinOp::LShift,
+                        AugOp::RShift => BinOp::RShift,
+                        AugOp::MatMul => BinOp::MatMul,
+                    };
+                    let error_mark = self.errors_mark();
+                    let computed_ty = self.check_binop(bin_op, lt, rt, target.span);
+                    self.truncate_errors(error_mark);
+                    let result_ty = if self.tcx.get(computed_ty).is_error() {
+                        any_ty
+                    } else {
+                        computed_ty
+                    };
                     let symbol = if self.is_unshadowed_builtin(name) {
                         let symbol = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.set_sym_type(symbol.0, any_ty);
+                        self.set_sym_type(symbol.0, result_ty);
                         Some(symbol)
                     } else {
                         self.symbols.lookup(name)
                     };
                     if let Some(symbol) = symbol {
-                        self.set_sym_type(symbol.0, any_ty);
+                        self.set_sym_type(symbol.0, result_ty);
                         self.set_builtin_class_alias(symbol, None);
                         self.inferred_local_placeholders.remove(&symbol);
                         self.set_binding_origins(symbol, None, None, None);
