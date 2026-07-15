@@ -443,6 +443,7 @@ pub struct ServingBackupSpec {
     pub admin_token_secret: Option<String>,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl std::ops::Deref for ServingBackupSpec {
     type Target = service_backup::ScheduledBackupPolicy;
 

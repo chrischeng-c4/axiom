@@ -662,6 +662,7 @@ pub fn router(state: AppState) -> Router {
 /// the route-class mapping and policy values; `service-http` owns enforcement.
 /// The established [`router`] entry point passes `None`, so admission remains
 /// disabled unless a serving adapter explicitly supplies policies.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md#source
 pub fn router_with_admission(
     state: AppState,
     admission: Option<service_http::AdmissionController>,

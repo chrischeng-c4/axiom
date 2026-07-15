@@ -50,7 +50,7 @@ Public API manifest for `apps/lumen/src/lib.rs` generated from AST during Score 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen — standalone search and duplicate-detection index.
@@ -88,6 +88,7 @@ pub mod backup_sink;
 pub mod config;
 pub mod consumer;
 pub mod coordinator;
+pub mod dx;
 /// Write-log entry vocabulary (always compiled; the active write path uses it).
 pub mod log_entry;
 pub mod metrics;
@@ -142,7 +143,7 @@ pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

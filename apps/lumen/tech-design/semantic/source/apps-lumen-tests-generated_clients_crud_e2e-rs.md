@@ -22,7 +22,7 @@ No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-tests-generated_clients_crud_e2e-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // @contract spec-gen-generated-clients-public-api-journey
@@ -443,6 +443,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         "users".to_string(),
         models::SearchRequest {{
             collapse: None,
+            offset: Some(0),
             cursor: None,
             limit: Some(10),
             query: query.clone(),
@@ -465,6 +466,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         "users".to_string(),
         models::SearchRequest {{
             collapse: None,
+            offset: Some(0),
             cursor: None,
             limit: Some(10),
             query,
@@ -503,7 +505,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let _ = fs::remove_dir_all(&dir);
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

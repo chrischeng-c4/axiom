@@ -656,6 +656,7 @@ enum LlmTopic {
     Diagnose,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#source
 impl LlmTopic {
     const fn id(self) -> &'static str {
         match self {

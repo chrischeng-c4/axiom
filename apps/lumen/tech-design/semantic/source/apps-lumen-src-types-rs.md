@@ -163,6 +163,99 @@ pub enum FieldType {
     Hash,
 }
 
+/// Operations a field type can truthfully expose to clients. This is shared by
+/// runtime validation and `lumen spec --fields`, so a documentation update
+/// cannot quietly advertise a query or sort the engine rejects.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldCapabilities {
+    pub bm25: bool,
+    pub exact: bool,
+    pub prefix: bool,
+    pub range: bool,
+    pub sort: bool,
+    pub set_membership: bool,
+    pub vector_search: bool,
+    pub hamming: bool,
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
+impl FieldType {
+    pub const ALL: [Self; 6] = [
+        Self::Text,
+        Self::Keyword,
+        Self::Number,
+        Self::Set,
+        Self::Vector,
+        Self::Hash,
+    ];
+
+    pub const fn capabilities(self) -> FieldCapabilities {
+        match self {
+            Self::Text => FieldCapabilities {
+                bm25: true,
+                exact: false,
+                prefix: false,
+                range: false,
+                sort: false,
+                set_membership: false,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Keyword => FieldCapabilities {
+                bm25: false,
+                exact: true,
+                prefix: true,
+                range: true,
+                sort: true,
+                set_membership: false,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Number => FieldCapabilities {
+                bm25: false,
+                exact: true,
+                prefix: false,
+                range: true,
+                sort: true,
+                set_membership: false,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Set => FieldCapabilities {
+                bm25: false,
+                exact: true,
+                prefix: false,
+                range: false,
+                sort: false,
+                set_membership: true,
+                vector_search: false,
+                hamming: false,
+            },
+            Self::Vector => FieldCapabilities {
+                bm25: false,
+                exact: false,
+                prefix: false,
+                range: false,
+                sort: false,
+                set_membership: false,
+                vector_search: true,
+                hamming: false,
+            },
+            Self::Hash => FieldCapabilities {
+                bm25: false,
+                exact: false,
+                prefix: false,
+                range: false,
+                sort: false,
+                set_membership: false,
+                vector_search: false,
+                hamming: true,
+            },
+        }
+    }
+}
+
 /// Distance metric for `FieldType::Vector`. Wire form is snake_case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -296,6 +389,13 @@ pub struct SearchRequest {
     pub query: QueryNode,
     #[serde(default = "default_limit")]
     pub limit: u32,
+    /// Zero-based deep-page jump applied after filtering and global
+    /// score/field ordering. Defaults to zero. `offset` and `cursor` are
+    /// mutually exclusive; use an offset for a direct jump, then issue another
+    /// offset request or restart cursor pagination from the first page.
+    #[serde(default)]
+    #[schema(default = 0)]
+    pub offset: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Optional caller-owned routing key for sharded deployments. When present,
@@ -316,9 +416,11 @@ pub struct SearchRequest {
     /// `NULLS FIRST`/`NULLS LAST`. A query containing `has_child` can be
     /// sorted by parent fields; it routes through the materialized sort path
     /// with exact `total`. `sort` remains incompatible with `knn`, `rrf`, and
-    /// `hamming`, and cannot be combined with an offset cursor — those return
-    /// 400. Page a sorted result with the keyset cursor returned in the
-    /// response, or over-fetch and slice.
+    /// `hamming`. Legacy offset cursors remain incompatible with the normal
+    /// keyset sort path; the native `offset` field deliberately selects the
+    /// exact materialized deep-page path instead. Page sequentially with the
+    /// keyset cursor returned by a first-page request, or jump directly with
+    /// `offset`.
     /// @spec apps/lumen/tech-design/logic/0-4-4-docs-stale-sort-missing-last-and-has-child-sort-both-work.md
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<Vec<SortSpec>>,
@@ -398,6 +500,9 @@ pub enum QueryNode {
     Match(MatchQuery),
     Term(TermQuery),
     Terms(TermsQuery),
+    /// Case-sensitive UTF-8 starts-with match on a `keyword` field. Wire:
+    /// `{"prefix":{"field":"path","value":"台北市/"}}`.
+    Prefix(PrefixQuery),
     /// Filter to a set of external_ids (#182). Wire: `{"ids": {"values":[...]}}`.
     Ids(IdsQuery),
     Range(RangeQuery),
@@ -531,6 +636,14 @@ pub struct TermsQuery {
     pub values: Vec<FieldValue>,
 }
 
+/// Case-sensitive UTF-8 starts-with query for `keyword` fields.
+/// @spec apps/lumen/tech-design/logic/native-prefix-wildcard-query-for-keyword-fields.md#logic
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PrefixQuery {
+    pub field: String,
+    pub value: String,
+}
+
 /// `ids` query node (#182): filter to a set of external_ids. Each id is resolved
 /// through the collection interner to a docid (unknown ids are skipped). It is
 /// constant-scored and composes under and/or/not like term/terms. Removes the
@@ -605,6 +718,31 @@ pub struct SearchResponse {
     /// `took_ms` at sub-millisecond resolution, so callers can see how fast the
     /// engine answered when `took_ms` rounds to 0.
     #[serde(default)]
+    pub took_us: u64,
+}
+
+/// `POST /collections/{id}/search:all` body. This is an explicitly expensive
+/// full-materialization operation for export/maintenance workflows; ordinary
+/// interactive queries should use [`SearchRequest`] pagination.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SearchAllRequest {
+    pub query: QueryNode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<Vec<SortSpec>>,
+}
+
+/// Complete matching id set returned by `search:all` from one local read-lock
+/// snapshot, or from one snapshot per routed shard (there is intentionally no
+/// cross-shard transaction).
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SearchAllResponse {
+    pub external_ids: Vec<String>,
+    pub total: u64,
+    pub took_ms: u64,
     pub took_us: u64,
 }
 
@@ -1069,6 +1207,7 @@ mod tests {
 }
 // CODEGEN-END
 ````
+
 ## Changes
 <!-- type: changes lang: yaml -->
 

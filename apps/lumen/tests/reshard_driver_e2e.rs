@@ -95,6 +95,7 @@ struct ControllableCheckpoint {
     delay: Duration,
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl ControllableCheckpoint {
     fn instant(fail: Arc<AtomicBool>, calls: Arc<AtomicI64>) -> Self {
         Self {
@@ -105,6 +106,7 @@ impl ControllableCheckpoint {
     }
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 #[async_trait]
 impl CheckpointSink for ControllableCheckpoint {
     async fn checkpoint_now(&self) -> anyhow::Result<bool> {
@@ -335,6 +337,7 @@ struct FakeControl {
     fail_next_spec_patch: AtomicBool,
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl FakeControl {
     fn new(cluster: Arc<Mutex<Lumen>>, shard_urls: Vec<String>) -> Self {
         Self {
@@ -386,6 +389,7 @@ impl FakeControl {
     }
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 #[async_trait]
 impl ClusterControl for FakeControl {
     async fn patch_spec(

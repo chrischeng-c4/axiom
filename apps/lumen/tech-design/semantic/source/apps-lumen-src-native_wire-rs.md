@@ -32,7 +32,7 @@ Public API manifest for `apps/lumen/src/native_wire.rs` generated from AST durin
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-native_wire-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Native binary search wire.
@@ -328,6 +328,7 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
                         lte: None,
                     }),
                     limit,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -361,6 +362,7 @@ fn handle_fast_frame(engine: &Engine, frame: &[u8]) -> Result<Vec<u8>> {
                         }),
                     ]),
                     limit,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -566,6 +568,7 @@ mod tests {
                     value: crate::types::FieldValue::String("taipei".to_string()),
                 }),
                 limit: 10,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort: None,
@@ -589,7 +592,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

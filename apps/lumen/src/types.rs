@@ -86,6 +86,7 @@ pub enum FieldType {
 /// Operations a field type can truthfully expose to clients. This is shared by
 /// runtime validation and `lumen spec --fields`, so a documentation update
 /// cannot quietly advertise a query or sort the engine rejects.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldCapabilities {
     pub bm25: bool,
@@ -98,6 +99,7 @@ pub struct FieldCapabilities {
     pub hamming: bool,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 impl FieldType {
     pub const ALL: [Self; 6] = [
         Self::Text,
@@ -555,6 +557,7 @@ pub struct TermsQuery {
 }
 
 /// Case-sensitive UTF-8 starts-with query for `keyword` fields.
+/// @spec apps/lumen/tech-design/logic/native-prefix-wildcard-query-for-keyword-fields.md#logic
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrefixQuery {
     pub field: String,
@@ -641,6 +644,7 @@ pub struct SearchResponse {
 /// `POST /collections/{id}/search:all` body. This is an explicitly expensive
 /// full-materialization operation for export/maintenance workflows; ordinary
 /// interactive queries should use [`SearchRequest`] pagination.
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchAllRequest {
     pub query: QueryNode,
@@ -653,6 +657,7 @@ pub struct SearchAllRequest {
 /// Complete matching id set returned by `search:all` from one local read-lock
 /// snapshot, or from one snapshot per routed shard (there is intentionally no
 /// cross-shard transaction).
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchAllResponse {
     pub external_ids: Vec<String>,

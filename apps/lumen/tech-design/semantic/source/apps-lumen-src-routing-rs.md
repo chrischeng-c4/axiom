@@ -61,7 +61,7 @@ Public API manifest for `apps/lumen/src/routing.rs` generated from AST during Sc
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Shard routing.
@@ -86,7 +86,7 @@ use rayon::prelude::*;
 use crate::api::{SearchBackend, WriteBackend};
 use crate::coordinator::WriteCoordinator;
 use crate::log_entry::RaftLogEntry;
-use crate::storage::{ApplyOutcome, DropOutcome, Engine};
+use crate::storage::{ApplyOutcome, DropOutcome, Engine, StorageError};
 use crate::types::{
     CreateCollectionRequest, CreateCollectionResponse, IndexRequest, IndexResponse, ReplaceDocItem,
     ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit, SearchRequest,
@@ -659,9 +659,10 @@ where
     K: Fn(&SearchHit, &str) -> Option<f64> + Sync,
 {
     let start = Instant::now();
-    let offset = req.cursor.as_deref().and_then(parse_cursor).unwrap_or(0) as usize;
+    let offset = search_request_offset(&req)?;
     let limit = req.limit as usize;
     let mut shard_req = req.clone();
+    shard_req.offset = 0;
     shard_req.cursor = None;
     shard_req.limit = offset.saturating_add(limit).min(u32::MAX as usize) as u32;
 
@@ -693,7 +694,12 @@ pub fn merge_shard_search_responses<K>(
 where
     K: Fn(&SearchHit, &str) -> Option<f64>,
 {
-    let offset = req.cursor.as_deref().and_then(parse_cursor).unwrap_or(0) as usize;
+    let offset = req
+        .cursor
+        .as_deref()
+        .and_then(parse_cursor)
+        .map(|offset| offset as usize)
+        .unwrap_or_else(|| usize::try_from(req.offset).unwrap_or(usize::MAX));
     let limit = req.limit as usize;
     let mut hits = Vec::new();
     let mut total = 0u64;
@@ -755,6 +761,25 @@ fn parse_cursor(s: &str) -> Option<u64> {
     let raw = STANDARD_NO_PAD.decode(s).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
     v.get("offset")?.as_u64()
+}
+
+pub(crate) fn search_request_offset(req: &SearchRequest) -> Result<usize> {
+    if req.offset != 0 && req.cursor.is_some() {
+        return Err(StorageError::InvalidPagination(
+            "offset and cursor cannot be combined".into(),
+        )
+        .into());
+    }
+    match req.cursor.as_deref().and_then(parse_cursor) {
+        Some(offset) => usize::try_from(offset).map_err(|_| {
+            StorageError::InvalidPagination("cursor offset does not fit this server platform".into())
+                .into()
+        }),
+        None => usize::try_from(req.offset).map_err(|_| {
+            StorageError::InvalidPagination("offset does not fit this server platform".into())
+                .into()
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -942,6 +967,53 @@ mod tests {
     }
 
     #[test]
+    fn merge_shard_search_responses_applies_native_offset_after_global_rank() {
+        let mut req = search_req(None);
+        req.offset = 2;
+        req.limit = 2;
+        let resp = merge_shard_search_responses(
+            &req,
+            [
+                search_resp([hit("a", 4.0), hit("d", 1.0)], 2),
+                search_resp([hit("b", 3.0), hit("c", 2.0)], 2),
+            ],
+            1000,
+            |_, _| None,
+        );
+
+        let ids: Vec<_> = resp.hits.iter().map(|hit| hit.external_id.as_str()).collect();
+        assert_eq!(ids, ["c", "d"]);
+        assert_eq!(resp.total, 4);
+    }
+
+    #[test]
+    fn merge_shard_search_responses_applies_native_offset_after_global_sort() {
+        let mut req = search_req(Some(vec![SortSpec {
+            field: "age".into(),
+            order: SortOrder::Asc,
+            missing: SortMissing::Exclude,
+        }]));
+        req.offset = 1;
+        req.limit = 2;
+        let resp = merge_shard_search_responses(
+            &req,
+            [
+                search_resp([hit("older", 1.0), hit("middle", 1.0)], 2),
+                search_resp([hit("young", 1.0)], 1),
+            ],
+            0,
+            |hit, field| match (hit.external_id.as_str(), field) {
+                ("young", "age") => Some(20.0),
+                ("middle", "age") => Some(35.0),
+                ("older", "age") => Some(70.0),
+                _ => None,
+            },
+        );
+        let ids: Vec<_> = resp.hits.iter().map(|hit| hit.external_id.as_str()).collect();
+        assert_eq!(ids, ["middle", "older"]);
+    }
+
+    #[test]
     fn merge_shard_search_responses_sorts_by_resolved_number_key() {
         let mut req = search_req(None);
         req.sort = Some(vec![SortSpec {
@@ -975,6 +1047,7 @@ mod tests {
                 value: FieldValue::String("taipei".into()),
             }),
             limit: 3,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort,
@@ -1011,7 +1084,7 @@ mod tests {
     }
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

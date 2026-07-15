@@ -43,7 +43,7 @@ Public API manifest for `apps/lumen/src/operator/crd.rs` generated from AST duri
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
+```rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
@@ -489,6 +489,7 @@ pub struct ServingBackupSpec {
     pub admin_token_secret: Option<String>,
 }
 
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-crd-rs.md#source
 impl std::ops::Deref for ServingBackupSpec {
     type Target = service_backup::ScheduledBackupPolicy;
 
@@ -822,7 +823,7 @@ fn default_raft_storage() -> String {
     "20Gi".into()
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->
