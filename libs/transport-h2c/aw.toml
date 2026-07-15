@@ -1,10 +1,10 @@
 [project]
-name = "h2c"
+name = "transport-h2c"
 cap_path = "README.md"
-label = "lib:h2c"
+label = "lib:transport-h2c"
 
 [[workspaces]]
-name = "h2c"
+name = "transport-h2c"
 paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p transport-h2c"

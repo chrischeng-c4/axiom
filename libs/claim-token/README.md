@@ -1,8 +1,8 @@
-# claimtoken
+# claim-token
 
 ## Brief
 
-`claimtoken` provides scoped claim-check access tokens using HMAC-SHA256. Schema
+`claim-token` provides scoped claim-check access tokens using HMAC-SHA256. Schema
 layers sign tokens and resource services verify them so workers can access only
 the key scope encoded in the token.
 
@@ -20,7 +20,7 @@ ID: scoped-claim-tokens
 Type: DeveloperTool
 Root WI: -
 Status: verified
-Surfaces: Rust API: `claimtoken` signing and verification primitives.
+Surfaces: Rust API: `claim_token` signing and verification primitives.
 EC Dimensions: behavior: `cargo test -p claim-token` - token signing, verification, and scope rejection coverage
 Required Verification: smoke
 Promise:

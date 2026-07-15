@@ -1,10 +1,10 @@
 [project]
-name = "claimtoken"
+name = "claim-token"
 cap_path = "README.md"
-label = "lib:claimtoken"
+label = "lib:claim-token"
 
 [[workspaces]]
-name = "claimtoken"
+name = "claim-token"
 paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p claim-token"

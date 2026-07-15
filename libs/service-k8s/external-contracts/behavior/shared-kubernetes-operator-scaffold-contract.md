@@ -16,7 +16,7 @@ e2e_tests:
     claim_id: shared-kubernetes-operator-scaffold-contract
     contract_id: shared-kubernetes-operator-scaffold-contract
     category: behavior
-    command: "cargo test -p operator"
+    command: "cargo test -p service-k8s"
     assertions:
       - "Shared Kubernetes Operator Scaffold public Rust API behavior remains covered by the configured library test suite."
       - "The library contract stays usable through its documented README capability surface."
