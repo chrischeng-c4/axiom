@@ -2,27 +2,27 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "apps/relay/tech-design"
-generated_at = "2026-07-08T05:43:46.735230+00:00"
-digest = "sha256:a7d1e36d2182cb92eab3ff10dfbdac057051326a6e9d6f96e045e88d1a88ebd7"
-source_digest = "sha256:a7d1e36d2182cb92eab3ff10dfbdac057051326a6e9d6f96e045e88d1a88ebd7"
-ir_digest = "sha256:4b8058109e8356b6c5cf1f106433894a37205c2c2aa6b1f2858782ba3b093a9e"
+generated_at = "2026-07-15T07:37:30.566409+00:00"
+digest = "sha256:852377a6c23d2670716e55d9ecfedc5a4bd942a841ea5fc337a6b6cc6db985f4"
+source_digest = "sha256:852377a6c23d2670716e55d9ecfedc5a4bd942a841ea5fc337a6b6cc6db985f4"
+ir_digest = "sha256:aba635cc2feac2404918a6a147f09663cca621d131777eeab8fea6ab7b62b821"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
-digest = "sha256:c06b6e3686acfa486c5f84c0fb93182fd2430ca5c740cfbb29542d1464815a77"
-ir_digest = "sha256:04969014b0a94ac2a15efecf6575a55726d4f1739af0edc7b4585204c6fe5e0e"
+digest = "sha256:01fb461f7218c46d3f5f0c2391fb683d054fcbe9f966b1e47fc015e18f1d06ee"
+ir_digest = "sha256:cc809eb2a31f8932d91985fa219b1f0b45250086224cc3d190d583e76856b621"
 section_count = 3
 
 [[files]]
 path = "interfaces/cli/adopt-service-backup-service-tls-peer-mtls-relay-spec-spec-gen.md"
-digest = "sha256:68722a7ff783926685f69e445b7043f21925435fa93b264c3b95bd4e2427ffa3"
-ir_digest = "sha256:12aceec95d5707e9e13754c3805e75a94959d2113fb4d658d3b61c75b9fe2012"
+digest = "sha256:39ec62da44fe36841cfe07359b87ee1ebf44d00f499ff5a8a41afe13360d0970"
+ir_digest = "sha256:d3e26eae49c0c6b3c65d2c7901ce3c1bb5b9187d8594b528a9dc7819b87644de"
 section_count = 3
 
 [[files]]
 path = "interfaces/cli/unify-relay-cli-single-relay-bin-with-cli-std-llm-upgrade-issue.md"
-digest = "sha256:9b85520aae2d7ebc390ed08c72aa6c38283349f33850e68da2ef447ace669ae9"
-ir_digest = "sha256:f5fdbe34a2c76b7a3067f1aa7a641b279b0b0dcddbde60022032f8c50b04d4c1"
+digest = "sha256:b8cba9bf14c0366f07f2c1373d8a71219cea29a94c256e72074f74f35accb84e"
+ir_digest = "sha256:9daccb313c9526503bdc2ebe4a0baf104d9a16137f1d8380ea76f507cb005493"
 section_count = 3
 
 [[files]]
@@ -33,8 +33,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/rest/adopt-service-http-shell-h2c-serve-service-metrics-standard-endp.md"
-digest = "sha256:55f88267b8d1926f5d34a415fff35cf939e3f3d12ab7c92fb57b2bb16899ddff"
-ir_digest = "sha256:5a58a575977b8e748572d91261d38fc2acdf3bb8d976769295d9e62a6e900aa2"
+digest = "sha256:b37338bd114c5ae04f12ec55b6b13dcba085481d68fa365c7d43dae56b56b73f"
+ir_digest = "sha256:671e911771e3029b67ddd5632901cfcd55d75e7ee57d5faf43d31f5c7dff2c97"
 section_count = 3
 
 [[files]]
@@ -57,8 +57,8 @@ section_count = 5
 
 [[files]]
 path = "logic/adopt-raft-host-relaystatemachine-auto-mode-ha-drop-hand-rolled.md"
-digest = "sha256:9509648a3e047918ea1ad1c2c2daa20f4a1f9f71b78abac9b5c1b9d0f9c35e71"
-ir_digest = "sha256:05ff80a4463853302f47fbc70590b3ee39cb2e1b987b4e2c16909139f2b975a3"
+digest = "sha256:117df3614f431a82fdb395c9482acb42ec142482575c20f78347c7d3f1055d8a"
+ir_digest = "sha256:a9ff675da1cfb2bfbf7e603f78c734cd0815278bda0364a53d1d97addb552878"
 section_count = 3
 
 [[files]]
@@ -81,8 +81,8 @@ section_count = 5
 
 [[files]]
 path = "logic/declare-service-umbrella-traits-sync-readme-ha-docs-to-the-conve.md"
-digest = "sha256:9c303d9c5a376f92a70adb6e55152148dc9e06385ebcb8a980c20cc18a6fdf25"
-ir_digest = "sha256:5308a3ab432e09d0f7cd60ba529287fa6dbdc863dc82fec24b9ee03ba84350ad"
+digest = "sha256:df4aead621b68f3cb3557322e3406ec5544f9b44d716b1bec6f882eb004198cc"
+ir_digest = "sha256:7c48317fa53a4ed6d4f231768b5fdb9ad15bc801e935d2b4ecdddb8549412296"
 section_count = 3
 
 [[files]]
