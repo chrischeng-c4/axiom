@@ -1,3 +1,16 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:0d5f04cf" tracker="pending-tracker" reason="scaffold for libs/server-lifecycle/Cargo.toml — fill in by hand and update tracker when codegen is ready"
-// TODO: hand-write content for `libs/server-lifecycle/Cargo.toml`.
-// HANDWRITE-END
+[package]
+name = "server-lifecycle"
+version = "0.1.0"
+edition = "2021"
+description = "Shared protocol-neutral server lifecycle primitives: bind configuration, drain and readiness signals, connection budgets, shutdown hooks, and metrics hooks."
+
+[lib]
+name = "server_lifecycle"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+<!-- marker: missing-generator:logic:0d5f04cf path: libs/server-lifecycle/Cargo.toml reason: scaffold for libs/server-lifecycle/Cargo.toml — fill in by hand and update tracker when codegen is ready -->
