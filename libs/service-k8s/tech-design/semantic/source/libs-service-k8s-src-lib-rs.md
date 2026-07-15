@@ -41,7 +41,7 @@ Public API manifest for `libs/service-k8s/src/lib.rs` captured during libs codeg
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-//! `operator` — the ecosystem's shared k8s operator scaffold.
+//! `service-k8s` — the ecosystem's shared k8s operator scaffold.
 //!
 //! Every axiom service that ships a CRD reconciles the same way: a controller
 //! that watches the CR cluster-wide, server-side-applies the rendered child
@@ -52,7 +52,7 @@ Public API manifest for `libs/service-k8s/src/lib.rs` captured during libs codeg
 //! `render`/`status_patch`/readiness) and its service-specific rendering.
 //!
 //! See `CONTRIBUTING.md` "Service archetype" — this is the deploy-layer member of
-//! the shared service kit (`raft-core` + `raft-runtime` + `h2c` + `service-http` +
+//! the shared service kit (`raft-core` + `raft-runtime` + `transport-h2c` + `service-http` +
 //! `service-backup` + `cli-std` + this).
 
 pub mod controller;

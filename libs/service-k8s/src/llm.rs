@@ -7,10 +7,10 @@ pub const TOPIC: cli_std::llm::Topic = cli_std::llm::Topic {
     id: "operator",
     summary:
         "Shared Kubernetes controller, lease, render, and maintenance toolkit for service CRDs.",
-    body: r#"# operator shared topic
+    body: r#"# Kubernetes operator shared topic
 
 ## Ownership boundary
-The `operator` crate owns the reusable Kubernetes controller scaffold:
+The `service-k8s` crate owns the reusable Kubernetes controller scaffold:
 cluster-wide watch, leader-election `Lease`, server-side apply, status patching,
 and render helpers for common service objects. Each service supplies a
 `ManagedService`: its CRD type, service-specific render policy, readiness facts,

@@ -1,10 +1,10 @@
-# operator
+# service-k8s
 
 ## Brief
 
-`operator` is the shared Kubernetes operator scaffold for axiom services: a
-generic reconcile controller, leader-election lease, and sharded HA render
-toolkit.
+`service-k8s` is the shared Kubernetes integration for axiom services: managed
+reconciliation, leader election, workload rendering, stateful capacity
+planning, and resize primitives.
 
 ## Capabilities
 
@@ -20,14 +20,14 @@ ID: shared-kubernetes-operator-scaffold
 Type: DeveloperTool
 Root WI: -
 Status: verified
-Surfaces: Rust API: `operator` controller, lease, render, resize, and service modules.
-EC Dimensions: behavior: `cargo test -p operator` - operator scaffold contract coverage
+Surfaces: Rust API: `service_k8s` controller, lease, render, resize, and service modules.
+EC Dimensions: behavior: `cargo test -p service-k8s` - operator scaffold contract coverage
 Required Verification: smoke
 Promise:
 Kubernetes-native services can supply their CRD and render model and reuse the
 same controller and HA scaffolding.
-Gate Inventory: `cargo test -p operator`; libs/service-k8s/src/lib.rs
+Gate Inventory: `cargo test -p service-k8s`; libs/service-k8s/src/lib.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| shared-kubernetes-operator-scaffold-contract | epic | - | implemented | verified | smoke | `cargo test -p operator`; libs/service-k8s/src/lib.rs |
+| shared-kubernetes-operator-scaffold-contract | epic | - | implemented | verified | smoke | `cargo test -p service-k8s`; libs/service-k8s/src/lib.rs |

@@ -21,7 +21,7 @@
 
 ## Commands
 
-- Test: `cargo test -p operator`.
+- Test: `cargo test -p service-k8s`.
 
 ## Root Artifacts
 

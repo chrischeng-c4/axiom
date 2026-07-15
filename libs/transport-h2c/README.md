@@ -1,10 +1,10 @@
-# h2c
+# transport-h2c
 
 ## Brief
 
-`h2c` provides shared HTTP/2 cleartext client helpers: a single-connection
-client, a round-robin connection pool, and the logarithmic concurrency heuristic
-used by service clients.
+`transport-h2c` provides shared HTTP/2 cleartext transport: client and pool
+helpers, frame-level connection management, logarithmic connection sizing, and
+optional HTTP/1.1 plus h2c server support.
 
 ## Capabilities
 
@@ -20,7 +20,7 @@ ID: http2-cleartext-client-helpers
 Type: DeveloperTool
 Root WI: -
 Status: verified
-Surfaces: Rust API: `h2c` connection, manager, and server helpers.
+Surfaces: Rust API: `transport_h2c` connection, manager, and server helpers.
 EC Dimensions: behavior: `cargo test -p transport-h2c` - h2c client and pool behavior coverage
 Required Verification: smoke
 Promise:
