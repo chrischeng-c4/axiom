@@ -51,3 +51,50 @@ flowchart TD
     app --> workload[Operator projects public and raft ports through shared StatefulSet primitives]
     workload --> verify([Run app adoption gates for auth admission TLS workload Rig and OTLP ownership])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/lumen/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Delegate OTLP trace ownership to service-http while retaining Lumen's domain metrics exporter. generator gap: missing-generator:lumen-manifest-feature-adoption (#1646)."
+  - path: apps/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Use shared observability initialization and wire configured peer mTLS into RaftHost plus a dedicated authenticated listener. generator gap: missing-generator:lumen-serve-foundation-adoption (#1646)."
+  - path: apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Keep the canonical Lumen binary source unit aligned with shared observability and peer transport adoption. generator gap: missing-generator:semantic-source-sync (#1646)."
+  - path: apps/lumen/src/operator/render.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Project the dedicated Raft port in the Lumen StatefulSet and headless Service while preserving the public client port. generator gap: missing-generator:lumen-peer-port-projection (#1646)."
+  - path: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Keep the operator render source unit aligned with peer-port projection. generator gap: missing-generator:semantic-source-sync (#1646)."
+  - path: apps/lumen/tests/operator_render.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Assert the public and Raft ports are projected without changing resource, topology, or domain policy. generator gap: missing-generator:lumen-operator-adoption-test (#1646)."
+  - path: apps/lumen/tests/shared_stateful_foundations.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: "Lock Lumen's ownership boundary: shared OTLP tracing and shared reloadable peer transport, with no local duplicate tracer. generator gap: missing-generator:lumen-foundation-ownership-test (#1646)."
+  - path: apps/lumen/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Publish the dependency-ordered #1640-#1645 adoption evidence and clarify the credential reload boundary. generator gap: missing-generator:lumen-capability-adoption-doc (#1646)."
+```
