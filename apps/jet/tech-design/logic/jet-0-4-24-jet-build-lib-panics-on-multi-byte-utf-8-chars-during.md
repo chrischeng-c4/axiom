@@ -36,3 +36,15 @@ edges:
 flowchart TD
   scan_source --> tokenize_utf8 --> select_renames --> apply_byte_ranges --> emit_valid_output
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: "apps/jet/src/bundler/mangle.rs"
+    action: "modify"
+    section: "logic"
+    impl_mode: "hand-written"
+    description: "Keep fallback punctuation tokens on UTF-8 boundaries and cover collision-renaming output with multi-byte text."
+```
