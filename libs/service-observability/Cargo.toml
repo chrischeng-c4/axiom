@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:4290ee80" tracker="pending-tracker" reason="Declare the protocol-neutral observability integration crate and optional OTLP feature."
+// TODO: hand-write content for `libs/service-observability/Cargo.toml`.
+// HANDWRITE-END
