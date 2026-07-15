@@ -3610,11 +3610,7 @@ fn parse_cut_delimiter(value: &str) -> Option<u8> {
 
 fn parse_cut_field(value: &str) -> Option<usize> {
     let field = value.parse().ok()?;
-    if field == 0 {
-        None
-    } else {
-        Some(field)
-    }
+    if field == 0 { None } else { Some(field) }
 }
 
 fn parse_cut_field_range(value: &str) -> Option<(usize, usize)> {
@@ -5140,11 +5136,15 @@ fn plan_head_grep_producer_mode(
         return Some(mode);
     }
     match downstream {
-        [cmd, pattern] if cmd == "grep" && !pattern.is_empty() && is_plain_literal_pattern(pattern) => Some((
-            pattern.clone(),
-            GrepFilePipeMode::Lines,
-            "head output piped to grep can filter emitted lines in-process",
-        )),
+        [cmd, pattern]
+            if cmd == "grep" && !pattern.is_empty() && is_plain_literal_pattern(pattern) =>
+        {
+            Some((
+                pattern.clone(),
+                GrepFilePipeMode::Lines,
+                "head output piped to grep can filter emitted lines in-process",
+            ))
+        }
         [cmd, pattern, pipe_word, count_cmd, flag]
             if cmd == "grep"
                 && !pattern.is_empty()
@@ -5217,16 +5217,25 @@ fn plan_head_grep_producer_mode(
                 "head output piped through grep, sort, and uniq can de-duplicate filtered emitted lines in-process",
             ))
         }
-        [cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, count_cmd, flag]
-            if cmd == "grep"
-                && !pattern.is_empty()
-                && is_plain_literal_pattern(pattern)
-                && pipe_a == "|"
-                && sort_cmd == "sort"
-                && pipe_b == "|"
-                && uniq_cmd == "uniq"
-                && pipe_c == "|"
-                && count_cmd == "wc" =>
+        [
+            cmd,
+            pattern,
+            pipe_a,
+            sort_cmd,
+            pipe_b,
+            uniq_cmd,
+            pipe_c,
+            count_cmd,
+            flag,
+        ] if cmd == "grep"
+            && !pattern.is_empty()
+            && is_plain_literal_pattern(pattern)
+            && pipe_a == "|"
+            && sort_cmd == "sort"
+            && pipe_b == "|"
+            && uniq_cmd == "uniq"
+            && pipe_c == "|"
+            && count_cmd == "wc" =>
         {
             let mode = WcCountMode::from_flag(flag)?;
             Some((
@@ -5251,15 +5260,23 @@ fn plan_head_grep_producer_mode(
                 "head output piped through grep, sort, and wc can count filtered emitted output in-process",
             ))
         }
-        [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-            if cmd == "grep"
-                && !pattern.is_empty()
-                && is_plain_literal_pattern(pattern)
-                && pipe_a == "|"
-                && sort_cmd == "sort"
-                && pipe_b == "|"
-                && limit_cmd == "head"
-                && flag == "-n" =>
+        [
+            cmd,
+            pattern,
+            pipe_a,
+            sort_cmd,
+            pipe_b,
+            limit_cmd,
+            flag,
+            limit,
+        ] if cmd == "grep"
+            && !pattern.is_empty()
+            && is_plain_literal_pattern(pattern)
+            && pipe_a == "|"
+            && sort_cmd == "sort"
+            && pipe_b == "|"
+            && limit_cmd == "head"
+            && flag == "-n" =>
         {
             let limit = limit.parse().ok()?;
             (limit > 0).then_some((
@@ -5268,15 +5285,23 @@ fn plan_head_grep_producer_mode(
                 "head output piped through grep, sort, and head can emit the sorted filtered prefix in-process",
             ))
         }
-        [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-            if cmd == "grep"
-                && !pattern.is_empty()
-                && is_plain_literal_pattern(pattern)
-                && pipe_a == "|"
-                && sort_cmd == "sort"
-                && pipe_b == "|"
-                && limit_cmd == "tail"
-                && flag == "-n" =>
+        [
+            cmd,
+            pattern,
+            pipe_a,
+            sort_cmd,
+            pipe_b,
+            limit_cmd,
+            flag,
+            limit,
+        ] if cmd == "grep"
+            && !pattern.is_empty()
+            && is_plain_literal_pattern(pattern)
+            && pipe_a == "|"
+            && sort_cmd == "sort"
+            && pipe_b == "|"
+            && limit_cmd == "tail"
+            && flag == "-n" =>
         {
             let limit = limit.parse().ok()?;
             Some((
@@ -5503,25 +5528,37 @@ fn grep_file_pipe_mode_reason(file: &str, mode: GrepFilePipeMode) -> String {
             )
         }
         GrepFilePipeMode::SortUniqWcLines | GrepFilePipeMode::SortUniqWc { .. } => {
-            format!("{source} piped through sort and uniq to wc can count unique matching output in-process")
+            format!(
+                "{source} piped through sort and uniq to wc can count unique matching output in-process"
+            )
         }
         GrepFilePipeMode::SortWcLines | GrepFilePipeMode::SortWc { .. } => {
             format!("{source} piped through sort to wc can count sorted matching output in-process")
         }
         GrepFilePipeMode::SortHead { .. } => {
-            format!("{source} piped through sort to head can emit the sorted matching prefix in-process")
+            format!(
+                "{source} piped through sort to head can emit the sorted matching prefix in-process"
+            )
         }
         GrepFilePipeMode::SortTail { .. } => {
-            format!("{source} piped through sort to tail can emit the sorted matching suffix in-process")
+            format!(
+                "{source} piped through sort to tail can emit the sorted matching suffix in-process"
+            )
         }
         GrepFilePipeMode::SortXargsEcho => {
-            format!("{source} piped through sort to xargs echo can batch sorted matching tokens in-process")
+            format!(
+                "{source} piped through sort to xargs echo can batch sorted matching tokens in-process"
+            )
         }
         GrepFilePipeMode::SortXargsEchoBatches { .. } => {
-            format!("{source} piped through sort to xargs -n echo can emit sorted matching token batches in-process")
+            format!(
+                "{source} piped through sort to xargs -n echo can emit sorted matching token batches in-process"
+            )
         }
         GrepFilePipeMode::SortXargsWcLines | GrepFilePipeMode::SortXargsWcOutput { .. } => {
-            format!("{source} piped through sort to xargs wc can line-count sorted matching path tokens in-process")
+            format!(
+                "{source} piped through sort to xargs wc can line-count sorted matching path tokens in-process"
+            )
         }
         GrepFilePipeMode::XargsEcho => {
             format!("{source} piped to xargs echo can batch matching tokens in-process")
@@ -5560,11 +5597,15 @@ fn plan_tail_grep_producer_mode(
         }
     }
     match downstream {
-        [cmd, pattern] if cmd == "grep" && !pattern.is_empty() && is_plain_literal_pattern(pattern) => Some((
-            pattern.clone(),
-            GrepFilePipeMode::Lines,
-            "tail output piped to grep can filter emitted lines in-process",
-        )),
+        [cmd, pattern]
+            if cmd == "grep" && !pattern.is_empty() && is_plain_literal_pattern(pattern) =>
+        {
+            Some((
+                pattern.clone(),
+                GrepFilePipeMode::Lines,
+                "tail output piped to grep can filter emitted lines in-process",
+            ))
+        }
         [cmd, pattern, pipe_word, count_cmd, flag]
             if cmd == "grep"
                 && !pattern.is_empty()
@@ -5637,16 +5678,25 @@ fn plan_tail_grep_producer_mode(
                 "tail output piped through grep, sort, and uniq can de-duplicate filtered emitted lines in-process",
             ))
         }
-        [cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, count_cmd, flag]
-            if cmd == "grep"
-                && !pattern.is_empty()
-                && is_plain_literal_pattern(pattern)
-                && pipe_a == "|"
-                && sort_cmd == "sort"
-                && pipe_b == "|"
-                && uniq_cmd == "uniq"
-                && pipe_c == "|"
-                && count_cmd == "wc" =>
+        [
+            cmd,
+            pattern,
+            pipe_a,
+            sort_cmd,
+            pipe_b,
+            uniq_cmd,
+            pipe_c,
+            count_cmd,
+            flag,
+        ] if cmd == "grep"
+            && !pattern.is_empty()
+            && is_plain_literal_pattern(pattern)
+            && pipe_a == "|"
+            && sort_cmd == "sort"
+            && pipe_b == "|"
+            && uniq_cmd == "uniq"
+            && pipe_c == "|"
+            && count_cmd == "wc" =>
         {
             let mode = WcCountMode::from_flag(flag)?;
             Some((
@@ -5671,15 +5721,23 @@ fn plan_tail_grep_producer_mode(
                 "tail output piped through grep, sort, and wc can count filtered emitted output in-process",
             ))
         }
-        [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-            if cmd == "grep"
-                && !pattern.is_empty()
-                && is_plain_literal_pattern(pattern)
-                && pipe_a == "|"
-                && sort_cmd == "sort"
-                && pipe_b == "|"
-                && limit_cmd == "head"
-                && flag == "-n" =>
+        [
+            cmd,
+            pattern,
+            pipe_a,
+            sort_cmd,
+            pipe_b,
+            limit_cmd,
+            flag,
+            limit,
+        ] if cmd == "grep"
+            && !pattern.is_empty()
+            && is_plain_literal_pattern(pattern)
+            && pipe_a == "|"
+            && sort_cmd == "sort"
+            && pipe_b == "|"
+            && limit_cmd == "head"
+            && flag == "-n" =>
         {
             let limit = limit.parse().ok()?;
             (limit > 0).then_some((
@@ -5688,15 +5746,23 @@ fn plan_tail_grep_producer_mode(
                 "tail output piped through grep, sort, and head can emit the sorted filtered prefix in-process",
             ))
         }
-        [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-            if cmd == "grep"
-                && !pattern.is_empty()
-                && is_plain_literal_pattern(pattern)
-                && pipe_a == "|"
-                && sort_cmd == "sort"
-                && pipe_b == "|"
-                && limit_cmd == "tail"
-                && flag == "-n" =>
+        [
+            cmd,
+            pattern,
+            pipe_a,
+            sort_cmd,
+            pipe_b,
+            limit_cmd,
+            flag,
+            limit,
+        ] if cmd == "grep"
+            && !pattern.is_empty()
+            && is_plain_literal_pattern(pattern)
+            && pipe_a == "|"
+            && sort_cmd == "sort"
+            && pipe_b == "|"
+            && limit_cmd == "tail"
+            && flag == "-n" =>
         {
             let limit = limit.parse().ok()?;
             Some((
@@ -6827,8 +6893,16 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                 let printf = parse_printf_args(&words[1..pipe])?;
                 if printf.format == PrintfFormat::StringNewline {
                     let downstream = &words[pipe + 1..];
-                    if let [grep_cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, rest @ ..] =
-                        downstream
+                    if let [
+                        grep_cmd,
+                        pattern,
+                        pipe_a,
+                        sort_cmd,
+                        pipe_b,
+                        uniq_cmd,
+                        pipe_c,
+                        rest @ ..,
+                    ] = downstream
                     {
                         if grep_cmd == "grep"
                             && !pattern.is_empty()
@@ -6930,17 +7004,26 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                                 "printf %s\\n piped through grep, sort, and uniq can de-duplicate filtered generated lines in-process",
                             ))
                         }
-                        [cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, count_cmd, flag]
-                            if cmd == "grep"
-                                && !pattern.is_empty()
-                                && is_plain_literal_pattern(pattern)
-                                && pipe_a == "|"
-                                && sort_cmd == "sort"
-                                && pipe_b == "|"
-                                && uniq_cmd == "uniq"
-                                && pipe_c == "|"
-                                && count_cmd == "wc"
-                                && flag == "-l" =>
+                        [
+                            cmd,
+                            pattern,
+                            pipe_a,
+                            sort_cmd,
+                            pipe_b,
+                            uniq_cmd,
+                            pipe_c,
+                            count_cmd,
+                            flag,
+                        ] if cmd == "grep"
+                            && !pattern.is_empty()
+                            && is_plain_literal_pattern(pattern)
+                            && pipe_a == "|"
+                            && sort_cmd == "sort"
+                            && pipe_b == "|"
+                            && uniq_cmd == "uniq"
+                            && pipe_c == "|"
+                            && count_cmd == "wc"
+                            && flag == "-l" =>
                         {
                             Some((
                                 pattern.clone(),
@@ -6964,15 +7047,23 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                                 "printf %s\\n piped through grep, sort, and wc -l can count filtered generated lines in-process",
                             ))
                         }
-                        [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-                            if cmd == "grep"
-                                && !pattern.is_empty()
-                                && is_plain_literal_pattern(pattern)
-                                && pipe_a == "|"
-                                && sort_cmd == "sort"
-                                && pipe_b == "|"
-                                && limit_cmd == "head"
-                                && flag == "-n" =>
+                        [
+                            cmd,
+                            pattern,
+                            pipe_a,
+                            sort_cmd,
+                            pipe_b,
+                            limit_cmd,
+                            flag,
+                            limit,
+                        ] if cmd == "grep"
+                            && !pattern.is_empty()
+                            && is_plain_literal_pattern(pattern)
+                            && pipe_a == "|"
+                            && sort_cmd == "sort"
+                            && pipe_b == "|"
+                            && limit_cmd == "head"
+                            && flag == "-n" =>
                         {
                             let limit = limit.parse().ok()?;
                             (limit > 0).then_some((
@@ -6981,15 +7072,23 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                                 "printf %s\\n piped through grep, sort, and head can emit the sorted filtered generated prefix in-process",
                             ))
                         }
-                        [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-                            if cmd == "grep"
-                                && !pattern.is_empty()
-                                && is_plain_literal_pattern(pattern)
-                                && pipe_a == "|"
-                                && sort_cmd == "sort"
-                                && pipe_b == "|"
-                                && limit_cmd == "tail"
-                                && flag == "-n" =>
+                        [
+                            cmd,
+                            pattern,
+                            pipe_a,
+                            sort_cmd,
+                            pipe_b,
+                            limit_cmd,
+                            flag,
+                            limit,
+                        ] if cmd == "grep"
+                            && !pattern.is_empty()
+                            && is_plain_literal_pattern(pattern)
+                            && pipe_a == "|"
+                            && sort_cmd == "sort"
+                            && pipe_b == "|"
+                            && limit_cmd == "tail"
+                            && flag == "-n" =>
                         {
                             let limit = limit.parse().ok()?;
                             Some((
@@ -7176,8 +7275,16 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
             if pipe > 0 && pipe + 1 < words.len() {
                 let seq = parse_seq_args(&words[1..pipe])?;
                 let downstream = &words[pipe + 1..];
-                if let [grep_cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, rest @ ..] =
-                    downstream
+                if let [
+                    grep_cmd,
+                    pattern,
+                    pipe_a,
+                    sort_cmd,
+                    pipe_b,
+                    uniq_cmd,
+                    pipe_c,
+                    rest @ ..,
+                ] = downstream
                 {
                     if grep_cmd == "grep"
                         && !pattern.is_empty()
@@ -7290,17 +7397,26 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                             "integer seq piped through grep, sort, and uniq can de-duplicate filtered lines in-process",
                         ))
                     }
-                    [cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, count_cmd, flag]
-                        if cmd == "grep"
-                            && !pattern.is_empty()
-                            && is_plain_literal_pattern(pattern)
-                            && pipe_a == "|"
-                            && sort_cmd == "sort"
-                            && pipe_b == "|"
-                            && uniq_cmd == "uniq"
-                            && pipe_c == "|"
-                            && count_cmd == "wc"
-                            && flag == "-l" =>
+                    [
+                        cmd,
+                        pattern,
+                        pipe_a,
+                        sort_cmd,
+                        pipe_b,
+                        uniq_cmd,
+                        pipe_c,
+                        count_cmd,
+                        flag,
+                    ] if cmd == "grep"
+                        && !pattern.is_empty()
+                        && is_plain_literal_pattern(pattern)
+                        && pipe_a == "|"
+                        && sort_cmd == "sort"
+                        && pipe_b == "|"
+                        && uniq_cmd == "uniq"
+                        && pipe_c == "|"
+                        && count_cmd == "wc"
+                        && flag == "-l" =>
                     {
                         Some((
                             pattern.clone(),
@@ -7324,15 +7440,23 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                             "integer seq piped through grep, sort, and wc -l can count filtered lines in-process",
                         ))
                     }
-                    [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-                        if cmd == "grep"
-                            && !pattern.is_empty()
-                            && is_plain_literal_pattern(pattern)
-                            && pipe_a == "|"
-                            && sort_cmd == "sort"
-                            && pipe_b == "|"
-                            && limit_cmd == "head"
-                            && flag == "-n" =>
+                    [
+                        cmd,
+                        pattern,
+                        pipe_a,
+                        sort_cmd,
+                        pipe_b,
+                        limit_cmd,
+                        flag,
+                        limit,
+                    ] if cmd == "grep"
+                        && !pattern.is_empty()
+                        && is_plain_literal_pattern(pattern)
+                        && pipe_a == "|"
+                        && sort_cmd == "sort"
+                        && pipe_b == "|"
+                        && limit_cmd == "head"
+                        && flag == "-n" =>
                     {
                         let limit = limit.parse().ok()?;
                         (limit > 0).then_some((
@@ -7341,15 +7465,23 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                             "integer seq piped through grep, sort, and head can emit the sorted filtered prefix in-process",
                         ))
                     }
-                    [cmd, pattern, pipe_a, sort_cmd, pipe_b, limit_cmd, flag, limit]
-                        if cmd == "grep"
-                            && !pattern.is_empty()
-                            && is_plain_literal_pattern(pattern)
-                            && pipe_a == "|"
-                            && sort_cmd == "sort"
-                            && pipe_b == "|"
-                            && limit_cmd == "tail"
-                            && flag == "-n" =>
+                    [
+                        cmd,
+                        pattern,
+                        pipe_a,
+                        sort_cmd,
+                        pipe_b,
+                        limit_cmd,
+                        flag,
+                        limit,
+                    ] if cmd == "grep"
+                        && !pattern.is_empty()
+                        && is_plain_literal_pattern(pattern)
+                        && pipe_a == "|"
+                        && sort_cmd == "sort"
+                        && pipe_b == "|"
+                        && limit_cmd == "tail"
+                        && flag == "-n" =>
                     {
                         let limit = limit.parse().ok()?;
                         Some((
@@ -7479,11 +7611,10 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                             "integer seq piped through sort to tail can emit the sorted suffix in-process",
                         ))
                     }
-                    args
-                        if args.len() >= 3
-                            && args[0] == "sort"
-                            && args[1] == "|"
-                            && parse_xargs_echo_command(&args[2..]).is_some() =>
+                    args if args.len() >= 3
+                        && args[0] == "sort"
+                        && args[1] == "|"
+                        && parse_xargs_echo_command(&args[2..]).is_some() =>
                     {
                         let xargs_mode = parse_xargs_echo_command(&args[2..])?;
                         Some((
@@ -14312,7 +14443,7 @@ fn collect_du_sk_output_lines(plan: &DuSkPlan, stderr: &mut dyn Write) -> Result
     )?;
     if saw_countable {
         Ok(vec![
-            format!("{}\t{}\n", (blocks + 1) / 2, plan.path).into_bytes()
+            format!("{}\t{}\n", (blocks + 1) / 2, plan.path).into_bytes(),
         ])
     } else {
         Ok(Vec::new())
@@ -16015,7 +16146,12 @@ struct LiteralNeedle {
 impl LiteralNeedle {
     fn new(bytes: Vec<u8>) -> Self {
         let mut shift = [bytes.len(); 256];
-        for (idx, byte) in bytes.iter().copied().enumerate().take(bytes.len().saturating_sub(1)) {
+        for (idx, byte) in bytes
+            .iter()
+            .copied()
+            .enumerate()
+            .take(bytes.len().saturating_sub(1))
+        {
             shift[byte as usize] = bytes.len() - idx - 1;
         }
         Self { bytes, shift }
@@ -16029,7 +16165,8 @@ impl LiteralNeedle {
         let mut offset = 0;
         while offset <= haystack.len() - self.bytes.len() {
             let tail = haystack[offset + last];
-            if tail == self.bytes[last] && haystack[offset..offset + self.bytes.len()] == self.bytes {
+            if tail == self.bytes[last] && haystack[offset..offset + self.bytes.len()] == self.bytes
+            {
                 return true;
             }
             offset += self.shift[tail as usize];
@@ -22463,6 +22600,5 @@ mod tests {
             other => panic!("expected PipeGrepFile native plan, got {other:?}"),
         }
     }
-
 }
 // CODEGEN-END

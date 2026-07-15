@@ -38,6 +38,7 @@ pub enum HookAgent {
     Auto,
     Claude,
     Codex,
+    Agy,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +52,24 @@ struct HookInput {
 #[derive(Debug, Deserialize)]
 struct ToolInput {
     command: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgyHookInput {
+    #[serde(rename = "toolCall")]
+    tool_call: Option<AgyToolCall>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgyToolCall {
+    name: Option<String>,
+    args: Option<AgyToolArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgyToolArgs {
+    #[serde(rename = "CommandLine")]
+    command_line: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,6 +100,12 @@ struct ModifiedInput {
     command: String,
 }
 
+#[derive(Debug, Serialize)]
+struct AgyDenyOutput {
+    decision: &'static str,
+    reason: String,
+}
+
 /// Read JSON from stdin, decide, print JSON to stdout. Always
 /// returns Ok — the binary exits 0 even on malformed input.
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
@@ -103,6 +128,15 @@ pub fn run_bash_hook(agent: HookAgent) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let agent = resolve_agent(agent, &input);
+    if let Some(reason) = crate::agent_guard::deny_reason(command) {
+        let out = HookOutput {
+            hook_specific_output: hook_specific_for_denial(reason),
+        };
+        println!("{}", serde_json::to_string(&out)?);
+        return Ok(());
+    }
+
     // Use the absolute path of THIS binary (the hook is `<abs>/cap hook
     // bash`, so `current_exe()` is the installed cap) rather than a bare
     // `cap`. The rewritten command runs in the agent's shell, whose PATH
@@ -121,12 +155,55 @@ pub fn run_bash_hook(agent: HookAgent) -> anyhow::Result<()> {
     };
 
     let rewrite = ModifiedInput { command: rewritten };
-    let agent = resolve_agent(agent, &input);
     let out = HookOutput {
         hook_specific_output: hook_specific_for_rewrite(agent, rewrite),
     };
     println!("{}", serde_json::to_string(&out)?);
     Ok(())
+}
+
+/// Read AGY's nested `run_command` hook payload and deny only commands the
+/// guard identifies as unsafe. AGY's overwrite contract is intentionally not
+/// used here: command rewriting remains limited to the two adapters whose
+/// modified-input behavior is covered by cap's compatibility tests.
+pub fn run_agy_hook() -> anyhow::Result<()> {
+    let mut buf = String::new();
+    std::io::stdin().read_to_string(&mut buf)?;
+    let input: AgyHookInput = match serde_json::from_str(&buf) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let Some(tool_call) = input.tool_call else {
+        return Ok(());
+    };
+    if tool_call.name.as_deref() != Some("run_command") {
+        return Ok(());
+    }
+    let command = tool_call
+        .args
+        .as_ref()
+        .and_then(|args| args.command_line.as_deref())
+        .unwrap_or("");
+    if let Some(reason) = crate::agent_guard::deny_reason(command) {
+        println!(
+            "{}",
+            serde_json::to_string(&AgyDenyOutput {
+                decision: "block",
+                reason,
+            })?
+        );
+    }
+    Ok(())
+}
+
+fn hook_specific_for_denial(reason: String) -> HookSpecific {
+    HookSpecific {
+        hook_event_name: "PreToolUse",
+        permission_decision: "deny",
+        modified_input: None,
+        updated_input: None,
+        permission_decision_reason: Some(reason),
+    }
 }
 
 fn resolve_agent(agent: HookAgent, input: &HookInput) -> HookAgent {
@@ -143,7 +220,9 @@ fn hook_specific_for_rewrite(agent: HookAgent, rewrite: ModifiedInput) -> HookSp
     let (modified_input, updated_input) = match agent {
         HookAgent::Claude => (Some(rewrite), None),
         HookAgent::Codex => (None, Some(rewrite)),
-        HookAgent::Auto => unreachable!("auto hook agent must be resolved before output"),
+        HookAgent::Auto | HookAgent::Agy => {
+            unreachable!("only Claude and Codex use Bash rewrite output")
+        }
     };
 
     HookSpecific {
@@ -364,6 +443,17 @@ mod tests {
         assert!(hook_specific.get("updatedInput").is_none());
     }
 
+    #[test]
+    fn agy_denial_uses_native_block_envelope() {
+        let output = serde_json::to_value(AgyDenyOutput {
+            decision: "block",
+            reason: "unsafe command".to_string(),
+        })
+        .unwrap();
+        assert_eq!(output["decision"], "block");
+        assert_eq!(output["reason"], "unsafe command");
+    }
+
     // Tests pin `cap_bin = "cap"` for stable expectations; production
     // passes the absolute path of the running binary (see
     // `absolute_cap_path_*` below for that path).
@@ -556,6 +646,18 @@ mod tests {
         assert_eq!(shell_single_quote("$HOME"), "'$HOME'");
         assert_eq!(shell_single_quote("a\\b"), "'a\\b'");
         assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn guard_denial_does_not_rewrite_the_agent_command() {
+        let denial = hook_specific_for_denial("outside workspace".into());
+        assert_eq!(denial.permission_decision, "deny");
+        assert!(denial.modified_input.is_none());
+        assert!(denial.updated_input.is_none());
+        assert_eq!(
+            denial.permission_decision_reason.as_deref(),
+            Some("outside workspace")
+        );
     }
 }
 // CODEGEN-END

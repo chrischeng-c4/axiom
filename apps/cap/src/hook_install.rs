@@ -1,13 +1,15 @@
 // SPEC-MANAGED: apps/cap/tech-design/semantic/cap-src.md#schema
 // CODEGEN-BEGIN
-//! Hook registration backend for `cap init` — wires the cap PreToolUse
-//! hook into Claude Code or Codex CLI.
+//! Hook registration backend for `cap on` / `cap off` — wires the cap
+//! PreToolUse hook into Claude Code, Codex CLI, or AGY.
 //!
 //! - Claude Code: merges `hooks.PreToolUse[]` into
-//!   `~/.claude/settings.json` (or `.claude/settings.json` with
-//!   `--project`).
-//! - Codex CLI:   merges `[[hooks.PreToolUse]]` into
-//!   `~/.codex/config.toml` (or `.codex/config.toml` with `--project`).
+//!   `~/.claude/settings.json`.
+//! - Codex CLI:   merges `[[hooks.PreToolUse]]` into `~/.codex/config.toml`.
+//! - AGY: merges a named `PreToolUse` entry into
+//!   `~/.gemini/config/hooks.json` (or the legacy global path when present).
+//!
+//! Hooks are intentionally global: cap protects the machine, not one checkout.
 //!
 //! Idempotent: if a PreToolUse entry already points at our cap
 //! binary it's left in place. Existing unrelated hooks are
@@ -15,32 +17,73 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value as JsonValue};
+use anyhow::{Context, Result, anyhow};
+use serde_json::{Value as JsonValue, json};
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Agent {
     Claude,
     Codex,
+    Agy,
 }
 
-/// @spec apps/cap/tech-design/semantic/cap-src.md#schema
+impl Agent {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Agy => "agy",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
-    User,
-    Project,
+pub enum HookState {
+    Enabled,
+    Disabled,
+}
+
+impl HookState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+        }
+    }
 }
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
-pub fn run(agent: Agent, scope: Scope, print: bool) -> Result<()> {
+pub fn enable(agent: Agent, print: bool) -> Result<()> {
     // Use the absolute path so the hook fires correctly even when
     // the parent process's PATH doesn't include cap's install dir.
     let cap_path = public_cap_exe().context("locating cap binary")?;
 
     match agent {
-        Agent::Claude => install_claude(&cap_path, scope, print),
-        Agent::Codex => install_codex(&cap_path, scope, print),
+        Agent::Claude => install_claude(&cap_path, print),
+        Agent::Codex => install_codex(&cap_path, print),
+        Agent::Agy => install_agy(&cap_path, print),
+    }
+}
+
+/// Backward-compatible Rust API for callers that used the former installer.
+pub fn run(agent: Agent, print: bool) -> Result<()> {
+    enable(agent, print)
+}
+
+pub fn disable(agent: Agent, print: bool) -> Result<()> {
+    match agent {
+        Agent::Claude => disable_claude(print),
+        Agent::Codex => disable_codex(print),
+        Agent::Agy => disable_agy(print),
+    }
+}
+
+pub fn status(agent: Agent) -> Result<HookState> {
+    match agent {
+        Agent::Claude => claude_hook_status(),
+        Agent::Codex => codex_hook_status(),
+        Agent::Agy => agy_hook_status(),
     }
 }
 
@@ -56,7 +99,7 @@ fn public_cap_exe() -> Result<String> {
 
 // ---------------------------------------------------------------- Claude
 
-fn install_claude(cap_path: &str, scope: Scope, print: bool) -> Result<()> {
+fn install_claude(cap_path: &str, print: bool) -> Result<()> {
     let hook_cmd = format!("{cap_path} hook bash --claude-code");
     let snippet = json!({
         "hooks": {
@@ -72,22 +115,73 @@ fn install_claude(cap_path: &str, scope: Scope, print: bool) -> Result<()> {
         return Ok(());
     }
 
-    let path = claude_settings_path(scope)?;
+    let path = claude_settings_path()?;
     let merged_status = merge_claude(&path, &hook_cmd)?;
     println!("{}: {}", merged_status.describe(), path.display());
     Ok(())
 }
 
-fn claude_settings_path(scope: Scope) -> Result<PathBuf> {
-    match scope {
-        Scope::User => {
-            let home = dirs::home_dir().ok_or_else(|| anyhow!("no $HOME"))?;
-            Ok(home.join(".claude").join("settings.json"))
-        }
-        Scope::Project => Ok(std::env::current_dir()?
-            .join(".claude")
-            .join("settings.json")),
+fn claude_settings_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("no $HOME"))?;
+    Ok(home.join(".claude").join("settings.json"))
+}
+
+fn disable_claude(print: bool) -> Result<()> {
+    let path = claude_settings_path()?;
+    if print {
+        println!("would remove cap hook from: {}", path.display());
+        return Ok(());
     }
+    if !path.exists() {
+        println!("cap hook already absent from: {}", path.display());
+        return Ok(());
+    }
+
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let mut root: JsonValue = if text.trim().is_empty() {
+        JsonValue::Object(Default::default())
+    } else {
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+    };
+    let removed = remove_claude_cap_hooks(&mut root)?;
+    if removed {
+        std::fs::write(&path, serde_json::to_string_pretty(&root)? + "\n")
+            .with_context(|| format!("writing {}", path.display()))?;
+        println!("removed cap hook from: {}", path.display());
+    } else {
+        println!("cap hook already absent from: {}", path.display());
+    }
+    Ok(())
+}
+
+fn claude_hook_status() -> Result<HookState> {
+    let path = claude_settings_path()?;
+    claude_hook_status_at(&path)
+}
+
+fn claude_hook_status_at(path: &Path) -> Result<HookState> {
+    if !path.exists() {
+        return Ok(HookState::Disabled);
+    }
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(HookState::Disabled);
+    }
+    let root: JsonValue =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let entries = root
+        .get("hooks")
+        .and_then(|hooks| hooks.get("PreToolUse"))
+        .and_then(JsonValue::as_array);
+    Ok(
+        if entries.is_some_and(|entries| pretool_has_cap_hook(entries)) {
+            HookState::Enabled
+        } else {
+            HookState::Disabled
+        },
+    )
 }
 
 fn merge_claude(path: &Path, hook_cmd: &str) -> Result<MergeStatus> {
@@ -156,8 +250,61 @@ fn pretool_has_cap_hook(entries: &[JsonValue]) -> bool {
     })
 }
 
+fn remove_claude_cap_hooks(root: &mut JsonValue) -> Result<bool> {
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("Claude settings root is not a JSON object"))?;
+    let Some(hooks) = root_obj.get_mut("hooks") else {
+        return Ok(false);
+    };
+    let hooks = hooks
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("Claude settings hooks is not an object"))?;
+    let Some(pretool) = hooks.get_mut("PreToolUse") else {
+        return Ok(false);
+    };
+    let pretool = pretool
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("Claude settings PreToolUse is not an array"))?;
+
+    let mut removed = false;
+    let entries = std::mem::take(pretool);
+    for mut entry in entries {
+        let Some(entry_obj) = entry.as_object_mut() else {
+            pretool.push(entry);
+            continue;
+        };
+        let Some(commands) = entry_obj.get_mut("hooks").and_then(JsonValue::as_array_mut) else {
+            pretool.push(entry);
+            continue;
+        };
+        let before = commands.len();
+        commands.retain(|hook| {
+            !hook
+                .get("command")
+                .and_then(JsonValue::as_str)
+                .is_some_and(is_cap_hook_command)
+        });
+        removed |= commands.len() != before;
+        if !commands.is_empty() {
+            pretool.push(entry);
+        }
+    }
+    if pretool.is_empty() {
+        hooks.remove("PreToolUse");
+    }
+    if hooks.is_empty() {
+        root_obj.remove("hooks");
+    }
+    Ok(removed)
+}
+
 fn is_cap_hook_command(s: &str) -> bool {
-    // Any command line that ends in `hook bash` (with optional flags)
+    is_cap_hook_command_kind(s, "bash")
+}
+
+fn is_cap_hook_command_kind(s: &str, adapter: &str) -> bool {
+    // Any command line that contains `hook <adapter>` (with optional flags)
     // and whose first token's basename is `cap` counts as ours.
     let mut tokens = s.split_whitespace();
     let prog = match tokens.next() {
@@ -169,12 +316,12 @@ fn is_cap_hook_command(s: &str) -> bool {
         return false;
     }
     let rest: Vec<&str> = tokens.collect();
-    rest.windows(2).any(|w| w == ["hook", "bash"])
+    rest.windows(2).any(|w| w[0] == "hook" && w[1] == adapter)
 }
 
 // ---------------------------------------------------------------- Codex
 
-fn install_codex(cap_path: &str, scope: Scope, print: bool) -> Result<()> {
+fn install_codex(cap_path: &str, print: bool) -> Result<()> {
     let hook_cmd = format!("{cap_path} hook bash --codex");
     let snippet = format!(
         "[[hooks.PreToolUse]]\n\
@@ -191,20 +338,75 @@ fn install_codex(cap_path: &str, scope: Scope, print: bool) -> Result<()> {
         return Ok(());
     }
 
-    let path = codex_config_path(scope)?;
+    let path = codex_config_path()?;
     let merged_status = merge_codex(&path, &hook_cmd)?;
     println!("{}: {}", merged_status.describe(), path.display());
     Ok(())
 }
 
-fn codex_config_path(scope: Scope) -> Result<PathBuf> {
-    match scope {
-        Scope::User => {
-            let home = dirs::home_dir().ok_or_else(|| anyhow!("no $HOME"))?;
-            Ok(home.join(".codex").join("config.toml"))
-        }
-        Scope::Project => Ok(std::env::current_dir()?.join(".codex").join("config.toml")),
+fn codex_config_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("no $HOME"))?;
+    Ok(home.join(".codex").join("config.toml"))
+}
+
+fn disable_codex(print: bool) -> Result<()> {
+    let path = codex_config_path()?;
+    if print {
+        println!("would remove cap hook from: {}", path.display());
+        return Ok(());
     }
+    if !path.exists() {
+        println!("cap hook already absent from: {}", path.display());
+        return Ok(());
+    }
+
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let mut root: toml::Value = if text.trim().is_empty() {
+        toml::Value::Table(Default::default())
+    } else {
+        text.parse::<toml::Value>()
+            .with_context(|| format!("parsing {}", path.display()))?
+    };
+    let removed = remove_codex_cap_hooks(&mut root)?;
+    if removed {
+        std::fs::write(&path, toml::to_string_pretty(&root)?)
+            .with_context(|| format!("writing {}", path.display()))?;
+        println!("removed cap hook from: {}", path.display());
+    } else {
+        println!("cap hook already absent from: {}", path.display());
+    }
+    Ok(())
+}
+
+fn codex_hook_status() -> Result<HookState> {
+    let path = codex_config_path()?;
+    codex_hook_status_at(&path)
+}
+
+fn codex_hook_status_at(path: &Path) -> Result<HookState> {
+    if !path.exists() {
+        return Ok(HookState::Disabled);
+    }
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(HookState::Disabled);
+    }
+    let root = text
+        .parse::<toml::Value>()
+        .with_context(|| format!("parsing {}", path.display()))?;
+    let entries = root
+        .get("hooks")
+        .and_then(|hooks| hooks.get("PreToolUse"))
+        .and_then(toml::Value::as_array);
+    Ok(
+        if entries.is_some_and(|entries| codex_pretool_has_cap_hook(entries)) {
+            HookState::Enabled
+        } else {
+            HookState::Disabled
+        },
+    )
 }
 
 fn merge_codex(path: &Path, hook_cmd: &str) -> Result<MergeStatus> {
@@ -284,6 +486,279 @@ fn codex_pretool_has_cap_hook(entries: &[toml::Value]) -> bool {
     })
 }
 
+fn remove_codex_cap_hooks(root: &mut toml::Value) -> Result<bool> {
+    let root_tbl = root
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("Codex config root is not a TOML table"))?;
+    let Some(hooks) = root_tbl.get_mut("hooks") else {
+        return Ok(false);
+    };
+    let hooks = hooks
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("Codex config hooks is not a table"))?;
+    let Some(pretool) = hooks.get_mut("PreToolUse") else {
+        return Ok(false);
+    };
+    let pretool = pretool
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("Codex config PreToolUse is not an array"))?;
+
+    let mut removed = false;
+    let entries = std::mem::take(pretool);
+    for mut entry in entries {
+        let Some(entry_tbl) = entry.as_table_mut() else {
+            pretool.push(entry);
+            continue;
+        };
+        let Some(commands) = entry_tbl
+            .get_mut("hooks")
+            .and_then(toml::Value::as_array_mut)
+        else {
+            pretool.push(entry);
+            continue;
+        };
+        let before = commands.len();
+        commands.retain(|hook| {
+            !hook
+                .as_table()
+                .and_then(|table| table.get("command"))
+                .and_then(toml::Value::as_str)
+                .is_some_and(is_cap_hook_command)
+        });
+        removed |= commands.len() != before;
+        if !commands.is_empty() {
+            pretool.push(entry);
+        }
+    }
+    if pretool.is_empty() {
+        hooks.remove("PreToolUse");
+    }
+    if hooks.is_empty() {
+        root_tbl.remove("hooks");
+    }
+    Ok(removed)
+}
+
+// ---------------------------------------------------------------- AGY
+
+/// AGY's current global hook path. Older AGY installations used the legacy
+/// antigravity-cli directory; when it already exists we preserve that choice
+/// instead of silently creating a second active config.
+fn agy_hooks_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("no $HOME"))?;
+    let current = home.join(".gemini").join("config").join("hooks.json");
+    let legacy = home
+        .join(".gemini")
+        .join("antigravity-cli")
+        .join("hooks.json");
+    if current.exists() || !legacy.exists() {
+        Ok(current)
+    } else {
+        Ok(legacy)
+    }
+}
+
+fn agy_hook_paths() -> Result<Vec<PathBuf>> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("no $HOME"))?;
+    Ok(vec![
+        home.join(".gemini").join("config").join("hooks.json"),
+        home.join(".gemini")
+            .join("antigravity-cli")
+            .join("hooks.json"),
+    ])
+}
+
+fn install_agy(cap_path: &str, print: bool) -> Result<()> {
+    let hook_cmd = format!("{cap_path} hook agy");
+    let snippet = json!({
+        "cap-agent-guard": {
+            "PreToolUse": [{
+                "matcher": "run_command",
+                "hooks": [{ "type": "command", "command": hook_cmd, "timeout": 10 }]
+            }]
+        }
+    });
+    if print {
+        println!("{}", serde_json::to_string_pretty(&snippet)?);
+        return Ok(());
+    }
+
+    let path = agy_hooks_path()?;
+    let merged_status = merge_agy(&path, &hook_cmd)?;
+    println!("{}: {}", merged_status.describe(), path.display());
+    Ok(())
+}
+
+fn disable_agy(print: bool) -> Result<()> {
+    for path in agy_hook_paths()? {
+        if print {
+            println!("would remove cap hook from: {}", path.display());
+            continue;
+        }
+        if !path.exists() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let mut root: JsonValue = if text.trim().is_empty() {
+            JsonValue::Object(Default::default())
+        } else {
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+        };
+        if remove_agy_cap_hooks(&mut root)? {
+            std::fs::write(&path, serde_json::to_string_pretty(&root)? + "\n")
+                .with_context(|| format!("writing {}", path.display()))?;
+            println!("removed cap hook from: {}", path.display());
+        }
+    }
+    if !print {
+        println!("cap AGY hook disabled");
+    }
+    Ok(())
+}
+
+fn agy_hook_status() -> Result<HookState> {
+    for path in agy_hook_paths()? {
+        if !path.exists() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if text.trim().is_empty() {
+            continue;
+        }
+        let root: JsonValue =
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        if agy_has_cap_hook(&root) {
+            return Ok(HookState::Enabled);
+        }
+    }
+    Ok(HookState::Disabled)
+}
+
+fn merge_agy(path: &Path, hook_cmd: &str) -> Result<MergeStatus> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let mut root: JsonValue = if path.exists() {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        if text.trim().is_empty() {
+            JsonValue::Object(Default::default())
+        } else {
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+        }
+    } else {
+        JsonValue::Object(Default::default())
+    };
+    if agy_has_cap_hook(&root) {
+        return Ok(MergeStatus::AlreadyPresent);
+    }
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{}: root is not a JSON object", path.display()))?;
+    let cap_config = root_obj
+        .entry("cap-agent-guard".to_string())
+        .or_insert_with(|| JsonValue::Object(Default::default()))
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{}: cap-agent-guard is not an object", path.display()))?;
+    let pretool = cap_config
+        .entry("PreToolUse".to_string())
+        .or_insert_with(|| JsonValue::Array(vec![]))
+        .as_array_mut()
+        .ok_or_else(|| {
+            anyhow!(
+                "{}: cap-agent-guard.PreToolUse is not an array",
+                path.display()
+            )
+        })?;
+    pretool.push(json!({
+        "matcher": "run_command",
+        "hooks": [{ "type": "command", "command": hook_cmd, "timeout": 10 }]
+    }));
+    std::fs::write(path, serde_json::to_string_pretty(&root)? + "\n")
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(MergeStatus::Installed)
+}
+
+fn agy_has_cap_hook(root: &JsonValue) -> bool {
+    root.as_object().is_some_and(|configs| {
+        configs.values().any(|config| {
+            config
+                .get("PreToolUse")
+                .and_then(JsonValue::as_array)
+                .is_some_and(|entries| pretool_has_agy_cap_hook(entries))
+        })
+    })
+}
+
+fn pretool_has_agy_cap_hook(entries: &[JsonValue]) -> bool {
+    entries.iter().any(|entry| {
+        entry
+            .get("hooks")
+            .and_then(JsonValue::as_array)
+            .is_some_and(|hooks| {
+                hooks.iter().any(|hook| {
+                    hook.get("command")
+                        .and_then(JsonValue::as_str)
+                        .is_some_and(is_cap_agy_hook_command)
+                })
+            })
+    })
+}
+
+fn remove_agy_cap_hooks(root: &mut JsonValue) -> Result<bool> {
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("AGY hooks root is not a JSON object"))?;
+    let keys: Vec<String> = root_obj.keys().cloned().collect();
+    let mut removed = false;
+    for key in keys {
+        let Some(config) = root_obj.get_mut(&key).and_then(JsonValue::as_object_mut) else {
+            continue;
+        };
+        let Some(pretool) = config
+            .get_mut("PreToolUse")
+            .and_then(JsonValue::as_array_mut)
+        else {
+            continue;
+        };
+        let entries = std::mem::take(pretool);
+        for mut entry in entries {
+            let keep = entry
+                .get_mut("hooks")
+                .and_then(JsonValue::as_array_mut)
+                .map(|hooks| {
+                    let before = hooks.len();
+                    hooks.retain(|hook| {
+                        !hook
+                            .get("command")
+                            .and_then(JsonValue::as_str)
+                            .is_some_and(is_cap_agy_hook_command)
+                    });
+                    removed |= hooks.len() != before;
+                    !hooks.is_empty()
+                })
+                .unwrap_or(true);
+            if keep {
+                pretool.push(entry);
+            }
+        }
+        if pretool.is_empty() {
+            config.remove("PreToolUse");
+        }
+        if config.is_empty() {
+            root_obj.remove(&key);
+        }
+    }
+    Ok(removed)
+}
+
+fn is_cap_agy_hook_command(s: &str) -> bool {
+    is_cap_hook_command_kind(s, "agy")
+}
+
 // ---------------------------------------------------------------- shared
 
 enum MergeStatus {
@@ -313,6 +788,8 @@ mod tests {
         assert!(is_cap_hook_command("/abs/path/cap hook bash --foo"));
         assert!(!is_cap_hook_command("npm hook bash")); // wrong program
         assert!(!is_cap_hook_command("cap status")); // not the bash hook
+        assert!(is_cap_agy_hook_command("cap hook agy"));
+        assert!(!is_cap_agy_hook_command("cap hook bash"));
         assert!(!is_cap_hook_command("")); // empty
     }
 
@@ -424,6 +901,166 @@ mod tests {
         assert!(text.contains("model = \"gpt-5\""), "existing key preserved");
         assert!(text.contains("[[hooks.PreToolUse]]"), "hook added");
         assert!(text.contains(cmd));
+    }
+
+    #[test]
+    fn claude_disable_removes_only_cap_hooks_and_is_idempotent() {
+        let mut root = json!({
+            "model": "claude-opus-4-7",
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [
+                        { "type": "command", "command": "/opt/bin/cap hook bash --claude-code" },
+                        { "type": "command", "command": "keep-this-hook" }
+                    ]
+                }, {
+                    "matcher": "Edit",
+                    "hooks": [{ "type": "command", "command": "other-hook" }]
+                }],
+                "PostToolUse": []
+            }
+        });
+
+        assert!(remove_claude_cap_hooks(&mut root).unwrap());
+        assert!(!remove_claude_cap_hooks(&mut root).unwrap());
+        assert_eq!(root["model"], "claude-opus-4-7");
+        let pretool = root
+            .pointer("/hooks/PreToolUse")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(pretool.len(), 2);
+        assert_eq!(pretool[0]["hooks"].as_array().unwrap().len(), 1);
+        assert_eq!(pretool[0]["hooks"][0]["command"], "keep-this-hook");
+        assert!(!pretool_has_cap_hook(pretool));
+    }
+
+    #[test]
+    fn claude_disable_cleans_empty_cap_entry_without_removing_other_settings() {
+        let mut root = json!({
+            "model": "claude-opus-4-7",
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{ "type": "command", "command": "cap hook bash --claude-code" }]
+                }],
+                "PostToolUse": []
+            }
+        });
+
+        assert!(remove_claude_cap_hooks(&mut root).unwrap());
+        assert!(root.pointer("/hooks/PreToolUse").is_none());
+        assert!(root.pointer("/hooks/PostToolUse").is_some());
+        assert_eq!(root["model"], "claude-opus-4-7");
+    }
+
+    #[test]
+    fn codex_disable_removes_only_cap_hooks_and_is_idempotent() {
+        let mut root: toml::Value = r#"
+model = "gpt-5"
+
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/opt/bin/cap hook bash --codex"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "keep-this-hook"
+
+[[hooks.PreToolUse]]
+matcher = "^Edit$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "other-hook"
+"#
+        .parse()
+        .unwrap();
+
+        assert!(remove_codex_cap_hooks(&mut root).unwrap());
+        assert!(!remove_codex_cap_hooks(&mut root).unwrap());
+        assert_eq!(root["model"].as_str(), Some("gpt-5"));
+        let pretool = root["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pretool.len(), 2);
+        assert_eq!(pretool[0]["hooks"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            pretool[0]["hooks"][0]["command"].as_str(),
+            Some("keep-this-hook")
+        );
+        assert!(!codex_pretool_has_cap_hook(pretool));
+    }
+
+    #[test]
+    fn agy_install_disable_and_idempotency_preserve_other_entries() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("hooks.json");
+        std::fs::write(
+            &path,
+            r#"{"other":{"PreToolUse":[{"matcher":"run_command","hooks":[{"command":"keep-this-hook"}]}]},"setting":true}"#,
+        )
+        .unwrap();
+        let cmd = "/opt/bin/cap hook agy";
+
+        assert!(matches!(
+            merge_agy(&path, cmd).unwrap(),
+            MergeStatus::Installed
+        ));
+        assert!(matches!(
+            merge_agy(&path, cmd).unwrap(),
+            MergeStatus::AlreadyPresent
+        ));
+        let mut root: JsonValue =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(agy_has_cap_hook(&root));
+        assert!(remove_agy_cap_hooks(&mut root).unwrap());
+        assert!(!remove_agy_cap_hooks(&mut root).unwrap());
+        assert_eq!(root["setting"], true);
+        assert_eq!(
+            root["other"]["PreToolUse"][0]["hooks"][0]["command"],
+            "keep-this-hook"
+        );
+        assert!(!agy_has_cap_hook(&root));
+    }
+
+    #[test]
+    fn hook_status_labels_cover_all_reported_states() {
+        assert_eq!(HookState::Enabled.label(), "enabled");
+        assert_eq!(HookState::Disabled.label(), "disabled");
+        assert_eq!(Agent::Claude.label(), "claude");
+        assert_eq!(Agent::Codex.label(), "codex");
+        assert_eq!(Agent::Agy.label(), "agy");
+    }
+
+    #[test]
+    fn hook_status_detects_enabled_disabled_and_unreadable_configs() {
+        let tmp = TempDir::new().unwrap();
+        let claude = tmp.path().join("settings.json");
+        let codex = tmp.path().join("config.toml");
+
+        assert_eq!(claude_hook_status_at(&claude).unwrap(), HookState::Disabled);
+        assert_eq!(codex_hook_status_at(&codex).unwrap(), HookState::Disabled);
+
+        std::fs::write(
+            &claude,
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"command":"/bin/cap hook bash --claude-code"}]}]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &codex,
+            "[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ncommand = \"/bin/cap hook bash --codex\"\n",
+        )
+        .unwrap();
+        assert_eq!(claude_hook_status_at(&claude).unwrap(), HookState::Enabled);
+        assert_eq!(codex_hook_status_at(&codex).unwrap(), HookState::Enabled);
+
+        std::fs::write(&claude, "{").unwrap();
+        std::fs::write(&codex, "[").unwrap();
+        assert!(claude_hook_status_at(&claude).is_err());
+        assert!(codex_hook_status_at(&codex).is_err());
     }
 }
 // CODEGEN-END
