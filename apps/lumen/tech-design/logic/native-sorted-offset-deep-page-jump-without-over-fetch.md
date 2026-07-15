@@ -40,7 +40,6 @@ flowchart TD
     local --> slice
     slice --> done([only requested page returned])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
