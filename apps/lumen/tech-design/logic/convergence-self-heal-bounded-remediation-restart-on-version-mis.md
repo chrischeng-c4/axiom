@@ -84,7 +84,6 @@ changes:
     impl_mode: hand-written
     description: "Verify exactly-one remediation, write-ahead durability, operator-restart persistence, fence retention, and eventual convergence."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
