@@ -213,13 +213,15 @@ requirementDiagram
 <!-- type: changes lang: yaml -->
 
 ```yaml
-files:
-  - apps/lumen/src/dx.rs
-  - apps/lumen/src/types.rs
-  - apps/lumen/src/storage.rs
-  - apps/lumen/src/spec.rs
-  - apps/lumen/clients/openapi.json
-verification:
-  - cargo test -p lumen --test spec_cli
-  - cargo test -p lumen --test cli_convention
+changes:
+  - path: apps/lumen/src/dx.rs
+    action: modify
+    section: dx-contract
+    impl_mode: hand-written
+    description: "Bind the typed TD task decisions to runtime FieldType capabilities and deterministic LLM v2 rendering; the missing cross-source emitter remains tracked by #1683."
+  - path: apps/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "Verify task-manifest/runbook typing, field capability projection, and canonical OpenAPI bytes from the public CLI surface."
 ```

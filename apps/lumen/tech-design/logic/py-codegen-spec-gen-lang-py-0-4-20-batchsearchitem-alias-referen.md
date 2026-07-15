@@ -1,6 +1,12 @@
 ---
 id: '1766'
 summary: (fill)
+capability_refs:
+  - id: cli-interface
+    role: primary
+    claim: lumen-spec-schema-openapi-json-yaml-json-schema-offline
+    coverage: full
+    rationale: "Executable Python generated clients are part of the public lumen spec gen contract."
 fill_sections: [logic, changes, unit-test]
 ---
 
@@ -40,6 +46,11 @@ flowchart TD
 
 ```yaml
 changes:
+  - path: libs/openapi-codegen/src/emit/py/models_emit.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Partition concrete Pydantic models from reference aliases and dependency-order aliases after their referenced declarations."
   - path: apps/lumen/tests/spec_gen_e2e.rs
     action: modify
     section: unit-test

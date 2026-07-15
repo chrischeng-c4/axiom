@@ -1,6 +1,12 @@
 ---
 id: '1792'
 summary: (fill)
+capability_refs:
+  - id: exact-filter-search
+    role: primary
+    claim: term-range-set-early-termination
+    coverage: full
+    rationale: "Prefix is an exact keyword operation implemented through the existing filter and sort planners."
 fill_sections: [logic, changes, unit-test]
 ---
 

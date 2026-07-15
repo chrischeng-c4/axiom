@@ -1,4 +1,6 @@
 // HANDWRITE-BEGIN gap="missing-generator:e2e-test:647c2c4a" tracker="#1645" reason="Bind Lumen search continuity assertions to the shared Rig stateful lifecycle. generator gap: missing-generator:lumen-stateful-adapter (#1645)."
+// @spec apps/lumen/tech-design/logic/adopt-shared-stateful-service-foundations.md#unit-test
+// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

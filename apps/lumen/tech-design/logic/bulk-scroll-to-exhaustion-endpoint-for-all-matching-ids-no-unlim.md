@@ -1,6 +1,12 @@
 ---
 id: '1783'
 summary: (fill)
+capability_refs:
+  - id: competitor-feature-parity
+    role: primary
+    claim: search-feature-breadth
+    coverage: full
+    rationale: "The explicit-cost search-all operation closes complete-result export parity without weakening bounded ordinary search."
 fill_sections: [logic, changes, unit-test]
 ---
 
