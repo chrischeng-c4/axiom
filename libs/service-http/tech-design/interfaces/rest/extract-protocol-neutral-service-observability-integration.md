@@ -9,38 +9,48 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: shared-service-observability-integration
+id: shared-service-observability-contract
 entry: configure
 nodes:
-  configure: { kind: start, label: "Application supplies ObservabilityConfig and stable ServiceIdentity" }
-  mode: { kind: decision, label: "Resolve logging-only, OTLP, or safe fallback mode without HTTP dependencies" }
-  subscriber: { kind: process, label: "service-observability installs the shared tracing subscriber and optional exporter" }
-  metrics: { kind: process, label: "Domain metrics implement the shared MetricsProvider seam and render with metrics-prometheus" }
-  lifecycle: { kind: process, label: "LifecycleMetrics implements server-lifecycle ConnectionMetrics with accepted, rejected, and closed counters" }
-  http: { kind: process, label: "service-http only adapts W3C request headers and exposes provider bytes at /metrics" }
-  other: { kind: terminal, label: "Raw TCP and future non-HTTP services compose the same observability contract" }
-  compatible: { kind: terminal, label: "Existing service-http imports remain additive re-exports with byte-compatible probe output" }
+  configure: { kind: start, label: "Application supplies ObservabilityConfig { log_level, log_format, otlp_endpoint } and ServiceIdentity" }
+  validate: { kind: decision, label: "Is OTLP requested with a valid absolute HTTP(S) endpoint and compiled exporter support?" }
+  logging: { kind: process, label: "Install one RUST_LOG-first pretty or JSON subscriber" }
+  exporter: { kind: process, label: "Attach stable service.name and service.version resources and W3C propagator" }
+  fallback: { kind: process, label: "Install logging-only subscriber and emit a redacted fallback reason" }
+  provider: { kind: process, label: "MetricsProvider returns canonical Prometheus exposition bytes" }
+  connection: { kind: process, label: "LifecycleMetrics implements ConnectionMetrics using metrics-prometheus counters" }
+  http_config: { kind: process, label: "service-http HttpConfig projects only its observability fields into ObservabilityConfig" }
+  http_adapter: { kind: process, label: "service-http extracts request headers and serves provider bytes without owning protocol-neutral state" }
+  non_http: { kind: terminal, label: "Raw TCP and future protocol runtimes consume service-observability directly" }
+  compatible: { kind: terminal, label: "Existing service-http names remain additive compatibility re-exports" }
 edges:
-  - { from: configure, to: mode }
-  - { from: mode, to: subscriber, when: "logging or exporter mode selected" }
-  - { from: configure, to: metrics }
-  - { from: metrics, to: lifecycle }
-  - { from: subscriber, to: http }
-  - { from: lifecycle, to: http }
-  - { from: lifecycle, to: other }
-  - { from: http, to: compatible }
+  - { from: configure, to: validate }
+  - { from: validate, to: logging, when: "no exporter requested" }
+  - { from: validate, to: exporter, when: "valid and supported" }
+  - { from: validate, to: fallback, when: "invalid or unavailable" }
+  - { from: configure, to: provider }
+  - { from: provider, to: connection }
+  - { from: configure, to: http_config }
+  - { from: http_config, to: http_adapter }
+  - { from: exporter, to: http_adapter }
+  - { from: connection, to: http_adapter }
+  - { from: connection, to: non_http }
+  - { from: http_adapter, to: compatible }
 ---
 flowchart TD
-  configure([ObservabilityConfig + ServiceIdentity]) --> mode{resolve trace mode}
-  mode --> subscriber[service-observability subscriber + optional OTLP]
-  configure --> metrics[MetricsProvider + metrics-prometheus encoder]
-  metrics --> lifecycle[LifecycleMetrics implements ConnectionMetrics]
-  subscriber --> http[service-http request/header + /metrics adapter only]
-  lifecycle --> http
-  lifecycle --> other([raw TCP and non-HTTP consumers])
-  http --> compatible([byte-compatible existing service surface])
+  configure([ObservabilityConfig + ServiceIdentity]) --> validate{OTLP request valid and supported?}
+  validate -->|not requested| logging[RUST_LOG-first pretty or JSON subscriber]
+  validate -->|yes| exporter[OTLP exporter + stable resource + W3C propagator]
+  validate -->|invalid/unavailable| fallback[logging-only + redacted fallback]
+  configure --> provider[MetricsProvider canonical bytes]
+  provider --> connection[LifecycleMetrics via metrics-prometheus]
+  configure --> http_config[HttpConfig projects observability fields]
+  http_config --> http_adapter[service-http HTTP request and route adapter]
+  exporter --> http_adapter
+  connection --> http_adapter
+  connection --> non_http([raw TCP and non-HTTP consumers])
+  http_adapter --> compatible([compatible service-http imports and bytes])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
