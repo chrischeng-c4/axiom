@@ -48,7 +48,7 @@ Public API manifest for `libs/transport-h2c/src/lib.rs` captured during libs cod
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-//! `h2c` — shared HTTP/2 cleartext (h2c) client helpers for the ecosystem.
+//! `transport-h2c` — shared HTTP/2 cleartext (h2c) client helpers for the ecosystem.
 //!
 //! Several components (loom → keep/relay, lumen's relay WAL, relay's raft peer
 //! transport) talk to each other over **h2c** (HTTP/2 over cleartext, via

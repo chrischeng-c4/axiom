@@ -7,7 +7,7 @@
 // @contract shared-kubernetes-operator-scaffold-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p operator
+// @command cargo test -p service-k8s
 // AW-EC-END
 
 // Contract: Shared Kubernetes Operator Scaffold public Rust API behavior remains covered by the configured library test suite.
@@ -15,7 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn shared_kubernetes_operator_scaffold_contract() {
-    let command = "cargo test -p operator";
+    let command = "cargo test -p service-k8s";
     let id = "shared-kubernetes-operator-scaffold-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
