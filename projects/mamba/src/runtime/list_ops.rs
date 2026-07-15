@@ -544,20 +544,15 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                 }
                 ObjData::Dict(ref lock) => {
                     // ET.Element dict-stubs iterate over their children, not
-                    // their internal keys.
-                    let element_children = {
-                        let guard = lock.read().unwrap();
-                        let is_element = guard
-                            .get("__class__")
-                            .and_then(|v| v.as_ptr())
-                            .map(|p| matches!(&(*p).data, ObjData::Str(s) if s == "Element"))
-                            .unwrap_or(false);
-                        if is_element {
-                            guard.get("_children").copied()
-                        } else {
-                            None
-                        }
-                    };
+                    // their internal keys. Must probe via `element_stub_children`
+                    // (hash-safe `dict_ops::dict_get_exact_str`), not a raw
+                    // `IndexMap::get(&str)` — `DictKey::Str`'s `Hash` impl no
+                    // longer shares Rust's native `str` `Hash` domain (#1028),
+                    // so a raw `&str` probe hashes into the wrong bucket and
+                    // silently misses even when the key is present (same bug
+                    // class as #1627's `dict_get_key` fix; `list(elem)` had
+                    // its own duplicated raw-probe copy of the guard).
+                    let element_children = super::stdlib::xml_mod::element_stub_children(val);
                     if let Some(kids) = element_children {
                         if let Some(kp) = kids.as_ptr() {
                             if let ObjData::List(ref kl) = (*kp).data {
