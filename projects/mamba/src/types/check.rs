@@ -520,6 +520,91 @@ fn direct_assignment_counts(stmts: &[Spanned<Stmt>]) -> HashMap<String, usize> {
     assignments
 }
 
+/// `x += expr`-shape counts anywhere in the same Python scope, recursing
+/// through same-scope compound bodies (if/while/for/try/with/match) exactly
+/// like `collect_same_scope_binding_events` does — an accumulator's
+/// `AugAssign` commonly lives inside a loop body one level down from its
+/// initializing `Assign` (#1775).
+fn collect_same_scope_augassign_counts(
+    stmts: &[Spanned<Stmt>],
+    counts: &mut HashMap<String, usize>,
+) {
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::AugAssign { target, .. } => {
+                if let Expr::Ident(name) = &target.node {
+                    *counts.entry(name.clone()).or_default() += 1;
+                }
+            }
+            Stmt::If {
+                body,
+                elif_clauses,
+                else_body,
+                ..
+            } => {
+                collect_same_scope_augassign_counts(body, counts);
+                for (_, body) in elif_clauses {
+                    collect_same_scope_augassign_counts(body, counts);
+                }
+                if let Some(body) = else_body {
+                    collect_same_scope_augassign_counts(body, counts);
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            } => {
+                collect_same_scope_augassign_counts(body, counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_augassign_counts(body, counts);
+                }
+            }
+            Stmt::For {
+                body, else_body, ..
+            }
+            | Stmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                collect_same_scope_augassign_counts(body, counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_augassign_counts(body, counts);
+                }
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    collect_same_scope_augassign_counts(&arm.body, counts);
+                }
+            }
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                collect_same_scope_augassign_counts(body, counts);
+                for handler in handlers {
+                    collect_same_scope_augassign_counts(&handler.body, counts);
+                }
+                if let Some(body) = else_body {
+                    collect_same_scope_augassign_counts(body, counts);
+                }
+                if let Some(body) = finally_body {
+                    collect_same_scope_augassign_counts(body, counts);
+                }
+            }
+            Stmt::With { body, .. } | Stmt::AsyncWith { body, .. } => {
+                collect_same_scope_augassign_counts(body, counts);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn same_scope_augassign_counts(stmts: &[Spanned<Stmt>]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    collect_same_scope_augassign_counts(stmts, &mut counts);
+    counts
+}
+
 #[derive(Clone)]
 pub struct TypeChecker {
     pub tcx: TypeContext,
@@ -554,6 +639,15 @@ pub struct TypeChecker {
     /// When these account for every event of a name, aliases can be replayed in
     /// source order instead of being collapsed as control-flow-ambiguous.
     preregister_direct_assignments: HashMap<String, usize>,
+    /// `x += expr`-shape augmented-assignment counts anywhere in the same
+    /// Python scope (recursive through if/while/for/try/with/match bodies,
+    /// unlike `preregister_direct_assignments`). When a name's every binding
+    /// event is accounted for by direct assignments plus these, its type is
+    /// left to the sequential walk (plain-assign fast path + AugAssign's own
+    /// `check_binop`-derived result) instead of being forced to `Any` upfront
+    /// — an accumulator idiom (`total = 0; for x in xs: total += x`) does not
+    /// need the pessimistic control-flow-ambiguous treatment (#1775).
+    preregister_augassign_counts: HashMap<String, usize>,
     /// Names whose assignments target an outer scope via global/nonlocal.
     preregister_declared_bindings: HashSet<String>,
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
@@ -725,6 +819,7 @@ impl TypeChecker {
             preregister_depth: 0,
             preregister_binding_events: HashMap::new(),
             preregister_direct_assignments: HashMap::new(),
+            preregister_augassign_counts: HashMap::new(),
             preregister_declared_bindings: HashSet::new(),
             type_param_alias_scopes: Vec::new(),
             resolved_type_exprs: HashMap::new(),
@@ -2129,6 +2224,7 @@ impl TypeChecker {
         if self.preregister_depth == 0 {
             self.preregister_binding_events = same_scope_binding_events(stmts);
             self.preregister_direct_assignments = direct_assignment_counts(stmts);
+            self.preregister_augassign_counts = same_scope_augassign_counts(stmts);
             let mut assigned = Vec::new();
             let mut declared = Vec::new();
             crate::resolve::pass::collect_assignment_targets(stmts, &mut assigned, &mut declared);
@@ -2574,8 +2670,21 @@ impl TypeChecker {
                                 .get(name)
                                 .copied()
                                 .unwrap_or_default();
-                            let only_direct_assignments =
-                                binding_events > 0 && binding_events == direct_assignments;
+                            let augassign_events = self
+                                .preregister_augassign_counts
+                                .get(name)
+                                .copied()
+                                .unwrap_or_default();
+                            // #1775: an accumulator idiom (`total = 0; for x in
+                            // xs: total += x`) accounts for every binding event
+                            // via one direct `Assign` plus some same-scope
+                            // `AugAssign`s — trust the sequential walk (plain-
+                            // assign fast path + AugAssign's own `check_binop`-
+                            // derived result) instead of pessimistically
+                            // forcing `Any` here, the same way an all-direct
+                            // multi-assign chain already does below.
+                            let only_direct_assignments = binding_events > 0
+                                && binding_events == direct_assignments + augassign_events;
                             if binding_events != 1 && !only_direct_assignments {
                                 let symbol = existing.unwrap_or_else(|| {
                                     self.symbols.define(name.clone(), SymbolKind::Variable)
@@ -2678,6 +2787,7 @@ impl TypeChecker {
         if self.preregister_depth == 0 {
             self.preregister_binding_events.clear();
             self.preregister_direct_assignments.clear();
+            self.preregister_augassign_counts.clear();
             self.preregister_declared_bindings.clear();
         }
     }
