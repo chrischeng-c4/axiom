@@ -1,10 +1,10 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:f036c9bf" tracker="pending-tracker" reason="tape's service-auth adapter: AuthConfig (TAPE_AUTH off|disabled|required mode parse + token-registry load via service_auth::load_registry with startup fail-fast naming TAPE_TOKEN_REGISTRY_FILE and the TAPE_TOKENS legacy/dev inline fallback), StaticRoleMapVerifier construction (registry when required, open() when off), and the per-handler authorize(principal, topic, needed) helper mapping RoleMapDenied to the shared 403 forbidden shape."
+// HANDWRITE-BEGIN gap="missing-generator:logic:f036c9bf" tracker="#1641" reason="tape's service-auth adapter: AuthConfig plus shared reloadable verifier construction and audited per-topic authorization."
 //! tape's adoption of the shared `libs/service-auth` bearer contract (#1326).
 //!
 //! CONTRIBUTING § "Service auth — one Bearer-token contract": every
 //! long-running service authenticates through `libs/service-auth`. tape uses
 //! the standard registry verifier —
-//! `service_auth::role_map::StaticRoleMapVerifier` — implementing the
+//! `service_auth::ReloadableRoleMapVerifier` — implementing the
 //! archetype's `TAPE_AUTH=off|required` + `TAPE_TOKEN_REGISTRY_FILE` shape.
 //! tape's auth is **all-or-nothing per deployment** (unlike keep's optional,
 //! per-handler claim-check), so the blanket `service_auth::auth_middleware`
@@ -47,7 +47,12 @@
 use std::collections::HashMap;
 
 use anyhow::{bail, Result};
-use service_auth::{AuthError, Role, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims};
+use std::sync::Arc;
+
+use service_auth::{
+    AuditedRoleMapPrincipal, AuthError, ReloadableRoleMapVerifier, Role, TokenClaims,
+    TracingAuthEventSink,
+};
 
 /// Auth-mode env var (`off`|`disabled`|`required`), surfaced as `--auth`.
 pub const AUTH_MODE_ENV: &str = "TAPE_AUTH";
@@ -102,8 +107,12 @@ impl AuthConfig {
 
     /// The verifier the data-plane `auth_middleware` runs: the shared static
     /// role-map over this registry (the `open()` shape when auth is off).
-    pub fn verifier(&self) -> StaticRoleMapVerifier {
-        StaticRoleMapVerifier::new(self.required, self.tokens.clone())
+    pub fn verifier(&self) -> ReloadableRoleMapVerifier {
+        ReloadableRoleMapVerifier::with_sink(
+            self.required,
+            self.tokens.clone(),
+            Arc::new(TracingAuthEventSink),
+        )
     }
 }
 
@@ -114,7 +123,11 @@ impl AuthConfig {
 /// [`service_auth::RoleMapDenied`] into the shared 403
 /// `{"error": "forbidden", "message": ...}` shape (consistent with the
 /// `service_http::ApiErr` envelope family).
-pub fn authorize(principal: &RoleMapPrincipal, topic: &str, needed: Role) -> Result<(), AuthError> {
+pub fn authorize(
+    principal: &AuditedRoleMapPrincipal,
+    topic: &str,
+    needed: Role,
+) -> Result<(), AuthError> {
     principal.ensure(topic, needed).map_err(|denied| {
         AuthError::Forbidden(format!(
             "topic `{}` lacks {:?} on `{}`",

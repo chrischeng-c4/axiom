@@ -12,7 +12,7 @@
 //!
 //! Request auth is the shared `libs/service-auth` bearer contract (#1326):
 //! the blanket `service_auth::auth_middleware` runs on the `/topics` data
-//! plane ONLY (probes stay tokenless), injecting a [`RoleMapPrincipal`] each
+//! plane ONLY (probes stay tokenless), injecting an [`AuditedRoleMapPrincipal`] each
 //! handler authorizes on its `{topic}` via [`crate::auth::authorize`] —
 //! `append` = write, `replay`/`checkpoint_get`/`checkpoint_put` = read.
 
@@ -27,7 +27,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use service_auth::{Role, RoleMapPrincipal, StaticRoleMapVerifier};
+use service_auth::{AuditedRoleMapPrincipal, ReloadableRoleMapVerifier, Role};
 use service_http::{ApiErr, MetricsProvider};
 use utoipa::ToSchema;
 
@@ -50,7 +50,7 @@ pub struct AppState {
     metrics: Arc<TapeMetrics>,
     draining: Arc<AtomicBool>,
     store: Option<PathBuf>,
-    verifier: Arc<StaticRoleMapVerifier>,
+    verifier: Arc<ReloadableRoleMapVerifier>,
     raft: Option<Arc<TapeRaft>>,
 }
 
@@ -65,7 +65,7 @@ impl AppState {
             metrics: Arc::new(TapeMetrics::new()),
             draining: Arc::new(AtomicBool::new(false)),
             store,
-            verifier: Arc::new(StaticRoleMapVerifier::open()),
+            verifier: Arc::new(ReloadableRoleMapVerifier::open()),
             raft: None,
         }
     }
@@ -73,14 +73,18 @@ impl AppState {
     /// Build state with a resolved auth config (`--auth` /
     /// `--token-registry-file`): the data-plane auth layer runs the registry
     /// verifier when auth is required, the open verifier when off.
-    pub fn with_auth(journal: TapeJournal, store: Option<PathBuf>, auth: crate::auth::AuthConfig) -> Self {
+    pub fn with_auth(
+        journal: TapeJournal,
+        store: Option<PathBuf>,
+        auth: crate::auth::AuthConfig,
+    ) -> Self {
         let mut state = Self::new(journal, store);
         state.verifier = Arc::new(auth.verifier());
         state
     }
 
     /// The bearer verifier the data-plane auth middleware runs.
-    pub fn verifier(&self) -> Arc<StaticRoleMapVerifier> {
+    pub fn verifier(&self) -> Arc<ReloadableRoleMapVerifier> {
         Arc::clone(&self.verifier)
     }
 
@@ -168,10 +172,10 @@ pub fn router(state: AppState) -> Router {
         // Shared bearer auth (#1326) on the data plane ONLY — probes stay
         // tokenless. The blanket middleware authenticates (401 on a
         // missing/unknown token when required) and injects the
-        // RoleMapPrincipal each handler authorizes on its {topic}.
+        // AuditedRoleMapPrincipal each handler authorizes on its {topic}.
         .route_layer(from_fn_with_state(
             verifier,
-            service_auth::auth_middleware::<StaticRoleMapVerifier>,
+            service_auth::auth_middleware::<ReloadableRoleMapVerifier>,
         ))
         // Per-op request metrics (counts + latency). route_layer => only for
         // matched data-plane routes, and MatchedPath is populated. Added
@@ -257,7 +261,7 @@ pub struct CheckpointPutRequest {
 )]
 pub async fn append(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(topic): Path<String>,
     body: axum::body::Bytes,
 ) -> Response {
@@ -285,7 +289,9 @@ pub async fn append(
             .propose_append(topic, req.key, req.payload, timestamp_ms)
             .await
         {
-            Ok((_, Some(TapeOutcome::Appended(event)))) => (StatusCode::OK, Json(event)).into_response(),
+            Ok((_, Some(TapeOutcome::Appended(event)))) => {
+                (StatusCode::OK, Json(event)).into_response()
+            }
             Ok((_, Some(TapeOutcome::Checkpoint(_)))) => ApiErr::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
@@ -298,10 +304,12 @@ pub async fn append(
                 "append outcome aged out before this node could read it back",
             )
             .into_response(),
-            Err(e) => {
-                ApiErr::new(StatusCode::SERVICE_UNAVAILABLE, "raft_unavailable", e.to_string())
-                    .into_response()
-            }
+            Err(e) => ApiErr::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "raft_unavailable",
+                e.to_string(),
+            )
+            .into_response(),
         };
     }
 
@@ -329,7 +337,7 @@ pub async fn append(
 )]
 pub async fn replay(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(topic): Path<String>,
     Query(q): Query<ReplayQuery>,
 ) -> Response {
@@ -354,7 +362,7 @@ pub async fn replay(
 )]
 pub async fn checkpoint_get(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path((topic, consumer)): Path<(String, String)>,
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &topic, Role::Read) {
@@ -382,7 +390,7 @@ pub async fn checkpoint_get(
 )]
 pub async fn checkpoint_put(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path((topic, consumer)): Path<(String, String)>,
     body: axum::body::Bytes,
 ) -> Response {
@@ -409,9 +417,10 @@ pub async fn checkpoint_put(
             Ok((_, Some(TapeOutcome::Checkpoint(Err(e @ TapeError::StaleCheckpoint { .. }))))) => {
                 ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response()
             }
-            Ok((_, Some(TapeOutcome::Checkpoint(Err(e @ TapeError::CheckpointBeyondEnd { .. }))))) => {
-                ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response()
-            }
+            Ok((
+                _,
+                Some(TapeOutcome::Checkpoint(Err(e @ TapeError::CheckpointBeyondEnd { .. }))),
+            )) => ApiErr::new(StatusCode::CONFLICT, "conflict", e.to_string()).into_response(),
             Ok((_, Some(TapeOutcome::Appended(_)))) => ApiErr::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
@@ -424,10 +433,12 @@ pub async fn checkpoint_put(
                 "checkpoint outcome aged out before this node could read it back",
             )
             .into_response(),
-            Err(e) => {
-                ApiErr::new(StatusCode::SERVICE_UNAVAILABLE, "raft_unavailable", e.to_string())
-                    .into_response()
-            }
+            Err(e) => ApiErr::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "raft_unavailable",
+                e.to_string(),
+            )
+            .into_response(),
         };
     }
 
@@ -463,7 +474,7 @@ pub async fn checkpoint_put(
 )]
 pub async fn admin_backup(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, "*", Role::Admin) {
         return deny.into_response();

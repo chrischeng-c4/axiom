@@ -83,7 +83,7 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Adopt ReloadableRoleMapVerifier and expose explicit validated reload while preserving Lumen AuthContext."
-  - path: apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md
+  - path: apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md
     action: modify
     section: source
     impl_mode: hand-written

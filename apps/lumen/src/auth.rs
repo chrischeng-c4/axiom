@@ -30,6 +30,7 @@
 //! on the target collection meets or exceeds that bar.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
@@ -39,7 +40,10 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
-use service_auth::{AuthError as ServiceAuthError, RoleMapDenied, RoleMapPrincipal, Verifier};
+use service_auth::{
+    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, ReloadableRoleMapVerifier,
+    RoleMapDenied, TracingAuthEventSink, Verifier,
+};
 
 pub use service_auth::{Role, TokenClaims};
 
@@ -88,18 +92,30 @@ impl AuthConfig {
 }
 
 /// Lumen's concrete verifier for the shared `service-auth` middleware: a
-/// thin newtype over `service_auth::StaticRoleMapVerifier`.
+/// thin newtype over `service_auth::ReloadableRoleMapVerifier`.
 #[derive(Debug, Clone)]
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
-pub struct LumenVerifier(service_auth::StaticRoleMapVerifier);
+pub struct LumenVerifier(ReloadableRoleMapVerifier);
 
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
 impl LumenVerifier {
     pub fn new(cfg: Arc<AuthConfig>) -> Self {
-        Self(service_auth::StaticRoleMapVerifier::new(
+        Self(ReloadableRoleMapVerifier::with_sink(
             cfg.required,
             cfg.tokens.clone(),
+            Arc::new(TracingAuthEventSink),
         ))
+    }
+
+    /// Explicit credential-rotation boundary. Parsing/validation completes
+    /// before the shared verifier swaps its snapshot; errors preserve the
+    /// last-known-good registry.
+    pub fn reload_file(&self, path: impl AsRef<Path>) -> Result<u64> {
+        self.0.reload_file(path)
+    }
+
+    pub fn reload_json(&self, json: &str) -> Result<u64> {
+        self.0.reload_json(json)
     }
 }
 
@@ -117,11 +133,11 @@ impl Verifier for LumenVerifier {
 }
 
 /// Resolved auth state attached to every request as an axum extension. A
-/// thin newtype over the shared [`RoleMapPrincipal`] so [`ensure`](Self::ensure)
+/// thin newtype over the shared [`AuditedRoleMapPrincipal`] so [`ensure`](Self::ensure)
 /// can map its rejection into lumen's own [`AuthErr`] / `ApiError` shape.
 #[derive(Debug, Clone)]
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
-pub struct AuthContext(RoleMapPrincipal);
+pub struct AuthContext(AuditedRoleMapPrincipal);
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 impl AuthContext {
@@ -237,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn lumen_verifier_delegates_to_shared_static_role_map_verifier() {
+    fn lumen_verifier_delegates_to_shared_reloadable_role_map_verifier() {
         let verifier = LumenVerifier::new(Arc::new(AuthConfig {
             required: true,
             tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
@@ -261,11 +277,33 @@ mod tests {
             verifier.authenticate(&bad).unwrap_err(),
             ServiceAuthError::Unauthenticated
         ));
+
+        verifier
+            .reload_json(r#"{"rotated":{"subject":"next","roles":{"u":"admin"}}}"#)
+            .unwrap();
+        assert!(verifier.authenticate(&headers).is_err());
+        let mut rotated = HeaderMap::new();
+        rotated.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer rotated".parse().unwrap(),
+        );
+        let ctx = verifier.authenticate(&rotated).unwrap();
+        assert_eq!(ctx.subject(), Some("next"));
+        assert!(ctx.ensure("u", Role::Admin).is_ok());
     }
 
     #[test]
     fn auth_context_ensure_forbidden_maps_resource_to_collection_id() {
-        let ctx = AuthContext(RoleMapPrincipal::Token(token(&[("users", Role::Read)])));
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
+            required: true,
+            tokens: HashMap::from([("abc".to_string(), token(&[("users", Role::Read)]))]),
+        }));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer abc".parse().unwrap(),
+        );
+        let ctx = verifier.authenticate(&headers).unwrap();
         match ctx.ensure("users", Role::Write) {
             Err(AuthErr::Forbidden {
                 subject,
@@ -282,7 +320,8 @@ mod tests {
 
     #[test]
     fn auth_context_open_allows_everything() {
-        let ctx = AuthContext(RoleMapPrincipal::Open);
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig::open()));
+        let ctx = verifier.authenticate(&HeaderMap::new()).unwrap();
         assert!(ctx.ensure("any", Role::Admin).is_ok());
         assert_eq!(ctx.subject(), None);
     }
