@@ -16,8 +16,8 @@ capability_refs:
     rationale: "The emit registry parses the project-labelled epic atomize handoff against the real CLI so #1518 cannot regress to an unresolved placeholder."
   - id: workflow-root-runner
     role: primary
-    gap: self-hosting-runner-policy
-    claim: self-hosting-runner-policy
+    gap: self-hosting-root-runner-policy
+    claim: self-hosting-root-runner-policy
     coverage: full
     rationale: "The emit registry keeps self-hosting remediation chain-valid without registering an AW root-runner retry."
 ---

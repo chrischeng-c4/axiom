@@ -28,8 +28,8 @@ capability_refs:
     rationale: "The CLI semantic domain owns run.rs project-label resolution, epic atomize dispatch, and the unresolved-label HITL envelope."
   - id: workflow-root-runner
     role: primary
-    gap: self-hosting-runner-policy
-    claim: self-hosting-runner-policy
+    gap: self-hosting-root-runner-policy
+    claim: self-hosting-root-runner-policy
     coverage: full
     rationale: "Runner admission rejects Agentic Workflow's own project, capability, and WI roots before mutation, while self-health exposes the sanctioned direct-commit gate partition."
   - id: project-local-td-and-ec-gates

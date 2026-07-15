@@ -10,8 +10,8 @@ capability_refs:
     rationale: "Project health generated surfaces implement standardization readiness reporting and gate evidence."
   - id: workflow-root-runner
     role: primary
-    gap: self-hosting-runner-policy
-    claim: self-hosting-runner-policy
+    gap: self-hosting-root-runner-policy
+    claim: self-hosting-root-runner-policy
     coverage: full
     rationale: "Self-AW health exposes a direct-commit policy partition and cannot emit the prohibited root runner."
 ---

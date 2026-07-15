@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-15T03:00:59.662555+00:00"
-ir_digest = "sha256:7b6e861ee8222b428d4f48fd39d10ea28df1a7645f1d765f86dbb63c64a0f2dd"
-source_digest = "sha256:3650823ac56fa0f6ceca02c9a125a9e20929f097d8c6a98a2927ddcb2f33b339"
+generated_at = "2026-07-15T03:04:31.442989+00:00"
+ir_digest = "sha256:cd98619aa665b08286477acf289b6450f5e71493e30e89cd04dacbabff949544"
+source_digest = "sha256:da3e8ff04d48162c59c5f6bcc8be4ca58f142e50c4561f4d29aa044b722f8827"
 tool_contracts = []
 
 [[sources]]
@@ -102,7 +102,7 @@ digest = "sha256:a974a00e9d89a389a17b4beaf911b471a01c5d2b006578ac34b57c6dae911f4
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md"
-digest = "sha256:3d3842f8cbb5010c3203b878e8a193335dd0db65568dbc86fc26a187d5a21964"
+digest = "sha256:833663181a363c4fef6513b3b0e6f35a922963815f0e79730438a4ad29dbda63"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md"
@@ -787,8 +787,8 @@ digest = "sha256:71eb3505b81dc27d94c255f13bfa441d066d1fed9803f0db88a218ec65da55a
 
 [[cases]]
 id = "self-hosting-capability-admission"
-capability_id = "unmapped"
-claim_id = "self-hosting-capability-admission"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-capability-admission"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-capability-admission"
@@ -801,12 +801,12 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f213189ce1c7c1e01f5fa6f1c16c2b1ac56fd83e3bc3b31e6fddfb13c158e754"
+digest = "sha256:03748d4690388545b6242965a7494f8d97a698c1a783c5a30c875028b09703a9"
 
 [[cases]]
 id = "self-hosting-health-policy"
-capability_id = "unmapped"
-claim_id = "self-hosting-health-policy"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-health-policy"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-health-policy"
@@ -819,12 +819,12 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:dd5bda5ac38eaa98147d9a479f473c7f37321095e9b4cefa7459b57c5bba7b89"
+digest = "sha256:f7741e0da91698829a8aaa6cc96e6b5672d9adde64d232c190a754e48aea27c9"
 
 [[cases]]
 id = "self-hosting-wi-admission"
-capability_id = "unmapped"
-claim_id = "self-hosting-wi-admission"
+capability_id = "workflow-root-runner"
+claim_id = "self-hosting-root-runner-policy"
 contract_id = "self-hosting-wi-admission"
 dimension = "behavior"
 source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md#self-hosting-wi-admission"
@@ -837,7 +837,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:6656f13765884f46814deb8e0f93f97a290d186bd96c443337de9b5b40af0fbd"
+digest = "sha256:158faa9b54a77126187243f6b57de7451de3ff41a6cca38649620d20c2d98119"
 
 [[cases]]
 id = "standardize-audit-first-contract-test"

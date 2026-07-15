@@ -5,8 +5,8 @@ fill_sections: [schema, logic, unit-test, e2e-test, changes]
 capability_refs:
   - id: workflow-root-runner
     role: primary
-    gap: self-hosting-runner-policy
-    claim: self-hosting-runner-policy
+    gap: self-hosting-root-runner-policy
+    claim: self-hosting-root-runner-policy
     coverage: full
     rationale: "The root-runner surface must not recursively require AW to run itself in order to repair AW."
 ---
@@ -90,16 +90,22 @@ requirementDiagram
 ```yaml
 e2e_tests:
   - id: self-hosting-capability-admission
+    capability_id: workflow-root-runner
+    claim_id: self-hosting-root-runner-policy
     command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_project_and_capability_roots_are_rejected_before_mutation -- --nocapture
     assertions:
       - "project and capability root commands emit aw.cli.v1 blocked policy envelopes"
       - "the fixture tree is byte-for-byte unchanged"
   - id: self-hosting-wi-admission
+    capability_id: workflow-root-runner
+    claim_id: self-hosting-root-runner-policy
     command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch -- --nocapture
     assertions:
       - "a locally resolved app:agentic-workflow work item is rejected before loop-state access or dispatch"
       - "the local issue store is unchanged"
   - id: self-hosting-health-policy
+    capability_id: workflow-root-runner
+    claim_id: self-hosting-root-runner-policy
     command: cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test self_hosting_health_reports_policy_and_never_points_back_to_root_runner -- --nocapture
     assertions:
       - "health emits policy_mode, hard_gates, and advisory_axes"
