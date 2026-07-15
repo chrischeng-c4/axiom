@@ -2,10 +2,10 @@ version = 2
 project = "relay"
 ir_kind = "td"
 td_path = "apps/relay/tech-design"
-generated_at = "2026-07-08T05:43:46.735230+00:00"
-digest = "sha256:a7d1e36d2182cb92eab3ff10dfbdac057051326a6e9d6f96e045e88d1a88ebd7"
-source_digest = "sha256:a7d1e36d2182cb92eab3ff10dfbdac057051326a6e9d6f96e045e88d1a88ebd7"
-ir_digest = "sha256:4b8058109e8356b6c5cf1f106433894a37205c2c2aa6b1f2858782ba3b093a9e"
+generated_at = "2026-07-15T07:23:13.238471+00:00"
+digest = "sha256:4ce6daba4515f98cf689884a45d968a50492c4508c418591c784602d73ea9a31"
+source_digest = "sha256:4ce6daba4515f98cf689884a45d968a50492c4508c418591c784602d73ea9a31"
+ir_digest = "sha256:77572953c381f75799399b4d48f13d1344eaac049d80196b1bab452a7c99337b"
 
 [[files]]
 path = "interfaces/cli/adopt-libs-operator-relayspec-crd-k8s-crd-operator-instance-dock.md"
@@ -21,8 +21,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/cli/unify-relay-cli-single-relay-bin-with-cli-std-llm-upgrade-issue.md"
-digest = "sha256:9b85520aae2d7ebc390ed08c72aa6c38283349f33850e68da2ef447ace669ae9"
-ir_digest = "sha256:f5fdbe34a2c76b7a3067f1aa7a641b279b0b0dcddbde60022032f8c50b04d4c1"
+digest = "sha256:55c9cfbc0696b537b7c9d33c66920699aaaf79819ecac10fad13b5d10f0ff43a"
+ir_digest = "sha256:0011f6b68a02e153e6672ef75a414e708cb3edfe73946306b9747083016e7b19"
 section_count = 3
 
 [[files]]
@@ -101,6 +101,12 @@ section_count = 3
 path = "logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md"
 digest = "sha256:3baa978402584d553a07082d127278ca224aab48e02961d776f7c86127144917"
 ir_digest = "sha256:3a3357e936710e429e1ed7af776a4e0a5b68d9fb48789343f35cf17ad8ab2ba3"
+section_count = 3
+
+[[files]]
+path = "logic/project-the-stateful-service-workload-baseline.md"
+digest = "sha256:cdb3f426e3f6c824e7311d417e199ffa3a37b03563bdbd8cd83ddad5a0cfd3a1"
+ir_digest = "sha256:4a51a49a025850714e21e331f921c03740bb9db0582067228f685c68f02c8351"
 section_count = 3
 
 [[files]]
