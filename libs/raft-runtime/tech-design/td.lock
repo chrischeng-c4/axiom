@@ -2,10 +2,10 @@ version = 2
 project = "raft-runtime"
 ir_kind = "td"
 td_path = "libs/raft-runtime/tech-design"
-generated_at = "2026-07-15T17:09:11.446019+00:00"
-digest = "sha256:c2400af16e0b8203fe47fd9c3727c490e88e1b2536f40da51252a7ea1a170309"
-source_digest = "sha256:c2400af16e0b8203fe47fd9c3727c490e88e1b2536f40da51252a7ea1a170309"
-ir_digest = "sha256:9b664627e5824d2ee2e5dce666f0f24e39b0f79ed7a1b54028ef6dce12f9cbce"
+generated_at = "2026-07-15T17:24:36.085653+00:00"
+digest = "sha256:6ec83aef6ad31bc63ad824a217ad20a43d817ec7938e7c8723f36dd431299b23"
+source_digest = "sha256:6ec83aef6ad31bc63ad824a217ad20a43d817ec7938e7c8723f36dd431299b23"
+ir_digest = "sha256:6292edacbad18e313b8fe3a51fcddc692992917e715910f70cb22b264f6c46d9"
 
 [[files]]
 path = "logic/add-shared-peer-mtls-transport-for-stateful-services.md"
@@ -20,8 +20,8 @@ parse_error = "schema:15-146: section 'schema' at lines 15..146: JSON Schema typ
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-cluster-rs.md"
-digest = "sha256:01eb53524ea84c2045741aa63df13477444656bebdcf9f265836d19aa40ea5ba"
-ir_digest = "sha256:1f4f735a6b15156aa19adc5dfeb43a368b45d7a697e3da8f66db3a15eb6ea931"
+digest = "sha256:fc884bff68e7957cb5c764878f5c575014b866be55089586100882529887c683"
+ir_digest = "sha256:8645e143c8272319f5f70631b9e10713844c7d94bf36f71abb4e00334cf53d38"
 section_count = 3
 
 [[files]]
@@ -32,14 +32,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-host-rs.md"
-digest = "sha256:feafaaaa0fa6d3c5fd635409bff325f35d9f467be95b34047c4aee7d4d95d68f"
-ir_digest = "sha256:6266d7283ad41cfd4c42c333b0d31f5008e4dc8a0916f74643bbd9a7e74596e5"
+digest = "sha256:47ff395db23825e5b7387641464f878e54d36ae767fb0e54762d4b1373b8dac0"
+ir_digest = "sha256:e128b2348b7f96a687647761177635d32a22f8ba399053ec64114221996c07b2"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-lib-rs.md"
-digest = "sha256:fe29f6ca4b82401ad3a39d7798065b74c74cff1a2878e4c3a059d99decc4a131"
-ir_digest = "sha256:b8cd261098628d0b8b63a4ee0d561a388534ec1eec66ab33e8c676d1cfdf9ad1"
+digest = "sha256:fb55c2fddf037ef9320f02f6b6ea88d36ec24a9548129ae6a93079df4499a08d"
+ir_digest = "sha256:39196ee809789c205fdc59ce771fe9644b98ad001970ab41d32ab2515988878c"
 section_count = 3
 
 [[files]]
