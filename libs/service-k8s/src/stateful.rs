@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:stateful-capacity-policy" tracker="pending-tracker" reason="Shared request-only resource defaults, dedicated-node placement, and whole-layer per-shard replica planning for long-running stateful services."
+// HANDWRITE-BEGIN gap="missing-generator:stateful-capacity-policy" tracker="#1644" reason="Shared request-only resource defaults, dedicated-node placement, and whole-layer per-shard replica planning for long-running stateful services."
 //! Stateful-service capacity primitives shared by every operator adopter.
 //!
 //! A data workload scales in whole replica layers: with `N` shards, changing
