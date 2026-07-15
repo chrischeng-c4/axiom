@@ -7,52 +7,54 @@
 //! `pgpool_frontend_active`, `pgpool_backend_active`, `pgpool_backend_idle`,
 //! each labeled `pool="<name>"`.
 
-use std::fmt::Write as _;
-
 use crate::admin::state::{AdminState, NamedPool};
+use metrics_prometheus::{render_labeled, Label, LabeledSample, SampleGroup};
 
 /// Content-type header value the TD's e2e test asserts verbatim.
 pub const CONTENT_TYPE: &str = "text/plain;version=0.0.4";
 
 /// Renders the full Prometheus text-format body for every pool in `state`.
 pub fn render(state: &AdminState) -> String {
-    let mut out = String::new();
-    render_gauge(
-        &mut out,
-        "pgpool_frontend_active",
-        "Frontend connections currently admitted by the connection budget.",
-        state,
-        |pool| pool.budget.active(),
-    );
-    render_gauge(
-        &mut out,
-        "pgpool_backend_active",
-        "Backend connections currently leased out.",
-        state,
-        |pool| pool.pool.stats().backend_active,
-    );
-    render_gauge(
-        &mut out,
-        "pgpool_backend_idle",
-        "Backend connections currently sitting idle in the pool.",
-        state,
-        |pool| pool.pool.stats().backend_idle,
-    );
-    out
+    let frontend_active = pool_samples(state, |pool| pool.budget.active());
+    let backend_active = pool_samples(state, |pool| pool.pool.stats().backend_active);
+    let backend_idle = pool_samples(state, |pool| pool.pool.stats().backend_idle);
+
+    render_labeled(&[
+        SampleGroup::new(
+            "pgpool_frontend_active",
+            "gauge",
+            "Frontend connections currently admitted by the connection budget.",
+            &frontend_active,
+        ),
+        SampleGroup::new(
+            "pgpool_backend_active",
+            "gauge",
+            "Backend connections currently leased out.",
+            &backend_active,
+        ),
+        SampleGroup::new(
+            "pgpool_backend_idle",
+            "gauge",
+            "Backend connections currently sitting idle in the pool.",
+            &backend_idle,
+        ),
+    ])
 }
 
-fn render_gauge(
-    out: &mut String,
-    name: &str,
-    help: &str,
-    state: &AdminState,
+fn pool_samples<'a>(
+    state: &'a AdminState,
     value_of: impl Fn(&NamedPool) -> usize,
-) {
-    let _ = writeln!(out, "# HELP {name} {help}");
-    let _ = writeln!(out, "# TYPE {name} gauge");
-    for pool in state.pools.iter() {
-        let _ = writeln!(out, "{name}{{pool=\"{}\"}} {}", pool.name, value_of(pool));
-    }
+) -> Vec<LabeledSample<'a>> {
+    state
+        .pools
+        .iter()
+        .map(|pool| {
+            LabeledSample::new(
+                vec![Label::new("pool", pool.name.as_str())],
+                value_of(pool) as u64,
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -111,6 +113,13 @@ mod tests {
         drop(permit);
         let body = render(&state);
         assert!(body.contains("pgpool_frontend_active{pool=\"default\"} 0"));
+    }
+
+    #[test]
+    fn pool_label_uses_shared_prometheus_escaping() {
+        let state = one_pool_state("west\"\\edge\nblue");
+        let body = render(&state);
+        assert!(body.contains("pgpool_frontend_active{pool=\"west\\\"\\\\edge\\nblue\"} 0"));
     }
 }
 // </HANDWRITE>
