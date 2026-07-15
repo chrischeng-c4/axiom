@@ -177,7 +177,6 @@ changes:
     impl_mode: hand-written
     description: Reject retired paths, package identities, and Rust crate identifiers in active source and docs.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
