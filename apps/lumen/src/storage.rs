@@ -6861,6 +6861,12 @@ fn eval_range(coll: &Collection, r: &RangeQuery) -> Result<RoaringBitmap> {
             collection: "<>".into(),
             field: r.field.clone(),
         })?;
+    if !fi.field_type().capabilities().range {
+        bail!(
+            "range query is only valid on number or keyword fields (field `{}`)",
+            r.field
+        );
+    }
     match fi {
         FieldIndex::Number(n) => {
             // Phase 2h-3: range walk through the unified accessor. Segment OFF: walks
@@ -6882,10 +6888,7 @@ fn eval_range(coll: &Collection, r: &RangeQuery) -> Result<RoaringBitmap> {
             let (low, high) = keyword_range_bounds(r)?;
             Ok(keyword_range_postings(k, low, high))
         }
-        _ => bail!(
-            "range query is only valid on number or keyword fields (field `{}`)",
-            r.field
-        ),
+        _ => unreachable!("FieldType capability mapping only permits number and keyword range"),
     }
 }
 
@@ -8415,19 +8418,24 @@ fn sort_field_kind(
     collection_id: &str,
     spec: &SortSpec,
 ) -> Result<SortFieldKind> {
-    match coll.fields.get(&spec.field) {
-        Some(FieldIndex::Number(_)) => Ok(SortFieldKind::Number),
-        Some(FieldIndex::Keyword(_)) => Ok(SortFieldKind::Keyword),
-        Some(_) => Err(StorageError::UnsupportedSort(format!(
-            "field `{}` is not sortable; supported sort fields are number and keyword",
-            spec.field
-        ))
-        .into()),
-        None => Err(StorageError::UnknownField {
+    let Some(field) = coll.fields.get(&spec.field) else {
+        return Err(StorageError::UnknownField {
             collection: collection_id.to_string(),
             field: spec.field.clone(),
         }
-        .into()),
+        .into());
+    };
+    if !field.field_type().capabilities().sort {
+        return Err(StorageError::UnsupportedSort(format!(
+            "field `{}` is not sortable; supported sort fields are number and keyword",
+            spec.field
+        ))
+        .into());
+    }
+    match field {
+        FieldIndex::Number(_) => Ok(SortFieldKind::Number),
+        FieldIndex::Keyword(_) => Ok(SortFieldKind::Keyword),
+        _ => unreachable!("FieldType capability mapping only permits number and keyword sort"),
     }
 }
 

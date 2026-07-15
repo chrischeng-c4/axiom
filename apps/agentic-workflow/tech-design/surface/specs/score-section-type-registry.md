@@ -84,6 +84,7 @@ properties:
       - { name: design-token,  family: JsonSchemaFamily, generator: apps/agentic-workflow/src/generators/frontend.rs,       heading_match: "Design Token",    use_for: "Design tokens (W3C DTCG)" }
       - { name: manifest,      family: JsonSchemaFamily, generator: apps/agentic-workflow/src/generators/frontend.rs,       heading_match: "Manifest",        use_for: "Package-manifest deps" }
       - { name: tool-contract, family: ConfigFamily,     generator: apps/agentic-workflow/src/cli/ec.rs,                   heading_match: "Tool Contract",   use_for: "AW EC bridge from TD contracts to native vat/rig/meter/guard manifests; arena remains legacy compatibility" }
+      - { name: dx-contract,   family: JsonSchemaFamily, generator: apps/agentic-workflow/src/generators/dx_contract.rs, heading_match: "DX Contract",     use_for: "Offline developer and agent task-navigation contract; distinct from EC tool-contract manifests" }
       - { name: runtime-image, family: JsonSchemaFamily, generator: apps/agentic-workflow/src/generate/gen/operations.rs,   heading_match: "Runtime Image",   use_for: "Container image build contract (Dockerfile, build context, entrypoint, image metadata)" }
       - { name: deployment,    family: JsonSchemaFamily, generator: apps/agentic-workflow/src/generate/gen/operations.rs,   heading_match: "Deployment",      use_for: "Runtime deployment manifests (Kubernetes, Kustomize base/component/overlay resources)" }
   deprecated:

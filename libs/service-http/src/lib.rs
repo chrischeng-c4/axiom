@@ -90,7 +90,7 @@ pub use logging::{
     init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
 };
 pub use metrics::MetricsProvider;
-pub use probes::standard_probe_routes;
+pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
 pub use readiness::ReadinessHook;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer, PropagatingMakeSpan};
