@@ -53,7 +53,6 @@ flowchart TD
     keep_stalled --> wait
     clear --> done([TopologyConverged])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
