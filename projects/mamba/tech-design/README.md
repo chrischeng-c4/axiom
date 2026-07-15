@@ -1,5 +1,11 @@
 # mamba tech-design — the knowledge system
 
+**Ownership**: this tree and `../external-contracts/` are authored and guarded
+by the orchestrating agent. Implementation agents (mamba-dev) implement FROM
+these documents and never edit them — report knowledge deltas (new hazards,
+invariants, contract changes) in the issue's evidence comment; the guardian
+folds them in and keeps the documents true after every landing.
+
 This tree is the durable knowledge base of how mamba works: mechanisms,
 invariants, hazards, and the verification surfaces that prove them. It is NOT
 an issue log — implementation status lives in the tracker, never here.
