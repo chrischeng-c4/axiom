@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use raft_host::Membership;
+use raft_runtime::Membership;
 use tape::raft::{TapeOutcome, TapeRaft};
 use tape::TapeJournal;
 

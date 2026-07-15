@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:51:58.584800+00:00"
-digest = "sha256:bf323e69a10cca71a66afcaa336e8cf01a44dcae6c7cffd83889ec70ee69e79d"
-source_digest = "sha256:bf323e69a10cca71a66afcaa336e8cf01a44dcae6c7cffd83889ec70ee69e79d"
-ir_digest = "sha256:8538508d8f5e22266a2de3e18e95ce2999adaf7796c4db5455952527f2b05467"
+generated_at = "2026-07-16T02:55:13.553646+00:00"
+digest = "sha256:309d71f02f79016f8b3f4e0a3e789fd5791e2e9747ef4c808c0c6ba4240e2a90"
+source_digest = "sha256:309d71f02f79016f8b3f4e0a3e789fd5791e2e9747ef4c808c0c6ba4240e2a90"
+ir_digest = "sha256:adc9850acc8957d54fc8d3cc4bb9152d9df2dd45ba0b9e3bd1a6cd7aa4399351"
 
 [[files]]
 path = "README.md"
@@ -27,8 +27,8 @@ section_count = 3
 
 [[files]]
 path = "logic/add-operator-kind-restart-and-durable-replay-dogfood.md"
-digest = "sha256:4f956632d57343e696491d7e493a88dbbffa6010d48431bf47ce6117637ad9ab"
-ir_digest = "sha256:c2acc0febfb33e0c4c4dc2922e0e3b8a03e0002b54ddf10bf7c0b255f03109d0"
+digest = "sha256:ae824271162945fe67f11e9d20d459a1c973002beade72178b060c565e1d9a12"
+ir_digest = "sha256:cc1ec2b3df9fef4864878d1eccbaff91d01a39caa5da04dc44a2866cf2b4036b"
 section_count = 2
 
 [[files]]
@@ -69,8 +69,8 @@ section_count = 2
 
 [[files]]
 path = "logic/seed-empty-pvcs-from-a-backup-snapshot-before-raft-catch-up.md"
-digest = "sha256:29e1fa2505b308d9a98fd6488b72f9870cb442558b8d674d76e869ea2d8db8b5"
-ir_digest = "sha256:2c359814af5b1cf988e5caf8cd0fa205e359f9f45ebeff334ad2acb332389f4b"
+digest = "sha256:10d00a856b97be22e40afbd1ae92dc11f076d971606362cd90f3b81c2446ae0c"
+ir_digest = "sha256:1ef9c6dc78ec6af339d92df4206b495705fe5f1178d46275e6fff7ac907d605b"
 section_count = 2
 
 [[files]]

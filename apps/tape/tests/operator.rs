@@ -2,7 +2,7 @@
 //! Operator-adoption render-shape tests (#1328). Compiled only with
 //! `--features operator`.
 //!
-//! - R4: `TapeSpec` flattens `operator::ClusterSpec` into the CRD schema.
+//! - R4: `TapeSpec` flattens `service_k8s::ClusterSpec` into the CRD schema.
 //! - R5: `render` emits the downward-API StatefulSet with the exact env/probe
 //!   contract tape's serve reads, plus ServiceAccount/Services/PDB.
 //! - R6: the token-registry Secret wiring is opt-in (relay/lumen's pattern).
@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use operator::{ClusterSpec, ManagedService, ReadyFacts};
+use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
 use serde_json::Value;
 use tape::operator::render::render;
 use tape::operator::{crd_yaml, Tape, TapeSpec};
@@ -164,6 +164,14 @@ fn render_emits_expected_child_objects() {
     assert_eq!(container["startupProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["ports"][0]["containerPort"], 7137);
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
+    assert_eq!(container["resources"]["requests"]["cpu"], "1");
+    assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
+    assert!(container["resources"].get("limits").is_none());
+    assert_eq!(
+        sts["spec"]["template"]["spec"]["affinity"]["podAntiAffinity"]
+            ["requiredDuringSchedulingIgnoredDuringExecution"][0]["topologyKey"],
+        "kubernetes.io/hostname"
+    );
 
     // Durable disk tier: the /data PVC carries the CR's storage size.
     assert_eq!(
@@ -313,7 +321,7 @@ fn status_patch_reports_pending_reconciling_ready() {
 /// shared helper is intentionally safe when an earlier TLS path installed it.
 #[test]
 fn rustls_provider_install_is_idempotent() {
-    service_tls::install_default_crypto_provider();
-    service_tls::install_default_crypto_provider();
+    peer_tls::install_default_crypto_provider();
+    peer_tls::install_default_crypto_provider();
 }
 // HANDWRITE-END

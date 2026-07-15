@@ -35,7 +35,7 @@ nodes:
     label: "Construct TapeRaft; state machine restores seed, then raft log/snapshot delta catches up"
   done:
     kind: terminal
-    label: "Cold recovery seed is complete; normal live replica synchronization remains raft-host owned"
+    label: "Cold recovery seed is complete; normal live replica synchronization remains raft-runtime owned"
 edges:
   - { from: seed, to: guard }
   - { from: guard, to: reject, label: "no" }
@@ -54,7 +54,7 @@ flowchart TD
     decode -->|no| reject
     decode -->|yes| persist[Atomically prepare canonical applied marker and snapshot files for this raft node]
     persist --> raft[Construct TapeRaft; state machine restores seed, then raft delta catches up]
-    raft --> done([Cold recovery seed is complete; live replica synchronization remains raft-host owned])
+    raft --> done([Cold recovery seed is complete; live replica synchronization remains raft-runtime owned])
 ```
 
 ## Changes
