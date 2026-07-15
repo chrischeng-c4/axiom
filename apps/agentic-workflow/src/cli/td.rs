@@ -2719,6 +2719,61 @@ pub(crate) fn default_spec_path_for_issue_in_project(
     ))
 }
 
+/// Resolve the TD documents owned by an existing issue without consulting
+/// checkout-global legacy discovery. Exact `Issue.implements` paths win;
+/// issues created before that field was populated recover through the same
+/// configured project-qualified default used by `aw td create`.
+pub(crate) fn resolve_issue_td_spec_paths(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    fallback_slug: &str,
+) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for raw in issue.implements.iter().filter(|path| path.ends_with(".md")) {
+        let normalized = normalize_checkout_rel_path(raw);
+        let rel = std::path::Path::new(&normalized);
+        if normalized.is_empty()
+            || rel.is_absolute()
+            || rel
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            anyhow::bail!(
+                "issue '{fallback_slug}' has a non-normalized TD reference in implements: `{raw}`"
+            );
+        }
+        if !paths.contains(&normalized) {
+            paths.push(normalized);
+        }
+    }
+    if paths.is_empty() {
+        paths.push(default_spec_path_for_issue_in_project(
+            project_root,
+            issue,
+            fallback_slug,
+        )?);
+    }
+    Ok(paths)
+}
+
+/// Generation is singular: if an issue owns several accepted TDs, the agent
+/// must select one explicitly rather than allowing repository discovery to
+/// choose a foreign or arbitrary document.
+pub(crate) fn resolve_issue_td_generation_spec_path(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    fallback_slug: &str,
+) -> Result<String> {
+    let paths = resolve_issue_td_spec_paths(project_root, issue, fallback_slug)?;
+    match paths.as_slice() {
+        [path] => Ok(path.clone()),
+        _ => anyhow::bail!(
+            "issue '{fallback_slug}' owns multiple TD specs ({}); rerun with --spec-path <repo-relative-spec.md>",
+            paths.join(", ")
+        ),
+    }
+}
+
 fn slash_path(path: std::path::PathBuf) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -4632,14 +4687,16 @@ async fn prepare_td_generation_before_lifecycle(
     let spec_path = if let Some(explicit) = explicit_spec_path {
         explicit.to_string()
     } else if let Some(issue) = local_issue.as_ref() {
-        default_spec_path_for_issue_in_project(project_root, issue, &workflow_slug).map_err(
+        resolve_issue_td_generation_spec_path(project_root, issue, &workflow_slug).map_err(
             |error| {
                 anyhow::anyhow!(
-                    "td gen must resolve its spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
+                    "td gen must resolve its issue-owned spec before lifecycle mutation: {error}; rerun `aw td gen {requested_slug} --spec-path <repo-relative-spec.md>`"
                 )
             },
         )?
     } else if let Some(discovered) = discover_worktree_spec(project_root) {
+        // Legacy no-issue utility mode only. Existing WIs must never consult
+        // a checkout-global diff because that can belong to another project.
         discovered
     } else {
         anyhow::bail!(
@@ -5704,7 +5761,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn td_gen_prefers_project_default_over_foreign_legacy_spec() {
+    async fn td_gen_prefers_issue_scope_over_foreign_legacy_discovery() {
         if !git_available() {
             return;
         }
@@ -5731,7 +5788,10 @@ mod tests {
         let foreign = root.join(".aw/tech-design/projects/mamba/logic/foreign.md");
         std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
         std::fs::write(&foreign, "# foreign legacy TD\n").unwrap();
-        for args in [["add", "."].as_slice(), ["commit", "-qm", "foreign legacy TD"].as_slice()] {
+        for args in [
+            ["add", "."].as_slice(),
+            ["commit", "-qm", "foreign legacy TD"].as_slice(),
+        ] {
             let status = std::process::Command::new("git")
                 .args(args)
                 .current_dir(root)
@@ -5739,12 +5799,22 @@ mod tests {
                 .unwrap();
             assert!(status.success());
         }
-        LocalBackend::from_project_root(root).create(&issue).await.unwrap();
+        LocalBackend::from_project_root(root)
+            .create(&issue)
+            .await
+            .unwrap();
 
         let prepared = prepare_td_generation_before_lifecycle(root, &issue.slug, None)
             .await
             .unwrap();
         assert_eq!(prepared.spec_path, expected);
+
+        let mut exact = issue.clone();
+        exact.implements = vec!["apps/lumen/tech-design/logic/custom.md".to_string()];
+        assert_eq!(
+            resolve_issue_td_generation_spec_path(root, &exact, &exact.slug).unwrap(),
+            exact.implements[0]
+        );
     }
 
     #[test]

@@ -542,7 +542,7 @@ async fn run_terminal_codegen_repair(slug: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let spec_paths = resolve_slug_spec_paths(&project_root, &issue);
+    let spec_paths = resolve_slug_spec_paths(&project_root, &issue)?;
     let claims = terminal_touched_codegen_claims(&project_root, slug, &spec_paths)?;
     if claims.is_empty() {
         return Ok(false);
@@ -8532,7 +8532,22 @@ async fn run_check_lifecycle_terminal(
         // (the marker gate, the touched-scope standardization gate, and the
         // empty-implementation gate that follows all consume
         // `slug_spec_paths` / the scope it derives).
-        let slug_spec_paths = resolve_slug_spec_paths(project_root, &issue);
+        let slug_spec_paths = match resolve_slug_spec_paths(project_root, &issue) {
+            Ok(paths) => paths,
+            Err(error) => {
+                let env = serde_json::json!({
+                    "action": "error",
+                    "error_kind": "terminal_spec_scope_unresolved",
+                    "slug": slug,
+                    "message": format!(
+                        "td code-check refused before EC or lifecycle mutation because the work item's TD scope is unresolved: {error:#}"
+                    ),
+                    "next": { "command": format!("aw wi show {slug}") },
+                });
+                println!("{}", serde_json::to_string(&env)?);
+                return Ok(true);
+            }
+        };
 
         // Issue #932: hoisted out of the `phase != CB_FILLED` marker-gate
         // guard below so it's always available — the touched-scope

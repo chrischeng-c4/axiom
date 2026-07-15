@@ -25,9 +25,9 @@ details.
 | [mamba](projects/mamba/README.md) | Force-typed Python compiler. |
 | [lumen](apps/lumen/README.md) | A K8s-native, log-replicated search specialist. |
 | [jet](apps/jet/README.md) | Jet is a Rust-native frontend toolchain. |
-| [pgpool](apps/pgpool/README.md) | Working-name Kubernetes-native PostgreSQL pooler built on the shared server substrate. |
-| [relay](apps/relay/README.md) | `relay` is the durable ordered-log and queue broker in the Axiom stack. |
+| [relay](apps/relay/README.md) | `relay` is the online single-cast pull work-queue broker in the Axiom stack (RabbitMQ/SQS-shaped): a producer publishes a task, a worker pulls (leases) it, runs it, and acks — each message is delivered exactly once to one of the competing consumers, then reclaimed (delete-on-ack). |
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
+| [pgpool](apps/pgpool/README.md) | `pgpool` is the working app id for Axiom's Kubernetes-native PostgreSQL connection pooler. |
 | [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
 <!-- aw:projects-table:end -->
 

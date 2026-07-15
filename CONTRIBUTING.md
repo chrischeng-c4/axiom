@@ -254,7 +254,7 @@ meta-doc producer/check after a trait changes.
 | `competitive_replacement` | `competitor-feature-parity`, `competitor-performance` | — | Project aims to replace or match an existing competitor tool; no settled CONTRIBUTING.md doc home yet. |
 | `long_running` | `long-running-stability` | — | Project runs as a long-lived process; no settled CONTRIBUTING.md doc home yet. |
 | `network_exposed` | `security-hardening` | — | Project exposes a network-reachable surface; no settled CONTRIBUTING.md doc home yet. |
-| `agent_facing` |  | — | Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet. |
+| `agent_facing` | `developer-agent-experience` | [DX convention: every service and CLI ships a Developer & Agent Experience capability](#dx-convention-every-service-and-cli-ships-a-developer-agent-experience-capability) | Project is primarily driven by agents rather than humans and must own the Developer & Agent Experience capability baseline. |
 | `stateful_storage` |  | — | Project owns durable stateful storage; prompt-only, no enforced baseline capability yet. |
 | `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly. |
 <!-- aw:trait-table:end -->

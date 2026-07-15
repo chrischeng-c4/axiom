@@ -12811,6 +12811,44 @@ traits = ["long-running", "cli_facing", "competitive_replacement", "network_expo
     }
 
     #[test]
+    fn agent_facing_trait_requires_developer_agent_experience_with_remediation() {
+        // #1481: promote the existing explicit trait instead of silently
+        // broadening every current service/CLI profile. Current project
+        // profiles do not declare agent_facing; projects that opt in now get
+        // the exact normal baseline-reporting and remediation path.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["agent_facing"]
+"#,
+        )
+        .unwrap();
+
+        let mut profile = load_capability_profile_report(tmp.path(), "demo").unwrap();
+        assert_eq!(profile.traits, vec!["agent_facing"]);
+        assert!(profile.unknown_traits.is_empty());
+        assert_eq!(
+            profile.required_baseline_caps,
+            vec!["developer-agent-experience"]
+        );
+
+        profile.missing_baseline_caps = missing_baseline_caps(&profile, &BTreeSet::new());
+        assert_eq!(
+            capability_profile_missing_baseline_blocker(&profile).as_deref(),
+            Some(
+                "capability profile requires missing baseline capabilities: developer-agent-experience"
+            )
+        );
+    }
+
+    #[test]
     fn project_declaring_service_umbrella_derives_full_deduped_baseline_set() {
         // Issue #1078 AC1: declaring the `service` umbrella derives the full
         // deduped baseline set of its members.

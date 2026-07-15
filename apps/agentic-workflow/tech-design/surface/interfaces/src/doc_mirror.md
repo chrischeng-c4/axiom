@@ -440,7 +440,7 @@ pub fn upsert_projects_table(
 /// `contributing_anchor` is `None` for traits with no settled CONTRIBUTING.md
 /// doc anchor (issue #1078, archetype-as-traits slice 2/3: `cli_facing`,
 /// `competitive_replacement`, `long_running`, `network_exposed`,
-/// `agent_facing`, `stateful_storage` — carried over from
+/// `stateful_storage` — carried over from
 /// `capability::other_known_trait_baseline_caps`, now folded into this one
 /// registry with no anchor rather than a second lookup table). Anchored
 /// traits render a working `Enforces` link and participate in
@@ -535,9 +535,11 @@ pub const TRAITS: &[TraitDef] = &[
     },
     TraitDef {
         id: "agent_facing",
-        baseline_caps: &[],
-        contributing_anchor: None,
-        about: "Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet.",
+        baseline_caps: &["developer-agent-experience"],
+        contributing_anchor: Some(
+            "## DX convention: every service and CLI ships a Developer & Agent Experience capability",
+        ),
+        about: "Project is primarily driven by agents rather than humans and must own the Developer & Agent Experience capability baseline.",
     },
     TraitDef {
         id: "stateful_storage",
