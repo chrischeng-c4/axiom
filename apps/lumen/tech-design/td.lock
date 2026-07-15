@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-15T19:05:29.566141+00:00"
-digest = "sha256:f46c24e5362fe90cf84ac080b06be2be162db63a7b8110e4deec502b9df5e423"
-source_digest = "sha256:f46c24e5362fe90cf84ac080b06be2be162db63a7b8110e4deec502b9df5e423"
-ir_digest = "sha256:b06b409890f5ff7cec314eb2cbc254d0d5fe52feecf2a6242a697aeda76b4128"
+generated_at = "2026-07-15T19:10:58.675290+00:00"
+digest = "sha256:671740dbb28e9273d6e619125e842e88a8f17c39dd7924cb6c42aa16b0e06835"
+source_digest = "sha256:671740dbb28e9273d6e619125e842e88a8f17c39dd7924cb6c42aa16b0e06835"
+ir_digest = "sha256:4f398906dfdd73f47e400dcfcaba50dc98c8921bbbfae1bfedd67ba04fedd1b1"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -57,8 +57,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/dx/lumen-dx-contract.md"
-digest = "sha256:2c2ea774e1513dd81befe4b817c6580a74981127afe4fb2eec1bdacfa1ce4bd9"
-ir_digest = "sha256:552932d354aea40542fe4dfdfa7c865a3b9469e30a45d027d16cf64438519cd0"
+digest = "sha256:52c33461088e841f2150c372d9293eac132ff1a1f93d6cdcb462c879d42844a6"
+ir_digest = "sha256:d1710190a942b4fd4d4c7a4c909de2593827bc9a8a2c6137ea9769d920e99108"
 section_count = 3
 
 [[files]]
@@ -93,8 +93,8 @@ section_count = 4
 
 [[files]]
 path = "logic/bulk-scroll-to-exhaustion-endpoint-for-all-matching-ids-no-unlim.md"
-digest = "sha256:61133d85e330ad6ba0aef02bca64d19de3e5a76867bdaa73d875426d0644ee61"
-ir_digest = "sha256:c28545624bdea8fcd921d4f8ccf467bd78373e634a61664f518120fe012a13de"
+digest = "sha256:6a14ee52b8124628dd0981f9e7cb58ce379cff9fdb0da11e7c2ab6d9d46e7c27"
+ir_digest = "sha256:94796a86fb3f5d3a3b17eb18954e5fa414c75eb544cf5e7bc7d5a5f83131ed45"
 section_count = 3
 
 [[files]]
@@ -147,8 +147,8 @@ section_count = 4
 
 [[files]]
 path = "logic/native-prefix-wildcard-query-for-keyword-fields.md"
-digest = "sha256:01d1daaa8a036c7e3152be28117d299a91622b23bc62d32e069d8be6e78b7edf"
-ir_digest = "sha256:f0b1fd6d806056a9b0073423c24e1b36c93c2e5175d76b3adba0bddb15ea67bd"
+digest = "sha256:d0322cbfa9217e38a74ecbb78c1dcde7ebfb84107e60b25c9f67a3d69336c127"
+ir_digest = "sha256:9940463da118acbfdb659df379a27eec9c774d23aa93db6457ab021f25411c64"
 section_count = 3
 
 [[files]]
@@ -171,8 +171,8 @@ section_count = 4
 
 [[files]]
 path = "logic/py-codegen-spec-gen-lang-py-0-4-20-batchsearchitem-alias-referen.md"
-digest = "sha256:bb29db3d6b7d90c1e002b2da8f9baf2f8e0c95576cd77aff90f5ed048f17dde7"
-ir_digest = "sha256:dbfb0a2ba59ea1f6005af35e5bd521fcba5058d07d15a5d766372656af066809"
+digest = "sha256:23cd7921c83ec5167aa065632fbb17c285c4ca1b641e582993d13d338965b12b"
+ir_digest = "sha256:abc4d8933df9a1facc4e6638b25786515fa9bb8d72c115fa9f0df84bac7ac63e"
 section_count = 3
 
 [[files]]
@@ -315,14 +315,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/lumen-src.md"
-digest = "sha256:d30618530cca1fd62a9c4ee30fe2058e80e1e89937f3713763d3a1ae565efa6d"
-ir_digest = "sha256:6aca2f69f596886ee260716e87dadd4cfb34a939aaeaf3f3e5a1fb2bf3c16941"
+digest = "sha256:83ae2a270c0a16f9e585000fc0d4f9f9658388dde9ae2a90200d23605d0855ed"
+ir_digest = "sha256:479ef906df3d7ca99d7d4dfb34051edbb78248e6fff178d1313a292b46284ba0"
 section_count = 2
 
 [[files]]
 path = "semantic/lumen-tests.md"
-digest = "sha256:b61f2b5272d9e24d9fbab4605203543f7f27a45806c4f63445807faf920a3cd7"
-ir_digest = "sha256:f62e0a990081fb771f62127be2e8d3564936feea019168f04bd88f7cb296835f"
+digest = "sha256:3ccf47ce8dfb894eba999991713003510e612ee426ff4ab38289dbce9f906534"
+ir_digest = "sha256:81978bae6b7d04cd3eaf6451a534704cd0aed4d05151a0409539b3a799cfadb1"
 section_count = 3
 
 [[files]]
@@ -453,8 +453,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-operator-reshard-driver-rs.md"
-digest = "sha256:b8206940284d4b1c4ae4fa15a43f4a075a8eb0e8f5cd00bc45e262616470eccb"
-ir_digest = "sha256:b3d9b639292edd477a716f1266f872a9683ae9e2433dd3fb417cf75aaa0137e3"
+digest = "sha256:258377911f3122630263c07035488f72b6531f2b8930b4471203fbf2c60ca8f2"
+ir_digest = "sha256:e3369d575103dbdd8d9ab3fe43db7e2240ff7f97466f6030e19b80421d903d3e"
 section_count = 3
 
 [[files]]
