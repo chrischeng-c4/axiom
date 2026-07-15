@@ -514,6 +514,10 @@ pub enum EcLockState {
     Locked,
     Missing,
     Stale,
+    /// The current EC IR omits entries protected by the existing lock. The
+    /// lock cannot be rewritten until a deliberate migration preserves or
+    /// retires those contracts.
+    MigrationRequired,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2500,10 +2504,15 @@ fn check_ec_lock_context(ctx: &EcProjectContext) -> Result<EcLockStatus> {
         ));
     }
 
+    let state = if removed.is_empty() {
+        EcLockState::Stale
+    } else {
+        EcLockState::MigrationRequired
+    };
     let message = ec_lock_stale_message(&ctx.project, metadata_changed, &changed, &added, &removed);
     Ok(ec_lock_status_from_parts(
         ctx,
-        EcLockState::Stale,
+        state,
         false,
         &snapshot,
         Some(lock.ir_digest),
@@ -2521,6 +2530,9 @@ fn write_ec_lock_context(ctx: &EcProjectContext) -> Result<(EcLockStatus, bool)>
         let status = check_ec_lock_context(ctx)?;
         if status.clean {
             return Ok((status, false));
+        }
+        if status.status == EcLockState::MigrationRequired {
+            bail!("{}", status.message);
         }
     }
     let snapshot = snapshot_ec_ir(ctx)?;
@@ -4129,6 +4141,13 @@ fn ec_lock_stale_message(
     added: &[String],
     removed: &[String],
 ) -> String {
+    if !removed.is_empty() {
+        return format!(
+            "ec lock migration required ({} locked entry/entries removed from current EC IR); refusing to overwrite `{}`. Preserve or deliberately retire each locked contract through a migration, then regenerate the lock. Inspect the affected entries with `aw ec lock --project {project} --show`",
+            removed.len(),
+            EC_LOCK_FILE,
+        );
+    }
     let mut parts = Vec::new();
     if metadata_changed {
         parts.push("metadata changed".to_string());
@@ -4138,9 +4157,6 @@ fn ec_lock_stale_message(
     }
     if !added.is_empty() {
         parts.push(format!("{} added", added.len()));
-    }
-    if !removed.is_empty() {
-        parts.push(format!("{} removed", removed.len()));
     }
     if parts.is_empty() {
         parts.push("digest changed".to_string());
@@ -7766,6 +7782,30 @@ tool_contracts:
         assert!(!status.clean);
         assert_ne!(status.ir_digest, status.locked_ir_digest.unwrap());
         assert!(status.changed.contains(&"case:demo-happy-path".to_string()));
+    }
+
+    #[test]
+    fn ec_lock_refuses_to_overwrite_when_current_ir_drops_locked_contracts() {
+        let (tmp, ctx) = write_demo_repo();
+        write_ec_lock_context(&ctx).unwrap();
+        let lock_path = ctx.ec_root.join(EC_LOCK_FILE);
+        let before = fs::read_to_string(&lock_path).unwrap();
+
+        fs::remove_file(
+            tmp.path()
+                .join("projects/demo/tech-design/specs/contract.md"),
+        )
+        .unwrap();
+
+        let status = check_ec_lock_context(&ctx).unwrap();
+        assert_eq!(status.status, EcLockState::MigrationRequired);
+        assert!(!status.clean);
+        assert!(status.removed.contains(&"case:demo-happy-path".to_string()));
+        assert!(status.message.contains("refusing to overwrite"));
+
+        let error = write_ec_lock_context(&ctx).unwrap_err();
+        assert!(format!("{error:#}").contains("migration required"));
+        assert_eq!(fs::read_to_string(&lock_path).unwrap(), before);
     }
 
     #[test]
