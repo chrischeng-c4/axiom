@@ -54,7 +54,6 @@ changes:
   - { path: apps/relay/src/operator/crd.rs, action: modify, section: logic, impl_mode: hand-written, description: Flatten the shared policy beside Relay token-secret fields. }
   - { path: apps/relay/tests/operator.rs, action: modify, section: unit-test, impl_mode: hand-written, description: Prove Relay CRD and rendering compatibility. }
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
