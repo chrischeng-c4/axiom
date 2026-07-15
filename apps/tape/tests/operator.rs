@@ -32,6 +32,7 @@ fn spec(replicas: u32) -> TapeSpec {
         log_level: None,
         auth: "off".into(),
         tokens_secret: None,
+        bootstrap_seed_uri: None,
     }
 }
 
@@ -84,6 +85,7 @@ fn crd_flattens_cluster_spec() {
         "logLevel",
         "auth",
         "tokensSecret",
+        "bootstrapSeedUri",
     ] {
         assert!(props.get(field).is_some(), "missing tape knob `{field}`");
     }
@@ -99,6 +101,16 @@ fn crd_flattens_cluster_spec() {
     assert!(
         yaml.contains("minimum"),
         "normalized uints keep a minimum floor"
+    );
+    assert!(
+        yaml.contains("default: \"off\""),
+        "the auth default must remain a string when Kubernetes parses YAML 1.1"
+    );
+    assert_eq!(props["auth"]["default"], "off");
+    assert_eq!(
+        include_str!("../k8s/operator/crd.yaml"),
+        yaml,
+        "checked-in CRD must be regenerated from the renderer"
     );
 }
 
@@ -242,6 +254,33 @@ fn token_registry_secret_wiring_is_opt_in() {
     assert_eq!(mount["readOnly"], true);
 }
 
+/// The optional cold-recovery seed stays absent by default and projects to the
+/// exact serve environment only when the CR intentionally requests it.
+#[test]
+fn bootstrap_seed_uri_wiring_is_opt_in() {
+    let plain = Tape::new("tape", spec(3));
+    let plain_objects = render(&plain);
+    let plain_env = env_of(of_kind(&plain_objects, "StatefulSet"));
+    assert!(
+        plain_env
+            .iter()
+            .all(|(name, _)| *name != "TAPE_BOOTSTRAP_SEED_URI"),
+        "ordinary PVC restarts must not reapply a seed"
+    );
+
+    let mut seeded = spec(3);
+    seeded.bootstrap_seed_uri = Some("s3://tape-backups/orders/snapshot-42.json".into());
+    let seeded = Tape::new("tape", seeded);
+    let seeded_objects = render(&seeded);
+    let seeded_env = env_of(of_kind(&seeded_objects, "StatefulSet"));
+    let seed = seeded_env
+        .iter()
+        .find(|(name, _)| *name == "TAPE_BOOTSTRAP_SEED_URI")
+        .expect("bootstrap seed env when CR requests one")
+        .1;
+    assert_eq!(seed["value"], "s3://tape-backups/orders/snapshot-42.json");
+}
+
 /// R7 — readiness target + status phases (Pending / Reconciling / Ready).
 #[test]
 fn status_patch_reports_pending_reconciling_ready() {
@@ -268,5 +307,13 @@ fn status_patch_reports_pending_reconciling_ready() {
         ready: HashMap::new(),
     });
     assert_eq!(status["status"]["phase"], "Pending");
+}
+
+/// The binary installs this process-level provider before CLI dispatch. The
+/// shared helper is intentionally safe when an earlier TLS path installed it.
+#[test]
+fn rustls_provider_install_is_idempotent() {
+    service_tls::install_default_crypto_provider();
+    service_tls::install_default_crypto_provider();
 }
 // HANDWRITE-END

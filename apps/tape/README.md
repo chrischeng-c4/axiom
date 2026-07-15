@@ -33,17 +33,22 @@ real-service external peer calibration remain separate work roots.
 |---|---:|---|---|---|---|---|
 | Topic Replay Journal | #768 | implemented | verified | smoke | ready | local file-backed append and offset/time replay; raft/h2c deferred |
 | Consumer Checkpoints | #768 | implemented | verified | smoke | ready | local durable consumer cursor and stale-write rejection |
+| Subscription Delivery Resources | #1254, #1255 | implemented | verified | smoke | ready | bounded pull/replay uses checkpoint cursors plus explicit ack; push stores endpoint contract only |
 | Retention And Backfill | #768 | planned | planned | none | not_ready | retention windows, compaction policy, and batch backfill |
 | HTTP/2 API List | #768 | implemented | verified | smoke | ready | offline `tape spec` route/OpenAPI inventory plus a real h2c + HTTP/1.1 server (#1325) serving `/topics` append/replay/checkpoint; `GET /admin/backup` + `tape backup`/`tape spec gen` client codegen (#1329) |
 | Standard Operational Endpoints | #768 | implemented | verified | smoke | ready | `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` served for real via `libs/service-http` (#1325), with drain-aware readiness and `tape serve` |
-| Kubernetes-Native Deployment | #768 | implemented | verified | smoke | ready | CRD/operator/instance render + dockerfile CLI (#1328); StatefulSet topology, offline render tests; no live kind cluster proof yet |
+| Kubernetes-Native Deployment | #768, #1590 | implemented | passing | dogfood | not_ready | CRD/operator/instance render + dockerfile CLI, plus disposable Kind proof of single-node operator reconciliation, PVC-backed append/replay, and replay after pod replacement; multi-shard and soak coverage remain separate |
+| Stateful Service Workload | #1554 | implemented | verified | smoke | ready | shared stateful-storage baseline composed from Tape's journal, raft, snapshot/backup, security boundary, and StatefulSet evidence; no duplicated runtime contract |
+| Observability | #1588 | implemented | passing | conformance | not_ready | shared Prometheus pull metrics plus optional ServiceMonitor/PrometheusRule; OTLP remains a shared-library gap rather than copied Lumen code |
+| Backup & Restore | #1585 | implemented | passing | conformance | not_ready | exact journal snapshots ship through `libs/service-backup`; cold recovery only seeds a fresh PVC before Raft catch-up, never a live in-place restore |
+| Replica Sync & Bootstrap | #1327, #1585 | implemented | passing | conformance | not_ready | Raft owns live replica synchronization; an explicit `TAPE_BOOTSTRAP_SEED_URI` can seed only an empty replacement PVC before normal delta catch-up |
 | Primary Replicas | #1327 | implemented | planned | dogfood | not_ready | raft-host auto-mode leader/follower primary-replica topology over the whole journal; live 3-node kill-9 failover proven, peer-TLS is config-surface + fail-fast validation only (raft-host h2c has no TLS seam yet) |
 | CLI Interface | #768 | implemented | verified | smoke | ready | `tape` CLI for local replay/admin, spec, and agent docs |
 | CLI Standard Surface | #768 | implemented | verified | smoke | ready | shared `llm`, `upgrade`, and `issue` command groups |
 | Chainable Output Conformance | #768 | implemented | verified | smoke | ready | replay/admin commands emit terminal `next:` hints |
 | EC Gates Configured | #768, #1330 | implemented | verified | smoke | ready | crate smoke tests + vat/meter/guard EC inventory (vat.toml, meter-tape-performance.toml, guard-tape-security.toml) |
-| Long-Running Stability | #768 | planned | planned | none | not_ready | soak, retention, compaction, and replay recovery gates |
-| Security Hardening | #768 | planned | planned | none | not_ready | producer/consumer authz, tenant isolation, audit, and secret rotation |
+| Long-Running Stability | #768, #1589 | implemented | passing | conformance | not_ready | repeated Raft restart recovery proves bounded append/checkpoint endurance; live soak and retention remain follow-ups |
+| Security Hardening | #768, #1593 | partial | passing | conformance | not_ready | shared bearer topic authz, Secret projection, non-root pod hardening, and an opt-in CNI-enforced NetworkPolicy component; audit, secret rotation, and abuse limits remain separate |
 | Competitor Feature Parity | #768 | implemented | verified | smoke | ready | Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams replay matrix; feature win only over RabbitMQ topic exchange replay gap |
 | Competitor Performance | #768 | implemented | verified | smoke | ready | Tape zero-copy replay beats NATS JetStream 20k-event local backlog replay >=1.5x; other replay-log broker wins remain unclaimed |
 
@@ -115,17 +120,17 @@ Type: Runtime
 Root WI: #768
 Status: confirmed
 Surfaces: Runtime: append log, replay readers, retention/compaction workers, checkpoint store, snapshot, and recovery paths.
-EC Dimensions: stability: pending long-running replay gate - soak, restart, retention, compaction, bounded memory, and replay continuity
+EC Dimensions: stability: `cargo test -p tape --test long_running_stability` - bounded repeated append/checkpoint restart recovery; pending live soak, retention, compaction, and bounded-memory gates
 Required Verification: conformance, dogfood
 Promise:
 Tape remains stable under sustained append/replay load, retention work, and
 restart cycles without losing committed events or corrupting checkpoints.
 Gate Inventory:
-- pending: apps/tape/tests/long_running_stability.rs
+- apps/tape/tests/long_running_stability.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| topic-replay-soak-and-recovery | epic | #768 | planned | planned | none | pending long-running replay gate |
+| repeated-raft-restart-endurance | change | #1589 | implemented | passing | conformance | apps/tape/tests/long_running_stability.rs |
 
 ### Security Hardening
 
@@ -133,18 +138,25 @@ ID: security-hardening
 Type: Devops
 Root WI: #768
 Status: confirmed
-Surfaces: HTTP/K8s: producer/consumer authn/authz, tenant/topic isolation, network policy, audit events, secret rotation, and request limits.
-EC Dimensions: behavior: pending security gate - auth failure cases, topic isolation, audit emission, secret rotation, and abuse limits
+Surfaces: HTTP/K8s: shared bearer producer/consumer authn/authz and topic isolation; opt-in ingress NetworkPolicy for Tape server pods; non-root contexts and read-only Secret projection. Audit events, secret rotation, and request limits remain separate work.
+EC Dimensions: behavior: `cargo test -p tape --test service_auth --test network_policy_assets` proves bearer topic-role enforcement and the static ingress boundary; a NetworkPolicy-capable CNI is required for cluster enforcement.
 Required Verification: negative, conformance
 Promise:
-Tape protects topic replay data with explicit producer/consumer authorization,
-auditability, network policy, and managed secret rotation.
+Tape protects topic replay data with shared bearer producer/consumer
+authorization and an opt-in NetworkPolicy that allows TCP 7137 only from
+explicitly labeled client or Prometheus namespaces. The policy complements
+rather than replaces HTTP authorization and is enforced only by a
+NetworkPolicy-capable CNI. It does not claim Lumen's search/collection RBAC;
+auditability, secret rotation, and abuse limits remain planned.
 Gate Inventory:
-- pending: apps/tape/tests/security_hardening.rs
+- apps/tape/tests/service_auth.rs
+- apps/tape/tests/network_policy_assets.rs
+- apps/tape/k8s/components/network-policy
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| topic-replay-security-boundary | epic | #768 | planned | planned | none | pending security hardening gate |
+| topic-replay-security-boundary | epic | #768 | partial | planned | none | bearer role map, Secret projection, non-root operator workload; remaining audit/rotation/limits are not claimed |
+| opt-in-server-ingress-network-policy | enhancement | #1593 | implemented | passing | conformance | apps/tape/k8s/components/network-policy<br>apps/tape/tests/network_policy_assets.rs |
 
 ### Competitor Feature Parity
 
@@ -175,28 +187,32 @@ ID: competitor-performance
 Type: RuntimeTool
 Root WI: #768
 Status: verified
-Surfaces: CLI/Test: `tape-bench run`, local append/replay throughput proxy, p50/p95 append latency, full replay latency, checkpoint write latency, real NATS JetStream replay comparison, and explicit peer calibration ledger.
-EC Dimensions: efficiency: `cargo test -p tape --test tape_perf_gate -- --nocapture`; `cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture` - local regression budget plus real JetStream replay win gate
+Surfaces: CLI/Test: `tape-bench run`, local append/replay throughput proxy, p50/p95 append latency, full replay latency, checkpoint write latency, real NATS JetStream replay comparison, real Kafka (KRaft) replay comparison, and explicit peer calibration ledger.
+EC Dimensions: efficiency: `cargo test -p tape --test tape_perf_gate -- --nocapture`; `cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture`; `cargo test -p tape --test tape_vs_kafka -- --nocapture` - local regression budget plus real JetStream and Kafka replay win gates
 Required Verification: smoke, conformance
 Promise:
-Tape maintains a local replay performance regression gate and an executable
-real-service competitor benchmark. For the current local backlog full-replay
+Tape maintains a local replay performance regression gate and executable
+real-service competitor benchmarks. For the current local backlog full-replay
 workload, Tape's zero-copy `replay_refs` path must beat NATS JetStream by at
 least 1.5x using a test that starts `nats-server -js`, publishes the same
-20,000-event, 128-byte-payload backlog, and replays it from the beginning.
-Kafka, Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed
-until their own real-service calibration gates exist; RabbitMQ topic exchange
-remains routing-only and is not a replay performance baseline.
+20,000-event, 128-byte-payload backlog, and replays it from the beginning. The
+same workload must beat a real single-node Kafka broker (KRaft mode, `docker
+run apache/kafka:3.9.0`) by at least 20x, calibrated from an actual measured
+run (~110-120x observed); this test skips gracefully when Docker is
+unavailable. Redpanda, Pulsar, and RabbitMQ Streams performance wins remain
+unclaimed until their own real-service calibration gates exist; RabbitMQ topic
+exchange remains routing-only and is not a replay performance baseline.
 Gate Inventory:
 - apps/tape/src/bench.rs
 - apps/tape/src/bin/tape-bench.rs
 - apps/tape/tests/tape_perf_gate.rs
 - apps/tape/tests/tape_vs_nats_jetstream.rs
+- apps/tape/tests/tape_vs_kafka.rs
 - apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| topic-replay-competitor-performance-baseline | epic | #768 | implemented | passing | smoke | apps/tape/tests/tape_perf_gate.rs<br>apps/tape/tests/tape_vs_nats_jetstream.rs |
+| topic-replay-competitor-performance-baseline | epic | #768 | implemented | passing | smoke | apps/tape/tests/tape_perf_gate.rs<br>apps/tape/tests/tape_vs_nats_jetstream.rs<br>apps/tape/tests/tape_vs_kafka.rs |
 
 ### Topic Replay Journal
 
@@ -237,6 +253,34 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | durable-consumer-cursor-contract | epic | #768 | implemented | passing | smoke | apps/tape/src/lib.rs<br>apps/tape/tests/cli_contract.rs |
+
+### Subscription Delivery Resources
+
+ID: subscription-delivery-resources
+Type: RuntimeTool
+Root WI: #1254, #1255
+Status: verified
+Surfaces: CLI: `tape subscription create|list|show|pull|ack|delete`; API inventory: `/topics/{topic}/subscriptions`, `/topics/{topic}/subscriptions/{subscription}/pull`, and `/topics/{topic}/subscriptions/{subscription}/ack`.
+EC Dimensions: behavior: `cargo test -p tape --test cli_contract` - local pull/push resource and spec inventory contract
+Required Verification: smoke, conformance
+Promise:
+Tape exposes named topic delivery resources without becoming Relay: bounded
+pull reads use the durable `topic/name` checkpoint as their next-offset cursor,
+return at most the caller's requested (maximum 1000) window, and require an
+explicit ack to advance it. This is Tape's high-QPS pull/replay comparison
+path. Push subscriptions persist an endpoint declaration only. This slice does
+not start a push worker, send outbound requests, add live h2c subscription
+routes, lease scheduling, or replicate subscription cursor state through raft.
+Gate Inventory:
+- apps/tape/src/lib.rs
+- apps/tape/src/bin/tape.rs
+- apps/tape/src/spec.rs
+- apps/tape/tests/cli_contract.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| topic-subscription-resource-contract | change | #1254 | implemented | passing | smoke | apps/tape/tests/cli_contract.rs |
+| pull-subscription-cursor-contract | change | #1255 | implemented | passing | smoke | apps/tape/src/lib.rs<br>apps/tape/tests/cli_contract.rs |
 
 ### Retention And Backfill
 
@@ -315,6 +359,31 @@ Gate Inventory:
 | standard-service-route-inventory | epic | #768 | implemented | passing | smoke | apps/tape/src/spec.rs<br>apps/tape/tests/cli_contract.rs |
 | service-http-shell-h2c-serve-standard-endpoints | change | #1325 | implemented | passing | smoke | apps/tape/src/server.rs<br>apps/tape/src/metrics.rs<br>apps/tape/src/bin/tape.rs<br>apps/tape/tests/http_transport.rs |
 
+### Observability
+
+ID: observability
+Type: Devops
+Root WI: #1588
+Status: confirmed
+Surfaces: HTTP: `/metrics` from shared `service-metrics`; K8s: optional
+ServiceMonitor and PrometheusRule component; Logs: structured `tracing` output.
+EC Dimensions: behavior: `cargo test -p tape --test observability_assets` -
+offline manifest and metric-name conformance.
+Required Verification: conformance
+Promise:
+Tape exports bounded pull metrics and provides an optional Prometheus Operator
+bundle that preserves `app`/`role` labels and alerts on actual append/replay
+latency series and pod restart loops. It intentionally does not copy Lumen's
+private OTLP implementation: shared OTLP ownership remains a library gap.
+Gate Inventory:
+- apps/tape/src/metrics.rs
+- apps/tape/k8s/components/observability
+- apps/tape/tests/observability_assets.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| prometheus-operator-scrape-alert-component | change | #1588 | implemented | passing | conformance | apps/tape/k8s/components/observability<br>apps/tape/tests/observability_assets.rs |
+
 ### EC Gates Configured
 
 ID: ec-gates-configured
@@ -349,20 +418,116 @@ Type: Devops
 Root WI: #768
 Status: confirmed
 Surfaces: K8s: dedicated StatefulSet/operator topology for topic partitions, storage, probes, and PDBs (#1328); `tape k8s crd|operator|instance render`, `tape k8s operator run` (behind the `operator` cargo feature), and `tape dockerfile render --variant source|release`.
-EC Dimensions: behavior: offline render/CLI gates (`tests/deploy_cli.rs`, `tests/operator.rs`) - CRD structural-schema safety, operator render shape, instance profiles, dockerfile fixture parity; stability: pending live kind replay dogfood (no cluster available in this slice)
-Required Verification: smoke
+EC Dimensions: behavior: offline render/CLI gates (`tests/deploy_cli.rs`, `tests/operator.rs`) - CRD structural-schema safety, operator render shape, instance profiles, dockerfile fixture parity; stability: `bash apps/tape/scripts/kind-e2e.sh` builds the real image, creates a disposable Kind cluster, and proves append/replay survives one single-node StatefulSet pod replacement with its PVC retained.
+Required Verification: smoke, dogfood
 Promise:
 Tape runs as a dedicated k8s-native replay service with stable identity,
-persistent storage, and operator-managed lifecycle. Live-cluster
-dogfood (kind smoke) is a deferred follow-up.
+persistent storage, and operator-managed lifecycle. The bounded Kind dogfood
+gate covers one single-node replacement; multi-shard and long-running soak
+remain separate work roots.
 Gate Inventory:
 - apps/tape/k8s/operator/{crd,rbac,deployment}.yaml
 - apps/tape/tests/deploy_cli.rs
 - apps/tape/tests/operator.rs
+- apps/tape/scripts/kind-e2e.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | dedicated-statefulset-operator-topology | epic | #768 | implemented | verified | smoke | apps/tape/tests/{deploy_cli,operator}.rs; #1328 |
+| operator-kind-pvc-restart-replay | test | #1590 | implemented | passing | dogfood | apps/tape/scripts/kind-e2e.sh |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Service
+Root WI: #1554
+Status: verified
+Surfaces: Durable journal state plus stateful deployment: `apps/tape/src/lib.rs`,
+`libs/raft-core`, `libs/raft-host`, `apps/tape/src/backup.rs`, and the dedicated
+StatefulSet/operator rendering surface under `apps/tape/k8s/`.
+EC Dimensions: behavior: `aw capability check --project tape --skip-issue-inventory` -
+the `stateful_storage` profile resolves its shared baseline; stability: existing
+raft failover/restart and backup snapshot gates remain authoritative, while live
+kind dogfood, peer-mTLS termination, and the broader security boundary remain
+explicitly unfinished in their own capability roots.
+Required Verification: smoke
+Promise:
+Tape projects the shared stateful-service workload baseline without a duplicate
+service implementation. Its durable append log, stable identity/PVC lifecycle,
+raft primary-replica recovery, snapshot/backup path, deployment artifacts, and
+security boundary are owned by the linked capability roots below; this baseline
+does not turn their remaining planned work into a completed claim.
+Gate Inventory:
+- `aw capability check --project tape --skip-issue-inventory`
+- apps/tape/tests/{raft_cluster,raft_failover,raft_persistence}.rs
+- apps/tape/tests/{backup,deploy_cli,operator}.rs
+- apps/tape/k8s/operator/{crd,rbac,deployment}.yaml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| stateful-service-workload-projection | change | #1554 | implemented | passing | smoke | `aw capability check --project tape --skip-issue-inventory`; composes Topic Replay Journal, Primary Replicas, HTTP/2 API List, Kubernetes-Native Deployment, and Security Hardening without duplicating their claims |
+
+### Backup & Restore
+
+ID: backup-restore
+Type: Service
+Root WI: #1585
+Status: confirmed
+Surfaces: Admin HTTP: `GET /admin/backup` yields the exact whole-journal
+`JournalSnapshot`; CLI: `tape backup` ships those bytes through
+`libs/service-backup`; Runtime: `tape serve --bootstrap-seed-uri` restores only
+into a fresh replica PVC before Raft starts.
+EC Dimensions: behavior: `cargo test -p tape --test backup --test bootstrap` -
+snapshot transport and cold-seed conformance.
+Required Verification: conformance
+Promise:
+Tape writes no second backup format. A backup object is the same
+`JournalSnapshot` bytes that the state machine snapshots and restores. A
+disaster-recovery seed is deliberately cold and destructive only to an *empty*
+PVC: Tape validates the object, atomically prepares the per-node state-machine
+snapshot and applied floor, then lets normal Raft log/snapshot catch-up resume.
+There is no online `POST /admin/restore` that can overwrite a live leader or
+follower.
+Gate Inventory:
+- apps/tape/src/{backup,raft}.rs
+- libs/service-backup/src/source.rs
+- apps/tape/tests/{backup,bootstrap}.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| exact-journal-snapshot-backup | epic | #1329 | implemented | passing | conformance | apps/tape/src/backup.rs<br>apps/tape/tests/backup.rs |
+| fresh-pvc-cold-recovery-seed | change | #1585 | implemented | passing | conformance | apps/tape/src/raft.rs<br>apps/tape/tests/bootstrap.rs |
+
+### Replica Sync & Bootstrap
+
+ID: replica-sync-bootstrap
+Type: Service
+Root WI: #1327, #1585
+Status: confirmed
+Surfaces: RaftHost: leader forwarding, committed apply, InstallSnapshot, and
+follower catch-up; Backup seed: exact `file://` or backup-enabled `s3://`
+object read through `libs/service-backup` before an empty PVC joins the group.
+EC Dimensions: behavior: `cargo test -p tape --test raft_cluster --test
+bootstrap` - live replica convergence and seed-before-catch-up conformance;
+stability: `cargo test -p tape --test raft_failover --test raft_persistence` -
+kill-9 failover and restart recovery.
+Required Verification: conformance, dogfood
+Promise:
+Existing PVCs recover their local Raft state and synchronise through
+`raft-host`; a replacement with no local state may load one exact external
+snapshot before it catches up. Backup artifacts are a cold seed or DR path,
+not a substitute for ordinary live replication, leader forwarding, or
+InstallSnapshot.
+Gate Inventory:
+- apps/tape/src/{raft,bin/tape}.rs
+- apps/tape/tests/{raft_cluster,raft_failover,raft_persistence,bootstrap}.rs
+- libs/raft-host
+- libs/service-backup/src/source.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| raft-log-existing-pvc-sync | epic | #1327 | implemented | passing | conformance | apps/tape/tests/raft_cluster.rs<br>apps/tape/tests/raft_persistence.rs |
+| empty-pvc-external-backup-seed | change | #1585 | implemented | passing | conformance | apps/tape/src/raft.rs<br>apps/tape/tests/bootstrap.rs |
 
 ### Primary Replicas
 

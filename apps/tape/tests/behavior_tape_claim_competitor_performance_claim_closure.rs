@@ -10,7 +10,7 @@
 // @command cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture
 // AW-EC-END
 
-// Contract: The local Tape performance regression gate passes for append, replay, and checkpoint operations.
+// Contract: The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations.
 // Contract: Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.
 // Contract: Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist.
 #[test]
