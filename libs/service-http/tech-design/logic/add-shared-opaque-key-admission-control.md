@@ -48,7 +48,6 @@ flowchart TD
     bypass --> done([Credential-free result])
     bound --> done
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
