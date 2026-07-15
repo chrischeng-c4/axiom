@@ -2,13 +2,13 @@ version = 2
 project = "server-http"
 ir_kind = "td"
 td_path = "libs/server-http/tech-design"
-generated_at = "2026-07-15T08:21:25.145825+00:00"
-digest = "sha256:c3144223da3882f3fd4efa3b87672bcfd47395f7c7c2a625e0989e94b13d5f76"
-source_digest = "sha256:c3144223da3882f3fd4efa3b87672bcfd47395f7c7c2a625e0989e94b13d5f76"
-ir_digest = "sha256:b1eab3d6c6aa105cb78c9387e350f51e85c1c7c2cf554542607279d0ab7fbf24"
+generated_at = "2026-07-15T09:06:14.275395+00:00"
+digest = "sha256:14988bf176c754e15f4398927dd91aa2c8331bc367dd2faacb2845bcc2ce6e9c"
+source_digest = "sha256:14988bf176c754e15f4398927dd91aa2c8331bc367dd2faacb2845bcc2ce6e9c"
+ir_digest = "sha256:c8c13ceb95c39f91ff0a42f27d7d19fac0006b4b907365e2e24d5876c80e9701"
 
 [[files]]
 path = "logic/converge-http-runtime-on-shared-lifecycle-ownership.md"
-digest = "sha256:313e59c494675c6071222b1c46224feae9fe18a11bab217229a2db53cf11f4ee"
-ir_digest = "sha256:6a3368ec7688bdfe0a3afd45778d3232f6ab733d37cff6b0883c4279717cc7dd"
+digest = "sha256:9efbc09c19f77fc78919c6c181bec903110eac25a3e806983620c19224e7eae9"
+ir_digest = "sha256:7408fe48ab8ad3e82fd90764745e05b9e4d5fd0a7d2e77ae2caafb4c7db3ee0c"
 section_count = 3
