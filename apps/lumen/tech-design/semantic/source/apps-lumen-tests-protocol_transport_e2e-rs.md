@@ -111,7 +111,7 @@ async fn lumen_server_accepts_http1_and_h2c_clients_on_one_socket() {
     let http1_body: Value = http1_resp.json().await.expect("http1 json");
     assert_eq!(http1_body, serde_json::json!([]));
 
-    let h2c = h2c::h2c_client().expect("h2c prior-knowledge client");
+    let h2c = transport_h2c::h2c_client().expect("h2c prior-knowledge client");
     let h2_resp = h2c.get(&url).send().await.expect("h2c GET /collections");
     assert_eq!(h2_resp.version(), reqwest::Version::HTTP_2);
     assert!(h2_resp.status().is_success());

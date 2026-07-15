@@ -101,7 +101,7 @@ Gate Inventory:
 
 ID: long-running-stability
 Type: RuntimeTool
-Surfaces: CLI: `keep` - long-running WAL/snapshot-backed service process.; K8s: `apps/keep/k8s` - StatefulSet/PDB deployment shape.; Rust API: `keep::raft` - raft-host-backed HA path.
+Surfaces: CLI: `keep` - long-running WAL/snapshot-backed service process.; K8s: `apps/keep/k8s` - StatefulSet/PDB deployment shape.; Rust API: `keep::raft` - raft-runtime-backed HA path.
 EC Dimensions: stability: `cargo test -p keep --test durability --test http_api --test raft_node` - recovery, drain, probe, and raft state-machine conformance
 Root WI: 121
 Status: auditing
@@ -190,7 +190,7 @@ Gate Inventory:
 
 ID: primary-replicas
 Type: Runtime
-Surfaces: Rust API: `keep::raft` - raft-host-backed state machine for primary/replica convergence.; K8s: StatefulSet - stable network identity and PVC-backed replica pods.; HTTP: future raft network - primary write ownership with replica failover.
+Surfaces: Rust API: `keep::raft` - raft-runtime-backed state machine for primary/replica convergence.; K8s: StatefulSet - stable network identity and PVC-backed replica pods.; HTTP: future raft network - primary write ownership with replica failover.
 EC Dimensions: stability: `cargo test -p keep --test raft_node` - current raft state-machine conformance; behavior: multi-node HTTP/2 raft network - staged failover gate
 Root WI: 121
 Status: auditing
@@ -273,7 +273,7 @@ Gate Inventory:
 
 ID: ha-raft
 Type: Runtime
-Surfaces: Rust API: `keep::raft` - raft-host-backed state machine.; K8s: StatefulSet - PVC-backed instances.
+Surfaces: Rust API: `keep::raft` - raft-runtime-backed state machine.; K8s: StatefulSet - PVC-backed instances.
 EC Dimensions: stability: `cargo test -p keep --test raft_node` - raft state-machine conformance
 Root WI: 121
 Status: auditing
@@ -382,7 +382,7 @@ Images: `Dockerfile` (from-source, build context = repo root) and
 - ✅ durable-before-ack WAL (no-drop, group commit) — #114
 - ✅ perf-gate via meter: engine throughput ratchet + server resource gate — see [meter-performance-gates.md](external-contracts/competitor-performance/efficiency/meter-performance-gates.md) (#126). Competitor comparison (vs Redis/Dragonfly) is the separate one-off `examples/bench_compare.rs`.
 - ☐ worker-facing OpenAPI contract finalized with relay — #108
-- ◑ HA — phase A (sharded scale-out + `/cluster`) done; phase C raft via raft-host integrated (`--features raft`, engine-backed state machine, HTTP write propose path, proven by `tests/raft_node.rs` and the raft HTTP API test) — multi-node failover remains staged; see [.aw/tech-design/projects/keep/logic/ha-raft-sharding-roadmap.md](../../.aw/tech-design/projects/keep/logic/ha-raft-sharding-roadmap.md) (#121)
+- ◑ HA — phase A (sharded scale-out + `/cluster`) done; phase C raft via raft-runtime integrated (`--features raft`, engine-backed state machine, HTTP write propose path, proven by `tests/raft_node.rs` and the raft HTTP API test) — multi-node failover remains staged; see [.aw/tech-design/projects/keep/logic/ha-raft-sharding-roadmap.md](../../.aw/tech-design/projects/keep/logic/ha-raft-sharding-roadmap.md) (#121)
 - ✅ queuekit and queue-era `ion` feature consumers now use `keep::client`
   instead of the retired raw-TCP `cclab-kv` client; remaining cleanup is
   deduping legacy `cclab-kv` copies.

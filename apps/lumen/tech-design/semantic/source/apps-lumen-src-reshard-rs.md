@@ -1349,7 +1349,7 @@ changes:
       whose id set alone serialized past `MAX_BATCH_BYTES` produced
       chunks over the route's hard body limit no matter how small
       `snapshot`/`external_ids` were, and
-      `operator::reshard_driver::detect_oversized_batch` wrongly blamed
+      `service_k8s::reshard_driver::detect_oversized_batch` wrongly blamed
       whichever document happened to be first in the chunk. The
       authoritative-replace concern moved to a new, independently
       byte-capped message type: `ReshardPruneChunk`, built by the new

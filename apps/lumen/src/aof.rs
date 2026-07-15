@@ -52,8 +52,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-pub use service_durability::FsyncPolicy;
-use service_durability::{FramedLogReader, FramedLogWriter};
+pub use storage_durable::FsyncPolicy;
+use storage_durable::{FramedLogReader, FramedLogWriter};
 
 #[cfg(test)]
 use std::fs::OpenOptions;

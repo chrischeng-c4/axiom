@@ -9,7 +9,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use bytes::BytesMut;
-use server_core::ConnectionBudget;
+use server_lifecycle::ConnectionBudget;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 

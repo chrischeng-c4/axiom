@@ -51,10 +51,10 @@ Public API manifest for `apps/lumen/src/config.rs` generated from AST during Sco
 //!
 //! The env keys and the ordinal/shard/replica/voter derivation are the same
 //! StatefulSet downward-API math every raft_core service needs, and live in
-//! `libs/raft-host::cluster::ClusterDims` (#1002); this module is a thin
+//! `libs/raft-runtime::cluster::ClusterDims` (#1002); this module is a thin
 //! adapter that keeps lumen's own `ClusterConfig` type (compiled unconditionally,
 //! unlike the raft-wal-only peer/DNS wiring in `raft.rs`) while delegating the
-//! actual math so it can't drift from `raft_host::cluster::ClusterTopology`.
+//! actual math so it can't drift from `raft_runtime::cluster::ClusterTopology`.
 
 use anyhow::{Context, Result};
 
@@ -70,8 +70,8 @@ pub struct ClusterConfig {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
-impl From<raft_host::cluster::ClusterDims> for ClusterConfig {
-    fn from(d: raft_host::cluster::ClusterDims) -> Self {
+impl From<raft_runtime::cluster::ClusterDims> for ClusterConfig {
+    fn from(d: raft_runtime::cluster::ClusterDims) -> Self {
         Self {
             shard_count: d.shard_count,
             replicas_per_shard: d.replicas_per_shard,
@@ -82,7 +82,7 @@ impl From<raft_host::cluster::ClusterDims> for ClusterConfig {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
-impl From<ClusterConfig> for raft_host::cluster::ClusterDims {
+impl From<ClusterConfig> for raft_runtime::cluster::ClusterDims {
     fn from(c: ClusterConfig) -> Self {
         Self {
             shard_count: c.shard_count,
@@ -96,23 +96,23 @@ impl From<ClusterConfig> for raft_host::cluster::ClusterDims {
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
 impl ClusterConfig {
     pub fn from_env() -> Result<Self> {
-        Ok(raft_host::cluster::ClusterDims::from_env()?.into())
+        Ok(raft_runtime::cluster::ClusterDims::from_env()?.into())
     }
 
     pub fn pod_ordinal(&self) -> Result<u32> {
-        raft_host::cluster::ClusterDims::from(self.clone()).pod_ordinal()
+        raft_runtime::cluster::ClusterDims::from(self.clone()).pod_ordinal()
     }
 
     pub fn shard_index(&self) -> Result<u32> {
-        raft_host::cluster::ClusterDims::from(self.clone()).shard_index()
+        raft_runtime::cluster::ClusterDims::from(self.clone()).shard_index()
     }
 
     pub fn replica_index(&self) -> Result<u32> {
-        raft_host::cluster::ClusterDims::from(self.clone()).replica_index()
+        raft_runtime::cluster::ClusterDims::from(self.clone()).replica_index()
     }
 
     pub fn is_voter(&self) -> Result<bool> {
-        raft_host::cluster::ClusterDims::from(self.clone()).is_voter()
+        raft_runtime::cluster::ClusterDims::from(self.clone()).is_voter()
     }
 }
 
@@ -214,12 +214,12 @@ pub fn check_fan_in_shard_count(map: &VirtualBucketShardMap, loaded_dirs: usize)
 ///
 /// `ClusterConfig::from_env` can't be used here: it requires the full raft
 /// downward-API quartet (`REPLICAS_PER_SHARD`/`VOTER_COUNT`), which
-/// `operator::render::serving_statefulset` deliberately strips at
+/// `service_k8s::render::serving_statefulset` deliberately strips at
 /// `replicasPerShard <= 1` — there is no raft peer identity to derive in
 /// that topology, exactly the one routed mode targets. At
 /// `replicasPerShard <= 1` the StatefulSet has exactly `shard_count` pods
 /// (ordinals `0..shard_count`), so `shard_index = ordinal % shard_count ==
-/// ordinal`; this mirrors `raft_host::cluster::ClusterDims::pod_ordinal`/
+/// ordinal`; this mirrors `raft_runtime::cluster::ClusterDims::pod_ordinal`/
 /// `shard_index`'s exact math (same `rsplit_once('-')` + `% shard_count`)
 /// so the two derivations can't drift apart.
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
@@ -247,7 +247,7 @@ pub fn routed_pod_topology(shard_count: u32) -> Result<(String, u32)> {
 /// forwarding overhead, not just a no-op branch through one).
 ///
 /// `REPLICAS_PER_SHARD` unset is treated as `<= 1`
-/// (`operator::render::serving_statefulset` strips this env entirely at
+/// (`service_k8s::render::serving_statefulset` strips this env entirely at
 /// `replicasPerShard <= 1`, so "absent" and "explicitly 1" are the same
 /// topology) — a `SHARD_COUNT > 1` deployment that also has
 /// `REPLICAS_PER_SHARD > 1` is the multi-replica-per-shard raft topology
@@ -580,14 +580,14 @@ mod tests {
     #[test]
     fn routed_pod_topology_matches_cluster_dims_math() {
         // Same rsplit_once('-') + `% shard_count` math as
-        // `raft_host::cluster::ClusterDims::pod_ordinal`/`shard_index` —
+        // `raft_runtime::cluster::ClusterDims::pod_ordinal`/`shard_index` —
         // must never drift apart.
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("POD_NAME", "search-7");
         }
         let (_, shard) = routed_pod_topology(3).unwrap();
-        let dims = raft_host::cluster::ClusterDims {
+        let dims = raft_runtime::cluster::ClusterDims {
             shard_count: 3,
             replicas_per_shard: 1,
             voter_count: 1,
@@ -693,7 +693,7 @@ mod tests {
     fn routed_shard_count_from_env_some_when_replicas_per_shard_absent_or_one() {
         // #1442 R3: absent REPLICAS_PER_SHARD is treated the same as an
         // explicit `1` — the operator strips the env entirely at
-        // `replicasPerShard <= 1` (`operator::render::serving_statefulset`).
+        // `replicasPerShard <= 1` (`service_k8s::render::serving_statefulset`).
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("SHARD_COUNT", "4");
@@ -789,7 +789,7 @@ changes:
     description: |
       #1442 R3: `routed_shard_count_from_env` now also reads
       `REPLICAS_PER_SHARD` (absent treated as `1`, matching
-      `operator::render::serving_statefulset` stripping the env at
+      `service_k8s::render::serving_statefulset` stripping the env at
       `replicasPerShard <= 1`) and returns `None` when it is `> 1` — a
       multi-replica-per-shard raft topology must never activate cross-pod
       routing, since `routed_pod_topology`'s ordinal math assumes exactly

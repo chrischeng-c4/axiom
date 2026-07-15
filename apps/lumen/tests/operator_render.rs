@@ -125,16 +125,15 @@ fn dev_renders_full_managed_set() {
     let objs = render(&l);
 
     // Serving objects, in the CR's namespace, named off the instance. The
-    // serving fleet is a StatefulSet even at replicasPerShard:1 (#812) — its
-    // headless Service and the ClusterIP Service and HPA are all still
-    // rendered for the single-member regime.
+    // serving fleet is a StatefulSet even at replicasPerShard:1 (#812). A
+    // direct HPA is intentionally absent: it cannot perform Raft membership
+    // changes or preserve whole per-shard replica layers.
     for (kind, name) in [
         ("ServiceAccount", "search"),
         ("ConfigMap", "search-config"),
         ("StatefulSet", "search"),
         ("Service", "search-headless"),
         ("Service", "search"),
-        ("HorizontalPodAutoscaler", "search"),
         ("PodDisruptionBudget", "search"),
     ] {
         assert!(
@@ -143,6 +142,7 @@ fn dev_renders_full_managed_set() {
             kinds(&objs)
         );
     }
+    assert!(!has(&objs, "HorizontalPodAutoscaler", "search"));
     // Never a Deployment — the operator no longer switches workload kind by
     // replica count.
     assert!(!has(&objs, "Deployment", "search"));
@@ -175,7 +175,7 @@ fn statefulset_wires_serving_contract_single_member() {
     let objs = render(&l);
     let sts = find(&objs, "StatefulSet", "search");
 
-    // HPA floor == apply-time replicas; StatefulSet-native rollout knobs.
+    // replicasPerShard is the apply-time floor; StatefulSet-native rollout knobs.
     assert_eq!(sts["spec"]["replicas"], 1);
     assert_eq!(sts["spec"]["serviceName"], "search-headless");
     assert_eq!(sts["spec"]["podManagementPolicy"], "Parallel");
@@ -191,12 +191,14 @@ fn statefulset_wires_serving_contract_single_member() {
     assert_eq!(c["command"], serde_json::json!(["lumen", "serve"]));
     assert_eq!(c["ports"][0]["containerPort"], 7373);
 
-    // Guaranteed QoS: requests == limits, from the spec.
-    assert_eq!(c["resources"]["requests"]["cpu"], "2");
-    assert_eq!(c["resources"]["limits"]["cpu"], "2");
+    // Shared request-only baseline: 1 CPU / 4Gi, no limits.
+    assert_eq!(c["resources"]["requests"]["cpu"], "1");
+    assert_eq!(c["resources"]["requests"]["memory"], "4Gi");
+    assert!(c["resources"].get("limits").is_none());
     assert_eq!(
-        c["resources"]["requests"]["memory"],
-        c["resources"]["limits"]["memory"]
+        sts["spec"]["template"]["spec"]["affinity"]["podAntiAffinity"]
+            ["requiredDuringSchedulingIgnoredDuringExecution"][0]["topologyKey"],
+        "kubernetes.io/hostname"
     );
 
     // Probes tuned for log-replay: a generous readiness failureThreshold.
@@ -287,7 +289,7 @@ fn statefulset_wires_serving_contract_single_member() {
     );
     // (#809) StatefulSet names the resulting per-pod PVCs
     // `raft-<statefulset-name>-<ordinal>` (e.g. `raft-search-0`); this is the
-    // exact `raft-<name>-` prefix `operator::resize::resize_instance` filters
+    // exact `raft-<name>-` prefix `service_k8s::resize::resize_instance` filters
     // on when detecting/patching live PVCs, and the "raft" template name +
     // `resources.requests.storage` field below are what it reads back to
     // compare against `spec.serving.raftStorage`. render() itself is
@@ -356,29 +358,14 @@ fn multi_shard_single_replica_is_fixed_storage_topology_not_hpa() {
 }
 
 #[test]
-fn hpa_is_rendered_for_single_replica_serving() {
+fn direct_hpa_is_never_rendered_for_single_replica_serving() {
     let l = lumen("search", dev_spec());
     let objs = render(&l);
-
-    let hpa = find(&objs, "HorizontalPodAutoscaler", "search");
-    // #1317: at replicasPerShard<=1 with shardCount<=1 there is no raft
-    // consensus, so the HPA's bounds are clamped to exactly 1/1 regardless
-    // of the CR's `serving.autoscaling` values (dev_spec sets min=1/max=3) —
-    // more than one live pod here would be an uncoordinated shard-0 copy.
-    // Confirmed empirically on a kind cluster: with minReplicas raised above
-    // 1, the resulting StatefulSet pods each hold independent local state
-    // and the fronting Service returns divergent results for identical
-    // reads.
-    assert_eq!(hpa["spec"]["minReplicas"], 1);
-    assert_eq!(hpa["spec"]["maxReplicas"], 1);
-    assert_eq!(hpa["spec"]["scaleTargetRef"]["name"], "search");
-    // The serving fleet is a StatefulSet (#812) — the HPA must target it, not
-    // the retired Deployment kind.
-    assert_eq!(hpa["spec"]["scaleTargetRef"]["kind"], "StatefulSet");
+    assert!(!has(&objs, "HorizontalPodAutoscaler", "search"));
 }
 
 #[test]
-fn single_member_hpa_and_storage_pod_count_clamp_to_one_regardless_of_autoscaling_bounds() {
+fn single_member_storage_pod_count_ignores_legacy_autoscaling_bounds() {
     // #1317: default `Autoscaling` (minReplicas: 3, maxReplicas: 12) at the
     // CRD's own default topology (shardCount: 1, replicasPerShard: 1) must
     // not fan out to 3+ uncoordinated shard-0 copies.
@@ -392,9 +379,7 @@ fn single_member_hpa_and_storage_pod_count_clamp_to_one_regardless_of_autoscalin
     let objs = render(&l);
     let sts = find(&objs, "StatefulSet", "search");
     assert_eq!(sts["spec"]["replicas"], 1);
-    let hpa = find(&objs, "HorizontalPodAutoscaler", "search");
-    assert_eq!(hpa["spec"]["minReplicas"], 1);
-    assert_eq!(hpa["spec"]["maxReplicas"], 1);
+    assert!(!has(&objs, "HorizontalPodAutoscaler", "search"));
 
     // Also an explicit, non-default CR bound (minReplicas: 3) — the same
     // clamp applies whether the bounds come from the CRD default or an
@@ -408,9 +393,7 @@ fn single_member_hpa_and_storage_pod_count_clamp_to_one_regardless_of_autoscalin
     let objs = render(&l);
     let sts = find(&objs, "StatefulSet", "search");
     assert_eq!(sts["spec"]["replicas"], 1);
-    let hpa = find(&objs, "HorizontalPodAutoscaler", "search");
-    assert_eq!(hpa["spec"]["minReplicas"], 1);
-    assert_eq!(hpa["spec"]["maxReplicas"], 1);
+    assert!(!has(&objs, "HorizontalPodAutoscaler", "search"));
 }
 
 #[test]
@@ -756,7 +739,7 @@ fn relay_objects_are_not_rendered() {
     let l = lumen("search", dev_spec());
     let objs = render(&l);
 
-    // No managed Relay objects at all: Lumen owns HA via raft-host.
+    // No managed Relay objects at all: Lumen owns HA via raft-runtime.
     assert!(!has(&objs, "StatefulSet", "search-relay"));
     assert!(!has(&objs, "Service", "search-relay"));
     assert!(!has(&objs, "Service", "search-relay-headless"));
@@ -766,8 +749,8 @@ fn relay_objects_are_not_rendered() {
 #[test]
 fn raft_ha_renders_serving_statefulset() {
     // `replicasPerShard > 1` switches the serving fleet from a Deployment+HPA to a
-    // raft-HA StatefulSet whose pods carry the downward-API env raft_host::cluster
-    // reads — the operator↔raft-host wiring, end to end.
+    // raft-HA StatefulSet whose pods carry the downward-API env raft_runtime::cluster
+    // reads — the operator↔raft-runtime wiring, end to end.
     let mut spec = dev_spec();
     spec.shard_count = 2;
     spec.replicas_per_shard = 3;
@@ -790,7 +773,7 @@ fn raft_ha_renders_serving_statefulset() {
     assert_eq!(sts["spec"]["podManagementPolicy"], "Parallel");
     assert_eq!(sts["spec"]["replicas"], 6); // shard_count(2) × replicasPerShard(3)
 
-    // Exactly the env `raft_host::cluster::ClusterTopology::from_env` reads.
+    // Exactly the env `raft_runtime::cluster::ClusterTopology::from_env` reads.
     let env = env_names(&sts["spec"]["template"]["spec"]["containers"][0]);
     for k in [
         "POD_NAME",
@@ -811,7 +794,7 @@ fn raft_ha_renders_serving_statefulset() {
     }
 
     // The raft PVC shape is unchanged by #812 — it was already unconditional
-    // in the raft-HA regime. Still unchanged by #809: `operator::resize`
+    // in the raft-HA regime. Still unchanged by #809: `service_k8s::resize`
     // only reads this rendered `raft-<name>-<ordinal>` PVC shape, it never
     // alters render()'s output.
     let vcts = sts["spec"]["volumeClaimTemplates"].as_array().unwrap();

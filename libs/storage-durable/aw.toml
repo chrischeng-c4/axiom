@@ -14,7 +14,7 @@ verify_cold = true
 [aw.ec.generated]
 version = 1
 project = "storage-durable"
-generated_from_td_digest = "sha256:db4e12963841860b4b014e49ed089b568dbe93ad831150546af868fd54b86363"
+generated_from_td_digest = "sha256:9d7f2d94db5d6492c7cb265737e6fa9e9ce0126fbaab7e096643f23ae1a336e7"
 
 [[aw.ec.generated.cases]]
 id = "shared-storage-durable-contract"

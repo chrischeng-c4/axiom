@@ -6,7 +6,7 @@ capability_refs:
     gap: "log-fan-out-rebuild-from-log"
     claim: "log-fan-out-rebuild-from-log"
     coverage: full
-    rationale: "This source unit owns the raft-host backed state-machine path for replaying committed log entries into Lumen Engine state."
+    rationale: "This source unit owns the raft-runtime backed state-machine path for replaying committed log entries into Lumen Engine state."
   - id: "replica-sync-bootstrap"
     role: primary
     gap: "raft-log-replica-sync-existing-pvc"
@@ -38,7 +38,7 @@ Public API manifest for `apps/lumen/src/raft_sm.rs` generated from AST during Lu
 ````rust
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-raft_sm-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! `EngineSm` — lumen's [`Engine`] as a [`raft_host::RaftStateMachine`].
+//! `EngineSm` — lumen's [`Engine`] as a [`raft_runtime::RaftStateMachine`].
 //!
 //! This is lumen's convergence onto the shared raft host (epic #524): the host
 //! is the sole applier, so the `WriteCoordinator`/`WalLog` seam (a NATS-era
@@ -54,14 +54,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use raft_host::{Index, OutcomeWindow, RaftStateMachine};
+use raft_runtime::{Index, OutcomeWindow, RaftStateMachine};
 
 use crate::coordinator::WriteSink;
 use crate::log_entry::RaftLogEntry;
 use crate::rdb::RdbSnapshot;
 use crate::storage::{ApplyOutcome, Engine};
 use crate::wal::WalRecord;
-use raft_host::RaftHost;
+use raft_runtime::RaftHost;
 
 /// How many recent apply outcomes to retain for the write handler to claim,
 /// via [`OutcomeWindow`].
@@ -171,7 +171,7 @@ mod tests {
     use crate::types::{
         CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
     };
-    use raft_host::{HostConfig, Membership, RaftHost, RaftStore};
+    use raft_runtime::{HostConfig, Membership, RaftHost, RaftStore};
     use std::collections::{BTreeMap, HashMap};
 
     fn number_field() -> FieldSpec {
@@ -201,7 +201,7 @@ mod tests {
                 learners: vec![],
             },
             HashMap::new(),
-            RaftStore::open(tmp.to_str().unwrap(), 0, raft_host::FsyncPolicy::Os).unwrap(),
+            RaftStore::open(tmp.to_str().unwrap(), 0, raft_runtime::FsyncPolicy::Os).unwrap(),
             sm.clone() as Arc<dyn RaftStateMachine>,
             HostConfig::default(),
         );
@@ -257,6 +257,6 @@ changes:
     action: modify
     section: rust-source-unit
     description: |
-      Existing raft-host state-machine source is captured as a per-file rust-source-unit so replay ownership is codegen-verifiable.
+      Existing raft-runtime state-machine source is captured as a per-file rust-source-unit so replay ownership is codegen-verifiable.
     impl_mode: codegen
 ```

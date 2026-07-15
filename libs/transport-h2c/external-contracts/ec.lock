@@ -1,16 +1,16 @@
 version = 1
-project = "h2c"
+project = "transport-h2c"
 ir_kind = "ec"
 ec_path = "libs/transport-h2c/external-contracts"
 inventory_path = "libs/transport-h2c/aw.toml"
-generated_at = "2026-07-07T14:12:33.497055+00:00"
-ir_digest = "sha256:2f43033fb34376cb31aba1d7b40333cce6c95c0c20d9d8748d4bc9849df10ed6"
-source_digest = "sha256:4a7531891e74cddd609ec9820bd42ae60ef6e7fbd97e75a4d830664db4c523c6"
+generated_at = "2026-07-15T07:39:22.089771+00:00"
+ir_digest = "sha256:1f6b0f27cc215fb65a871ffea226191da639c88fb87ba9e0cf5e4317f7fc1582"
+source_digest = "sha256:b497f4bd75dde2ca803004d5cfbd28adab23b52557a929b2a5e2046308ddad15"
 tool_contracts = []
 
 [[sources]]
 path = "libs/transport-h2c/external-contracts/behavior/http2-cleartext-client-helpers-contract.md"
-digest = "sha256:01dec8838d01ba366a9dec0344197d2edaabd43051edc89ebb2156d857e2d704"
+digest = "sha256:b51e333ca92f824dc653f6d2e51f75b799cd1a28d629d3d4277495f73b5f9e06"
 
 [[cases]]
 id = "http2-cleartext-client-helpers-contract"
@@ -28,4 +28,4 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:bcd2401fbfe951a04e8f832c588cee502a832c62d528247901ae3e697814e291"
+digest = "sha256:e3b9bf9b1772a7f813ee33b5fbb88f90d62442a1dae477b698bddf1390ba9ebe"

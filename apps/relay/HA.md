@@ -1,7 +1,7 @@
-<!-- HANDWRITE-BEGIN gap="missing-generator:logic:80f2de20" tracker="pending-tracker" reason="New archetype-required HA doc: auto-mode (REPLICAS_PER_SHARD>1 flips raft), RelayStateMachine (publish replication, snapshot/compaction, fsynced applied-index marker), node-local lease/ack at-least-once failover limitation, RELAY_PEERS override, operator CR as the production HA path, backup/restore semantics, peer-TLS surface + raft-host TLS seam gap." -->
+<!-- HANDWRITE-BEGIN gap="missing-generator:logic:80f2de20" tracker="pending-tracker" reason="New archetype-required HA doc: auto-mode (REPLICAS_PER_SHARD>1 flips raft), RelayStateMachine (publish replication, snapshot/compaction, fsynced applied-index marker), node-local lease/ack at-least-once failover limitation, RELAY_PEERS override, operator CR as the production HA path, backup/restore semantics, peer-TLS surface + raft-runtime TLS seam gap." -->
 # relay — high availability (#1207)
 
-relay's HA is **auto-mode raft** on the shared `libs/raft-host` driver (WI
+relay's HA is **auto-mode raft** on the shared `libs/raft-runtime` driver (WI
 #1207 replaced the hand-rolled driver/store/topology stack). One substrate
 serves every deployment shape: the same single `relay` bin is the single-node
 dev process, the raft replica pod, and the backup source.
@@ -10,7 +10,7 @@ dev process, the raft replica pod, and the backup source.
 
 Bare `relay` runs a plain single-node broker: no cluster env, no flags, direct
 engine writes. Replica mode turns on when the StatefulSet scales out —
-`raft_host::cluster::replica_mode()` is true when `REPLICAS_PER_SHARD > 1`
+`raft_runtime::cluster::replica_mode()` is true when `REPLICAS_PER_SHARD > 1`
 (a downward-API value). In that mode the serve path builds
 `ClusterTopology::from_env` from `POD_NAME`, `SHARD_COUNT=1`,
 `REPLICAS_PER_SHARD`, `VOTER_COUNT`, and `RELAY_PEER_SERVICE` (the headless
@@ -26,7 +26,7 @@ Service for peer DNS), and spawns one `RaftHost` for the whole node.
 
 ## RelayStateMachine — what replicates, and the restart floor
 
-`src/raft.rs` wires the engine as a `raft_host::RaftStateMachine`:
+`src/raft.rs` wires the engine as a `raft_runtime::RaftStateMachine`:
 
 - **Command = `PubCommand`** `{subject, message_id, payload, headers,
   priority, not_before}` — a multi-subject publish, one raft log entry per
@@ -91,12 +91,12 @@ restored work redelivers (at-least-once, same rule as failover).
 
 ## Peer TLS — config surface now, transport seam pending
 
-Replica mode loads peer mTLS material via `service-tls`:
+Replica mode loads peer mTLS material via `peer-tls`:
 `RELAY_PEER_TLS_CERT` / `RELAY_PEER_TLS_KEY` / `RELAY_PEER_TLS_CA`
 (+ `RELAY_PEER_MTLS=on` to require client certs). Serve validates the material
 fail-fast at startup — partial config or a mis-pointed path exits nonzero.
-**Honest limit:** raft-host's h2c peer transport has no TLS seam yet, so mTLS
+**Honest limit:** raft-runtime's h2c peer transport has no TLS seam yet, so mTLS
 termination is not applied to `/raft/*` traffic — peer RPCs stay cleartext h2c
-inside the cluster until the shared seam lands (tracked as a raft-host gap;
+inside the cluster until the shared seam lands (tracked as a raft-runtime gap;
 relay adopts it the release it exists).
 <!-- HANDWRITE-END -->

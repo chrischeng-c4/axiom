@@ -2013,9 +2013,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
             // host:port to run a multi-node group on one machine.
             let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
                 .unwrap_or_else(|_| "lumen-headless".to_string());
-            let topo =
-                raft_runtime::ClusterTopology::from_env("lumen", &headless, args.port, "LUMEN_PEERS")
-                    .context("raft: cluster topology from env")?;
+            let topo = raft_runtime::ClusterTopology::from_env(
+                "lumen",
+                &headless,
+                args.port,
+                "LUMEN_PEERS",
+            )
+            .context("raft: cluster topology from env")?;
             tracing::info!(
                 node_id = topo.node_id,
                 voters = ?topo.membership.voters,

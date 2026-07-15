@@ -1,9 +1,9 @@
 // SPEC-MANAGED: apps/relay/tech-design/logic/adopt-raft-host-relaystatemachine-auto-mode-ha-drop-hand-rolled.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:e331737f" tracker="pending-tracker" reason="raft-host adoption cluster tests (#544): an in-process 3-node RelayRaft group over real h2c listeners — election, leader publish applied on every engine, follower publish forwarded by the host, direct follower /raft/publish answers 421, leader kill re-elects with no committed loss; and the snapshot path — a small SnapshotPolicy threshold compacts the leader log so a late-started fresh node catches up via InstallSnapshot."
-//! raft-host cluster integration (#544): 3 `RelayRaft` nodes over real h2c.
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:e331737f" tracker="pending-tracker" reason="raft-runtime adoption cluster tests (#544): an in-process 3-node RelayRaft group over real h2c listeners — election, leader publish applied on every engine, follower publish forwarded by the host, direct follower /raft/publish answers 421, leader kill re-elects with no committed loss; and the snapshot path — a small SnapshotPolicy threshold compacts the leader log so a late-started fresh node catches up via InstallSnapshot."
+//! raft-runtime cluster integration (#544): 3 `RelayRaft` nodes over real h2c.
 //!
 //! Replaces the old hand-rolled-driver test: the group now runs the shared
-//! [`raft_host::RaftHost`] (relay supplies only [`relay::RelayStateMachine`]),
+//! [`raft_runtime::RaftHost`] (relay supplies only [`relay::RelayStateMachine`]),
 //! publishes are multi-subject [`PubCommand`]s, a follower publish is
 //! *forwarded* to the leader by the host (the old driver only redirected), and
 //! the snapshot/compaction path is real — a fresh node catches up via
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use raft_host::Membership;
+use raft_runtime::Membership;
 use relay::{PubCommand, Relay, RelayCoreConfig, RelayRaft};
 
 fn cmd(id: &str) -> PubCommand {

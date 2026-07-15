@@ -25,7 +25,7 @@ highest, the default is `10`, and higher values lease first. In relay, priority
 orders only entries that are already visible in the work queue; long-horizon ETA,
 rate limiting, and HTTP target dispatch remain Defer concerns.
 
-Relay ships as **one binary**: bare `relay` serves (h2c broker; raft-host
+Relay ships as **one binary**: bare `relay` serves (h2c broker; raft-runtime
 auto-mode HA — see [`HA.md`](HA.md)), and the same bin carries the offline
 `spec`/`spec gen`, `backup`, `k8s crd|operator|instance`, `dockerfile render`,
 and shared `llm`/`upgrade`/`issue` verbs (WIs #1204-#1209, the
@@ -53,11 +53,11 @@ remain first-class domain roots.
 | Standard Operational Endpoints | 1205 | implemented | passing | conformance | not_ready | mandatory baseline: one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` surface plus offline `relay spec` |
 | EC Gates Configured | 125 | implemented | passing | conformance | not_ready | mandatory baseline: aw.toml EC inventory, vat meter/guard runners, and external-contracts evidence stay wired |
 | Kubernetes-Native Deployment | 1208 | implemented | planned | dogfood | not_ready | mandatory baseline: RelaySpec CRD/operator/instance render, auto-mode StatefulSet topology, and kind failover smoke |
-| Primary Replicas | 1207 | implemented | planned | dogfood | not_ready | mandatory baseline: raft-host auto-mode leader/follower primary-replica topology |
+| Primary Replicas | 1207 | implemented | planned | dogfood | not_ready | mandatory baseline: raft-runtime auto-mode leader/follower primary-replica topology |
 | Durable Ordered Log | - | implemented | passing | conformance | not_ready | domain: per-subject append, dedupe, and segment lifecycle |
 | Work Queue Lifecycle | - | implemented | passing | conformance | not_ready | domain: lease, heartbeat, ack, redelivery, and reconciler behavior |
 | HTTP/OpenAPI Worker Protocol | 108 | implemented | passing | conformance | not_ready | domain: polyglot h2c worker contract |
-| Raft HA | 1207 | implemented | planned | dogfood | not_ready | domain: raft-host RelayStateMachine, auto-mode topology, applied-index floor, and kind failover |
+| Raft HA | 1207 | implemented | planned | dogfood | not_ready | domain: raft-runtime RelayStateMachine, auto-mode topology, applied-index floor, and kind failover |
 
 ### CLI Interface
 
@@ -226,7 +226,7 @@ Gate Inventory:
 | peer-tls-material-validation | epic | 1209 | implemented | passing | conformance | apps/relay/src/peer_tls.rs; apps/relay/HA.md |
 | guard-static-runtime-evidence | epic | - | implemented | planned | negative | apps/relay/vat.toml#guard-security |
 | request-limit-and-malformed-frame-negative-tests | epic | - | planned | planned | negative | apps/relay/vat.toml#guard-security |
-| network-policy-and-peer-mtls-termination | epic | - | planned | planned | negative | pending raft-host TLS seam (peer RPCs stay cleartext h2c; see apps/relay/HA.md) |
+| network-policy-and-peer-mtls-termination | epic | - | planned | planned | negative | pending raft-runtime TLS seam (peer RPCs stay cleartext h2c; see apps/relay/HA.md) |
 
 ### HTTP/2 API List
 
@@ -409,13 +409,13 @@ Gate Inventory:
 
 ID: raft-ha
 Type: Runtime
-Surfaces: CLI: `relay` - auto-mode raft node on `libs/raft-host` (no flags; downward-API env flips replica mode).; Rust API: `RelayStateMachine` - publish replication with the fsynced applied-index floor.; K8s: operator-rendered StatefulSet + `apps/relay/k8s` - deployment shapes.
+Surfaces: CLI: `relay` - auto-mode raft node on `libs/raft-runtime` (no flags; downward-API env flips replica mode).; Rust API: `RelayStateMachine` - publish replication with the fsynced applied-index floor.; K8s: operator-rendered StatefulSet + `apps/relay/k8s` - deployment shapes.
 EC Dimensions: stability: `cargo test -p relay --test raft_core --test raft_persistence --test raft_cluster` - raft convergence, persistence, and h2c cluster smoke
 Root WI: 1207
 Status: auditing
 Required Verification: conformance, dogfood
 Promise:
-Provide a raft-backed HA path on the shared raft-host driver that converges in
+Provide a raft-backed HA path on the shared raft-runtime driver that converges in
 process, persists hard state and the applied-index floor, serves through real
 h2c nodes, and can be dogfooded through a Kubernetes kind failover smoke.
 Gate Inventory:
@@ -423,7 +423,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| raft-host-adoption-auto-mode | epic | 1207 | implemented | passing | conformance | apps/relay/src/raft.rs; apps/relay/HA.md |
+| raft-runtime-adoption-auto-mode | epic | 1207 | implemented | passing | conformance | apps/relay/src/raft.rs; apps/relay/HA.md |
 | in-process-raft-convergence | epic | - | implemented | passing | conformance | apps/relay/tests/raft_core.rs |
 | durable-raft-hard-state-restore | epic | - | implemented | passing | conformance | apps/relay/tests/raft_persistence.rs |
 | real-h2c-raft-cluster-smoke | epic | - | implemented | passing | dogfood | apps/relay/tests/raft_cluster.rs |

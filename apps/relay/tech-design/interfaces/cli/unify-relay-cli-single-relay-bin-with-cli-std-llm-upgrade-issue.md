@@ -8,7 +8,7 @@ summary: >
   `relay issue <search|view|create>` (cli_std::issue, auto-tagged
   app:relay). build.rs delegates to libs/build-stamp for
   RELAY_GIT_SHA/RELAY_BUILT_AT/RELAY_TARGET. relay-raft stays untouched (its
-  collapse is the raft-host adoption WI).
+  collapse is the raft-runtime adoption WI).
 fill_sections: [logic, unit-test, changes]
 ---
 

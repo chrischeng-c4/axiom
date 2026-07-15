@@ -9,7 +9,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use server_core::{BindConfig, ConnectionBudget};
+use server_lifecycle::{BindConfig, ConnectionBudget};
 use tokio::io::AsyncBufReadExt;
 
 use pgpool::pool::{BackendPool, PoolConfig};
@@ -123,13 +123,13 @@ async fn spawn_proxy(
     tokio::sync::oneshot::Sender<()>,
 ) {
     let handler = SessionHandler::new(session_proxy_config(backend_addr, max_frontend));
-    let server_config = tcp_server::TcpServerConfig::new(BindConfig::localhost(0));
-    let listener = tcp_server::bind(&server_config)
+    let server_config = server_tcp::TcpServerConfig::new(BindConfig::localhost(0));
+    let listener = server_tcp::bind(&server_config)
         .await
         .expect("bind proxy listener");
     let proxy_addr = listener.local_addr().expect("proxy listener addr");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(tcp_server::serve(
+    let server = tokio::spawn(server_tcp::serve(
         listener,
         server_config,
         handler,

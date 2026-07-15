@@ -1,4 +1,4 @@
-//! raft-host-backed consensus (HA phase C). Only compiles/runs with
+//! raft-runtime-backed consensus (HA phase C). Only compiles/runs with
 //! `--features raft`. Proves a write goes through the shared [`RaftHost`]
 //! (propose → commit → apply) onto the engine with read-your-write, that the
 //! per-shard hosts route by key, and that a shard's snapshot round-trips
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use keep::persistence::format::WalOp;
 use keep::raft::{KvStateMachine, ShardHosts};
 use keep::{ClusterConfig, KvEngine, KvKey, KvValue};
-use raft_host::RaftStateMachine;
+use raft_runtime::RaftStateMachine;
 
 /// A fresh, empty temp dir for a test's raft hard-state stores.
 fn tmp_dir(tag: &str) -> std::path::PathBuf {
@@ -186,7 +186,7 @@ async fn shard_state_machine_snapshot_round_trips() {
 #[cfg(test)]
 mod multi_node {
     use super::*;
-    use raft_host::{FsyncPolicy, HostConfig, Membership, RaftHost, RaftStore, SnapshotPolicy};
+    use raft_runtime::{FsyncPolicy, HostConfig, Membership, RaftHost, RaftStore, SnapshotPolicy};
     use std::collections::HashMap;
     use std::time::Duration;
     use tokio::net::TcpListener;

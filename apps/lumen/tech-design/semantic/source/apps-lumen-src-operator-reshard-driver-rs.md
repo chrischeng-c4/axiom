@@ -176,7 +176,7 @@ parts of.
 //!   `PrepareSplit`.
 //! - **PrepareSplit**: wait for the StatefulSet's `readyReplicas` to reach
 //!   `targetShardCount` (the new pod exists once `shardCount` is bumped, via
-//!   the *existing*, independently-leader-gated `libs/operator` apply loop —
+//!   the *existing*, independently-leader-gated `libs/service-k8s` apply loop —
 //!   this driver never applies child objects itself). Once ready, phase ->
 //!   `Splitting`. Restart-safe: re-reads the same live readiness fact every
 //!   tick.
@@ -346,7 +346,7 @@ const CLIENT_PORT: u16 = 7373;
 const DRIVER_POLL_INTERVAL: Duration = Duration::from_secs(20);
 
 /// Leader-election Lease name for [`spawn_reshard_driver_loop`] — distinct
-/// from `libs/operator`'s own `S::MANAGER`-named apply-loop Lease so the two
+/// from `libs/service-k8s`'s own `S::MANAGER`-named apply-loop Lease so the two
 /// independently-leader-gated loops (which may pick different leaders) never
 /// contend on one Lease object.
 const DRIVER_LEASE_NAME: &str = "lumen-reshard-driver";
@@ -2528,13 +2528,13 @@ pub async fn drive_tick(
 
 /// Background loop: every [`DRIVER_POLL_INTERVAL`], list every `Lumen` CR
 /// cluster-wide and [`drive_tick`] it. Independently leader-gated (its own
-/// [`DRIVER_LEASE_NAME`] Lease) from the shared `libs/operator` apply loop —
+/// [`DRIVER_LEASE_NAME`] Lease) from the shared `libs/service-k8s` apply loop —
 /// either loop's leader may or may not be this replica, and both are safe to
 /// run concurrently since every driver action is an idempotent-or-checkpointed
 /// spec patch / additive data-plane call.
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
 pub fn spawn_reshard_driver_loop(client: Client) {
-    // Mirrors `libs/operator::controller`'s own `identity`/`lease_namespace`
+    // Mirrors `libs/service-k8s::controller`'s own `identity`/`lease_namespace`
     // helpers (private to that crate, so duplicated here) so both
     // independently-leader-gated loops resolve the same pod identity and
     // Lease namespace from the same env vars.

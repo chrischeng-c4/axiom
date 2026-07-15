@@ -12,7 +12,7 @@ capability_refs:
     rationale: >
       Removes the remaining tracked HANDWRITE source ownership that blocks
       generator request readiness for #39's lumen migration slice after the
-      obsolete per-service raft units moved to shared raft-host ownership.
+      obsolete per-service raft units moved to shared raft-runtime ownership.
 fill_sections: [logic, changes]
 ---
 

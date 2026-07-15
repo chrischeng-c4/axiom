@@ -3,14 +3,14 @@ project = "metrics-prometheus"
 ir_kind = "ec"
 ec_path = "libs/metrics-prometheus/external-contracts"
 inventory_path = "libs/metrics-prometheus/aw.toml"
-generated_at = "2026-07-07T14:12:34.014243+00:00"
-ir_digest = "sha256:d860bd0acbcb31e6793ccf6c8d649b9818ce4f838bb8be11ad41e761c506f15f"
-source_digest = "sha256:aa51abe4753823036cbe407abeece13745a4bd3a1bf7e7de47c5542c63ae94d8"
+generated_at = "2026-07-15T07:39:35.213363+00:00"
+ir_digest = "sha256:65c85b52022396db53ebfbbd1138afea0c6d799642517b8b50818478e8043281"
+source_digest = "sha256:3257b9ab3b4a04e60371fa3f3d4ee81083b99be75871688e4820b866398d1c9a"
 tool_contracts = []
 
 [[sources]]
 path = "libs/metrics-prometheus/external-contracts/behavior/shared-prometheus-metric-primitives-contract.md"
-digest = "sha256:92d8716ca87c49cc5595bc158e25caf0cf2eafa1ba0182cd8c352983d9b314e8"
+digest = "sha256:bec6a407d3261dcc6ca1e1e7a86f6b62f244648c6772d2ea2337d6a2a7016e18"
 
 [[cases]]
 id = "shared-prometheus-metric-primitives-contract"
@@ -28,4 +28,4 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:fec4c8c360c44e3c8e2ece274c23f71934c82fb1678eaf47ca4421e6147ae221"
+digest = "sha256:b62a2418480cc7e49ca68a566a94afd34e4c3a3cff20acfd5642df05ec7f1e0c"

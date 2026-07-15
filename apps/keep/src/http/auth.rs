@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:eb2a130d" tracker="pending-tracker" reason="New module: KeepPrincipal (concrete principal wrapping claimtoken::Scope, with authorizes(id, write)) and KeepVerifier implementing service_auth::Verifier by composing service_auth::bearer_token + claimtoken::verify."
+// HANDWRITE-BEGIN gap="missing-generator:logic:eb2a130d" tracker="pending-tracker" reason="New module: KeepPrincipal (concrete principal wrapping claim_token::Scope, with authorizes(id, write)) and KeepVerifier implementing service_auth::Verifier by composing service_auth::bearer_token + claim_token::verify."
 //! keep's adoption of the shared `libs/service-auth` request-auth contract (#746).
 //!
 //! keep's claim-check auth is intentionally NOT a blanket router gate (unlike
@@ -30,7 +30,7 @@ use std::sync::Arc;
 use axum::http::HeaderMap;
 use service_auth::{bearer_token, AuthError, Verifier};
 
-/// keep's concrete principal: a verified claim-check token's [`claimtoken::Scope`].
+/// keep's concrete principal: a verified claim-check token's [`claim_token::Scope`].
 ///
 /// keep's "open" mode (enforcement off) is modeled by the *absence* of a
 /// verifier in `AppState`, not by a principal variant — so the only principal a
@@ -38,7 +38,7 @@ use service_auth::{bearer_token, AuthError, Verifier};
 #[derive(Debug, Clone)]
 pub struct KeepPrincipal {
     /// The scope the presented token authorizes (readable `r`, writable `w`).
-    pub scope: claimtoken::Scope,
+    pub scope: claim_token::Scope,
 }
 
 impl KeepPrincipal {
@@ -55,10 +55,10 @@ impl KeepPrincipal {
     }
 }
 
-/// keep's [`service_auth::Verifier`]: wraps `claimtoken::verify` (HMAC-SHA256
+/// keep's [`service_auth::Verifier`]: wraps `claim_token::verify` (HMAC-SHA256
 /// over the scoped payload) and yields a concrete [`KeepPrincipal`].
 ///
-/// Token crypto stays in `libs/claimtoken`; this only composes it. The bare-id
+/// Token crypto stays in `libs/claim-token`; this only composes it. The bare-id
 /// scope decision (`scope.r`/`scope.w == id`) is per-resource authorization and
 /// stays in the handler (`check_scope`), per the service-auth split.
 #[derive(Clone)]
@@ -78,7 +78,7 @@ impl Verifier for KeepVerifier {
 
     /// Authenticate a request's `Bearer` token into a verified [`KeepPrincipal`].
     ///
-    /// Uses the shared [`bearer_token`] extractor, then `claimtoken::verify`
+    /// Uses the shared [`bearer_token`] extractor, then `claim_token::verify`
     /// against the current unix time. A missing header is treated as an empty
     /// token, which fails verification — keep's handler renders that (and every
     /// other failure) as `403`, so the [`AuthError`] variant is not surfaced on
@@ -89,7 +89,7 @@ impl Verifier for KeepVerifier {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        match claimtoken::verify(&self.secret, token, now) {
+        match claim_token::verify(&self.secret, token, now) {
             Some(scope) => Ok(KeepPrincipal { scope }),
             None => Err(AuthError::Unauthenticated),
         }
@@ -113,8 +113,8 @@ mod tests {
         h
     }
 
-    fn scope(r: &str, w: &str, exp: u64) -> claimtoken::Scope {
-        claimtoken::Scope {
+    fn scope(r: &str, w: &str, exp: u64) -> claim_token::Scope {
+        claim_token::Scope {
             r: r.into(),
             w: w.into(),
             exp,
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn valid_token_authenticates_to_principal() {
         let v = KeepVerifier::new(secret());
-        let token = claimtoken::sign(&secret(), &scope("job-r", "job-w", u64::MAX));
+        let token = claim_token::sign(&secret(), &scope("job-r", "job-w", u64::MAX));
         let p = v.authenticate(&bearer(&token)).unwrap();
         assert_eq!(p.scope.r, "job-r");
         assert_eq!(p.scope.w, "job-w");
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn out_of_scope_id_is_not_authorized() {
         let v = KeepVerifier::new(secret());
-        let token = claimtoken::sign(&secret(), &scope("job-r", "job-w", u64::MAX));
+        let token = claim_token::sign(&secret(), &scope("job-r", "job-w", u64::MAX));
         let p = v.authenticate(&bearer(&token)).unwrap();
         assert!(!p.authorizes("other", false));
         assert!(!p.authorizes("other", true));
@@ -159,10 +159,10 @@ mod tests {
         // Malformed bearer value.
         assert!(v.authenticate(&bearer("not-a-token")).is_err());
         // Signed with a different secret.
-        let wrong = claimtoken::sign(&Arc::new(b"WRONG".to_vec()), &scope("a", "b", u64::MAX));
+        let wrong = claim_token::sign(&Arc::new(b"WRONG".to_vec()), &scope("a", "b", u64::MAX));
         assert!(v.authenticate(&bearer(&wrong)).is_err());
         // Expired (exp in the past, now is well beyond 0).
-        let expired = claimtoken::sign(&secret(), &scope("a", "b", 0));
+        let expired = claim_token::sign(&secret(), &scope("a", "b", 0));
         assert!(v.authenticate(&bearer(&expired)).is_err());
     }
 }

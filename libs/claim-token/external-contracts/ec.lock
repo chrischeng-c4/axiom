@@ -1,16 +1,16 @@
 version = 1
-project = "claimtoken"
+project = "claim-token"
 ir_kind = "ec"
 ec_path = "libs/claim-token/external-contracts"
 inventory_path = "libs/claim-token/aw.toml"
-generated_at = "2026-07-07T14:12:33.370475+00:00"
-ir_digest = "sha256:64a6f68bf7029539f6b54b47be67e097d8078f7cfc38ab8dc83d0d95b996cddc"
-source_digest = "sha256:21ef76e2e2e49de4300e9018d7a27e377fd4d54a03c61702e64d0a916df3cd84"
+generated_at = "2026-07-15T07:39:54.922007+00:00"
+ir_digest = "sha256:339efd75b7ebad1d5a88b47e97b3cbe1ce0910e90309ee3db6d04f4417aab5f5"
+source_digest = "sha256:746156b80e2f3e3b9f4ebf222e21fd697f1260252d6d1b219d113ea2d2cd8991"
 tool_contracts = []
 
 [[sources]]
 path = "libs/claim-token/external-contracts/behavior/scoped-claim-tokens-contract.md"
-digest = "sha256:edd66e49934eec81abb11434b414d3fc1058403a42fc39261dfcb888267d325f"
+digest = "sha256:19f0ed23cb22779cb786929addf816851cb005b093ede41b3ca300d34085b296"
 
 [[cases]]
 id = "scoped-claim-tokens-contract"
@@ -28,4 +28,4 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:75ab6c4f045ab8165c6cb64b847c60506e686055132ed4e02b5c3231ffaa2577"
+digest = "sha256:49d8838a19f3cd1f3068a89d8bfd201d94c8c2687f2ea104b74dedcdca979e46"

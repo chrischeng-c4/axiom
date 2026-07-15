@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:67ddc87b" tracker="pending-tracker" reason="Pure render (no I/O), everything via the shared operator::render toolkit: RenderCtx (app relay, manager relay-operator, owner_ref from CR uid) -> ServiceAccount, StatefulSet via sharded_statefulset (command [relay], port http 7000, shard_count pinned 1, headless_env_key RELAY_PEER_SERVICE = {name}-headless, /data PVC with storage/storageClass, extra_env RELAY_BIND 0.0.0.0:7000 + RELAY_DATA_DIR /data + RELAY_GRACE_SECS + optional RUST_LOG + opt-in RELAY_AUTH/RELAY_TOKEN_REGISTRY_FILE with the token-registry Secret volume mounted read-only at /var/run/secrets/relay — lumen's pattern, off unless auth: required AND tokensSecret), then harden(): RollingUpdate + revisionHistoryLimit 5 + prometheus annotations + nonroot 65532 pod/container security contexts + readOnlyRootFilesystem + writable /tmp + terminationGracePeriodSeconds = graceSecs + readiness /readyz + liveness/startup /healthz probes; headless + client Services on 7000; PDB maxUnavailable 1."
+// HANDWRITE-BEGIN gap="missing-generator:logic:67ddc87b" tracker="pending-tracker" reason="Pure render (no I/O), everything via the shared service_k8s::render toolkit: RenderCtx (app relay, manager relay-operator, owner_ref from CR uid) -> ServiceAccount, StatefulSet via sharded_statefulset (command [relay], port http 7000, shard_count pinned 1, headless_env_key RELAY_PEER_SERVICE = {name}-headless, /data PVC with storage/storageClass, extra_env RELAY_BIND 0.0.0.0:7000 + RELAY_DATA_DIR /data + RELAY_GRACE_SECS + optional RUST_LOG + opt-in RELAY_AUTH/RELAY_TOKEN_REGISTRY_FILE with the token-registry Secret volume mounted read-only at /var/run/secrets/relay — lumen's pattern, off unless auth: required AND tokensSecret), then harden(): RollingUpdate + revisionHistoryLimit 5 + prometheus annotations + nonroot 65532 pod/container security contexts + readOnlyRootFilesystem + writable /tmp + terminationGracePeriodSeconds = graceSecs + readiness /readyz + liveness/startup /healthz probes; headless + client Services on 7000; PDB maxUnavailable 1."
 //! Pure rendering: a [`Relay`] spec → the child Kubernetes objects that
 //! realize it. No cluster, no I/O — each object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels
@@ -8,9 +8,9 @@
 //! relay is always a durable StatefulSet (per-pod durable-log + raft-state
 //! PVC), so there is no Deployment branch — single-node is just
 //! `replicasPerShard: 1` (no raft env consumed: `replica_mode()` flips HA only
-//! when `REPLICAS_PER_SHARD > 1`). The shared [`operator::render`] toolkit
+//! when `REPLICAS_PER_SHARD > 1`). The shared [`service_k8s::render`] toolkit
 //! supplies the identity, the downward-API StatefulSet (the env
-//! `raft_host::cluster::ClusterTopology::from_env` consumes), and the
+//! `raft_runtime::cluster::ClusterTopology::from_env` consumes), and the
 //! Service/PDB/ServiceAccount shapes; relay adds its runtime env, health
 //! probes, security hardening, disk tier, and the opt-in token-registry
 //! Secret wiring on top.
@@ -18,7 +18,7 @@
 use serde_json::{json, Value};
 
 use super::crd::Relay;
-use operator::render::{self, RenderCtx, ShardedStatefulSet};
+use service_k8s::render::{self, RenderCtx, ShardedStatefulSet};
 
 const APP: &str = "relay";
 const MANAGER: &str = "relay-operator";
@@ -60,7 +60,7 @@ fn owner_ref(relay: &Relay) -> Option<Value> {
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
-/// relay's render identity for the shared [`operator::render`] helpers.
+/// relay's render identity for the shared [`service_k8s::render`] helpers.
 fn ctx<'a>(relay: &Relay, name: &'a str, ns: &'a str) -> RenderCtx<'a> {
     RenderCtx {
         app: APP,
@@ -113,7 +113,7 @@ pub fn render(relay: &Relay) -> Vec<Value> {
 /// (`GET /admin/backup`, the exact `RelayStateMachine::snapshot` bytes); this
 /// CronJob adds nothing to the snapshot path — it only *schedules and
 /// transports* that endpoint's bytes to a destination via `relay backup`
-/// (`libs/service-backup`). The shared [`operator::render::cron_job`] helper
+/// (`libs/service-backup`). The shared [`service_k8s::render::cron_job`] helper
 /// stays manifest-only (lumen #808).
 fn backup_cron_job(relay: &Relay, cx: &RenderCtx<'_>) -> Option<Value> {
     let policy = relay.spec.backup.as_ref()?;
@@ -171,21 +171,13 @@ fn backup_cron_job(relay: &Relay, cx: &RenderCtx<'_>) -> Option<Value> {
 
 /// The durable serving StatefulSet: the toolkit's downward-API base
 /// (`replicas = replicasPerShard` — `shard_count` PINNED to 1, relay is a
-/// single raft group; the raft-host env quartet + `RELAY_PEER_SERVICE`; the
+/// single raft group; the raft-runtime env quartet + `RELAY_PEER_SERVICE`; the
 /// `/data` PVC) hardened with relay's probes, security contexts, and writable
 /// `/tmp`.
 fn statefulset(relay: &Relay, cx: &RenderCtx, headless: &str) -> Value {
     let s = &relay.spec;
-    let cpu = if s.cluster.resources.cpu.is_empty() {
-        "1"
-    } else {
-        s.cluster.resources.cpu.as_str()
-    };
-    let memory = if s.cluster.resources.memory.is_empty() {
-        "1Gi"
-    } else {
-        s.cluster.resources.memory.as_str()
-    };
+    let cpu = s.cluster.resources.cpu.as_str();
+    let memory = s.cluster.resources.memory.as_str();
 
     // Per-pod durable disk tier: the ordered log + raft hard state on a
     // ReadWriteOnce PVC, mounted at /data (the helper mounts a `data` claim).

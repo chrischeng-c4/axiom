@@ -314,7 +314,8 @@ impl RaftHost {
             }
         }
 
-        let client = transport_h2c::h2c_client_with(Some(cfg.rpc_timeout), None).expect("h2c client");
+        let client =
+            transport_h2c::h2c_client_with(Some(cfg.rpc_timeout), None).expect("h2c client");
         let (applied_tx, _rx) = watch::channel(sm.applied_index());
         let shared = Arc::new(Shared {
             id,

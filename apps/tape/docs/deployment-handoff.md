@@ -109,7 +109,7 @@ keep the CR name `tape` — `tape serve` derives raft peer DNS as
 ## 4. Environment variables
 
 `serve` reads flags and env (flag wins). Source: `src/bin/tape.rs::ServeArgs`,
-`src/auth.rs`, `libs/raft-host/src/cluster.rs`.
+`src/auth.rs`, `libs/raft-runtime/src/cluster.rs`.
 
 | Area | Env (≡ flag) | Default |
 |------|--------------|---------|
@@ -124,7 +124,7 @@ keep the CR name `tape` — `tape serve` derives raft peer DNS as
 > **Production:** set `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE`, and
 > for HA deployments set `REPLICAS_PER_SHARD>1` plus a durable `TAPE_DATA_DIR`
 > volume. Peer-mTLS material validates at startup but termination is not yet
-> applied on the raft peer port (raft-host's h2c transport has no TLS seam
+> applied on the raft peer port (raft-runtime's h2c transport has no TLS seam
 > yet — peer RPCs stay plain h2c even with `TAPE_PEER_MTLS=on`; tracked as a
 > known gap, not a silent security regression).
 
@@ -211,6 +211,6 @@ cd apps/tape && ../../target/debug/vat run guard-security
 
 *Generated as the tape docs+scripts+traits polish handoff (#1331, epic
 #1324). Coordinates (env names, ports, paths) are sourced from
-`src/bin/tape.rs`, `src/server.rs`, `src/auth.rs`, `libs/raft-host/src/
+`src/bin/tape.rs`, `src/server.rs`, `src/auth.rs`, `libs/raft-runtime/src/
 cluster.rs`, `k8s/`, `Dockerfile.release`.*
 <!-- HANDWRITE-END -->

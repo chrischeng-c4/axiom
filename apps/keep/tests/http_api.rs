@@ -537,12 +537,12 @@ async fn keep_ns_token_checks_bare_key() {
     let app = router(state);
 
     // Token scoped to the BARE result key 'job-3'.
-    let scope = claimtoken::Scope {
+    let scope = claim_token::Scope {
         r: "job-3".into(),
         w: "job-3".into(),
         exp: u64::MAX,
     };
-    let token = claimtoken::sign(&secret, &scope);
+    let token = claim_token::sign(&secret, &scope);
 
     // PUT with a namespace header still passes — the token is verified against
     // the bare 'job-3' from the URL, before the namespace prefix is applied.
@@ -581,12 +581,12 @@ async fn keep_token_invalid_and_out_of_scope_are_403() {
     let app = router(state);
 
     // Seed an input the worker is allowed to read with an in-scope token.
-    let scope = claimtoken::Scope {
+    let scope = claim_token::Scope {
         r: "job-7".into(),
         w: "job-7".into(),
         exp: u64::MAX,
     };
-    let token = claimtoken::sign(&secret, &scope);
+    let token = claim_token::sign(&secret, &scope);
     let put = Request::builder()
         .method("PUT")
         .uri("/inputs/job-7")
@@ -619,12 +619,12 @@ async fn keep_token_invalid_and_out_of_scope_are_403() {
     assert_eq!(st, StatusCode::FORBIDDEN);
 
     // A valid token for a DIFFERENT id (out of scope) ⇒ 403.
-    let other = claimtoken::Scope {
+    let other = claim_token::Scope {
         r: "job-other".into(),
         w: "job-other".into(),
         exp: u64::MAX,
     };
-    let other_token = claimtoken::sign(&secret, &other);
+    let other_token = claim_token::sign(&secret, &other);
     let get_oos = Request::builder()
         .method("GET")
         .uri("/inputs/job-7")

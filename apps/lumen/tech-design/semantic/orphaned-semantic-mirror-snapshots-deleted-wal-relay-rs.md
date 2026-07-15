@@ -4,7 +4,7 @@ summary: >
   Remove semantic/source mirror snapshots for deleted relay WAL files so Lumen's
   semantic inventory no longer preserves stale source text or references to the
   retired HA.md relay-WAL path. The cleanup is documentation/ownership hygiene
-  only; runtime WAL behavior remains raft-host based.
+  only; runtime WAL behavior remains raft-runtime based.
 capability_refs:
   - id: "long-running-stability"
     role: primary
@@ -14,7 +14,7 @@ capability_refs:
     rationale: >
       The orphaned mirrors describe the retired relay-backed WAL path under the
       long-running rebuild-from-log claim; removing them keeps the semantic
-      inventory aligned with the current raft-host source tree.
+      inventory aligned with the current raft-runtime source tree.
 fill_sections: [logic, unit-test, changes]
 ---
 

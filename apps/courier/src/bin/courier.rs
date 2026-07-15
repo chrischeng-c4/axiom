@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
     // Install the process-level rustls crypto provider before anything
     // dials TLS (reqwest's rustls-tls-native-roots backend + the online CLI
     // paths both link rustls, which panics without a default provider).
-    service_tls::install_default_crypto_provider();
+    peer_tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.cmd {
         // Default (no subcommand): run the server.

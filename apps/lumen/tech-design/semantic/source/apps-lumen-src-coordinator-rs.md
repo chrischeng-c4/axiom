@@ -62,7 +62,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use futures::{FutureExt, StreamExt};
-use raft_host::OutcomeWindow;
+use raft_runtime::OutcomeWindow;
 use rustc_hash::FxHashMap;
 use tokio::sync::oneshot;
 
@@ -414,7 +414,7 @@ impl WriteCoordinator {
 
 /// The write seam the API binds to: submit a log entry, get its applied outcome,
 /// and report the applied head. Implemented by [`WriteCoordinator`] (the WAL-seam
-/// path for embedded/nats) and by `RaftWriteSink` (the raft-host path).
+/// path for embedded/nats) and by `RaftWriteSink` (the raft-runtime path).
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 #[async_trait::async_trait]
 pub trait WriteSink: Send + Sync {

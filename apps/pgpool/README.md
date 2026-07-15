@@ -16,14 +16,14 @@ the pooler runtime.
 Current implementation slice: `apps/pgpool` is a Rust workspace crate and
 binary with an offline runtime plan, OpenAPI-shaped admin route inventory,
 agent docs, and shared server substrate dependencies wired through
-`server-core`, `tcp-server`, and `http-server`. PostgreSQL wire handling,
+`server-lifecycle`, `server-tcp`, and `server-http`. PostgreSQL wire handling,
 auth/backend adapters, k8s operator artifacts, and real database integration
 gates are separate work roots.
 
 ## Boundaries
 
 - `pgpool` owns Postgres-compatible pooling and proxy admission.
-- `server-core`, `tcp-server`, and `http-server` own generic server runtime
+- `server-lifecycle`, `server-tcp`, and `server-http` own generic server runtime
   mechanics; `pgpool` composes them instead of duplicating accept loops,
   connection budgets, h2c serving, drain, or tracing.
 - Platform adapters such as Cloud SQL Proxy or AlloyDB endpoint discovery stay
@@ -44,7 +44,7 @@ and the platform adapter boundary remain first-class domain roots.
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Working-Name App Scaffold | - | implemented | passing | smoke | partial | crate/bin/README/AW metadata and route inventory are present under `apps/pgpool` |
-| Shared Server Substrate Adoption | - | implemented | passing | smoke | partial | runtime plan composes `server-core`, `tcp-server`, and `http-server` types |
+| Shared Server Substrate Adoption | - | implemented | passing | smoke | partial | runtime plan composes `server-lifecycle`, `server-tcp`, and `server-http` types |
 | PostgreSQL Pooler Core | 1282 | planned | planned | none | not_ready | domain: frontend pg wire parser, backend pool, transaction/session modes |
 | Platform Adapter Boundary | 1283 | planned | planned | none | not_ready | domain: Cloud SQL/AlloyDB discovery/auth adapters remain outside core runtime |
 | CLI Interface | 1282 | implemented | passing | smoke | partial | mandatory baseline: single `pgpool` bin with runtime-plan/spec verbs; serve entrypoint remains open |
@@ -83,7 +83,7 @@ Gate Inventory:
 
 ID: shared-server-substrate-adoption
 Type: RuntimeTool
-Surfaces: Rust API: `RuntimePlan` - composes `server-core` bind/budget/drain, `tcp-server` socket options, and `http-server` h2c options.; CLI: `pgpool runtime-plan` - JSON plan naming the shared libs.
+Surfaces: Rust API: `RuntimePlan` - composes `server-lifecycle` bind/budget/drain, `server-tcp` socket options, and `server-http` h2c options.; CLI: `pgpool runtime-plan` - JSON plan naming the shared libs.
 EC Dimensions: behavior: `cargo test -p pgpool` - runtime plan composes shared substrate types instead of local reinventions
 Root WI: -
 Status: auditing
@@ -91,8 +91,8 @@ Required Verification: smoke
 Promise:
 `pgpool` starts from the shared service substrate instead of inventing a local
 accept loop or HTTP admin server. The TCP data-plane listener uses
-`tcp-server` concepts, the admin listener uses `http-server`/h2c concepts, and
-connection limits/readiness/drain are represented by `server-core`.
+`server-tcp` concepts, the admin listener uses `server-http`/h2c concepts, and
+connection limits/readiness/drain are represented by `server-lifecycle`.
 Gate Inventory:
 - apps/pgpool/src/lib.rs; apps/pgpool/tests/cli_contract.rs
 
@@ -366,7 +366,7 @@ Gate Inventory:
 
 ID: standard-operational-endpoints
 Type: Service
-Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - one-port operational surface, served on `RuntimePlan.admin_bind` via `http_server::serve_h2c_with_options`.; CLI: `pgpool spec` - offline OpenAPI evidence for the same contract when no server is running.
+Surfaces: HTTP: `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - one-port operational surface, served on `RuntimePlan.admin_bind` via `server_http::serve_h2c_with_options`.; CLI: `pgpool spec` - offline OpenAPI evidence for the same contract when no server is running.
 EC Dimensions: behavior: `cargo test -p pgpool` - offline inventory carries the five standard endpoints; served conformance proven by `tests/admin_plane.rs`
 Root WI: 1282
 Status: candidate

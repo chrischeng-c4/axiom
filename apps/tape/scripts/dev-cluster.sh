@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# HANDWRITE-BEGIN gap="missing-generator:logic:8dbe3ccf" tracker="pending-tracker" reason="New script (mirrors apps/lumen/scripts/dev-cluster.sh): 3-node local raft cluster, sets REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_host::ClusterTopology::from_env resolves peers and TapeRaft::from_topology replicates append/checkpoint-put across 3 tape serve processes on distinct ports."
+# HANDWRITE-BEGIN gap="missing-generator:logic:8dbe3ccf" tracker="pending-tracker" reason="New script (mirrors apps/lumen/scripts/dev-cluster.sh): 3-node local raft cluster, sets REPLICAS_PER_SHARD=3/SHARD_COUNT=1/VOTER_COUNT=3/POD_NAME plus TAPE_DATA_DIR/TAPE_PEER_SERVICE/TAPE_PEERS so raft_runtime::ClusterTopology::from_env resolves peers and TapeRaft::from_topology replicates append/checkpoint-put across 3 tape serve processes on distinct ports."
 # 3-node local raft cluster (#1327).
 #
 #   node 0: :7137    node 1: :7138    node 2: :7139
 #
 # Demonstrates the real data plane: append/checkpoint-put on any node
-# replicates to the others through raft-host's TapeRaft state machine; replay
+# replicates to the others through raft-runtime's TapeRaft state machine; replay
 # and checkpoint-get are served locally by whichever node you hit. Ctrl-C
 # stops all three.
 #
 # This is auto-mode HA: setting REPLICAS_PER_SHARD=3 (plus the standard
 # SHARD_COUNT/VOTER_COUNT/POD_NAME downward-API quartet) is the only signal —
 # there is no tape-specific "--raft" flag. Peers resolve through
-# raft_host::ClusterTopology::from_env("tape", <peer-service>, <peer-port>,
+# raft_runtime::ClusterTopology::from_env("tape", <peer-service>, <peer-port>,
 # "TAPE_PEERS"), so a flat comma-separated TAPE_PEERS list stands in here for
 # the k8s headless-service DNS lookup the operator wires in-cluster.
 

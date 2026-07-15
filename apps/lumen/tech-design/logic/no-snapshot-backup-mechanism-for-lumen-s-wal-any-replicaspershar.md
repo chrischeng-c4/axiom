@@ -35,7 +35,7 @@ nodes:
   render_start: { kind: start,    label: "render(lumen) — after #812's unconditional StatefulSet+PVC objects" }
   has_backup:   { kind: decision, label: "spec.serving.backup set?" }
   no_cronjob:   { kind: process,  label: "no CronJob rendered — lumen llm storage documents the manual /admin/backup procedure" }
-  build_cronjob: { kind: process, label: "backup_cron_job(): batch/v1 CronJob '<name>-backup' via shared operator::render::cron_job, schedule=policy.schedule, args=[backup, --url, http://<name>.<ns>.svc.cluster.local:7373, --dest, policy.destination, --retention-secs?]" }
+  build_cronjob: { kind: process, label: "backup_cron_job(): batch/v1 CronJob '<name>-backup' via shared service_k8s::render::cron_job, schedule=policy.schedule, args=[backup, --url, http://<name>.<ns>.svc.cluster.local:7373, --dest, policy.destination, --retention-secs?]" }
   token_env:    { kind: decision, label: "adminTokenSecret set?" }
   with_token:   { kind: process,  label: "add container env LUMEN_BACKUP_TOKEN <- secretKeyRef(adminTokenSecret, key=token)" }
   render_emit:  { kind: terminal, label: "render() returns full object set (+ optional backup CronJob)" }
@@ -62,7 +62,7 @@ edges:
 flowchart TD
     render_start([render lumen serving fleet, post-#812]) --> has_backup{spec.serving.backup set?}
     has_backup -->|no| no_cronjob[no CronJob; lumen llm storage documents manual /admin/backup procedure]
-    has_backup -->|yes| build_cronjob["backup_cron_job(): CronJob '<name>-backup' via operator::render::cron_job(schedule, args=[backup --url http://<name>.<ns>.svc:7373 --dest <destination> [--retention-secs]])"]
+    has_backup -->|yes| build_cronjob["backup_cron_job(): CronJob '<name>-backup' via service_k8s::render::cron_job(schedule, args=[backup --url http://<name>.<ns>.svc:7373 --dest <destination> [--retention-secs]])"]
     build_cronjob --> token_env{adminTokenSecret set?}
     token_env -->|yes| with_token[env LUMEN_BACKUP_TOKEN <- secretKeyRef]
     token_env -->|no| render_emit([render emits full object set + optional CronJob])
@@ -208,7 +208,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add a backup_cron_job(lumen) -> Option<Value> function using the shared operator::render::cron_job helper; when spec.serving.backup is set it renders a batch/v1 CronJob named '<name>-backup' on the configured schedule with a container invoking `lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 --dest <destination> [--retention-secs <n>]`, adding a LUMEN_BACKUP_TOKEN env sourced via secretKeyRef when admin_token_secret is set; render() pushes this object (via .into_iter().chain / conditional push) only when Some."
+    description: "Add a backup_cron_job(lumen) -> Option<Value> function using the shared service_k8s::render::cron_job helper; when spec.serving.backup is set it renders a batch/v1 CronJob named '<name>-backup' on the configured schedule with a container invoking `lumen backup --url http://<name>.<namespace>.svc.cluster.local:7373 --dest <destination> [--retention-secs <n>]`, adding a LUMEN_BACKUP_TOKEN env sourced via secretKeyRef when admin_token_secret is set; render() pushes this object (via .into_iter().chain / conditional push) only when Some."
   - path: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md
     action: modify
     section: source

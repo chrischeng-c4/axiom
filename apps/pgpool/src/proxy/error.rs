@@ -60,7 +60,7 @@ pub enum SessionOutcome {
     EstablishedClosedClean,
     EstablishedClosedError,
     /// Classification for a session whose `drain_timeout` elapsed while
-    /// `Established`/`Draining`: `tcp_server::serve_arc` abandons the task at
+    /// `Established`/`Draining`: `server_tcp::serve_arc` abandons the task at
     /// that point (see its bounded drain loop), so this variant documents
     /// the outcome rather than being returned by `run_session` itself — an
     /// abandoned future is dropped, not resolved.

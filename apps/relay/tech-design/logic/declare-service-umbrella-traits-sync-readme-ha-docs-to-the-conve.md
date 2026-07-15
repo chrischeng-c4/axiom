@@ -9,7 +9,7 @@ summary: >
   network_exposed, primary_replicas. README.md capability contract drops
   every reference to the deleted relay-server/relay-raft bins and
   src/bin/relay_server.rs / src/bin/relay_raft.rs evidence paths in favor of
-  the single `relay` bin (serve default with raft-host auto-mode HA), adds
+  the single `relay` bin (serve default with raft-runtime auto-mode HA), adds
   field-style capability sections for the four umbrella-derived baselines
   (standard-operational-endpoints WI #1205, cli-standard-surface WI #1204,
   chainable-output-conformance with honest partial maturity,
@@ -20,7 +20,7 @@ summary: >
   replication, snapshot/compaction, fsynced applied-index marker), the
   node-local lease/ack at-least-once failover limitation, RELAY_PEERS,
   the operator CR as the production HA path, backup/restore semantics, and
-  the peer-TLS surface + raft-host TLS seam gap. The committed Dockerfile
+  the peer-TLS surface + raft-runtime TLS seam gap. The committed Dockerfile
   fixture moves EXPOSE 8080 -> 7000 (render reads the fixture via
   include_str!, so dockerfile-render byte-equality is preserved one-sided),
   and the `relay llm` operations topic gains the --grace-secs
@@ -147,7 +147,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "New archetype-required HA doc: auto-mode (REPLICAS_PER_SHARD>1 flips raft), RelayStateMachine (publish replication, snapshot/compaction, fsynced applied-index marker), node-local lease/ack at-least-once failover limitation, RELAY_PEERS override, operator CR as the production HA path, backup/restore semantics, peer-TLS surface + raft-host TLS seam gap."
+    description: "New archetype-required HA doc: auto-mode (REPLICAS_PER_SHARD>1 flips raft), RelayStateMachine (publish replication, snapshot/compaction, fsynced applied-index marker), node-local lease/ack at-least-once failover limitation, RELAY_PEERS override, operator CR as the production HA path, backup/restore semantics, peer-TLS surface + raft-runtime TLS seam gap."
   - path: apps/relay/Dockerfile
     action: modify
     section: unit-test

@@ -3,14 +3,14 @@ project = "storage-durable"
 ir_kind = "ec"
 ec_path = "libs/storage-durable/external-contracts"
 inventory_path = "libs/storage-durable/aw.toml"
-generated_at = "2026-07-08T05:37:31.013628+00:00"
-ir_digest = "sha256:8c008eba09cb0dadb873249945ec5cafc583f5f661d2c41655e1a27f0fe314ca"
-source_digest = "sha256:9327619323d666f2990fcde65b1cd4e7ede2a168bb9734630b3cd0e023ec9248"
+generated_at = "2026-07-15T07:39:29.701750+00:00"
+ir_digest = "sha256:43966834aea467b48b65dcf7ee5fa66daa09607d92bf9c7c41a229551564fbc2"
+source_digest = "sha256:ad64d3e2c7f0ca712cdf585ceb01456c5fecf035a6342824a6dd74c6c1309016"
 tool_contracts = []
 
 [[sources]]
 path = "libs/storage-durable/external-contracts/behavior/shared-storage-durable-contract.md"
-digest = "sha256:cb5fb02af51a80fae41e7941a0de068d7eab22e1ebbd187b9a05f4cc15887964"
+digest = "sha256:4944606f48de8d528b98f986ad5b4ab8763c1f3339af2a1187df1c9106d727a6"
 
 [[cases]]
 id = "shared-storage-durable-contract"
@@ -28,4 +28,4 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:b50f91a5959430b406a078087210732ca8710140b424a8aacf904d3b57d5973d"
+digest = "sha256:d5bf26cffcbacf4ae9c193a5d8994b86893d4bc8a75e8242e8b728d09152d02d"

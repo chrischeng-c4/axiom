@@ -3,14 +3,14 @@ project = "peer-tls"
 ir_kind = "ec"
 ec_path = "libs/peer-tls/external-contracts"
 inventory_path = "libs/peer-tls/aw.toml"
-generated_at = "2026-07-07T14:12:34.078705+00:00"
-ir_digest = "sha256:a75fd9e220433e003601c187633b650d4c3d073e0ed5743b8ffd2360dc0412dc"
-source_digest = "sha256:657a9e5dd21fb1adbe5ded1e172448811c6cd29f4c0367139001f5ecbbf9e01e"
+generated_at = "2026-07-15T07:39:49.607907+00:00"
+ir_digest = "sha256:a130697f6a06886dbeae075cc90e581a30a333e1855abe9222cc21e59f13893c"
+source_digest = "sha256:462c707331dbddbe886cc55b54ffc0c1c8d78271fdc102919e8c5f7b8e260ad7"
 tool_contracts = []
 
 [[sources]]
 path = "libs/peer-tls/external-contracts/behavior/shared-peer-mtls-material-loading-contract.md"
-digest = "sha256:a1a7500c2436aceac58608f5d3b9fd85648d6568032dc96db1f6bb9d1c3ba28c"
+digest = "sha256:13f9ad0c09fe2d29709fca9fc7158de0f6a35e3fdd1a28235d11711b3ffe8368"
 
 [[cases]]
 id = "shared-peer-mtls-material-loading-contract"
@@ -28,4 +28,4 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:77547ef0a800be9f1dd6dba380bb970709216175f513007ed5a005f177b6d709"
+digest = "sha256:5afaa4776379ff80d10e734dac6caa1b5036f4e83e339e3dc710b863ef7e559b"

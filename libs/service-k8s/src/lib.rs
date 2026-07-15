@@ -20,8 +20,13 @@ pub mod llm;
 pub mod render;
 pub mod resize;
 pub mod service;
+pub mod stateful;
 
 pub use controller::{run, Error};
 pub use lease::Election;
 pub use service::{ClusterSpec, ManagedService, ReadinessTarget, ReadyFacts, ResourceSpec};
+pub use stateful::{
+    plan_replica_layer, ObservedUtilization, ReplicaLayerError, ReplicaLayerPlan,
+    ReplicaLayerPolicy, DEFAULT_CPU_REQUEST, DEFAULT_MEMORY_REQUEST,
+};
 // CODEGEN-END

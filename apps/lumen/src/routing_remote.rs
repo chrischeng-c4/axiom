@@ -6,8 +6,8 @@
 //! it consults the delivered [`crate::routing::VirtualBucketShardMap`] and
 //! either answers locally (this pod owns the target bucket) or forwards to
 //! the owning shard's pod over the same h2c client stack every other
-//! cross-pod call in this codebase uses (`libs/h2c`, see
-//! `operator::reshard_driver`'s admin forwarding for the established
+//! cross-pod call in this codebase uses (`libs/transport-h2c`, see
+//! `service_k8s::reshard_driver`'s admin forwarding for the established
 //! `reqwest`-over-headless-DNS idiom this module follows). A routing-key-less
 //! search scatters to every shard (local direct call + one forward per
 //! remote shard) and merges through the same
@@ -97,7 +97,7 @@ const MAP_VERSION_HEADER: &str = "x-lumen-map-version";
 /// Read-consistency header carried through a forward verbatim (R3).
 const READ_CONSISTENCY_HEADER: &str = "x-read-consistency";
 /// Connections per remote shard's h2c pool — small and fixed, matching
-/// `operator::reshard_driver`'s admin client sizing; forwarding is bounded
+/// `service_k8s::reshard_driver`'s admin client sizing; forwarding is bounded
 /// one-hop request/response, not a bulk data-mover.
 const REMOTE_POOL_CONNECTIONS: usize = 2;
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -107,7 +107,7 @@ const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
 /// [`RoutedRouter::remotes`] — the local shard is never dialed.
 struct RemoteShard {
     base_url: String,
-    pool: h2c::H2cPool,
+    pool: transport_h2c::H2cPool,
 }
 
 /// Routes reads and writes across physical shards for one operator/k8s
@@ -155,7 +155,7 @@ impl RoutedRouter {
                 if shard as u32 == local_shard {
                     return Ok(None);
                 }
-                let pool = h2c::H2cPool::with_connections_and(
+                let pool = transport_h2c::H2cPool::with_connections_and(
                     REMOTE_POOL_CONNECTIONS,
                     Some(REMOTE_TIMEOUT),
                     Some("lumen-routed"),
