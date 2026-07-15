@@ -1,55 +1,55 @@
 version = 2
-project = "operator"
+project = "service-k8s"
 ir_kind = "td"
 td_path = "libs/service-k8s/tech-design"
-generated_at = "2026-07-07T15:58:25.300340+00:00"
-digest = "sha256:af074ae5db0e9923a45cfc5ee2ffc53cdf23ceba601ea8060bdce3783f01b91f"
-source_digest = "sha256:af074ae5db0e9923a45cfc5ee2ffc53cdf23ceba601ea8060bdce3783f01b91f"
-ir_digest = "sha256:bd24b23d186cad279609d581a6493b789faeea17c5b90022d5518358f8e26f83"
+generated_at = "2026-07-15T07:37:45.463253+00:00"
+digest = "sha256:c950a762619b5f88ab56346f6e01d2a0bc9bb5cde3b2e1ba06491f5be2bcafb0"
+source_digest = "sha256:c950a762619b5f88ab56346f6e01d2a0bc9bb5cde3b2e1ba06491f5be2bcafb0"
+ir_digest = "sha256:6596a088a74b0f08529a15ebf8ce49f706b8dd741617e1eaeb8a90dcb335cf25"
 
 [[files]]
 path = "semantic/service-k8s-libs-service-k8s.md"
-digest = "sha256:1ab0d7394649c25be8152532f1c2f395499bf99a15cb8cc673fd968598874210"
+digest = "sha256:f8e1910a81c01c7a14aa2b4d4c3e61366c04dad40d30c877fae7b0c5cb424372"
 parse_error = "schema:15-116: section 'schema' at lines 15..116: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
 
 [[files]]
 path = "semantic/source/libs-service-k8s-src-controller-rs.md"
-digest = "sha256:cd9f1aeae1229976f3f0296428219481bdcac2e8128044cd48c1da8a78a31689"
-ir_digest = "sha256:ae6379a743966230e8012c44a07bb9f90291f99ab00e20d677aba3e2d71bd8f6"
+digest = "sha256:21662d33467a284180840b8c40cdf6116374df0d01f162da9573bade0ac6dadb"
+ir_digest = "sha256:42d740388dacfb0f09e9fe388d3e43d301021d45fe99d9e445e88c76cb23a899"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-k8s-src-lease-rs.md"
-digest = "sha256:7b8e4914d8171d5376f12ea5c5a79184cc6c6554ae768d326e3788f9e0de87f0"
-ir_digest = "sha256:2d9006fe1551916e22ac1976033457a559cf31dfd58780619bf0a559c750f50c"
+digest = "sha256:f276a304c89f1b1ae337a0b79a73fbf63550e9c9982276bea481ee1f04d294fa"
+ir_digest = "sha256:736b9a93aa33793f1bba33eef9f7063cfe4de0d4486be81d7a6d9e6a1f4adacd"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-k8s-src-lib-rs.md"
-digest = "sha256:778e4c1629b32ebaa2fbc9256ab8f3fd129c52af2722e16a061db0d790a41cdd"
-ir_digest = "sha256:b55a3ba55a68d2248c075cd04059145251fe7bd0d7c85afca7b255231a061ff7"
+digest = "sha256:9f260f221ce5b2024d97508867f817fc5ab3d03fcf9b44af820c8c17a7ad2a80"
+ir_digest = "sha256:45c40fc8b3b98580ece05d4406d284ed1f1c7731645dd79ef3e454dbe0a8692b"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-k8s-src-llm-rs.md"
-digest = "sha256:c7d1ab34d610e1e8f19db64ca69cba2cbdb3ecbae1e423ce2094d39a41fba780"
-ir_digest = "sha256:9ded793fb66cf9b2e44b6ea5b08e740dca0a748921c160e21a721d89bf275e87"
+digest = "sha256:2211c27f7bbff55b68183ab0623611ee0f8db17b4fa0b3104360745b5abcda03"
+ir_digest = "sha256:4194cfb2fa2b876d2a134136af6da6e76a68e0bfdacdd4efd06cfcf61fb1ccc2"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-k8s-src-render-rs.md"
-digest = "sha256:5d8ee16bdd34cf9ac45cf4151e6e640cf2d775f8cdb17484cb2b8ef7b67384b9"
-ir_digest = "sha256:7d5c687569206d7b537be43823590e56adc10e5a8d6b46e4f4debf5b553fd1b6"
+digest = "sha256:ca77e9a9c1ca5888cfed31755ae0cdafaa6906774dddc51aa0be6491bc82bd9c"
+ir_digest = "sha256:d3c4c6be6b59c42a6634803c8894ada21250db20be58e20d6b3ac0b85c1cafd8"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-k8s-src-resize-rs.md"
-digest = "sha256:fb7308100565489f3eb2b2379de908b8335cc442bf823e058bc11c01d7ff3fe4"
-ir_digest = "sha256:4f935433b3d5ea472d13f05dbad0f16d934ddf808f7f34289694eb837cf14df4"
+digest = "sha256:830059d304d925d86e8e2743267a324b7924e94b3ddf900e0731edbf96e55113"
+ir_digest = "sha256:730305f8a1f4d747e4ab628bfc48770127c63327b0a6fd144e9220c889153d7a"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-k8s-src-service-rs.md"
-digest = "sha256:b5cbedcbe9b272c99c3b53b141cd11199b19a5c2f8781846b131356ec6bcd17e"
-ir_digest = "sha256:1da736100c203654d66d6310e192c4a22afde657657d1b4464181895a3a22e81"
+digest = "sha256:6a3385918e42ac47fe214710f5e279d140b3734c886782d101b884e2ff878034"
+ir_digest = "sha256:4bbaa9cfd57b3d174afcc36ae92aaa3a8d4fbf6b7d9e368063a7add29a8e5bfa"
 section_count = 3
