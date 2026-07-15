@@ -2,10 +2,16 @@ version = 2
 project = "raft-runtime"
 ir_kind = "td"
 td_path = "libs/raft-runtime/tech-design"
-generated_at = "2026-07-15T07:37:49.656872+00:00"
-digest = "sha256:2bb539732367f905f3934a62270186ca83cbd47f9a776f2d8cfae411ae05b1d5"
-source_digest = "sha256:2bb539732367f905f3934a62270186ca83cbd47f9a776f2d8cfae411ae05b1d5"
-ir_digest = "sha256:1d3858d25e9c8148ca04c1701f30133f54966035b9c8da1918263847f12d931b"
+generated_at = "2026-07-15T17:09:11.446019+00:00"
+digest = "sha256:c2400af16e0b8203fe47fd9c3727c490e88e1b2536f40da51252a7ea1a170309"
+source_digest = "sha256:c2400af16e0b8203fe47fd9c3727c490e88e1b2536f40da51252a7ea1a170309"
+ir_digest = "sha256:9b664627e5824d2ee2e5dce666f0f24e39b0f79ed7a1b54028ef6dce12f9cbce"
+
+[[files]]
+path = "logic/add-shared-peer-mtls-transport-for-stateful-services.md"
+digest = "sha256:1b36318e11a44a16be63345a501ae1f0556c7cf4d139901e07ba3438caa5c8be"
+ir_digest = "sha256:4d2d0e5ecfc1b850c6804e455a85eeb2d55fc1ee4bd8f36848ee19003f139f38"
+section_count = 3
 
 [[files]]
 path = "semantic/raft-runtime-libs-raft-runtime.md"
