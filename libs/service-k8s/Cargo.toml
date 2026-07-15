@@ -1,3 +1,26 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:febc0457" tracker="pending-tracker" reason="scaffold for libs/service-k8s/Cargo.toml — fill in by hand and update tracker when codegen is ready"
-// TODO: hand-write content for `libs/service-k8s/Cargo.toml`.
-// HANDWRITE-END
+[package]
+name = "service-k8s"
+version = "0.1.0"
+edition = "2021"
+description = "Shared Kubernetes integration for Axiom services: managed-service reconciliation, leader election, CRD and workload rendering, stateful capacity planning, and resize primitives."
+
+[lib]
+name = "service_k8s"
+path = "src/lib.rs"
+
+[dependencies]
+# Pinned to Lumen's operator surface so the workspace lock stays single-versioned.
+kube = { version = "0.98", features = ["runtime", "derive", "client"] }
+k8s-openapi = { version = "0.24", features = ["v1_32"] }
+cli-std = { path = "../cli-std", default-features = false }
+schemars = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+
+<!-- marker: missing-generator:logic:febc0457 path: libs/service-k8s/Cargo.toml reason: scaffold for libs/service-k8s/Cargo.toml — fill in by hand and update tracker when codegen is ready -->
