@@ -2,72 +2,72 @@ version = 2
 project = "raft-runtime"
 ir_kind = "td"
 td_path = "libs/raft-runtime/tech-design"
-generated_at = "2026-07-08T05:29:44.681519+00:00"
-digest = "sha256:460a1d08912ac1f120cfe93a2c9831d71df5e4704c94eadbc886de1f20be61c6"
-source_digest = "sha256:460a1d08912ac1f120cfe93a2c9831d71df5e4704c94eadbc886de1f20be61c6"
-ir_digest = "sha256:409de33f140c4d4f91d4309d34556ab84af0ca72f3c5728a49382d5b546afaa4"
+generated_at = "2026-07-15T07:37:49.656872+00:00"
+digest = "sha256:2bb539732367f905f3934a62270186ca83cbd47f9a776f2d8cfae411ae05b1d5"
+source_digest = "sha256:2bb539732367f905f3934a62270186ca83cbd47f9a776f2d8cfae411ae05b1d5"
+ir_digest = "sha256:1d3858d25e9c8148ca04c1701f30133f54966035b9c8da1918263847f12d931b"
 
 [[files]]
 path = "semantic/raft-runtime-libs-raft-runtime.md"
-digest = "sha256:e1c341a45c5a36b4b7fe259c3a5944593d5b1d87e01a9683f55e060e24ff7ea8"
+digest = "sha256:9125ea9855132b68fa2ffa1161c6a4dd785c084a5cf9df4595ee7817aa92b45f"
 parse_error = "schema:15-146: section 'schema' at lines 15..146: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-cluster-rs.md"
-digest = "sha256:511500d5f63f32478c6caa84811d8d144fc48943af22170ce4d36e5e67d94ad7"
-ir_digest = "sha256:490833f34d90980d4bd08de882e2307706c77d718646ce853866bab859b1563b"
+digest = "sha256:01eb53524ea84c2045741aa63df13477444656bebdcf9f265836d19aa40ea5ba"
+ir_digest = "sha256:1f4f735a6b15156aa19adc5dfeb43a368b45d7a697e3da8f66db3a15eb6ea931"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-config-rs.md"
-digest = "sha256:cfa6b0907d873f5af8d010ffd7b82f17c3c26274fdd6beb9dbd2681fd0d93497"
-ir_digest = "sha256:e5a8214cd281da492d792835799e9cebffb8ea24387415541eff944e71ae0f3c"
+digest = "sha256:c11ada2dbf80a8b61c6187f960166f8d1d49559bbccdabe2b9b6004fcee07b93"
+ir_digest = "sha256:c8399d7aebd55146411f537a0416da50437c9566cea63869a809c74ffae7d933"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-host-rs.md"
-digest = "sha256:7f1ca857cee1367fd64273bf79d66f7a3498915ffa7981b735301bd50d12a7db"
-ir_digest = "sha256:d8cbeaa33a93f6370552bca0ec8bdc413c15fa654d08e94121b506c6d2619548"
+digest = "sha256:feafaaaa0fa6d3c5fd635409bff325f35d9f467be95b34047c4aee7d4d95d68f"
+ir_digest = "sha256:6266d7283ad41cfd4c42c333b0d31f5008e4dc8a0916f74643bbd9a7e74596e5"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-lib-rs.md"
-digest = "sha256:905daecad9511d168fbff9e0d878c3d1d3c69cfbf8f62c8205afcb1570395d5a"
-ir_digest = "sha256:d7b8d588b372e4c00885fb640025deaabb1489c0611f27d70868290af645e2ab"
+digest = "sha256:fe29f6ca4b82401ad3a39d7798065b74c74cff1a2878e4c3a059d99decc4a131"
+ir_digest = "sha256:b8cd261098628d0b8b63a4ee0d561a388534ec1eec66ab33e8c676d1cfdf9ad1"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-llm-rs.md"
-digest = "sha256:0b8db5cb369c19058c52a1164b5679885b5ddad6a5f9be48f7546b6c9214639f"
-ir_digest = "sha256:5d2c1f71c4df5eb9e0dc1f41c5ef2d156c23aff2ab7a74e0eb5304c1c4add716"
+digest = "sha256:1e5cff5d43e6b57444f4f0bed532cc4a0b855f20780a059b98e65ff8a95f0474"
+ir_digest = "sha256:140200692d900788cec62d4f63f23fcdb6c889cc2bf0a19fc2274dbdf89fbbb7"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-outcome-window-rs.md"
-digest = "sha256:3632dcbb1165ced0e8510b7dfb018bda83d56b51f06486a5b101acd15dc828a6"
-ir_digest = "sha256:c5fb400512d7f1a780549f6114bb49706b0fa35468005d5ba7762064d870f4f9"
+digest = "sha256:f4be176b8d9908917f89bc97eb0b395dff8e70e3e7f9740b118eb76a314e97fd"
+ir_digest = "sha256:9a22d379de1e2f0fcc5935c0266a9bd3a464e5c6ec41ba3edb4f1522fd79df1d"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-read-consistency-rs.md"
-digest = "sha256:a594dd269bd71818a72fd432c9ac7b30cffe3b0eb96fafb3d1b95f023c823ae0"
-ir_digest = "sha256:36af1d84964f20ea9b881663f990c7cf060f394cfd65ecc079ace2d30437581e"
+digest = "sha256:3066bd2353e5e49240aa937080201d71bfb6b13a7be295825383ea8d1130a7bb"
+ir_digest = "sha256:8c518ba5c9b3d16267136ad929bd3131be4ddaa8a80f29213236931dceb6b878"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-state-machine-rs.md"
-digest = "sha256:faf8d4fdb72b690aff554edcea64a5180868b069da1524f9ea4437106417f353"
-ir_digest = "sha256:3a382c65d22c122ee2a9c73bfdd86b91ab211375eb9e05622d41a445e18c73cb"
+digest = "sha256:21d95b6454ae9cf39ae3d7fdb8c63f383635ed766ddc6636e7ea702154113f05"
+ir_digest = "sha256:969f54ad33897870936a2f982a40c865f47c25c287b5623ed3ffa8b77724dab9"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-store-rs.md"
-digest = "sha256:dbb256e70ddb570b18c6dc0acbf991e5bf455becb6f8b9f7954e661ffbde91f5"
-ir_digest = "sha256:674737eeae63a3ef713e3eca59cba3898c6f3596d10a1d57b8c851294508d0a0"
+digest = "sha256:a98b6a6590bae0a4f31280acb24f011bb6b87bab7bf1778547d8ac538469dd58"
+ir_digest = "sha256:f9b522f2b8d6f8032a9c39bbd9a3f5872258e591402e9fd8cb45e602ed8dd478"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-raft-runtime-src-view-rs.md"
-digest = "sha256:8a5420926a9e4b477c2cc27a07f301afb062c0b20d147f7bab8270d34f26968d"
-ir_digest = "sha256:b1734b94487bae033685678fcacfee2881e86710c5286d1b3cf283d72f9a4a88"
+digest = "sha256:77705e0238bc56c4e5b44ab87cb35323ae46b8e0034ec835b50fc59cba82cdca"
+ir_digest = "sha256:8c2148d31e285f7629d5f349e5d180d90ae9e977d70eddb53de47eb11f0a5ebc"
 section_count = 3
