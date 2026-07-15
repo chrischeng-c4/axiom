@@ -805,6 +805,7 @@ export {
         complex_commonjs.join("index.js"),
         r#"
 const api = {
+  delete: "keyword-safe",
   object: "collision-safe",
   get getter() {
     return "getter";

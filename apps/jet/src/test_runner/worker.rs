@@ -118,7 +118,13 @@ function namedCommonJsFacadeUrl(specifier, context, resolved) {
       `const require = createRequire(${JSON.stringify(resolved.url)});`,
       `const ${localBinding} = require(${JSON.stringify(fileURLToPath(resolved.url))});`,
       `export default ${localBinding};`,
-      ...names.map((name) => `export const ${name} = ${localBinding}[${JSON.stringify(name)}];`),
+      ...names.flatMap((name, index) => {
+        const localExport = `__jet_cjs_export_${index}`;
+        return [
+          `const ${localExport} = ${localBinding}[${JSON.stringify(name)}];`,
+          `export { ${localExport} as ${name} };`,
+        ];
+      }),
     ].join("\n");
     return `data:text/javascript,${encodeURIComponent(source)}`;
   } catch {
@@ -3047,6 +3053,7 @@ mod tests {
         assert!(TEST_ASSET_LOADER.contains("isTestStylesheetUrl"));
         assert!(TEST_ASSET_LOADER.contains("let localBinding = \"__jet_cjs_module\";"));
         assert!(TEST_ASSET_LOADER.contains("const ${localBinding} = require"));
+        assert!(TEST_ASSET_LOADER.contains("export { ${localExport} as ${name} };"));
     }
 
     #[test]
