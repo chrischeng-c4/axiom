@@ -3,7 +3,7 @@
 //! CLI surface — clap-derive command tree.
 //!
 //! ```text
-//!   cap init [claude|codex] [--project] [--print]   # install agent hooks
+//!   cap on|off [claude|codex|agy] [--print] # global agent hooks
 //!   cap <cmd> [args...]           # default: wrap cmd
 //!   cap run -- <cmd> [args...]    # explicit
 //!   cap run "<bash command>"       # string command entrypoint for hooks
@@ -50,10 +50,11 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
 # cap workflow
 
 cap protects the local machine from agent-launched command storms. Start with
-`cap init` to install fail-open Bash hooks for Claude Code and Codex CLI. The
-hooks rewrite agent Bash commands to `cap run '<original command>'`, and cap
-then decides whether to run the command under a daemon lease, a resident native
-fast path, a session queue barrier, or Bash fallback.
+`cap on` installs global hooks for Claude Code, Codex CLI, and AGY. Claude and
+Codex Bash commands are rewritten to `cap run '<original command>'`; the AGY
+hook currently supplies the same destructive-command guard for `run_command`.
+cap then decides whether a wrapped command runs under a daemon lease, a
+resident native fast path, a session queue barrier, or Bash fallback.
 
 Use `cap status`, `cap ps`, and `cap wait` to inspect or wait for host
 capacity. Use `cap explain -- <command>` to see whether a command can use a
@@ -67,12 +68,13 @@ native replacement.",
 
 | task | command |
 |---|---|
-| install agent hooks | `cap init` |
-| preview hook snippets | `cap init --print` |
+| enable agent hooks | `cap on` |
+| disable agent hooks | `cap off` |
+| preview hook snippets | `cap on --print` |
 | wrap one command string | `cap run 'cargo test -p cap'` |
 | wrap argv directly | `cap run -- cargo test -p cap` |
 | inspect replacement decision | `cap explain -- find . -type f` |
-| show leases and pressure | `cap status` |
+| show leases, pressure, and agent hooks | `cap status` |
 | wait for headroom | `cap wait --timeout 30` |
 | search cap issues | `cap issue search queue` |
 | file a diagnostics issue | `cap issue create --title 'cap: ...' ...` |",
@@ -133,7 +135,7 @@ pub enum Cmd {
         #[command(subcommand)]
         action: DaemonCmd,
     },
-    /// Print leases + memory pressure.
+    /// Print leases, memory pressure, and agent hook status.
     Status,
     /// Alias of `status`.
     Ps,
@@ -153,23 +155,34 @@ pub enum Cmd {
         #[arg(long)]
         timeout: Option<u64>,
     },
-    /// Set up cap: install the PreToolUse hook into your coding agents.
+    /// Enable the PreToolUse hook in your coding agents.
     ///
-    /// With no arguments, installs into BOTH Claude Code and Codex CLI
-    /// at the user level (`~/.claude/settings.json`,
-    /// `~/.codex/config.toml`) so every Bash command the agent runs is
-    /// transparently throttled by cap. Pass agent names to narrow it
-    /// (`cap init claude`), `--project` for cwd scope, or `--print` to
-    /// preview the snippets without writing anything.
-    Init {
-        /// Install into the current project (`./.claude`, `./.codex`)
-        /// instead of the user-global location.
-        #[arg(long)]
-        project: bool,
+    /// With no arguments, installs globally into Claude Code, Codex CLI,
+    /// and AGY. Cap never installs project-local hooks: every agent receives
+    /// the same machine-level protection. Pass an agent name to narrow it
+    /// (`cap on claude`) or `--print` to preview without writing anything.
+    On {
         /// Print the snippet(s) to stdout and exit; do not modify files.
         #[arg(long)]
         print: bool,
         /// Limit to specific agents. Default: all of them.
+        #[arg(value_enum)]
+        agents: Vec<AgentArg>,
+    },
+    /// Disable cap's PreToolUse hook without affecting unrelated agent hooks.
+    Off {
+        /// Print the target path(s) without modifying files.
+        #[arg(long)]
+        print: bool,
+        /// Limit to specific agents. Default: all of them.
+        #[arg(value_enum)]
+        agents: Vec<AgentArg>,
+    },
+    /// Deprecated alias for `cap on`.
+    #[command(hide = true)]
+    Init {
+        #[arg(long)]
+        print: bool,
         #[arg(value_enum)]
         agents: Vec<AgentArg>,
     },
@@ -318,7 +331,7 @@ pub enum ConfigCmd {
 #[derive(Subcommand, Debug)]
 pub enum HookCmd {
     /// PreToolUse adapter for Bash (the runtime hook entrypoint that
-    /// `cap init` registers — you normally don't run this by hand).
+    /// `cap on` registers — you normally don't run this by hand).
     /// Reads the hook event from stdin and prints a permission-decision
     /// JSON that rewrites the command to run under cap.
     Bash {
@@ -329,6 +342,9 @@ pub enum HookCmd {
         #[arg(long, conflicts_with = "codex")]
         claude_code: bool,
     },
+    /// PreToolUse adapter for AGY `run_command`. It blocks dangerous
+    /// commands; AGY does not yet use cap's command-rewrite adapter.
+    Agy,
 }
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
@@ -338,6 +354,8 @@ pub enum AgentArg {
     Claude,
     /// Codex CLI (~/.codex/config.toml)
     Codex,
+    /// AGY (~/.gemini/config/hooks.json or its legacy global path)
+    Agy,
 }
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
@@ -355,11 +373,12 @@ pub async fn run() -> Result<ExitCode> {
         Some(Cmd::Config { action }) => handle_config(action),
         Some(Cmd::Ping) => handle_ping().await,
         Some(Cmd::Wait { timeout }) => handle_wait(timeout).await,
-        Some(Cmd::Init {
-            project,
-            print,
-            agents,
-        }) => handle_init(agents, project, print),
+        Some(Cmd::On { print, agents }) => handle_hook_switch(agents, print, HookSwitch::On),
+        Some(Cmd::Off { print, agents }) => handle_hook_switch(agents, print, HookSwitch::Off),
+        Some(Cmd::Init { print, agents }) => {
+            eprintln!("cap init is deprecated; use `cap on`");
+            handle_hook_switch(agents, print, HookSwitch::On)
+        }
         Some(Cmd::Hook { action }) => handle_hook(action),
         Some(Cmd::Run(args)) => handle_run(args).await,
         Some(Cmd::Explain(args)) => handle_explain(args),
@@ -558,6 +577,7 @@ async fn handle_status() -> Result<ExitCode> {
         Ok(c) => c,
         Err(_) => {
             println!("cap daemon: stopped");
+            print_hook_status();
             return Ok(ExitCode::SUCCESS);
         }
     };
@@ -594,6 +614,7 @@ async fn handle_status() -> Result<ExitCode> {
             l.lease, state, pid, l.age_secs, l.label
         );
     }
+    print_hook_status();
     Ok(ExitCode::SUCCESS)
 }
 
@@ -629,34 +650,61 @@ fn handle_hook(action: HookCmd) -> Result<ExitCode> {
             crate::hook::run_bash_hook(agent)?;
             Ok(ExitCode::SUCCESS)
         }
+        HookCmd::Agy => {
+            crate::hook::run_agy_hook()?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
-/// `cap init` — register the PreToolUse hook with one or more agents.
-/// No agents given = all of them; no `--project` = user-global scope.
-fn handle_init(agents: Vec<AgentArg>, project: bool, print: bool) -> Result<ExitCode> {
-    let scope = if project {
-        hook_install::Scope::Project
-    } else {
-        hook_install::Scope::User
-    };
-    // Default to every supported agent — the zero-argument `cap init`
-    // is meant to "just set everything up".
+#[derive(Clone, Copy)]
+enum HookSwitch {
+    On,
+    Off,
+}
+
+/// Toggle the PreToolUse hook for one or more agents.
+/// Hooks are always user-global. No agents given = every supported agent.
+fn handle_hook_switch(agents: Vec<AgentArg>, print: bool, action: HookSwitch) -> Result<ExitCode> {
+    // Default to every supported agent — zero-argument `cap on` is
+    // intentionally a complete user-global setup.
     let targets: Vec<hook_install::Agent> = if agents.is_empty() {
-        vec![hook_install::Agent::Claude, hook_install::Agent::Codex]
+        vec![
+            hook_install::Agent::Claude,
+            hook_install::Agent::Codex,
+            hook_install::Agent::Agy,
+        ]
     } else {
         agents
             .iter()
             .map(|a| match a {
                 AgentArg::Claude => hook_install::Agent::Claude,
                 AgentArg::Codex => hook_install::Agent::Codex,
+                AgentArg::Agy => hook_install::Agent::Agy,
             })
             .collect()
     };
     for agent in targets {
-        hook_install::run(agent, scope, print)?;
+        match action {
+            HookSwitch::On => hook_install::enable(agent, print)?,
+            HookSwitch::Off => hook_install::disable(agent, print)?,
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn print_hook_status() {
+    println!("agent hooks:");
+    for agent in [
+        hook_install::Agent::Claude,
+        hook_install::Agent::Codex,
+        hook_install::Agent::Agy,
+    ] {
+        match hook_install::status(agent) {
+            Ok(state) => println!("  global {}: {}", agent.label(), state.label()),
+            Err(error) => println!("  global {}: unreadable ({error:#})", agent.label()),
+        }
+    }
 }
 
 async fn handle_ping() -> Result<ExitCode> {
@@ -803,9 +851,13 @@ mod tests {
     #[test]
     fn cli_std_convention_help_lists_current_commands_and_compat_alias() {
         let help = Cli::command().render_help().to_string();
-        for verb in ["llm", "upgrade", "issue", "report-issue"] {
+        for verb in ["llm", "upgrade", "issue", "report-issue", "on", "off"] {
             assert!(help.contains(verb), "missing {verb} in help:\n{help}");
         }
+        assert!(
+            !help.contains("\n  init  "),
+            "deprecated init must stay hidden:\n{help}"
+        );
     }
 
     #[test]
@@ -875,8 +927,7 @@ mod tests {
 
     #[test]
     fn run_args_timeout_flags_are_optional() {
-        let cli = Cli::try_parse_from(["cap", "run", "--", "cargo", "build"])
-            .expect("flags parse");
+        let cli = Cli::try_parse_from(["cap", "run", "--", "cargo", "build"]).expect("flags parse");
         match cli.command {
             Some(Cmd::Run(args)) => {
                 assert_eq!(args.timeout, None);
@@ -884,6 +935,41 @@ mod tests {
             }
             other => panic!("expected Cmd::Run, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn hook_switch_commands_are_global_and_support_all_agents() {
+        let on = Cli::try_parse_from(["cap", "on", "agy", "--print"]).expect("on parses");
+        match on.command {
+            Some(Cmd::On { print, agents }) => {
+                assert!(print);
+                assert!(matches!(agents.as_slice(), [AgentArg::Agy]));
+            }
+            other => panic!("expected Cmd::On, got {other:?}"),
+        }
+
+        let off = Cli::try_parse_from(["cap", "off", "claude"]).expect("off parses");
+        match off.command {
+            Some(Cmd::Off { print, agents }) => {
+                assert!(!print);
+                assert!(matches!(agents.as_slice(), [AgentArg::Claude]));
+            }
+            other => panic!("expected Cmd::Off, got {other:?}"),
+        }
+
+        assert!(Cli::try_parse_from(["cap", "on", "--project"]).is_err());
+    }
+
+    #[test]
+    fn deprecated_init_still_parses_as_compatibility_command() {
+        let cli = Cli::try_parse_from(["cap", "init"]).expect("init parses");
+        assert!(matches!(
+            cli.command,
+            Some(Cmd::Init {
+                print: false,
+                agents,
+            }) if agents.is_empty()
+        ));
     }
 }
 // CODEGEN-END

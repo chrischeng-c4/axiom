@@ -69,7 +69,8 @@ e2e_tests:
     category: behavior
     command: "cargo test -p cap hook_install -- --nocapture && cargo test -p cap hook -- --nocapture"
     assertions:
-      - "cap init hook installation is idempotent for Claude Code and Codex CLI"
+      - "cap on/off global hook lifecycle is idempotent for Claude Code, Codex CLI, and AGY"
+      - "agent hooks deny destructive commands outside the current Git workspace"
       - "unrelated user hooks are preserved"
       - "hook payload adapters rewrite Bash commands without making cap a hard dependency"
 ```

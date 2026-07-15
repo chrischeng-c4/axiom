@@ -5,7 +5,7 @@
 `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`,
 …) from eating the whole machine. It is built for one job in
 particular: **throttling the Bash commands a coding agent
-(Claude Code, Codex CLI) fires off**, so an agent that happily launches
+(Claude Code, Codex CLI, AGY) fires off**, so an agent that happily launches
 8 `cargo test`s at once can't OOM your box.
 
 It is **not** an environment manager. No sandboxing, no container, no
@@ -45,19 +45,19 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 ID: agent-hook-installation
 Type: AgentFirst
-Surfaces: CLI: `cap init` + `cap hook` + `cap run '<command string>'` - Agent hook installation and hook-adapter routing that rewrites agent Bash commands through cap run.; AgentHook: `Claude Code PreToolUse` + `Codex CLI PreToolUse` - Fail-open agent hook snippets that preserve unrelated user config and route Bash commands through cap.
-EC Dimensions: behavior: `cap` - Claude/Codex hook installation, command-string rewrite adapters, recursion prevention, and fail-open routing behavior
+Surfaces: CLI: `cap on` + `cap off` + `cap status` + `cap hook` + `cap run '<command string>'` - Global agent-hook lifecycle, status, and adapter routing.; AgentHook: `Claude Code PreToolUse` + `Codex CLI PreToolUse` + `AGY PreToolUse` - Global snippets preserve unrelated user config; Claude/Codex rewrite Bash through cap and AGY applies the destructive-command guard to `run_command`.
+EC Dimensions: behavior: `cap` - global three-agent hook installation, command-string rewrite adapters, destructive-command guard, recursion prevention, and fail-open routing behavior
 Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-`cap init` installs fail-open PreToolUse hook snippets for Claude Code and Codex CLI, preserving unrelated user configuration while routing Bash commands through cap.
+`cap on` installs and `cap off` removes global PreToolUse hook snippets for Claude Code, Codex CLI, and AGY, preserving unrelated user configuration. Claude/Codex route Bash through cap; AGY applies the destructive-command guard to `run_command`. Agent hooks deny destructive commands they cannot prove stay inside the current Git workspace; `cap status` reports global hook state alongside daemon capacity.
 Gate Inventory:
 - `cargo test -p cap hook_install`; `cargo test -p cap hook`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Claude and Codex hook installation | epic | - | implemented | verified | smoke | `cargo test -p cap hook_install` |
+| Claude, Codex, and AGY hook installation | epic | - | implemented | verified | smoke | `cargo test -p cap hook_install` |
 | Hook payload rewrite adapters | epic | - | implemented | verified | smoke | `cargo test -p cap hook` |
 
 ### Standard Agent CLI Operations
@@ -150,19 +150,20 @@ that, and the box dies. `cap` is the throttle in front of them.
 
 ## Quick start (the agent use case)
 
-Build + install, then run `cap init`:
+Build + install, then run `cap on`:
 
 ```bash
 # 1. build & put `cap` on your PATH (e.g. ~/.local/bin)
 CAP_INSTALL="$HOME/.local/bin" apps/cap/build.sh debug
 
-# 2. wire the PreToolUse hook into your agents (user-global)
-cap init        # installs into BOTH Claude Code and Codex CLI
+# 2. enable the PreToolUse hook in your agents (user-global)
+cap on          # enables Claude Code, Codex CLI, and AGY globally
 ```
 
-`cap init` with no arguments registers the hook into both
-`~/.claude/settings.json` and `~/.codex/config.toml`. From then on every
-Bash command the agent runs is transparently rewritten to:
+`cap on` with no arguments registers global hooks in
+`~/.claude/settings.json`, `~/.codex/config.toml`, and AGY's global hooks
+configuration (`~/.gemini/config/hooks.json`, or its existing legacy path).
+Claude/Codex Bash commands are transparently rewritten to:
 
 ```
 /abs/path/to/cap run '<original Bash command>'
@@ -1087,14 +1088,27 @@ The latest baseline and interpretation live in `apps/cap/BENCHMARKS.md`.
 Narrowing it down:
 
 ```bash
-cap init claude       # just Claude Code
-cap init codex        # just Codex CLI
-cap init --project    # write ./.claude, ./.codex instead of user-global
-cap init --print      # print the snippets, touch nothing
+cap on claude         # enable just Claude Code
+cap on codex          # enable just Codex CLI
+cap on agy            # enable just AGY globally
+cap on --print        # print the snippets, touch nothing
+cap off codex         # remove only cap's Codex hook
+cap off agy           # remove only cap's AGY hook
+cap status            # daemon capacity plus global hook state
 ```
 
-`cap init` is idempotent (re-running won't duplicate the hook) and
-preserves any unrelated hooks already in the file.
+`cap on` and `cap off` are idempotent and preserve unrelated hooks already in
+the file. `cap init` remains a deprecated compatibility alias for `cap on`.
+
+### Agent destructive-command guard
+
+When installed through `cap on`, all three agent hooks reject `rm` targets outside the
+current Git workspace (including the workspace root), ambiguous destructive
+shell forms, `find -delete`, forceful `git clean`, `git reset --hard`, and
+privileged or disk-destructive commands such as `sudo`, `dd`, `mkfs`, and
+`diskutil`. Claude/Codex also route commands through cap's throttle; AGY's
+adapter currently uses the guard without rewriting its command. This guard applies only to agent hook calls; direct terminal
+`cap run` retains its normal shell behavior.
 
 ### Fail-open by design
 

@@ -10,7 +10,8 @@
 // @command cargo test -p cap --lib hook_install -- --nocapture && cargo test -p cap hook -- --nocapture
 // AW-EC-END
 
-// Contract: cap init hook installation is idempotent for Claude Code and Codex CLI
+// Contract: cap on/off global hook lifecycle is idempotent for Claude Code, Codex CLI, and AGY
+// Contract: agent hooks deny destructive commands outside the current Git workspace
 // Contract: unrelated user hooks are preserved
 // Contract: hook payload adapters rewrite Bash commands without making cap a hard dependency
 #[test]
