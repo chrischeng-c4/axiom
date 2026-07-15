@@ -2,10 +2,16 @@ version = 2
 project = "service-k8s"
 ir_kind = "td"
 td_path = "libs/service-k8s/tech-design"
-generated_at = "2026-07-15T07:37:45.463253+00:00"
-digest = "sha256:c950a762619b5f88ab56346f6e01d2a0bc9bb5cde3b2e1ba06491f5be2bcafb0"
-source_digest = "sha256:c950a762619b5f88ab56346f6e01d2a0bc9bb5cde3b2e1ba06491f5be2bcafb0"
-ir_digest = "sha256:6596a088a74b0f08529a15ebf8ce49f706b8dd741617e1eaeb8a90dcb335cf25"
+generated_at = "2026-07-15T16:20:37.452951+00:00"
+digest = "sha256:65da0dbf038e199dbdfba364d612a5af856932f8bbfda5d36795b252ef4cb633"
+source_digest = "sha256:65da0dbf038e199dbdfba364d612a5af856932f8bbfda5d36795b252ef4cb633"
+ir_digest = "sha256:a66e556f711c1a94b3f6f66afa09d0e003aafa7402c6f2d6d39081d9ebb12255"
+
+[[files]]
+path = "logic/extract-shared-stateful-service-workload-projection-primitives.md"
+digest = "sha256:fcb695856a858f6506b785081e52852ac6a30335b3280a50b01319af1d5680e1"
+ir_digest = "sha256:fda41c1d9e1474dc8890e6c434d9f828698687eba061abc74c51080b3a53c71c"
+section_count = 3
 
 [[files]]
 path = "semantic/service-k8s-libs-service-k8s.md"
