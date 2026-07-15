@@ -32,6 +32,10 @@ Public API manifest for `libs/metrics-prometheus/src/lib.rs` captured during lib
 | `observe` | libs/metrics-prometheus/src/lib.rs | function | pub | 108 | pub fn observe(&self, value: u64) { |
 | `Sample` | libs/metrics-prometheus/src/lib.rs | struct | pub | 118 | pub struct Sample<'a> { |
 | `render` | libs/metrics-prometheus/src/lib.rs | function | pub | 140 | pub fn render(samples: &[Sample<'_>]) -> String { |
+| `Label` | libs/metrics-prometheus/src/lib.rs | struct | pub | — | pub struct Label<'a> { |
+| `LabeledSample` | libs/metrics-prometheus/src/lib.rs | struct | pub | — | pub struct LabeledSample<'a> { |
+| `SampleGroup` | libs/metrics-prometheus/src/lib.rs | struct | pub | — | pub struct SampleGroup<'a> { |
+| `render_labeled` | libs/metrics-prometheus/src/lib.rs | function | pub | — | pub fn render_labeled(groups: &[SampleGroup<'_>]) -> String { |
 
 
 ## Source
@@ -47,8 +51,9 @@ Public API manifest for `libs/metrics-prometheus/src/lib.rs` captured during lib
 //! crate holds only those primitives: no registry side-table, no
 //! macros, no dependencies. Callers own their metric structs (typically
 //! one field per metric, as plain `Counter`/`Gauge`/`Latency` values)
-//! and hand a slice of [`Sample`]s to [`render`] to produce the scrape
-//! body.
+//! and hand a slice of [`Sample`]s to [`render`] to produce an unlabeled
+//! scrape body, or [`SampleGroup`]s to [`render_labeled`] when one HELP/TYPE
+//! declaration owns multiple labeled rows.
 //!
 //! Lifted from lumen's `src/metrics.rs` (#974): lumen's `Metrics`
 //! reimplements on top of these primitives with byte-identical
@@ -173,6 +178,59 @@ impl<'a> Sample<'a> {
     }
 }
 
+/// One Prometheus label name/value pair. The renderer canonicalizes label
+/// order and escapes values, so callers only own label semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Label<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+}
+
+impl<'a> Label<'a> {
+    pub const fn new(name: &'a str, value: &'a str) -> Self {
+        Self { name, value }
+    }
+}
+
+/// One value row within a labeled metric family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabeledSample<'a> {
+    pub labels: Vec<Label<'a>>,
+    pub value: u64,
+}
+
+impl<'a> LabeledSample<'a> {
+    pub fn new(labels: Vec<Label<'a>>, value: u64) -> Self {
+        Self { labels, value }
+    }
+}
+
+/// A metric family whose HELP and TYPE declarations are shared by one or more
+/// labeled value rows.
+#[derive(Debug, Clone, Copy)]
+pub struct SampleGroup<'a> {
+    pub name: &'a str,
+    pub kind: &'a str,
+    pub help: &'a str,
+    pub samples: &'a [LabeledSample<'a>],
+}
+
+impl<'a> SampleGroup<'a> {
+    pub const fn new(
+        name: &'a str,
+        kind: &'a str,
+        help: &'a str,
+        samples: &'a [LabeledSample<'a>],
+    ) -> Self {
+        Self {
+            name,
+            kind,
+            help,
+            samples,
+        }
+    }
+}
+
 /// Render `samples` as Prometheus text format (0.0.4 compatible): each
 /// sample emits `# HELP <name> <help>`, `# TYPE <name> <kind>`, then
 /// `<name> <value>`, in the order given. Always emits the same set of
@@ -185,6 +243,53 @@ pub fn render(samples: &[Sample<'_>]) -> String {
         let _ = writeln!(out, "{} {}", sample.name, sample.value);
     }
     out
+}
+
+/// Render labeled metric families as Prometheus text format 0.0.4.
+///
+/// Groups and rows preserve caller order. Labels within a row are sorted by
+/// name then value, and label values escape backslash, double quote, and
+/// newline as required by the Prometheus exposition format.
+pub fn render_labeled(groups: &[SampleGroup<'_>]) -> String {
+    let mut out = String::new();
+    for group in groups {
+        let _ = writeln!(out, "# HELP {} {}", group.name, group.help);
+        let _ = writeln!(out, "# TYPE {} {}", group.name, group.kind);
+        for sample in group.samples {
+            let _ = write!(out, "{}", group.name);
+            if !sample.labels.is_empty() {
+                let mut labels = sample.labels.iter().collect::<Vec<_>>();
+                labels.sort_unstable_by(|left, right| {
+                    left.name
+                        .cmp(right.name)
+                        .then_with(|| left.value.cmp(right.value))
+                });
+                out.push('{');
+                for (index, label) in labels.into_iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    let _ = write!(out, "{}=\"", label.name);
+                    write_escaped_label_value(&mut out, label.value);
+                    out.push('"');
+                }
+                out.push('}');
+            }
+            let _ = writeln!(out, " {}", sample.value);
+        }
+    }
+    out
+}
+
+fn write_escaped_label_value(out: &mut String, value: &str) {
+    for character in value.chars() {
+        match character {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            other => out.push(other),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -243,6 +348,28 @@ mod tests {
              # TYPE demo_bytes gauge\n\
              demo_bytes 100\n"
         );
+    }
+
+    #[test]
+    fn labeled_render_sorts_and_escapes_labels() {
+        let rows = [LabeledSample::new(
+            vec![Label::new("zone", "a\\b\nc"), Label::new("pool", "x\"y")],
+            7,
+        )];
+        let groups = [SampleGroup::new(
+            "demo_active",
+            "gauge",
+            "Active demo resources.",
+            &rows,
+        )];
+
+        assert_eq!(
+            render_labeled(&groups),
+            "# HELP demo_active Active demo resources.\n\
+# TYPE demo_active gauge\n\
+demo_active{pool=\"x\\\"y\",zone=\"a\\\\b\\nc\"} 7\n"
+        );
+        assert_eq!(rows[0].labels[0].name, "zone");
     }
 
     /// Golden-render test derived from lumen's `src/metrics.rs` (#974):

@@ -62,7 +62,7 @@ nodes:
     label: "true: 503 'draining' (R2)"
   metrics_req:
     kind: terminal
-    label: "GET /metrics: renders Prometheus text-format gauges (pgpool_frontend_active, pgpool_backend_active, pgpool_backend_idle, each labeled pool=<name>) from every AdminState.pools entry's ConnectionBudget::active() and BackendPool::stats() (AC4)"
+    label: "GET /metrics: maps live pgpool_frontend_active, pgpool_backend_active, and pgpool_backend_idle values (each labeled pool=<name>) into metrics-prometheus SampleGroup rows; the shared encoder owns HELP/TYPE, deterministic label ordering, and escaping (AC4)"
   openapi_req:
     kind: terminal
     label: "GET /openapi.json: returns Json(pgpool::spec::openapi()) - the identical serde_json::Value apps/pgpool/src/spec.rs already builds for `pgpool spec --format openapi` (R4)"
@@ -332,7 +332,7 @@ definitions:
     $id: AdminMetricsLine
     x-rust-derive: ["Debug", "Clone"]
     required: [metric, pool, value]
-    description: "Internal (non-serialized-as-JSON) shape the /metrics handler folds every AdminState.pools entry into before rendering Prometheus text-format output; not part of the served JSON contract, only documents the pgpool_frontend_active / pgpool_backend_active / pgpool_backend_idle gauge rows (AC4). Rendered as `<metric>{pool=\"<pool>\"} <value>` per Prometheus text exposition format 0.0.4."
+    description: "Internal (non-serialized-as-JSON) shape the /metrics handler folds every AdminState.pools entry into before passing labeled rows to metrics-prometheus; not part of the served JSON contract, only documents the pgpool_frontend_active / pgpool_backend_active / pgpool_backend_idle gauge rows (AC4). The shared encoder renders `<metric>{pool=\"<pool>\"} <value>` per Prometheus text exposition format 0.0.4."
     properties:
       metric:
         type: string

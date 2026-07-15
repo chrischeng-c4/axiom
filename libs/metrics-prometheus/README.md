@@ -3,7 +3,8 @@
 ## Brief
 
 `metrics-prometheus` provides lock-free Prometheus metric primitives and a text
-format encoder for HTTP services.
+format encoder for service endpoints, including deterministic labeled metric
+groups with Prometheus-safe label escaping.
 
 ## Capabilities
 
@@ -11,7 +12,7 @@ format encoder for HTTP services.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Shared Prometheus Metric Primitives | - | implemented | verified | smoke | ready | counters, gauges, latency observations, and encoder |
+| Shared Prometheus Metric Primitives | - | implemented | verified | smoke | ready | counters, gauges, latency observations, and labeled/unlabeled encoders |
 
 ### Shared Prometheus Metric Primitives
 
@@ -24,9 +25,12 @@ EC Dimensions: behavior: `cargo test -p metrics-prometheus` - metric primitive a
 Required Verification: smoke
 Promise:
 Services can expose deterministic Prometheus text metrics through shared
-lock-free primitives without service-specific encoders.
-Gate Inventory: `cargo test -p metrics-prometheus`; libs/metrics-prometheus/src/lib.rs
+lock-free primitives without service-specific encoders. Labeled groups emit
+one HELP/TYPE declaration, preserve caller row order, sort labels
+deterministically, and escape backslash, quote, and newline values.
+Gate Inventory: `cargo test -p metrics-prometheus`; `cargo test -p pgpool admin::metrics`; libs/metrics-prometheus/src/lib.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | shared-prometheus-metric-primitives-contract | epic | - | implemented | verified | smoke | `cargo test -p metrics-prometheus`; libs/metrics-prometheus/src/lib.rs |
+| labeled-sample-encoder-adoption | change | #1765 | implemented | passing | conformance | `cargo test -p metrics-prometheus`; `cargo test -p pgpool admin::metrics` |
