@@ -48,7 +48,6 @@ flowchart TD
     failed --> teardown
     teardown --> report([Emit deterministic typed scenario report])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
