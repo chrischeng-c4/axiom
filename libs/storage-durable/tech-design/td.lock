@@ -2,43 +2,43 @@ version = 2
 project = "storage-durable"
 ir_kind = "td"
 td_path = "libs/storage-durable/tech-design"
-generated_at = "2026-07-08T05:43:34.724076+00:00"
-digest = "sha256:00bc891a009daeacbf8b1f227dbde2767f22ec9242b3e118f4dafe9eeb057aaf"
-source_digest = "sha256:00bc891a009daeacbf8b1f227dbde2767f22ec9242b3e118f4dafe9eeb057aaf"
-ir_digest = "sha256:0c92b94129ca1bc36938ba379b5776344e9999855d4ef17b1831ffda73725caf"
-
-[[files]]
-path = "semantic/storage-durable-libs-storage-durable.md"
-digest = "sha256:cabcb70200eb8da24cfa00ffc12a5de4aa3927ca879d24828da9b4f6ddff8786"
-ir_digest = "sha256:5ceae45ba2bcc6a9fa0d6d9d120efe6b99b83a318f4526efa1cc261896ecf485"
-section_count = 2
+generated_at = "2026-07-15T07:37:58.147155+00:00"
+digest = "sha256:3e431c7d3343426c0c9362226b82b48c94a1548f181e2cdc3b446f64d070bec6"
+source_digest = "sha256:3e431c7d3343426c0c9362226b82b48c94a1548f181e2cdc3b446f64d070bec6"
+ir_digest = "sha256:a234776a9cb42f4f655d31f3ec625f8186ebcce0d430e09f0fe493d37001c30d"
 
 [[files]]
 path = "semantic/source/libs-storage-durable-src-atomic-rs.md"
-digest = "sha256:9fade3ef008391c1e49925dd18c3f54334da435cd4f540cbade2fb31841b0804"
-ir_digest = "sha256:566f4b2afb02aa6b5f995984c7ff2376595f858a233e809b1a0ff18d8cb1b282"
+digest = "sha256:f67f10934ffb33bc17a9f45d6b7cf6e4c67796b66e7276327e4c10ff70498111"
+ir_digest = "sha256:e0e0993a7827a67b839f00d8db538b68cbf51a4c33cb3942951d5fa9520acbf4"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-storage-durable-src-framed_log-rs.md"
-digest = "sha256:67766d707b66ec026989ab1fdcd4df90bd359e058039d54d0c1da00a4557a529"
-ir_digest = "sha256:022ca4175d5f176302ed6cf5615d00bef5322219a26df8463569613bdfcbb6a0"
+digest = "sha256:96285aaf9a132e4396f378863479c70f13c843a44d1a1555336bf33378521fdc"
+ir_digest = "sha256:158b4ca12cf353f25fbca31d5868e7645564d1f8d82f42268ac65e2032f13c7e"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-storage-durable-src-fsync-rs.md"
-digest = "sha256:c966399b148e31568727847a93d3c8dfed9ebcfadf190f9fb42a6c93e1e33c03"
-ir_digest = "sha256:7d2d8cca6ea091d9fa0e9b725903190e1b3cab4fb2da17bb3a25a63c12a4a18c"
+digest = "sha256:23cbf81da0632728bd0f1e02d32228c49980cf13f0c79cf001394ddee2e049a5"
+ir_digest = "sha256:af28a15fc929077409f3d303b6cb764f50f2143598302b93f1212c3b8a5a1621"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-storage-durable-src-lib-rs.md"
-digest = "sha256:d6fb06a73d6f554e6692b8abf51419a0f9c9d944d1693babe87e0ea3ac716f88"
-ir_digest = "sha256:6da5d714680ee9dc7e205cc1cf5cbd247325b6197244c205a3cf3bccfe10d70c"
+digest = "sha256:841d6eca76e8ff5b9c51d1da4a953ee9dba0c153096402e7715408220b08e2ec"
+ir_digest = "sha256:806df74a0cb219ef0d8f46ad514b43473432e31c8ddf63ae96ac4124b4ae1e4c"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-storage-durable-src-snapshot_store-rs.md"
-digest = "sha256:abcc94828334992b75e9db9694b948e9943e4e6d9703ee206c9fdc07ae0cb0f0"
-ir_digest = "sha256:e5b86d0616e2759db9eb7e333402701ba38dd33a6e88c8d09c5f03dd9d206c70"
+digest = "sha256:9ef9469f3df65e62d3a8537879479a6befcf31277cb6a4f0f0bcaad07b33d8b4"
+ir_digest = "sha256:a7a90c34a75813a1e0b15fae25d13c866c89fd1b6100c03af6c161ac9f076e8c"
 section_count = 3
+
+[[files]]
+path = "semantic/storage-durable-libs-storage-durable.md"
+digest = "sha256:1b2b07365d039ea94f383d37a604c2e8d86287e61465fb28d62e71ab3aefb7b1"
+ir_digest = "sha256:2f550f809b9f4cfb19d88c25dd0e17c6ec3fb7843166aac5c5104c7a8b9599e8"
+section_count = 2
