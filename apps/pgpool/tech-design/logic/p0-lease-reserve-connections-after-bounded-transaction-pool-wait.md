@@ -191,7 +191,6 @@ changes:
     impl_mode: hand-written
     reason: Pin benchmark telemetry field parsing and diagnostic-only labeling.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
