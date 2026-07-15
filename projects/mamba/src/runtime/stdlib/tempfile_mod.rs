@@ -18,7 +18,9 @@
 //!   returns a context-manager object); context-manager protocol
 //!   support requires `__enter__`/`__exit__` plumbing on
 //!   class.rs. The string is a usable path immediately.
-//! - `mkstemp` doesn't return a real fd — uses 0 placeholder.
+//! - `mkstemp` returns a real fd registered in `os_mod`'s shared fd table
+//!   (#1630) so `os.close`/`os.read`/`os.write` on it behave like any
+//!   `os.open`-returned fd.
 
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::super::value::MbValue;
@@ -362,16 +364,28 @@ pub fn mb_tempfile_mkdtemp() -> MbValue {
 /// tempfile.mkstemp(suffix=None, prefix=None, dir=None, text=False)
 /// -> tuple (fd, path_string). The basename embeds prefix and suffix.
 pub fn mb_tempfile_mkstemp_v(args: &[MbValue]) -> MbValue {
+    use std::os::unix::fs::OpenOptionsExt;
     let (dir, prefix, suffix) = resolve_dir_prefix_suffix(args, "tmp");
     let base = temp_name(&prefix);
     let file_name = format!("{base}{suffix}");
     let file_path = std::path::Path::new(&dir).join(&file_name);
-    match std::fs::write(&file_path, "") {
-        Ok(_) => {
+    // #1630: mkstemp must return a *real*, still-open fd (matching CPython's
+    // O_RDWR|O_CREAT|O_EXCL, mode 0o600) registered in the shared os fd table
+    // — a hardcoded `0` placeholder isn't in that table, so `os.close(fd)`
+    // later raises `OSError: [Errno 9] Bad file descriptor`.
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&file_path)
+    {
+        Ok(file) => {
             let abs = std::fs::canonicalize(&file_path).unwrap_or(file_path);
             let path = abs.to_str().unwrap_or("").to_string();
+            let fd = super::os_mod::mb_os_register_open_file(file, path.clone());
             let tuple = MbObject::new_tuple(vec![
-                MbValue::from_int(0),
+                MbValue::from_int(fd),
                 MbValue::from_ptr(MbObject::new_str(path)),
             ]);
             MbValue::from_ptr(tuple)
@@ -1141,7 +1155,14 @@ mod tests {
             let ptr = result.as_ptr().unwrap();
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 assert_eq!(items.len(), 2);
-                assert_eq!(items[0].as_int(), Some(0));
+                // #1630: fd must be a real, registered fd (not the old `0`
+                // placeholder) so `os.close(fd)` doesn't raise Errno 9.
+                let fd = items[0].as_int().expect("mkstemp fd should be an int");
+                assert!(fd >= 0, "mkstemp fd should be a valid non-negative fd, got {fd}");
+                assert!(
+                    super::super::os_mod::mb_os_fd_path(fd).is_some(),
+                    "mkstemp fd should be registered in the shared os fd table"
+                );
                 let path = extract_str(items[1]).unwrap();
                 assert!(
                     std::path::Path::new(&path).exists(),

@@ -3719,6 +3719,36 @@ impl TypeChecker {
                 }
             },
             Ty::Union(members) => {
+                // #1630: when the *actual* value is itself a union (e.g. a
+                // `str | bytes`-typed local passed to a `str | bytes |
+                // os.PathLike[str] | os.PathLike[bytes]` parameter), every
+                // actual branch must be covered by *some* expected member —
+                // decompose it first and recurse per branch. Without this,
+                // the loop below tests each expected `member` against the
+                // whole actual union via `stdlib_type_relation`, which
+                // requires that single member to cover ALL of the actual
+                // union's branches at once and always fails for a
+                // multi-branch actual (mirrors the `Ty::Union` handling
+                // already done for `expected` under the `Ty::Literal` arm
+                // above).
+                if let Ty::Union(actual_members) = self.tcx.get(actual).clone() {
+                    let mut unknown = false;
+                    for actual_member in actual_members {
+                        match self.stdlib_literal_argument_relation(expected, actual_member, value)
+                        {
+                            StrictRelation::Compatible => {}
+                            StrictRelation::Indeterminate => unknown = true,
+                            StrictRelation::Incompatible => {
+                                return StrictRelation::Incompatible;
+                            }
+                        }
+                    }
+                    return if unknown {
+                        StrictRelation::Indeterminate
+                    } else {
+                        StrictRelation::Compatible
+                    };
+                }
                 let mut unknown = false;
                 for member in members {
                     match self.stdlib_literal_argument_relation(member, actual, value) {
