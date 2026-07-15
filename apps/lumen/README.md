@@ -624,7 +624,7 @@ Type: Service
 Root WI: #1553
 Status: verified
 Surfaces: Durable index and checkpoint state plus stateful deployment:
-`apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-host`,
+`apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-runtime`,
 `apps/lumen/src/backup.rs`, and the operator-owned StatefulSet rendering
 surface under `apps/lumen/src/operator/` and `apps/lumen/k8s/`.
 EC Dimensions: behavior: `aw capability check --project lumen

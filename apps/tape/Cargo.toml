@@ -44,7 +44,9 @@ service-auth = { path = "../../libs/service-auth" }
 # ClusterTopology::from_env, OutcomeWindow, SnapshotPolicy/HostConfig, and
 # the shared peer-TLS config adapter.
 raft-runtime = { path = "../../libs/raft-runtime" }
-# K8s operator (feature `operator`) — the shared libs/operator scaffold + render
+# Shared peer mTLS material/configuration for the Raft transport.
+peer-tls = { path = "../../libs/peer-tls" }
+# K8s operator (feature `operator`) — the shared libs/service-k8s scaffold + render
 # toolkit (#1328), mirroring relay's #1208 slice. tape supplies a TapeSpec CRD +
 # ManagedService and gets the reconcile controller for free. Versions mirror
 # the workspace's existing kube-rs users (relay / keep / lumen) so the
@@ -90,7 +92,7 @@ build-stamp = { path = "../../libs/build-stamp" }
 default = []
 self-update = ["cli-std/online"]
 issue = ["cli-std/online"]
-# operator — the shared libs/operator scaffold: a TapeSpec CRD + ManagedService
+# operator — the shared libs/service-k8s scaffold: a TapeSpec CRD + ManagedService
 # render, driven by operator::run. Ships the `tape k8s operator run` controller
 # and the CRD generator; pulls kube-rs, so the serving image stays kube-free
 # unless built with this feature (#1328).

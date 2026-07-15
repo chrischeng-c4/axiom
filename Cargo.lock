@@ -12886,6 +12886,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "metrics-prometheus",
+ "peer-tls",
  "raft-runtime",
  "reqwest 0.12.28",
  "schemars",
