@@ -127,3 +127,42 @@ changes:
     impl_mode: hand-written
     description: Record the listener, lifecycle, and per-connection transport boundaries.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: shared-http-runtime-lifecycle-convergence-verification
+requirements:
+  connection_metric_events:
+    id: R2
+    text: "server-tcp emits accepted, rejected, and closed metric callbacks with permits and task completion preserving current admission behavior."
+    kind: functional
+    risk: high
+    verify: cargo test -p server-tcp
+  service_consumer_regression:
+    id: R4
+    text: "Lumen, Tape, Keep, Relay, Courier, and Pgpool preserve their existing HTTP and drain contracts after the shared runtime convergence."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --features operator --test operator_render; cargo test -p tape --test http_transport; cargo test -p keep; cargo test -p relay --test http2_transport; cargo test -p courier; cargo test -p pgpool --test admin_plane
+  single_readiness_shutdown_contract:
+    id: R3
+    text: "server-lifecycle owns readiness and signal/drain behavior while service-http only adapts that contract to probe routes."
+    kind: regression
+    risk: high
+    verify: cargo test -p server-lifecycle -p service-http
+  sole_http_listener_owner:
+    id: R1
+    text: "server-http owns listener admission and dispatches accepted streams through server-tcp into per-connection HTTP/1.1+h2c handling; transport-h2c exposes no listener-level serve API."
+    kind: functional
+    risk: high
+    verify: cargo test -p server-http -p transport-h2c
+---
+flowchart TD
+    r1[R1 sole http listener owner] --> cargo_test_p_server_http_p_transport_h2c[cargo test -p server-http -p transport-h2c]
+    r2[R2 connection metric events] --> cargo_test_p_server_tcp[cargo test -p server-tcp]
+    r3[R3 single readiness shutdown contract] --> cargo_test_p_server_lifecycle_p_service_http[cargo test -p server-lifecycle -p service-http]
+    r4[R4 service consumer regression] --> cargo_test_p_lumen_features_operator_test_operator_render_cargo_test_p_tape_test_http_transport_cargo_test_p_keep_cargo_test_p_relay_test_http2_transport_cargo_test_p_courier_cargo_test_p_pgpool_test_admin_plane[cargo test -p lumen --features operator --test operator_render; cargo test -p tape --test http_transport; cargo test -p keep; cargo test -p relay --test http2_transport; cargo test -p courier; cargo test -p pgpool --test admin_plane]
+```
