@@ -2,15 +2,21 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-15T09:32:25.355387+00:00"
-digest = "sha256:5afdf7b52072fc00c333717ec225112f6c7146434fc551114d9f5705d5884e7a"
-source_digest = "sha256:5afdf7b52072fc00c333717ec225112f6c7146434fc551114d9f5705d5884e7a"
-ir_digest = "sha256:9f0711d83e687c17db5f4d31469837f690601f4583c91506b988ad59331185e1"
+generated_at = "2026-07-15T16:51:43.244179+00:00"
+digest = "sha256:3a2673e11b1855d56cbf5491573aa84b67b4793b472cf1bf45bf5aca89dcaef9"
+source_digest = "sha256:3a2673e11b1855d56cbf5491573aa84b67b4793b472cf1bf45bf5aca89dcaef9"
+ir_digest = "sha256:a1e7651368267fe5250988690eada65807194ba9dcad109a5e06546323cc7931"
 
 [[files]]
 path = "interfaces/rest/extract-protocol-neutral-service-observability-integration.md"
 digest = "sha256:fc62e6a5bbf9536eaf55f255d7d42ea50da92b7bdc109341df1abac62ba2893f"
 ir_digest = "sha256:91244122110ca295e73c972f683766679ad2e93d05b4e6b1b542130856bcfc91"
+section_count = 3
+
+[[files]]
+path = "logic/add-shared-opaque-key-admission-control.md"
+digest = "sha256:15490307a9787808b9c3a8eae074b4a13ba043529794037a6c66fe7cf1ead1dd"
+ir_digest = "sha256:671bbd619b6feca987d3c654fc8fc68eec00e940fb29db6d756c898b9ca864df"
 section_count = 3
 
 [[files]]
