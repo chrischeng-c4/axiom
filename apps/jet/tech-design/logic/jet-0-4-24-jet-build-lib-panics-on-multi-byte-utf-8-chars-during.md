@@ -36,7 +36,6 @@ edges:
 flowchart TD
   scan_source --> tokenize_utf8 --> select_renames --> apply_byte_ranges --> emit_valid_output
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
