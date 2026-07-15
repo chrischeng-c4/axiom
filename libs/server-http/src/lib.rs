@@ -1,3 +1,4 @@
+// HANDWRITE-BEGIN gap="missing-generator:server-http-runtime" tracker="#1776" reason="Shared HTTP listener composition needs a deterministic Rust generator."
 //! Shared HTTP runtime above `server-lifecycle` and `server-tcp`.
 //! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
@@ -157,3 +158,4 @@ mod tests {
             .expect("server task");
     }
 }
+// HANDWRITE-END
