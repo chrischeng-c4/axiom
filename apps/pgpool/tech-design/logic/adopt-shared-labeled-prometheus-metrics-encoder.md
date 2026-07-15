@@ -39,3 +39,15 @@ flowchart LR
   escape --> render[Shared HELP TYPE and row rendering]
   render --> response([Serve unchanged metrics contract])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - { path: libs/metrics-prometheus/tech-design/semantic/source/libs-metrics-prometheus-src-lib-rs.md, action: modify, section: logic, impl_mode: hand-written, description: Add labeled sample groups, deterministic label ordering, and safe escaping to the canonical source unit. }
+  - { path: libs/metrics-prometheus/README.md, action: modify, section: logic, impl_mode: hand-written, description: Document labeled exposition as part of the shared capability. }
+  - { path: apps/pgpool/src/admin/metrics.rs, action: modify, section: logic, impl_mode: hand-written, description: Replace local exposition formatting with shared labeled sample groups. }
+  - { path: apps/pgpool/Cargo.toml, action: modify, section: logic, impl_mode: hand-written, description: Depend on metrics-prometheus. }
+  - { path: apps/pgpool/tech-design/logic/served-admin-plane-with-drain-aware-readiness.md, action: modify, section: logic, impl_mode: hand-written, description: Record shared encoder ownership while preserving the Pgpool contract. }
+```
