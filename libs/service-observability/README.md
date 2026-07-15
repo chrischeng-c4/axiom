@@ -15,14 +15,14 @@ in `service-http`; Prometheus primitives and encoding remain in
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Shared Service Observability Integration | #1777 | implementing | planned | conformance | partial | protocol-neutral configuration, traces, providers, and lifecycle counters |
+| Shared Service Observability Integration | #1777 | implemented | passing | conformance | ready | protocol-neutral configuration, traces, providers, and lifecycle counters |
 
 ### Shared Service Observability Integration
 
 ID: shared-service-observability-integration
 Type: DeveloperTool
 Root WI: 1777
-Status: implementing
+Status: verified
 Surfaces: Rust API: `service_observability`.
 EC Dimensions: behavior: `cargo test -p service-observability` - logging mode, identity, metric provider, and lifecycle counter coverage
 Required Verification: conformance
@@ -35,5 +35,5 @@ Gate Inventory: `cargo test -p service-observability`; libs/service-observabilit
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| shared-service-observability-integration | change | #1777 | implementing | planned | conformance | `cargo test -p service-observability` |
+| shared-service-observability-integration | change | #1777 | implemented | passing | conformance | `cargo test -p service-observability`; `cargo test -p service-observability --features otlp` |
 <!-- HANDWRITE-END -->

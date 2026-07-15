@@ -25,10 +25,7 @@ pub enum OtelFallback {
     InvalidEndpoint,
 }
 
-pub fn tracing_mode(
-    config: &ObservabilityConfig,
-    identity: &ServiceIdentity,
-) -> TracingMode {
+pub fn tracing_mode(config: &ObservabilityConfig, identity: &ServiceIdentity) -> TracingMode {
     let Some(endpoint) = config.otlp_endpoint.as_deref() else {
         return TracingMode::LoggingOnly;
     };
@@ -91,7 +88,10 @@ pub fn init_tracing_with_identity(
                 .with(fmt_layer)
                 .try_init()
                 .map_err(|error| anyhow::anyhow!("install tracing subscriber: {error}"))?;
-            tracing::warn!(?reason, "OTLP tracing unavailable; emitting structured logs only");
+            tracing::warn!(
+                ?reason,
+                "OTLP tracing unavailable; emitting structured logs only"
+            );
             Ok(())
         }
         #[cfg(feature = "otlp")]
@@ -188,7 +188,10 @@ mod tests {
     #[test]
     fn logging_only_is_default() {
         let identity = ServiceIdentity::new("test", "0.1.0").unwrap();
-        assert_eq!(tracing_mode(&config(None), &identity), TracingMode::LoggingOnly);
+        assert_eq!(
+            tracing_mode(&config(None), &identity),
+            TracingMode::LoggingOnly
+        );
     }
 
     #[test]
@@ -199,6 +202,32 @@ mod tests {
             TracingMode::OtelUnavailable {
                 endpoint: "not-an-endpoint".to_string(),
                 reason: OtelFallback::InvalidEndpoint,
+            }
+        );
+    }
+
+    #[cfg(feature = "otlp")]
+    #[test]
+    fn valid_endpoint_selects_otel_when_exporter_is_compiled() {
+        let identity = ServiceIdentity::new("test", "0.1.0").unwrap();
+        assert_eq!(
+            tracing_mode(&config(Some("http://otel-collector:4317")), &identity),
+            TracingMode::Otel {
+                endpoint: "http://otel-collector:4317".to_string(),
+                identity,
+            }
+        );
+    }
+
+    #[cfg(not(feature = "otlp"))]
+    #[test]
+    fn valid_endpoint_reports_disabled_exporter() {
+        let identity = ServiceIdentity::new("test", "0.1.0").unwrap();
+        assert_eq!(
+            tracing_mode(&config(Some("http://otel-collector:4317")), &identity),
+            TracingMode::OtelUnavailable {
+                endpoint: "http://otel-collector:4317".to_string(),
+                reason: OtelFallback::FeatureDisabled,
             }
         );
     }

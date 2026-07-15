@@ -12090,18 +12090,16 @@ dependencies = [
  "axum 0.8.9",
  "http-body-util",
  "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "serde",
  "serde_json",
  "server-http",
  "server-lifecycle",
+ "service-observability",
  "tokio",
  "tower 0.5.3",
  "tower-http 0.5.2",
  "tracing",
  "tracing-opentelemetry",
- "tracing-subscriber",
  "utoipa",
 ]
 
@@ -12121,6 +12119,22 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "service-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http 1.4.0",
+ "metrics-prometheus",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "server-lifecycle",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]

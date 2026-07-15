@@ -737,16 +737,6 @@ test_cmd = "true"
 verify_cold = false
 
 [[projects]]
-name = "lumen"
-path = "apps/lumen"
-
-[[projects.workspaces]]
-paths = ["apps/lumen/**"]
-target = "rust"
-test_cmd = "cargo test -p lumen"
-verify_cold = false
-
-[[projects]]
 name = "mamba"
 path = "projects/mamba"
 
@@ -754,6 +744,17 @@ path = "projects/mamba"
 paths = ["projects/mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p mamba"
+verify_cold = false
+
+[[projects]]
+name = "meter"
+path = "projects/meter"
+
+[[projects.workspaces]]
+name = "meter"
+paths = ["projects/meter/**"]
+target = "schemas"
+test_cmd = "true"
 verify_cold = false
 
 [[projects]]
@@ -797,23 +798,13 @@ test_cmd = "cargo test -p cclab-compass"
 verify_cold = false
 
 [[projects]]
-name = "transport-h2c"
-path = "libs/transport-h2c"
+name = "metrics-prometheus"
+path = "libs/metrics-prometheus"
 
 [[projects.workspaces]]
-paths = ["libs/transport-h2c/**"]
+paths = ["libs/metrics-prometheus/**"]
 target = "rust"
-test_cmd = "cargo test -p transport-h2c"
-verify_cold = false
-
-[[projects]]
-name = "server-http"
-path = "libs/server-http"
-
-[[projects.workspaces]]
-paths = ["libs/server-http/**"]
-target = "rust"
-test_cmd = "cargo test -p server-http"
+test_cmd = "cargo test -p metrics-prometheus"
 verify_cold = false
 
 [[projects]]
@@ -827,13 +818,13 @@ test_cmd = "cargo test -p cclab-openapi-codegen"
 verify_cold = false
 
 [[projects]]
-name = "service-k8s"
-path = "libs/service-k8s"
+name = "peer-tls"
+path = "libs/peer-tls"
 
 [[projects.workspaces]]
-paths = ["libs/service-k8s/**"]
+paths = ["libs/peer-tls/**"]
 target = "rust"
-test_cmd = "cargo test -p service-k8s"
+test_cmd = "cargo test -p peer-tls"
 verify_cold = false
 
 [[projects]]
@@ -857,6 +848,16 @@ test_cmd = "cargo test -p raft-runtime"
 verify_cold = false
 
 [[projects]]
+name = "server-http"
+path = "libs/server-http"
+
+[[projects.workspaces]]
+paths = ["libs/server-http/**"]
+target = "rust"
+test_cmd = "cargo test -p server-http"
+verify_cold = false
+
+[[projects]]
 name = "server-lifecycle"
 path = "libs/server-lifecycle"
 
@@ -864,6 +865,16 @@ path = "libs/server-lifecycle"
 paths = ["libs/server-lifecycle/**"]
 target = "rust"
 test_cmd = "cargo test -p server-lifecycle"
+verify_cold = false
+
+[[projects]]
+name = "server-tcp"
+path = "libs/server-tcp"
+
+[[projects.workspaces]]
+paths = ["libs/server-tcp/**"]
+target = "rust"
+test_cmd = "cargo test -p server-tcp"
 verify_cold = false
 
 [[projects]]
@@ -887,16 +898,6 @@ test_cmd = "cargo test -p service-backup"
 verify_cold = false
 
 [[projects]]
-name = "storage-durable"
-path = "libs/storage-durable"
-
-[[projects.workspaces]]
-paths = ["libs/storage-durable/**"]
-target = "rust"
-test_cmd = "cargo test -p storage-durable"
-verify_cold = false
-
-[[projects]]
 name = "service-http"
 path = "libs/service-http"
 
@@ -907,23 +908,33 @@ test_cmd = "cargo test -p service-http"
 verify_cold = false
 
 [[projects]]
-name = "metrics-prometheus"
-path = "libs/metrics-prometheus"
+name = "service-k8s"
+path = "libs/service-k8s"
 
 [[projects.workspaces]]
-paths = ["libs/metrics-prometheus/**"]
+paths = ["libs/service-k8s/**"]
 target = "rust"
-test_cmd = "cargo test -p metrics-prometheus"
+test_cmd = "cargo test -p service-k8s"
 verify_cold = false
 
 [[projects]]
-name = "peer-tls"
-path = "libs/peer-tls"
+name = "service-observability"
+path = "libs/service-observability"
 
 [[projects.workspaces]]
-paths = ["libs/peer-tls/**"]
+paths = ["libs/service-observability/**"]
 target = "rust"
-test_cmd = "cargo test -p peer-tls"
+test_cmd = "cargo test -p service-observability"
+verify_cold = false
+
+[[projects]]
+name = "storage-durable"
+path = "libs/storage-durable"
+
+[[projects.workspaces]]
+paths = ["libs/storage-durable/**"]
+target = "rust"
+test_cmd = "cargo test -p storage-durable"
 verify_cold = false
 
 [[projects]]
@@ -937,13 +948,13 @@ test_cmd = "cargo test -p cclab-surface"
 verify_cold = false
 
 [[projects]]
-name = "server-tcp"
-path = "libs/server-tcp"
+name = "transport-h2c"
+path = "libs/transport-h2c"
 
 [[projects.workspaces]]
-paths = ["libs/server-tcp/**"]
+paths = ["libs/transport-h2c/**"]
 target = "rust"
-test_cmd = "cargo test -p server-tcp"
+test_cmd = "cargo test -p transport-h2c"
 verify_cold = false
 
 [[projects]]

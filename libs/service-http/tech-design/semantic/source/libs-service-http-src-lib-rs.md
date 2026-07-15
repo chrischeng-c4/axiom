@@ -57,16 +57,15 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! `service-http` — shared HTTP-service scaffolding for the ecosystem's
 //! k8s-native services.
 //!
-//! lumen, keep, relay, and loom each hand-roll the same service shell today: the
+//! lumen, keep, relay, and loom compose the same HTTP policy shell: the
 //! standard probe/admin endpoints (`/healthz` `/readyz` `/metrics`
-//! `/openapi.json` `/docs`), env-driven `tracing` init, a SIGTERM-aware
-//! graceful-drain shutdown, the h2c serve loop (HTTP/1.1 + HTTP/2 cleartext
-//! on one port), and the `{"error", "message"}` HTTP error envelope
+//! `/openapi.json` `/docs`), observability compatibility adapters, lifecycle
+//! readiness/shutdown re-exports, runtime delegation, and the
+//! `{"error", "message"}` HTTP error envelope
 //! ([`error`]) each service renders for its error responses. This crate is
-//! the one place that shape lives — the 6th service-kit lib, after `h2c`
-//! (transport), `cli-std` (the `llm`/`upgrade`/`issue` CLI convention),
-//! `raft-core` + `raft-runtime` (replication), and `operator` (the k8s
-//! reconcile scaffold). It operationalizes the CONTRIBUTING "standard
+//! the one place that HTTP shape lives. Protocol-neutral logging, tracing,
+//! metric-provider, and lifecycle metric ownership belongs to
+//! `service-observability`. This crate operationalizes the CONTRIBUTING "standard
 //! endpoints" convention: every service exposes the same probe surface,
 //! with the same auth-exempt / no-body-limit treatment.
 //!
@@ -146,6 +145,7 @@ pub use logging::{
 pub use metrics::MetricsProvider;
 pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
 pub use readiness::ReadinessHook;
+pub use service_observability::LifecycleMetrics;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer, PropagatingMakeSpan};
 ````

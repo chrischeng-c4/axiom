@@ -1,258 +1,32 @@
 // SPEC-MANAGED: libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! Tracing init: one shared `tracing-subscriber` registry built from
-//! [`HttpConfig`].
-//!
-//! `RUST_LOG` wins; otherwise the filter falls back to `cfg.log_level`. The fmt
-//! layer is `pretty` or `json` per `cfg.log_format`. This is the prefix-agnostic
-//! version of the `init_tracing` each service binary hand-rolls today (lumen's
-//! `init_tracing`, keep's inline `fmt().with_env_filter(...)`).
+//! Compatibility adapter to protocol-neutral `service-observability`.
 
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use crate::config::HttpConfig;
 
-use crate::config::{HttpConfig, LogFormat, ServiceIdentity};
+pub use service_observability::{OtelFallback, TracingMode};
 
-/// The trace-export outcome selected from service configuration.
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#source
-pub enum TracingMode {
-    /// No exporter was requested; install the standard formatter only.
-    LoggingOnly,
-    /// Export using this endpoint and service identity.
-    Otel {
-        endpoint: String,
-        identity: ServiceIdentity,
-    },
-    /// Export was requested but cannot be initialized; keep logging available.
-    OtelUnavailable {
-        endpoint: String,
-        reason: OtelFallback,
-    },
+/// Resolve the shared trace mode from HTTP configuration.
+pub fn tracing_mode(
+    config: &HttpConfig,
+    identity: &service_observability::ServiceIdentity,
+) -> TracingMode {
+    service_observability::tracing_mode(&config.observability_config(), identity)
 }
 
-/// A redacted reason for falling back to logging-only tracing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#source
-pub enum OtelFallback {
-    /// The binary was built without the optional exporter feature.
-    FeatureDisabled,
-    /// The endpoint is not an absolute HTTP(S) URI with an authority.
-    InvalidEndpoint,
+/// Install tracing using the compatibility default identity.
+pub fn init_tracing(config: &HttpConfig) -> anyhow::Result<()> {
+    service_observability::init_tracing(&config.observability_config())
 }
 
-/// Resolve the non-global trace-export mode before a service installs its one
-/// global subscriber. Keeping this pure makes the fallback contract testable.
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#source
-pub fn tracing_mode(cfg: &HttpConfig, identity: &ServiceIdentity) -> TracingMode {
-    let Some(endpoint) = cfg.otlp_endpoint.as_deref() else {
-        return TracingMode::LoggingOnly;
-    };
-    if !valid_otlp_endpoint(endpoint) {
-        return TracingMode::OtelUnavailable {
-            endpoint: endpoint.to_string(),
-            reason: OtelFallback::InvalidEndpoint,
-        };
-    }
-
-    #[cfg(feature = "otlp")]
-    {
-        TracingMode::Otel {
-            endpoint: endpoint.to_string(),
-            identity: identity.clone(),
-        }
-    }
-    #[cfg(not(feature = "otlp"))]
-    {
-        let _ = identity;
-        TracingMode::OtelUnavailable {
-            endpoint: endpoint.to_string(),
-            reason: OtelFallback::FeatureDisabled,
-        }
-    }
-}
-
-fn valid_otlp_endpoint(endpoint: &str) -> bool {
-    let Ok(uri) = endpoint.parse::<axum::http::Uri>() else {
-        return false;
-    };
-    matches!(uri.scheme_str(), Some("http") | Some("https")) && uri.authority().is_some()
-}
-
-/// Install the global tracing subscriber from `cfg`.
-///
-/// Filter precedence: `RUST_LOG` (via `EnvFilter::try_from_default_env`) →
-/// otherwise `cfg.log_level`. The fmt layer is JSON or pretty per
-/// `cfg.log_format`.
-///
-/// Idempotency: installs the **global default** subscriber, so call this once
-/// at startup. A second call returns an error (the global is already set).
-///
-/// OTLP is opt-in through the `otlp` feature and an endpoint. A missing feature
-/// or malformed endpoint keeps the formatter active and emits a redacted
-/// diagnostic rather than failing startup.
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#source
-pub fn init_tracing(cfg: &HttpConfig) -> anyhow::Result<()> {
-    let identity = ServiceIdentity::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))?;
-    init_tracing_with_identity(cfg, &identity)
-}
-
-/// Install the global tracing subscriber using application-owned stable
-/// identity for optional OTLP resource attributes.
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#source
+/// Install tracing with application-owned stable identity.
 pub fn init_tracing_with_identity(
-    cfg: &HttpConfig,
-    identity: &ServiceIdentity,
+    config: &HttpConfig,
+    identity: &service_observability::ServiceIdentity,
 ) -> anyhow::Result<()> {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.log_level.clone()));
-
-    let fmt_layer = match cfg.log_format {
-        LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),
-        LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
-    };
-
-    match tracing_mode(cfg, identity) {
-        TracingMode::LoggingOnly => tracing_subscriber::registry()
-            .with(filter)
-            .with(fmt_layer)
-            .try_init()
-            .map_err(|e| anyhow::anyhow!("install tracing subscriber: {e}")),
-        TracingMode::OtelUnavailable { reason, .. } => {
-            tracing_subscriber::registry()
-                .with(filter)
-                .with(fmt_layer)
-                .try_init()
-                .map_err(|e| anyhow::anyhow!("install tracing subscriber: {e}"))?;
-            tracing::warn!(reason = ?reason, "OTLP tracing unavailable; emitting structured logs only");
-            Ok(())
-        }
-        #[cfg(feature = "otlp")]
-        TracingMode::Otel { endpoint, identity } => match build_otel_tracer(&endpoint, &identity) {
-            Ok(tracer) => {
-                install_trace_context_propagator();
-                tracing_subscriber::registry()
-                    .with(filter)
-                    .with(fmt_layer)
-                    .with(tracing_opentelemetry::layer().with_tracer(tracer))
-                    .try_init()
-                    .map_err(|e| anyhow::anyhow!("install tracing subscriber: {e}"))
-            }
-            Err(_error) => {
-                tracing_subscriber::registry()
-                    .with(filter)
-                    .with(fmt_layer)
-                    .try_init()
-                    .map_err(|e| anyhow::anyhow!("install tracing subscriber: {e}"))?;
-                tracing::warn!(
-                    reason = "exporter-construction",
-                    "OTLP tracer construction failed; emitting structured logs only"
-                );
-                Ok(())
-            }
-        },
-        #[cfg(not(feature = "otlp"))]
-        TracingMode::Otel { .. } => unreachable!("OTLP mode requires the otlp feature"),
-    }
+    service_observability::init_tracing_with_identity(&config.observability_config(), identity)
 }
 
 #[cfg(feature = "otlp")]
-fn build_otel_tracer(
-    endpoint: &str,
-    identity: &ServiceIdentity,
-) -> std::result::Result<opentelemetry_sdk::trace::Tracer, Box<dyn std::error::Error>> {
-    use opentelemetry_otlp::WithExportConfig;
-    let exporter = opentelemetry_otlp::new_exporter()
-        .tonic()
-        .with_endpoint(endpoint.to_string());
-    opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(exporter)
-        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
-            opentelemetry_sdk::Resource::new(vec![
-                opentelemetry::KeyValue::new("service.name", identity.name().to_string()),
-                opentelemetry::KeyValue::new("service.version", identity.version().to_string()),
-            ]),
-        ))
-        .install_batch(opentelemetry_sdk::runtime::Tokio)
-        .map_err(Into::into)
-}
-
-#[cfg(feature = "otlp")]
-fn install_trace_context_propagator() {
-    use std::sync::Once;
-    static INSTALLED: Once = Once::new();
-    INSTALLED.call_once(|| {
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
-    });
-}
-
-/// Extract W3C trace context from HTTP request headers. Invalid or absent
-/// headers yield an empty context, which safely creates a root request span.
-#[cfg(feature = "otlp")]
-/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-logging-rs.md#source
-pub fn extract_trace_context(headers: &axum::http::HeaderMap) -> opentelemetry::Context {
-    use opentelemetry::propagation::Extractor;
-    install_trace_context_propagator();
-
-    struct HeaderExtractor<'a>(&'a axum::http::HeaderMap);
-    impl Extractor for HeaderExtractor<'_> {
-        fn get(&self, key: &str) -> Option<&str> {
-            self.0.get(key).and_then(|value| value.to_str().ok())
-        }
-
-        fn keys(&self) -> Vec<&str> {
-            self.0.keys().map(axum::http::HeaderName::as_str).collect()
-        }
-    }
-
-    opentelemetry::global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(headers))
-    })
-}
-// CODEGEN-END
-// SPEC-MANAGED: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#logic
-// CODEGEN-BEGIN
-pub fn configure() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Decision: Is OTLP requested with a valid absolute HTTP(S) endpoint and compiled exporter support?
-    if todo!("decision: Is OTLP requested with a valid absolute HTTP(S) endpoint and compiled exporter support?") /* branch */ {
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-logging
-        // TODO: Implement process step: Install one RUST_LOG-first pretty or JSON subscriber
-        todo!("process: Install one RUST_LOG-first pretty or JSON subscriber");
-    } else if todo!("decision branch: {}", "branch") { /* branch */
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-exporter
-        // TODO: Implement process step: Attach stable service.name and service.version resources and W3C propagator
-        todo!("process: Attach stable service.name and service.version resources and W3C propagator");
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_adapter
-        // TODO: Implement process step: service-http extracts request headers and serves provider bytes without owning protocol-neutral state
-        todo!("process: service-http extracts request headers and serves provider bytes without owning protocol-neutral state");
-        todo!("terminal: Existing service-http names remain additive compatibility re-exports");
-    } else { /* branch */
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-fallback
-        // TODO: Implement process step: Install logging-only subscriber and emit a redacted fallback reason
-        todo!("process: Install logging-only subscriber and emit a redacted fallback reason");
-    }
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-provider
-    // TODO: Implement process step: MetricsProvider returns canonical Prometheus exposition bytes
-    todo!("process: MetricsProvider returns canonical Prometheus exposition bytes");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-connection
-    // TODO: Implement process step: LifecycleMetrics implements ConnectionMetrics using metrics-prometheus counters
-    todo!("process: LifecycleMetrics implements ConnectionMetrics using metrics-prometheus counters");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_adapter
-    // TODO: Implement process step: service-http extracts request headers and serves provider bytes without owning protocol-neutral state
-    todo!("process: service-http extracts request headers and serves provider bytes without owning protocol-neutral state");
-    todo!("terminal: Existing service-http names remain additive compatibility re-exports");
-    todo!("terminal: Raw TCP and future protocol runtimes consume service-observability directly");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_config
-    // TODO: Implement process step: service-http HttpConfig projects only its observability fields into ObservabilityConfig
-    todo!("process: service-http HttpConfig projects only its observability fields into ObservabilityConfig");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_adapter
-    // TODO: Implement process step: service-http extracts request headers and serves provider bytes without owning protocol-neutral state
-    todo!("process: service-http extracts request headers and serves provider bytes without owning protocol-neutral state");
-    todo!("terminal: Existing service-http names remain additive compatibility re-exports");
-    // Terminal: compatible -> Existing service-http names remain additive compatibility re-exports
-    // Terminal: non_http -> Raw TCP and future protocol runtimes consume service-observability directly
-}
+pub use service_observability::extract_trace_context;
 // CODEGEN-END

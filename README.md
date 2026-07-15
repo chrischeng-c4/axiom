@@ -62,7 +62,8 @@ together; see [Shared-library naming grammar](CONTRIBUTING.md#shared-library-nam
 | [service-auth](libs/service-auth/Cargo.toml) | Shared request-auth middleware: extract, verify, reject, and inject verified identity into service handlers. |
 | [service-backup](libs/service-backup/Cargo.toml) | Shared backup contract: destination and policy schema, sink trait, local and S3-compatible sinks, and runner primitive. |
 | [storage-durable](libs/storage-durable/Cargo.toml) | Shared durable local storage primitives: fsync policy, atomic replace, CRC-framed append logs, and sequence-named snapshot stores. |
-| [service-http](libs/service-http/Cargo.toml) | Standard HTTP service policy shell: probes, lifecycle readiness adapter, metrics, OpenAPI/docs routes, tracing policy, and shared errors. |
+| [service-observability](libs/service-observability/Cargo.toml) | Protocol-neutral service observability composition: logging, stable identity, optional OTLP export, metric-provider semantics, and lifecycle counters. |
+| [service-http](libs/service-http/Cargo.toml) | Standard HTTP service policy shell: probes, lifecycle adapters, OpenAPI/docs routes, request-context propagation, and shared errors. |
 | [metrics-prometheus](libs/metrics-prometheus/Cargo.toml) | Lock-free Prometheus primitives and text encoder for service metrics. |
 | [peer-tls](libs/peer-tls/Cargo.toml) | Peer mTLS material loading and rustls server/client config builders. |
 | [surface](libs/surface/Cargo.toml) | Renderer-neutral UI element model shared by Jet WASM, native readers, renderers, and parity tools. |

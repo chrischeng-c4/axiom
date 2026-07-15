@@ -56,7 +56,7 @@ impl<B> MakeSpan<B> for PropagatingMakeSpan {
         {
             use opentelemetry::trace::TraceContextExt as _;
             use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-            let parent = crate::logging::extract_trace_context(request.headers());
+            let parent = service_observability::extract_trace_context(request.headers());
             if parent.span().span_context().is_valid() {
                 span.set_parent(parent);
             }

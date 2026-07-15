@@ -3,16 +3,15 @@
 //! `service-http` — shared HTTP-service scaffolding for the ecosystem's
 //! k8s-native services.
 //!
-//! lumen, keep, relay, and loom each hand-roll the same service shell today: the
+//! lumen, keep, relay, and loom compose the same HTTP policy shell: the
 //! standard probe/admin endpoints (`/healthz` `/readyz` `/metrics`
-//! `/openapi.json` `/docs`), env-driven `tracing` init, a SIGTERM-aware
-//! graceful-drain shutdown, the h2c serve loop (HTTP/1.1 + HTTP/2 cleartext
-//! on one port), and the `{"error", "message"}` HTTP error envelope
+//! `/openapi.json` `/docs`), observability compatibility adapters, lifecycle
+//! readiness/shutdown re-exports, runtime delegation, and the
+//! `{"error", "message"}` HTTP error envelope
 //! ([`error`]) each service renders for its error responses. This crate is
-//! the one place that shape lives — the 6th service-kit lib, after `h2c`
-//! (transport), `cli-std` (the `llm`/`upgrade`/`issue` CLI convention),
-//! `raft-core` + `raft-runtime` (replication), and `operator` (the k8s
-//! reconcile scaffold). It operationalizes the CONTRIBUTING "standard
+//! the one place that HTTP shape lives. Protocol-neutral logging, tracing,
+//! metric-provider, and lifecycle metric ownership belongs to
+//! `service-observability`. This crate operationalizes the CONTRIBUTING "standard
 //! endpoints" convention: every service exposes the same probe surface,
 //! with the same auth-exempt / no-body-limit treatment.
 //!
@@ -92,49 +91,7 @@ pub use logging::{
 pub use metrics::MetricsProvider;
 pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
 pub use readiness::ReadinessHook;
+pub use service_observability::LifecycleMetrics;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer, PropagatingMakeSpan};
-// CODEGEN-END
-// SPEC-MANAGED: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#logic
-// CODEGEN-BEGIN
-pub fn configure() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Decision: Is OTLP requested with a valid absolute HTTP(S) endpoint and compiled exporter support?
-    if todo!("decision: Is OTLP requested with a valid absolute HTTP(S) endpoint and compiled exporter support?") /* branch */ {
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-logging
-        // TODO: Implement process step: Install one RUST_LOG-first pretty or JSON subscriber
-        todo!("process: Install one RUST_LOG-first pretty or JSON subscriber");
-    } else if todo!("decision branch: {}", "branch") { /* branch */
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-exporter
-        // TODO: Implement process step: Attach stable service.name and service.version resources and W3C propagator
-        todo!("process: Attach stable service.name and service.version resources and W3C propagator");
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_adapter
-        // TODO: Implement process step: service-http extracts request headers and serves provider bytes without owning protocol-neutral state
-        todo!("process: service-http extracts request headers and serves provider bytes without owning protocol-neutral state");
-        todo!("terminal: Existing service-http names remain additive compatibility re-exports");
-    } else { /* branch */
-        // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-fallback
-        // TODO: Implement process step: Install logging-only subscriber and emit a redacted fallback reason
-        todo!("process: Install logging-only subscriber and emit a redacted fallback reason");
-    }
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-provider
-    // TODO: Implement process step: MetricsProvider returns canonical Prometheus exposition bytes
-    todo!("process: MetricsProvider returns canonical Prometheus exposition bytes");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-connection
-    // TODO: Implement process step: LifecycleMetrics implements ConnectionMetrics using metrics-prometheus counters
-    todo!("process: LifecycleMetrics implements ConnectionMetrics using metrics-prometheus counters");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_adapter
-    // TODO: Implement process step: service-http extracts request headers and serves provider bytes without owning protocol-neutral state
-    todo!("process: service-http extracts request headers and serves provider bytes without owning protocol-neutral state");
-    todo!("terminal: Existing service-http names remain additive compatibility re-exports");
-    todo!("terminal: Raw TCP and future protocol runtimes consume service-observability directly");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_config
-    // TODO: Implement process step: service-http HttpConfig projects only its observability fields into ObservabilityConfig
-    todo!("process: service-http HttpConfig projects only its observability fields into ObservabilityConfig");
-    // SPEC-REF: libs/service-http/tech-design/interfaces/rest/extract-protocol-neutral-service-observability-integration.md#shared-service-observability-contract-http_adapter
-    // TODO: Implement process step: service-http extracts request headers and serves provider bytes without owning protocol-neutral state
-    todo!("process: service-http extracts request headers and serves provider bytes without owning protocol-neutral state");
-    todo!("terminal: Existing service-http names remain additive compatibility re-exports");
-    // Terminal: compatible -> Existing service-http names remain additive compatibility re-exports
-    // Terminal: non_http -> Raw TCP and future protocol runtimes consume service-observability directly
-}
 // CODEGEN-END
