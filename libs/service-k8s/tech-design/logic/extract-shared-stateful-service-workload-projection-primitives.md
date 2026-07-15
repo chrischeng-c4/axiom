@@ -58,7 +58,6 @@ changes:
     impl_mode: hand-written
     description: "Record Tape as a consumer of ShardedStatefulSet while retaining its distinct Tape CRD and topic-service policy."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
