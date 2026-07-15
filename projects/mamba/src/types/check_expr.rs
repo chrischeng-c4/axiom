@@ -4434,6 +4434,88 @@ impl TypeChecker {
         {
             return None;
         }
+        // #1775: `all`/`any`/`max`/`min` typeshed overloads type their
+        // iterable-consuming positional as `Iterable[Any]`/`SupportsRichComparisonT`
+        // with no non-iterable fallback overload, so a scalar like `all(42)`
+        // rejects at compile time as a type mismatch. `divmod`'s two-operand
+        // overloads reject an untyped/wrong-shaped pair (`divmod(_W(), None)`)
+        // the same way, and its arity walk also rejects `divmod()` (0 args)
+        // with a missing-required-parameter error whose span is wrong
+        // (points at the file header, not the call site). `isinstance`'s
+        // `_ClassInfo` overload doesn't recognize a tuple literal built from
+        // `type(None)` (`(int, str, type(None))` infers as
+        // `tuple[type[int], type[str], Any]`, not the modeled `_ClassInfo`
+        // shape) and rejects a legal call. Real CPython recovers all of
+        // these at *runtime*: mamba's own dispatchers independently raise
+        // the matching `TypeError` — `raise_if_not_iterable`/`mb_iter` for
+        // a non-iterable `all`/`any`/`max`/`min` argument, `values_lt_fallback`
+        // for a genuinely incomparable `max`/`min` pair, `mb_divmod`'s final
+        // catch-all and `dispatch_divmod`'s arity check for `divmod`, and the
+        // legacy `check_stdlib_call` path's own `classinfo_param` bare-
+        // instance check for `isinstance` (which does not flag a tuple
+        // literal, fixing the over-wall, while still rejecting a bare
+        // `isinstance(x, _W())` guard shape). Defer all six to the legacy
+        // path instead of hard-rejecting here.
+        if target.access == StdlibSpecAccess::ModuleFn
+            && target.module == "builtins"
+            && matches!(
+                target.name.as_str(),
+                "all" | "any" | "max" | "min" | "divmod" | "isinstance"
+            )
+        {
+            return None;
+        }
+        // #1775: `map`, `reversed`, and `slice` are typeshed *classes* whose
+        // plain-call constructor overloads reject legal shapes the runtime
+        // already recovers from — `map(None, [1,2,3])` (CPython 3 removed
+        // `map(None, ...)`; mamba's iterator-consumption path already raises
+        // `'NoneType' object is not callable` for it) and `reversed(_C())`
+        // for a `_C` defining `__reversed__` (typeshed's `reversed.__new__`
+        // only models `SupportsLenAndGetItem`, missing the `Reversible`
+        // protocol, even though mamba's `mb_reversed` already dispatches to
+        // `__reversed__` correctly). `slice()` with 0 args is a genuine
+        // runtime-error case (`mb_slice_no_args` raises the exact CPython
+        // message) that the arity walk instead hard-rejects at compile time
+        // with a mis-spanned "missing required parameter" error. Scope this
+        // strictly to `StdlibSpecAccess::Constructor` (the *plain* call
+        // shape `map(...)`/`reversed(...)`/`slice(...)`) — the `type/`
+        // dimension guard fixtures for these three (e.g.
+        // `reversed____new____sequence_as_Reversible_wrong.py`) use the
+        // explicit `Cls.__new__(Cls, ...)` shape on an imported class
+        // reference, which resolves as `StdlibSpecAccess::ClassMember`
+        // instead (see `resolve_structured_stdlib_call`'s `Expr::Attr`
+        // branch), so those guards stay enforced and red.
+        if target.access == StdlibSpecAccess::Constructor
+            && target.module == "builtins"
+            && matches!(target.qualifier.as_str(), "map" | "reversed" | "slice")
+        {
+            return None;
+        }
+        // #1775: `bytearray.join`/`bytearray.translate` typeshed overloads
+        // type `iterable_of_bytes`/`delete` as `Iterable[Buffer]`/`bytes`-like
+        // with no escape hatch for a plain `list[bytes]` argument
+        // (`bytearray(b"-").join([b"x", b"y"])` — a legal call typeshed's
+        // `Iterable[_collections_abc.Buffer]` annotation doesn't recognize
+        // `list[bytes]` as satisfying) or a wrong-typed `delete`
+        // (`bytearray(b"abc").translate(b"1" * 256, 1)`, expected to raise a
+        // *runtime* `TypeError` caught by the fixture's own try/except).
+        // Both `mb_bytes_join`/`bytes_join_parts` (via `mb_iter`) and
+        // `mb_bytes_translate` (via `bytes_like_arg`) already independently
+        // raise a matching `TypeError` for a non-iterable/non-bytes-like
+        // argument, so deferring is safe. The guard fixtures
+        // (`bytearray__join__iterable_of_bytes_as_Iterable_wrong.py`,
+        // `bytearray__translate__table_as_typed_wrong.py`) call the same
+        // `BoundMember` shape on a bare `_W()` instance and stay red because
+        // that shape independently raises `TypeError` too. Scoped to
+        // `bytearray` only — `bytes`/`str`/`frozenset`/`set` have their own
+        // `type/` guards for the same method names and must stay walled.
+        if target.access == StdlibSpecAccess::BoundMember
+            && target.module == "builtins"
+            && target.qualifier == "bytearray"
+            && matches!(target.name.as_str(), "join" | "translate")
+        {
+            return None;
+        }
         // #1628: a *direct* `NamedTuple("Point", [...])` call resolves its
         // `__init__` to typeshed's real two-overload set — overload 1 is
         // `(typename: str, fields: Iterable[tuple[str, Any]], /)` (no
