@@ -2147,6 +2147,10 @@ mod tests {
 
     #[test]
     fn test_proxy_wraps_userlist() {
+        // #1631: CLASS_REGISTRY is thread_local; register the native class in
+        // THIS test thread before `user_wrapper_data`'s MRO lookup needs it
+        // (see collections_mod::tests::test_userlist_empty).
+        super::super::collections_mod::register_userlist_class();
         let v = super::super::collections_mod::mb_userlist_new(MbValue::none());
         let proxy = mb_weakref_proxy(v, MbValue::none());
         assert!(is_proxy_instance(proxy));
@@ -2155,6 +2159,8 @@ mod tests {
 
     #[test]
     fn test_userlist_proxy_bool_forwards_to_backing_list() {
+        // #1631: see test_proxy_wraps_userlist — thread-local CLASS_REGISTRY setup.
+        super::super::collections_mod::register_userlist_class();
         let v = super::super::collections_mod::mb_userlist_new(MbValue::none());
         let proxy = mb_weakref_proxy(v, MbValue::none());
         assert_eq!(

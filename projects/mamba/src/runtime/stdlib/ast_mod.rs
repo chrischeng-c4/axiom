@@ -7297,7 +7297,12 @@ mod tests {
         super::super::super::class::mb_delattr(cls, fields_attr);
         super::super::super::exception::mb_clear_exception();
 
-        let node = mb_ast_construct_marker("AST", &[]).expect("AST constructor dispatch");
+        // #1631: `ast_constructor_build_fields_with_warning_mode` returns Rust
+        // `None` directly (not `Some(python_none)`) on every raise_type_error /
+        // AttributeError exit path — see the `_fields` missing check near the
+        // top of that function. Assert on the outer call's own `None`, don't
+        // `.expect(...)` past it first.
+        let node = mb_ast_construct_marker("AST", &[]);
         assert!(
             node.is_none(),
             "AST() should fail when AST._fields is missing"
@@ -7445,11 +7450,14 @@ mod tests {
         assert_eq!(ast_field(node, "right").as_int(), Some(3));
 
         super::super::super::exception::mb_clear_exception();
+        // #1631: too-many-positional-args raises TypeError and returns Rust
+        // `None` directly from `ast_constructor_build_fields_with_warning_mode`
+        // (see test_ast_constructor_requires_fields_class_attr) — assert on the
+        // outer call's own `None`, don't `.expect(...)` past it first.
         let result = mb_ast_construct_marker(
             "mb_ast_node_BinOp",
             &[left, op, right, MbValue::from_int(4)],
-        )
-        .expect("BinOp overflow result");
+        );
         assert!(result.is_none());
         assert_eq!(
             super::super::super::exception::current_exception_type().as_deref(),
@@ -8176,38 +8184,53 @@ mod tests {
 
     #[test]
     fn test_iter_fields_excludes_internal() {
+        use super::super::super::iter::mb_next;
         use super::super::super::rc::ObjData;
         // A Module node has body + type_ignores grammar fields plus internal
         // location/_type/_source attrs which must be filtered out.
+        //
+        // #1631: `mb_ast_iter_fields` wraps its list through `mb_iter` to
+        // match CPython's generator-returning `ast.iter_fields` — the result
+        // is an int-tagged iterator handle (`as_ptr()` is always None for
+        // those), not a list pointer. Drive it with `mb_next` like every
+        // other iterator-returning stdlib test (struct_mod's
+        // test_iter_unpack_iterates_records), don't probe `as_ptr()`.
         let node = mb_ast_parse(MbValue::from_ptr(MbObject::new_str("x = 1".to_string())));
         let result = mb_ast_iter_fields(node);
-        let ptr = result.as_ptr().expect("iter_fields returns a list");
-        unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
-                // Each item is a (name, value) 2-tuple; no internal names.
-                for item in items.iter() {
-                    let tptr = item.as_ptr().expect("tuple pair");
-                    if let ObjData::Tuple(ref elems) = (*tptr).data {
-                        assert_eq!(elems.len(), 2);
-                        if let Some(name) = extract_str(elems[0]) {
-                            assert!(!is_internal_field(&name), "leaked internal field {name}");
-                        }
-                    } else {
-                        panic!("iter_fields item is not a tuple");
+        assert!(result.as_int().is_some(), "iter_fields returns an iterator");
+        loop {
+            let item = mb_next(result);
+            if item.is_none() {
+                break;
+            }
+            // Each item is a (name, value) 2-tuple; no internal names.
+            let tptr = item.as_ptr().expect("tuple pair");
+            unsafe {
+                if let ObjData::Tuple(ref elems) = (*tptr).data {
+                    assert_eq!(elems.len(), 2);
+                    if let Some(name) = extract_str(elems[0]) {
+                        assert!(!is_internal_field(&name), "leaked internal field {name}");
                     }
+                } else {
+                    panic!("iter_fields item is not a tuple");
                 }
-            } else {
-                panic!("iter_fields did not return a list");
             }
         }
     }
 
     #[test]
     fn test_iter_child_nodes_returns_list() {
+        use super::super::super::iter::mb_next;
+        // #1631: `mb_ast_iter_child_nodes` wraps its list through `mb_iter`
+        // to match CPython's generator-returning `ast.iter_child_nodes` —
+        // the result is an int-tagged iterator handle, not a list pointer
+        // (see test_iter_fields_excludes_internal). `x = 1` has exactly one
+        // child node (the Assign statement).
         let node = mb_ast_parse(MbValue::from_ptr(MbObject::new_str("x = 1".to_string())));
         let result = mb_ast_iter_child_nodes(node);
-        assert!(result.as_ptr().is_some());
+        assert!(result.as_int().is_some(), "iter_child_nodes returns an iterator");
+        assert!(mb_next(result).as_ptr().is_some(), "expected one child node");
+        assert!(mb_next(result).is_none(), "expected exactly one child node");
     }
 
     #[test]
