@@ -11,8 +11,8 @@
 
 use std::collections::HashMap;
 
-use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
 use serde_json::Value;
+use service_k8s::{ClusterSpec, ManagedService, ReadyFacts};
 use tape::operator::render::render;
 use tape::operator::{crd_yaml, Tape, TapeSpec};
 
