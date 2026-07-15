@@ -24,19 +24,52 @@ density over coverage; file:symbol references; decision tables over prose.
 
 ## Context map (bounded contexts)
 
-| Domain | Owns | Key source | EC surface |
+A complete Python 3.12 runtime is large; this map names the WHOLE subsystem
+taxonomy so gaps are visible. `docs?` marks current coverage — `map` =
+ARCHITECTURE.md exists, `+topics` = topic docs too, `todo` = context named
+but unwritten (author its ARCHITECTURE.md on first substantive work there).
+
+### Frontend — source → typed HIR
+
+| Domain | Owns | Key source | docs? |
 |---|---|---|---|
-| `type-system/` | checker, signatures, walls, ingress enforcement | `src/types/` | `type/` dimension = negative contract (walls must reject); other dimensions must never be compile-rejected |
-| `object-model/` | class registry, identity/keys, MRO, slots, super, dispatch, dict/value model | `src/runtime/class/`, `dict_ops` | `_regression/core/{class_system,mro_super,language,descriptors}`, `behavior/core/descr` |
-| `memory/` | NaN-boxing, refcount contracts, GC, escape analysis | `src/runtime/rc*`, `src/runtime/gc.rs`, `src/mir/escape_analysis.rs` | `behavior|surface|type/std-libs/gc`, `_regression/core/stability`; corpus-wide hang/SIGTRAP jurisdiction |
-| `exceptions/` | construction, fields, propagation, rendering, traceback | `src/runtime/exception.rs` | `_regression/core/exception*`, `behavior/core/exceptions` |
-| `closures/` | capture cells, scoping passes, capture introspection | `src/runtime/closure.rs`, resolver/checker scope arms | `pep/572`, capture-introspection fixtures |
-| `codegen/` | ast→hir→mir lowering, cranelift JIT, tracing emission | `src/lower/`, `src/codegen/cranelift/` | `--emit ast|hir|mir` tooling; `behavior/core/sys_settrace` |
-| `stdlib/` | the `*_mod.rs` runtime surface, vendored modules, kits | `src/runtime/stdlib/` | `behavior|errors|real_world/std-libs/<mod>` |
-| `pkgmanage/` | C4 package manager | `src/pkgmanage/` | pkgmanage suite |
+| `frontend/` | lexer, parser, AST, HIR construction | `src/lexer/`, `src/parser/`, `src/hir/`, `src/source/` | todo |
+| `name-resolution/` | resolver passes, symbol tables, scoping (the resolver half of the two-pass system) | `src/resolve/` | todo |
+| `type-system/` | checker, signatures, walls, ingress enforcement | `src/types/` | +topics |
+
+### Backend — HIR → machine
+
+| Domain | Owns | Key source | docs? |
+|---|---|---|---|
+| `codegen/` | ast→hir→mir lowering, cranelift JIT, tracing emission | `src/lower/`, `src/mir/`, `src/codegen/` | +topics |
+| `memory/` | NaN-boxing, refcount contracts, GC, escape analysis | `src/runtime/rc*`, `src/runtime/gc.rs`, `src/mir/escape_analysis.rs` | +topics |
+
+### Runtime — object model & data types
+
+| Domain | Owns | Key source | docs? |
+|---|---|---|---|
+| `object-model/` | class registry, identity/keys, MRO, slots, super, attribute dispatch | `src/runtime/class/`, `dict_ops` | +topics |
+| `calling-convention/` | runtime arg binding — args/kwargs/defaults/kw-only/unpacking, frame adaptation | `runtime/builtins/` (mb_arg_bind, validate_and_adapt_declared_frame) | todo |
+| `numbers/` | the numeric tower — int/bigint, float, complex, bool, coercion; Decimal/Fraction | `runtime/bigint_ops.rs`, `integer_handle_registry.rs`, number mods | todo |
+| `strings/` | str/bytes/bytearray, unicode, codecs/encodings, formatting | `runtime/string_ops.rs`, `bytes_ops.rs`, codec mods | todo |
+| `collections/` | list/dict/set/tuple internals, views, hashing | `runtime/{list,dict,set,tuple}_ops.rs` | todo |
+| `iterators/` | iterator protocol, generators, coroutines, async iteration, state-machine lowering | `runtime/iter.rs`, `generator.rs` | todo |
+| `exceptions/` | construction, fields, propagation, rendering, traceback | `src/runtime/exception.rs` | +topics |
+| `closures/` | capture cells, scoping (checker half), capture introspection | `src/runtime/closure.rs` | +topics |
+
+### Runtime — services
+
+| Domain | Owns | Key source | docs? |
+|---|---|---|---|
+| `concurrency/` | no-GIL threading, asyncio event loop, multiprocessing | `runtime/async_rt.rs`, `async_task.rs`, threading mods | todo |
+| `import-system/` | finders/loaders, module cache, circular imports, vendored resolution | import machinery, `vendor_lib.rs` | todo |
+| `stdlib/` | the 206 `*_mod.rs` surfaces, vendored modules, sentinel shims | `src/runtime/stdlib/` | +topics |
+| `ffi/` | C3 native kit binding (mambalibs) | `src/ffi/` | todo |
+| `pkgmanage/` | C4 package manager | `src/pkgmanage/` | map |
 
 The EC machinery itself (runner verdict semantics, oracle cache, sweep
 tooling, perf pins) is documented in `../external-contracts/HARNESS.md`.
 
 Cross-domain knowledge lives in its dominant domain's topic doc and is
-cross-referenced by path, never restated.
+cross-referenced by path, never restated. When a `todo` context gets its
+first real work, author its ARCHITECTURE.md first (as-is), then the topic doc.
