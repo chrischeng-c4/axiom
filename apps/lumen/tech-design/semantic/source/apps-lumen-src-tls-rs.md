@@ -121,6 +121,14 @@ impl PeerTlsConfig {
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
         peer_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
     }
+
+    /// Construct the shared reloadable Raft peer transport. Lumen owns only
+    /// env naming; TLS connection, identity, and reload semantics stay in
+    /// `raft-runtime`.
+    pub fn peer_transport(&self) -> Result<raft_runtime::PeerTransport> {
+        let config = peer_tls::PeerTlsConfig::from(self.clone());
+        raft_runtime::PeerTransport::from_config(&config)
+    }
 }
 
 pub use peer_tls::install_default_crypto_provider;
@@ -259,6 +267,7 @@ LkjT2UdpFBDZGWHwqDRhXX8k
             .expect("server config should build");
         cfg.rustls_client_config()
             .expect("client config should build");
+        assert_eq!(cfg.peer_transport().unwrap().generation(), 1);
         std::fs::remove_dir_all(cfg.cert.parent().unwrap()).ok();
     }
 }

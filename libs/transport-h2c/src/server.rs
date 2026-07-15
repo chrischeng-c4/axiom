@@ -13,6 +13,7 @@
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tower::ServiceExt;
 
@@ -37,7 +38,7 @@ impl Default for ConnectionOptions {
 /// belong to `server-http`/`server-tcp`.
 /// @spec libs/transport-h2c/tech-design/semantic/source/libs-transport-h2c-src-server-rs.md#source
 pub async fn serve_connection(stream: TcpStream, app: axum::Router) -> Result<(), ConnectionError> {
-    serve_connection_with_options(stream, app, ConnectionOptions::default()).await
+    serve_io(stream, app).await
 }
 
 /// Like [`serve_connection`], with a tunable HTTP/2 stream limit.
@@ -46,6 +47,27 @@ pub async fn serve_connection_with_options(
     app: axum::Router,
     options: ConnectionOptions,
 ) -> Result<(), ConnectionError> {
+    serve_io_with_options(stream, app, options).await
+}
+
+/// Serve one arbitrary Tokio byte stream as HTTP/1.1 or HTTP/2. This is the
+/// transport seam used by authenticated peer ports after rustls completes its
+/// handshake; cleartext callers continue to use [`serve_connection`].
+pub async fn serve_io<I>(stream: I, app: axum::Router) -> Result<(), ConnectionError>
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    serve_io_with_options(stream, app, ConnectionOptions::default()).await
+}
+
+pub async fn serve_io_with_options<I>(
+    stream: I,
+    app: axum::Router,
+    options: ConnectionOptions,
+) -> Result<(), ConnectionError>
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let mut builder = auto::Builder::new(TokioExecutor::new());
     // Lift the per-connection concurrent-stream ceiling: clients open
     // ~ln(concurrency) connections and multiplex many streams over each (see
