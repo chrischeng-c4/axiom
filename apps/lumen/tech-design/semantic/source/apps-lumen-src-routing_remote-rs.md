@@ -105,7 +105,10 @@ use crate::api::{
     RoutedBackend, ShardForwardMisrouted, ShardForwardRemoteError, ShardForwardUnavailable,
     ShardMapVersionMismatch, WriteBackend,
 };
-use crate::routing::{merge_shard_search_responses, SearchShardTarget, VirtualBucketShardMap};
+use crate::routing::{
+    merge_shard_search_responses, search_request_offset, SearchShardTarget,
+    VirtualBucketShardMap,
+};
 use crate::storage::Engine;
 use crate::types::{
     IndexItem, IndexRequest, IndexResponse, ReplaceDocItem, ReplaceDocsRequest,
@@ -381,9 +384,10 @@ impl RoutedRouter {
         headers: &HeaderMap,
     ) -> Result<SearchResponse> {
         let start = Instant::now();
-        let offset = cursor_offset(req.cursor.as_deref()) as usize;
+        let offset = search_request_offset(&req)?;
         let limit = req.limit as usize;
         let mut shard_req = req.clone();
+        shard_req.offset = 0;
         shard_req.cursor = None;
         shard_req.limit = offset.saturating_add(limit).min(u32::MAX as usize) as u32;
 
@@ -434,6 +438,7 @@ impl RoutedRouter {
 /// caller — this is incidental cursor-codec plumbing, not the reusable
 /// merge primitive (`merge_shard_search_responses`) this module already
 /// shares with `routing.rs`.
+#[cfg(test)]
 fn cursor_offset(cursor: Option<&str>) -> u64 {
     use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
     let Some(s) = cursor else {
@@ -1108,6 +1113,7 @@ mod tests {
                 value: FieldValue::String("taipei".into()),
             }),
             limit: 10,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort,
@@ -1142,67 +1148,17 @@ mod tests {
 // CODEGEN-END
 ````
 
+## Changes
+<!-- type: changes lang: yaml -->
+
 ```yaml
 changes:
   - path: "apps/lumen/src/routing_remote.rs"
-    action: create
+    action: modify
     section: rust-source-unit
-    impl_mode: hand-written
+    impl_mode: codegen
     description: |
-      New module (#1398 R1-R3): `RoutedRouter`, the sole implementation of
-      `crate::api::RoutedBackend`. Local-owned virtual buckets are answered
-      directly from `engine`/`local_write`; remote-owned buckets forward one
-      hop over `libs/transport-h2c` to the owning shard pod's stable headless-DNS name
-      (`routing::shard_host`), following the same `reqwest`-over-h2c idiom
-      already established by `service_k8s::reshard_driver`'s admin forwarding.
-      Every `RoutedBackend` method checks the `x-lumen-forwarded` header
-      first and always answers locally when it is present, bounding
-      cross-pod forwarding to exactly one hop (R3, no forwarding loops). A
-      forward carries the caller's `Authorization` and `x-read-consistency`
-      headers through unchanged. Routing-key-less search
-      (`scatter_search`) fans out to every shard and merges through the
-      same `routing::merge_shard_search_responses` primitive
-      `routing::EngineShardSearch` uses in the non-k8s fan-in mode.
-  - path: "apps/lumen/src/routing_remote.rs"
-    action: update
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1442 round-2 hardening: the forwarded marker is no longer trusted
-      blindly on receipt. `check_forwarded_map_version` (R2) rejects a
-      forward whose `x-lumen-map-version` disagrees with this pod's live
-      map with a distinct retryable `ShardMapVersionMismatch` error instead
-      of letting the one-hop guard force a local answer during a rolling
-      restart's mixed-map window; `send` now sends that header on every
-      forward. `assert_owns` (R1) recomputes bucket ownership for every
-      deterministic-owner forwarded path (`index`, `replace_docs`,
-      `delete`, and keyed `search`) and rejects with
-      `ShardForwardMisrouted` rather than answering locally when this pod
-      isn't the real owner, closing the spoofed-header gap (a caller can
-      set `x-lumen-forwarded` directly); keyless scatter sub-requests keep
-      trusting the marker since they have no single owner to validate
-      against. `replace_docs` (R5) now tracks `sent` doc counts per shard
-      and validates each shard's response length before merging, replacing
-      the previous `.expect()`-based zip-truncation panic hazard with a
-      classified `ShardForwardRemoteError`. `delete`'s remote-forward URL
-      (R4) now percent-encodes `external_id`/`field` via the new
-      `percent_encode_component` helper instead of interpolating them raw.
-  - path: "apps/lumen/src/routing_remote.rs"
-    action: update
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1467 R6: keyless (scatter) sub-requests remain exempt from the hard
-      `check_forwarded_map_version` rejection — availability over
-      completeness during a rolling restart's mixed-map window, now
-      documented explicitly in the module header doc — but the exemption
-      is paired with an observable signal: on a keyless forwarded
-      sub-request, the responding pod compares the sender's declared
-      `x-lumen-map-version` against its own live map and, on a mismatch,
-      increments `lumen_scatter_map_version_mismatches_total`
-      (`src/metrics.rs`) and logs a non-fatal `tracing::warn!` naming the
-      collection and both versions. New unit test
-      `search_already_forwarded_keyless_mismatch_increments_scatter_metric`
-      proves the counter increments exactly once on a mismatched scatter
-      sub-request and stays untouched on a matching one.
+      Lossless exact source unit for the routed multi-shard backend, including
+      ownership validation, retryable mixed-map handling, sorted offset fan-out,
+      response validation, and scatter mismatch observability.
 ```
