@@ -1,0 +1,33 @@
+[project]
+name = "storage-durable"
+cap_path = "README.md"
+label = "lib:storage-durable"
+
+[[workspaces]]
+name = "storage-durable"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p storage-durable"
+verify_cold = true
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "storage-durable"
+generated_from_td_digest = "sha256:db4e12963841860b4b014e49ed089b568dbe93ad831150546af868fd54b86363"
+
+[[aw.ec.generated.cases]]
+id = "shared-storage-durable-contract"
+capability_id = "shared-storage-durable-contract"
+claim_id = "shared-storage-durable-contract"
+contract_id = "shared-storage-durable-contract"
+category = "behavior"
+td_ref = "libs/storage-durable/external-contracts/behavior/shared-storage-durable-contract.md#shared-storage-durable-contract"
+test_path = "libs/storage-durable/tests/behavior_shared_storage_durable_contract.rs"
+command = "cargo test -p storage-durable"
+required_for_production = true
+assertions = [
+    "Shared Service Durability Contract public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+# AW-EC-END

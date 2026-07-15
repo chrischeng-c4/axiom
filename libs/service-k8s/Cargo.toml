@@ -22,5 +22,3 @@ futures = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
-
-<!-- marker: missing-generator:logic:febc0457 path: libs/service-k8s/Cargo.toml reason: scaffold for libs/service-k8s/Cargo.toml — fill in by hand and update tracker when codegen is ready -->

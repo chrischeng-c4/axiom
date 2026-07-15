@@ -32,7 +32,7 @@ Public API manifest for `libs/service-http/src/transport.rs` captured during lib
 ````rust
 //! HTTP transport: the h2c serve loop + the standard request-tracing layer.
 //!
-//! [`serve`] composes [`h2c::serve`] (HTTP/1.1 + HTTP/2 cleartext on one port —
+//! [`serve`] composes [`transport_h2c::serve`] (HTTP/1.1 + HTTP/2 cleartext on one port —
 //! the in-cluster default `axum::serve` can't do) rather than re-implementing
 //! the accept loop. [`trace_layer`] is the one INFO-level span-per-request layer
 //! lumen/keep both attach; a service `.layer(...)`s it onto its router.
@@ -66,7 +66,7 @@ impl<B> MakeSpan<B> for PropagatingMakeSpan {
 /// Serve `app` (HTTP/1.1 + h2c on one port) on `listener`, stopping when
 /// `shutdown` resolves (e.g. [`crate::signal::shutdown_with_drain`]).
 ///
-/// Thin delegation to [`h2c::serve`] — the shared transport — so a service does
+/// Thin delegation to [`transport_h2c::serve`] — the shared transport — so a service does
 /// not hand-roll the hyper-util auto-builder accept loop. In-flight connections
 /// get a bounded grace period after `shutdown` resolves before the process
 /// exits.
@@ -75,7 +75,7 @@ pub async fn serve(
     app: axum::Router,
     shutdown: impl std::future::Future<Output = ()>,
 ) {
-    h2c::serve(listener, app, shutdown).await;
+    transport_h2c::serve(listener, app, shutdown).await;
 }
 
 /// The standard request-tracing layer: one INFO-level span per HTTP request.
