@@ -9,42 +9,33 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: relay-stateful-service-workload-projection
-entry: trait
+id: relay-stateful-workload-evidence-contract
+entry: root
 nodes:
-  trait:
-    kind: start
-    label: "Relay aw.toml declares stateful_storage"
-  project:
-    kind: process
-    label: "AW derives the stateful-service-workload baseline"
   root:
+    kind: start
+    label: "stateful-service-workload capability root"
+  shared:
     kind: process
-    label: "README root links shared mechanisms with Relay-local evidence"
-  check:
-    kind: decision
-    label: "capability check finds a complete root?"
-  ready:
+    label: "Reference shared mechanisms, not copied implementation prose"
+  local:
+    kind: process
+    label: "Reference Relay policy and existing domain evidence"
+  validate:
     kind: terminal
-    label: "Relay baseline is present without duplicating domain capability prose"
-  missing:
-    kind: terminal
-    label: "Report the missing root and the remediation command"
+    label: "Capability validation reports no missing stateful baseline"
 edges:
-  - { from: trait, to: project }
-  - { from: project, to: root }
-  - { from: root, to: check }
-  - { from: check, to: ready, label: "yes" }
-  - { from: check, to: missing, label: "no" }
+  - { from: root, to: shared }
+  - { from: root, to: local }
+  - { from: shared, to: validate }
+  - { from: local, to: validate }
 ---
-flowchart LR
-    trait[Relay stateful_storage trait] --> project[AW baseline projection]
-    project --> root[README stateful-service-workload root]
-    root --> check{capability check complete?}
-    check -->|yes| ready[shared mechanisms and Relay policy are linked]
-    check -->|no| missing[emit root-specific remediation]
+flowchart TD
+    root[Stateful workload root] --> shared[shared library mechanisms]
+    root --> local[Relay domain evidence]
+    shared --> validate[capability check passes]
+    local --> validate
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
