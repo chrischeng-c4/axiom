@@ -6,7 +6,10 @@
 //! coarse lock signal and the issue body carries a structured hidden state
 //! block. The repo never writes `.aw/workflow/locks/*.toml`.
 
-use crate::issues::{Issue, IssueBackend, IssueFilter, IssuePatch, IssueState, LocalBackend};
+use crate::issues::{
+    make_backend, resolve_default_backend, Issue, IssueBackend, IssueFilter, IssuePatch,
+    IssueState, LocalBackend,
+};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -416,7 +419,12 @@ pub async fn guard_issue_mutation(
 
 // @spec apps/agentic-workflow/tech-design/surface/interfaces/src/workflow_guard.md#source
 pub async fn issue_locks(project_root: &Path) -> Result<Vec<IssueLockView>> {
-    let backend = LocalBackend::from_project_root(project_root);
+    // The remote tracker owns workflow-lock truth.  The local lifecycle ledger
+    // is deliberately write-optimized and can retain a lock after an issue was
+    // closed outside `aw`; consulting it here would deadlock unrelated work.
+    let (kind, repo, host) = resolve_default_backend(project_root)?;
+    let backend = make_backend(&kind, project_root, repo, host)
+        .context("failed to create workflow-lock issue backend")?;
     let filter = IssueFilter {
         label: Some(LOCK_LABEL.to_string()),
         ..Default::default()
