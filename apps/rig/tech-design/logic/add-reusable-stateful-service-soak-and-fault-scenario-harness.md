@@ -99,7 +99,6 @@ changes:
     impl_mode: hand-written
     description: "Bind Tape replay and checkpoint continuity assertions to the shared Rig stateful lifecycle. generator gap: missing-generator:tape-stateful-adapter (#1645)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
