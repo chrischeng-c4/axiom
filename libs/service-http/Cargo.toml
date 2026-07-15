@@ -37,6 +37,7 @@ tracing-opentelemetry = { version = "0.22", optional = true }
 
 # The HTTP runtime (HTTP/1.1 + h2c on one port) is composed, not re-implemented.
 server-http = { path = "../server-http" }
+server-lifecycle = { path = "../server-lifecycle" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

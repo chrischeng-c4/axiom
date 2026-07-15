@@ -2,9 +2,10 @@
 
 ## Brief
 
-`service-http` provides shared HTTP-service scaffolding: standard probe routes,
-optional OTLP tracing, graceful shutdown, h2c transport, and the JSON error
-envelope.
+`service-http` provides shared HTTP-service policy: standard probe routes,
+optional OTLP tracing policy, lifecycle readiness/signal adapters, the metrics
+provider seam, and the JSON error envelope. Listener admission and drain state
+belong to `server-http` and `server-lifecycle`.
 
 ## Capabilities
 
@@ -12,7 +13,7 @@ envelope.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Shared HTTP Service Scaffold | #1640 | implemented | passing | conformance | ready | probes, optional OTLP tracing, shutdown, transport, and error envelope |
+| Shared HTTP Service Scaffold | #1640 | implemented | passing | conformance | ready | probes, tracing policy, lifecycle adapters, metrics seam, and error envelope |
 
 ### Shared HTTP Service Scaffold
 
@@ -24,8 +25,9 @@ Surfaces: Rust API: `service_http`.
 EC Dimensions: behavior: `cargo test -p service-http` - standard HTTP service scaffold coverage
 Required Verification: smoke
 Promise:
-HTTP services can reuse the common operational endpoints and shutdown/transport
-plumbing instead of hand-rolling them per service.
+HTTP services can reuse common operational routes and policy adapters instead
+of hand-rolling them per service. `service-http` delegates listener serving to
+`server-http` and re-exports readiness/shutdown from `server-lifecycle`.
 Tracing defaults to structured pretty/JSON logging. Enable the optional `otlp`
 feature and provide an `HttpConfig.otlp_endpoint` plus `ServiceIdentity` to
 export traces with stable `service.name` and `service.version` resources. A

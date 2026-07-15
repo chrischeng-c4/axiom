@@ -14,14 +14,14 @@ Service routes and operational endpoint policy remain in `service-http`.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Shared HTTP Runtime | #1776 | implementing | planned | conformance | partial | sole listener owner over server-tcp and per-connection h2c |
+| Shared HTTP Runtime | #1776 | implemented | passing | conformance | ready | sole listener owner over server-tcp and per-connection h2c |
 
 ### Shared HTTP Runtime
 
 ID: shared-http-runtime
 Type: DeveloperTool
 Root WI: 1776
-Status: implementing
+Status: verified
 Surfaces: Rust API: `server_http`.
 EC Dimensions: behavior: `cargo test -p server-http -p server-tcp -p transport-h2c` - listener ownership, admission metrics, h2c, and drain coverage
 Required Verification: conformance
@@ -34,7 +34,6 @@ Gate Inventory: `cargo test -p server-http -p server-tcp -p transport-h2c`; libs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| shared-http-runtime-lifecycle-convergence | change | #1776 | implementing | planned | conformance | `cargo test -p server-http -p server-tcp -p transport-h2c` |
+| shared-http-runtime-lifecycle-convergence | change | #1776 | implemented | passing | conformance | `cargo test -p server-http -p server-tcp -p transport-h2c` |
 
-<!-- marker: missing-generator:logic:34db7bee path: libs/server-http/README.md reason: Define the HTTP runtime capability boundary. -->
 <!-- HANDWRITE-END -->

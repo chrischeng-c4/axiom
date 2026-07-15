@@ -12023,6 +12023,7 @@ dependencies = [
 name = "server-http"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum 0.8.9",
  "server-lifecycle",
  "server-tcp",
@@ -12094,6 +12095,7 @@ dependencies = [
  "serde",
  "serde_json",
  "server-http",
+ "server-lifecycle",
  "tokio",
  "tower 0.5.3",
  "tower-http 0.5.2",

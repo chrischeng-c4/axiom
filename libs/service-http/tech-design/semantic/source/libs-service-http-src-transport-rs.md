@@ -31,8 +31,9 @@ Public API manifest for `libs/service-http/src/transport.rs` captured during lib
 
 ````rust
 //! HTTP transport: the h2c serve loop + the standard request-tracing layer.
+//! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
-//! [`serve`] composes [`transport_h2c::serve`] (HTTP/1.1 + HTTP/2 cleartext on one port —
+//! [`serve`] composes [`server_http::serve_h2c`] (HTTP/1.1 + HTTP/2 cleartext on one port —
 //! the in-cluster default `axum::serve` can't do) rather than re-implementing
 //! the accept loop. [`trace_layer`] is the one INFO-level span-per-request layer
 //! lumen/keep both attach; a service `.layer(...)`s it onto its router.
@@ -44,6 +45,7 @@ use tower_http::trace::{DefaultMakeSpan, MakeSpan, TraceLayer};
 /// Request span maker that preserves standard request fields and, in an
 /// OTLP-enabled build, attaches a valid propagated W3C parent context.
 #[derive(Debug, Clone, Copy)]
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub struct PropagatingMakeSpan;
 
 impl<B> MakeSpan<B> for PropagatingMakeSpan {
@@ -66,16 +68,18 @@ impl<B> MakeSpan<B> for PropagatingMakeSpan {
 /// Serve `app` (HTTP/1.1 + h2c on one port) on `listener`, stopping when
 /// `shutdown` resolves (e.g. [`crate::signal::shutdown_with_drain`]).
 ///
-/// Thin delegation to [`transport_h2c::serve`] — the shared transport — so a service does
-/// not hand-roll the hyper-util auto-builder accept loop. In-flight connections
+/// Thin delegation to [`server_http::serve_h2c`] — the shared HTTP runtime — so
+/// a service does not hand-roll the hyper-util auto-builder accept loop.
+/// In-flight connections
 /// get a bounded grace period after `shutdown` resolves before the process
 /// exits.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub async fn serve(
     listener: TcpListener,
     app: axum::Router,
-    shutdown: impl std::future::Future<Output = ()>,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) {
-    transport_h2c::serve(listener, app, shutdown).await;
+    server_http::serve_h2c(listener, app, shutdown).await;
 }
 
 /// The standard request-tracing layer: one INFO-level span per HTTP request.
@@ -94,6 +98,7 @@ pub async fn serve(
 /// Returns the concrete `TraceLayer` so callers `.layer()` it directly. For a
 /// different classifier/make-span, build `TraceLayer::new_for_http()` inline
 /// instead.
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-transport-rs.md#source
 pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, PropagatingMakeSpan> {
     TraceLayer::new_for_http().make_span_with(PropagatingMakeSpan)
 }

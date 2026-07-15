@@ -18,8 +18,8 @@
 //!
 //! ## Composition
 //!
-//! It composes, it does not replace: [`transport::serve`] delegates to
-//! [`transport_h2c::serve`]; [`probes::standard_probe_routes`] returns an `axum::Router`
+//! It composes, it does not replace: [`transport::serve`] delegates listener
+//! ownership to `server-http`; [`probes::standard_probe_routes`] returns an `axum::Router`
 //! a service `.merge`s its own (auth'd, body-limited) data plane onto.
 //!
 //! ## What a service wires

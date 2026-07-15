@@ -72,8 +72,8 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //!
 //! ## Composition
 //!
-//! It composes, it does not replace: [`transport::serve`] delegates to
-//! [`transport_h2c::serve`]; [`probes::standard_probe_routes`] returns an `axum::Router`
+//! It composes, it does not replace: [`transport::serve`] delegates listener
+//! ownership to `server-http`; [`probes::standard_probe_routes`] returns an `axum::Router`
 //! a service `.merge`s its own (auth'd, body-limited) data plane onto.
 //!
 //! ## What a service wires
@@ -144,7 +144,7 @@ pub use logging::{
     init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
 };
 pub use metrics::MetricsProvider;
-pub use probes::standard_probe_routes;
+pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
 pub use readiness::ReadinessHook;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer, PropagatingMakeSpan};
