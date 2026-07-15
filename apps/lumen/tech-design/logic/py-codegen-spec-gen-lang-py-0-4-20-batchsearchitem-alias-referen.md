@@ -35,7 +35,6 @@ flowchart TD
     aliases --> execute[compile and execute generated models.py]
     execute --> done([generated package is import-safe])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
