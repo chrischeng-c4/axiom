@@ -1,3 +1,5 @@
+// SPEC-MANAGED: apps/lumen/tech-design/logic/bulk-scroll-to-exhaustion-endpoint-for-all-matching-ids-no-unlim.md#unit-test
+// CODEGEN-BEGIN
 use std::sync::Arc;
 
 use axum_test::TestServer;
@@ -89,3 +91,4 @@ fn search_all_is_a_typed_generated_client_operation() {
         "#/components/schemas/SearchAllResponse"
     );
 }
+// CODEGEN-END

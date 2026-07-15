@@ -1,3 +1,5 @@
+// SPEC-MANAGED: apps/lumen/tech-design/logic/native-prefix-wildcard-query-for-keyword-fields.md#unit-test
+// CODEGEN-BEGIN
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -139,3 +141,4 @@ async fn prefix_rejects_empty_values_and_non_keyword_fields() {
             .assert_status(StatusCode::BAD_REQUEST);
     }
 }
+// CODEGEN-END
