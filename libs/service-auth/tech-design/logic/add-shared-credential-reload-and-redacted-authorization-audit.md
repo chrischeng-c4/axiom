@@ -105,3 +105,42 @@ changes:
     impl_mode: hand-written
     description: "Verify Tape rotation and authorization remain compatible through the shared lifecycle."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: credential-reload-redacted-audit-verification
+requirements:
+  app_adoption:
+    id: R4
+    text: "Lumen and Tape authenticate and authorize through ReloadableRoleMapVerifier while keeping their own collection/topic role policy and HTTP error shapes."
+    kind: integration
+    risk: high
+    verify: cargo test -p lumen auth && cargo test -p tape --test service_auth
+  last_known_good:
+    id: R2
+    text: "Unreadable, malformed, empty-required, or semantically invalid replacement data leaves the prior authorization snapshot active."
+    kind: regression
+    risk: high
+    verify: cargo test -p service-auth
+  redacted_events:
+    id: R3
+    text: "Authentication/reload/authorization events expose decision context and counters but their typed and serialized forms have no bearer credential field or value."
+    kind: security
+    risk: high
+    verify: cargo test -p service-auth
+  valid_rotation:
+    id: R1
+    text: "A validated replacement registry is atomically visible to subsequent requests and advances an observable revision without restarting the service."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-auth
+---
+flowchart TD
+    r1[R1 valid rotation] --> cargo_test_p_service_auth[cargo test -p service-auth]
+    r2[R2 last known good] --> cargo_test_p_service_auth
+    r3[R3 redacted events] --> cargo_test_p_service_auth
+    r4[R4 app adoption] --> cargo_test_p_lumen_auth_cargo_test_p_tape_test_service_auth[cargo test -p lumen auth && cargo test -p tape --test service_auth]
+```
