@@ -62,7 +62,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ASSET_EXTENSIONS = new Set([
   ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
   ".woff", ".woff2", ".ttf", ".otf",
-  ".css",
+  ".css", ".scss",
 ]);
 
 function isTemporaryJetModuleParent(parentURL) {
@@ -139,7 +139,8 @@ function isTestAssetUrl(url) {
 }
 
 function isTestStylesheetUrl(url) {
-  return url.startsWith("file:") && new URL(url).pathname.toLowerCase().endsWith(".css");
+  return url.startsWith("file:")
+    && [".css", ".scss"].some((extension) => new URL(url).pathname.toLowerCase().endsWith(extension));
 }
 
 export async function resolve(specifier, context, nextResolve) {
@@ -188,7 +189,7 @@ export async function load(url, context, nextLoad) {
 
 const TEST_ASSET_EXTENSIONS: &[&str] = &[
     "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp", "woff", "woff2", "ttf",
-    "otf", "css",
+    "otf", "css", "scss",
 ];
 
 /// Run a single spec file to completion. Returns a partial Summary for this
@@ -3047,10 +3048,12 @@ mod tests {
         assert!(is_test_asset_module(Path::new("icon.svg")));
         assert!(is_test_asset_module(Path::new("avatar.JPEG")));
         assert!(is_test_asset_module(Path::new("styles.css")));
+        assert!(is_test_asset_module(Path::new("form-wrapper.scss")));
         assert!(!is_test_asset_module(Path::new("module.js")));
         assert!(TEST_ASSET_LOADER.contains("shortCircuit: true"));
         assert!(TEST_ASSET_LOADER.contains("export default"));
         assert!(TEST_ASSET_LOADER.contains("isTestStylesheetUrl"));
+        assert!(TEST_ASSET_LOADER.contains(".scss"));
         assert!(TEST_ASSET_LOADER.contains("let localBinding = \"__jet_cjs_module\";"));
         assert!(TEST_ASSET_LOADER.contains("const ${localBinding} = require"));
         assert!(TEST_ASSET_LOADER.contains("export { ${localExport} as ${name} };"));
