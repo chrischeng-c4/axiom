@@ -63,7 +63,6 @@ changes:
     impl_mode: hand-written
     description: "Lock offline search-all and canonical OpenAPI metadata."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
