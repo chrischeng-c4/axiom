@@ -36,5 +36,3 @@ bytes = "1"
 [[example]]
 name = "conn_sweep"
 path = "examples/conn_sweep.rs"
-
-<!-- marker: missing-generator:logic:126d98e8 path: libs/transport-h2c/Cargo.toml reason: scaffold for libs/transport-h2c/Cargo.toml — fill in by hand and update tracker when codegen is ready -->

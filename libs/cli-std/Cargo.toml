@@ -30,7 +30,7 @@ default = []
 online = ["dep:reqwest"]
 # Enables `connect`: the k8s-native service CLI's port-forward lifecycle +
 # token-registry Secret resolution (#1376). Off by default so non-k8s
-# consumers (openapi-codegen, h2c, service-auth, raft-host, operator,
+# consumers (openapi-codegen, h2c, service-auth, raft-runtime, operator,
 # service-backup, ...) don't pay for kubectl/Secret-shaped deps they never use.
 k8s = ["dep:serde", "dep:base64"]
 

@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
-h2c = { path = "../../libs/h2c" }
+transport-h2c = { path = "../../libs/transport-h2c" }
 lumen = { path = "../../apps/lumen" }
 reqwest.workspace = true
 service-http = { path = "../../libs/service-http" }

@@ -41,7 +41,7 @@ use crate::error::AuthError;
 /// Authenticate a request from its headers into the service's principal.
 ///
 /// Each HTTP service implements this once. The token crypto a verifier uses
-/// (HMAC via `libs/claimtoken`, a role-map, k8s ServiceAccount JWT, OIDC, …) is
+/// (HMAC via `libs/claim-token`, a role-map, k8s ServiceAccount JWT, OIDC, …) is
 /// the implementor's choice and is **not** part of this lib.
 ///
 /// Open / anonymous mode is expressed by the verifier itself: set

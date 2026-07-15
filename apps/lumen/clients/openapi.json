@@ -173,7 +173,7 @@
           "Admin"
         ],
         "summary": "`POST /admin/reshard:fence`: arm or clear a bounded write pause on a set",
-        "description": "of virtual buckets (#1396 R2). The reshard driver's cutover\n(`operator::reshard_driver::advance_catching_up`) arms this over exactly\nthe buckets its final `CatchingUp` migration pass is about to copy,\nimmediately before that pass, and clears it (`buckets: []`) once the\npass/evict/checkpoint/cutover sequence finishes — on success or on\n`Blocked`. A write to a fenced bucket is rejected with `503\nbucket_write_paused` rather than silently dropped or applied against a\nmap that is about to change; see [`WriteFence`] for the crash-safety\n(TTL) argument.",
+        "description": "of virtual buckets (#1396 R2). The reshard driver's cutover\n(`service_k8s::reshard_driver::advance_catching_up`) arms this over exactly\nthe buckets its final `CatchingUp` migration pass is about to copy,\nimmediately before that pass, and clears it (`buckets: []`) once the\npass/evict/checkpoint/cutover sequence finishes — on success or on\n`Blocked`. A write to a fenced bucket is rejected with `503\nbucket_write_paused` rather than silently dropped or applied against a\nmap that is about to change; see [`WriteFence`] for the crash-safety\n(TTL) argument.",
         "operationId": "reshard_fence",
         "requestBody": {
           "content": {

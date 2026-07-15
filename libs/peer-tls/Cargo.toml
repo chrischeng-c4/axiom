@@ -12,5 +12,3 @@ path = "src/lib.rs"
 anyhow = { workspace = true }
 rustls = "0.23"
 rustls-pemfile = "2"
-
-<!-- marker: missing-generator:logic:39c28625 path: libs/peer-tls/Cargo.toml reason: scaffold for libs/peer-tls/Cargo.toml — fill in by hand and update tracker when codegen is ready -->
