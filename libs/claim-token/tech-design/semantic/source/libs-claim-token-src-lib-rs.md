@@ -1,5 +1,5 @@
 ---
-id: libs-claimtoken-src-lib-rs
+id: libs-claim-token-src-lib-rs
 summary: Lossless rust-source-unit coverage for `libs/claim-token/src/lib.rs`.
 capability_refs:
   - id: scoped-claim-tokens
