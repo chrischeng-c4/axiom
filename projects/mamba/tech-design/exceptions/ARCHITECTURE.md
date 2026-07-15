@@ -2,7 +2,7 @@
 
 Scope: `src/runtime/exception.rs` (3.7k L), `src/runtime/stdlib/traceback_mod.rs` (4.1k L),
 raise/catch slots in `src/runtime/class/mod.rs` (~4788–5223), lowering in `src/lower/hir_to_mir.rs`.
-Fix TDs in this dir: `exception-construction-contracts.md` (landed), `1557-exc-subclass-init-shapes.md` (OPEN).
+Fix TDs in this dir: `exception-construction-contracts.md` (landed), `exc-subclass-init-shapes.md` (OPEN).
 
 ## Responsibilities
 
@@ -65,7 +65,7 @@ Invariants that must hold:
 - **Save-stack retain parking** — abnormal region exits discard deeper slots; each parked retain must release exactly once. WHY: earlier miscount surfaced as intermittent double-free in nested try/except (class/mod.rs:5140 comment).
 - **StopIteration flag leak** — user `except StopIteration:` without the class/mod.rs:5206 clear makes the next generator resume read phantom exhaustion.
 - **Synthetic tracebacks** — traceback_mod.rs header carve-out: no real frame walk/linecache; several `traceback` functions return empty surfaces; `mb_take_uncaught_traceback` prints a fixed one-frame header. WHY: callers pretty-printing real tracebacks observe empty/wrong output while gates still pass.
-- **Open #1557 shapes** — unbound `Exception.__init__(self,…)` chain loses attrs; `__new__` args not pre-stored (P3 `str()` falls to generic repr); composite NoneType-callable crash. See `1557-exc-subclass-init-shapes.md` (do not "fix" past its red lines).
+- **Open #1557 shapes** — unbound `Exception.__init__(self,…)` chain loses attrs; `__new__` args not pre-stored (P3 `str()` falls to generic repr); composite NoneType-callable crash. See `exc-subclass-init-shapes.md` (do not "fix" past its red lines).
 
 ## Extension points
 

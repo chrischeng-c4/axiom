@@ -2,7 +2,7 @@
 
 Scope: value representation, refcount contracts, cycle GC, escape analysis, and the
 JIT-emitted refcount protocol. Fix-family TDs in this directory
-(`1610-escape-analysis-flow-sensitivity.md`, `1627-context-manager-enter-retain.md`)
+(`escape-analysis-flow-sensitivity.md`, `context-manager-enter-retain.md`)
 are cross-referenced, not restated.
 
 ## Responsibilities
@@ -42,8 +42,8 @@ are cross-referenced, not restated.
 
 ## Known hazards
 
-- **Precomputed alias maps over MIR VRegs** — VRegs are reused per variable, not SSA; last-root-wins steals escape marks. WHY: mis-elided `gc_track` = state corruption/hang far from cause (`x=[1]; x=[2]` hung). See `1610-escape-analysis-flow-sensitivity.md`.
-- **`__enter__` returning non-self without compensating retain** — the with-exit double-release contract silently under-counts. WHY: intermittent SIGTRAP UAF, maskable for weeks by an unrelated type wall. See `1627-context-manager-enter-retain.md` + comment at `tempfile_mod.rs:1043`.
+- **Precomputed alias maps over MIR VRegs** — VRegs are reused per variable, not SSA; last-root-wins steals escape marks. WHY: mis-elided `gc_track` = state corruption/hang far from cause (`x=[1]; x=[2]` hung). See `escape-analysis-flow-sensitivity.md`.
+- **`__enter__` returning non-self without compensating retain** — the with-exit double-release contract silently under-counts. WHY: intermittent SIGTRAP UAF, maskable for weeks by an unrelated type wall. See `context-manager-enter-retain.md` + comment at `tempfile_mod.rs:1043`.
 - **Re-enabling the `__main__` epilogue release sweep** — deliberately off (jit.rs:488). WHY: double-free, oscillating conformance gate (#1663 T4c5; suspect BigInt inner-Vec drop path; rationale block at mod.rs:1751).
 - **#2111 carve-out: fresh per-iter VRegs bypass rebind release** (jit.rs:653 comment). WHY: module-scope hot-loop allocations leak monotonically with iteration count; fix surface = per-back-edge release sweep.
 - **`gc_clear_all_state` must never run `collect()`** (gc.rs:139 doc; called from `runtime/mod.rs:66` + JIT teardown). WHY: `module_to_value` dicts hold borrowed rc=1 copies — a sweep double-frees them.
