@@ -45,9 +45,8 @@ changes:
     action: "modify"
     section: "logic"
     impl_mode: "hand-written"
-    description: "Keep fallback punctuation tokens on UTF-8 boundaries and cover collision-renaming output with multi-byte text."
+    description: "Advance non-ASCII punctuation by its UTF-8 codepoint width so every token range remains a valid byte slice, then assert collision-renamed JSX text remains intact."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
