@@ -51,3 +51,35 @@ changes:
   - { path: apps/pgpool/Cargo.toml, action: modify, section: logic, impl_mode: hand-written, description: Depend on metrics-prometheus. }
   - { path: apps/pgpool/tech-design/logic/served-admin-plane-with-drain-aware-readiness.md, action: modify, section: logic, impl_mode: hand-written, description: Record shared encoder ownership while preserving the Pgpool contract. }
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-shared-labeled-prometheus-verification
+requirements:
+  labeled_encoder:
+    id: R1
+    text: "metrics-prometheus emits HELP and TYPE once per group, sorts label names deterministically, and escapes backslash, quote, and newline in label values."
+    kind: functional
+    risk: high
+    verify: cargo test -p metrics-prometheus
+  pgpool_contract:
+    id: R2
+    text: "Pgpool preserves its three per-pool gauge names, HELP text, TYPE, pool labels, values, and row order while delegating generic exposition formatting."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool admin::metrics
+  served_scrape:
+    id: R3
+    text: "The served /metrics endpoint continues exposing live labeled pool gauges over the existing admin plane."
+    kind: regression
+    risk: medium
+    verify: cargo test -p pgpool --test admin_plane metrics_exposes_prometheus_pool_gauges -- --nocapture
+---
+flowchart TD
+    r1[R1 labeled encoder] --> cargo_test_p_metrics_prometheus[cargo test -p metrics-prometheus]
+    r2[R2 pgpool contract] --> cargo_test_p_pgpool_admin_metrics[cargo test -p pgpool admin::metrics]
+    r3[R3 served scrape] --> cargo_test_p_pgpool_test_admin_plane_metrics_exposes_prometheus_pool_gauges_nocapture[cargo test -p pgpool --test admin_plane metrics_exposes_prometheus_pool_gauges -- --nocapture]
+```
