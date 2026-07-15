@@ -17,7 +17,7 @@ duplicate them as prose.
 |---|---|---|
 | type-system | — | `type/` dimension `*_wrong.py` walls; weakening a wall is a contract breach |
 | object-model | `_regression/core/{class_system,mro_super,language,descriptors}`, `behavior/core/descr` | — |
-| memory | `gc/`, `stability/` soaks; absence of hang/SIGTRAP corpus-wide | — |
+| memory | `behavior|surface|type/std-libs/gc`, `_regression/core/stability` soaks; absence of hang/SIGTRAP corpus-wide | — |
 | exceptions | `_regression/core/exception*`, `behavior/core/exceptions` | — |
 | closures | `pep/572`, capture-introspection fixtures | — |
 | stdlib (per module) | `behavior/std-libs/<mod>`, `errors/std-libs/<mod>`, `real_world/std-libs/<mod>` | — |

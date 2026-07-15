@@ -1,6 +1,6 @@
 # #1536 — self-referential container mutation must not wall
 
-Status: OPEN (p1). Design for implementation.
+Status: LANDED opportunistically by a goal-loop wave (`self_referential_mutation_widen`, check_expr.rs:1573; victim fixture green 2026-07-15). Remaining gap: aliased receiver (`y = x; x.append(y)`) still walls — track as follow-up if a fixture demands it.
 
 ## Mechanism
 
