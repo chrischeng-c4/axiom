@@ -53,7 +53,11 @@ fn is_dict(val: MbValue) -> bool {
 fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
     dict.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).copied()
+            // `DictKey::Str` hashes with the Python-semantic domain (#1028),
+            // not Rust's native `str` hash — a raw `.get(&str)` here would
+            // silently miss present keys (#1566). Route through the
+            // hash-domain-safe helper.
+            super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
         } else {
             None
         }

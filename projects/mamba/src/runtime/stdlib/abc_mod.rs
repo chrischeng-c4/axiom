@@ -281,9 +281,11 @@ mod tests {
     fn dict_str_field(val: MbValue, key: &str) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read()
-                    .unwrap()
-                    .get(key)
+                // `DictKey::Str` hashes with the Python-semantic domain
+                // (#1028), not Rust's native `str` hash — a raw `.get(&str)`
+                // here would silently miss present keys (#1566). Route
+                // through the hash-domain-safe helper.
+                super::super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
                     .and_then(|v| v.as_ptr())
                     .and_then(|p| {
                         if let ObjData::Str(ref s) = (*p).data {
@@ -301,7 +303,8 @@ mod tests {
     fn dict_bool_field(val: MbValue, key: &str) -> Option<bool> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(key).and_then(|v| v.as_bool())
+                super::super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
+                    .and_then(|v| v.as_bool())
             } else {
                 None
             }
@@ -311,7 +314,7 @@ mod tests {
     fn dict_val_field(val: MbValue, key: &str) -> Option<MbValue> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(key).copied()
+                super::super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
             } else {
                 None
             }
