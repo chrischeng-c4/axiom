@@ -836,12 +836,12 @@ fn run_apply_inner(
                 .flatten()
                 .is_some_and(|content| is_whole_file_handwrite_content(&content));
 
-        // impl_mode: hand-written — rule 2-2 of the codegen policy. Spec
-        // tracks requirements + tests + intent; agent edits the target
-        // file directly. When the entry carries `anchor:` we additionally
-        // scaffold an XML-form handwrite marker
-        // marker pair around the anchor symbol so the audit pipeline can
-        // detect the region (sdd-handwrite-marker R1).
+        // impl_mode: hand-written — rule 2-2 of the codegen policy. The CLI
+        // owns the writable skeleton: a new file gets a whole-file HANDWRITE
+        // marker, while an existing target must name an `anchor:` so generation
+        // can scaffold a bounded marker pair. A markerless existing target is
+        // not a valid lifecycle result: it would let TD generation advance
+        // without an implementation payload for `td fill` to own.
         //
         // Regenerable promotion is the exception: a semantic TD may still
         // record the original source as hand-written, but an explicit
@@ -903,20 +903,20 @@ fn run_apply_inner(
                         );
                     }
                     Ok(crate::generate::handwrite_scaffold::ScaffoldOutcome::AnchorMissing) => {
-                        apply_diagnostic!(
-                            "[gen apply] HANDWRITE: anchor '{}' not found in {} — agent must insert marker by hand",
-                            anchor, entry.path,
-                        );
+                        return Err(crate::generate::GenerateError::InvalidValue(format!(
+                            "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                            entry.path, anchor,
+                        )));
                     }
                     Err(e) => {
                         return Err(crate::generate::GenerateError::Io(e));
                     }
                 }
             } else {
-                apply_diagnostic!(
-                    "[gen apply] SKIP: '{}' impl_mode=hand-written (no anchor; spec tracks intent only)",
+                return Err(crate::generate::GenerateError::InvalidValue(format!(
+                    "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
                     entry.path,
-                );
+                )));
             }
             files.push(FileApplyResult {
                 path: PathBuf::from(&entry.path),
@@ -2149,8 +2149,9 @@ pub(crate) struct ChangeEntry {
     /// absent, `scaffold_handwrite` synthesises one from `section_id` and
     /// the target file basename.
     pub(crate) handwrite_reason: Option<String>,
-    /// Optional anchor symbol used to position the HANDWRITE marker. When
-    /// absent, no scaffold is inserted (the SKIP behaviour is preserved).
+    /// Anchor symbol used to position a HANDWRITE marker in an existing
+    /// target. New files receive a whole-file marker; existing targets must
+    /// provide an anchor so the lifecycle cannot advance markerless.
     pub(crate) handwrite_anchor: Option<String>,
 }
 
@@ -6909,10 +6910,11 @@ impl MambaModule for HttpkitModule {
         assert!(updated.contains("response::register(r);"));
     }
 
-    /// R3 — impl_mode: hand-written entries are recorded but no code is
-    /// written. Spec tracks intent; agent implements Rust directly.
+    /// Existing hand-written targets need an explicit anchor so `td gen`
+    /// creates the bounded marker that `td fill` owns. Otherwise generation
+    /// must fail before the lifecycle can advance without an implementation.
     #[test]
-    fn hand_written_impl_mode_skips_codegen_output() {
+    fn hand_written_existing_target_requires_anchor_before_lifecycle_progress() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let crate_dir = root.join("projects/score/src");
@@ -6942,8 +6944,9 @@ fill_sections: [overview, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Spec tracks the merge-branch bug fix intent. Rust edit is hand-written
-by the agent — rule 2-2 of the codegen policy.
+Spec tracks the merge-branch bug fix intent. The CLI must first scaffold a
+bounded HANDWRITE region before an agent can fill it — rule 2-2 of the
+codegen policy.
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -6963,20 +6966,16 @@ changes:
         )
         .unwrap();
 
-        let report = run_apply(&spec_path, root, false).unwrap();
-        assert_eq!(report.files.len(), 1, "one change entry → one result");
-        let result = &report.files[0];
-        assert!(
-            !result.updated,
-            "hand-written entry should not mark updated"
-        );
-        assert_eq!(result.blocks_updated, 0, "no CODEGEN blocks written");
+        let error = run_apply(&spec_path, root, false).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("requires `anchor:`"), "{message}");
+        assert!(message.contains("aw td gen"), "{message}");
 
         let after = std::fs::read_to_string(&target).unwrap();
         assert_eq!(before, after, "hand-written entry leaves file untouched");
         assert!(
-            !after.contains("CODEGEN-BEGIN"),
-            "no CODEGEN block should be inserted into a hand-written target"
+            !after.contains("HANDWRITE-BEGIN"),
+            "generation must not create an unscoped marker"
         );
     }
 
