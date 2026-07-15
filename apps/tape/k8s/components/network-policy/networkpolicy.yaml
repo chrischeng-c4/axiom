@@ -1,0 +1,39 @@
+# HANDWRITE-BEGIN gap="missing-generator:manifest:18492c18" tracker="#1593" reason="Default-deny ingress to only Tape server pods, with explicit labeled client and monitoring namespace peers restricted to TCP 7137. generator gap: missing-generator:kubernetes-network-policy."
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tape-server-ingress
+  labels:
+    app: tape
+    role: server
+spec:
+  podSelector:
+    matchLabels:
+      app: tape
+      role: server
+  policyTypes:
+    - Ingress
+  ingress:
+    # Client namespaces must opt in explicitly. The policy intentionally has
+    # no empty peer and no podSelector-only peer, so it cannot accidentally
+    # open Tape to every namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              tape.cclab.dev/client-access: "true"
+      ports:
+        - protocol: TCP
+          port: 7137
+    # Prometheus is granted separately: both its namespace and its pod carry
+    # explicit labels. ServiceMonitor remains independently opt-in.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              tape.cclab.dev/monitoring-access: "true"
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 7137
+# HANDWRITE-END

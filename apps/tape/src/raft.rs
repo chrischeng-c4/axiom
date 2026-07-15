@@ -95,6 +95,65 @@ pub fn snapshot_bytes(journal: &Arc<Mutex<TapeJournal>>, up_to: Index) -> Result
     Ok(serde_json::to_vec(&JournalSnapshot { up_to, journal })?)
 }
 
+/// Prepare an empty replica PVC to recover from one exact backup object.
+///
+/// This is deliberately a cold-start-only operation: it refuses any existing
+/// content in `data_dir`, decodes the same [`JournalSnapshot`] shape served by
+/// `/admin/backup`, then writes the state-machine files that
+/// [`TapeRaft::from_topology`] will consume. The snapshot is installed before
+/// the Raft host opens its store, so normal Raft log/snapshot catch-up resumes
+/// from `up_to` instead of replaying the seed as new appends. It is not a live
+/// restore API and must never overwrite a running replica's durable state.
+pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) -> Result<()> {
+    let snapshot: JournalSnapshot =
+        serde_json::from_slice(bytes).context("decode bootstrap JournalSnapshot JSON")?;
+
+    if data_dir.exists() {
+        let mut entries = std::fs::read_dir(data_dir)
+            .with_context(|| format!("read bootstrap data dir {}", data_dir.display()))?;
+        if entries.next().transpose()?.is_some() {
+            anyhow::bail!(
+                "bootstrap seed requires an empty data directory {}; refusing to replace existing raft state",
+                data_dir.display()
+            );
+        }
+    } else {
+        std::fs::create_dir_all(data_dir)
+            .with_context(|| format!("create bootstrap data dir {}", data_dir.display()))?;
+    }
+
+    let raft_dir = data_dir.join("raft");
+    std::fs::create_dir(&raft_dir)
+        .with_context(|| format!("create bootstrap raft dir {}", raft_dir.display()))?;
+    let marker = raft_dir.join(format!("applied-{node_id}.idx"));
+    let snapshot_path = snapshot_path_for(&marker);
+    let snapshot_bytes =
+        serde_json::to_vec(&snapshot).context("encode bootstrap JournalSnapshot")?;
+
+    // Publish the snapshot before its floor marker. A crash after the first
+    // rename is still safe: TapeStateMachine::new sees the snapshot and its
+    // own `up_to`; it must never see a marker that claims an absent snapshot.
+    write_atomic(&snapshot_path, &snapshot_bytes)?;
+    write_atomic(&marker, snapshot.up_to.to_string().as_bytes())?;
+    Ok(())
+}
+
+/// Atomic file replacement shared by cold seed preparation. The files live
+/// on the PVC and have no parent creation race because the empty-directory
+/// guard creates `raft/` before this helper runs.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    let mut file = std::fs::File::create(&tmp)
+        .with_context(|| format!("create bootstrap temp file {}", tmp.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("write bootstrap temp file {}", tmp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("sync bootstrap temp file {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("publish bootstrap file {}", path.display()))?;
+    Ok(())
+}
+
 /// tape's [`TapeJournal`] driven as a [`RaftStateMachine`].
 ///
 /// `apply` calls the SAME validated [`TapeJournal::append`] /
