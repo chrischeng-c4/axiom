@@ -54,6 +54,7 @@ remain first-class domain roots.
 | EC Gates Configured | 125 | implemented | passing | conformance | ready | aw.toml EC inventory, vat meter/guard runners, and external-contracts evidence stay wired |
 | Kubernetes-Native Deployment | 1208 | implemented | verified | dogfood | ready | layered Kustomize base/overlays/components, CRD/operator/instance, PDB/PVC/NetworkPolicy/observability, and Kind leader-failover proof |
 | Primary Replicas | 1207 | implemented | verified | dogfood | ready | every lifecycle mutation is Raft committed with node/epoch fencing, durable restart recovery, snapshots, and leader failover |
+| Stateful Service Workload | 1555 | implemented | passing | conformance | ready | mandatory baseline composes existing durable acknowledgement, stable StatefulSet identity, raft, backup, security, and deployment evidence without duplicating domain policy |
 | Durable Ordered Log | - | implemented | passing | conformance | ready | domain: per-subject append/batch append, dedupe, retention, sparse index, and segment lifecycle |
 | Work Queue Lifecycle | - | implemented | passing | conformance | ready | domain: committed lease/batch lease, heartbeat, ack/batch ack, redelivery, reconcile, and node/epoch fencing |
 | HTTP/OpenAPI Worker Protocol | 108 | implemented | passing | conformance | ready | domain: polyglot h2c worker contract with preferred bidirectional consume and compatibility lease/ack routes |
@@ -348,6 +349,27 @@ Gate Inventory:
 | in-process-leader-follower-convergence | epic | - | implemented | passing | conformance | apps/relay/tests/raft_core.rs |
 | durable-primary-replica-hard-state | epic | - | implemented | passing | conformance | apps/relay/tests/raft_persistence.rs |
 | real-h2c-replica-cluster-smoke | epic | - | implemented | passing | dogfood | apps/relay/tests/raft_cluster.rs |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Devops
+Surfaces: Config: `apps/relay/aw.toml` - the `stateful_storage` trait requires the common workload baseline.; K8s: `apps/relay/k8s` - RelaySpec/operator rendering gives the broker stable StatefulSet identity and persistent storage.; Rust API: `RelayStateMachine` - the raft-backed ordered log owns replicated durable acknowledgement and snapshot restore.
+EC Dimensions: behavior: `aw capability check --project relay --skip-issue-inventory` - Relay's capability contract resolves the trait-derived stateful baseline and its evidence references
+Root WI: 1555
+Status: auditing
+Required Verification: conformance
+Promise:
+Compose Relay's stateful production workload from the shared storage, backup,
+raft, peer-security, and Kubernetes mechanisms while keeping product policy in
+Relay's existing durable-log, work-queue, HA, security, and deployment roots.
+This root is an integration map, not a second copy of those domain contracts.
+Gate Inventory:
+- apps/relay/aw.toml; apps/relay/k8s; apps/relay/HA.md; apps/relay/tests/durable.rs; apps/relay/tests/raft_persistence.rs; apps/relay/tests/raft_cluster.rs; apps/relay/tests/backup.rs; apps/relay/tests/auth.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| relay-stateful-service-workload | epic | 1555 | implemented | passing | conformance | Shared: libs/service-durability, libs/service-backup, libs/raft-host, libs/service-tls, libs/operator. Relay policy: Durable Ordered Log, Work Queue Lifecycle, Primary Replicas, Raft HA, Security Hardening, Kubernetes-Native Deployment, and Long-Running Stability sections above. |
 
 ### Durable Ordered Log
 
