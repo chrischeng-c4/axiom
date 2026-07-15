@@ -1689,14 +1689,16 @@ changes:
     action: modify
     section: unit-test
     description: |
-      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
-    impl_mode: codegen
+      Full-file replay is owned by the exact per-file rust-source-unit TD; this
+      aggregate semantic inventory only tracks the test surface.
+    impl_mode: hand-written
   - path: "apps/lumen/tests/protocol_transport_e2e.rs"
     action: modify
     section: unit-test
     description: |
-      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
-    impl_mode: codegen
+      Full-file replay is owned by the exact per-file rust-source-unit TD; this
+      aggregate semantic inventory only tracks the test surface.
+    impl_mode: hand-written
   - path: "apps/lumen/tests/cli_convention.rs"
     action: modify
     section: unit-test
