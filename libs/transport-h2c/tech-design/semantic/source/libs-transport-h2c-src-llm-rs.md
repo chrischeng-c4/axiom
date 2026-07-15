@@ -35,7 +35,7 @@ Public API manifest for `libs/transport-h2c/src/llm.rs` captured during libs cod
 pub const TOPIC: cli_std::llm::Topic = cli_std::llm::Topic {
     id: "h2c",
     summary: "Shared HTTP/2 cleartext client helpers, logarithmic connection-pool sizing, and optional server accept loop.",
-    body: r#"# h2c shared topic
+    body: r#"# transport-h2c shared topic
 
 ## Client-side pool sizing
 Use the h2c pool on outbound callers: generated clients, adapters, raft peers,
