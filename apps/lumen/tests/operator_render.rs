@@ -189,7 +189,20 @@ fn statefulset_wires_serving_contract_single_member() {
     assert_eq!(c["image"], "lumen:latest");
     assert_eq!(c["imagePullPolicy"], "IfNotPresent");
     assert_eq!(c["command"], serde_json::json!(["lumen", "serve"]));
+    assert_eq!(c["ports"][0]["name"], "http");
     assert_eq!(c["ports"][0]["containerPort"], 7373);
+    assert_eq!(c["ports"][1]["name"], "raft");
+    assert_eq!(c["ports"][1]["containerPort"], 7374);
+
+    let headless = find(&objs, "Service", "search-headless");
+    assert_eq!(headless["spec"]["ports"][0]["name"], "http");
+    assert_eq!(headless["spec"]["ports"][0]["port"], 7373);
+    assert_eq!(headless["spec"]["ports"][1]["name"], "raft");
+    assert_eq!(headless["spec"]["ports"][1]["port"], 7374);
+    assert_eq!(headless["spec"]["ports"][1]["targetPort"], "raft");
+
+    let config = find(&objs, "ConfigMap", "search-config");
+    assert_eq!(config["data"]["LUMEN_RAFT_PORT"], "7374");
 
     // Shared request-only baseline: 1 CPU / 4Gi, no limits.
     assert_eq!(c["resources"]["requests"]["cpu"], "1");

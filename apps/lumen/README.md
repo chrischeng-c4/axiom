@@ -222,6 +222,7 @@ Gate Inventory:
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
 | kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | apps/lumen/scripts/kind-e2e.sh |
 | meta-api-health-ready-metrics-version | epic | - | implemented | passing | conformance | apps/lumen/tests/api_e2e.rs |
+| shared-stateful-foundation-adoption | epic | 1646 | implemented | passing | conformance | `cargo test -p lumen --test shared_stateful_foundations`; `cargo test -p lumen --lib auth`; `cargo test -p lumen --test admission_e2e`; `cargo test -p lumen --lib tls`; `cargo test -p lumen --features operator --test operator_render`; `cargo test -p lumen --test rig_stateful_adapter` |
 
 ### Security Hardening
 
@@ -245,7 +246,7 @@ Gate Inventory:
 | role-based-authz-matrix-per-route | epic | - | implemented | passing | conformance | apps/lumen/tests/authz_matrix_e2e.rs |
 | adversarial-query-safety | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
 | score-confidentiality | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
-| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>apps/lumen/src/tls.rs |
+| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>`cargo test -p lumen --test shared_stateful_foundations`<br>apps/lumen/src/tls.rs |
 
 ### HTTP/2 API List
 
@@ -588,7 +589,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | prometheus-metrics-endpoint | epic | - | implemented | passing | smoke | apps/lumen/tests/api_e2e.rs |
 | servicemonitor-prometheusrule-bundle | epic | - | implemented | passing | smoke | apps/lumen/k8s/components/observability |
-| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/compose.yaml |
+| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/compose.yaml<br>apps/lumen/tests/shared_stateful_foundations.rs |
 
 ### Kubernetes-Native Deployment
 
@@ -1248,8 +1249,11 @@ LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
 The registry file is a JSON map of bearer token to subject/roles, mounted from a
 Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
 materialize that file through External Secrets Operator or Secret Store CSI.
-Lumen reads the registry at startup; token rotation should roll the serving pods
-or use a Secret reloader controller.
+Lumen's adapter delegates validation and atomic last-known-good replacement to
+`service-auth`; `LumenVerifier::reload_file` and `reload_json` are the explicit
+in-process rotation boundary. The default `serve` bootstrap loads once, so a
+deployment that does not call that boundary should roll serving pods through a
+Secret reloader controller when the mounted file changes.
 
 `token-registry.json` shape:
 

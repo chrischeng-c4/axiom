@@ -78,6 +78,7 @@ const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
 const COMPONENT: &str = "server";
 const CLIENT_PORT: i32 = 7373;
+const RAFT_PORT: i32 = 7374;
 const BACKUP_COMPONENT: &str = "backup";
 const HEADLESS_ENV_KEY: &str = "LUMEN_HEADLESS_SERVICE";
 const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
@@ -211,7 +212,15 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::service_account(&cx, COMPONENT),
         serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),
-        render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
+        render::headless_service_with_ports(
+            &cx,
+            &headless,
+            COMPONENT,
+            vec![
+                json!({ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }),
+                json!({ "name": "raft", "port": RAFT_PORT, "targetPort": "raft", "protocol": "TCP" }),
+            ],
+        ),
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ];
     if wants_hpa(lumen) {
@@ -363,7 +372,10 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         image_pull_policy,
         command: vec!["lumen".into(), "serve".into()],
         args: vec![],
-        ports: vec![json!({ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" })],
+        ports: vec![
+            json!({ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" }),
+            json!({ "name": "raft", "containerPort": RAFT_PORT, "protocol": "TCP" }),
+        ],
         headless_service: headless,
         shard_count: lumen.spec.shard_count,
         replicas_per_shard: lumen.spec.replicas_per_shard,
@@ -533,6 +545,7 @@ fn serving_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
         "VIRTUAL_BUCKET_COUNT": lumen.spec.shard_map.virtual_bucket_count.to_string(),
         "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
         "LUMEN_PORT": CLIENT_PORT.to_string(),
+        "LUMEN_RAFT_PORT": RAFT_PORT.to_string(),
         "LUMEN_AUTH": lumen.spec.auth.as_env(),
     });
     if !lumen.spec.shard_map.assignments.is_empty() {

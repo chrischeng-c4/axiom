@@ -1,6 +1,12 @@
 ---
 id: '1646'
-summary: (fill)
+summary: Adopt the completed shared stateful-service foundations while preserving Lumen domain policy and compatibility.
+capability_refs:
+  - id: long-running-stability
+    role: primary
+    claim: shared-stateful-foundation-adoption
+    coverage: full
+    rationale: "This TD dependency-orders #1640-#1645 and verifies every Lumen adapter plus the remaining OTLP and peer-listener runtime wiring."
 fill_sections: [logic, changes, unit-test]
 ---
 
