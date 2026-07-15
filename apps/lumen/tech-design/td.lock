@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-15T11:08:56.691152+00:00"
-digest = "sha256:af55d275f2f393668588af7079e7b12af4c88b9d91325cb4b1c61a8a7a12c3ae"
-source_digest = "sha256:af55d275f2f393668588af7079e7b12af4c88b9d91325cb4b1c61a8a7a12c3ae"
-ir_digest = "sha256:b02550e3aea5d8a65594946eb4485b0b2e4e790f5698023e2daa97a5811f10f1"
+generated_at = "2026-07-15T14:19:29.975092+00:00"
+digest = "sha256:120e942e45b1de9c9417d622603b75a929a608cb38c8212aa769b112c5ccd2ee"
+source_digest = "sha256:120e942e45b1de9c9417d622603b75a929a608cb38c8212aa769b112c5ccd2ee"
+ir_digest = "sha256:b484311fa3fe1f8fb771120e65d26e5b9575e9b33fa4ec801acec2f258d0d4c2"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -84,6 +84,12 @@ path = "logic/allow-has-child-to-combine-with-sort-by-materializing-parent-bit.m
 digest = "sha256:086ad410e92c38a573173a4fdee9e4290f6b595d07cf245461ed21f27af7d9de"
 ir_digest = "sha256:2699a2bd6ef448dd3a3c76a8dcb9c664f7a8b18366e9a4925edf55e5d1a2c23b"
 section_count = 4
+
+[[files]]
+path = "logic/convergence-self-heal-bounded-remediation-restart-on-version-mis.md"
+digest = "sha256:58d1b71dcd86a8450f9aac06248794e2849263a2ba3e96a249bb4c4f84dc40a4"
+ir_digest = "sha256:776520bf515441554d30906f7df0bb6e4c591870438043db56acf600f5437075"
+section_count = 3
 
 [[files]]
 path = "logic/early-stop-on-high-selectivity-term-lookups-p99-regression-vs-pg.md"
