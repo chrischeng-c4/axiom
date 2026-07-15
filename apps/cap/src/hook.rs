@@ -101,9 +101,10 @@ struct ModifiedInput {
 }
 
 #[derive(Debug, Serialize)]
-struct AgyDenyOutput {
+struct AgyHookOutput {
     decision: &'static str,
-    reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 /// Read JSON from stdin, decide, print JSON to stdout. Always
@@ -171,28 +172,35 @@ pub fn run_agy_hook() -> anyhow::Result<()> {
     std::io::stdin().read_to_string(&mut buf)?;
     let input: AgyHookInput = match serde_json::from_str(&buf) {
         Ok(v) => v,
-        Err(_) => return Ok(()),
+        Err(_) => {
+            println!(
+                "{}",
+                serde_json::to_string(&AgyHookOutput {
+                    decision: "allow",
+                    reason: None,
+                })?
+            );
+            return Ok(());
+        }
     };
-    let Some(tool_call) = input.tool_call else {
-        return Ok(());
+    let command = input
+        .tool_call
+        .filter(|tool_call| tool_call.name.as_deref() == Some("run_command"))
+        .and_then(|tool_call| tool_call.args)
+        .and_then(|args| args.command_line)
+        .unwrap_or_default();
+    let output = if let Some(reason) = crate::agent_guard::deny_reason(&command) {
+        AgyHookOutput {
+            decision: "deny",
+            reason: Some(reason),
+        }
+    } else {
+        AgyHookOutput {
+            decision: "allow",
+            reason: None,
+        }
     };
-    if tool_call.name.as_deref() != Some("run_command") {
-        return Ok(());
-    }
-    let command = tool_call
-        .args
-        .as_ref()
-        .and_then(|args| args.command_line.as_deref())
-        .unwrap_or("");
-    if let Some(reason) = crate::agent_guard::deny_reason(command) {
-        println!(
-            "{}",
-            serde_json::to_string(&AgyDenyOutput {
-                decision: "block",
-                reason,
-            })?
-        );
-    }
+    println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
 
@@ -444,13 +452,24 @@ mod tests {
     }
 
     #[test]
-    fn agy_denial_uses_native_block_envelope() {
-        let output = serde_json::to_value(AgyDenyOutput {
-            decision: "block",
-            reason: "unsafe command".to_string(),
+    fn agy_allow_uses_native_allow_envelope() {
+        let output = serde_json::to_value(AgyHookOutput {
+            decision: "allow",
+            reason: None,
         })
         .unwrap();
-        assert_eq!(output["decision"], "block");
+        assert_eq!(output["decision"], "allow");
+        assert!(output.get("reason").is_none());
+    }
+
+    #[test]
+    fn agy_denial_uses_native_deny_envelope() {
+        let output = serde_json::to_value(AgyHookOutput {
+            decision: "deny",
+            reason: Some("unsafe command".to_string()),
+        })
+        .unwrap();
+        assert_eq!(output["decision"], "deny");
         assert_eq!(output["reason"], "unsafe command");
     }
 
