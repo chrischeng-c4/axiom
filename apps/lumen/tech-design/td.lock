@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-15T14:39:51.704077+00:00"
-digest = "sha256:9b0cb0440b9bca1cbf2ea5bfbe6659b6e6f4a407c3fc7751fcb99cd10b16b9ab"
-source_digest = "sha256:9b0cb0440b9bca1cbf2ea5bfbe6659b6e6f4a407c3fc7751fcb99cd10b16b9ab"
-ir_digest = "sha256:3c00edc0abd681d9b52aa48e112e0b218db2afe1eade3751e899563b3b8a7460"
+generated_at = "2026-07-15T15:11:15.553010+00:00"
+digest = "sha256:e25fd64b3339a4b106fcdc6149668a1a0f55c72dfd1fd4da5d03d1e26d15bbbc"
+source_digest = "sha256:e25fd64b3339a4b106fcdc6149668a1a0f55c72dfd1fd4da5d03d1e26d15bbbc"
+ir_digest = "sha256:6fe9dde364a67dd506c7aa3e4f4852c157cab73df271bc7998d392ce3c7de1b9"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -86,6 +86,12 @@ ir_digest = "sha256:2699a2bd6ef448dd3a3c76a8dcb9c664f7a8b18366e9a4925edf55e5d1a2
 section_count = 4
 
 [[files]]
+path = "logic/bulk-scroll-to-exhaustion-endpoint-for-all-matching-ids-no-unlim.md"
+digest = "sha256:61133d85e330ad6ba0aef02bca64d19de3e5a76867bdaa73d875426d0644ee61"
+ir_digest = "sha256:c28545624bdea8fcd921d4f8ccf467bd78373e634a61664f518120fe012a13de"
+section_count = 3
+
+[[files]]
 path = "logic/convergence-self-heal-bounded-remediation-restart-on-version-mis.md"
 digest = "sha256:58d1b71dcd86a8450f9aac06248794e2849263a2ba3e96a249bb4c4f84dc40a4"
 ir_digest = "sha256:776520bf515441554d30906f7df0bb6e4c591870438043db56acf600f5437075"
@@ -132,6 +138,18 @@ path = "logic/native-ids-query-node-filter-by-external-id-set.md"
 digest = "sha256:bc1f506a01546d751cad9fad086158c10cd8e85920181ef51745ddf645b3b3e0"
 ir_digest = "sha256:d487d0a341fe53bef8aaa6b605f7d31b9c2dc1e598ae7100dfbc3fcbb3f29f80"
 section_count = 4
+
+[[files]]
+path = "logic/native-prefix-wildcard-query-for-keyword-fields.md"
+digest = "sha256:01d1daaa8a036c7e3152be28117d299a91622b23bc62d32e069d8be6e78b7edf"
+ir_digest = "sha256:f0b1fd6d806056a9b0073423c24e1b36c93c2e5175d76b3adba0bddb15ea67bd"
+section_count = 3
+
+[[files]]
+path = "logic/native-sorted-offset-deep-page-jump-without-over-fetch.md"
+digest = "sha256:224bac4909bc66c9fad1348705e0fa35592a1475196d399e174aa63dbd0158c2"
+ir_digest = "sha256:21a05c28d3a354a7ddcf87888e67c5d86f88d5335d5425e3719c92b70fb67e27"
+section_count = 3
 
 [[files]]
 path = "logic/no-snapshot-backup-mechanism-for-lumen-s-wal-any-replicaspershar.md"
