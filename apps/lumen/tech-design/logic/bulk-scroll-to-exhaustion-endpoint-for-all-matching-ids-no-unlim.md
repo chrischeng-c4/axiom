@@ -32,7 +32,6 @@ flowchart TD
     snapshot --> project[external_ids + exact total + timing]
     project --> done([generated client operation])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
