@@ -1,7 +1,7 @@
 use super::super::{
     iter,
     rc::ObjData,
-    stdlib::{collections_mod, dataclasses_mod, enum_class},
+    stdlib::{collections_mod, dataclasses_mod, enum_class, functools_mod},
     value::MbValue,
 };
 use super::{is_complex_obj, raise_type_error, value_type_name};
@@ -101,6 +101,14 @@ pub(super) fn can_derive_ordering_from_lt_eq(a: MbValue, b: MbValue) -> bool {
         return true;
     }
     if collections_mod::is_counter_instance(a) && collections_mod::is_counter_instance(b) {
+        return true;
+    }
+    // functools.cmp_to_key key objects derive __gt__/__le__/__ge__ from the
+    // wrapped cmp via the mb_lt/mb_eq tails below (mb_values_lt/mb_values_eq
+    // already dispatch cmp_to_key_obj pairs) — only mb_lt/mb_eq themselves
+    // handled this before, so plain `>` on two key objects hit the
+    // unsupported-ordering TypeError instead of reaching them (#1742).
+    if functools_mod::is_cmp_to_key_obj(a) && functools_mod::is_cmp_to_key_obj(b) {
         return true;
     }
     same_datetime_instances(a, b) || same_ordered_dataclass_instances(a, b)
