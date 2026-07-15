@@ -184,6 +184,18 @@ impl ScriptRunner {
 
     /// Execute an arbitrary command with node_modules/.bin on PATH.
     pub async fn exec_command(&self, cmd: &str, args: &[String]) -> Result<RunResult> {
+        let env_overrides = HashMap::new();
+        self.exec_command_with_env(cmd, args, &env_overrides).await
+    }
+
+    /// Execute an arbitrary command with node_modules/.bin on PATH and
+    /// explicit environment overrides for that child process only.
+    pub async fn exec_command_with_env(
+        &self,
+        cmd: &str,
+        args: &[String],
+        env_overrides: &HashMap<String, String>,
+    ) -> Result<RunResult> {
         // Check if cmd exists in .bin
         let bin_path = self.resolve_bin_path(cmd);
         let effective_cmd = if let Some(bp) = bin_path {
@@ -192,7 +204,8 @@ impl ScriptRunner {
             cmd.to_string()
         };
 
-        self.exec_shell(&effective_cmd, args).await
+        self.exec_shell_with_env(&effective_cmd, args, env_overrides)
+            .await
     }
 
     /// Resolve a command name to node_modules/.bin path.
@@ -208,7 +221,21 @@ impl ScriptRunner {
 
     /// Execute a shell command with injected environment.
     async fn exec_shell(&self, command: &str, extra_args: &[String]) -> Result<RunResult> {
-        let env_vars = env::build_env(&self.project_root);
+        let env_overrides = HashMap::new();
+        self.exec_shell_with_env(command, extra_args, &env_overrides)
+            .await
+    }
+
+    /// Execute a shell command with the standard injected environment plus
+    /// command-specific overrides.
+    async fn exec_shell_with_env(
+        &self,
+        command: &str,
+        extra_args: &[String],
+        env_overrides: &HashMap<String, String>,
+    ) -> Result<RunResult> {
+        let mut env_vars = env::build_env(&self.project_root);
+        env_vars.extend(env_overrides.clone());
         let full_cmd = if extra_args.is_empty() {
             command.to_string()
         } else {

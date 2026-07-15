@@ -4905,6 +4905,37 @@ fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
 /// commonly has only `tsconfig.base.json`, though: invoking bare `tsc` there
 /// prints its help instead of checking any source. Detect that layout and run
 /// each leaf project config with the workspace-local compiler instead.
+const DEFAULT_CHECK_NODE_OLD_SPACE_SIZE_MB: &str = "8192";
+const CHECK_NODE_HEAP_ENV: &str = "JET_CHECK_MAX_OLD_SPACE_SIZE_MB";
+
+fn check_node_options_from(inherited: Option<&str>, heap_override: Option<&str>) -> String {
+    let heap_mb = heap_override
+        .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .unwrap_or(DEFAULT_CHECK_NODE_OLD_SPACE_SIZE_MB);
+    let inherited = inherited.unwrap_or_default().trim();
+    if inherited
+        .split_ascii_whitespace()
+        .any(|option| option.starts_with("--max-old-space-size="))
+    {
+        return inherited.to_string();
+    }
+    if inherited.is_empty() {
+        format!("--max-old-space-size={heap_mb}")
+    } else {
+        format!("{inherited} --max-old-space-size={heap_mb}")
+    }
+}
+
+fn check_environment() -> HashMap<String, String> {
+    HashMap::from([(
+        "NODE_OPTIONS".to_string(),
+        check_node_options_from(
+            std::env::var("NODE_OPTIONS").ok().as_deref(),
+            std::env::var(CHECK_NODE_HEAP_ENV).ok().as_deref(),
+        ),
+    )])
+}
+
 async fn handle_check(root_dir: &Path) -> Result<()> {
     if let Some(nx_workspace) = crate::pkg_manager::nx::NxWorkspaceManager::discover(root_dir)? {
         return handle_nx_check(&nx_workspace).await;
@@ -4912,13 +4943,17 @@ async fn handle_check(root_dir: &Path) -> Result<()> {
 
     let runner = crate::runner::ScriptRunner::new(root_dir.to_path_buf());
     let args = [String::from("--noEmit")];
-    let result = runner.exec_command("tsc", &args).await.with_context(|| {
-        format!(
-            "Failed to start local `tsc --noEmit` in {}. Install project dependencies with \
+    let check_env = check_environment();
+    let result = runner
+        .exec_command_with_env("tsc", &args, &check_env)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to start local `tsc --noEmit` in {}. Install project dependencies with \
                  `jet install` and retry.",
-            root_dir.display()
-        )
-    })?;
+                root_dir.display()
+            )
+        })?;
 
     print!("{}", result.stdout);
     eprint!("{}", result.stderr);
@@ -4949,6 +4984,7 @@ async fn handle_nx_check(nx_workspace: &crate::pkg_manager::nx::NxWorkspaceManag
 
     println!("Nx workspace detected at {}", nx_workspace.root.display());
     let runner = crate::runner::ScriptRunner::new(nx_workspace.root.clone());
+    let check_env = check_environment();
     let mut failures = Vec::new();
 
     for (project_name, config_path) in configs {
@@ -4963,12 +4999,15 @@ async fn handle_nx_check(nx_workspace: &crate::pkg_manager::nx::NxWorkspaceManag
             relative_config.clone(),
             String::from("--noEmit"),
         ];
-        let result = runner.exec_command("tsc", &args).await.with_context(|| {
-            format!(
-                "Failed to start workspace-local `tsc --project {relative_config} --noEmit`. \\
+        let result = runner
+            .exec_command_with_env("tsc", &args, &check_env)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to start workspace-local `tsc --project {relative_config} --noEmit`. \\
                  Install workspace dependencies with `jet install` and retry."
-            )
-        })?;
+                )
+            })?;
 
         print!("{}", result.stdout);
         eprint!("{}", result.stderr);
@@ -5269,6 +5308,25 @@ mod check_handler_tests {
     //! local TypeScript compiler and understands Nx project configs.
     use super::*;
 
+    #[test]
+    fn check_node_options_adds_default_heap_and_respects_existing_choice() {
+        assert_eq!(
+            check_node_options_from(None, None),
+            "--max-old-space-size=8192"
+        );
+        assert_eq!(
+            check_node_options_from(Some("--trace-warnings"), Some("12288")),
+            "--trace-warnings --max-old-space-size=12288"
+        );
+        assert_eq!(
+            check_node_options_from(
+                Some("--max-old-space-size=6144 --trace-warnings"),
+                Some("12288"),
+            ),
+            "--max-old-space-size=6144 --trace-warnings"
+        );
+    }
+
     #[cfg(unix)]
     fn write_fake_tsc(root: &Path, script_body: &str) {
         use std::os::unix::fs::PermissionsExt;
@@ -5291,6 +5349,7 @@ mod check_handler_tests {
             r#"#!/bin/sh
 : > .jet-check-ran-from-project-root
 printf '%s\n' "$@" > .jet-check-args
+printf '%s\n' "$NODE_OPTIONS" > .jet-check-node-options
 printf '%s\n' 'typecheck stdout'
 printf '%s\n' 'typecheck stderr' >&2
 "#,
@@ -5308,6 +5367,12 @@ printf '%s\n' 'typecheck stderr' >&2
             std::fs::read_to_string(temp.path().join(".jet-check-args")).unwrap(),
             "--noEmit\n",
             "jet check must pass exactly the no-emit TypeScript flag"
+        );
+        assert!(
+            std::fs::read_to_string(temp.path().join(".jet-check-node-options"))
+                .unwrap()
+                .contains("--max-old-space-size="),
+            "jet check must give tsc a bounded Node old-space heap"
         );
     }
 
@@ -5373,6 +5438,7 @@ exit 17
             r#"#!/bin/sh
 : > .jet-check-ran-from-workspace-root
 printf '%s\n' "$@" >> .jet-check-args
+printf '%s\n' "$NODE_OPTIONS" >> .jet-check-node-options
 printf '\n' >> .jet-check-args
 "#,
         );
@@ -5391,6 +5457,13 @@ printf '\n' >> .jet-check-args
              --project\napps/dashboard/tsconfig.spec.json\n--noEmit\n\n\
              --project\nlibs/shared/tsconfig.lib.json\n--noEmit\n\n",
             "jet check must use each Nx leaf config and skip reference-only tsconfig.json"
+        );
+        assert!(
+            std::fs::read_to_string(temp.path().join(".jet-check-node-options"))
+                .unwrap()
+                .lines()
+                .all(|options| options.contains("--max-old-space-size=")),
+            "every Nx tsc child must receive the Node heap setting"
         );
     }
 

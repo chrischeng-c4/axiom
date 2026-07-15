@@ -44,7 +44,10 @@ stories, browser proof, tests, publish, and diagnostics.
    contract for component review.
 4. `jet bb` and `jet browser` provide agent-first browser control for real
    screenshots, clicks, console errors, and visual proof.
-5. `jet build` builds apps or libraries; `jet check` type-checks.
+5. `jet build` builds apps or libraries; `jet check` type-checks. Check runs give
+   `tsc` an 8192 MiB Node old-space heap by default for large Nx configs; set
+   `JET_CHECK_MAX_OLD_SPACE_SIZE_MB=<MiB>` to tune it, or set an explicit
+   `NODE_OPTIONS=--max-old-space-size=<MiB>` to retain that process-wide choice.
 6. `jet test` and `jet e2e` prove unit/component/product flows.
 7. `jet pack` / `jet publish` package libraries for npm-compatible registries.
 

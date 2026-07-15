@@ -59,7 +59,18 @@ fn visit_node<'a>(
     cursor: &mut tree_sitter::TreeCursor<'a>,
 ) -> Result<()> {
     for child in node.children(cursor) {
+        if child.end_byte() <= *last_pos {
+            continue;
+        }
+
         match child.kind() {
+            "required_parameter" if is_typescript_this_parameter(&child) => {
+                if *last_pos < child.start_byte() {
+                    result.push_str(&source[*last_pos..child.start_byte()]);
+                }
+                *last_pos = skip_typescript_this_parameter(source, &child);
+            }
+
             "type_annotation"
             | "type_arguments"
             | "type_parameters"
@@ -219,6 +230,36 @@ fn is_class_field_type_marker(parent: &Node, child: &Node, source: &str) -> bool
         "public_field_definition" | "private_field_definition"
     ) && matches!(child.kind(), "?" | "!")
         && matches!(&source[child.byte_range()], "?" | "!")
+}
+
+fn is_typescript_this_parameter(node: &Node) -> bool {
+    if node.kind() != "required_parameter" {
+        return false;
+    }
+
+    let mut cursor = node.walk();
+    let mut has_this = false;
+    let mut has_type = false;
+    for child in node.children(&mut cursor) {
+        has_this |= child.kind() == "this";
+        has_type |= child.kind() == "type_annotation";
+    }
+    has_this && has_type
+}
+
+fn skip_typescript_this_parameter(source: &str, parameter: &Node) -> usize {
+    let bytes = source.as_bytes();
+    let mut position = parameter.end_byte();
+    while position < source.len() && bytes[position].is_ascii_whitespace() {
+        position += 1;
+    }
+    if position < source.len() && bytes[position] == b',' {
+        position += 1;
+        while position < source.len() && bytes[position].is_ascii_whitespace() {
+            position += 1;
+        }
+    }
+    position
 }
 
 fn method_name(source: &str, node: &Node) -> Option<String> {
