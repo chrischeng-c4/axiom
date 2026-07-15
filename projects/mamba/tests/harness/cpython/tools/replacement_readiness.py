@@ -268,6 +268,13 @@ def perf_dimension(show: int) -> Dimension:
         cwd=WORKSPACE_DIR,
     )
     perf = payload["perf"]
+    # #1514: pins measuring a hand-written sentinel shim (no pyo3/tonic/prost
+    # implementation behind them, see #1119) must not be counted as
+    # third-party-conformance readiness evidence. `perf["pins"]` still covers
+    # every registered pin (used for CI regression enforcement); this
+    # dimension's readiness gate/evidence uses only non-sentinel pins.
+    sentinel_pins = perf.get("sentinel_pins", 0)
+    non_sentinel_pins = perf.get("non_sentinel_pins", perf["pins"] - sentinel_pins)
     blocker_counts = {
         "baseline_missing_rows": perf["baseline_missing_rows"],
         "baseline_stale_rows": perf["baseline_stale_rows"],
@@ -281,7 +288,7 @@ def perf_dimension(show: int) -> Dimension:
     total_blockers = sum(int(value) for value in blocker_counts.values())
     status = (
         "green"
-        if perf["pins"] > 0 and perf["baseline_db_exists"] and total_blockers == 0
+        if non_sentinel_pins > 0 and perf["baseline_db_exists"] and total_blockers == 0
         else "red"
     )
 
@@ -310,18 +317,24 @@ def perf_dimension(show: int) -> Dimension:
         status=status,
         owner_issue="#707",
         summary=(
-            "all perf pins have comparable CPython CPU and peak-RSS baseline rows"
+            f"all {non_sentinel_pins} non-sentinel perf pins have comparable CPython "
+            f"CPU and peak-RSS baseline rows ({sentinel_pins} shim-backed sentinel "
+            "pins excluded from this evidence, #1119)"
             if status == "green"
             else (
                 "perf/RSS baseline is not replacement-ready: "
                 f"{perf['baseline_missing_rows']} missing rows, "
                 f"{perf['baseline_missing_cpu_rows']} missing CPU rows, "
                 f"{perf['baseline_missing_rss_rows']} missing RSS rows, "
-                f"{perf['missing_prereq_import_count']} missing prereq imports"
+                f"{perf['missing_prereq_import_count']} missing prereq imports "
+                f"({sentinel_pins} shim-backed sentinel pins excluded from readiness "
+                "evidence, #1119)"
             )
         ),
         counts={
             "pins": perf["pins"],
+            "sentinel_pins": sentinel_pins,
+            "non_sentinel_pins": non_sentinel_pins,
             "baseline_db_exists": perf["baseline_db_exists"],
             "baseline_rows": perf["baseline_rows"],
             "baseline_missing_rows": perf["baseline_missing_rows"],
