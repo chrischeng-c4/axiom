@@ -60,6 +60,6 @@ rg -Fq '[claim-token](libs/claim-token/Cargo.toml)' README.md
 rg -Fq '### Shared-library naming grammar' CONTRIBUTING.md
 rg -Fq '`server-*`' CONTRIBUTING.md
 rg -Fq '`service-*`' CONTRIBUTING.md
-rg -Fq 'Directory, Cargo package, and Rust crate identities move together' README.md
+rg -Fq 'Directory, Cargo package, and Rust crate identities move' README.md
 
 cargo metadata --no-deps --format-version 1 >/dev/null
