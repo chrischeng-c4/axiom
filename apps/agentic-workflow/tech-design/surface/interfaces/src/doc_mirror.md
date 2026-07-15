@@ -439,8 +439,8 @@ pub fn upsert_projects_table(
 ///
 /// `contributing_anchor` is `None` for traits with no settled CONTRIBUTING.md
 /// doc anchor (issue #1078, archetype-as-traits slice 2/3: `cli_facing`,
-/// `competitive_replacement`, `long_running`, `network_exposed`,
-/// `stateful_storage` — carried over from
+/// `competitive_replacement`, `long_running`, and `network_exposed` — carried
+/// over from
 /// `capability::other_known_trait_baseline_caps`, now folded into this one
 /// registry with no anchor rather than a second lookup table). Anchored
 /// traits render a working `Enforces` link and participate in
@@ -543,9 +543,11 @@ pub const TRAITS: &[TraitDef] = &[
     },
     TraitDef {
         id: "stateful_storage",
-        baseline_caps: &[],
-        contributing_anchor: None,
-        about: "Project owns durable stateful storage; prompt-only, no enforced baseline capability yet.",
+        baseline_caps: &["stateful-service-workload"],
+        contributing_anchor: Some(
+            "### Service workload profiles — common, StatefulSet, Deployment",
+        ),
+        about: "Service owns durable application state, so it selects the StatefulSet profile: stable identity, PVC/storage durability, peer topology, backup/restore, and an explicit workload-kind migration handoff.",
     },
 ];
 
@@ -560,11 +562,13 @@ pub struct TraitExpansion {
     pub about: &'static str,
 }
 
-/// The umbrella-trait expansion registry. `service` is the full
-/// service-archetype adopter: every trait with a settled CONTRIBUTING.md
+/// The umbrella-trait expansion registry. `service` is the common
+/// service-archetype baseline: every trait with a settled CONTRIBUTING.md
 /// "Service archetype" or "CLI convention" doc home, excluding
-/// `primary_replicas` (topology-dependent, stays opt-in per the archetype's
-/// own HA row -- not every service needs sharded HA).
+/// `primary_replicas` and `stateful_storage` because topology and durable
+/// state ownership stay opt-in. A service without `stateful_storage` uses the
+/// Deployment workload profile; declaring `stateful_storage` selects the
+/// StatefulSet workload profile and its additional baseline capability.
 pub const TRAIT_EXPANSIONS: &[TraitExpansion] = &[TraitExpansion {
     id: "service",
     members: &[
@@ -575,7 +579,7 @@ pub const TRAIT_EXPANSIONS: &[TraitExpansion] = &[TraitExpansion {
         "cli_std",
         "chainable_output",
     ],
-    about: "Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly.",
+    about: "Umbrella for the common service baseline; expands to transport, deploy artifacts, operational endpoints, EC gates, and CLI conventions. Without stateful_storage the primary workload is a Deployment; stateful_storage selects the StatefulSet profile.",
 }];
 
 /// Expand `traits` into the trait-id set actually used for baseline-cap
@@ -978,6 +982,27 @@ mod tests {
                 .map(str::to_string)
                 .collect()
         );
+    }
+
+    #[test]
+    fn stateful_storage_selects_the_statefulset_service_profile() {
+        let stateful = TRAITS
+            .iter()
+            .find(|def| def.id == "stateful_storage")
+            .expect("stateful_storage trait");
+        assert_eq!(stateful.baseline_caps, &["stateful-service-workload"]);
+        assert_eq!(
+            stateful.contributing_anchor,
+            Some("### Service workload profiles — common, StatefulSet, Deployment")
+        );
+
+        let service = TRAIT_EXPANSIONS
+            .iter()
+            .find(|expansion| expansion.id == "service")
+            .expect("service umbrella");
+        assert!(!service.members.contains(&"stateful_storage"));
+        assert!(service.about.contains("Deployment"));
+        assert!(service.about.contains("StatefulSet"));
     }
 }
 // CODEGEN-END

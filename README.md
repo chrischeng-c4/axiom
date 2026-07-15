@@ -110,8 +110,9 @@ The runtime tools are intentionally split by responsibility:
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the repo-wide authoring contract:
 how to shape files, paths, and names so the tree stays legible to agents and
-tooling, plus the shared **service archetype** (durable-only, scheduled object
-snapshots, HA, HTTP/2 + OpenAPI, k8s-native) and the **CLI convention** every
+tooling, plus the shared **service archetype** (a common service baseline with
+StatefulSet and Deployment workload profiles, HTTP/2 + OpenAPI, k8s-native)
+and the **CLI convention** every
 binary follows (`llm` / `upgrade` / `issue`).
 
 ## License

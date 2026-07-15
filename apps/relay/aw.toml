@@ -4,7 +4,7 @@ cap_path = "README.md"
 label = "app:relay"
 
 [capability.profile]
-traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "primary_replicas"]
+traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "primary_replicas", "stateful_storage"]
 
 [ec.efficiency]
 tool = "meter"
