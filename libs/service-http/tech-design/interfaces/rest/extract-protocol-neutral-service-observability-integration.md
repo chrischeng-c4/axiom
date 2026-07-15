@@ -81,7 +81,6 @@ changes:
   - { path: README.md, action: modify, section: logic, impl_mode: hand-written, description: "Name one owner for every observability layer." }
   - { path: CONTRIBUTING.md, action: modify, section: logic, impl_mode: hand-written, description: "Define service-observability, metrics-prometheus, server lifecycle, and HTTP adapter boundaries." }
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
