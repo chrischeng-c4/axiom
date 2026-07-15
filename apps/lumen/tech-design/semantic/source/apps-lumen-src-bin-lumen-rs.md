@@ -15,11 +15,13 @@ capability_refs:
     rationale: "The serving binary owns bootstrap seed restore before WAL or raft catch-up."
   - id: "http2-api-list"
     role: primary
+    gap: "x-read-consistency-raft-bootstrap-wiring"
     claim: "x-read-consistency-raft-bootstrap-wiring"
     coverage: full
     rationale: "The serving process wires live raft cluster state into the API consistency gate."
   - id: "dynamic-shard-topology"
     role: primary
+    gap: "serve-consumes-delivered-shard-map"
     claim: "serve-consumes-delivered-shard-map"
     coverage: full
     rationale: "The serving process consumes the operator-delivered shard map when it builds routed backends."

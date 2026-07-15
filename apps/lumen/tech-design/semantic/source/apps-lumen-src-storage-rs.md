@@ -3,11 +3,13 @@ id: projects-lumen-src-storage-rs
 capability_refs:
   - id: "competitor-feature-parity"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
   - id: "exact-filter-search"
     role: primary
+    gap: "keyword-byte-lexicographic-range-query"
     claim: "keyword-byte-lexicographic-range-query"
     coverage: full
     rationale: "storage.rs owns byte-lexicographic keyword range validation and execution."
