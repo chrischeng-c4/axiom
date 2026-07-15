@@ -13,6 +13,31 @@ capability_refs:
     claim: "meta-api-health-ready-metrics-version"
     coverage: full
     rationale: "api.rs owns /healthz, /readyz, /metrics, and /version, which are the operability meta endpoints used by probes and scrapes."
+  - id: "http2-api-list"
+    role: primary
+    claim: "query-method-post-twins-accept-query"
+    coverage: full
+    rationale: "api.rs owns QUERY/POST twins plus OPTIONS and HEAD Accept-Query discovery."
+  - id: "http2-api-list"
+    role: primary
+    claim: "x-read-consistency-live-cluster-state"
+    coverage: full
+    rationale: "api.rs validates X-Read-Consistency against the live cluster-state view."
+  - id: "http2-api-list"
+    role: primary
+    claim: "reshard-apply-scoped-backup-evict-admin-verbs"
+    coverage: full
+    rationale: "api.rs exposes the bounded reshard export, apply, and eviction administration routes."
+  - id: "http2-api-list"
+    role: primary
+    claim: "synchronous-checkpoint-admin-verb"
+    coverage: full
+    rationale: "api.rs owns the synchronous administrative checkpoint endpoint."
+  - id: "dynamic-shard-topology"
+    role: primary
+    claim: "reshard-data-plane-admin-verbs"
+    coverage: full
+    rationale: "The data-plane reshard administration verbs terminate in api.rs handlers."
 fill_sections: [overview, source, changes]
 ---
 

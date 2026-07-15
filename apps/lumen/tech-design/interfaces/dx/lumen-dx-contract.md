@@ -8,6 +8,16 @@ capability_refs:
     claim: lumen-llm-v2-task-navigation
     coverage: full
     rationale: Typed offline task navigation is the capability's primary contract.
+  - id: cli-interface
+    role: primary
+    claim: lumen-llm-v2-task-navigation
+    coverage: full
+    rationale: The same typed contract defines the public `lumen llm` CLI surface.
+  - id: developer-agent-experience
+    role: primary
+    claim: lumen-llm-v2-task-navigation
+    coverage: full
+    rationale: The source-backed manifest and runbooks are the DX task-navigation contract.
 fill_sections:
   - dx-contract
   - unit-test

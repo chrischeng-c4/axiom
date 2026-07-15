@@ -31,6 +31,16 @@ capability_refs:
     claim: "multi-shard-replica-kind-e2e"
     coverage: partial
     rationale: "The operator render shape is the static proof behind the live kind multi-shard and replicated-shard profiles."
+  - id: "dynamic-shard-topology"
+    role: primary
+    claim: "single-member-durable-persistence-render"
+    coverage: full
+    rationale: "The renderer always gives a single-member serving instance durable StatefulSet storage."
+  - id: "kubernetes-native-deployment"
+    role: primary
+    claim: "single-member-durable-persistence-render"
+    coverage: full
+    rationale: "The Kubernetes renderer owns the single-member StatefulSet and PVC contract."
 fill_sections: [overview, source, changes]
 ---
 

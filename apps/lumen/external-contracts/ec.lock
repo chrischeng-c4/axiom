@@ -3,13 +3,13 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "apps/lumen/external-contracts"
 inventory_path = "apps/lumen/aw.toml"
-generated_at = "2026-07-15T19:29:37.314238+00:00"
-ir_digest = "sha256:076d8f6670b28fcd40c6dbb457b0d99817709fb8019d123b0b0f047d468664d5"
-source_digest = "sha256:19d080670df6d4ccf02b600ff19874d8c71d3db7fbe134e128252a568d9eb3e9"
+generated_at = "2026-07-15T20:04:41.997330+00:00"
+ir_digest = "sha256:9f63b74410a28e94601fa63697813c0cefed842f57514b0bdad6c6986ee25bd4"
+source_digest = "sha256:9538448466cc1335abe02924c0d7a7c79025d9741091ad3622766b3a3dc1c952"
 
 [[sources]]
 path = "apps/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:a3649952ead5c9e30786baf6616a9a4b0a9d4bd2462cbf85d7f770549f12f475"
+digest = "sha256:79c3f0d816839e75d5e8ff5a4b2850b19415393e81732c7989420ac7ae6d7f09"
 
 [[sources]]
 path = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
@@ -172,6 +172,21 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:a1cd38d5231e421151293beac01f08d74749a3b8ed06340ae758558d3107322e"
 
 [[cases]]
+id = "lumen-claim-cli-connect-query-workflow"
+capability_id = "cli-interface"
+claim_id = "lumen-connect-query-k8s-agent-workflow"
+contract_id = "cli-connect-query-workflow"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-connect-query-workflow"
+test_path = "apps/lumen/tests/behavior_lumen_claim_cli_connect_query_workflow.rs"
+command = "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+required_for_production = true
+assertions = ["The connect and query command groups parse and the query adapter emits the published request shape."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d5200c732814f5d4a9b8f266684c069550ad1af272ff5aabdbe266ae443b1017"
+
+[[cases]]
 id = "lumen-claim-cli-deployment-operator-command-surface"
 capability_id = "cli-interface"
 claim_id = "deployment-operator-command-surface"
@@ -185,6 +200,21 @@ assertions = ["The operator-facing command surface renders CRD and serving objec
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:57cb36d1987c79a09b0a9534f5a428c968e34f4fd6be86693a4b0d3b296de1e1"
+
+[[cases]]
+id = "lumen-claim-cli-llm-v2-task-navigation"
+capability_id = "cli-interface"
+claim_id = "lumen-llm-v2-task-navigation"
+contract_id = "cli-llm-v2-task-navigation"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-cli-llm-v2-task-navigation"
+test_path = "apps/lumen/tests/behavior_lumen_claim_cli_llm_v2_task_navigation.rs"
+command = "cargo test -p lumen --test spec_cli dx_llm_v2_json_and_markdown_share_one_typed_contract -- --exact --nocapture"
+required_for_production = true
+assertions = ["The public lumen llm command renders deterministic Markdown and typed JSON from one source-backed cclab.llm.v2 contract."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7c6a395efa6c58f08c2a8f03891ebca0bf48ddc36530dbdc747533dbfc639d0c"
 
 [[cases]]
 id = "lumen-claim-cli-service-process-interface"
@@ -322,6 +352,51 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:d3d89e42f2ab85fa9b48731d56ba4bbb606a4b392ca5ec6c9af506eb26646e81"
 
 [[cases]]
+id = "lumen-claim-developer-integration-contract"
+capability_id = "developer-agent-experience"
+claim_id = "integration-contract"
+contract_id = "developer-integration-contract"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-developer-integration-contract"
+test_path = "apps/lumen/tests/behavior_lumen_claim_developer_integration_contract.rs"
+command = "cargo test -p lumen --test spec_cli llm_workflow_discloses_routed_mode_retry_contract -- --exact --nocapture && cargo test -p lumen --test spec_cli llm_storage_documents_reshard_fence_admin_verb -- --exact --nocapture"
+required_for_production = true
+assertions = ["The integration contract documents routed retry semantics and the reshard administration boundary from the canonical source model."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:91da3828026a071f0768be4943ce6971b50effd037f11ba0e0e078344f39d11e"
+
+[[cases]]
+id = "lumen-claim-developer-interactive-tooling"
+capability_id = "developer-agent-experience"
+claim_id = "interactive-tooling"
+contract_id = "developer-interactive-tooling"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-developer-interactive-tooling"
+test_path = "apps/lumen/tests/behavior_lumen_claim_developer_interactive_tooling.rs"
+command = "cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+required_for_production = true
+assertions = ["The installed CLI exposes discoverable connect and query tooling for agents and operators."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:958a5c413e96fee0d263d8a277887d8a0b39f8130e860b1b5543fd38e7ba8e83"
+
+[[cases]]
+id = "lumen-claim-developer-llm-v2-task-navigation"
+capability_id = "developer-agent-experience"
+claim_id = "lumen-llm-v2-task-navigation"
+contract_id = "developer-llm-v2-task-navigation"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-developer-llm-v2-task-navigation"
+test_path = "apps/lumen/tests/behavior_lumen_claim_developer_llm_v2_task_navigation.rs"
+command = "cargo test -p lumen --test spec_cli dx_llm_v2_json_and_markdown_share_one_typed_contract -- --exact --nocapture"
+required_for_production = true
+assertions = ["Agent task navigation exposes one deterministic typed contract in Markdown and JSON."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7ba43dad9b89002a7573a6e2dc728223f031f861902798e7fc0925a1b17a3bad"
+
+[[cases]]
 id = "lumen-claim-duplicates-group-by"
 capability_id = "duplicate-nested-search"
 claim_id = "duplicates-group-by"
@@ -335,6 +410,51 @@ assertions = ["Duplicate detection returns groups of external IDs sharing a fiel
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:4f3f3cf67cb4bd221f30d7aea7a7fc13e480a1472299a267f706eafa0b31fba5"
+
+[[cases]]
+id = "lumen-claim-dynamic-autonomous-reshard"
+capability_id = "dynamic-shard-topology"
+claim_id = "autonomous-reshard-workflow"
+contract_id = "dynamic-autonomous-reshard"
+dimension = "stability"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-autonomous-reshard"
+test_path = "apps/lumen/tests/stability_lumen_claim_dynamic_autonomous_reshard.rs"
+command = "cargo test -p lumen --features operator --test reshard_driver_e2e full_split_resumes_after_restart_and_reaches_complete -- --exact --nocapture"
+required_for_production = true
+assertions = ["The autonomous reshard workflow resumes after interruption and reaches Complete."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b655f970d86476395b4b88c62608dbd332babb1aeb29e3192223b92d2adcc490"
+
+[[cases]]
+id = "lumen-claim-dynamic-checkpointed-phase-driver"
+capability_id = "dynamic-shard-topology"
+claim_id = "checkpointed-reshard-phase-driver"
+contract_id = "dynamic-checkpointed-phase-driver"
+dimension = "stability"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-checkpointed-phase-driver"
+test_path = "apps/lumen/tests/stability_lumen_claim_dynamic_checkpointed_phase_driver.rs"
+command = "cargo test -p lumen --features operator --test reshard_driver_e2e cutover_blocked_until_every_touched_shard_checkpoints -- --exact --nocapture"
+required_for_production = true
+assertions = ["The reshard phase driver cannot cut over until every touched shard has checkpointed."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2c2c42e8b458e35b4a679fb16042e3903dae3b3fad33a29a11ef4ae16fdbb32b"
+
+[[cases]]
+id = "lumen-claim-dynamic-cross-pod-routing"
+capability_id = "dynamic-shard-topology"
+claim_id = "cross-pod-shard-routing"
+contract_id = "dynamic-cross-pod-routing"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-cross-pod-routing"
+test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_cross_pod_routing.rs"
+command = "cargo test -p lumen --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
+required_for_production = true
+assertions = ["Cross-pod reads and writes follow the delivered ownership map to the owning shard."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:582171ee8703036a27f36409852d26597a7b2d75f9a576c44ce529df05123a9a"
 
 [[cases]]
 id = "lumen-claim-dynamic-multi-shard-replica-kind"
@@ -352,6 +472,36 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:b41314a3c993e713b54e56be40dc588cd3232a74ab9084b2741d4179c74f6cb6"
 
 [[cases]]
+id = "lumen-claim-dynamic-post-cutover-usage-freshness"
+capability_id = "dynamic-shard-topology"
+claim_id = "post-cutover-usage-freshness-split-gate"
+contract_id = "dynamic-post-cutover-usage-freshness"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-post-cutover-usage-freshness"
+test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_post_cutover_usage_freshness.rs"
+command = "cargo test -p lumen --features operator --test operator_render reshard_status_with_usage_holds_on_pre_cutover_measurement -- --exact --nocapture && cargo test -p lumen --features operator --test operator_render reshard_status_with_usage_reports_urgent_after_fresh_post_cutover_measurement -- --exact --nocapture"
+required_for_production = true
+assertions = ["A pre-cutover usage sample cannot trigger another split; a fresh generation can."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:6d0d55f462a309b16559ceaaa585b142e3c3b580d25eac0306add2a6f552c318"
+
+[[cases]]
+id = "lumen-claim-dynamic-reshard-admin-verbs"
+capability_id = "dynamic-shard-topology"
+claim_id = "reshard-data-plane-admin-verbs"
+contract_id = "dynamic-reshard-admin-verbs"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-reshard-admin-verbs"
+test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_reshard_admin_verbs.rs"
+command = "cargo test -p lumen --test reshard_admin_e2e scoped_export_then_apply_merges_additively_without_touching_source -- --exact --nocapture"
+required_for_production = true
+assertions = ["Scoped export and additive apply move a bounded shard subset without mutating the source."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:2923777f28356474b0ad72f287e3a8b00d403f3cdb82ad7e699d556c158cbdf6"
+
+[[cases]]
 id = "lumen-claim-dynamic-reshard-durability"
 capability_id = "dynamic-shard-topology"
 claim_id = "reshard-apply-evict-synchronous-checkpoint"
@@ -365,6 +515,51 @@ assertions = ["The checkpointed reshard phase driver (state machine, checkpoint-
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:ac046aad13ac5bcd342e24b2cb5f78c0941e435f5a3a39cf8e0d8eb6c7733e1c"
+
+[[cases]]
+id = "lumen-claim-dynamic-serve-shard-map"
+capability_id = "dynamic-shard-topology"
+claim_id = "serve-consumes-delivered-shard-map"
+contract_id = "dynamic-serve-shard-map"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-serve-shard-map"
+test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_serve_shard_map.rs"
+command = "cargo test -p lumen --features operator --test operator_render shard_map_assignments_are_exposed_to_serving_config -- --exact --nocapture"
+required_for_production = true
+assertions = ["The operator-delivered shard map is projected into the serving process configuration."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:7b69dd737d4a06c027eb44bfd79610ed96c3c8ae7d07b6eadc77e265343622f3"
+
+[[cases]]
+id = "lumen-claim-dynamic-single-member-persistence"
+capability_id = "dynamic-shard-topology"
+claim_id = "single-member-durable-persistence-render"
+contract_id = "dynamic-single-member-persistence"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-single-member-persistence"
+test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_single_member_persistence.rs"
+command = "cargo test -p lumen --features operator --test operator_render statefulset_wires_serving_contract_single_member -- --exact --nocapture"
+required_for_production = true
+assertions = ["A single-member topology renders as a durable StatefulSet with its serving storage contract."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:fa15e71f85884192fbe3b0be3276d4ad75b591da4de7f25317e4ffcd72fafbb7"
+
+[[cases]]
+id = "lumen-claim-dynamic-stale-hpa-handoff"
+capability_id = "dynamic-shard-topology"
+claim_id = "stale-single-member-hpa-handoff-deletion"
+contract_id = "dynamic-stale-hpa-handoff"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-stale-hpa-handoff"
+test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_stale_hpa_handoff.rs"
+command = "cargo test -p lumen --features operator --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
+required_for_production = true
+assertions = ["The reconcile loop deletes a stale operator-rendered HPA when fixed shard topology takes ownership."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:d8fef5ea1dcc5c2f056e240c4f945ab442c6800b127d80d48173224789f63ec0"
 
 [[cases]]
 id = "lumen-claim-dynamic-storage-pressure-split-policy"
@@ -457,6 +652,21 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:a2a5015236f0e570628396d5d5a6b544f24dcc664d19475e8cfeb1a1b656049f"
 
 [[cases]]
+id = "lumen-claim-exact-keyword-lexicographic-range"
+capability_id = "exact-filter-search"
+claim_id = "keyword-byte-lexicographic-range-query"
+contract_id = "exact-keyword-lexicographic-range"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-exact-keyword-lexicographic-range"
+test_path = "apps/lumen/tests/behavior_lumen_claim_exact_keyword_lexicographic_range.rs"
+command = "cargo test -p lumen --lib range_query_on_keyword_byte_lexicographic -- --nocapture"
+required_for_production = true
+assertions = ["Keyword range queries use deterministic byte-lexicographic bounds rather than text analysis semantics."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:cd15f30f3142d0c58f16ec9de220f8bb6c3d46b1dd8309b191408437985f42b9"
+
+[[cases]]
 id = "lumen-claim-exact-term-range-set"
 capability_id = "exact-filter-search"
 claim_id = "term-range-set-early-termination"
@@ -532,6 +742,81 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:0aedc6ba58d42bcf3e4b605c79e76677dbff1e2134ecbc41c479befc6c058e5b"
 
 [[cases]]
+id = "lumen-claim-http2-query-method-twins"
+capability_id = "http2-api-list"
+claim_id = "query-method-post-twins-accept-query"
+contract_id = "http2-query-method-twins"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-query-method-twins"
+test_path = "apps/lumen/tests/behavior_lumen_claim_http2_query_method_twins.rs"
+command = "cargo test -p lumen --test api_e2e query_single_search_byte_identical_to_post_twin_lexical -- --exact --nocapture && cargo test -p lumen --test api_e2e query_options_and_head_advertise_accept_query_on_collection_id -- --exact --nocapture"
+required_for_production = true
+assertions = ["QUERY is byte-identical to its POST twin and OPTIONS/HEAD advertise Accept-Query."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1516026044c3413e8f25864ed37635653778713feafa72149ae4fe4e1c6cf0fd"
+
+[[cases]]
+id = "lumen-claim-http2-read-consistency-live-state"
+capability_id = "http2-api-list"
+claim_id = "x-read-consistency-live-cluster-state"
+contract_id = "http2-read-consistency-live-state"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-read-consistency-live-state"
+test_path = "apps/lumen/tests/behavior_lumen_claim_http2_read_consistency_live_state.rs"
+command = "cargo test -p lumen --test api_e2e leader_pod_serves_leader_consistency_and_default_omitted_header -- --exact --nocapture"
+required_for_production = true
+assertions = ["X-Read-Consistency is evaluated against the live cluster role and applied index."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:673386233ca18e0d5ea85138fc6d5c6cee425bb19f02e35bcf02c772d62a2c7f"
+
+[[cases]]
+id = "lumen-claim-http2-read-consistency-raft-bootstrap"
+capability_id = "http2-api-list"
+claim_id = "x-read-consistency-raft-bootstrap-wiring"
+contract_id = "http2-read-consistency-raft-bootstrap"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-read-consistency-raft-bootstrap"
+test_path = "apps/lumen/tests/behavior_lumen_claim_http2_read_consistency_raft_bootstrap.rs"
+command = "cargo test -p lumen --test api_e2e bounded_zero_rejects_lagged_follower -- --exact --nocapture"
+required_for_production = true
+assertions = ["The serving bootstrap supplies raft state to the API so bounded reads reject a lagged follower."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:a670f379282318448de7bed04ad915720393d716c5d6a7d8c6aab7d39b6106d0"
+
+[[cases]]
+id = "lumen-claim-http2-reshard-admin-verbs"
+capability_id = "http2-api-list"
+claim_id = "reshard-apply-scoped-backup-evict-admin-verbs"
+contract_id = "http2-reshard-admin-verbs"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-reshard-admin-verbs"
+test_path = "apps/lumen/tests/behavior_lumen_claim_http2_reshard_admin_verbs.rs"
+command = "cargo test -p lumen --test reshard_admin_e2e reshard_admin_verbs_appear_in_openapi_spec -- --exact --nocapture"
+required_for_production = true
+assertions = ["The public API list contains scoped export, additive apply, prune/evict, and checkpoint administration routes."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:9243aa528c7adab239c4e5a8259777713576fd600e76e0dfd416a6fcbf913000"
+
+[[cases]]
+id = "lumen-claim-http2-synchronous-checkpoint"
+capability_id = "http2-api-list"
+claim_id = "synchronous-checkpoint-admin-verb"
+contract_id = "http2-synchronous-checkpoint"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-http2-synchronous-checkpoint"
+test_path = "apps/lumen/tests/behavior_lumen_claim_http2_synchronous_checkpoint.rs"
+command = "cargo test -p lumen --test reshard_admin_e2e admin_checkpoint_without_durable_store_is_vacuously_satisfied -- --exact --nocapture"
+required_for_production = true
+assertions = ["The synchronous checkpoint administration verb returns an explicit completion result."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:63c49ac8c1ba9fed930ecd3a3d35203d36f7c5640e11d4f4bc0fbfd1f605f077"
+
+[[cases]]
 id = "lumen-claim-hybrid-rrf"
 capability_id = "hybrid-search"
 claim_id = "rrf-fusion-node-planner-integration"
@@ -592,6 +877,21 @@ evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 digest = "sha256:179d6f92706c71e87df857c7327667016fb4dbc914234ec3ce97c1cfb58e261b"
 
 [[cases]]
+id = "lumen-claim-k8s-single-member-persistence"
+capability_id = "kubernetes-native-deployment"
+claim_id = "single-member-durable-persistence-render"
+contract_id = "k8s-single-member-persistence"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-single-member-persistence"
+test_path = "apps/lumen/tests/behavior_lumen_claim_k8s_single_member_persistence.rs"
+command = "cargo test -p lumen --features operator --test operator_render statefulset_wires_serving_contract_single_member -- --exact --nocapture"
+required_for_production = true
+assertions = ["The Kubernetes instance renderer gives a single-member service durable StatefulSet storage."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:34f0106e0ca13ef590b52843ac64b0577566ae2c2a40f6ad29f567eb52b073f3"
+
+[[cases]]
 id = "lumen-claim-k8s-stateless-kind"
 capability_id = "kubernetes-native-deployment"
 claim_id = "kind-api-recovery-no-relay"
@@ -605,6 +905,21 @@ assertions = ["The live kind dogfood path runs Lumen only, without building or d
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:cfbe998590e700a440a2f79f7abd7f019b082ff29b424ab08f4b08d1693e3549"
+
+[[cases]]
+id = "lumen-claim-k8s-topology-hpa-handoff"
+capability_id = "kubernetes-native-deployment"
+claim_id = "topology-transition-hpa-handoff-deletion"
+contract_id = "k8s-topology-hpa-handoff"
+dimension = "behavior"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-k8s-topology-hpa-handoff"
+test_path = "apps/lumen/tests/behavior_lumen_claim_k8s_topology_hpa_handoff.rs"
+command = "cargo test -p lumen --features operator --lib prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
+required_for_production = true
+assertions = ["The Kubernetes reconcile loop deletes stale autoscaling state when fixed storage topology takes over."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:195e91de8aad28041a08bb18fa393e3f5540b55532ef9a515d3911224c7bbe46"
 
 [[cases]]
 id = "lumen-claim-lexical-bm25"
@@ -650,6 +965,21 @@ assertions = ["A late or second node can replay the published write stream and c
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:a0cfc0b3d7176081320283122a439d7d4380e98a3c8e460430b7d17e454b258a"
+
+[[cases]]
+id = "lumen-claim-long-running-shared-foundations"
+capability_id = "long-running-stability"
+claim_id = "shared-stateful-foundation-adoption"
+contract_id = "long-running-shared-stateful-foundations"
+dimension = "stability"
+source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-long-running-shared-foundations"
+test_path = "apps/lumen/tests/stability_lumen_claim_long_running_shared_foundations.rs"
+command = "cargo test -p lumen --test shared_stateful_foundations -- --nocapture"
+required_for_production = true
+assertions = ["Lumen delegates tracing, peer transport, and completed shared stateful roots to the reusable service libraries."]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:1a403e40c48f1b85280bd8c1e11344e96aa8fc2979f989375fd5ef595308dfa1"
 
 [[cases]]
 id = "lumen-claim-long-running-stateless-kind"

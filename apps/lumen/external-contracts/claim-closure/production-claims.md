@@ -534,4 +534,186 @@ e2e_tests:
     command: "cargo test -p lumen --test spec_cli -- --nocapture"
     assertions:
       - "The offline cclab.llm.v2 outline publishes every typed Lumen task and each task emits a source-backed Markdown/JSON runbook."
+
+  - id: lumen-claim-cli-llm-v2-task-navigation
+    capability_id: cli-interface
+    claim_id: lumen-llm-v2-task-navigation
+    contract_id: cli-llm-v2-task-navigation
+    category: behavior
+    command: "cargo test -p lumen --test spec_cli dx_llm_v2_json_and_markdown_share_one_typed_contract -- --exact --nocapture"
+    assertions:
+      - "The public lumen llm command renders deterministic Markdown and typed JSON from one source-backed cclab.llm.v2 contract."
+  - id: lumen-claim-cli-connect-query-workflow
+    capability_id: cli-interface
+    claim_id: lumen-connect-query-k8s-agent-workflow
+    contract_id: cli-connect-query-workflow
+    category: behavior
+    command: "cargo test -p lumen --bin lumen build_index_body_matches_published_index_shape -- --nocapture && cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+    assertions:
+      - "The connect and query command groups parse and the query adapter emits the published request shape."
+  - id: lumen-claim-long-running-shared-foundations
+    capability_id: long-running-stability
+    claim_id: shared-stateful-foundation-adoption
+    contract_id: long-running-shared-stateful-foundations
+    category: stability
+    command: "cargo test -p lumen --test shared_stateful_foundations -- --nocapture"
+    assertions:
+      - "Lumen delegates tracing, peer transport, and completed shared stateful roots to the reusable service libraries."
+
+  - id: lumen-claim-http2-query-method-twins
+    capability_id: http2-api-list
+    claim_id: query-method-post-twins-accept-query
+    contract_id: http2-query-method-twins
+    category: behavior
+    command: "cargo test -p lumen --test api_e2e query_single_search_byte_identical_to_post_twin_lexical -- --exact --nocapture && cargo test -p lumen --test api_e2e query_options_and_head_advertise_accept_query_on_collection_id -- --exact --nocapture"
+    assertions:
+      - "QUERY is byte-identical to its POST twin and OPTIONS/HEAD advertise Accept-Query."
+  - id: lumen-claim-http2-read-consistency-live-state
+    capability_id: http2-api-list
+    claim_id: x-read-consistency-live-cluster-state
+    contract_id: http2-read-consistency-live-state
+    category: behavior
+    command: "cargo test -p lumen --test api_e2e leader_pod_serves_leader_consistency_and_default_omitted_header -- --exact --nocapture"
+    assertions:
+      - "X-Read-Consistency is evaluated against the live cluster role and applied index."
+  - id: lumen-claim-http2-read-consistency-raft-bootstrap
+    capability_id: http2-api-list
+    claim_id: x-read-consistency-raft-bootstrap-wiring
+    contract_id: http2-read-consistency-raft-bootstrap
+    category: behavior
+    command: "cargo test -p lumen --test api_e2e bounded_zero_rejects_lagged_follower -- --exact --nocapture"
+    assertions:
+      - "The serving bootstrap supplies raft state to the API so bounded reads reject a lagged follower."
+  - id: lumen-claim-http2-reshard-admin-verbs
+    capability_id: http2-api-list
+    claim_id: reshard-apply-scoped-backup-evict-admin-verbs
+    contract_id: http2-reshard-admin-verbs
+    category: behavior
+    command: "cargo test -p lumen --test reshard_admin_e2e reshard_admin_verbs_appear_in_openapi_spec -- --exact --nocapture"
+    assertions:
+      - "The public API list contains scoped export, additive apply, prune/evict, and checkpoint administration routes."
+  - id: lumen-claim-http2-synchronous-checkpoint
+    capability_id: http2-api-list
+    claim_id: synchronous-checkpoint-admin-verb
+    contract_id: http2-synchronous-checkpoint
+    category: behavior
+    command: "cargo test -p lumen --test reshard_admin_e2e admin_checkpoint_without_durable_store_is_vacuously_satisfied -- --exact --nocapture"
+    assertions:
+      - "The synchronous checkpoint administration verb returns an explicit completion result."
+
+  - id: lumen-claim-exact-keyword-lexicographic-range
+    capability_id: exact-filter-search
+    claim_id: keyword-byte-lexicographic-range-query
+    contract_id: exact-keyword-lexicographic-range
+    category: behavior
+    command: "cargo test -p lumen --lib range_query_on_keyword_byte_lexicographic -- --nocapture"
+    assertions:
+      - "Keyword range queries use deterministic byte-lexicographic bounds rather than text analysis semantics."
+
+  - id: lumen-claim-dynamic-autonomous-reshard
+    capability_id: dynamic-shard-topology
+    claim_id: autonomous-reshard-workflow
+    contract_id: dynamic-autonomous-reshard
+    category: stability
+    command: "cargo test -p lumen --features operator --test reshard_driver_e2e full_split_resumes_after_restart_and_reaches_complete -- --exact --nocapture"
+    assertions:
+      - "The autonomous reshard workflow resumes after interruption and reaches Complete."
+  - id: lumen-claim-dynamic-reshard-admin-verbs
+    capability_id: dynamic-shard-topology
+    claim_id: reshard-data-plane-admin-verbs
+    contract_id: dynamic-reshard-admin-verbs
+    category: behavior
+    command: "cargo test -p lumen --test reshard_admin_e2e scoped_export_then_apply_merges_additively_without_touching_source -- --exact --nocapture"
+    assertions:
+      - "Scoped export and additive apply move a bounded shard subset without mutating the source."
+  - id: lumen-claim-dynamic-checkpointed-phase-driver
+    capability_id: dynamic-shard-topology
+    claim_id: checkpointed-reshard-phase-driver
+    contract_id: dynamic-checkpointed-phase-driver
+    category: stability
+    command: "cargo test -p lumen --features operator --test reshard_driver_e2e cutover_blocked_until_every_touched_shard_checkpoints -- --exact --nocapture"
+    assertions:
+      - "The reshard phase driver cannot cut over until every touched shard has checkpointed."
+  - id: lumen-claim-dynamic-serve-shard-map
+    capability_id: dynamic-shard-topology
+    claim_id: serve-consumes-delivered-shard-map
+    contract_id: dynamic-serve-shard-map
+    category: behavior
+    command: "cargo test -p lumen --features operator --test operator_render shard_map_assignments_are_exposed_to_serving_config -- --exact --nocapture"
+    assertions:
+      - "The operator-delivered shard map is projected into the serving process configuration."
+  - id: lumen-claim-dynamic-stale-hpa-handoff
+    capability_id: dynamic-shard-topology
+    claim_id: stale-single-member-hpa-handoff-deletion
+    contract_id: dynamic-stale-hpa-handoff
+    category: behavior
+    command: "cargo test -p lumen --features operator prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
+    assertions:
+      - "The reconcile loop deletes a stale operator-rendered HPA when fixed shard topology takes ownership."
+  - id: lumen-claim-dynamic-post-cutover-usage-freshness
+    capability_id: dynamic-shard-topology
+    claim_id: post-cutover-usage-freshness-split-gate
+    contract_id: dynamic-post-cutover-usage-freshness
+    category: behavior
+    command: "cargo test -p lumen --features operator --test operator_render reshard_status_with_usage_holds_on_pre_cutover_measurement -- --exact --nocapture && cargo test -p lumen --features operator --test operator_render reshard_status_with_usage_reports_urgent_after_fresh_post_cutover_measurement -- --exact --nocapture"
+    assertions:
+      - "A pre-cutover usage sample cannot trigger another split; a fresh generation can."
+  - id: lumen-claim-dynamic-single-member-persistence
+    capability_id: dynamic-shard-topology
+    claim_id: single-member-durable-persistence-render
+    contract_id: dynamic-single-member-persistence
+    category: behavior
+    command: "cargo test -p lumen --features operator --test operator_render statefulset_wires_serving_contract_single_member -- --exact --nocapture"
+    assertions:
+      - "A single-member topology renders as a durable StatefulSet with its serving storage contract."
+  - id: lumen-claim-dynamic-cross-pod-routing
+    capability_id: dynamic-shard-topology
+    claim_id: cross-pod-shard-routing
+    contract_id: dynamic-cross-pod-routing
+    category: behavior
+    command: "cargo test -p lumen --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
+    assertions:
+      - "Cross-pod reads and writes follow the delivered ownership map to the owning shard."
+
+  - id: lumen-claim-k8s-single-member-persistence
+    capability_id: kubernetes-native-deployment
+    claim_id: single-member-durable-persistence-render
+    contract_id: k8s-single-member-persistence
+    category: behavior
+    command: "cargo test -p lumen --features operator --test operator_render statefulset_wires_serving_contract_single_member -- --exact --nocapture"
+    assertions:
+      - "The Kubernetes instance renderer gives a single-member service durable StatefulSet storage."
+  - id: lumen-claim-k8s-topology-hpa-handoff
+    capability_id: kubernetes-native-deployment
+    claim_id: topology-transition-hpa-handoff-deletion
+    contract_id: k8s-topology-hpa-handoff
+    category: behavior
+    command: "cargo test -p lumen --features operator prune_stale_hpa_deletes_operator_rendered_hpa_on_multi_shard -- --nocapture"
+    assertions:
+      - "The Kubernetes reconcile loop deletes stale autoscaling state when fixed storage topology takes over."
+
+  - id: lumen-claim-developer-llm-v2-task-navigation
+    capability_id: developer-agent-experience
+    claim_id: lumen-llm-v2-task-navigation
+    contract_id: developer-llm-v2-task-navigation
+    category: behavior
+    command: "cargo test -p lumen --test spec_cli dx_llm_v2_json_and_markdown_share_one_typed_contract -- --exact --nocapture"
+    assertions:
+      - "Agent task navigation exposes one deterministic typed contract in Markdown and JSON."
+  - id: lumen-claim-developer-interactive-tooling
+    capability_id: developer-agent-experience
+    claim_id: interactive-tooling
+    contract_id: developer-interactive-tooling
+    category: behavior
+    command: "cargo run -p lumen -- connect --help && cargo run -p lumen -- query --help"
+    assertions:
+      - "The installed CLI exposes discoverable connect and query tooling for agents and operators."
+  - id: lumen-claim-developer-integration-contract
+    capability_id: developer-agent-experience
+    claim_id: integration-contract
+    contract_id: developer-integration-contract
+    category: behavior
+    command: "cargo test -p lumen --test spec_cli llm_workflow_discloses_routed_mode_retry_contract -- --exact --nocapture && cargo test -p lumen --test spec_cli llm_storage_documents_reshard_fence_admin_verb -- --exact --nocapture"
+    assertions:
+      - "The integration contract documents routed retry semantics and the reshard administration boundary from the canonical source model."
 ```

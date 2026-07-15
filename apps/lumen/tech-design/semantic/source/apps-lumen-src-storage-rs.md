@@ -6,6 +6,11 @@ capability_refs:
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
+  - id: "exact-filter-search"
+    role: primary
+    claim: "keyword-byte-lexicographic-range-query"
+    coverage: full
+    rationale: "storage.rs owns byte-lexicographic keyword range validation and execution."
 fill_sections: [overview, source, changes]
 ---
 

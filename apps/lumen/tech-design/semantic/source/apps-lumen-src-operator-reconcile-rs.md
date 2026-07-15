@@ -13,6 +13,16 @@ capability_refs:
     claim: "operator-owned-storage-topology-and-reshard-status"
     coverage: full
     rationale: "The reconcile loop publishes status from the operator-owned StatefulSet storage topology and reshard policy."
+  - id: "dynamic-shard-topology"
+    role: primary
+    claim: "stale-single-member-hpa-handoff-deletion"
+    coverage: full
+    rationale: "The reconcile loop detects and deletes stale single-member or legacy HPA objects during topology handoff."
+  - id: "kubernetes-native-deployment"
+    role: primary
+    claim: "topology-transition-hpa-handoff-deletion"
+    coverage: full
+    rationale: "The Kubernetes reconcile loop owns stale-HPA deletion during storage-topology transitions."
 fill_sections: [overview, source, changes]
 ---
 

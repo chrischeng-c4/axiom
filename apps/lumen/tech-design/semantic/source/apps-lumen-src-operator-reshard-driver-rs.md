@@ -7,6 +7,26 @@ capability_refs:
     claim: "storage-pressure-operator-split-policy"
     coverage: full
     rationale: "This source unit is the autonomous phase driver (#1319 R2 executor) that turns a reported crossed-threshold reshard policy into a real, checkpointed, resumable topology change end to end (#1381)."
+  - id: "dynamic-shard-topology"
+    role: primary
+    claim: "autonomous-reshard-workflow"
+    coverage: full
+    rationale: "This source unit executes the autonomous reshard state machine end to end."
+  - id: "dynamic-shard-topology"
+    role: primary
+    claim: "checkpointed-reshard-phase-driver"
+    coverage: full
+    rationale: "The driver persists phases and gates cutover on durable checkpoints."
+  - id: "dynamic-shard-topology"
+    role: primary
+    claim: "post-cutover-usage-freshness-split-gate"
+    coverage: full
+    rationale: "The driver requires a fresh post-cutover usage sample before another split."
+  - id: "dynamic-shard-topology"
+    role: primary
+    claim: "reshard-apply-evict-synchronous-checkpoint"
+    coverage: full
+    rationale: "The driver orders apply, synchronous checkpoint, cutover, and eviction durably."
 fill_sections: [overview, source, changes]
 ---
 

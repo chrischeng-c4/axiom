@@ -62,6 +62,12 @@ capability_refs:
     claim: "query-shape-cookbook-field-analyzer-catalog"
     coverage: full
     rationale: "Provides offline query-shape and field/analyzer catalog context for agents."
+  - id: "developer-agent-experience"
+    role: primary
+    gap: "integration-contract"
+    claim: "integration-contract"
+    coverage: full
+    rationale: "Defines the canonical OpenAPI, routed-mode, consistency, and administrative integration surfaces exposed by one binary."
   - id: "agent-task-navigation"
     role: primary
     gap: "lumen-llm-v2-task-navigation"
