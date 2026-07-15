@@ -1978,6 +1978,7 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
     let mut external_imports: Vec<String> = Vec::new();
     let mut seen_external: HashSet<String> = HashSet::new();
     let mut inlined_files: HashSet<PathBuf> = HashSet::new();
+    let mut used_top_level_bindings: HashSet<String> = HashSet::new();
 
     let body = inline_module(
         entry,
@@ -1986,6 +1987,7 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
         &mut seen_external,
         &mut inlined_files,
         false,
+        &mut used_top_level_bindings,
     )?;
 
     // Inlined modules can each import the same external package.  Deduplicating
@@ -2387,6 +2389,7 @@ fn inline_module(
     seen_external: &mut HashSet<String>,
     inlined_files: &mut HashSet<PathBuf>,
     make_private: bool,
+    used_top_level_bindings: &mut HashSet<String>,
 ) -> Result<String> {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !inlined_files.insert(canonical.clone()) {
@@ -2412,6 +2415,19 @@ fn inline_module(
         .parse(&source, None)
         .context("parsing module source")?;
     let root = tree.root_node();
+    // This library path flattens source modules directly instead of routing
+    // through the app bundler's CJS scope-hoister. Give every module its own
+    // binding namespace before splicing it into the shared ESM body: imports
+    // such as `Form` from two packages and private locals such as `Panel`
+    // otherwise become duplicate root declarations in the emitted file.
+    let module_index = inlined_files.len() - 1;
+    let (module_source, external_import_renames) = isolate_library_module_scope(
+        &source,
+        root,
+        externals,
+        module_index,
+        used_top_level_bindings,
+    );
 
     // Walk top-level statements in order, splicing internal modules inline.
     let mut out = String::new();
@@ -2430,7 +2446,7 @@ fn inline_module(
         let stmt_start = child.start_byte();
         let stmt_end = child.end_byte();
         // Emit any interstitial text (comments / other statements) verbatim.
-        out.push_str(&source[last_end..stmt_start]);
+        out.push_str(&module_source[last_end..stmt_start]);
         last_end = stmt_end;
 
         let stmt_text = &source[stmt_start..stmt_end];
@@ -2442,10 +2458,12 @@ fn inline_module(
             // copy (deduplicated) is enough — do not also splice it into the
             // body, or the re-export would be emitted twice.
             let rewritten_specifier = rewrite_external_library_specifier_for_node(path, &spec);
+            let renamed_statement =
+                rename_external_import_local_bindings(stmt_text, &external_import_renames);
             let external_statement = if rewritten_specifier == spec {
-                stmt_text.to_string()
+                renamed_statement
             } else {
-                rewrite_statement_specifier(stmt_text, &spec, &rewritten_specifier)
+                rewrite_statement_specifier(&renamed_statement, &spec, &rewritten_specifier)
             };
             if seen_external.insert(external_statement.clone()) {
                 external_imports.push(external_statement);
@@ -2491,6 +2509,7 @@ fn inline_module(
                         seen_external,
                         inlined_files,
                         false,
+                        used_top_level_bindings,
                     )?;
                     out.push_str(&inlined);
                 } else {
@@ -2504,6 +2523,7 @@ fn inline_module(
                         seen_external,
                         inlined_files,
                         true,
+                        used_top_level_bindings,
                     )?;
                     out.push_str(&inlined);
                     if let Some(clause) = export_named_clause(stmt_text) {
@@ -2530,7 +2550,7 @@ fn inline_module(
                     // package's own published CSS exports, so do not inline or
                     // preserve a browser-unresolvable SCSS import here.
                 } else {
-                    out.push_str(stmt_text);
+                    out.push_str(&module_source[stmt_start..stmt_end]);
                 }
             } else if let Some(target) = resolve_relative(path, &spec)? {
                 let inlined = inline_module(
@@ -2540,17 +2560,18 @@ fn inline_module(
                     seen_external,
                     inlined_files,
                     false,
+                    used_top_level_bindings,
                 )?;
                 out.push_str(&inlined);
             } else {
                 // Unresolved relative import: keep verbatim rather than drop it.
-                out.push_str(stmt_text);
+                out.push_str(&module_source[stmt_start..stmt_end]);
             }
         }
     }
 
     // Trailing text after the last handled statement.
-    out.push_str(&source[last_end..]);
+    out.push_str(&module_source[last_end..]);
 
     // When this module was inlined to satisfy a *named* re-export, strip its
     // (and every module it transitively inlined — all concatenated at this
@@ -2561,6 +2582,268 @@ fn inline_module(
         out = strip_top_level_exports(&out);
     }
     Ok(out)
+}
+
+/// Isolate bindings private to one source module before library-mode inlining
+/// flattens all modules into one ESM scope.
+///
+/// Runtime external imports are blanked while the scoped rename runs, then
+/// emitted separately with local aliases rewritten. This preserves the
+/// imported export name (`Form`) while rewriting this module's uses to its
+/// unique local binding (`__jet_m1_Form`).
+fn isolate_library_module_scope(
+    source: &str,
+    root: tree_sitter::Node<'_>,
+    externals: &HashSet<String>,
+    module_index: usize,
+    used_top_level_bindings: &mut HashSet<String>,
+) -> (String, HashMap<String, String>) {
+    let mut external_import_renames = HashMap::new();
+    let mut external_ranges = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() != "import_statement" {
+            continue;
+        }
+        let Some(specifier) = statement_specifier(source, &child) else {
+            continue;
+        };
+        if !is_external_specifier(&specifier, externals) {
+            continue;
+        }
+        let statement = &source[child.start_byte()..child.end_byte()];
+        for binding in external_import_bindings(statement) {
+            let local_name = binding.local_name;
+            let alias = format!("__jet_m{module_index}_{local_name}");
+            external_import_renames.entry(local_name).or_insert(alias);
+        }
+        external_ranges.push((child.start_byte(), child.end_byte()));
+    }
+
+    let private_bindings = collect_library_private_top_level_bindings(source, root);
+    let exported_bindings = collect_library_exported_top_level_bindings(source, root);
+    if private_bindings.is_empty()
+        && exported_bindings.is_empty()
+        && external_import_renames.is_empty()
+    {
+        return (source.to_string(), external_import_renames);
+    }
+
+    let mut root_renames = HashMap::new();
+    for name in private_bindings {
+        used_top_level_bindings.insert(name.clone());
+        root_renames.insert(name.clone(), format!("__jet_m{module_index}_{name}"));
+    }
+    for name in exported_bindings {
+        if !used_top_level_bindings.insert(name.clone()) {
+            root_renames
+                .entry(name.clone())
+                .or_insert_with(|| format!("__jet_m{module_index}_{name}"));
+        }
+    }
+
+    // Keep byte offsets stable while `inline_module` walks the tree parsed from
+    // the original source to splice relative modules.
+    let mut without_external_imports = source.as_bytes().to_vec();
+    for (start, end) in external_ranges {
+        for byte in &mut without_external_imports[start..end] {
+            *byte = b' ';
+        }
+    }
+    let without_external_imports = String::from_utf8(without_external_imports)
+        .expect("replacing UTF-8 source bytes with ASCII spaces stays valid UTF-8");
+
+    (
+        super::mangle::apply_scoped_module_renames(
+            &without_external_imports,
+            &root_renames,
+            &external_import_renames,
+        ),
+        external_import_renames,
+    )
+}
+
+/// Public declarations retain their authored name so `export const A` still
+/// exports `A`. Other top-level bindings are module-local and can be safely
+/// namespaced before concatenation.
+fn collect_library_private_top_level_bindings(
+    source: &str,
+    root: tree_sitter::Node<'_>,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if matches!(child.kind(), "import_statement" | "export_statement") {
+            continue;
+        }
+        collect_library_declaration_bindings(source, child, &mut names);
+    }
+    names
+}
+
+/// Export declarations normally retain their authored public name. When two
+/// inlined modules declare the same exported root binding, the later module
+/// still needs a private alpha-name so concatenation cannot emit duplicate ESM
+/// declarations. Bare `export { local as public }` clauses introduce no new
+/// declaration and are therefore intentionally excluded.
+fn collect_library_exported_top_level_bindings(
+    source: &str,
+    root: tree_sitter::Node<'_>,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() != "export_statement" {
+            continue;
+        }
+        let mut export_cursor = child.walk();
+        for exported in child.named_children(&mut export_cursor) {
+            collect_library_declaration_bindings(source, exported, &mut names);
+        }
+    }
+    names
+}
+
+fn collect_library_declaration_bindings(
+    source: &str,
+    declaration: tree_sitter::Node<'_>,
+    names: &mut HashSet<String>,
+) {
+    match declaration.kind() {
+        "function_declaration" | "class_declaration" => {
+            if let Some(name) = declaration.child_by_field_name("name") {
+                collect_library_binding_pattern(source, name, names);
+            }
+        }
+        "lexical_declaration" | "variable_declaration" => {
+            let mut cursor = declaration.walk();
+            for declarator in declaration.named_children(&mut cursor) {
+                if declarator.kind() != "variable_declarator" {
+                    continue;
+                }
+                if let Some(name) = declarator.child_by_field_name("name") {
+                    collect_library_binding_pattern(source, name, names);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_library_binding_pattern(
+    source: &str,
+    pattern: tree_sitter::Node<'_>,
+    names: &mut HashSet<String>,
+) {
+    match pattern.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            let name = &source[pattern.start_byte()..pattern.end_byte()];
+            if is_js_identifier(name) {
+                names.insert(name.to_string());
+            }
+        }
+        "pair_pattern" => {
+            if let Some(value) = pattern.child_by_field_name("value") {
+                collect_library_binding_pattern(source, value, names);
+            }
+        }
+        "rest_pattern" => {
+            if let Some(argument) = pattern.child_by_field_name("argument") {
+                collect_library_binding_pattern(source, argument, names);
+            }
+        }
+        "assignment_pattern" => {
+            if let Some(left) = pattern.child_by_field_name("left") {
+                collect_library_binding_pattern(source, left, names);
+            }
+        }
+        "object_pattern" | "array_pattern" => {
+            let mut cursor = pattern.walk();
+            for child in pattern.named_children(&mut cursor) {
+                collect_library_binding_pattern(source, child, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Rewrite only the local side of an external import. `{ Form }` becomes
+/// `{ Form as __jet_m1_Form }`; the package's exported symbol remains `Form`.
+fn rename_external_import_local_bindings(
+    statement: &str,
+    renames: &HashMap<String, String>,
+) -> String {
+    if renames.is_empty() {
+        return statement.to_string();
+    }
+    let Some(rest) = statement.trim().strip_prefix("import").map(str::trim_start) else {
+        return statement.to_string();
+    };
+    let Some((clause, specifier)) = parse_import_from_clause(rest) else {
+        return statement.to_string();
+    };
+    let clause = clause.trim();
+    if clause.starts_with("type ") || clause == "type" {
+        return statement.to_string();
+    }
+
+    let renamed_clause =
+        if let Some((default_binding, named_bindings)) = split_named_import_clause(clause) {
+            let default_binding = default_binding.map(|binding| {
+                renames
+                    .get(binding)
+                    .cloned()
+                    .unwrap_or_else(|| binding.to_string())
+            });
+            let named_bindings = named_bindings
+                .split(',')
+                .map(str::trim)
+                .filter(|binding| !binding.is_empty())
+                .map(|binding| rename_named_import_binding(binding, renames))
+                .collect::<Vec<_>>();
+            let mut rendered = default_binding.unwrap_or_default();
+            if !rendered.is_empty() && !named_bindings.is_empty() {
+                rendered.push_str(", ");
+            }
+            if !named_bindings.is_empty() {
+                rendered.push_str("{ ");
+                rendered.push_str(&named_bindings.join(", "));
+                rendered.push_str(" }");
+            }
+            rendered
+        } else if let Some(namespace) = clause.strip_prefix("* as ").map(str::trim) {
+            let local = renames
+                .get(namespace)
+                .cloned()
+                .unwrap_or_else(|| namespace.to_string());
+            format!("* as {local}")
+        } else {
+            renames
+                .get(clause)
+                .cloned()
+                .unwrap_or_else(|| clause.to_string())
+        };
+
+    format!("import {renamed_clause} from \"{specifier}\";")
+}
+
+fn rename_named_import_binding(binding: &str, renames: &HashMap<String, String>) -> String {
+    if binding.starts_with("type ") {
+        return binding.to_string();
+    }
+    let (imported, local) = binding
+        .split_once(" as ")
+        .map(|(imported, local)| (imported.trim(), local.trim()))
+        .unwrap_or((binding, binding));
+    let local = renames
+        .get(local)
+        .cloned()
+        .unwrap_or_else(|| local.to_string());
+    if imported == local {
+        imported.to_string()
+    } else {
+        format!("{imported} as {local}")
+    }
 }
 
 fn inline_svg_named_reexport(
@@ -3299,6 +3582,50 @@ mod tests {
         assert!(!is_external_specifier("./util", &ext));
         assert!(!is_external_specifier("../util", &ext));
         assert!(!is_external_specifier("/abs", &ext));
+    }
+
+    #[test]
+    fn library_bundle_isolates_external_and_private_module_bindings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let entry = src.join("index.ts");
+        std::fs::write(&entry, "export * from \"./a\";\nexport * from \"./b\";\n").unwrap();
+        std::fs::write(
+            src.join("a.ts"),
+            "import { Form, Collapse } from \"antd\";\n\
+             const { Panel } = Collapse;\n\
+             export function getSelectedNode() { return Panel; }\n\
+             export const A = () => [Form, Panel];\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("b.ts"),
+            "import { Form } from \"formik\";\n\
+             import { Collapse } from \"antd\";\n\
+             const { Panel } = Collapse;\n\
+             export function getSelectedNode() { return Panel; }\n\
+             export const B = () => [Form, Panel];\n",
+        )
+        .unwrap();
+
+        let externals = HashSet::from(["antd".to_string(), "formik".to_string()]);
+        let esm = bundle_library_entry(&entry, &externals).unwrap();
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&esm),
+            "ESM output must remain syntactically valid:\n{esm}"
+        );
+        assert!(esm.contains("__jet_m1_Form"), "{esm}");
+        assert!(esm.contains("__jet_m2_Form"), "{esm}");
+        assert!(esm.contains("__jet_m1_Panel"), "{esm}");
+        assert!(esm.contains("__jet_m2_Panel"), "{esm}");
+        assert!(esm.contains("__jet_m2_getSelectedNode"), "{esm}");
+
+        let cjs = esm_to_cjs(&esm);
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&cjs),
+            "CJS output must remain syntactically valid:\n{cjs}"
+        );
     }
 
     #[test]
