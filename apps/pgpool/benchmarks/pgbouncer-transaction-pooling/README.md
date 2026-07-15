@@ -76,6 +76,23 @@ apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
   --pgpool-bin target/debug/pgpool
 ```
 
+To attribute completed pgpool transaction legs without changing their protocol
+or pool semantics, add `--phase-telemetry` (and retain the work directory):
+
+```bash
+PGPOOL_BENCH_KEEP_WORK_DIR=true \
+apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh \
+  --workload select-only \
+  --phase-telemetry
+```
+
+This opt-in mode records only bounded pool aggregates: `acquire`, `relay`, and
+`release`, each split into success/failure count and elapsed-time sum. The
+retained work directory contains before/after Prometheus snapshots and
+`pgpool-*-phase-delta.prom` files for the two pgpool legs. It carries
+`comparison_valid: false` and cannot establish a PgBouncer win; use it to pick
+the next behavior-changing P0, then rerun the ordinary unsampled comparison.
+
 The runner starts and removes a temporary PostgreSQL data directory itself. It
 does not install packages, change a service, or retain benchmark data after it
 exits.

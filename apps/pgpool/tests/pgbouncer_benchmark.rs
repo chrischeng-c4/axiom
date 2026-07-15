@@ -80,6 +80,23 @@ fn dry_run_profile_stays_immutable_when_pgbouncer_is_the_meter_target() {
 }
 
 #[test]
+fn dry_run_profile_stays_immutable_when_phase_telemetry_is_requested() {
+    let ordinary = dry_run_profile();
+    let output = command(&["--dry-run", "--phase-telemetry"]);
+    assert!(
+        output.status.success(),
+        "phase telemetry dry run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let with_telemetry: Value =
+        serde_json::from_slice(&output.stdout).expect("phase telemetry dry run should emit JSON");
+    assert_eq!(
+        with_telemetry, ordinary,
+        "diagnostic telemetry must not mutate the fixed profile"
+    );
+}
+
+#[test]
 fn dry_run_profile_declares_equal_transaction_pooling_inputs() {
     let profile = dry_run_profile();
 
@@ -205,6 +222,17 @@ fn meter_can_sample_either_pooler_but_never_changes_peer_verdict_rules() {
     assert!(RUNNER_SOURCE.contains("winner_by_tps\":\"diagnostic-only"));
     assert!(RUNNER_SOURCE.contains("comparison_valid\":false"));
     assert!(RUNNER_SOURCE.contains("pgpool_win_eligible\":false"));
+}
+
+#[test]
+fn phase_telemetry_is_opt_in_and_marks_the_peer_result_diagnostic_only() {
+    assert!(RUNNER_SOURCE.contains("--phase-telemetry"));
+    assert!(RUNNER_SOURCE.contains("PGPOOL_TRANSACTION_PHASE_TELEMETRY=1"));
+    assert!(RUNNER_SOURCE.contains("capture_pgpool_phase_metrics"));
+    assert!(RUNNER_SOURCE.contains("write_pgpool_phase_delta"));
+    assert!(RUNNER_SOURCE.contains("printf \"%s %.9f\\n\""));
+    assert!(!RUNNER_SOURCE.contains("printf \"%s %.9f\\\\n\""));
+    assert!(RUNNER_SOURCE.contains("WINNER=\"diagnostic-only\""));
 }
 
 #[test]

@@ -7,11 +7,15 @@
 
 mod backend_pool;
 mod handler;
+pub(crate) mod telemetry;
 mod transaction;
 mod types;
 
 pub use backend_pool::{BackendLease, BackendPool, StartupAdmission};
 pub use handler::PoolHandler;
+pub use telemetry::{
+    TransactionPhaseMetric, TransactionPhaseTelemetry, TransactionPhaseTelemetrySnapshot,
+};
 pub use transaction::{TransactionHandler, TransactionProxyConfig};
 pub use types::{
     BackendConnectionId, BackendPoolStats, LeaseDisposition, PoolConfig, PoolError,

@@ -19,6 +19,7 @@ readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 PGPOOL_BIN="${PGPOOL_BIN:-$REPO_ROOT/target/release/pgpool}"
 METER_BIN=""
 METER_TARGET="pgpool"
+PHASE_TELEMETRY=false
 DRY_RUN=false
 WORKLOAD="tpcb"
 WORKLOAD_PROFILE=""
@@ -32,7 +33,7 @@ KEEP_WORK_DIR="${PGPOOL_BENCH_KEEP_WORK_DIR:-false}"
 
 usage() {
     cat <<'USAGE'
-Usage: run.sh [--dry-run] [--workload tpcb|select-only] [--pgpool-bin PATH] [--meter-bin PATH] [--meter-target pgpool|pgbouncer]
+Usage: run.sh [--dry-run] [--workload tpcb|select-only] [--pgpool-bin PATH] [--meter-bin PATH] [--meter-target pgpool|pgbouncer] [--phase-telemetry]
 
 Compares PgBouncer and pgpool transaction pooling against one temporary local
 PostgreSQL backend. `--dry-run` prints the immutable profile JSON and does not
@@ -48,6 +49,11 @@ win evidence.
 update-row lock contention, so it measures transaction-pool relay and reset
 throughput. The default `tpcb` profile remains unchanged as the database-stress
 regression workload.
+
+`--phase-telemetry` starts pgpool with its opt-in aggregate phase telemetry,
+saves before/after Prometheus snapshots plus per-leg deltas, and marks the
+result diagnostic-only. It never changes the fixed workload profile or proves
+a competitor win.
 
 An ordinary peer comparison runs two 30-second paired trials in opposite
 target orders. It prints raw samples and marks a pgpool candidate inconclusive
@@ -245,7 +251,11 @@ require_meter_artifacts() {
 }
 
 start_pgpool() {
-    "$PGPOOL_BIN" serve \
+    local telemetry_env=()
+    if [[ "$PHASE_TELEMETRY" == true ]]; then
+        telemetry_env+=(PGPOOL_TRANSACTION_PHASE_TELEMETRY=1)
+    fi
+    env "${telemetry_env[@]}" "$PGPOOL_BIN" serve \
         --backend-host 127.0.0.1 \
         --backend-port "$POSTGRES_PORT" \
         --bind "127.0.0.1:$PGPOOL_PORT" \
@@ -255,6 +265,26 @@ start_pgpool() {
         >"$WORK_DIR/pgpool.log" 2>&1 &
     PGPOOL_PID=$!
     wait_for_sql "$PGPOOL_PORT" "pgpool"
+}
+
+capture_pgpool_phase_metrics() {
+    local label="$1"
+    [[ "$PHASE_TELEMETRY" == true ]] || return 0
+    curl --fail --silent --show-error "http://127.0.0.1:$ADMIN_PORT/metrics" >"$WORK_DIR/$label-phase-metrics.prom"
+    grep -q '^pgpool_transaction_phase_seconds_count' "$WORK_DIR/$label-phase-metrics.prom" || fail "pgpool phase telemetry was enabled but metrics were absent"
+}
+
+write_pgpool_phase_delta() {
+    local before="$1"
+    local after="$2"
+    local output="$3"
+    [[ "$PHASE_TELEMETRY" == true ]] || return 0
+    awk '
+        FNR == NR { before[$1] = $2; next }
+        /^pgpool_transaction_phase_seconds_(count|sum)/ {
+            printf "%s %.9f\n", $1, $2 - before[$1]
+        }
+    ' "$before" "$after" >"$output"
 }
 
 start_pgbouncer() {
@@ -363,6 +393,10 @@ while (($#)); do
             METER_TARGET="$2"
             shift 2
             ;;
+        --phase-telemetry)
+            PHASE_TELEMETRY=true
+            shift
+            ;;
         --workload)
             (($# >= 2)) || fail "--workload requires tpcb or select-only"
             WORKLOAD="$2"
@@ -388,6 +422,9 @@ fi
 for command in initdb pg_ctl psql pgbench pgbouncer lsof; do
     require_command "$command"
 done
+if [[ "$PHASE_TELEMETRY" == true ]]; then
+    require_command curl
+fi
 [[ -x "$PGPOOL_BIN" ]] || fail "pgpool binary is not executable: $PGPOOL_BIN (build with: cargo build --release -p pgpool)"
 PGPOOL_BIN="$(absolute_executable_path "$PGPOOL_BIN")"
 if [[ -n "$METER_BIN" ]]; then
@@ -491,11 +528,17 @@ run_target_warmup 127.0.0.1 "$PGBOUNCER_PORT" "$WORK_DIR/pgbouncer-first-warmup-
 run_pgbench_workload 127.0.0.1 "$PGBOUNCER_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGBOUNCER_FIRST_LOG"
 validate_benchmark_sample "$PGBOUNCER_FIRST_LOG" "PgBouncer first trial"
 run_target_warmup 127.0.0.1 "$PGPOOL_PORT" "$WORK_DIR/pgpool-second-warmup-pgbench.log" "pgpool second trial"
+capture_pgpool_phase_metrics "pgpool-second-before"
 run_pgbench_workload 127.0.0.1 "$PGPOOL_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGPOOL_SECOND_LOG"
 validate_benchmark_sample "$PGPOOL_SECOND_LOG" "pgpool second trial"
+capture_pgpool_phase_metrics "pgpool-second-after"
+write_pgpool_phase_delta "$WORK_DIR/pgpool-second-before-phase-metrics.prom" "$WORK_DIR/pgpool-second-after-phase-metrics.prom" "$WORK_DIR/pgpool-second-phase-delta.prom"
 run_target_warmup 127.0.0.1 "$PGPOOL_PORT" "$WORK_DIR/pgpool-first-warmup-pgbench.log" "pgpool first trial"
+capture_pgpool_phase_metrics "pgpool-first-before"
 run_pgbench_workload 127.0.0.1 "$PGPOOL_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGPOOL_FIRST_LOG"
 validate_benchmark_sample "$PGPOOL_FIRST_LOG" "pgpool first trial"
+capture_pgpool_phase_metrics "pgpool-first-after"
+write_pgpool_phase_delta "$WORK_DIR/pgpool-first-before-phase-metrics.prom" "$WORK_DIR/pgpool-first-after-phase-metrics.prom" "$WORK_DIR/pgpool-first-phase-delta.prom"
 run_target_warmup 127.0.0.1 "$PGBOUNCER_PORT" "$WORK_DIR/pgbouncer-second-warmup-pgbench.log" "PgBouncer second trial"
 run_pgbench_workload 127.0.0.1 "$PGBOUNCER_PORT" "$CLIENTS" "$JOBS" "$DURATION_SECONDS" "$PGBOUNCER_SECOND_LOG"
 validate_benchmark_sample "$PGBOUNCER_SECOND_LOG" "PgBouncer second trial"
@@ -532,6 +575,11 @@ if [[ "$UNANIMOUS_DIRECTION" == "pgbouncer" || "$PGPOOL_WIN_ELIGIBLE" == true ]]
 else
     COMPARISON_VALID=false
     WINNER="invalid"
+fi
+if [[ "$PHASE_TELEMETRY" == true ]]; then
+    PGPOOL_WIN_ELIGIBLE=false
+    COMPARISON_VALID=false
+    WINNER="diagnostic-only"
 fi
 PGBOUNCER_TPS="$(mean_two "$PGBOUNCER_FIRST_TPS" "$PGBOUNCER_SECOND_TPS")"
 PGBOUNCER_LATENCY_MS="$(mean_two "$PGBOUNCER_FIRST_LATENCY_MS" "$PGBOUNCER_SECOND_LATENCY_MS")"

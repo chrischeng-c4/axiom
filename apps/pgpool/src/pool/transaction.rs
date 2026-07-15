@@ -25,6 +25,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 
 use crate::pool::backend_pool::{BackendLease, BackendPool, StartupAdmission};
+use crate::pool::telemetry::{TransactionPhase, TransactionPhaseOutcome};
 use crate::pool::types::{BackendConnectionId, LeaseDisposition, PoolRejectionReason};
 use crate::proxy::{
     forward_backend, forward_backend_batch, forward_frontend, forward_raw,
@@ -269,16 +270,30 @@ async fn run_transaction_client(
         // `PoolError` here (saturation timeout, or a fresh-connect failure
         // inside `acquire()`) is reported to this client as the synthesized
         // pool-saturated rejection.
-        let lease = match if replay_safe_startup {
+        let acquire_started = config.backend_pool.transaction_phase_started_at();
+        let acquisition = if replay_safe_startup {
             config
                 .backend_pool
                 .acquire_for_replayed_startup(&startup)
                 .await
         } else {
             config.backend_pool.acquire().await
-        } {
-            Ok(lease) => lease,
+        };
+        let lease = match acquisition {
+            Ok(lease) => {
+                config.backend_pool.record_transaction_phase_started(
+                    TransactionPhase::Acquire,
+                    TransactionPhaseOutcome::Success,
+                    acquire_started,
+                );
+                lease
+            }
             Err(_) => {
+                config.backend_pool.record_transaction_phase_started(
+                    TransactionPhase::Acquire,
+                    TransactionPhaseOutcome::Failure,
+                    acquire_started,
+                );
                 write_pool_rejection(&mut client_write, PoolRejectionReason::BackendPoolSaturated)
                     .await;
                 drop(permit);
@@ -294,6 +309,7 @@ async fn run_transaction_client(
         let (mut txn_backend_read, mut txn_backend_write) = txn_backend.into_split();
         let mut txn_backend_reader = FrameReader::new(Role::Backend, &config.wire);
 
+        let relay_started = config.backend_pool.transaction_phase_started_at();
         let outcome = relay_one_transaction(
             &mut client_read,
             &mut client_write,
@@ -304,6 +320,15 @@ async fn run_transaction_client(
             first_frame,
         )
         .await;
+        let relay_outcome = match outcome {
+            TxnLegOutcome::ReadyIdle(_) => TransactionPhaseOutcome::Success,
+            TxnLegOutcome::Ended => TransactionPhaseOutcome::Failure,
+        };
+        config.backend_pool.record_transaction_phase_started(
+            TransactionPhase::Relay,
+            relay_outcome,
+            relay_started,
+        );
 
         match outcome {
             TxnLegOutcome::ReadyIdle(pending) => {

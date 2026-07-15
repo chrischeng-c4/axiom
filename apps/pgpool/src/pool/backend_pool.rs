@@ -19,6 +19,10 @@ use tokio::net::TcpStream;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 
+use crate::pool::telemetry::{
+    TransactionPhase, TransactionPhaseOutcome, TransactionPhaseTelemetry,
+    TransactionPhaseTelemetrySnapshot,
+};
 use crate::pool::types::{
     BackendConnectionId, BackendPoolStats, LeaseDisposition, PoolConfig, PoolError,
 };
@@ -109,6 +113,7 @@ struct PoolInner {
     permits: Arc<Semaphore>,
     state: Mutex<PoolState>,
     notify: Notify,
+    telemetry: Option<Arc<TransactionPhaseTelemetry>>,
 }
 
 /// Shared backend-connection pool: idle-reuse-preferring acquire with a
@@ -124,6 +129,17 @@ pub struct BackendPool {
 
 impl BackendPool {
     pub fn new(config: PoolConfig) -> Self {
+        Self::new_inner(config, TransactionPhaseTelemetry::from_environment())
+    }
+
+    /// Creates a pool with bounded phase telemetry for deterministic tests and
+    /// explicitly diagnostic callers.  Ordinary construction remains off by
+    /// default unless `PGPOOL_TRANSACTION_PHASE_TELEMETRY` enables it.
+    pub fn new_with_transaction_phase_telemetry(config: PoolConfig) -> Self {
+        Self::new_inner(config, Some(TransactionPhaseTelemetry::new()))
+    }
+
+    fn new_inner(config: PoolConfig, telemetry: Option<Arc<TransactionPhaseTelemetry>>) -> Self {
         let max = config.max_backend_connections;
         Self {
             config,
@@ -136,6 +152,7 @@ impl BackendPool {
                     next_id: 0,
                 }),
                 notify: Notify::new(),
+                telemetry,
             }),
         }
     }
@@ -343,14 +360,16 @@ impl BackendPool {
             drop(stream);
             return;
         };
+        let release_started = self.transaction_phase_started_at();
 
-        match disposition {
+        let outcome = match disposition {
             LeaseDisposition::Close => {
                 let mut stream = stream;
                 let _ = stream.shutdown().await;
                 drop(stream);
                 drop(permit);
                 self.inner.notify.notify_waiters();
+                TransactionPhaseOutcome::Success
             }
             LeaseDisposition::ReturnToIdle => {
                 match reset_connection(
@@ -365,16 +384,19 @@ impl BackendPool {
                         state.idle.push((id, stream, permit));
                         drop(state);
                         self.inner.notify.notify_waiters();
+                        TransactionPhaseOutcome::Success
                     }
                     Err(mut stream) => {
                         let _ = stream.shutdown().await;
                         drop(stream);
                         drop(permit);
                         self.inner.notify.notify_waiters();
+                        TransactionPhaseOutcome::Failure
                     }
                 }
             }
-        }
+        };
+        self.record_transaction_phase_started(TransactionPhase::Release, outcome, release_started);
     }
 
     pub fn stats(&self) -> BackendPoolStats {
@@ -382,6 +404,44 @@ impl BackendPool {
         BackendPoolStats {
             backend_active: state.outstanding.len(),
             backend_idle: state.idle.len(),
+        }
+    }
+
+    /// Returns the fixed-cardinality diagnostic snapshot only when the pool
+    /// was explicitly started with transaction phase telemetry enabled.
+    pub fn transaction_phase_telemetry(&self) -> Option<TransactionPhaseTelemetrySnapshot> {
+        self.inner
+            .telemetry
+            .as_ref()
+            .map(|telemetry| telemetry.snapshot())
+    }
+
+    pub(crate) fn record_transaction_phase(
+        &self,
+        phase: TransactionPhase,
+        outcome: TransactionPhaseOutcome,
+        elapsed: Duration,
+    ) {
+        if let Some(telemetry) = &self.inner.telemetry {
+            telemetry.record(phase, outcome, elapsed);
+        }
+    }
+
+    /// Captures an `Instant` only while the explicitly opt-in diagnostic
+    /// telemetry is active, keeping the ordinary release path free of timing
+    /// calls and atomic updates.
+    pub(crate) fn transaction_phase_started_at(&self) -> Option<Instant> {
+        self.inner.telemetry.as_ref().map(|_| Instant::now())
+    }
+
+    pub(crate) fn record_transaction_phase_started(
+        &self,
+        phase: TransactionPhase,
+        outcome: TransactionPhaseOutcome,
+        started_at: Option<Instant>,
+    ) {
+        if let Some(started_at) = started_at {
+            self.record_transaction_phase(phase, outcome, started_at.elapsed());
         }
     }
 
