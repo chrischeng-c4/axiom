@@ -1425,7 +1425,14 @@ mod tests {
     async fn release_returns_envelope_after_kill() {
         let t = Throttle::new(cfg_with(2.0, 1), 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo test".into(), String::new(), None, None)
+            .register(
+                1,
+                "cargo".into(),
+                "cargo test".into(),
+                String::new(),
+                None,
+                None,
+            )
             .await;
         t.attach_pid(a, 999).await;
         let _ = t.tick(0.5, 0.0, NO_RSS).await; // forces kill (External, solo)
@@ -1451,7 +1458,14 @@ mod tests {
         // total=16, kill_floor=1.0, headroom=15. Victim RSS=16 GB → Oversize.
         let t = Throttle::new(cfg_with(2.0, 1), 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo build -j16".into(), String::new(), None, None)
+            .register(
+                1,
+                "cargo".into(),
+                "cargo build -j16".into(),
+                String::new(),
+                None,
+                None,
+            )
             .await;
         t.attach_pid(a, 700).await;
         let rss: &(dyn Fn(i32) -> Option<u64> + Send + Sync) = &|pid| {
@@ -1487,11 +1501,25 @@ mod tests {
     async fn envelope_action_for_competition_is_wait_and_retry() {
         let t = Throttle::new(cfg_with(2.0, 1), 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo a".into(), String::new(), None, None)
+            .register(
+                1,
+                "cargo".into(),
+                "cargo a".into(),
+                String::new(),
+                None,
+                None,
+            )
             .await;
         t.attach_pid(a, 800).await;
         let b = t
-            .register(1, "cargo".into(), "cargo b".into(), String::new(), None, None)
+            .register(
+                1,
+                "cargo".into(),
+                "cargo b".into(),
+                String::new(),
+                None,
+                None,
+            )
             .await;
         t.attach_pid(b, 801).await;
         // Both running, biggest is a (8 GB RSS, fits in headroom=15)
@@ -1575,7 +1603,14 @@ mod tests {
         cfg.protect.kill_grace_secs = 3;
         let t = Throttle::new(cfg, 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo test".into(), String::new(), None, None)
+            .register(
+                1,
+                "cargo".into(),
+                "cargo test".into(),
+                String::new(),
+                None,
+                None,
+            )
             .await;
         t.attach_pid(a, i32::MAX).await;
 
@@ -1659,7 +1694,14 @@ mod tests {
         cfg.protect.kill_grace_secs = 2;
         let t = Throttle::new(cfg, 2.0, 1.0, 16.0).expect("invariant");
         let a = t
-            .register(1, "cargo".into(), "cargo test".into(), String::new(), None, None)
+            .register(
+                1,
+                "cargo".into(),
+                "cargo test".into(),
+                String::new(),
+                None,
+                None,
+            )
             .await;
         t.attach_pid(a, i32::MAX).await;
         // Tick 1: kill zone → SIGTERM.
@@ -1862,7 +1904,10 @@ mod tests {
         t.attach_pid(id, i32::MAX).await;
         tokio::time::sleep(Duration::from_millis(30)).await;
         match t.tick(8.0, 0.0, NO_RSS).await {
-            TickAction::KilledVictim { id: killed, classification } => {
+            TickAction::KilledVictim {
+                id: killed,
+                classification,
+            } => {
                 assert_eq!(killed, id);
                 assert_eq!(classification, KillClassification::AbsoluteTimeout);
             }
@@ -1914,7 +1959,9 @@ mod tests {
     #[tokio::test]
     async fn idle_timeout_disabled_by_default_never_fires() {
         let t = throttle_with(2.0, 1);
-        let id = t.register(1, "x".into(), "x".into(), String::new(), None, None).await;
+        let id = t
+            .register(1, "x".into(), "x".into(), String::new(), None, None)
+            .await;
         t.attach_pid(id, i32::MAX).await;
         let empty = HashMap::new();
         for _ in 0..10 {
@@ -1946,7 +1993,10 @@ mod tests {
         assert!(matches!(t.tick(8.0, 0.0, NO_RSS).await, TickAction::Idle));
         t.note_cpu_usage(&empty).await;
         match t.tick(8.0, 0.0, NO_RSS).await {
-            TickAction::KilledVictim { id: killed, classification } => {
+            TickAction::KilledVictim {
+                id: killed,
+                classification,
+            } => {
                 assert_eq!(killed, id);
                 assert_eq!(classification, KillClassification::IdleTimeout);
             }

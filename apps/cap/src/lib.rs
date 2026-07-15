@@ -33,6 +33,7 @@
 
 pub use daemon::is_running;
 
+pub mod agent_guard;
 pub mod cli;
 pub mod client;
 pub mod command_planner;

@@ -342,8 +342,8 @@ async fn handle_conn(
                 let idle_timeout_secs = a
                     .idle_timeout_secs
                     .unwrap_or(protect.default_idle_timeout_secs);
-                let timeout = (timeout_secs > 0)
-                    .then(|| std::time::Duration::from_secs(timeout_secs));
+                let timeout =
+                    (timeout_secs > 0).then(|| std::time::Duration::from_secs(timeout_secs));
                 let idle_timeout = (idle_timeout_secs > 0)
                     .then(|| std::time::Duration::from_secs(idle_timeout_secs));
                 let lease = throttle

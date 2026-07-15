@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::process::{Child, Command};
 
 /// @spec apps/cap/tech-design/semantic/cap-src.md#schema
