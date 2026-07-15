@@ -1375,11 +1375,11 @@ version = "0.4.6"
 dependencies = [
  "anyhow",
  "cclab-openapi-codegen",
- "h2c",
  "lumen",
  "reqwest 0.12.28",
  "service-http",
  "tokio",
+ "transport-h2c",
 ]
 
 [[package]]
@@ -2666,7 +2666,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "claimtoken"
+name = "claim-token"
 version = "0.4.6"
 dependencies = [
  "base64 0.22.1",
@@ -3078,12 +3078,12 @@ dependencies = [
  "build-stamp",
  "clap",
  "cli-std",
+ "peer-tls",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "service-auth",
  "service-http",
- "service-tls",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -5225,25 +5225,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2c"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "bytes",
- "cli-std",
- "h2 0.4.14",
- "http 1.4.0",
- "http-body-util",
- "hyper 1.9.0",
- "hyper-util",
- "reqwest 0.12.28",
- "thiserror 2.0.18",
- "tokio",
- "tower 0.5.3",
- "tracing",
-]
-
-[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5570,19 +5551,6 @@ dependencies = [
  "http 1.4.0",
  "http-body 1.0.1",
  "pin-project-lite",
-]
-
-[[package]]
-name = "http-server"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "h2c",
- "server-core",
- "tcp-server",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
 ]
 
 [[package]]
@@ -6740,19 +6708,17 @@ dependencies = [
  "axum 0.8.9",
  "bincode",
  "cclab-openapi-codegen",
- "claimtoken",
+ "claim-token",
  "clap",
  "cli-std",
  "crc32fast",
  "criterion",
  "crossbeam-channel",
  "futures",
- "h2c",
  "k8s-openapi",
  "kube",
- "operator",
  "parking_lot",
- "raft-host",
+ "raft-runtime",
  "redis",
  "reqwest 0.12.28",
  "rust_decimal",
@@ -6764,6 +6730,7 @@ dependencies = [
  "service-auth",
  "service-backup",
  "service-http",
+ "service-k8s",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
@@ -6773,6 +6740,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "transport-h2c",
  "utoipa",
 ]
 
@@ -7261,7 +7229,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "chrono",
- "claimtoken",
+ "claim-token",
  "clap",
  "cli-std",
  "futures",
@@ -7333,7 +7301,6 @@ dependencies = [
  "crc32fast",
  "criterion",
  "futures",
- "h2c",
  "hnsw_rs",
  "jieba-rs",
  "k8s-openapi",
@@ -7342,14 +7309,15 @@ dependencies = [
  "lz4_flex",
  "memmap2 0.9.10",
  "memory-stats",
+ "metrics-prometheus",
  "moka",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "operator",
+ "peer-tls",
  "proptest",
  "raft-core",
- "raft-host",
+ "raft-runtime",
  "rand 0.8.6",
  "rayon",
  "reqwest 0.12.28",
@@ -7363,11 +7331,10 @@ dependencies = [
  "serde_yaml",
  "service-auth",
  "service-backup",
- "service-durability",
  "service-http",
- "service-metrics",
- "service-tls",
+ "service-k8s",
  "smallvec",
+ "storage-durable",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -7377,6 +7344,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "transport-h2c",
  "utoipa",
  "wiremock",
 ]
@@ -7824,6 +7792,10 @@ dependencies = [
  "meter",
  "serde_json",
 ]
+
+[[package]]
+name = "metrics-prometheus"
+version = "0.1.0"
 
 [[package]]
 name = "mime"
@@ -8682,24 +8654,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "operator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "cli-std",
- "futures",
- "k8s-openapi",
- "kube",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9231,6 +9185,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "peer-tls"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rustls 0.23.40",
+ "rustls-pemfile",
+]
+
+[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9332,20 +9295,20 @@ dependencies = [
  "bytes",
  "clap",
  "cli-std",
- "h2c",
  "http-body-util",
- "http-server",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "serde_yaml",
- "server-core",
- "tcp-server",
+ "server-http",
+ "server-lifecycle",
+ "server-tcp",
  "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
  "tower 0.5.3",
  "tracing",
+ "transport-h2c",
 ]
 
 [[package]]
@@ -10447,23 +10410,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "raft-host"
+name = "raft-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum 0.8.9",
  "cli-std",
- "h2c",
  "raft-core",
  "reqwest 0.12.28",
- "rustls 0.23.40",
  "serde",
  "serde_json",
- "service-durability",
- "service-tls",
+ "storage-durable",
  "tokio",
  "tracing",
+ "transport-h2c",
 ]
 
 [[package]]
@@ -10874,13 +10835,13 @@ dependencies = [
  "crc32fast",
  "criterion",
  "futures",
- "h2c",
  "k8s-openapi",
  "kube",
  "lapin",
- "operator",
+ "metrics-prometheus",
+ "peer-tls",
  "raft-core",
- "raft-host",
+ "raft-runtime",
  "redis",
  "reqwest 0.12.28",
  "rustls 0.23.40",
@@ -10891,12 +10852,12 @@ dependencies = [
  "service-auth",
  "service-backup",
  "service-http",
- "service-metrics",
- "service-tls",
+ "service-k8s",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "transport-h2c",
  "utoipa",
 ]
 
@@ -11983,10 +11944,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "server-core"
+name = "server-http"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "server-lifecycle",
+ "server-tcp",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "transport-h2c",
+]
+
+[[package]]
+name = "server-lifecycle"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "server-tcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "server-lifecycle",
+ "socket2 0.6.3",
  "tokio",
  "tracing",
 ]
@@ -12016,17 +12001,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "service-durability",
+ "storage-durable",
  "tokio",
-]
-
-[[package]]
-name = "service-durability"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crc32fast",
- "tempfile",
 ]
 
 [[package]]
@@ -12036,12 +12012,12 @@ dependencies = [
  "anyhow",
  "axum 0.8.9",
  "http-body-util",
- "http-server",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "serde",
  "serde_json",
+ "server-http",
  "tokio",
  "tower 0.5.3",
  "tower-http 0.5.2",
@@ -12052,16 +12028,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "service-metrics"
-version = "0.1.0"
-
-[[package]]
-name = "service-tls"
+name = "service-k8s"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "rustls 0.23.40",
- "rustls-pemfile",
+ "chrono",
+ "cli-std",
+ "futures",
+ "k8s-openapi",
+ "kube",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -12666,6 +12647,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "storage-durable"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crc32fast",
+ "tempfile",
+]
+
+[[package]]
 name = "str_stack"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12892,12 +12882,11 @@ dependencies = [
  "clap",
  "cli-std",
  "futures",
- "h2c",
  "http-body-util",
  "k8s-openapi",
  "kube",
- "operator",
- "raft-host",
+ "metrics-prometheus",
+ "raft-runtime",
  "reqwest 0.12.28",
  "schemars",
  "serde",
@@ -12906,13 +12895,14 @@ dependencies = [
  "service-auth",
  "service-backup",
  "service-http",
- "service-metrics",
+ "service-k8s",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
+ "transport-h2c",
  "utoipa",
 ]
 
@@ -12938,17 +12928,6 @@ name = "target-triple"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "591ef38edfb78ca4771ee32cf494cb8771944bee237a9b91fc9c1424ac4b777b"
-
-[[package]]
-name = "tcp-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "server-core",
- "socket2 0.6.3",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "tcp-stream"
@@ -13798,6 +13777,25 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "transport-h2c"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "bytes",
+ "cli-std",
+ "h2 0.4.14",
+ "http 1.4.0",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "reqwest 0.12.28",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
 ]
 
 [[package]]
