@@ -2716,10 +2716,11 @@ fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBu
         );
     }
 
-    let extension_candidates: &[&str] = if matches!(
+    let replaces_javascript_extension = matches!(
         base.extension().and_then(|e| e.to_str()),
         Some("js" | "jsx" | "mjs")
-    ) {
+    );
+    let extension_candidates: &[&str] = if replaces_javascript_extension {
         // TypeScript commonly writes `import "./module.js"` while the
         // source tree holds `module.ts` or `module.tsx`.
         &["ts", "tsx"]
@@ -2732,7 +2733,11 @@ fn resolve_test_relative_module(from: &Path, spec: &str) -> Result<Option<PathBu
         &["ts", "tsx", "js", "jsx", "mjs", "cjs"]
     };
     for ext in extension_candidates {
-        let candidate = append_test_module_extension(&base, ext);
+        let candidate = if replaces_javascript_extension {
+            base.with_extension(ext)
+        } else {
+            append_test_module_extension(&base, ext)
+        };
         if candidate.is_file() {
             return Ok(Some(candidate));
         }
@@ -2979,6 +2984,42 @@ mod tests {
         assert!(
             !code.contains("../../app.config"),
             "staged modules must not retain a source-relative dotted import: {code}"
+        );
+    }
+
+    #[test]
+    fn emitter_rewrites_explicit_javascript_imports_to_typescript_sources() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("sum.test.ts");
+        std::fs::write(
+            &source,
+            "import { sum } from './sum.js';\nexport { sum };\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source_dir.join("sum.ts"),
+            "export const sum = (left: number, right: number) => left + right;\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
+        let emitted = emitter
+            .emit(
+                &source,
+                Some("import { sum } from './sum.js';\nexport { sum };\n".to_string()),
+            )
+            .unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("file://"),
+            "explicit JavaScript imports must resolve to emitted TypeScript sources: {code}"
+        );
+        assert!(
+            !code.contains("'./sum.js'"),
+            "staged modules must not retain an unresolved JavaScript source import: {code}"
         );
     }
 
