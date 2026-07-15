@@ -1968,10 +1968,10 @@ changes:
     impl_mode: hand-written
   - path: "apps/lumen/src/raft_sm.rs"
     action: modify
-    section: rust-source-unit
+    section: schema
     description: |
-      Full-file rust-source-unit artifact is replayed from its SPEC-MANAGED CODEGEN block.
-    impl_mode: codegen
+      Semantic inventory edge only; the exact per-file source TD owns deterministic replay.
+    impl_mode: hand-written
   - path: "apps/lumen/src/reshard.rs"
     action: modify
     section: schema
