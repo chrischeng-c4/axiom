@@ -46,7 +46,6 @@ changes:
     impl_mode: hand-written
     description: "Extend the real lumen spec gen --lang py e2e test to assert SearchRequest is declared before BatchSearchItem = SearchRequest and execute the emitted models.py with python3, locking import-time safety for reference aliases."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
