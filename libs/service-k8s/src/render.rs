@@ -1036,3 +1036,27 @@ mod tests {
     }
 }
 // CODEGEN-END
+// SPEC-MANAGED: libs/service-k8s/tech-design/logic/extract-shared-stateful-service-workload-projection-primitives.md#logic
+// CODEGEN-BEGIN
+pub fn app_policy() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // SPEC-REF: libs/service-k8s/tech-design/logic/extract-shared-stateful-service-workload-projection-primitives.md#shared-stateful-workload-projection-typed_input
+    // TODO: Implement process step: Build service-k8s typed projection input
+    todo!("process: Build service-k8s typed projection input");
+    // SPEC-REF: libs/service-k8s/tech-design/logic/extract-shared-stateful-service-workload-projection-primitives.md#shared-stateful-workload-projection-statefulset
+    // TODO: Implement process step: Render common StatefulSet with downward API, storage, probes, and security defaults
+    todo!("process: Render common StatefulSet with downward API, storage, probes, and security defaults");
+    // SPEC-REF: libs/service-k8s/tech-design/logic/extract-shared-stateful-service-workload-projection-primitives.md#shared-stateful-workload-projection-services
+    // TODO: Implement process step: Render headless/client Services and PDB
+    todo!("process: Render headless/client Services and PDB");
+    // Decision: App policy enables HPA?
+    if todo!("decision: App policy enables HPA?") /* yes */ {
+        // SPEC-REF: libs/service-k8s/tech-design/logic/extract-shared-stateful-service-workload-projection-primitives.md#shared-stateful-workload-projection-render_hpa
+        // TODO: Implement process step: Render optional HPA without changing durable shard topology
+        todo!("process: Render optional HPA without changing durable shard topology");
+        todo!("terminal: Lumen and Tape retain distinct CRDs and domain policy");
+    } else { /* no */
+        todo!("terminal: Lumen and Tape retain distinct CRDs and domain policy");
+    }
+    // Terminal: preserve -> Lumen and Tape retain distinct CRDs and domain policy
+}
+// CODEGEN-END
