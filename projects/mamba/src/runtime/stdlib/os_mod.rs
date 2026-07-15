@@ -2555,6 +2555,23 @@ pub fn mb_os_fd_raw_fd(fd: i64) -> Option<i32> {
     FD_TABLE.with(|t| t.borrow().get(&fd).map(|entry| entry.file.as_raw_fd()))
 }
 
+/// Register an already-open file under the shared `FD_TABLE`, returning the
+/// Python-visible surrogate fd (#1630). Lets callers outside this module —
+/// e.g. `tempfile.mkstemp` (`tempfile_mod.rs`), which opens a real file of
+/// its own rather than going through `os.open` — hand back an fd that
+/// `os.close`/`os.read`/`os.write`/`os.lseek` can also resolve, instead of a
+/// bare placeholder int that isn't in the table and makes `os.close` raise
+/// `OSError: [Errno 9] Bad file descriptor`.
+pub fn mb_os_register_open_file(file: std::fs::File, path: String) -> i64 {
+    let fd = NEXT_FD.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    });
+    FD_TABLE.with(|t| t.borrow_mut().insert(fd, OsFdFile { file, path }));
+    fd
+}
+
 /// os.open(path, flags, mode=0o777) → int fd. Honors O_CREAT/O_WRONLY/O_RDWR/
 /// O_TRUNC/O_APPEND/O_EXCL well enough for round-trip I/O tests.
 fn mb_os_open_fd(args: &[MbValue]) -> MbValue {
