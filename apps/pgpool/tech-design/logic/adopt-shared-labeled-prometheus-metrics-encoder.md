@@ -69,7 +69,6 @@ changes:
   - { path: apps/pgpool/Cargo.toml, action: modify, section: logic, impl_mode: hand-written, description: Depend on metrics-prometheus. }
   - { path: apps/pgpool/tech-design/logic/served-admin-plane-with-drain-aware-readiness.md, action: modify, section: logic, impl_mode: hand-written, description: Record shared encoder ownership while preserving the Pgpool contract. }
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
