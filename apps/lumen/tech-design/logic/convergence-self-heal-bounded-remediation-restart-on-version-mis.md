@@ -85,3 +85,28 @@ changes:
     impl_mode: hand-written
     description: "Verify exactly-one remediation, write-ahead durability, operator-restart persistence, fence retention, and eventual convergence."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: convergence-self-heal-verification
+requirements:
+  bounded_remediation_restart:
+    id: R1
+    text: "After the persisted convergence stall budget expires with rollout complete and serving pods on the old map, the driver write-ahead claims and triggers exactly one remediation restart, keeps the fence armed while waiting, and clears the episode state only after convergence."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --features operator --test reshard_driver_e2e convergence_stall -- --nocapture
+  restart_durable_stall_budget:
+    id: R2
+    text: "A new driver process over the same persisted CR observes the original wait start and restart count, preserving both the stalled signal and the exactly-once remediation bound across operator restarts."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --features operator --test reshard_driver_e2e convergence_stall_remediation_restart_count_survives_a_simulated_operator_restart -- --exact --nocapture
+---
+flowchart TD
+    r1[R1 bounded remediation restart] --> cargo_test_p_lumen_features_operator_test_reshard_driver_e2e_convergence_stall_nocapture[cargo test -p lumen --features operator --test reshard_driver_e2e convergence_stall -- --nocapture]
+    r2[R2 restart durable stall budget] --> cargo_test_p_lumen_features_operator_test_reshard_driver_e2e_convergence_stall_remediation_restart_count_survives_a_simulated_operator_restart_exact_nocapture[cargo test -p lumen --features operator --test reshard_driver_e2e convergence_stall_remediation_restart_count_survives_a_simulated_operator_restart -- --exact --nocapture]
+```
