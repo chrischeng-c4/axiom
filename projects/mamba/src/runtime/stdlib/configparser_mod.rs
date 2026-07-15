@@ -2398,7 +2398,10 @@ pub fn mb_configparser_ConfigParser() -> MbValue {
 fn legacy_data_ptr(parser: MbValue) -> Option<MbValue> {
     parser.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get("_data").copied()
+            // #1566: `IndexMap<DictKey, _>::get(&str)` silently misses —
+            // DictKey::Str hashes via the Python-semantic domain, not Rust's
+            // `str` Hash. Use dict_get_exact_str, not a bare `.get("_data")`.
+            super::super::dict_ops::dict_get_exact_str(&lock.read().unwrap(), "_data")
         } else {
             None
         }
@@ -2586,8 +2589,14 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let m = lock.read().unwrap();
+                // #1566: bare `.get("__class__")` misses the hash domain —
+                // use dict_get_exact_str like the non-test call sites.
                 assert_eq!(
-                    extract_str(*m.get("__class__").unwrap()),
+                    extract_str(super::super::super::dict_ops::dict_get_exact_str(
+                        &m,
+                        "__class__"
+                    )
+                    .unwrap()),
                     Some("ConfigParser".to_string())
                 );
             } else {

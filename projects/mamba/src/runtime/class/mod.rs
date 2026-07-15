@@ -21889,7 +21889,11 @@ mod tests {
         let proxy = mb_super(cls, inst);
         let attr = MbValue::from_ptr(MbObject::new_str("greet".to_string()));
         let method = mb_super_getattr(proxy, attr);
-        assert_eq!(method.as_int(), Some(100)); // Base2's method
+        // #1631/#1594: super()-resolved methods are now wrapped via
+        // make_bound_method (correctness fix, unrelated to this test's
+        // int-stand-in-for-a-method setup) — unwrap __func__ like the P1
+        // descriptor tests below do (`bound_method_func_value`).
+        assert_eq!(bound_method_func_value(method).as_int(), Some(100)); // Base2's method
     }
 
     #[test]
@@ -22208,6 +22212,16 @@ mod tests {
                 );
             }
         }
+        // #1631: `mb_dir`'s Dict branch only surfaces a dict's own keys for a
+        // genuine module (`is_module_value`, backed by MODULE_VALUE_PTRS) —
+        // a plain dict shows dict-protocol method names instead (#1028 fix,
+        // so dir() on a real dict doesn't leak module-namespace keys). This
+        // test's fake "module" must be marked the same way a real one is
+        // (see `super::super::module::register_module`), or it's just an
+        // ordinary dict as far as `mb_dir` is concerned.
+        super::super::module::MODULE_VALUE_PTRS.with(|s| {
+            s.borrow_mut().insert(module as u64);
+        });
 
         let dir_list = mb_dir(MbValue::from_ptr(module));
         let names: Vec<String> = unsafe {
@@ -23533,8 +23547,10 @@ mod tests {
         let attr = MbValue::from_ptr(MbObject::new_str("value".to_string()));
         let result = mb_super_getattr(proxy, attr);
 
+        // #1631/#1594: super()-resolved methods are now wrapped via
+        // make_bound_method — unwrap __func__ (see test_super_method_lookup).
         assert_eq!(
-            result.as_int(),
+            bound_method_func_value(result).as_int(),
             Some(42),
             "super() must return parent's method value, not child's"
         );
@@ -23562,8 +23578,9 @@ mod tests {
         let proxy_c = mb_super(cls_c, inst_c);
         let attr = MbValue::from_ptr(MbObject::new_str("compute".to_string()));
         let result_c = mb_super_getattr(proxy_c, attr);
+        // #1631/#1594: unwrap the bound-method wrapper (see test_super_method_lookup).
         assert_eq!(
-            result_c.as_int(),
+            bound_method_func_value(result_c).as_int(),
             Some(15),
             "super() from C must find B.compute"
         );
@@ -23576,7 +23593,7 @@ mod tests {
         let attr2 = MbValue::from_ptr(MbObject::new_str("compute".to_string()));
         let result_b = mb_super_getattr(proxy_b, attr2);
         assert_eq!(
-            result_b.as_int(),
+            bound_method_func_value(result_b).as_int(),
             Some(10),
             "super() from B must find A.compute"
         );
@@ -23604,8 +23621,9 @@ mod tests {
         let proxy = mb_super(cls, inst);
         let attr = MbValue::from_ptr(MbObject::new_str("__init__".to_string()));
         let result = mb_super_getattr(proxy, attr);
+        // #1631/#1594: unwrap the bound-method wrapper (see test_super_method_lookup).
         assert_eq!(
-            result.as_int(),
+            bound_method_func_value(result).as_int(),
             Some(777),
             "super().__init__() must find parent's __init__"
         );
