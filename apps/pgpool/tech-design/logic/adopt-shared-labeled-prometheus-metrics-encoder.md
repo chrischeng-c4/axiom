@@ -14,32 +14,50 @@ entry: collect
 nodes:
   collect:
     kind: start
-    label: Pgpool collects live per-pool gauge values as shared labeled samples
-  normalize:
+    label: Pgpool reads live ConnectionBudget and BackendPool stats in configured pool order
+  adapt:
     kind: process
-    label: metrics-prometheus sorts every sample label set by label name
-  escape:
+    label: Build three SampleGroup values; each LabeledSample owns Label entries and the live u64 value
+  group_loop:
+    kind: process
+    label: metrics-prometheus writes HELP and TYPE once for each group in caller order
+  sort_labels:
+    kind: process
+    label: For each row, sort label references by name then value without mutating caller data
+  escape_labels:
     kind: process
     label: Escape backslash, double quote, and newline in every label value
-  render:
+  render_row:
     kind: process
-    label: Emit HELP and TYPE once per supplied sample group, followed by deterministic labeled rows
+    label: Write metric name, canonical brace-delimited labels, and value; preserve sample order
+  more_rows:
+    kind: decision
+    label: More samples or groups remain
   response:
     kind: terminal
-    label: Pgpool serves the byte-compatible Prometheus 0.0.4 response
+    label: Return deterministic Prometheus 0.0.4 bytes with the existing Pgpool metric contract
 edges:
-  - { from: collect, to: normalize }
-  - { from: normalize, to: escape }
-  - { from: escape, to: render }
-  - { from: render, to: response }
+  - { from: collect, to: adapt }
+  - { from: adapt, to: group_loop }
+  - { from: group_loop, to: sort_labels }
+  - { from: sort_labels, to: escape_labels }
+  - { from: escape_labels, to: render_row }
+  - { from: render_row, to: more_rows }
+  - { from: more_rows, to: sort_labels, label: next sample }
+  - { from: more_rows, to: group_loop, label: next group }
+  - { from: more_rows, to: response, label: complete }
 ---
-flowchart LR
-  collect[Collect live Pgpool gauges] --> normalize[Sort labels]
-  normalize --> escape[Escape label values]
-  escape --> render[Shared HELP TYPE and row rendering]
-  render --> response([Serve unchanged metrics contract])
+flowchart TD
+  collect([Read live Pgpool pool state]) --> adapt[Build shared SampleGroup and LabeledSample values]
+  adapt --> group_loop[Emit group HELP and TYPE]
+  group_loop --> sort_labels[Sort labels by name then value]
+  sort_labels --> escape_labels[Escape label values]
+  escape_labels --> render_row[Emit labeled row]
+  render_row --> more_rows{More rows or groups?}
+  more_rows -->|next row| sort_labels
+  more_rows -->|next group| group_loop
+  more_rows -->|done| response([Return unchanged scrape contract])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
