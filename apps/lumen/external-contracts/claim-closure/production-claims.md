@@ -494,7 +494,7 @@ e2e_tests:
       - "The live kind dogfood path covers multi-shard and replicated-shard operator profiles."
   - id: lumen-claim-dynamic-reshard-durability
     capability_id: dynamic-shard-topology
-    claim_id: reshard-driver-admin-verb-and-cold-start-migration-durability
+    claim_id: reshard-apply-evict-synchronous-checkpoint
     contract_id: dynamic-reshard-durability
     category: behavior
     command: "cargo test -p lumen --features operator --test reshard_driver_e2e -- --nocapture && cargo test -p lumen --test reshard_admin_e2e -- --nocapture && cargo test -p lumen --lib segment_rdb -- --nocapture"

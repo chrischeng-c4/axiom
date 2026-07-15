@@ -1707,7 +1707,7 @@
       },
       "PrefixQuery": {
         "type": "object",
-        "description": "Case-sensitive UTF-8 starts-with query for `keyword` fields.",
+        "description": "Case-sensitive UTF-8 starts-with query for `keyword` fields.\n@spec apps/lumen/tech-design/logic/native-prefix-wildcard-query-for-keyword-fields.md#logic",
         "required": [
           "field",
           "value"
@@ -2145,7 +2145,7 @@
       },
       "SearchAllRequest": {
         "type": "object",
-        "description": "`POST /collections/{id}/search:all` body. This is an explicitly expensive\nfull-materialization operation for export/maintenance workflows; ordinary\ninteractive queries should use [`SearchRequest`] pagination.",
+        "description": "`POST /collections/{id}/search:all` body. This is an explicitly expensive\nfull-materialization operation for export/maintenance workflows; ordinary\ninteractive queries should use [`SearchRequest`] pagination.\n@spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source",
         "required": [
           "query"
         ],
@@ -2168,7 +2168,7 @@
       },
       "SearchAllResponse": {
         "type": "object",
-        "description": "Complete matching id set returned by `search:all` from one local read-lock\nsnapshot, or from one snapshot per routed shard (there is intentionally no\ncross-shard transaction).",
+        "description": "Complete matching id set returned by `search:all` from one local read-lock\nsnapshot, or from one snapshot per routed shard (there is intentionally no\ncross-shard transaction).\n@spec apps/lumen/tech-design/semantic/source/apps-lumen-src-types-rs.md#source",
         "required": [
           "external_ids",
           "total",

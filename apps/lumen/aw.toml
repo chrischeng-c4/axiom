@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:09b8b781f8c76710448f282d4bf4f9f6263b29ab9f508e4f15037fe5d9e6e87f"
+generated_from_td_digest = "sha256:e13222b63e85fbfdda544d17ae6c83f955ae9f14158702db112b30f859d588ce"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -272,7 +272,7 @@ assertions = ["The live kind dogfood path covers multi-shard and replicated-shar
 [[aw.ec.generated.cases]]
 id = "lumen-claim-dynamic-reshard-durability"
 capability_id = "dynamic-shard-topology"
-claim_id = "reshard-driver-admin-verb-and-cold-start-migration-durability"
+claim_id = "reshard-apply-evict-synchronous-checkpoint"
 contract_id = "dynamic-reshard-durability"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-reshard-durability"

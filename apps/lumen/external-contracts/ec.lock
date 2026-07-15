@@ -3,13 +3,13 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "apps/lumen/external-contracts"
 inventory_path = "apps/lumen/aw.toml"
-generated_at = "2026-07-15T13:37:52.147215+00:00"
-ir_digest = "sha256:758df36a8dc52507dca307ebb07b17882b943a8aa6112f8c77874340ff3e0729"
-source_digest = "sha256:735c10b00df0c9bb8f104202d0e94765c6534e51cad81acf2dc7c40c1e98c700"
+generated_at = "2026-07-15T19:29:37.314238+00:00"
+ir_digest = "sha256:076d8f6670b28fcd40c6dbb457b0d99817709fb8019d123b0b0f047d468664d5"
+source_digest = "sha256:19d080670df6d4ccf02b600ff19874d8c71d3db7fbe134e128252a568d9eb3e9"
 
 [[sources]]
 path = "apps/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:da0f3d98222148ab9bb25fcabf53020ed612221997288864007aaee4130dd01a"
+digest = "sha256:a3649952ead5c9e30786baf6616a9a4b0a9d4bd2462cbf85d7f770549f12f475"
 
 [[sources]]
 path = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
@@ -354,7 +354,7 @@ digest = "sha256:b41314a3c993e713b54e56be40dc588cd3232a74ab9084b2741d4179c74f6cb
 [[cases]]
 id = "lumen-claim-dynamic-reshard-durability"
 capability_id = "dynamic-shard-topology"
-claim_id = "reshard-driver-admin-verb-and-cold-start-migration-durability"
+claim_id = "reshard-apply-evict-synchronous-checkpoint"
 contract_id = "dynamic-reshard-durability"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-reshard-durability"
@@ -364,7 +364,7 @@ required_for_production = true
 assertions = ["The checkpointed reshard phase driver (state machine, checkpoint-gated cutover, no-transition guard), the four reshard/backup admin verbs (scoped export, additive apply, source eviction, on-demand checkpoint) including idempotency and auth, and cold-start durability of applied/evicted reshard mutations all pass — keeping the migration-path regression class #1389 fixed under standing gate."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:e748233bdaba12b9fd73477726e5a5dcd0e619a30552fc6548fadb8dae77b493"
+digest = "sha256:ac046aad13ac5bcd342e24b2cb5f78c0941e435f5a3a39cf8e0d8eb6c7733e1c"
 
 [[cases]]
 id = "lumen-claim-dynamic-storage-pressure-split-policy"

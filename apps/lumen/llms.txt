@@ -24,7 +24,7 @@
 - Build debug: `./build.sh debug`.
 - Build release: `./build.sh release`.
 - Install: repo root `install.sh --project=lumen` dispatches to `./install.sh`.
-- Test: `cargo test -p lumen --lib --bins`.
+- Test: `cargo test -p lumen`.
 
 ## Root Artifacts
 
