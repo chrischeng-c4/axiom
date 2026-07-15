@@ -79,3 +79,116 @@ The per-endpoint invariant is extended rather than replaced: discovered usable c
 BackendPool remains local and reuse-first. Any waiter may take a reset-clean normal backend. Only after reservePoolTimeout does it signal bounded demand to a background lease client. The client coalesces requests and renewals; relay, reset, and queue-wake paths only inspect an in-memory lease snapshot. A new reserve TCP connection consumes a cached grant before dialing. Failed connect, failed reset, cancellation, expiry, and drain converge on one idempotent reconciliation key, returning or retaining capacity exactly once.
 
 Fairness is FIFO among live waiters per endpoint. Cancellation and completed waiters are skipped lazily without changing deadline order. Allocator denial, controller unavailability, endpoint failure, and expiry prohibit new reserve connections but leave normal reuse and valid existing grants available. A waiter wakes on normal capacity or returns BackendPoolSaturated with SQLSTATE 53300 at queueWaitTimeout. Idle reserve backends close after the configured TTL; draining Pods retain grants through physical close or safely reconciled expiry.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/k8s/budget.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Extend endpoint accounting with reserve-grant chunk admission, expiry, idempotent release, and the invariant over base, grant, connect, active, idle, and drain capacity.
+  - path: apps/pgpool/src/k8s/reserve.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: Define deterministic reserve grant requests, grant tokens, expiry and reconciliation transitions independently of Kubernetes transport.
+  - path: apps/pgpool/src/k8s/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Export reserve allocation models to the operator and runtime integration.
+  - path: apps/pgpool/src/operator/crd.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Add normal/reserve/wait policy, lease-grant status, allocator availability, and endpoint reserve telemetry to the Pgpool CRD contract.
+  - path: apps/pgpool/src/operator/reconcile.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Reconcile bounded Pod endpoint reserve requests atomically against discovered or fallback capacity and retain grants through drain/expiry.
+  - path: apps/pgpool/src/operator/render.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Render the admitted normal capacity and reserve policy/runtime endpoint configuration into stateless Pods.
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Carry the normal/reserve wait policy in the pure Deployment instance renderer.
+  - path: apps/pgpool/src/pool/types.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Replace the single local cap vocabulary with endpoint normal/reserve policy, bounded wait phases, and reserve-aware pool stats.
+  - path: apps/pgpool/src/pool/reserve.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: Implement the asynchronous batched reserve lease cache/client, active-grant spend/reconcile rules, renewal, expiration, and diagnostic counters.
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Preserve idle-first acquisition while adding normal wait then reserve admission to the legacy backend-pool path.
+  - path: apps/pgpool/src/pool/reactor/state.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Add endpoint FIFO waiter phases and reserve-grant ownership to the default readiness reactor state machine.
+  - path: apps/pgpool/src/pool/reactor/runtime.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Drive monotonic reserve/queue deadlines and only consult the in-memory grant snapshot from the transaction hot path.
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Wire reserve-aware transaction admission for the explicit legacy engine without altering session-pool behavior.
+  - path: apps/pgpool/src/pool/telemetry.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Emit bounded queue, reuse, normal-open, reserve-open, grant-denial, expiry, and allocator-unavailable diagnostics.
+  - path: apps/pgpool/src/pool/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Export reserve policy, grant client, and reserve-aware telemetry contracts.
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Read rendered reserve policy and endpoint lease-client settings while keeping safe defaults for non-Kubernetes local use.
+  - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Surface diagnostic queue/reuse/normal/reserve metrics without changing the independent peer-winner policy.
+  - path: apps/pgpool/tests/pool.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: Verify idle-first reuse, reserve timeout gating, queue deadline, cancellation, failed connect, reset failure, and exactly-once grant reconciliation.
+  - path: apps/pgpool/tests/pool_modes.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: Verify the default reactor and legacy transaction engine preserve fairness and fail closed without affecting session mode.
+  - path: apps/pgpool/tests/operator.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: Prove a deterministic multi-Pod request race cannot over-grant one endpoint and that status distinguishes exhaustion from allocator unavailability.
+  - path: apps/pgpool/tests/pgbouncer_benchmark.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: Pin benchmark telemetry field parsing and diagnostic-only labeling.
+```
