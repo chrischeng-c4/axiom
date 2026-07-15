@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-15T14:19:29.975092+00:00"
-digest = "sha256:120e942e45b1de9c9417d622603b75a929a608cb38c8212aa769b112c5ccd2ee"
-source_digest = "sha256:120e942e45b1de9c9417d622603b75a929a608cb38c8212aa769b112c5ccd2ee"
-ir_digest = "sha256:b484311fa3fe1f8fb771120e65d26e5b9575e9b33fa4ec801acec2f258d0d4c2"
+generated_at = "2026-07-15T14:39:51.704077+00:00"
+digest = "sha256:9b0cb0440b9bca1cbf2ea5bfbe6659b6e6f4a407c3fc7751fcb99cd10b16b9ab"
+source_digest = "sha256:9b0cb0440b9bca1cbf2ea5bfbe6659b6e6f4a407c3fc7751fcb99cd10b16b9ab"
+ir_digest = "sha256:3c00edc0abd681d9b52aa48e112e0b218db2afe1eade3751e899563b3b8a7460"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -167,6 +167,12 @@ section_count = 4
 path = "logic/render-serving-as-a-statefulset-unconditionally-even-at-replicas.md"
 digest = "sha256:47eb4274ea15c6a33bba7df0cb32bcde32f9b0529a477056dd86418f51afdbd3"
 ir_digest = "sha256:daf7a53c289230c6b115bbd0720dd19b7e8ee7772e90aba887ad7e1ce1e9bec0"
+section_count = 3
+
+[[files]]
+path = "logic/repo-taxonomy-move-lumen-from-projects-lumen-to-apps-lumen.md"
+digest = "sha256:029bb7c9f0e8c40f1b3e6272678cd2abb995fa1d979e9291ce475ead403cea13"
+ir_digest = "sha256:44cd25cf65b7729bc1206ca8fc0ad9b14496fdc237aedf2fc1eed01b2976fc7d"
 section_count = 3
 
 [[files]]
