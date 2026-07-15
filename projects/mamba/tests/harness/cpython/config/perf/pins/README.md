@@ -7,6 +7,33 @@ Each `*.toml` in this directory declares one perf-pin: `issue`, `lib`,
 ship-profile runtime RSS floor), `samples` (median-of-N), and `prereq_imports`
 (skip the pin if these Python modules aren't importable in the oracle env).
 
+## `sentinel = true`: quarantining shim-backed pins from readiness evidence (#1514)
+
+Some third-party pins' `fixture` only exercises a hand-written
+module-attribute-identity shim in `src/runtime/stdlib/<lib>_mod.rs` (a
+58-77-line callable-dispatcher stub that returns identity-stable sentinel
+callables — see that file's own doc comment) rather than a real
+pyo3/tonic/prost-backed implementation. Such a pin still passes and is
+otherwise indistinguishable from a pin backed by real conformance work, so it
+carries `sentinel = true` (an extra key the `perf_pin.rs` gate ignores; the
+enforcement behavior — floor/mem_floor/samples — is unchanged) to mark it.
+
+`sentinel = true` pins remain real, enforced perf/RSS regression gates for
+their shim's own code path, but readiness rollups must exclude them from
+"N pins are conformance-ready" evidence: `tests/harness/cpython/status.rs`
+reports `perf.sentinel_pins` / `perf.non_sentinel_pins` alongside the
+existing `perf.pins` total, and
+`tests/harness/cpython/tools/replacement_readiness.py`'s `perf_rss_baselines`
+(#707) dimension gates and summarizes on `non_sentinel_pins` only. The full
+quarantine list and marking rule are recorded on #1119; the authoritative,
+grep-verifiable list is `grep -l 'sentinel = true' *.toml` in this directory,
+which must match 1:1 against `grep -l 'Minimal callable-dispatcher shim'
+../../../../../../src/runtime/stdlib/*.rs` restricted to third-party
+(non-stdlib) modules — as of #1514, 49 pins (`bdb`, `compileall`,
+`multiprocessing`, and `concurrent_futures` share the same shim doc-comment
+phrase but are excluded: they are CPython stdlib modules with substantial
+non-shim implementation beyond the 58-77-line pure-sentinel pattern).
+
 The gate itself lives in `tests/harness/cpython/perf_pin.rs`, registered as a
 `harness=false` cargo test named `perf_pin` in the repo-root `Cargo.toml`. It
 measures mamba live via external `getrusage`/`/usr/bin/time` on every run and

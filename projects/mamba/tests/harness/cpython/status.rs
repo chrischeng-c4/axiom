@@ -143,6 +143,12 @@ struct PerfPin {
     fixture_rel: String,
     fixture_path: PathBuf,
     prereq_imports: Vec<String>,
+    /// #1514: `sentinel = true` marks a pin whose fixture measures a
+    /// hand-written module-attribute-identity shim (see the `<lib>_mod.rs`
+    /// doc comment) rather than a real pyo3/tonic/prost-backed
+    /// implementation. Readiness rollups must not count these pins as
+    /// third-party conformance evidence; see #1119 for the quarantine list.
+    sentinel: bool,
 }
 
 impl PerfPin {
@@ -159,6 +165,7 @@ impl PerfPin {
             "issue": self.issue,
             "lib": self.lib,
             "fixture": self.fixture_rel,
+            "sentinel": self.sentinel,
         })
     }
 }
@@ -205,6 +212,10 @@ fn load_perf_pins() -> (Vec<PerfPin>, Vec<String>) {
                     .collect()
             })
             .unwrap_or_default();
+        let sentinel = parsed
+            .get("sentinel")
+            .and_then(TomlValue::as_bool)
+            .unwrap_or(false);
 
         pins.push(PerfPin {
             rel_path,
@@ -212,6 +223,7 @@ fn load_perf_pins() -> (Vec<PerfPin>, Vec<String>) {
             lib,
             fixture_rel: fixture_rel.to_string(),
             fixture_path: manifest_dir().join(fixture_rel),
+            sentinel,
             prereq_imports,
         });
     }
@@ -259,6 +271,10 @@ struct PerfBaselineSummary {
     db_exists: bool,
     rows: usize,
     pins: usize,
+    /// #1514: count of `pins` above that carry `sentinel = true` (shim-backed,
+    /// not real third-party conformance evidence). `pins - sentinel_pins` is
+    /// the count a readiness rollup should treat as evidence.
+    sentinel_pins: usize,
     malformed_pins: Vec<String>,
     missing_rows: Vec<PerfPin>,
     recordable_missing_rows: Vec<PerfPin>,
@@ -286,6 +302,7 @@ fn perf_baseline_summary() -> PerfBaselineSummary {
         db_exists: db.exists(),
         rows: 0,
         pins: pins.len(),
+        sentinel_pins: pins.iter().filter(|pin| pin.sentinel).count(),
         malformed_pins,
         ..Default::default()
     };
@@ -591,6 +608,12 @@ fn main() {
                 "cpython_denominator": denominator,
                 "perf": {
                     "pins": perf.pins,
+                    // #1514: pins backed by a hand-written sentinel shim (no
+                    // pyo3/tonic/prost implementation). `non_sentinel_pins` is
+                    // the count a readiness rollup should treat as
+                    // third-party-conformance evidence; see #1119.
+                    "sentinel_pins": perf.sentinel_pins,
+                    "non_sentinel_pins": perf.pins - perf.sentinel_pins,
                     "baseline_db": perf.db_path,
                     "baseline_db_exists": perf.db_exists,
                     "baseline_rows": perf.rows,
@@ -679,6 +702,10 @@ fn main() {
         println!("  denominator error: {err}");
     }
     println!("  perf pins: {}", perf.pins);
+    println!(
+        "  perf sentinel pins (shim-backed, excluded from readiness evidence, #1119): {}",
+        perf.sentinel_pins
+    );
     println!("  perf baseline db: {}", perf.db_path.display());
     println!("  perf baseline db exists: {}", perf.db_exists);
     println!("  perf baseline rows: {}", perf.rows);
