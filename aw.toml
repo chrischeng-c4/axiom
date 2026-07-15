@@ -787,13 +787,13 @@ test_cmd = "cargo test -p build-stamp"
 verify_cold = false
 
 [[projects]]
-name = "claimtoken"
-path = "libs/claimtoken"
+name = "claim-token"
+path = "libs/claim-token"
 
 [[projects.workspaces]]
-paths = ["libs/claimtoken/**"]
+paths = ["libs/claim-token/**"]
 target = "rust"
-test_cmd = "cargo test -p claimtoken"
+test_cmd = "cargo test -p claim-token"
 verify_cold = false
 
 [[projects]]
@@ -817,23 +817,23 @@ test_cmd = "cargo test -p cclab-compass"
 verify_cold = false
 
 [[projects]]
-name = "h2c"
-path = "libs/h2c"
+name = "transport-h2c"
+path = "libs/transport-h2c"
 
 [[projects.workspaces]]
-paths = ["libs/h2c/**"]
+paths = ["libs/transport-h2c/**"]
 target = "rust"
-test_cmd = "cargo test -p h2c"
+test_cmd = "cargo test -p transport-h2c"
 verify_cold = false
 
 [[projects]]
-name = "http-server"
-path = "libs/http-server"
+name = "server-http"
+path = "libs/server-http"
 
 [[projects.workspaces]]
-paths = ["libs/http-server/**"]
+paths = ["libs/server-http/**"]
 target = "rust"
-test_cmd = "cargo test -p http-server"
+test_cmd = "cargo test -p server-http"
 verify_cold = false
 
 [[projects]]
@@ -847,13 +847,13 @@ test_cmd = "cargo test -p cclab-openapi-codegen"
 verify_cold = false
 
 [[projects]]
-name = "operator"
-path = "libs/operator"
+name = "service-k8s"
+path = "libs/service-k8s"
 
 [[projects.workspaces]]
-paths = ["libs/operator/**"]
+paths = ["libs/service-k8s/**"]
 target = "rust"
-test_cmd = "cargo test -p operator"
+test_cmd = "cargo test -p service-k8s"
 verify_cold = false
 
 [[projects]]
@@ -867,23 +867,23 @@ test_cmd = "cargo test -p raft-core"
 verify_cold = false
 
 [[projects]]
-name = "raft-host"
-path = "libs/raft-host"
+name = "raft-runtime"
+path = "libs/raft-runtime"
 
 [[projects.workspaces]]
-paths = ["libs/raft-host/**"]
+paths = ["libs/raft-runtime/**"]
 target = "rust"
-test_cmd = "cargo test -p raft-host"
+test_cmd = "cargo test -p raft-runtime"
 verify_cold = false
 
 [[projects]]
-name = "server-core"
-path = "libs/server-core"
+name = "server-lifecycle"
+path = "libs/server-lifecycle"
 
 [[projects.workspaces]]
-paths = ["libs/server-core/**"]
+paths = ["libs/server-lifecycle/**"]
 target = "rust"
-test_cmd = "cargo test -p server-core"
+test_cmd = "cargo test -p server-lifecycle"
 verify_cold = false
 
 [[projects]]
@@ -907,13 +907,13 @@ test_cmd = "cargo test -p service-backup"
 verify_cold = false
 
 [[projects]]
-name = "service-durability"
-path = "libs/service-durability"
+name = "storage-durable"
+path = "libs/storage-durable"
 
 [[projects.workspaces]]
-paths = ["libs/service-durability/**"]
+paths = ["libs/storage-durable/**"]
 target = "rust"
-test_cmd = "cargo test -p service-durability"
+test_cmd = "cargo test -p storage-durable"
 verify_cold = false
 
 [[projects]]
@@ -927,23 +927,23 @@ test_cmd = "cargo test -p service-http"
 verify_cold = false
 
 [[projects]]
-name = "service-metrics"
-path = "libs/service-metrics"
+name = "metrics-prometheus"
+path = "libs/metrics-prometheus"
 
 [[projects.workspaces]]
-paths = ["libs/service-metrics/**"]
+paths = ["libs/metrics-prometheus/**"]
 target = "rust"
-test_cmd = "cargo test -p service-metrics"
+test_cmd = "cargo test -p metrics-prometheus"
 verify_cold = false
 
 [[projects]]
-name = "service-tls"
-path = "libs/service-tls"
+name = "peer-tls"
+path = "libs/peer-tls"
 
 [[projects.workspaces]]
-paths = ["libs/service-tls/**"]
+paths = ["libs/peer-tls/**"]
 target = "rust"
-test_cmd = "cargo test -p service-tls"
+test_cmd = "cargo test -p peer-tls"
 verify_cold = false
 
 [[projects]]
@@ -957,13 +957,13 @@ test_cmd = "cargo test -p cclab-surface"
 verify_cold = false
 
 [[projects]]
-name = "tcp-server"
-path = "libs/tcp-server"
+name = "server-tcp"
+path = "libs/server-tcp"
 
 [[projects.workspaces]]
-paths = ["libs/tcp-server/**"]
+paths = ["libs/server-tcp/**"]
 target = "rust"
-test_cmd = "cargo test -p tcp-server"
+test_cmd = "cargo test -p server-tcp"
 verify_cold = false
 
 [[projects]]
