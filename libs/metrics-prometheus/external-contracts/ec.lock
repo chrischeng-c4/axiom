@@ -1,0 +1,31 @@
+version = 1
+project = "metrics-prometheus"
+ir_kind = "ec"
+ec_path = "libs/metrics-prometheus/external-contracts"
+inventory_path = "libs/metrics-prometheus/aw.toml"
+generated_at = "2026-07-15T07:39:35.213363+00:00"
+ir_digest = "sha256:65c85b52022396db53ebfbbd1138afea0c6d799642517b8b50818478e8043281"
+source_digest = "sha256:3257b9ab3b4a04e60371fa3f3d4ee81083b99be75871688e4820b866398d1c9a"
+tool_contracts = []
+
+[[sources]]
+path = "libs/metrics-prometheus/external-contracts/behavior/shared-prometheus-metric-primitives-contract.md"
+digest = "sha256:bec6a407d3261dcc6ca1e1e7a86f6b62f244648c6772d2ea2337d6a2a7016e18"
+
+[[cases]]
+id = "shared-prometheus-metric-primitives-contract"
+capability_id = "shared-prometheus-metric-primitives"
+claim_id = "shared-prometheus-metric-primitives-contract"
+contract_id = "shared-prometheus-metric-primitives-contract"
+dimension = "behavior"
+source_ref = "libs/metrics-prometheus/external-contracts/behavior/shared-prometheus-metric-primitives-contract.md#shared-prometheus-metric-primitives-contract"
+test_path = "libs/metrics-prometheus/tests/behavior_shared_prometheus_metric_primitives_contract.rs"
+command = "cargo test -p metrics-prometheus"
+required_for_production = true
+assertions = [
+    "Shared Prometheus Metric Primitives public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:b62a2418480cc7e49ca68a566a94afd34e4c3a3cff20acfd5642df05ec7f1e0c"

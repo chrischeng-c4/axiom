@@ -2,7 +2,7 @@
 name = "service-auth"
 version = "0.1.0"
 edition = "2021"
-description = "Shared request-auth middleware for the ecosystem's HTTP services: the generic extract -> verify -> reject -> inject plumbing plus a `Verifier` trait each service implements. Token crypto lives in `libs/claimtoken`; per-resource authorization (RBAC, scope-vs-key) stays in the service handlers. The common shape lumen/keep/relay/loom each hand-roll today."
+description = "Shared request-auth middleware for the ecosystem's HTTP services: the generic extract -> verify -> reject -> inject plumbing plus a `Verifier` trait each service implements. Token crypto lives in `libs/claim-token`; per-resource authorization (RBAC, scope-vs-key) stays in the service handlers. The common shape lumen/keep/relay/loom each hand-roll today."
 
 [lib]
 name = "service_auth"

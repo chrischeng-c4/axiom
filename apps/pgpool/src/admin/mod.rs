@@ -2,8 +2,8 @@
 // <HANDWRITE gap="missing-generator:logic:pgpool-admin-plane" tracker="#1290" reason="Admin plane needs generator primitives that do not exist yet.">
 //! Served admin HTTP plane (TD Logic/Schema sections): a hand-rolled axum
 //! router bound on `RuntimePlan.admin_bind` via
-//! `http_server::serve_h2c_with_options`, sharing ONE
-//! `server_core::DrainController` with the TCP frontend so `/readyz` and
+//! `server_http::serve_h2c_with_options`, sharing ONE
+//! `server_lifecycle::DrainController` with the TCP frontend so `/readyz` and
 //! `POST /drain` observe/drive the exact same drain state SIGTERM/SIGINT
 //! does (R2). Hand-rolled rather than `service_http::standard_probe_routes`
 //! because that helper's `openapi` argument is
@@ -24,5 +24,5 @@ mod wiring;
 pub use router::{build_router, ADMIN_ROUTES};
 pub use state::{AdminState, NamedPool};
 pub use types::{DrainResponse, PoolListResponse, PoolStatsResponse, ReadyzResponse};
-pub use wiring::{drain_on_shutdown_signal, wire_tcp_server_drain};
+pub use wiring::{drain_on_shutdown_signal, wire_server_tcp_drain};
 // </HANDWRITE>

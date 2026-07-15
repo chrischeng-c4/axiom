@@ -237,7 +237,8 @@ async fn bench_relay_h2c(args: &Args, plan: &Plan) -> Result<()> {
     };
 
     let clients = args.relay_clients.unwrap_or(args.concurrency).max(1);
-    let pool = h2c::H2cPool::with_connections_and(clients, Some(Duration::from_secs(10)), None)?;
+    let pool =
+        transport_h2c::H2cPool::with_connections_and(clients, Some(Duration::from_secs(10)), None)?;
     for _ in 0..pool.connections() {
         let _ = pool.get(format!("{}/healthz", args.relay_url)).send().await;
     }

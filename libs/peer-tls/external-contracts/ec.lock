@@ -1,0 +1,31 @@
+version = 1
+project = "peer-tls"
+ir_kind = "ec"
+ec_path = "libs/peer-tls/external-contracts"
+inventory_path = "libs/peer-tls/aw.toml"
+generated_at = "2026-07-15T07:39:49.607907+00:00"
+ir_digest = "sha256:a130697f6a06886dbeae075cc90e581a30a333e1855abe9222cc21e59f13893c"
+source_digest = "sha256:462c707331dbddbe886cc55b54ffc0c1c8d78271fdc102919e8c5f7b8e260ad7"
+tool_contracts = []
+
+[[sources]]
+path = "libs/peer-tls/external-contracts/behavior/shared-peer-mtls-material-loading-contract.md"
+digest = "sha256:13f9ad0c09fe2d29709fca9fc7158de0f6a35e3fdd1a28235d11711b3ffe8368"
+
+[[cases]]
+id = "shared-peer-mtls-material-loading-contract"
+capability_id = "shared-peer-mtls-material-loading"
+claim_id = "shared-peer-mtls-material-loading-contract"
+contract_id = "shared-peer-mtls-material-loading-contract"
+dimension = "behavior"
+source_ref = "libs/peer-tls/external-contracts/behavior/shared-peer-mtls-material-loading-contract.md#shared-peer-mtls-material-loading-contract"
+test_path = "libs/peer-tls/tests/behavior_shared_peer_mtls_material_loading_contract.rs"
+command = "cargo test -p peer-tls"
+required_for_production = true
+assertions = [
+    "Shared Peer mTLS Material Loading public Rust API behavior remains covered by the configured library test suite.",
+    "The library contract stays usable through its documented README capability surface.",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:5afaa4776379ff80d10e734dac6caa1b5036f4e83e339e3dc710b863ef7e559b"

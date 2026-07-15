@@ -89,7 +89,7 @@ spec:
     matchLabels:
       app: relay
 ---
-# The auto-mode HA topology: the standard downward-API quartet raft-host reads.
+# The auto-mode HA topology: the standard downward-API quartet raft-runtime reads.
 # REPLICAS_PER_SHARD > 1 flips the single `relay` entrypoint into replica mode;
 # keep spec.replicas == SHARD_COUNT * REPLICAS_PER_SHARD and VOTER_COUNT odd.
 apiVersion: apps/v1

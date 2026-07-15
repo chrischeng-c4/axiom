@@ -60,6 +60,17 @@ spec:
             matchLabels:
               app: lumen
               role: server
+      # Production data-plane baseline: one Lumen pod per node. Pending pods
+      # are the portable signal Cluster Autoscaler uses; no provider-specific
+      # node-pool detection is required.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: lumen
+                  role: server
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: lumen
           image: lumen:latest
@@ -103,13 +114,12 @@ spec:
                 configMapKeyRef:
                   name: lumen-config
                   key: SHARD_COUNT
-          # QoS Guaranteed: requests == limits.
+          # Request-only baseline. The deployer edits its overlay for the
+          # actual node pool; no limits lets this dedicated pod use idle node
+          # capacity.
           resources:
             requests:
-              cpu: "2"
-              memory: 4Gi
-            limits:
-              cpu: "2"
+              cpu: "1"
               memory: 4Gi
           readinessProbe:
             # 503 until the process has finished startup/recovery (and again

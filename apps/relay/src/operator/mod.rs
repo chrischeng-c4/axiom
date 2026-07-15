@@ -2,7 +2,7 @@
 //! K8s operator for relay: a `Relay` custom resource ([`crd`]) plus a
 //! reconcile loop ([`reconcile`]) that renders ([`render`]) relay's HA
 //! topology — ServiceAccount, headless + client Services, PodDisruptionBudget,
-//! and the downward-API StatefulSet raft-host consumes. Behind the `operator`
+//! and the downward-API StatefulSet raft-runtime consumes. Behind the `operator`
 //! feature so the serving image never links kube-rs.
 //!
 //! ```text

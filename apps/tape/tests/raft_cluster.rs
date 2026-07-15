@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/tape/tech-design/logic/tape-raft-host-primary-replicas.md#unit-test
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:0ca51618" tracker="pending-tracker" reason="An in-process 3-node TapeRaft group over real h2c listeners (relay's tests/raft_cluster.rs shape, adapted to tape's Append/CheckpointPut commands): exactly one leader; a leader append is applied and readable on every node's journal; a follower append is forwarded to the leader by the host; a direct follower POST to the host's peer route answers 421 not-leader; killing (aborting) the leader's task re-elects a survivor with no committed loss; a small SnapshotPolicy threshold compacts the leader's raft log so a late-started fresh node catches up via InstallSnapshot instead of full log replay."
-//! raft-host cluster integration (#1327): 3 `TapeRaft` nodes over real h2c.
+//! raft-runtime cluster integration (#1327): 3 `TapeRaft` nodes over real h2c.
 //!
 //! Mirrors relay's `tests/raft_cluster.rs` (#544) shape: election, a leader
 //! append applied on every node's journal, a follower append forwarded by
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use raft_host::Membership;
+use raft_runtime::Membership;
 use tape::raft::TapeRaft;
 use tape::TapeJournal;
 

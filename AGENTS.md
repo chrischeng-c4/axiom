@@ -201,7 +201,7 @@ branches are:
   as `app/jet` or `app/aw`; their local worktree directories use underscores,
   such as `app_jet`.
 - `lib/{name}` — persistent work-area branches for `libs/` internal libraries,
-  such as `lib/openapi-codegen` or `lib/raft-host`; their local worktree
+  such as `lib/openapi-codegen` or `lib/raft-runtime`; their local worktree
   directories use underscores, such as `lib_openapi-codegen`.
 - `project-mamba` and `project-lumen` — retained legacy project work-area
   branches while those two roots remain under `projects/`.

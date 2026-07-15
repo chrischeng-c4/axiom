@@ -321,10 +321,10 @@ async fn issue(args: IssueArgs) -> Result<()> {
 }
 
 /// `serve_entry` in the TD Logic flowchart: build a `TcpServerConfig` from
-/// `RuntimePlan` with NO tcp-server-level `ConnectionBudget` wired in (the
+/// `RuntimePlan` with NO server-tcp-level `ConnectionBudget` wired in (the
 /// `SessionHandler`/`TransactionHandler` enforce their own admission so a
 /// rejection can write a wire-level `ErrorResponse` before closing), share
-/// ONE `server_core::DrainController` between the TCP frontend and the
+/// ONE `server_lifecycle::DrainController` between the TCP frontend and the
 /// admin plane (`share_drain`), spawn the SIGTERM/SIGINT signal task
 /// (`spawn_signal_task`), build the admin router (`build_admin_router`),
 /// then run both planes concurrently (`run_both_planes`) until they both
@@ -335,7 +335,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let frontend_bind = match &args.bind {
         Some(addr) => {
             let addr: std::net::SocketAddr = addr.parse()?;
-            server_core::BindConfig {
+            server_lifecycle::BindConfig {
                 host: addr.ip(),
                 port: addr.port(),
             }
@@ -345,7 +345,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     if let Some(addr) = &args.admin_bind {
         let addr: std::net::SocketAddr = addr.parse()?;
-        plan.admin_bind = server_core::BindConfig {
+        plan.admin_bind = server_lifecycle::BindConfig {
             host: addr.ip(),
             port: addr.port(),
         };
@@ -393,12 +393,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // `share_drain` (TD Logic section): one `DrainController` for the whole
     // process, cloned into `TcpServerConfig.drain`, `AdminState`, and the
     // signal task below — never a second, independent controller (R2, R7).
-    let drain = server_core::DrainController::new();
+    let drain = server_lifecycle::DrainController::new();
 
-    let server_config = tcp_server::TcpServerConfig::new(frontend_bind)
+    let server_config = server_tcp::TcpServerConfig::new(frontend_bind)
         .with_socket_options(plan.frontend_socket)
         .with_drain_timeout(drain_timeout);
-    let server_config = pgpool::admin::wire_tcp_server_drain(server_config, &drain);
+    let server_config = pgpool::admin::wire_server_tcp_drain(server_config, &drain);
 
     // `PoolHandler` dispatch (TD Schema section): selected once at process
     // start from `RuntimePlan::pool_mode`, never re-evaluated per
@@ -422,7 +422,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // accept loop react identically to either trigger (R2).
     tokio::spawn(pgpool::admin::drain_on_shutdown_signal(
         drain.clone(),
-        server_core::signal::wait_shutdown_signal(),
+        server_lifecycle::signal::wait_shutdown_signal(),
     ));
 
     // `build_admin_router` (TD Logic section): one named pool per process
@@ -439,7 +439,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let admin_router = pgpool::admin::build_router(admin_state);
     let admin_listener = tokio::net::TcpListener::bind(plan.admin_bind.socket_addr()).await?;
 
-    let listener = tcp_server::bind(&server_config).await?;
+    let listener = server_tcp::bind(&server_config).await?;
     println!("pgpool serve: listening on {}", listener.local_addr()?);
     println!(
         "pgpool serve: backend {}:{}",
@@ -469,8 +469,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
     };
 
     tokio::join!(
-        tcp_server::serve(listener, server_config, handler, tcp_shutdown),
-        http_server::serve_h2c_with_options(
+        server_tcp::serve(listener, server_config, handler, tcp_shutdown),
+        server_http::serve_h2c_with_options(
             admin_listener,
             admin_router,
             plan.admin_h2c,

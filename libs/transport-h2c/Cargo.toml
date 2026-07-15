@@ -1,0 +1,38 @@
+[package]
+name = "transport-h2c"
+version = "0.1.0"
+edition = "2021"
+description = "Shared HTTP/2 cleartext transport: reqwest client helpers, frame-level connection management, round-robin pooling, connection sizing, and optional HTTP/1.1 plus h2c server support."
+
+[lib]
+name = "transport_h2c"
+path = "src/lib.rs"
+
+[dependencies]
+cli-std = { path = "../cli-std", default-features = false }
+reqwest = { workspace = true }
+h2 = "0.4"
+tokio = { workspace = true }
+http = { workspace = true }
+bytes = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio", "http1", "http2"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+axum = { workspace = true, optional = true }
+
+[features]
+# Server transport (`transport_h2c::serve`) is optional for client-only consumers.
+server = ["dep:hyper", "dep:hyper-util", "dep:tower", "dep:axum"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio", "http1", "http2"] }
+http-body-util = "0.1"
+bytes = "1"
+
+[[example]]
+name = "conn_sweep"
+path = "examples/conn_sweep.rs"

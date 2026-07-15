@@ -3,7 +3,7 @@
 //! HTTP transport: the h2c serve loop + the standard request-tracing layer.
 //! @spec apps/agentic-workflow/tech-design/logic/shared-server-substrate-performance-layers.md#logic
 //!
-//! [`serve`] composes [`http_server::serve_h2c`] (HTTP/1.1 + HTTP/2 cleartext on one port —
+//! [`serve`] composes [`server_http::serve_h2c`] (HTTP/1.1 + HTTP/2 cleartext on one port —
 //! the in-cluster default `axum::serve` can't do) rather than re-implementing
 //! the accept loop. [`trace_layer`] is the one INFO-level span-per-request layer
 //! lumen/keep both attach; a service `.layer(...)`s it onto its router.
@@ -38,7 +38,7 @@ impl<B> MakeSpan<B> for PropagatingMakeSpan {
 /// Serve `app` (HTTP/1.1 + h2c on one port) on `listener`, stopping when
 /// `shutdown` resolves (e.g. [`crate::signal::shutdown_with_drain`]).
 ///
-/// Thin delegation to [`http_server::serve_h2c`] — the shared HTTP runtime — so
+/// Thin delegation to [`server_http::serve_h2c`] — the shared HTTP runtime — so
 /// a service does not hand-roll the hyper-util auto-builder accept loop.
 /// In-flight connections
 /// get a bounded grace period after `shutdown` resolves before the process
@@ -49,7 +49,7 @@ pub async fn serve(
     app: axum::Router,
     shutdown: impl std::future::Future<Output = ()>,
 ) {
-    http_server::serve_h2c(listener, app, shutdown).await;
+    server_http::serve_h2c(listener, app, shutdown).await;
 }
 
 /// The standard request-tracing layer: one INFO-level span per HTTP request.

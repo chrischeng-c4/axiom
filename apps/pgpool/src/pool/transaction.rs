@@ -8,7 +8,7 @@
 //! non-`Terminate` frontend frame and relays verbatim until the backend
 //! reports `ReadyForQuery(Idle)` (reset + return to idle, loop back) or the
 //! leg ends via `Terminate`/EOF/`FrameError` (release `Close`, close the
-//! client). Drain is honored transparently by `tcp_server::serve_arc`'s
+//! client). Drain is honored transparently by `server_tcp::serve_arc`'s
 //! outer accept loop + bounded `drain_timeout` task abandonment — this
 //! handler references `cx.drain` nowhere, exactly like `SessionHandler`.
 
@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bytes::BytesMut;
-use server_core::ConnectionBudget;
-use tcp_server::{ConnectionContext, TcpHandler};
+use server_lifecycle::ConnectionBudget;
+use server_tcp::{ConnectionContext, TcpHandler};
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
@@ -38,11 +38,11 @@ use crate::wire::{
 /// Full configuration for one `TransactionHandler`, per the TD Schema
 /// section: its own frontend admission budget (mirroring
 /// `SessionProxyConfig.frontend_budget`, deliberately not wired into
-/// `tcp_server::TcpServerConfig.connection_budget` for the same reason —
+/// `server_tcp::TcpServerConfig.connection_budget` for the same reason —
 /// see `crate::proxy::SessionProxyConfig`), the shared backend pool, wire
 /// bounds, and the drain timeout `pgpool serve` also feeds into
 /// `TcpServerConfig` (not referenced by `TransactionHandler` itself; drain
-/// is purely a `tcp_server::serve_arc`-level concern).
+/// is purely a `server_tcp::serve_arc`-level concern).
 #[derive(Debug, Clone)]
 pub struct TransactionProxyConfig {
     pub frontend_budget: ConnectionBudget,
@@ -51,7 +51,7 @@ pub struct TransactionProxyConfig {
     pub drain_timeout: Duration,
 }
 
-/// Transaction-mode `tcp_server::TcpHandler` impl `pgpool serve` binds to
+/// Transaction-mode `server_tcp::TcpHandler` impl `pgpool serve` binds to
 /// its listener when `RuntimePlan::pool_mode` is `PoolMode::Transaction`.
 /// Private field, constructed via `TransactionHandler::new(config)`;
 /// mirrors `SessionHandler`'s shape.

@@ -2,31 +2,31 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-09T10:09:11.946015+00:00"
-digest = "sha256:145fe96af5b6f3e57b1634e5936e8428f4c29eeefada7168843155473a211b81"
-source_digest = "sha256:145fe96af5b6f3e57b1634e5936e8428f4c29eeefada7168843155473a211b81"
-ir_digest = "sha256:b4b3b6e7362fb422f721128ad734cbcf968ee4e96ae3cc368e998eff7096e1b5"
+generated_at = "2026-07-15T07:37:40.287407+00:00"
+digest = "sha256:126e3c05f5ea7b85af68547b11b3942d58f81153615cd010e66f0f6a626577b8"
+source_digest = "sha256:126e3c05f5ea7b85af68547b11b3942d58f81153615cd010e66f0f6a626577b8"
+ir_digest = "sha256:91d8856e8c42fa9e273536dbf448ce9bd7e467a47230e0b4752ef13916cfa41c"
 
 [[files]]
 path = "logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md"
-digest = "sha256:d2f5f44f314423c45921a5dc9bd61a8d7ad9d1e93146aff664a8c0ed67fc65b5"
-ir_digest = "sha256:64e071dc34569e6c3ac1b3eb1e382497f6d1a5a17b3a1ea4216b6b0d68ff8ab8"
+digest = "sha256:f48b51f6d9c4ded801b3165e7871d7170e8e56f72f2f7461230396f334efafa0"
+ir_digest = "sha256:f2556fdaf924fc7be335d64f0c2378be45dfd3284c45e948201a45592d51d358"
 section_count = 5
 
 [[files]]
 path = "logic/pg-wire-message-codec-frontend-backend-frames.md"
-digest = "sha256:57eff20ef4dffb83799bb164163b27f3ed6d089b3fdb1d3f6f8edfeb2354a0c6"
-ir_digest = "sha256:960d2f9162deae0cd1bbb5faf2db04edf33593b2228e057304a85b4fa82876c5"
+digest = "sha256:091b349aa19051d9fd2ff659263ffadde4ade7f21d35475b5898e6a76b01f9a9"
+ir_digest = "sha256:e387738a08be633eef2b9adf6507e3879a8dd276e31865b855f221718c04f605"
 section_count = 5
 
 [[files]]
 path = "logic/served-admin-plane-with-drain-aware-readiness.md"
-digest = "sha256:dbf747ff20af9a4932d50e08b4eadf85ebfb31a4adb26ee45c8735b5f937d274"
-ir_digest = "sha256:fabe1aae0886a966d29cf6fc22de5792c13b72d4544c2771ce7268ec689659f1"
+digest = "sha256:5910d0d19af5a5859444fc052c242212af563a35638bc72cc6c9f8d37c1ac5ed"
+ir_digest = "sha256:82cda8f934e16da9a8eed3524159d7ca2578b0b396feaf90833b9f0969cdc164"
 section_count = 6
 
 [[files]]
 path = "logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md"
-digest = "sha256:5815a9253c5ef0577529d12703f63f9767f82c35305cd842e67803158919399d"
-ir_digest = "sha256:a7cf1214ff219926275cc17650e46b74ea4c0cec5bed326d30ba87ac414a804c"
+digest = "sha256:0c46c3e28a30fcb022030ee72c55bc8adda72a748364ac8116938b81f7467338"
+ir_digest = "sha256:03029e494ff1a48e828bec73408863543cdfa9ce678bc34993b80bdeedd4747c"
 section_count = 5

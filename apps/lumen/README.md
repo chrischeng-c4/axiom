@@ -198,7 +198,7 @@ Gate Inventory:
 
 ID: long-running-stability
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `apps/lumen/k8s`, `lumen k8s crd/operator/instance`, and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Lumen WAL / raft-host - rebuildable derived-index mutation stream.
+Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `apps/lumen/k8s`, `lumen k8s crd/operator/instance`, and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Lumen WAL / raft-runtime - rebuildable derived-index mutation stream.
 EC Dimensions: stability: `rig` - resilience, endurance, load, and recovery scenarios; behavior: `apps/lumen/scripts/kind-e2e.sh` - k8s/operator dogfood gate
 Root WI: -
 Status: verified
@@ -212,7 +212,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| log-fan-out-rebuild-from-log | epic | - | implemented | passing | dogfood | apps/lumen/src/raft_sm.rs<br>libs/raft-host/src/host.rs |
+| log-fan-out-rebuild-from-log | epic | - | implemented | passing | dogfood | apps/lumen/src/raft_sm.rs<br>libs/raft-runtime/src/host.rs |
 | search-p99-survives-fault-and-recovers | epic | - | implemented | passing | dogfood | apps/lumen/tests/rig/cases/resilience |
 | graceful-degradation-under-overload | epic | - | implemented | passing | dogfood | apps/lumen/tests/rig/cases/load<br>apps/lumen/tests/rig/config/pins |
 | no-fd-socket-thread-leak | epic | - | implemented | passing | dogfood | apps/lumen/tests/rig/cases/endurance |
@@ -521,7 +521,7 @@ Gate Inventory:
 
 ID: backup-restore
 Type: Service
-Surfaces: CLI: `lumen serve` - snapshot restore and periodic object-snapshot loop.; Rust API: `LocalFsRdbStore` - local-dev snapshot sink wrapper over `libs/service-durability` atomic snapshot files.; Admin/backup path: external snapshot bytes written through service-backup object-store sinks for cold DR seed.
+Surfaces: CLI: `lumen serve` - snapshot restore and periodic object-snapshot loop.; Rust API: `LocalFsRdbStore` - local-dev snapshot sink wrapper over `libs/storage-durable` atomic snapshot files.; Admin/backup path: external snapshot bytes written through service-backup object-store sinks for cold DR seed.
 EC Dimensions: behavior: `cargo test -p lumen --test backup_restore_e2e` - snapshot/restore conformance
 Root WI: -
 Status: verified
@@ -532,7 +532,7 @@ WAL/raft-backed state before success, while scheduled SnapshotV1 backups are
 written to object storage for cold-start and disaster-recovery. Live replicas
 synchronize through raft log/snapshot mechanics; backup artifacts seed cold
 restore and future empty-PVC bootstrap, not normal replica replication.
-Local RDB/AOF durability composes `libs/service-durability` for fsync policy,
+Local RDB/AOF durability composes `libs/storage-durable` for fsync policy,
 atomic snapshot replacement, CRC-framed AOF records, torn-tail recovery, and
 compaction; Lumen keeps only the `SnapshotV1`/`WalRecord` codecs and engine
 restore semantics locally.
@@ -559,11 +559,11 @@ state/logs, replacement replicas seed from snapshot/object storage before raft
 delta catch-up, and disaster recovery restores from external backup without
 confusing backup with live replica synchronization.
 Gate Inventory:
-- #1181 empty-PVC replica bootstrap seed path; apps/lumen/src/bin/lumen.rs; apps/lumen/src/raft.rs; apps/lumen/src/raft_sm.rs; libs/raft-host; libs/service-backup
+- #1181 empty-PVC replica bootstrap seed path; apps/lumen/src/bin/lumen.rs; apps/lumen/src/raft.rs; apps/lumen/src/raft_sm.rs; libs/raft-runtime; libs/service-backup
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| raft-log-replica-sync-existing-pvc | epic | - | implemented | passing | conformance | apps/lumen/src/raft.rs<br>apps/lumen/src/raft_sm.rs<br>libs/raft-host |
+| raft-log-replica-sync-existing-pvc | epic | - | implemented | passing | conformance | apps/lumen/src/raft.rs<br>apps/lumen/src/raft_sm.rs<br>libs/raft-runtime |
 | external-backup-disaster-recovery-seed | epic | - | implemented | passing | conformance | apps/lumen/tests/backup_restore_e2e.rs |
 | empty-pvc-object-store-seed-before-raft-catch-up | epic | 1181 | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>libs/service-backup/src/source.rs |
 
@@ -624,7 +624,7 @@ Type: Service
 Root WI: #1553
 Status: verified
 Surfaces: Durable index and checkpoint state plus stateful deployment:
-`apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-host`,
+`apps/lumen/src/storage.rs`, `libs/raft-core`, `libs/raft-runtime`,
 `apps/lumen/src/backup.rs`, and the operator-owned StatefulSet rendering
 surface under `apps/lumen/src/operator/` and `apps/lumen/k8s/`.
 EC Dimensions: behavior: `aw capability check --project lumen
@@ -1150,7 +1150,7 @@ bucket_write_paused` instead of racing the map change, and `reshard:prune`
 accumulates a final migration pass's authoritative per-bucket "keep" id set
 and prunes anything absent from it once complete. All five are
 `Role::Admin`-gated and idempotent on retry; `reshard:fence` is
-driver-owned (`operator::reshard_driver::advance_catching_up`) — manual use
+driver-owned (`service_k8s::reshard_driver::advance_catching_up`) — manual use
 outside driver-orchestrated cutover risks a real write outage.
 `reshard:apply`/`reshard:evict` mutate engine state directly, bypassing the
 normal WriteCoordinator/AOF write path, so the reshard driver calls `POST
@@ -1289,7 +1289,7 @@ runtime capacity for services that add streaming operations.
 
 Durable decisions folded from the retired `HA.md`; its session-era "Original
 design notes (openraft)" framing was already superseded by the shipped
-`raft-core`/`raft-host` implementation and is dropped as historical.
+`raft-core`/`raft-runtime` implementation and is dropped as historical.
 
 lumen is a **log-replicated, derived, rebuildable search index**: the caller
 still owns the source of truth, and lumen indexes the caller's `external_id`s.
@@ -1333,7 +1333,7 @@ based on growth and safety windows, treat high utilization as urgent, and avoid
 auto-split when the max shard size or max shard count is unknown.
 
 Raft responsibility is split by crate/module: `libs/raft-core` (consensus
-state machine and log semantics), `libs/raft-host` (h2c peer transport,
+state machine and log semantics), `libs/raft-runtime` (h2c peer transport,
 leader forwarding, snapshot install, log compaction — snapshot upload/pruning
 policy lives in `libs/service-backup`), `apps/lumen/src/raft_sm.rs`
 (committed write records → engine mutations, snapshot produce/restore), and

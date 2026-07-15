@@ -1,16 +1,16 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md#logic
 // <HANDWRITE gap="missing-generator:logic:pgpool-session-proxy" tracker="#1288" reason="Session-mode proxy needs generator primitives that do not exist yet.">
-//! `SessionHandler`: the `tcp_server::TcpHandler` impl `pgpool serve` binds
+//! `SessionHandler`: the `server_tcp::TcpHandler` impl `pgpool serve` binds
 //! to its listener. One backend connection per accepted client
 //! (session-mode), admission-gated by its own `ConnectionBudget` — see the
 //! TD Logic flowchart's `cli_serve_entry` node for why this is deliberately
-//! not wired into `tcp_server::TcpServerConfig.connection_budget`.
+//! not wired into `server_tcp::TcpServerConfig.connection_budget`.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::Result;
-use tcp_server::{ConnectionContext, TcpHandler};
+use server_tcp::{ConnectionContext, TcpHandler};
 use tokio::net::TcpStream;
 
 use crate::proxy::config::SessionProxyConfig;

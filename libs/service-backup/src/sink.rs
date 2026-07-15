@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Context, Result};
-use service_durability::{atomic_write, FsyncPolicy};
+use storage_durable::{atomic_write, FsyncPolicy};
 
 #[cfg(feature = "s3")]
 use crate::s3::S3Sink;

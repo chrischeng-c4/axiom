@@ -59,7 +59,7 @@ nodes:
     label: "If the decoded message is ReadyForQuery, update TransactionStatus from the status byte (I/T/E -> Idle/InTransaction/Failed)"
   emit_frame:
     kind: terminal
-    label: "Advance the buffer cursor past the consumed frame and emit the typed Frame to the caller (tcp-server TcpHandler seam)"
+    label: "Advance the buffer cursor past the consumed frame and emit the typed Frame to the caller (server-tcp TcpHandler seam)"
   encode_call:
     kind: start
     label: "Caller encodes a typed FrontendMessage or BackendMessage for the write path"
@@ -615,7 +615,7 @@ definitions:
 # WireCodecConfig — FrameReader bounds and codec limits for pgpool's
 # PostgreSQL wire protocol 3.0 codec. No live-Postgres or TLS/auth
 # verification concerns live here; this is decode/encode-boundary config
-# only, consumed by the tcp-server TcpHandler seam in the next slice (#1288).
+# only, consumed by the server-tcp TcpHandler seam in the next slice (#1288).
 
 # Bounded incremental frame reader (R3 / AC2 / AC3).
 max_frame_bytes: 10485760        # 10 MiB hard cap on a tagged frame's declared length; oversized -> FrameError::Oversized, connection closed by caller, never a panic

@@ -41,9 +41,9 @@ Public API manifest for `libs/service-auth/src/lib.rs` captured during libs code
 //! crypto and not per-resource authorization:
 //!
 //! - **Token crypto is elsewhere, except the static role-map.** keep and loom
-//!   share scoped claim-check HMAC tokens via `libs/claimtoken`; a service's
+//!   share scoped claim-check HMAC tokens via `libs/claim-token`; a service's
 //!   [`Verifier`] *composes* that (its `authenticate` calls
-//!   `claimtoken::verify`). Services that instead want a static,
+//!   `claim_token::verify`). Services that instead want a static,
 //!   config-driven token→role registry (the archetype's
 //!   `<SVC>_AUTH=off|required` + `<SVC>_TOKEN_REGISTRY_FILE` shape) can use
 //!   [`role_map::StaticRoleMapVerifier`] directly — lumen's original
@@ -84,7 +84,7 @@ Public API manifest for `libs/service-auth/src/lib.rs` captured during libs code
 //!     type Principal = Principal;
 //!     fn authenticate(&self, headers: &HeaderMap) -> Result<Principal, AuthError> {
 //!         let token = bearer_token(headers).ok_or(AuthError::Unauthenticated)?;
-//!         // e.g. claimtoken::verify(secret, token, now) — crypto lives there.
+//!         // e.g. claim_token::verify(secret, token, now) — crypto lives there.
 //!         Ok(Principal { subject: token.to_string() })
 //!     }
 //! }

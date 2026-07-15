@@ -6,7 +6,7 @@
 //!
 //! Drives `raft_core` directly (dev-dependency): relay no longer re-exports
 //! the consensus core it does not own — production code reaches raft only
-//! through `raft_host` (#544). The relay-specific value here is the
+//! through `raft_runtime` (#544). The relay-specific value here is the
 //! command=publish / apply=engine integration scenario at the bottom.
 
 use std::collections::{BTreeMap, HashMap, HashSet};

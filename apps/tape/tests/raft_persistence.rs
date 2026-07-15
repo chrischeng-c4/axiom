@@ -6,7 +6,7 @@
 //! nor loses its applied index.
 //!
 //! These exercise the SAME on-disk raft dir across two `TapeRaft::spawn`
-//! calls (simulating a process restart) rather than restarting `raft-host`'s
+//! calls (simulating a process restart) rather than restarting `raft-runtime`'s
 //! internal log replay directly -- the marker recovery + apply-time floor
 //! check in [`tape::raft::TapeStateMachine`] is what's under test here (the
 //! finer-grained unit coverage for the marker itself lives in
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use raft_host::Membership;
+use raft_runtime::Membership;
 use tape::raft::{TapeOutcome, TapeRaft};
 use tape::TapeJournal;
 
@@ -80,7 +80,7 @@ async fn restarted_single_node_recovers_applied_floor_and_accepts_new_proposes()
     }
 
     // "Restart": same raft dir, a brand-new fresh-empty journal (as a real
-    // process restart would have before raft-host cold-replays committed
+    // process restart would have before raft-runtime cold-replays committed
     // entries back into the state machine).
     let journal = Arc::new(Mutex::new(TapeJournal::default()));
     let raft = TapeRaft::spawn(
@@ -94,7 +94,7 @@ async fn restarted_single_node_recovers_applied_floor_and_accepts_new_proposes()
     .unwrap();
 
     // The recovered floor is at least what the first run committed --
-    // raft-host's own cold replay drives it the rest of the way as entries
+    // raft-runtime's own cold replay drives it the rest of the way as entries
     // resident in its store are re-delivered to `apply`.
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {

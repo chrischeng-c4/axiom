@@ -10,14 +10,14 @@
 //!
 //! The counter/gauge primitives and the Prometheus text-format encoder
 //! are generic across every service with a `/metrics` scrape endpoint
-//! and live in `libs/service-metrics` (#974); this module wires lumen's
+//! and live in `libs/metrics-prometheus` (#974); this module wires lumen's
 //! metric names, HELP text, and `# TYPE` kinds onto them. `Counter`/
 //! `Gauge` deref to the underlying `AtomicU64`, so this module's pub API
 //! — field names, method names, and `render()`'s byte output — is
 //! unchanged for callers, including the `otel` feature's direct
 //! `field.load(Ordering::Relaxed)` reads in `src/bin/lumen.rs`.
 
-use service_metrics::{Counter, Gauge, Sample};
+use metrics_prometheus::{Counter, Gauge, Sample};
 
 /// All metrics carry the `{collection, shard, partition}` label set per
 /// the README §5 contract. v1 in-memory single-shard reports
@@ -198,7 +198,7 @@ impl Metrics {
                 self.scatter_map_version_mismatches_total.get(),
             ),
         ];
-        service_metrics::render(&samples)
+        metrics_prometheus::render(&samples)
     }
 }
 

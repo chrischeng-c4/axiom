@@ -23,7 +23,7 @@ pub fn lumen_client_transport_samples() -> Result<Vec<ClientTransportSample>> {
 }
 
 pub fn h2_physical_connection_hint() -> usize {
-    h2c::recommended_h2c_connections_for(EXAMPLE_TARGET_CONCURRENCY, EXAMPLE_PARALLELISM)
+    transport_h2c::recommended_h2c_connections_for(EXAMPLE_TARGET_CONCURRENCY, EXAMPLE_PARALLELISM)
 }
 
 fn opts(lang: Lang) -> GenOptions {

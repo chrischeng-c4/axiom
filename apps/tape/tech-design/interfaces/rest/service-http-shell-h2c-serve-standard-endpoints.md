@@ -6,7 +6,7 @@ summary: >
   topic append/replay/checkpoint data plane, the h2c + HTTP/1.1 one-port serve
   loop with a SIGTERM-aware graceful drain (--grace-secs / TAPE_GRACE_SECS),
   the shared {error, message} ApiErr envelope on error paths, and TapeMetrics
-  — per-op request counts + latency on libs/service-metrics primitives,
+  — per-op request counts + latency on libs/metrics-prometheus primitives,
   recorded by a route_layer middleware and exposed through the
   MetricsProvider seam. Domain semantics (append/replay/checkpoint) stay in
   src/lib.rs unchanged; this slice only adds the HTTP serving surface.
@@ -44,7 +44,7 @@ nodes:
     label: "Handler locks the journal Mutex, calls TapeJournal::append/replay/put_checkpoint/checkpoint (unchanged lib.rs API), persists to --store on mutation, encodes JSON; decode/validation errors return ApiErr 400 bad_request, domain errors (stale/beyond-end checkpoint) return ApiErr 409 conflict"
   track:
     kind: process
-    label: "metrics::track route_layer middleware: map the matched route pattern to its op family (append/replay/checkpoint_get/checkpoint_put/other) and observe count + latency ms into TapeMetrics (service-metrics Latency primitives)"
+    label: "metrics::track route_layer middleware: map the matched route pattern to its op family (append/replay/checkpoint_get/checkpoint_put/other) and observe count + latency ms into TapeMetrics (metrics-prometheus Latency primitives)"
   sigterm:
     kind: process
     label: "SIGTERM or SIGINT: start_drain flips the draining AtomicBool so /readyz reports 503, the grace window holds, then the listener closes"
@@ -116,7 +116,7 @@ requirements:
     verify: tests/http_transport.rs::h2c_and_http11_share_the_serve_port
   metrics_counters:
     id: R5
-    text: "TapeMetrics (service-metrics Latency primitives, recorded by the metrics::track route_layer) renders per-op tape request counters + latency into the Prometheus text /metrics serves after append/replay/checkpoint traffic."
+    text: "TapeMetrics (metrics-prometheus Latency primitives, recorded by the metrics::track route_layer) renders per-op tape request counters + latency into the Prometheus text /metrics serves after append/replay/checkpoint traffic."
     kind: functional
     risk: medium
     verify: tests/http_transport.rs::metrics_report_tape_request_counters_after_traffic
@@ -145,7 +145,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add service-http + service-metrics path deps, axum/tower/utoipa/tracing/tracing-subscriber (env-filter) workspace deps, and a tape-bin serve subcommand's http-body-util/reqwest dev-deps for the shared shell and serve-path tracing init."
+    description: "Add service-http + metrics-prometheus path deps, axum/tower/utoipa/tracing/tracing-subscriber (env-filter) workspace deps, and a tape-bin serve subcommand's http-body-util/reqwest dev-deps for the shared shell and serve-path tracing init."
   - path: apps/tape/src/lib.rs
     action: modify
     section: logic
@@ -155,7 +155,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: "TapeMetrics on libs/service-metrics primitives (Latency = count + sum, render): append / replay / checkpoint_get / checkpoint_put / other request counts + latency ms, plus the track route_layer middleware that maps the matched route pattern to its op family (mirrors relay/keep's metrics::track)."
+    description: "TapeMetrics on libs/metrics-prometheus primitives (Latency = count + sum, render): append / replay / checkpoint_get / checkpoint_put / other request counts + latency ms, plus the track route_layer middleware that maps the matched route pattern to its op family (mirrors relay/keep's metrics::track)."
   - path: apps/tape/src/openapi.rs
     action: create
     section: logic
@@ -175,5 +175,5 @@ changes:
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: "New integration test file: probe_surface_answers_on_serve_port, readyz_flips_to_503_on_drain, h2c_and_http11_share_the_serve_port (libs/h2c h2c_client + plain HTTP/1.1 reqwest), metrics_report_tape_request_counters_after_traffic, errors_render_the_shared_envelope, and append_replay_checkpoint_round_trip_over_http driving the full HTTP data plane against tape::server::router."
+    description: "New integration test file: probe_surface_answers_on_serve_port, readyz_flips_to_503_on_drain, h2c_and_http11_share_the_serve_port (libs/transport-h2c h2c_client + plain HTTP/1.1 reqwest), metrics_report_tape_request_counters_after_traffic, errors_render_the_shared_envelope, and append_replay_checkpoint_round_trip_over_http driving the full HTTP data plane against tape::server::router."
 ```

@@ -1,6 +1,6 @@
 ---
 id: apps-pgpool-admin-plane
-summary: Served admin HTTP plane for pgpool - a hand-rolled axum router bound on `RuntimePlan.admin_bind` via `http_server::serve_h2c_with_options`, exposing `/healthz`, `/readyz`, `/metrics` (Prometheus), `/openapi.json`, `/docs`, `GET /pools`, `GET /pools/{pool}/stats`, and `POST /drain`. A single shared `server_core::DrainController` (constructed once in `serve()` and cloned into both the TCP frontend's `TcpServerConfig.drain` and the admin plane's readiness/drain handlers) makes `/readyz` and the data-plane accept loop react identically to SIGTERM/SIGINT and to `POST /drain`, so in-flight sessions/transactions finish before the process exits. `/openapi.json` and `/pools`/`/pools/{pool}/stats` responses are built directly from the existing `apps/pgpool/src/spec.rs` JSON value and the WI #1289 `pool::BackendPool::stats()`/`PoolStats` accounting so the served contract and the offline `pgpool spec` inventory share one source of truth (R4/AC3) instead of round-tripping through a separately-typed OpenAPI document.
+summary: Served admin HTTP plane for pgpool - a hand-rolled axum router bound on `RuntimePlan.admin_bind` via `server_http::serve_h2c_with_options`, exposing `/healthz`, `/readyz`, `/metrics` (Prometheus), `/openapi.json`, `/docs`, `GET /pools`, `GET /pools/{pool}/stats`, and `POST /drain`. A single shared `server_lifecycle::DrainController` (constructed once in `serve()` and cloned into both the TCP frontend's `TcpServerConfig.drain` and the admin plane's readiness/drain handlers) makes `/readyz` and the data-plane accept loop react identically to SIGTERM/SIGINT and to `POST /drain`, so in-flight sessions/transactions finish before the process exits. `/openapi.json` and `/pools`/`/pools/{pool}/stats` responses are built directly from the existing `apps/pgpool/src/spec.rs` JSON value and the WI #1289 `pool::BackendPool::stats()`/`PoolStats` accounting so the served contract and the offline `pgpool spec` inventory share one source of truth (R4/AC3) instead of round-tripping through a separately-typed OpenAPI document.
 capability_refs:
   - id: standard-operational-endpoints
     role: primary
@@ -29,19 +29,19 @@ entry: serve_entry
 nodes:
   serve_entry:
     kind: start
-    label: "pgpool serve builds RuntimePlan, constructs ONE shared server_core::DrainController, and binds both the TCP frontend listener and the admin HTTP listener on RuntimePlan.admin_bind"
+    label: "pgpool serve builds RuntimePlan, constructs ONE shared server_lifecycle::DrainController, and binds both the TCP frontend listener and the admin HTTP listener on RuntimePlan.admin_bind"
   share_drain:
     kind: process
     label: "Clone the shared DrainController into TcpServerConfig.drain (replacing the fresh DrainController::new() TcpServerConfig::new() builds by default) and into AdminState, so the data plane, the admin plane, and readiness all read/write the same watch channel (R2, scope: drain coordination)"
   spawn_signal_task:
     kind: process
-    label: "Spawn a background task awaiting server_core::signal::wait_shutdown_signal(); when SIGTERM/SIGINT resolves it, the task calls drain.start_drain() on the shared controller (R2)"
+    label: "Spawn a background task awaiting server_lifecycle::signal::wait_shutdown_signal(); when SIGTERM/SIGINT resolves it, the task calls drain.start_drain() on the shared controller (R2)"
   build_admin_router:
     kind: process
     label: "Build the admin axum Router directly against AdminState (shared DrainController clone + Vec<NamedPool>, each pairing a pool name/mode with its ConnectionBudget and BackendPool clone): /healthz, /readyz, /metrics, /openapi.json, /docs, GET /pools, GET /pools/{pool}/stats, POST /drain (R1, R3) - hand-rolled rather than libs/service-http's standard_probe_routes because that helper's openapi arg type is fn() -> utoipa::openapi::OpenApi, while apps/pgpool/src/spec.rs's single-source-of-truth OpenAPI document is a serde_json::Value the offline `pgpool spec --format openapi` CLI already serializes directly; routing /openapi.json through a typed utoipa round-trip would risk breaking the byte-for-byte parity R4/AC3 requires, so /openapi.json instead returns Json(pgpool::spec::openapi()) - the exact same Value"
   run_both_planes:
     kind: process
-    label: "tokio::join! the TCP frontend (tcp_server::serve, existing PoolHandler dispatch, unchanged from WI #1289) and the admin plane (http_server::serve_h2c_with_options) concurrently; each is given its OWN one-shot shutdown future that awaits drain.signal().changed()"
+    label: "tokio::join! the TCP frontend (server_tcp::serve, existing PoolHandler dispatch, unchanged from WI #1289) and the admin plane (server_http::serve_h2c_with_options) concurrently; each is given its OWN one-shot shutdown future that awaits drain.signal().changed()"
   request_kind:
     kind: decision
     label: "Which admin request arrives while both planes are running?"
@@ -158,7 +158,7 @@ flowchart TD
     serve_entry([pgpool serve: build RuntimePlan, construct shared DrainController, bind TCP+admin listeners]) --> share_drain[Share DrainController: TcpServerConfig.drain + AdminState]
     share_drain --> spawn_signal_task[Spawn task: wait_shutdown_signal -> drain.start_drain]
     spawn_signal_task --> build_admin_router[Build admin axum Router against AdminState]
-    build_admin_router --> run_both_planes[tokio::join!: tcp_server::serve + http_server::serve_h2c_with_options, each shutdown = drain.signal changed]
+    build_admin_router --> run_both_planes[tokio::join!: server_tcp::serve + server_http::serve_h2c_with_options, each shutdown = drain.signal changed]
     run_both_planes --> request_kind{Which admin request arrives?}
     request_kind -->|GET /healthz| healthz_req([200 ok, always])
     request_kind -->|GET /readyz| readyz_req[Read drain.is_draining]
@@ -194,7 +194,7 @@ nodes:
     label: "Shared DrainController flipped to Draining by either SIGTERM/SIGINT or POST /drain (R2). /readyz now returns 503 'draining'. TCP frontend accept loop stops admitting new connections; already-established sessions/transactions keep relaying to completion. Admin plane keeps serving /healthz, /metrics, /openapi.json, /docs, /pools, /pools/{pool}/stats, and POST /drain (idempotent) throughout."
   exited:
     kind: terminal
-    label: "Both the TCP frontend's tokio::join! future and the admin http_server::serve_h2c_with_options future have resolved (in-flight work ended, or drain_timeout/admin_h2c.drain_timeout elapsed) and serve() returns Ok(()) (AC2)."
+    label: "Both the TCP frontend's tokio::join! future and the admin server_http::serve_h2c_with_options future have resolved (in-flight work ended, or drain_timeout/admin_h2c.drain_timeout elapsed) and serve() returns Ok(()) (AC2)."
 edges:
   - from: ready
     to: draining
@@ -230,8 +230,8 @@ description: >
   exact field shape `apps/pgpool/src/spec.rs`'s offline `schemas()` already
   declares (R4/AC3 byte-for-byte parity with `pgpool spec --format openapi`);
   this section does not redefine `apps::pgpool::pool::{PoolConfig,
-  BackendPoolStats}`, `server_core::{DrainController, DrainState as
-  CoreDrainState}`, or `server_core::ConnectionBudget` — it composes them.
+  BackendPoolStats}`, `server_lifecycle::{DrainController, DrainState as
+  CoreDrainState}`, or `server_lifecycle::ConnectionBudget` — it composes them.
 
 definitions:
   NamedPool:
@@ -248,7 +248,7 @@ definitions:
         x-rust-type: "crate::pool::PoolMode"
         description: "Session or Transaction — the fixed-for-the-process mode already selected by RuntimePlan.pool_mode; surfaced read-only in PoolStats.mode."
       budget:
-        x-rust-type: "server_core::ConnectionBudget"
+        x-rust-type: "server_lifecycle::ConnectionBudget"
         description: "The SAME ConnectionBudget instance the frontend accept path checks (RuntimePlan::frontend_budget); AdminState reads budget.active() for PoolStats.frontend_active and the pgpool_frontend_active metric gauge, never constructing a second budget (single source of truth)."
       pool:
         x-rust-type: "crate::pool::BackendPool"
@@ -262,7 +262,7 @@ definitions:
     description: "axum shared state for the admin Router (via axum::extract::State), constructed once in `serve()` alongside the TCP frontend's TcpServerConfig so both planes hold clones of the identical DrainController (R2). Cheap to clone per-request since DrainController, ConnectionBudget, and BackendPool are all Arc/watch-channel backed internally."
     properties:
       drain:
-        x-rust-type: "server_core::DrainController"
+        x-rust-type: "server_lifecycle::DrainController"
         description: "The one shared drain controller; /readyz reads drain.is_draining(), POST /drain calls drain.start_drain(), and the same clone is handed to TcpServerConfig.drain for the frontend accept loop and to the signal-handling task (R2)."
       pools:
         type: array
@@ -284,7 +284,7 @@ definitions:
       frontend_active:
         type: integer
         minimum: 0
-        description: "server_core::ConnectionBudget::active() for this pool's frontend budget (AC4 metric source)."
+        description: "server_lifecycle::ConnectionBudget::active() for this pool's frontend budget (AC4 metric source)."
       backend_active:
         type: integer
         minimum: 0
@@ -372,7 +372,7 @@ pool_name:
   default: "default"
 
 # Admin plane drain timeout (R2 / AC2) — bounds how long the admin HTTP
-# plane's own http_server::serve_h2c_with_options shutdown future waits for
+# plane's own server_http::serve_h2c_with_options shutdown future waits for
 # in-flight admin requests (e.g. a slow /pools/{pool}/stats) to finish once
 # drain.signal().changed() resolves; independent of, but defaulted equal to,
 # the existing frontend drain_timeout_ms so both planes exit within the same
@@ -487,10 +487,10 @@ requirements:
     text: "The TcpServerConfig constructed in serve() carries the SAME DrainController clone passed to AdminState (compared via DrainController's shared watch-channel identity), not the fresh DrainController::new() TcpServerConfig::new() would otherwise construct by default."
     kind: regression
     risk: high
-    verify: admin::serve_wires_shared_drain_controller_into_tcp_server_config
+    verify: admin::serve_wires_shared_drain_controller_into_server_tcp_config
   r7_signal_task_calls_start_drain_on_shared_controller:
     id: R7
-    text: "Triggering the signal task's underlying future (via a test seam substituting a manually-resolved shutdown future for server_core::signal::wait_shutdown_signal()) calls start_drain() on the exact shared controller instance AdminState and TcpServerConfig both hold."
+    text: "Triggering the signal task's underlying future (via a test seam substituting a manually-resolved shutdown future for server_lifecycle::signal::wait_shutdown_signal()) calls start_drain() on the exact shared controller instance AdminState and TcpServerConfig both hold."
     kind: functional
     risk: high
     verify: admin::signal_task_calls_start_drain_on_the_shared_controller
@@ -510,7 +510,7 @@ flowchart TD
     r5[R5 r5 openapi json matches spec value exactly] --> admin_openapi_json_endpoint_matches_spec_openapi_value_exactly[admin::openapi_json_endpoint_matches_spec_openapi_value_exactly]
     r5[R5 r5 served route set matches offline routes inventory] --> admin_served_route_set_matches_offline_routes_json_inventory[admin::served_route_set_matches_offline_routes_json_inventory]
     r6[R6 r6 docs serves swagger ui referencing openapi json] --> admin_docs_serves_swagger_ui_html_referencing_openapi_json[admin::docs_serves_swagger_ui_html_referencing_openapi_json]
-    r7[R7 r7 share drain wires tcp config not a fresh controller] --> admin_serve_wires_shared_drain_controller_into_tcp_server_config[admin::serve_wires_shared_drain_controller_into_tcp_server_config]
+    r7[R7 r7 share drain wires tcp config not a fresh controller] --> admin_serve_wires_shared_drain_controller_into_server_tcp_config[admin::serve_wires_shared_drain_controller_into_server_tcp_config]
     r7[R7 r7 signal task calls start drain on shared controller] --> admin_signal_task_calls_start_drain_on_the_shared_controller[admin::signal_task_calls_start_drain_on_the_shared_controller]
 ```
 ## E2E Test

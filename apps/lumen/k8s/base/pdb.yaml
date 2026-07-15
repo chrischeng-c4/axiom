@@ -9,7 +9,7 @@ metadata:
     app: lumen
     role: server
 spec:
-  minAvailable: 2
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: lumen

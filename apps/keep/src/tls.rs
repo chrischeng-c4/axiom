@@ -1,7 +1,7 @@
 //! Process-level rustls crypto provider install.
 //!
 //! Several keep build paths link rustls: the k8s operator (kube-rs → hyper +
-//! rustls), the raft-host peer transport, and the online CLI ops (`upgrade` /
+//! rustls), the raft-runtime peer transport, and the online CLI ops (`upgrade` /
 //! `issue`, via reqwest). rustls 0.23 refuses to pick a default crypto provider
 //! when more than one is linked in the process, so any binary that reaches a TLS
 //! path must install one explicitly — before the first `ClientConfig` /

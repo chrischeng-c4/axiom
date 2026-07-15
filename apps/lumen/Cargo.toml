@@ -43,7 +43,7 @@ futures.workspace = true
 reqwest = { workspace = true, optional = true }
 # Shared h2c transport: `server` powers `serve` (HTTP/1.1 + h2c on one port via
 # hyper auto-builder, replacing the HTTP/1-only `axum::serve`).
-h2c = { path = "../../libs/h2c", features = ["server"] }
+transport-h2c = { path = "../../libs/transport-h2c", features = ["server"] }
 # `lumen upgrade` / `lumen issue` — the standard agent-facing CLI ops,
 # shared across the ecosystem (CONTRIBUTING.md "CLI convention"). Offline paths
 # always build; the HTTPS paths are pulled in by lumen's `self-update` /
@@ -62,19 +62,19 @@ service-http = { path = "../../libs/service-http" }
 service-backup = { path = "../../libs/service-backup" }
 # Shared durable local storage primitives: fsync policy, atomic snapshot replace,
 # and CRC-framed append logs. Lumen owns the domain codecs layered on top.
-service-durability = { path = "../../libs/service-durability" }
+storage-durable = { path = "../../libs/storage-durable" }
 # Lumen-owned HA: writes replicated through the shared raft-core engine (behind
 # the `raft-wal` feature). Peer RPCs ride the same h2c transport.
 raft-core = { path = "../../libs/raft-core", optional = true }
 # Non-optional (#1002): `src/config.rs`/`src/raft.rs` delegate the StatefulSet
 # shard/replica/voter math + peer-DNS/`LUMEN_PEERS` override parsing to
-# `raft_host::cluster` unconditionally (those modules compile with no
+# `raft_runtime::cluster` unconditionally (those modules compile with no
 # feature), so the actual raft engine and lumen's serving-side topology
 # surface can't fork the derivation. Adds no new crate to the default build:
 # every transitive dep it pulls in (raft-core, h2c, axum, tokio, reqwest via
 # h2c) is already unconditional in this graph; only `raft-wal` still gates the
 # replication engine (raft-core) + peer-RPC HTTP client (reqwest) themselves.
-raft-host = { path = "../../libs/raft-host" }
+raft-runtime = { path = "../../libs/raft-runtime" }
 # `lumen spec gen` — generate a typed client from lumen's own OpenAPI.
 cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 rayon = "1.10"
@@ -91,7 +91,7 @@ k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 schemars = { version = "0.8", optional = true }
 # Shared operator scaffolding (reconcile loop + leader-election lease); lumen
 # supplies the `Lumen` CRD + render and composes the rest (epic #580).
-operator = { path = "../../libs/operator", optional = true }
+service-k8s = { path = "../../libs/service-k8s", optional = true }
 serde_yaml.workspace = true
 lz4_flex = "0.11"
 memmap2 = "0.9"
@@ -104,11 +104,11 @@ rustls-pemfile = "2"
 # Shared peer-mTLS material loading (PEM cert/key/CA + rustls builders +
 # crypto-provider install); lumen keeps a thin adapter with its
 # `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names (#971).
-service-tls = { path = "../../libs/service-tls" }
+peer-tls = { path = "../../libs/peer-tls" }
 # Shared lock-free counter/gauge/latency primitives + Prometheus text
 # encoder; lumen's `Metrics` reimplements on top with byte-identical
 # `render()` output (#974).
-service-metrics = { path = "../../libs/service-metrics" }
+metrics-prometheus = { path = "../../libs/metrics-prometheus" }
 smallvec = "1"
 thiserror.workspace = true
 tokio = { workspace = true }
@@ -133,7 +133,7 @@ default = []
 jieba = ["dep:jieba-rs"]
 # raft-wal — lumen owns write ordering + replication via libs/raft-core (HA),
 # instead of an external broker. Peer RPCs use the h2c client. (#515)
-# raft-host itself is non-optional (#1002; see the dependency comment above) —
+# raft-runtime itself is non-optional (#1002; see the dependency comment above) —
 # only the engine (raft-core) and its peer-RPC HTTP client (reqwest) are
 # feature-gated here.
 raft-wal = ["dep:raft-core", "dep:reqwest"]
@@ -152,7 +152,7 @@ issue = ["cli-std/online"]
 # that have not yet renamed their feature set. The CLI command itself is
 # `lumen issue`, not `lumen report-issue`.
 report-issue = ["issue"]
-operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:operator", "backup"]
+operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s", "backup"]
 # OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
 # pass --features otel); off in plain dev builds so they don't pay the OTLP build
 # cost. At runtime it stays dormant unless LUMEN_OTLP_ENDPOINT is set.

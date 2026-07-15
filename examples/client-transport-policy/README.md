@@ -6,7 +6,7 @@ workspace components:
 - `apps/lumen` supplies its actual OpenAPI document.
 - A real Lumen router is served over the shared HTTP/1.1 + h2c server path.
 - `libs/openapi-codegen` generates TypeScript, Python, and Rust clients.
-- `libs/h2c` supplies the logarithmic HTTP/2 connection-count heuristic.
+- `libs/transport-h2c` supplies the logarithmic HTTP/2 connection-count heuristic.
 
 Run it:
 

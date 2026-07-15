@@ -25,9 +25,9 @@ fn runtime_plan_is_chainable_and_names_shared_libs() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8");
     assert!(stdout.contains("\"app_id\": \"pgpool\""));
-    assert!(stdout.contains("server-core"));
-    assert!(stdout.contains("tcp-server"));
-    assert!(stdout.contains("http-server"));
+    assert!(stdout.contains("server-lifecycle"));
+    assert!(stdout.contains("server-tcp"));
+    assert!(stdout.contains("server-http"));
     assert!(stdout.contains("next: pgpool spec --format routes"));
 }
 
