@@ -105,3 +105,42 @@ changes:
     impl_mode: hand-written
     description: "Verify Tape-selected append policy uses shared enforcement and default routing stays disabled."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: opaque-key-admission-control-verification
+requirements:
+  app_adoption:
+    id: R4
+    text: "Lumen and Tape can each select their own endpoint classes and policies through the same optional middleware boundary; their existing router entrypoints remain admission-disabled."
+    kind: integration
+    risk: high
+    verify: cargo test -p lumen --test admission_e2e && cargo test -p tape --test service_admission
+  bounded_redaction:
+    id: R2
+    text: "The controller never stores raw opaque keys, event schemas cannot carry them, and per-policy state evicts deterministically to remain at or below max_keys."
+    kind: security
+    risk: high
+    verify: cargo test -p service-http admission
+  deterministic_bucket:
+    id: R1
+    text: "Configured endpoint classes consume deterministic token-bucket capacity, deny excess requests, and refill from caller-controlled monotonic time with a bounded Retry-After value."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-http admission
+  standard_http:
+    id: R3
+    text: "The reusable axum middleware returns the shared error envelope with HTTP 429 and Retry-After while an unconfigured endpoint class passes without allocating state."
+    kind: integration
+    risk: high
+    verify: cargo test -p service-http admission
+---
+flowchart TD
+    r1[R1 deterministic bucket] --> cargo_test_p_service_http_admission[cargo test -p service-http admission]
+    r2[R2 bounded redaction] --> cargo_test_p_service_http_admission
+    r3[R3 standard http] --> cargo_test_p_service_http_admission
+    r4[R4 app adoption] --> cargo_test_p_lumen_test_admission_e2e_cargo_test_p_tape_test_service_admission[cargo test -p lumen --test admission_e2e && cargo test -p tape --test service_admission]
+```
