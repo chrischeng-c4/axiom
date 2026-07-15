@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, Method, StatusCode};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -155,6 +155,16 @@ impl service_http::MetricsProvider for AppState {
 /// Build the HTTP router for the tape transport: the `/topics` data plane
 /// merged onto the shared service shell's standard probe routes.
 pub fn router(state: AppState) -> Router {
+    router_with_admission(state, None)
+}
+
+/// Build Tape with optional shared request admission. Tape owns the
+/// read/write/admin route classes; `service-http` owns opaque-key retention,
+/// token buckets, eviction, observability, and the 429 wire response.
+pub fn router_with_admission(
+    state: AppState,
+    admission: Option<service_http::AdmissionController>,
+) -> Router {
     let req_metrics = state.metrics();
     let verifier = state.verifier();
     let raft = state.raft();
@@ -183,6 +193,28 @@ pub fn router(state: AppState) -> Router {
         // counted.
         .route_layer(from_fn_with_state(req_metrics, crate::metrics::track))
         .with_state(state.clone());
+    let data_plane = match admission {
+        Some(controller) => data_plane.route_layer(from_fn_with_state(
+            service_http::AdmissionMiddleware::new(controller, |request| {
+                let path = request.uri().path();
+                let class = if path.starts_with("/admin/") {
+                    "tape.admin"
+                } else if *request.method() == Method::GET {
+                    "tape.read"
+                } else {
+                    "tape.write"
+                };
+                let key = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .map(|value| value.as_bytes())
+                    .unwrap_or(b"anonymous");
+                Some(service_http::AdmissionInput::new(class, key))
+            }),
+            service_http::admission_middleware,
+        )),
+        None => data_plane,
+    };
 
     // Standard probes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) come from the shared service shell so the operational

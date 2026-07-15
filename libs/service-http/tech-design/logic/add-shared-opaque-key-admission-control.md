@@ -83,7 +83,7 @@ changes:
     section: logic
     impl_mode: hand-written
     description: "Expose an opt-in router_with_admission boundary so Lumen chooses endpoint classes and policies without owning enforcement."
-  - path: apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md
+  - path: apps/lumen/tech-design/semantic/source/apps-lumen-src-api-rs.md
     action: modify
     section: source
     impl_mode: hand-written

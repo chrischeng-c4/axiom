@@ -106,10 +106,10 @@ use crate::types::{
     CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup, DuplicatesRequest,
     DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue, IndexItem, IndexRequest,
     IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, ReplaceDocBody,
-    ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit,
-    SearchRequest, SearchResponse, StatsResponse, StorageStats, TermQuery, TermsQuery,
-    VectorBackend, VectorMetric, VectorQuantize, VectorSpec, MAX_BATCH_REPLACE_SIZE,
-    MAX_BATCH_SEARCH_SIZE,
+    ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchAllRequest,
+    SearchAllResponse, SearchHit, SearchRequest, SearchResponse, StatsResponse, StorageStats,
+    TermQuery, TermsQuery, VectorBackend, VectorMetric, VectorQuantize, VectorSpec,
+    MAX_BATCH_REPLACE_SIZE, MAX_BATCH_SEARCH_SIZE,
 };
 use crate::wal::{MemWal, SharedWal};
 
@@ -591,6 +591,7 @@ impl AppState {
         replace_docs,
         replace_doc,
         search,
+        search_all,
         batch_search,
         duplicates,
         stats,
@@ -626,6 +627,7 @@ impl AppState {
         MatchOp,
         TermQuery,
         TermsQuery,
+        crate::types::PrefixQuery,
         RangeQuery,
         // #1307: $ref'd by RangeQuery's gt/gte/lt/lte bounds (untagged f64 | String) —
         // same dangling-ref reason as the #200 note below, registered explicitly.
@@ -645,6 +647,8 @@ impl AppState {
         crate::types::SortMissing,
         SearchHit,
         SearchResponse,
+        SearchAllRequest,
+        SearchAllResponse,
         BatchSearchRequest,
         crate::types::BatchSearchItem,
         BatchSearchResponse,
@@ -705,6 +709,17 @@ impl MetricsProvider for Engine {
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
+    router_with_admission(state, None)
+}
+
+/// Build the Lumen router with optional shared request admission. Lumen owns
+/// the route-class mapping and policy values; `service-http` owns enforcement.
+/// The established [`router`] entry point passes `None`, so admission remains
+/// disabled unless a serving adapter explicitly supplies policies.
+pub fn router_with_admission(
+    state: AppState,
+    admission: Option<service_http::AdmissionController>,
+) -> Router {
     // Apply auth middleware only to data-plane routes. Admin/Probe
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) stay open so K8s probes and Prometheus scrape can hit
@@ -753,6 +768,7 @@ pub fn router(state: AppState) -> Router {
             put(replace_doc),
         )
         .route("/collections/{collection_id}/search", post(search))
+        .route("/collections/{collection_id}/search:all", post(search_all))
         .route("/collections:search", post(batch_search))
         .route("/collections/{collection_id}/duplicates", post(duplicates))
         .route("/collections/{collection_id}/stats", get(stats))
@@ -783,9 +799,39 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
         ));
+    let data_plane = match admission {
+        Some(controller) => data_plane.route_layer(from_fn_with_state(
+            service_http::AdmissionMiddleware::new(controller, |request| {
+                let path = request.uri().path();
+                let class = if path.starts_with("/admin/") {
+                    "lumen.admin"
+                } else if matches!(*request.method(), Method::GET | Method::HEAD)
+                    || path.contains("/search")
+                    || path.ends_with("/duplicates")
+                    || path.ends_with("/stats")
+                {
+                    "lumen.read"
+                } else {
+                    "lumen.write"
+                };
+                let key = request
+                    .headers()
+                    .get(axum::http::header::AUTHORIZATION)
+                    .map(|value| value.as_bytes())
+                    .unwrap_or(b"anonymous");
+                Some(service_http::AdmissionInput::new(class, key))
+            }),
+            service_http::admission_middleware,
+        )),
+        None => data_plane,
+    };
 
     let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
-    let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
+    let probes = service_http::standard_probe_routes_canonical_json(
+        state.engine.clone(),
+        Some(metrics),
+        crate::spec::openapi_json,
+    );
     let admin = Router::new()
         .route("/version", get(version))
         .route("/debug/cluster", get(debug_cluster));
@@ -1357,6 +1403,57 @@ async fn search(
     ))
 }
 
+/// Export every matching external id in one explicit full-materialization
+/// request. The local engine evaluates the request while holding one read-lock
+/// snapshot; routed deployments collect one independently consistent snapshot
+/// per shard and intentionally do not claim a cross-shard transaction.
+#[utoipa::path(
+    post,
+    path = "/collections/{collection_id}/search:all",
+    tag = "Query",
+    params(("collection_id" = String, Path, description = "Collection namespace")),
+    request_body = SearchAllRequest,
+    responses(
+        (status = 200, description = "All matching external ids; materializes the complete result set", body = SearchAllResponse),
+        (status = 400, description = "Invalid query or unsupported sort", body = ApiError)
+    )
+)]
+async fn search_all(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    headers: HeaderMap,
+    Path(collection_id): Path<String>,
+    Json(req): Json<SearchAllRequest>,
+) -> Result<Json<SearchAllResponse>, ApiErr> {
+    let response = search_core(
+        &state,
+        &auth,
+        &headers,
+        &collection_id,
+        SearchRequest {
+            query: req.query,
+            limit: u32::MAX,
+            offset: 0,
+            cursor: None,
+            routing_key: req.routing_key,
+            sort: req.sort,
+            track_total: true,
+            collapse: None,
+        },
+    )
+    .await?;
+    Ok(Json(SearchAllResponse {
+        external_ids: response
+            .hits
+            .into_iter()
+            .map(|hit| hit.external_id)
+            .collect(),
+        total: response.total,
+        took_ms: response.took_ms,
+        took_us: response.took_us,
+    }))
+}
+
 /// Shared implementation behind `POST /collections/{collection_id}/search`
 /// and its `QUERY /collections/{collection_id}` twin
 /// ([`collection_id_query_dispatch`], epic #1296 R1: every QUERY endpoint
@@ -1578,6 +1675,7 @@ fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
         Some(StorageError::InvalidNumber(_)) => "invalid_number",
         Some(StorageError::BulkLimit { .. }) => "bulk_limit",
         Some(StorageError::QueryTooComplex(_)) => "query_too_complex",
+        Some(StorageError::InvalidPagination(_)) => "invalid_pagination",
         Some(StorageError::Gone(_)) => "gone",
         Some(StorageError::UnsupportedSort(_)) => "unsupported_sort",
         Some(StorageError::InvalidPruneChunk { .. }) => "invalid_prune_chunk",
@@ -2604,6 +2702,9 @@ impl From<anyhow::Error> for ApiErr {
                 }
                 StorageError::QueryTooComplex(_) => {
                     Self::new(StatusCode::BAD_REQUEST, "query_too_complex", e.to_string())
+                }
+                StorageError::InvalidPagination(_) => {
+                    Self::new(StatusCode::BAD_REQUEST, "invalid_pagination", e.to_string())
                 }
                 StorageError::Gone(_) => Self::new(StatusCode::GONE, "gone", e.to_string()),
                 StorageError::UnsupportedSort(_) => {

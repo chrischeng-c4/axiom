@@ -12096,6 +12096,7 @@ dependencies = [
  "server-http",
  "server-lifecycle",
  "service-observability",
+ "sha2 0.10.9",
  "tokio",
  "tower 0.5.3",
  "tower-http 0.5.2",

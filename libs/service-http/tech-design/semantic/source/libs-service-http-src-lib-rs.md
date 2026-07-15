@@ -126,6 +126,7 @@ Public API manifest for `libs/service-http/src/lib.rs` captured during libs code
 //! wrapper — it carries no `ToSchema`) has no such constraint and is meant
 //! to be adopted directly.
 
+pub mod admission;
 pub mod config;
 pub mod error;
 pub mod logging;
@@ -135,6 +136,11 @@ pub mod readiness;
 pub mod signal;
 pub mod transport;
 
+pub use admission::{
+    admission_middleware, AdmissionController, AdmissionDecision, AdmissionEvent, AdmissionInput,
+    AdmissionMiddleware, AdmissionObserver, AdmissionOutcome, AdmissionPolicy,
+    AdmissionPolicyError, NoopAdmissionObserver,
+};
 pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};
 #[cfg(feature = "otlp")]

@@ -28,6 +28,7 @@ utoipa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+sha2 = "0.10"
 opentelemetry = { version = "0.21", optional = true }
 tracing-opentelemetry = { version = "0.22", optional = true }
 

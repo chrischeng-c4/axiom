@@ -54,9 +54,8 @@ use crate::types::{
     IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, ReplaceDocBody,
     ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchAllRequest,
     SearchAllResponse, SearchHit, SearchRequest, SearchResponse, StatsResponse, StorageStats,
-    TermQuery, TermsQuery,
-    VectorBackend, VectorMetric, VectorQuantize, VectorSpec, MAX_BATCH_REPLACE_SIZE,
-    MAX_BATCH_SEARCH_SIZE,
+    TermQuery, TermsQuery, VectorBackend, VectorMetric, VectorQuantize, VectorSpec,
+    MAX_BATCH_REPLACE_SIZE, MAX_BATCH_SEARCH_SIZE,
 };
 use crate::wal::{MemWal, SharedWal};
 
@@ -656,6 +655,17 @@ impl MetricsProvider for Engine {
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
+    router_with_admission(state, None)
+}
+
+/// Build the Lumen router with optional shared request admission. Lumen owns
+/// the route-class mapping and policy values; `service-http` owns enforcement.
+/// The established [`router`] entry point passes `None`, so admission remains
+/// disabled unless a serving adapter explicitly supplies policies.
+pub fn router_with_admission(
+    state: AppState,
+    admission: Option<service_http::AdmissionController>,
+) -> Router {
     // Apply auth middleware only to data-plane routes. Admin/Probe
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) stay open so K8s probes and Prometheus scrape can hit
@@ -735,6 +745,32 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
         ));
+    let data_plane = match admission {
+        Some(controller) => data_plane.route_layer(from_fn_with_state(
+            service_http::AdmissionMiddleware::new(controller, |request| {
+                let path = request.uri().path();
+                let class = if path.starts_with("/admin/") {
+                    "lumen.admin"
+                } else if matches!(*request.method(), Method::GET | Method::HEAD)
+                    || path.contains("/search")
+                    || path.ends_with("/duplicates")
+                    || path.ends_with("/stats")
+                {
+                    "lumen.read"
+                } else {
+                    "lumen.write"
+                };
+                let key = request
+                    .headers()
+                    .get(axum::http::header::AUTHORIZATION)
+                    .map(|value| value.as_bytes())
+                    .unwrap_or(b"anonymous");
+                Some(service_http::AdmissionInput::new(class, key))
+            }),
+            service_http::admission_middleware,
+        )),
+        None => data_plane,
+    };
 
     let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
     let probes = service_http::standard_probe_routes_canonical_json(
