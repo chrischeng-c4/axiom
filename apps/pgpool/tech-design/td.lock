@@ -2,10 +2,16 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-15T07:37:40.287407+00:00"
-digest = "sha256:126e3c05f5ea7b85af68547b11b3942d58f81153615cd010e66f0f6a626577b8"
-source_digest = "sha256:126e3c05f5ea7b85af68547b11b3942d58f81153615cd010e66f0f6a626577b8"
-ir_digest = "sha256:91d8856e8c42fa9e273536dbf448ce9bd7e467a47230e0b4752ef13916cfa41c"
+generated_at = "2026-07-15T09:45:05.659505+00:00"
+digest = "sha256:5636b971fc8e081892766a8ed85e4cce486e6ab39cc5ebd07708ab0ad1da7b83"
+source_digest = "sha256:5636b971fc8e081892766a8ed85e4cce486e6ab39cc5ebd07708ab0ad1da7b83"
+ir_digest = "sha256:d5ebdaa1d97e7a9de4355abb693142585ba9c430e04097a521d48011173fdd7c"
+
+[[files]]
+path = "logic/adopt-shared-labeled-prometheus-metrics-encoder.md"
+digest = "sha256:56c6f9c72cd38afe400a4589b728014fc4c0e93c555217c01a54723099d4b29f"
+ir_digest = "sha256:b28403033987f04d30350bb221bedc264e89fb7d8f130a6395ea4ae51c3b0dcb"
+section_count = 3
 
 [[files]]
 path = "logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md"
