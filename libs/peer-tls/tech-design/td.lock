@@ -2,18 +2,18 @@ version = 2
 project = "peer-tls"
 ir_kind = "td"
 td_path = "libs/peer-tls/tech-design"
-generated_at = "2026-07-07T15:58:25.669056+00:00"
-digest = "sha256:063f0cd3c794f01ba6229fb56ca1550ce2b932c9b192f3f76b78f636915eebc3"
-source_digest = "sha256:063f0cd3c794f01ba6229fb56ca1550ce2b932c9b192f3f76b78f636915eebc3"
-ir_digest = "sha256:461f012141f0e00e11ae8c5e8bee92625224df2235c729e7eb8c29c8930b2e04"
+generated_at = "2026-07-15T07:38:11.179706+00:00"
+digest = "sha256:a0c27044487441441bad5d437748cb02a2a0158f3391e5698e929cc67f33694b"
+source_digest = "sha256:a0c27044487441441bad5d437748cb02a2a0158f3391e5698e929cc67f33694b"
+ir_digest = "sha256:dec3393b683b7cdc50518fc677c06f715e775de667c1358944938bf9c8f76d0b"
 
 [[files]]
 path = "semantic/peer-tls-libs-peer-tls.md"
-digest = "sha256:2d42d534ee888730edf9e5ac0db0a00aa4a70120e44c7c7be47bdd93aff1cef6"
+digest = "sha256:59366909f909cbcdc6073055e03a61b79ef2c1495fa4a212547e0e60311b136c"
 parse_error = "schema:15-56: section 'schema' at lines 15..56: JSON Schema typed-payload parse error: did not find expected key at line 7 column 1, while parsing a block mapping"
 
 [[files]]
 path = "semantic/source/libs-peer-tls-src-lib-rs.md"
-digest = "sha256:77090ef5f503aa86d7efa7f52e8fc1a0e12554f40308ba700687160d379ccd19"
-ir_digest = "sha256:ab3e78354355f93161a22dc2ef21c5ca644db9dc65c73606d67bddac33737111"
+digest = "sha256:7fb62dd610663a967a79aede5923686bdf740273d51d3e5d939cc2b8561aa8c8"
+ir_digest = "sha256:d7c0b4c02ec419ebbf618e5272036b9def89b1f8428440a901d8b73c1f1103f8"
 section_count = 3
