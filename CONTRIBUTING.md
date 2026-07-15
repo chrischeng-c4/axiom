@@ -254,7 +254,7 @@ meta-doc producer/check after a trait changes.
 | `competitive_replacement` | `competitor-feature-parity`, `competitor-performance` | — | Project aims to replace or match an existing competitor tool; no settled CONTRIBUTING.md doc home yet. |
 | `long_running` | `long-running-stability` | — | Project runs as a long-lived process; no settled CONTRIBUTING.md doc home yet. |
 | `network_exposed` | `security-hardening` | — | Project exposes a network-reachable surface; no settled CONTRIBUTING.md doc home yet. |
-| `agent_facing` |  | — | Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet. |
+| `agent_facing` | `agent-task-navigation` | [DX convention](#dx-convention-every-service-and-cli-ships-a-developer-agent-experience-capability) | Project is primarily driven by agents and owes an offline task-navigation protocol with verified runbooks. |
 | `stateful_storage` |  | — | Project owns durable stateful storage; prompt-only, no enforced baseline capability yet. |
 | `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly. |
 <!-- aw:trait-table:end -->
@@ -836,11 +836,9 @@ Experience` (`developer-agent-experience`, `AgentFirst`) with
 `lumen spec --format openapi`), `agent-onboarding` (`lumen llm` topics
 test-asserted by `tests/spec_cli.rs`), `interactive-tooling` (`lumen
 connect`, `lumen query`), and `integration-contract` (the routed
-multi-shard retry-code contract, test-asserted). Wiring this convention
-into `[capability.profile].traits` derivation (so it becomes a
-trait-derived baseline capability like `cli-interface`) is tracked
-separately as agentic-workflow work item #1481 — not implemented by this
-section.
+multi-shard retry-code contract, test-asserted). A project that declares
+the `agent_facing` trait derives the `agent-task-navigation` baseline; the
+trait does not imply Kubernetes, HA, backup, or performance traits.
 
 ## Meta-doc content contract
 

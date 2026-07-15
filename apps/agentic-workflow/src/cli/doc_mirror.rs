@@ -458,6 +458,65 @@ pub struct TraitDef {
     pub about: &'static str,
 }
 
+/// One non-domain capability family. Families classify baseline capability
+/// ids for planning and generated reports; they do not themselves create
+/// README capabilities or widen a project's trait-derived obligations.
+pub struct CapabilityFamilyDef {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub baseline_caps: &'static [&'static str],
+}
+
+/// The canonical non-domain capability taxonomy. Domain capabilities remain
+/// product-owned README roots and are intentionally absent from this registry.
+pub const CAPABILITY_FAMILIES: &[CapabilityFamilyDef] = &[
+    CapabilityFamilyDef {
+        id: "developer-agent-experience",
+        title: "Developer & Agent Experience",
+        baseline_caps: &[
+            "cli-interface",
+            "cli-standard-surface",
+            "chainable-output-conformance",
+            "agent-task-navigation",
+        ],
+    },
+    CapabilityFamilyDef {
+        id: "interface-ecosystem-integration",
+        title: "Interface & Ecosystem Integration",
+        baseline_caps: &["http2-api-list", "competitor-feature-parity"],
+    },
+    CapabilityFamilyDef {
+        id: "operations-observability",
+        title: "Operations & Observability",
+        baseline_caps: &["standard-operational-endpoints"],
+    },
+    CapabilityFamilyDef {
+        id: "security-governance",
+        title: "Security & Governance",
+        baseline_caps: &["security-hardening"],
+    },
+    CapabilityFamilyDef {
+        id: "reliability-data-continuity",
+        title: "Reliability & Data Continuity",
+        baseline_caps: &["long-running-stability", "primary-replicas"],
+    },
+    CapabilityFamilyDef {
+        id: "performance-capacity",
+        title: "Performance & Capacity",
+        baseline_caps: &["competitor-performance"],
+    },
+    CapabilityFamilyDef {
+        id: "platform-delivery-lifecycle",
+        title: "Platform Delivery & Lifecycle",
+        baseline_caps: &["kubernetes-native-deployment"],
+    },
+    CapabilityFamilyDef {
+        id: "contract-quality-assurance",
+        title: "Contract Quality & Assurance",
+        baseline_caps: &["ec-gates-configured"],
+    },
+];
+
 /// The full known-trait registry (archetype-anchored and general), in
 /// CONTRIBUTING.md trait-table row order.
 pub const TRAITS: &[TraitDef] = &[
@@ -533,9 +592,9 @@ pub const TRAITS: &[TraitDef] = &[
     },
     TraitDef {
         id: "agent_facing",
-        baseline_caps: &[],
-        contributing_anchor: None,
-        about: "Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet.",
+        baseline_caps: &["agent-task-navigation"],
+        contributing_anchor: Some("## DX convention: every service and CLI ships a Developer & Agent Experience capability"),
+        about: "Project is primarily driven by agents and owes an offline task-navigation protocol with verified runbooks.",
     },
     TraitDef {
         id: "stateful_storage",
@@ -691,6 +750,26 @@ pub fn upsert_trait_table(doc_text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capability_family_registry_is_complete_and_non_domain_only() {
+        assert_eq!(CAPABILITY_FAMILIES.len(), 8);
+        let ids = CAPABILITY_FAMILIES
+            .iter()
+            .map(|family| family.id)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(ids.len(), 8, "family ids must be unique");
+        assert!(CAPABILITY_FAMILIES.iter().any(|family| {
+            family.id == "developer-agent-experience"
+                && family.baseline_caps.contains(&"agent-task-navigation")
+        }));
+        assert!(CAPABILITY_FAMILIES.iter().all(|family| {
+            family
+                .baseline_caps
+                .iter()
+                .all(|capability| !capability.starts_with("domain-"))
+        }));
+    }
 
     #[test]
     fn agents_block_from_claude_block_inserts_paragraph_before_anchor() {

@@ -2,7 +2,7 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-agent-offline-spec
-// @capability agent-offline-integration
+// @capability developer-agent-experience
 // @claim lumen-spec-schema-openapi-json-yaml-json-schema-offline
 // @contract agent-offline-spec
 // @category behavior

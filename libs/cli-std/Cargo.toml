@@ -21,7 +21,7 @@ tar = "0.4"
 reqwest = { workspace = true, optional = true }
 # `connect` (feature `k8s`) only: deserialize the token-registry.json / CR
 # JSON shapes it reads and decode a Kubernetes Secret's base64 `.data` values.
-serde = { workspace = true, optional = true }
+serde.workspace = true
 base64 = { workspace = true, optional = true }
 
 [features]
@@ -32,7 +32,7 @@ online = ["dep:reqwest"]
 # token-registry Secret resolution (#1376). Off by default so non-k8s
 # consumers (openapi-codegen, h2c, service-auth, raft-host, operator,
 # service-backup, ...) don't pay for kubectl/Secret-shaped deps they never use.
-k8s = ["dep:serde", "dep:base64"]
+k8s = ["dep:base64"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

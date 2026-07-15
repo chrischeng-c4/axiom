@@ -2,16 +2,16 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-cli-interface-llm-playbook
-// @capability cli-interface
-// @claim lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes
-// @contract lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes
+// @capability agent-task-navigation
+// @claim lumen-llm-v2-task-navigation
+// @contract lumen-llm-v2-task-navigation
 // @category behavior
 // @required_for_production true
 // @command cargo test -p lumen --test spec_cli -- --nocapture
 // AW-EC-END
 
-// Contract: lumen llm outline, workflow, integration, quickstart, and recipes preserve the agent-facing topic set.
-// Contract: lumen llm integration preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.
+// Contract: lumen llm outline publishes the cclab.llm.v2 typed task manifest and every advertised topic parses through the binary.
+// Contract: lumen llm integrate-source-db preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.
 // Contract: agent-facing playbook output remains deterministic and offline.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

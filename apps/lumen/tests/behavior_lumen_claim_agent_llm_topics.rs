@@ -2,15 +2,15 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-agent-llm-topics
-// @capability agent-offline-integration
-// @claim lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes
-// @contract agent-llm-topics
+// @capability agent-task-navigation
+// @claim lumen-llm-v2-task-navigation
+// @contract agent-llm-v2-task-navigation
 // @category behavior
 // @required_for_production true
 // @command cargo test -p lumen --test spec_cli -- --nocapture
 // AW-EC-END
 
-// Contract: The offline LLM outline, workflow, integration, quickstart, and recipe topics remain available.
+// Contract: The offline cclab.llm.v2 outline publishes every typed Lumen task and each task emits a source-backed Markdown/JSON runbook.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_agent_llm_topics() {

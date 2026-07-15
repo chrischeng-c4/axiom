@@ -141,7 +141,8 @@ pub enum SectionKind {
     /// db-model, scenarios, unit-test, mindmap, requirements.
     MermaidFamily,
     /// JSON Schema family — schema, wireframe, component, design-token,
-    /// manifest, tool-contract, e2e-test.
+    /// manifest, dx-contract, tool-contract, e2e-test. `dx-contract` is a
+    /// distinct section type; this generic YAML parser is not the EC manifest.
     JsonSchemaFamily,
     /// OpenRPC 1.3 family — rpc-api.
     OpenRpcFamily,
@@ -189,6 +190,7 @@ impl SectionKind {
             | SectionType::Deployment
             | SectionType::Manifest
             | SectionType::ToolContract
+            | SectionType::DxContract
             | SectionType::E2eTest => SectionKind::JsonSchemaFamily,
 
             SectionType::RpcApi => SectionKind::OpenRpcFamily,

@@ -2,7 +2,7 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-claim-agent-query-catalog
-// @capability agent-offline-integration
+// @capability developer-agent-experience
 // @claim query-shape-cookbook-field-analyzer-catalog
 // @contract agent-query-catalog
 // @category behavior

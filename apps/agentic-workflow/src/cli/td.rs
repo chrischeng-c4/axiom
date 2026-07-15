@@ -2372,6 +2372,9 @@ fn section_type_brief_hint(st: crate::models::spec_rules::SectionType) -> &'stat
         SectionType::ToolContract => {
             "AW tool-contract bridge to native vat/rig/meter/guard manifests; arena remains legacy compatibility"
         }
+        SectionType::DxContract => {
+            "Developer/agent task-navigation decisions: typed runbooks, templates, and generated DX artifacts"
+        }
         SectionType::RustSourceUnit => "Lossless Rust source unit (CST-backed regen)",
         SectionType::TextSourceUnit => "Lossless shell/text source unit (TD-owned regen)",
         SectionType::Changes => "File change list (path + action)",

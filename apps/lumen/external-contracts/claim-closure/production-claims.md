@@ -511,7 +511,7 @@ e2e_tests:
       - "A fresh serving process restores a configured SnapshotV1 seed before WAL or raft catch-up."
 
   - id: lumen-claim-agent-offline-spec
-    capability_id: agent-offline-integration
+    capability_id: developer-agent-experience
     claim_id: lumen-spec-schema-openapi-json-yaml-json-schema-offline
     contract_id: agent-offline-spec
     category: behavior
@@ -519,7 +519,7 @@ e2e_tests:
     assertions:
       - "Offline schema commands produce valid OpenAPI JSON/YAML and JSON-schema output for agents."
   - id: lumen-claim-agent-query-catalog
-    capability_id: agent-offline-integration
+    capability_id: developer-agent-experience
     claim_id: query-shape-cookbook-field-analyzer-catalog
     contract_id: agent-query-catalog
     category: behavior
@@ -527,11 +527,11 @@ e2e_tests:
     assertions:
       - "The offline query-shape and field/analyzer catalogs remain deterministic for agent ingestion."
   - id: lumen-claim-agent-llm-topics
-    capability_id: agent-offline-integration
-    claim_id: lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes
-    contract_id: agent-llm-topics
+    capability_id: agent-task-navigation
+    claim_id: lumen-llm-v2-task-navigation
+    contract_id: agent-llm-v2-task-navigation
     category: behavior
     command: "cargo test -p lumen --test spec_cli -- --nocapture"
     assertions:
-      - "The offline LLM outline, workflow, integration, quickstart, and recipe topics remain available."
+      - "The offline cclab.llm.v2 outline publishes every typed Lumen task and each task emits a source-backed Markdown/JSON runbook."
 ```
