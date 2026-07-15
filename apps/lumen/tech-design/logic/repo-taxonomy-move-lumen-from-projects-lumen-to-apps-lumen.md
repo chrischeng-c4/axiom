@@ -50,7 +50,6 @@ changes:
     impl_mode: hand-written
     description: "Make the Lumen capability-profile discovery fixture exercise apps/lumen rather than the retired projects/lumen root."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
