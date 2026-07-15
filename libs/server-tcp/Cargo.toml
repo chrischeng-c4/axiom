@@ -14,5 +14,3 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 socket2 = "0.6"
-
-<!-- marker: missing-generator:logic:fc16524e path: libs/server-tcp/Cargo.toml reason: scaffold for libs/server-tcp/Cargo.toml — fill in by hand and update tracker when codegen is ready -->

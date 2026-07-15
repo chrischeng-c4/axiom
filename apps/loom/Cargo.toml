@@ -39,7 +39,7 @@ reqwest = { workspace = true }
 # Shared Raft consensus engine for replicated workflow state (#110).
 raft-core = { path = "../../libs/raft-core" }
 # Scoped claim-check tokens the schema layer signs for workers (#444).
-claimtoken = { path = "../../libs/claimtoken" }
+claim-token = { path = "../../libs/claim-token" }
 # Standard agent-facing CLI ops — llm/upgrade/report-issue (#475). Offline paths
 # always build; the network paths are gated behind loom's online features below.
 cli-std = { path = "../../libs/cli-std", default-features = false }

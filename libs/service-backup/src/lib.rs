@@ -3,7 +3,7 @@
 //! `service-backup` — shared backup contract for axiom services.
 //!
 //! The data plane owns snapshot consistency: each service state machine produces
-//! bytes at a concrete applied index, and `raft-host` handles snapshot install
+//! bytes at a concrete applied index, and `raft-runtime` handles snapshot install
 //! plus log compaction. This crate owns the cross-service backup shape around
 //! those bytes: destination/policy schema, sink trait, local sink, and a small
 //! runner primitive.

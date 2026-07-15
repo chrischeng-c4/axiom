@@ -15,5 +15,3 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
 sha2 = "0.10"
-
-<!-- marker: missing-generator:logic:ebe63011 path: libs/claim-token/Cargo.toml reason: scaffold for libs/claim-token/Cargo.toml — fill in by hand and update tracker when codegen is ready -->

@@ -21,5 +21,3 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-
-<!-- marker: missing-generator:logic:811572f3 path: libs/raft-runtime/Cargo.toml reason: scaffold for libs/raft-runtime/Cargo.toml — fill in by hand and update tracker when codegen is ready -->

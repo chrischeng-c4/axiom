@@ -26,7 +26,7 @@ pub mod auth;
 /// serving fleet's existing `GET /admin/backup` endpoint and hands it to a
 /// `libs/service-backup` destination sink. No new snapshot mechanism — this
 /// is transport/scheduling only, meant to be driven by the operator's
-/// optional backup CronJob (`spec.backup`, see `operator::render`) or ad hoc.
+/// optional backup CronJob (`spec.backup`, see `service_k8s::render`) or ad hoc.
 /// Behind the `backup` feature (pulled in by `operator`) since it needs an
 /// HTTP client; `raft-wal` already links one into every shipped binary.
 #[cfg(feature = "backup")]
@@ -50,8 +50,8 @@ pub mod operator;
 /// Cluster-state view types backing the read/admin API. This surface is the
 /// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
-/// `EngineSm` — lumen's `Engine` as a shared-`raft_host` state machine: the
-/// convergence onto `libs/raft-host` (#524). The host is the sole applier, so
+/// `EngineSm` — lumen's `Engine` as a shared-`raft_runtime` state machine: the
+/// convergence onto `libs/raft-runtime` (#524). The host is the sole applier, so
 /// the per-service driver, durable hard state, and the WAL seam are no longer
 /// lumen's to own — they live in the shared lib.
 #[cfg(feature = "raft-wal")]

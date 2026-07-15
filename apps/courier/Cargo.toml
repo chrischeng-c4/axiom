@@ -37,7 +37,7 @@ service-http = { path = "../../libs/service-http" }
 service-auth = { path = "../../libs/service-auth" }
 # Process-level rustls crypto provider install (reqwest's rustls-tls-native-roots
 # backend needs a default provider installed once before the first TLS dial).
-service-tls = { path = "../../libs/service-tls" }
+peer-tls = { path = "../../libs/peer-tls" }
 # Outbound calls to api.github.com (server-held credential).
 reqwest = { workspace = true }
 # Standard agent-facing CLI ops — llm/upgrade/issue.

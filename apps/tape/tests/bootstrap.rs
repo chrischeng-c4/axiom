@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use raft_host::RaftStateMachine;
+use raft_runtime::RaftStateMachine;
 use tape::raft::{prepare_bootstrap_seed, snapshot_bytes, TapeStateMachine};
 use tape::TapeJournal;
 

@@ -429,7 +429,7 @@ fn llm_deployment_documents_shard_cluster_topology() {
         "Search without a routing key scatters/gathers",
         "LUMEN_BOOTSTRAP_SEED_URI",
         "Backup is the cold disaster-recovery and seed surface",
-        "Shared raft-host topology primitive",
+        "Shared raft-runtime topology primitive",
         "RaftStateMachine",
         "REPLICAS_PER_SHARD > 1",
     ] {
@@ -512,7 +512,7 @@ fn llm_storage_documents_shard_replica_and_bootstrap_boundaries() {
         "Shared backup primitive",
         "BackupDestination",
         "fetch_backup_object",
-        "Shared raft-host primitive",
+        "Shared raft-runtime primitive",
         "RaftStateMachine",
     ] {
         assert!(storage.contains(needle), "storage topic missing `{needle}`");

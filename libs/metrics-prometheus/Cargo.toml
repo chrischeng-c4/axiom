@@ -7,5 +7,3 @@ description = "Shared lock-free Prometheus counter, gauge, and latency primitive
 [lib]
 name = "metrics_prometheus"
 path = "src/lib.rs"
-
-<!-- marker: missing-generator:logic:6a0affa5 path: libs/metrics-prometheus/Cargo.toml reason: scaffold for libs/metrics-prometheus/Cargo.toml — fill in by hand and update tracker when codegen is ready -->
