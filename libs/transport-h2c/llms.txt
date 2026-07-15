@@ -1,4 +1,4 @@
-<!-- SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/h2c-libs-h2c.md#schema -->
+<!-- SPEC-MANAGED: libs/transport-h2c/tech-design/semantic/transport-h2c-libs-transport-h2c.md#schema -->
 <!-- CODEGEN-BEGIN -->
 # h2c Agent Context
 

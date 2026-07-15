@@ -1,5 +1,5 @@
 ---
-id: semantic-claimtoken-libs-claimtoken
+id: semantic-claim-token-libs-claim-token
 summary: Semantic coverage for the claimtoken library source, manifest, tests, and project-root context artifact.
 capability_refs:
   - id: scoped-claim-tokens
@@ -67,7 +67,7 @@ changes:
     Existing manifest behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-claimtoken-cargo-toml>"
+    - "<handwrite-tracker:libs-claim-token-cargo-toml>"
 - path: "libs/claim-token/src/lib.rs"
   action: modify
   section: schema
@@ -75,7 +75,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-claimtoken-src-lib-rs>"
+    - "<handwrite-tracker:libs-claim-token-src-lib-rs>"
 - path: "libs/claim-token/llms.txt"
   action: modify
   section: schema

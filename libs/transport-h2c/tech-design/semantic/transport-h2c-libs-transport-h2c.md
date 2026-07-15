@@ -1,5 +1,5 @@
 ---
-id: semantic-h2c-libs-h2c
+id: semantic-transport-h2c-libs-transport-h2c
 summary: Semantic coverage for the h2c library source, manifest, tests, and project-root context artifact.
 capability_refs:
   - id: http2-cleartext-client-helpers
@@ -137,7 +137,7 @@ changes:
     Existing manifest behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-cargo-toml>"
+    - "<handwrite-tracker:libs-transport-h2c-cargo-toml>"
 - path: "libs/transport-h2c/examples/conn_sweep.rs"
   action: modify
   section: schema
@@ -145,7 +145,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-examples-conn-sweep-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-examples-conn-sweep-rs>"
 - path: "libs/transport-h2c/src/conn.rs"
   action: modify
   section: schema
@@ -153,7 +153,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-src-conn-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-src-conn-rs>"
 - path: "libs/transport-h2c/src/error.rs"
   action: modify
   section: schema
@@ -161,7 +161,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-src-error-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-src-error-rs>"
 - path: "libs/transport-h2c/src/lib.rs"
   action: modify
   section: schema
@@ -169,7 +169,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-src-lib-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-src-lib-rs>"
 - path: "libs/transport-h2c/src/llm.rs"
   action: modify
   section: schema
@@ -177,7 +177,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-src-llm-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-src-llm-rs>"
 - path: "libs/transport-h2c/src/manager.rs"
   action: modify
   section: schema
@@ -185,7 +185,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-src-manager-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-src-manager-rs>"
 - path: "libs/transport-h2c/src/server.rs"
   action: modify
   section: schema
@@ -193,7 +193,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-src-server-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-src-server-rs>"
 - path: "libs/transport-h2c/tests/manager.rs"
   action: modify
   section: schema
@@ -201,7 +201,7 @@ changes:
     Existing source behavior is covered by this library semantic TD.
   impl_mode: hand-written
   replaces:
-    - "<handwrite-tracker:libs-h2c-tests-manager-rs>"
+    - "<handwrite-tracker:libs-transport-h2c-tests-manager-rs>"
 - path: "libs/transport-h2c/llms.txt"
   action: modify
   section: schema
