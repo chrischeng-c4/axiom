@@ -2643,6 +2643,9 @@ fn project_health_completion(report: &ProjectHealthReport) -> serde_json::Value 
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_requires_hitl(report: &ProjectHealthReport) -> bool {
+    if report.ec.lock_status == Some(crate::cli::ec::EcLockState::MigrationRequired) {
+        return true;
+    }
     if project_health_caps_ec_only(&report.project) {
         return false;
     }
@@ -2790,6 +2793,9 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         );
     }
     if !report.ec.lock_clean {
+        if report.ec.lock_status == Some(crate::cli::ec::EcLockState::MigrationRequired) {
+            return None;
+        }
         return Some(
             if report.ec.lock_status == Some(crate::cli::ec::EcLockState::Missing) {
                 format!("aw ec lock --project {}", report.project)
@@ -4638,6 +4644,25 @@ mod tests {
             project_health_next_reason(&report),
             "EC generated content drifted"
         );
+    }
+
+    #[test]
+    fn health_marks_ec_lock_removals_as_a_migration_hitl_blocker() {
+        let mut report = ready_project_health_report("jet");
+        report.production_ready = false;
+        report.status = ProjectHealthStatus::Blocked;
+        report.production_status = ProductionStatus::Blocked;
+        report.ec.lock_clean = false;
+        report.ec.lock_status = Some(crate::cli::ec::EcLockState::MigrationRequired);
+        report.ec.note = Some(
+            "ec lock migration required (86 locked entry/entries removed from current EC IR); refusing to overwrite `ec.lock`".to_string(),
+        );
+
+        assert!(project_health_requires_hitl(&report));
+        assert_eq!(project_health_loop_status(&report), "blocked");
+        assert_eq!(project_health_next_command(&report), None);
+        assert_eq!(project_health_next_kind(&report, false), "hitl");
+        assert!(project_health_next_reason(&report).contains("migration required"));
     }
 
     #[test]
