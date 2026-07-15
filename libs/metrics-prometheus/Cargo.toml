@@ -1,3 +1,11 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:6a0affa5" tracker="pending-tracker" reason="scaffold for libs/metrics-prometheus/Cargo.toml — fill in by hand and update tracker when codegen is ready"
-// TODO: hand-write content for `libs/metrics-prometheus/Cargo.toml`.
-// HANDWRITE-END
+[package]
+name = "metrics-prometheus"
+version = "0.1.0"
+edition = "2021"
+description = "Shared lock-free Prometheus counter, gauge, and latency primitives plus the text/plain version 0.0.4 encoder used by service metrics endpoints."
+
+[lib]
+name = "metrics_prometheus"
+path = "src/lib.rs"
+
+<!-- marker: missing-generator:logic:6a0affa5 path: libs/metrics-prometheus/Cargo.toml reason: scaffold for libs/metrics-prometheus/Cargo.toml — fill in by hand and update tracker when codegen is ready -->
