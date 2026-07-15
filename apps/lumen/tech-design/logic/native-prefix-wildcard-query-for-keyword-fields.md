@@ -76,7 +76,6 @@ changes:
     impl_mode: hand-written
     description: "Lock runtime-derived field catalogue and canonical OpenAPI prefix metadata."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
