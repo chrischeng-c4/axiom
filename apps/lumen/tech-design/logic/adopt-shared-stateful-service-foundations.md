@@ -97,7 +97,6 @@ changes:
     impl_mode: hand-written
     description: "Publish the dependency-ordered #1640-#1645 adoption evidence and clarify the credential reload boundary. generator gap: missing-generator:lumen-capability-adoption-doc (#1646)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
