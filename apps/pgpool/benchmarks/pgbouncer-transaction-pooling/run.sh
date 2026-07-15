@@ -207,8 +207,12 @@ relative_spread() {
     awk -v first="$1" -v second="$2" '
         function abs(value) { return value < 0 ? -value : value }
         BEGIN {
-            mean = (first + second) / 2
-            printf "%.6f", mean == 0 ? 1 : abs(first - second) / mean
+            midpoint = (first + second) / 2
+            if (midpoint == 0) {
+                printf "%.6f", 1
+            } else {
+                printf "%.6f", abs(first - second) / midpoint
+            }
         }
     '
 }
@@ -251,11 +255,11 @@ require_meter_artifacts() {
 }
 
 start_pgpool() {
-    local telemetry_env=()
+    local telemetry_env=(env)
     if [[ "$PHASE_TELEMETRY" == true ]]; then
         telemetry_env+=(PGPOOL_TRANSACTION_PHASE_TELEMETRY=1)
     fi
-    env "${telemetry_env[@]}" "$PGPOOL_BIN" serve \
+    "${telemetry_env[@]}" "$PGPOOL_BIN" serve \
         --backend-host 127.0.0.1 \
         --backend-port "$POSTGRES_PORT" \
         --bind "127.0.0.1:$PGPOOL_PORT" \

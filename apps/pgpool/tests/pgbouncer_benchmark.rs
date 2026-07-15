@@ -227,6 +227,8 @@ fn meter_can_sample_either_pooler_but_never_changes_peer_verdict_rules() {
 #[test]
 fn phase_telemetry_is_opt_in_and_marks_the_peer_result_diagnostic_only() {
     assert!(RUNNER_SOURCE.contains("--phase-telemetry"));
+    assert!(RUNNER_SOURCE.contains("local telemetry_env=(env)"));
+    assert!(!RUNNER_SOURCE.contains("local telemetry_env=()"));
     assert!(RUNNER_SOURCE.contains("PGPOOL_TRANSACTION_PHASE_TELEMETRY=1"));
     assert!(RUNNER_SOURCE.contains("capture_pgpool_phase_metrics"));
     assert!(RUNNER_SOURCE.contains("write_pgpool_phase_delta"));
@@ -237,6 +239,9 @@ fn phase_telemetry_is_opt_in_and_marks_the_peer_result_diagnostic_only() {
 
 #[test]
 fn runner_is_syntax_valid_and_dry_run_is_hermetic() {
+    assert!(RUNNER_SOURCE.contains("midpoint = (first + second) / 2"));
+    assert!(RUNNER_SOURCE.contains("if (midpoint == 0)"));
+    assert!(!RUNNER_SOURCE.contains("midpoint == 0 ?"));
     let syntax = Command::new("bash")
         .args(["-n", SCRIPT])
         .output()
