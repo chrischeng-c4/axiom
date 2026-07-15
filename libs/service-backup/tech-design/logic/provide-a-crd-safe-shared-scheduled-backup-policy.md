@@ -52,3 +52,42 @@ changes:
   - { path: apps/relay/src/operator/crd.rs, action: modify, section: logic, impl_mode: hand-written, description: Flatten the shared policy beside Relay token-secret fields. }
   - { path: apps/relay/tests/operator.rs, action: modify, section: unit-test, impl_mode: hand-written, description: Prove Relay CRD and rendering compatibility. }
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: shared-crd-safe-backup-policy-verification
+requirements:
+  crd_compatibility:
+    id: R3
+    text: "Lumen, Keep, and Relay generated CRDs retain flat schedule, destination, retentionSecs, and app-specific adminTokenSecret fields without tagged destination unions."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --test operator_render; cargo test -p keep --test operator; cargo test -p relay --test operator
+  render_compatibility:
+    id: R4
+    text: "All three operators render the same CronJob schedule, destination, retention, and token-secret wiring as before adoption."
+    kind: regression
+    risk: medium
+    verify: cargo test -p lumen --test operator_render; cargo test -p keep --test operator; cargo test -p relay --test operator
+  shared_projection:
+    id: R1
+    text: "ScheduledBackupPolicy serializes as the flat schedule, destination, and retentionSecs contract and exposes a structural-schema-safe JsonSchema."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-backup
+  validated_conversion:
+    id: R2
+    text: "One shared conversion rejects blank schedules and invalid destination URIs while preserving valid retention semantics."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-backup
+---
+flowchart TD
+    r1[R1 shared projection] --> cargo_test_p_service_backup[cargo test -p service-backup]
+    r2[R2 validated conversion] --> cargo_test_p_service_backup
+    r3[R3 crd compatibility] --> cargo_test_p_lumen_test_operator_render_cargo_test_p_keep_test_operator_cargo_test_p_relay_test_operator[cargo test -p lumen --test operator_render; cargo test -p keep --test operator; cargo test -p relay --test operator]
+    r4[R4 render compatibility] --> cargo_test_p_lumen_test_operator_render_cargo_test_p_keep_test_operator_cargo_test_p_relay_test_operator
+```
