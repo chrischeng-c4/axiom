@@ -26,6 +26,12 @@ capability_refs:
     claim: "aw-epic-project-label-dispatch"
     coverage: full
     rationale: "The CLI semantic domain owns run.rs project-label resolution, epic atomize dispatch, and the unresolved-label HITL envelope."
+  - id: workflow-root-runner
+    role: primary
+    gap: self-hosting-runner-policy
+    claim: self-hosting-runner-policy
+    coverage: full
+    rationale: "Runner admission rejects Agentic Workflow's own project, capability, and WI roots before mutation, while self-health exposes the sanctioned direct-commit gate partition."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: ec-evidence-documentation
@@ -1174,6 +1180,24 @@ semantic_domain:
           - name: "GOAL_INLINE_LIMIT_BYTES"
             kind: "constant"
             public: false
+          - name: "SELF_HOSTING_POLICY_MODE"
+            kind: "constant"
+            public: true
+          - name: "SELF_HOSTING_HARD_GATES"
+            kind: "constant"
+            public: false
+          - name: "SELF_HOSTING_ADVISORY_AXES"
+            kind: "constant"
+            public: false
+          - name: "is_self_hosting_project"
+            kind: "function"
+            public: true
+          - name: "self_hosting_hard_gates"
+            kind: "function"
+            public: true
+          - name: "self_hosting_advisory_axes"
+            kind: "function"
+            public: true
           - name: "RunArgs"
             kind: "struct"
             public: true
@@ -1234,6 +1258,15 @@ semantic_domain:
           - name: "WorkflowGoalEnvelope"
             kind: "struct"
             public: false
+          - name: "SelfHostingPolicyEnvelope"
+            kind: "struct"
+            public: false
+          - name: "self_hosting_policy_envelope"
+            kind: "function"
+            public: false
+          - name: "emit_self_hosting_policy_error"
+            kind: "function"
+            public: true
           - name: "RunPrintOptions"
             kind: "struct"
             public: true
@@ -1322,6 +1355,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "project_from_labels"
+            kind: "function"
+            public: false
+          - name: "issue_is_self_hosting"
             kind: "function"
             public: false
         source_evidence_node:
@@ -3523,6 +3559,23 @@ changes:
       `PROJECT` placeholder. Focused tests cover the historical #1511 pgpool
       label shape, app/lib compatibility, invalid values, and real-CLI chain
       parsing.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1501 adds a single self-hosting admission policy. Root capability
+      and work-item runners reject Agentic Workflow identity before a lifecycle
+      tick, return a terminal aw.cli.v1 policy envelope with no next command or
+      invoke, and route self rollup to read-only health claims instead of a
+      project root runner.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1501 rejects the project-scoped capability runner before its
+      report or next-action loop can mutate local planning or tracker state.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/chain.rs"
     action: modify

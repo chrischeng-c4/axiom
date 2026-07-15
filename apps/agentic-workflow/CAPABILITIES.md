@@ -73,6 +73,7 @@ Gate Inventory:
 | Root envelope completion contract | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib create_wi_blocks_on_pending_epicize_artifact` |
 | Parent rollup routing | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib closed_change_outputs_parent_inspection` |
 | Runtime Envelope Backward Compatibility | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib envelope_profile -- --nocapture`; apps/agentic-workflow/tech-design/specs/3903.md |
+| Self-hosting root-runner policy | change | #1501 | implemented | verified | smoke | `cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md; AW rejects its own WI/capability/project root runners before mutation and uses sanctioned direct commits plus focused health/TD/EC verification instead |
 
 ### Capability Control Plane
 

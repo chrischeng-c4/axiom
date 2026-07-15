@@ -260,9 +260,9 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "project health's next-remediation command for a stale TD lock",
     },
     EmitSite {
-        source: "project.rs:project_health_next_command (capability run)",
-        sample: "aw capability run --project agentic-workflow --non-interactive --max-ticks 1",
-        note: "project health's next-remediation command for capability readiness",
+        source: "project.rs:project_health_next_command (self-hosting capability verification)",
+        sample: "aw capability check --project agentic-workflow --verify",
+        note: "self-hosting health verifies capability work roots without re-entering a root runner",
     },
     EmitSite {
         source: "standardize.rs:takeover_audit_health_worker_command (unrecorded)",
@@ -331,15 +331,16 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "run.rs:capability_run_command",
-        sample: "aw capability run work-item-planning --project agentic-workflow",
+        sample: "aw capability run work-item-planning --project jet",
         note: "#917: canonical `aw capability run <capability-id> --project <project>` \
-               replacement for the deprecated `aw run --root capability:<project>:<id>` forms",
+               replacement for the deprecated `aw run --root capability:<project>:<id>` forms; \
+               Agentic Workflow self-hosting is rejected at admission",
     },
     EmitSite {
         source: "run.rs:project_capability_rollup_command",
-        sample: "aw capability run --project agentic-workflow --non-interactive --max-ticks 1",
-        note: "#917: canonical replacement for the deprecated bare `aw run --project <project>` \
-               form; subsumes the project root via the existing project-scoped capability loop",
+        sample: "aw health --project agentic-workflow claims",
+        note: "self-hosting rollup is a read-only health inspection; other projects use the \
+               project-scoped capability loop",
     },
     EmitSite {
         source: "cb.rs:bare_code_check_guidance_envelope",
@@ -1599,10 +1600,7 @@ mod tests {
     fn legacy_aw_run_project_only_normalizes_to_capability_rollup() {
         assert_eq!(
             normalize_legacy_next_action("aw run --project agentic-workflow", "irrelevant"),
-            Some(
-                "aw capability run --project agentic-workflow --non-interactive --max-ticks 1"
-                    .to_string()
-            )
+            Some("aw health --project agentic-workflow claims".to_string())
         );
     }
 

@@ -33,6 +33,37 @@ use std::time::{Duration, Instant};
 
 const GOAL_INLINE_LIMIT_BYTES: usize = 4000;
 
+/// AW's own repository uses the sanctioned direct-commit mode rather than
+/// recursively invoking the root workflow that it implements.
+pub(crate) const SELF_HOSTING_POLICY_MODE: &str = "sanctioned_direct_commit";
+const SELF_HOSTING_HARD_GATES: &[&str] = &[
+    "capability_work_root_alignment",
+    "closing_work_item_and_td_refs",
+    "configured_ec_claim_verification",
+];
+const SELF_HOSTING_ADVISORY_AXES: &[&str] = &[
+    "managed",
+    "semantic",
+    "traceability",
+    "td_lock",
+    "cb_verify",
+    "cold_rebuild",
+    "tests",
+    "regenerable",
+];
+
+pub(crate) fn is_self_hosting_project(project: &str) -> bool {
+    matches!(project.trim(), "agentic-workflow" | "aw")
+}
+
+pub(crate) fn self_hosting_hard_gates() -> &'static [&'static str] {
+    SELF_HOSTING_HARD_GATES
+}
+
+pub(crate) fn self_hosting_advisory_axes() -> &'static [&'static str] {
+    SELF_HOSTING_ADVISORY_AXES
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedRunRoot {
     Capability {
@@ -265,6 +296,89 @@ struct WorkflowGoalEnvelope {
     goal_prompt: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct SelfHostingPolicyEnvelope {
+    schema_version: &'static str,
+    status: &'static str,
+    action: &'static str,
+    root: WorkflowNode,
+    completion: CanonicalWorkflowCompletion,
+    next: CanonicalWorkflowNext,
+    policy_mode: &'static str,
+    hard_gates: &'static [&'static str],
+    advisory_axes: &'static [&'static str],
+    remediation: Vec<&'static str>,
+    agent_prompt: String,
+}
+
+fn self_hosting_policy_envelope(
+    project: &str,
+    root_kind: &str,
+    root_id: &str,
+) -> SelfHostingPolicyEnvelope {
+    SelfHostingPolicyEnvelope {
+        schema_version: "aw.cli.v1",
+        status: "blocked",
+        action: "self_hosting_policy",
+        root: WorkflowNode {
+            kind: root_kind.to_string(),
+            id: root_id.to_string(),
+        },
+        completion: CanonicalWorkflowCompletion {
+            root_complete: false,
+            workflow_complete: false,
+            requires_hitl: false,
+            criteria: self_hosting_hard_gates()
+                .iter()
+                .map(|gate| gate.to_string())
+                .collect(),
+            missing: vec![format!(
+                "self-hosting policy forbids root workflow execution for `{project}`"
+            )],
+        },
+        next: CanonicalWorkflowNext {
+            kind: "policy".to_string(),
+            command: None,
+            reason: "Agentic Workflow must not require its own root lifecycle to repair the lifecycle implementation".to_string(),
+            payload_path: None,
+        },
+        policy_mode: SELF_HOSTING_POLICY_MODE,
+        hard_gates: self_hosting_hard_gates(),
+        advisory_axes: self_hosting_advisory_axes(),
+        remediation: vec![
+            "Apply a bounded direct change and commit it with a Refs #<issue> trailer.",
+            "Align the CAPABILITIES.md work root and its closing WI/TD references.",
+            "Use focused aw td check/code-check or aw ec commands when their artifacts are in scope.",
+            "Verify the resulting policy and capability evidence with aw health --project agentic-workflow.",
+        ],
+        agent_prompt: format!(
+            "Do not invoke `aw wi run` or `aw capability run` for `{project}`. Use sanctioned direct self-hosting work, then verify focused artifacts and health."
+        ),
+    }
+}
+
+pub(crate) fn emit_self_hosting_policy_error(
+    project: &str,
+    root_kind: &str,
+    root_id: &str,
+    print: RunPrintOptions,
+) -> Result<()> {
+    let envelope = self_hosting_policy_envelope(project, root_kind, root_id);
+    if print.human {
+        println!("blocked self-hosting policy for {root_kind}:{root_id}");
+        println!("policy_mode: {}", envelope.policy_mode);
+        println!("reason: {}", envelope.next.reason);
+        for remediation in &envelope.remediation {
+            println!("- {remediation}");
+        }
+    } else if print.pretty {
+        println!("{}", serde_json::to_string_pretty(&envelope)?);
+    } else {
+        println!("{}", serde_json::to_string(&envelope)?);
+    }
+    Ok(())
+}
+
 /// Print options shared by every thin runner shell (`aw wi run`,
 /// `aw capability run <id>`). Mirrors the human/pretty/goal subset that
 /// actually affects output shape.
@@ -341,6 +455,16 @@ pub(crate) fn wi_run_command(id: &str) -> String {
 /// via the shared root loop.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
+    // Resolve the owning project before the shared runner can load loop state
+    // or dispatch a lifecycle command. A failed read falls through to the
+    // existing runner diagnostics unchanged.
+    if let Ok(project_root) = crate::find_project_root() {
+        if let Ok(Some(issue)) = resolve_issue(id, &project_root).await {
+            if issue_is_self_hosting(&issue) {
+                return emit_self_hosting_policy_error("agentic-workflow", "wi", id, print);
+            }
+        }
+    }
     let root = ResolvedRunRoot::Wi {
         wi: id.to_string(),
         command: wi_run_command(id),
@@ -363,6 +487,9 @@ pub(crate) async fn run_capability_root(
     capability_id: &str,
     print: RunPrintOptions,
 ) -> Result<()> {
+    if is_self_hosting_project(project) {
+        return emit_self_hosting_policy_error(project, "capability", capability_id, print);
+    }
     let root = ResolvedRunRoot::Capability {
         project: project.to_string(),
         capability_id: capability_id.to_string(),
@@ -375,6 +502,9 @@ pub(crate) async fn run_capability_root(
 /// subsumes a project root.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn project_capability_rollup_command(project: &str) -> String {
+    if is_self_hosting_project(project) {
+        return format!("aw health --project {project} claims");
+    }
     format!("aw capability run --project {project} --non-interactive --max-ticks 1")
 }
 
@@ -2273,6 +2403,12 @@ fn project_from_labels(issue: &Issue) -> Option<String> {
     })
 }
 
+fn issue_is_self_hosting(issue: &Issue) -> bool {
+    project_from_labels(issue)
+        .as_deref()
+        .is_some_and(is_self_hosting_project)
+}
+
 fn print_text(envelope: &WorkflowEnvelope) {
     println!(
         "{} {}:{}",
@@ -2742,6 +2878,42 @@ mod tests {
         assert_eq!(json["next"]["kind"], "blocked");
         assert!(json["next"].get("command").is_none());
         assert!(json.get("hitl_question").is_none());
+    }
+
+    #[test]
+    fn self_hosting_policy_envelope_is_terminal_and_has_no_root_retry() {
+        let envelope =
+            self_hosting_policy_envelope("agentic-workflow", "project", "agentic-workflow");
+        let json = serde_json::to_value(&envelope).unwrap();
+
+        assert_eq!(json["status"], "blocked");
+        assert_eq!(json["action"], "self_hosting_policy");
+        assert_eq!(json["completion"]["workflow_complete"], false);
+        assert_eq!(json["next"]["kind"], "policy");
+        assert!(json["next"].get("command").is_none());
+        assert_eq!(json["policy_mode"], SELF_HOSTING_POLICY_MODE);
+        assert!(json["hard_gates"].as_array().is_some_and(|gates| gates
+            .iter()
+            .any(|gate| gate == "capability_work_root_alignment")));
+        assert!(json["advisory_axes"]
+            .as_array()
+            .is_some_and(|axes| axes.iter().any(|axis| axis == "traceability")));
+        assert!(!serde_json::to_string(&envelope)
+            .unwrap()
+            .contains("aw capability run"));
+    }
+
+    #[test]
+    fn self_hosting_wi_identity_and_rollup_never_reenter_root_runner() {
+        let mut issue = open_issue(IssueType::Bug, 1501);
+        issue.labels = vec!["app:agentic-workflow".to_string()];
+
+        assert!(issue_is_self_hosting(&issue));
+        assert!(is_self_hosting_project("aw"));
+        assert_eq!(
+            project_capability_rollup_command("agentic-workflow"),
+            "aw health --project agentic-workflow claims"
+        );
     }
 
     #[test]
