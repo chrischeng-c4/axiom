@@ -9,49 +9,68 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: shared-service-library-semantic-name-migration
-entry: inventory
+id: shared-service-library-semantic-name-contract
+entry: source_tree
 nodes:
-  inventory: { kind: start, label: "inventory shared library responsibilities and all consumers" }
-  classify: { kind: process, label: "classify each crate by stable responsibility family" }
-  ambiguous: { kind: decision, label: "does the current path expose responsibility and abstraction level?" }
-  retain: { kind: process, label: "retain already explicit library identity" }
-  rename: { kind: process, label: "rename directory package and Rust crate identity atomically" }
-  references: { kind: process, label: "rewrite Cargo source test script TD EC and active doc references" }
-  docs: { kind: process, label: "project canonical inventory and naming grammar into README and CONTRIBUTING" }
-  stale: { kind: decision, label: "do retired active identifiers remain?" }
-  repair: { kind: process, label: "repair remaining active references" }
-  verify: { kind: process, label: "run Cargo metadata focused crate tests and representative adopter tests" }
-  done: { kind: terminal, label: "semantic library taxonomy is internally consistent" }
+  source_tree: { kind: start, label: "read current libs tree and consumer graph" }
+  server_family: { kind: process, label: "server-core to server-lifecycle; tcp-server to server-tcp; http-server to server-http" }
+  transport_family: { kind: process, label: "h2c to transport-h2c" }
+  service_family: { kind: process, label: "operator to service-k8s" }
+  raft_family: { kind: process, label: "raft-host to raft-runtime" }
+  primitive_family: { kind: process, label: "service-durability to storage-durable; service-metrics to metrics-prometheus; service-tls to peer-tls" }
+  token_family: { kind: process, label: "claimtoken to claim-token" }
+  identity: { kind: process, label: "directory package and Rust crate identifier change together without compatibility aliases" }
+  rewrite: { kind: process, label: "rewrite all active Cargo code test script TD EC and documentation references" }
+  canonical_docs: { kind: process, label: "README inventories names; CONTRIBUTING owns naming grammar and boundaries" }
+  retired: { kind: decision, label: "retired active path package or crate identity found?" }
+  fail: { kind: terminal, label: "fail semantic-name fixture with offending reference" }
+  graph: { kind: decision, label: "Cargo metadata and focused tests pass?" }
+  repair: { kind: process, label: "repair graph or adopter reference" }
+  done: { kind: terminal, label: "new taxonomy is canonical and behavior-preserving" }
 edges:
-  - { from: inventory, to: classify }
-  - { from: classify, to: ambiguous }
-  - { from: ambiguous, to: retain, label: "no" }
-  - { from: ambiguous, to: rename, label: "yes" }
-  - { from: retain, to: references }
-  - { from: rename, to: references }
-  - { from: references, to: docs }
-  - { from: docs, to: stale }
-  - { from: stale, to: repair, label: "yes" }
-  - { from: repair, to: stale }
-  - { from: stale, to: verify, label: "no" }
-  - { from: verify, to: done }
+  - { from: source_tree, to: server_family }
+  - { from: source_tree, to: transport_family }
+  - { from: source_tree, to: service_family }
+  - { from: source_tree, to: raft_family }
+  - { from: source_tree, to: primitive_family }
+  - { from: source_tree, to: token_family }
+  - { from: server_family, to: identity }
+  - { from: transport_family, to: identity }
+  - { from: service_family, to: identity }
+  - { from: raft_family, to: identity }
+  - { from: primitive_family, to: identity }
+  - { from: token_family, to: identity }
+  - { from: identity, to: rewrite }
+  - { from: rewrite, to: canonical_docs }
+  - { from: canonical_docs, to: retired }
+  - { from: retired, to: fail, label: "yes" }
+  - { from: retired, to: graph, label: "no" }
+  - { from: graph, to: repair, label: "no" }
+  - { from: repair, to: rewrite }
+  - { from: graph, to: done, label: "yes" }
 ---
 flowchart TD
-  inventory([inventory responsibilities and consumers]) --> classify[classify by responsibility family]
-  classify --> ambiguous{ambiguous path or abstraction?}
-  ambiguous -->|no| retain[retain identity]
-  ambiguous -->|yes| rename[atomic directory package crate rename]
-  retain --> references[rewrite all active references]
-  rename --> references
-  references --> docs[update README and CONTRIBUTING]
-  docs --> stale{retired active identifier remains?}
-  stale -->|yes| repair[repair reference]
-  repair --> stale
-  stale -->|no| verify[metadata and focused tests]
-  verify --> done([consistent semantic taxonomy])
+  source_tree([current libs and consumers]) --> server_family[server responsibility family]
+  source_tree --> transport_family[transport responsibility family]
+  source_tree --> service_family[service integration family]
+  source_tree --> raft_family[raft responsibility family]
+  source_tree --> primitive_family[storage metrics peer-security families]
+  source_tree --> token_family[token identity]
+  server_family --> identity[atomic directory package crate identity]
+  transport_family --> identity
+  service_family --> identity
+  raft_family --> identity
+  primitive_family --> identity
+  token_family --> identity
+  identity --> rewrite[rewrite every active reference]
+  rewrite --> canonical_docs[README inventory and CONTRIBUTING grammar]
+  canonical_docs --> retired{retired identity remains?}
+  retired -->|yes| fail([fixture fails with reference])
+  retired -->|no| graph{metadata and focused tests pass?}
+  graph -->|no| repair[repair graph or adopter]
+  repair --> rewrite
+  graph -->|yes| done([canonical semantic taxonomy])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
