@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-15T17:58:11.152482+00:00"
-digest = "sha256:52946871ec19e1b99635800354a140f8ed4b0ec2c707298f36ecf504a5a5fdf1"
-source_digest = "sha256:52946871ec19e1b99635800354a140f8ed4b0ec2c707298f36ecf504a5a5fdf1"
-ir_digest = "sha256:3efd6cd5c6db14e0004a47aeaa186a46d36fa15092c231185a275b9410c0414f"
+generated_at = "2026-07-15T18:13:44.568417+00:00"
+digest = "sha256:9c5484ca68bf182983c8d09d99c0e0c7744fdc2f2fb819957587b9fee72b95b4"
+source_digest = "sha256:9c5484ca68bf182983c8d09d99c0e0c7744fdc2f2fb819957587b9fee72b95b4"
+ir_digest = "sha256:35d6e0f237ab6f7b23dcc40b03c179ed7b1e57343a1fd79f5fb72048a16996de"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -81,8 +81,8 @@ section_count = 4
 
 [[files]]
 path = "logic/adopt-shared-stateful-service-foundations.md"
-digest = "sha256:37bcc32b6376fd6eae08cd33ed2e5835023b7814ee9aa46053e49d2126237fed"
-ir_digest = "sha256:060f464d11965f6b49f6865ac3fc4a6809ef93382bccbf9b4569b8640fdab4a9"
+digest = "sha256:02a9d64b106f68398ea44ec40fa1c6b0d4d95c70df8a6fbe958e2c8a084a5678"
+ir_digest = "sha256:9b541e03f6368d7184b284bf817bcf1a3ed21605fdb95578b2f6718ad45d947b"
 section_count = 3
 
 [[files]]
@@ -375,8 +375,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-bin-lumen-rs.md"
-digest = "sha256:f00d1e86311ab32a99f5905c2d285a1d7a4469c596b9d4810b5ba76c12e9c9aa"
-ir_digest = "sha256:b7acb62e43c112c6127d5b5aea867eccb133a383db3151bc01bf5a69d27fca17"
+digest = "sha256:37f90d532964be5f0c48de47cea467c764db747ce40e3fbe4e1047245dfbaad1"
+ir_digest = "sha256:0a9ddad5dd0b9703f4656c71fa86324975efd2d165a026f82bee31d9c6064781"
 section_count = 3
 
 [[files]]
@@ -447,8 +447,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-lumen-src-operator-render-rs.md"
-digest = "sha256:a2032f70733a8b29c4df8791af0e5e13f4dae43623c07155c347b6af4326fbeb"
-ir_digest = "sha256:abb41147f68a995cbd627b120065422922047499e8dce6a8b9b0229ee0a58090"
+digest = "sha256:67ccb4c317b2631feb4f1f99f4f8c6baa289e23ae474bec487c28e85251ed809"
+ir_digest = "sha256:4bb3579887e940eef202ff81bb0f63d960658a6062084c7539ffb9ed36ce70c5"
 section_count = 3
 
 [[files]]
