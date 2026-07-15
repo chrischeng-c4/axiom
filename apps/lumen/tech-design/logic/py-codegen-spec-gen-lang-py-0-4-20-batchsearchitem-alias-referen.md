@@ -47,3 +47,28 @@ changes:
     impl_mode: hand-written
     description: "Extend the real lumen spec gen --lang py e2e test to assert SearchRequest is declared before BatchSearchItem = SearchRequest and execute the emitted models.py with python3, locking import-time safety for reference aliases."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: python-reference-alias-order-verification
+requirements:
+  generated_models_execute:
+    id: R2
+    text: "The unmodified models.py emitted by lumen spec gen --lang py compiles and executes successfully under python3 with Pydantic installed."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --test spec_gen_e2e gen_py_writes_pydantic_h2c_client
+  reference_alias_follows_concrete_model:
+    id: R1
+    text: "For Lumen's canonical OpenAPI, generated Python declares SearchRequest before the top-level BatchSearchItem = SearchRequest alias so module evaluation never references an undefined name."
+    kind: regression
+    risk: high
+    verify: cargo test -p lumen --test spec_gen_e2e gen_py_writes_pydantic_h2c_client
+---
+flowchart TD
+    r1[R1 reference alias follows concrete model] --> cargo_test_p_lumen_test_spec_gen_e2e_gen_py_writes_pydantic_h2c_client[cargo test -p lumen --test spec_gen_e2e gen_py_writes_pydantic_h2c_client]
+    r2[R2 generated models execute] --> cargo_test_p_lumen_test_spec_gen_e2e_gen_py_writes_pydantic_h2c_client
+```
