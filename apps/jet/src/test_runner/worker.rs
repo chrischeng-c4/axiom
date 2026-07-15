@@ -56,21 +56,14 @@ const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
 /// internal relative imports (for example `./affix` -> `./affix/index.js`).
 /// Both behaviors stay test-only and leave package export resolution intact.
 const TEST_ASSET_LOADER: &str = r##"
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ASSET_EXTENSIONS = new Set([
   ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
   ".woff", ".woff2", ".ttf", ".otf",
+  ".css",
 ]);
-
-function isRelativeSpecifier(specifier) {
-  return specifier === "."
-    || specifier === ".."
-    || specifier.startsWith("./")
-    || specifier.startsWith("../");
-}
 
 function isTemporaryJetModuleParent(parentURL) {
   return parentURL.startsWith("file:")
@@ -97,13 +90,9 @@ function isUnsupportedCommonJsFacadeSpecifier(specifier) {
     || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier) && !specifier.startsWith("file:"));
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function namedCommonJsFacadeUrl(specifier, context, resolved) {
   if (
-    resolved.format !== "commonjs"
+    (resolved.format && resolved.format !== "commonjs")
     || !resolved.url?.startsWith("file:")
     || !context.parentURL?.startsWith("file:")
     || isUnsupportedCommonJsFacadeSpecifier(specifier)
@@ -112,40 +101,35 @@ function namedCommonJsFacadeUrl(specifier, context, resolved) {
   }
 
   try {
-    const parentSource = readFileSync(fileURLToPath(context.parentURL), "utf8");
-    const namedImportPattern = new RegExp(
-      `\\b(?:import\\s+(?:[A-Za-z_$][A-Za-z0-9_$]*\\s*,\\s*)?|export\\s*)\\{([^}]*)\\}\\s*from\\s*(["'])${escapeRegExp(specifier)}\\2`,
-      "g",
-    );
-    const names = new Set();
-    for (const match of parentSource.matchAll(namedImportPattern)) {
-      for (const binding of match[1].split(",")) {
-        const name = binding.trim().split(/\s+as\s+/)[0].trim();
-        if (name !== "default" && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
-          names.add(name);
-        }
-      }
-    }
-    if (names.size === 0) {
+    const require = createRequire(resolved.url);
+    const object = require(fileURLToPath(resolved.url));
+    if (object === null || (typeof object !== "object" && typeof object !== "function")) {
       return null;
     }
-
+    const names = Object.keys(object).filter(
+      (name) => name !== "default" && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name),
+    );
     const source = [
       'import { createRequire } from "node:module";',
       `const require = createRequire(${JSON.stringify(resolved.url)});`,
       `const object = require(${JSON.stringify(fileURLToPath(resolved.url))});`,
       "export default object;",
-      ...[...names].map((name) => `export const ${name} = object[${JSON.stringify(name)}];`),
+      ...names.map((name) => `export const ${name} = object[${JSON.stringify(name)}];`),
     ].join("\n");
     return `data:text/javascript,${encodeURIComponent(source)}`;
   } catch {
+    // The module is ESM or otherwise cannot be required: preserve Node's
+    // native resolution path rather than fabricating a CommonJS facade.
     return null;
   }
 }
-
 function isTestAssetUrl(url) {
   return url.startsWith("file:")
     && [...ASSET_EXTENSIONS].some((extension) => new URL(url).pathname.toLowerCase().endsWith(extension));
+}
+
+function isTestStylesheetUrl(url) {
+  return url.startsWith("file:") && new URL(url).pathname.toLowerCase().endsWith(".css");
 }
 
 export async function resolve(specifier, context, nextResolve) {
@@ -158,7 +142,7 @@ export async function resolve(specifier, context, nextResolve) {
     return resolved;
   } catch (error) {
     const isLegacyFileOrDirectoryMiss = error?.code === "ERR_MODULE_NOT_FOUND"
-      || (error?.code === "ERR_UNSUPPORTED_DIR_IMPORT" && isRelativeSpecifier(specifier));
+      || error?.code === "ERR_UNSUPPORTED_DIR_IMPORT";
     if (
       !isLegacyFileOrDirectoryMiss
       || !context.parentURL?.startsWith("file:")
@@ -185,7 +169,7 @@ export async function load(url, context, nextLoad) {
     return {
       format: "module",
       shortCircuit: true,
-      source: `export default ${JSON.stringify(url)};`,
+      source: isTestStylesheetUrl(url) ? "" : `export default ${JSON.stringify(url)};`,
     };
   }
   return nextLoad(url, context);
@@ -193,7 +177,8 @@ export async function load(url, context, nextLoad) {
 "##;
 
 const TEST_ASSET_EXTENSIONS: &[&str] = &[
-    "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp", "woff", "woff2", "ttf", "otf",
+    "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp", "woff", "woff2", "ttf",
+    "otf", "css",
 ];
 
 /// Run a single spec file to completion. Returns a partial Summary for this
@@ -3004,9 +2989,11 @@ mod tests {
     fn test_asset_extensions_are_rewritten_and_loader_backed() {
         assert!(is_test_asset_module(Path::new("icon.svg")));
         assert!(is_test_asset_module(Path::new("avatar.JPEG")));
+        assert!(is_test_asset_module(Path::new("styles.css")));
         assert!(!is_test_asset_module(Path::new("module.js")));
         assert!(TEST_ASSET_LOADER.contains("shortCircuit: true"));
         assert!(TEST_ASSET_LOADER.contains("export default"));
+        assert!(TEST_ASSET_LOADER.contains("isTestStylesheetUrl"));
     }
 
     #[test]
