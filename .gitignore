@@ -115,12 +115,16 @@ test-results/
 .tdc/state.toml
 
 # CPython conformance fixtures use test.support.os_helper, whose TESTFN
-# (= "@test_<pid>_tmp" + a non-ASCII suffix) and companion artifacts are
-# created RELATIVE TO THE CWD. When a fixture/harness runs with cwd = repo
+# (= "@test_<pid>_tmp" + a non-ASCII suffix under the real CPython oracle, or
+# "@mamba_test_<pid>" under mamba's own support_mod.rs TESTFN — see
+# src/runtime/stdlib/support_mod.rs) and companion artifacts (.dir/.dat/.pag)
+# are created RELATIVE TO THE CWD. When a fixture/harness runs with cwd = repo
 # root these leak here. The real fix is running fixtures in an isolated
-# tempdir (see run.py / regen_golden.py / tests/cpython/harness/*.rs), but
-# this is a belt-and-suspenders guard so a stray leak is never committed.
+# tempdir (see sweep.py's harness_lib.run_fixture, the conformance runner's
+# ScratchCwd, and `mamba run`'s opt-in MAMBA_SCRATCH_CWD=1 — issue #1558),
+# but this is a belt-and-suspenders guard so a stray leak is never committed.
 @test_*_tmp*
+@mamba_test_*
 # os_helper sibling artifacts (anchored to repo root only). Remove if a
 # legitimate root-level base/ or file.txt is ever introduced.
 /base/
