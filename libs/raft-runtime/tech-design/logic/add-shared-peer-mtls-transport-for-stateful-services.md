@@ -140,3 +140,49 @@ changes:
     impl_mode: hand-written
     description: "Ephemeral CA/certificate tests for mutual success, hostname mismatch, untrusted client rejection, and explicit reload preservation."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: shared-peer-mtls-transport-verification
+requirements:
+  app_adapters:
+    id: R5
+    text: "Lumen and Tape peer TLS adapters construct the same raft_runtime::PeerTransport without app-local acceptor or connector implementations."
+    kind: integration
+    risk: medium
+    verify: cargo test -p lumen tls && cargo test -p tape peer_tls
+  compatibility:
+    id: R4
+    text: "Existing RaftHost::spawn and ClusterTopology::from_env retain plain h2c behavior; opt-in callers use spawn_with_peer_transport and https topology."
+    kind: compatibility
+    risk: high
+    verify: cargo test -p raft-runtime
+  invalid_identity:
+    id: R2
+    text: "Hostname mismatch and an untrusted client certificate fail during the TLS handshake before any Raft HTTP route is dispatched."
+    kind: security
+    risk: high
+    verify: cargo test -p raft-runtime --test peer_mtls
+  mutual_auth:
+    id: R1
+    text: "A peer connection succeeds only when the server identity matches and both certificates chain to the configured CA; the accepted TLS stream can serve the shared HTTP/2 transport."
+    kind: security
+    risk: high
+    verify: cargo test -p raft-runtime --test peer_mtls
+  reload:
+    id: R3
+    text: "A valid explicit reload atomically advances the transport generation for new dials/accepts, while malformed replacement material preserves the last-known-good generation."
+    kind: regression
+    risk: high
+    verify: cargo test -p raft-runtime --test peer_mtls
+---
+flowchart TD
+    r1[R1 mutual auth] --> cargo_test_p_raft_runtime_test_peer_mtls[cargo test -p raft-runtime --test peer_mtls]
+    r2[R2 invalid identity] --> cargo_test_p_raft_runtime_test_peer_mtls
+    r3[R3 reload] --> cargo_test_p_raft_runtime_test_peer_mtls
+    r4[R4 compatibility] --> cargo_test_p_raft_runtime[cargo test -p raft-runtime]
+    r5[R5 app adapters] --> cargo_test_p_lumen_tls_cargo_test_p_tape_peer_tls[cargo test -p lumen tls && cargo test -p tape peer_tls]
+```
