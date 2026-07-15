@@ -9,10 +9,10 @@ capability_refs:
       This source unit is captured as a per-file rust-source-unit during lumen
       td_ast standardization. Thinned to an adapter by #971: PEM cert/key/CA
       loading, the rustls server/client config builders, and the Once-guarded
-      crypto-provider install moved verbatim to the shared `libs/service-tls`
+      crypto-provider install moved verbatim to the shared `libs/peer-tls`
       crate (parameterized by an env prefix); this file keeps only the
       `LUMEN_PEER_TLS_*`/`LUMEN_PEER_MTLS` env names and the lumen-facing
-      `PeerTlsConfig` type, delegating to `service_tls::PeerTlsConfig` via
+      `PeerTlsConfig` type, delegating to `peer_tls::PeerTlsConfig` via
       `From` conversions.
 fill_sections: [overview, source, changes]
 ---
@@ -32,7 +32,7 @@ Public API manifest for `apps/lumen/src/tls.rs` generated from AST during Score 
 | `from_env` | apps/lumen/src/tls.rs | function | pub | 70 | from_env() -> Result<Option<Self>> |
 | `rustls_client_config` | apps/lumen/src/tls.rs | function | pub | 80 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
 | `rustls_server_config` | apps/lumen/src/tls.rs | function | pub | 75 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
-| `install_default_crypto_provider` | apps/lumen/src/tls.rs | function | pub use (re-export) | 85 | re-exported from `service_tls::install_default_crypto_provider` |
+| `install_default_crypto_provider` | apps/lumen/src/tls.rs | function | pub use (re-export) | 85 | re-exported from `peer_tls::install_default_crypto_provider` |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -58,7 +58,7 @@ Public API manifest for `apps/lumen/src/tls.rs` generated from AST during Score 
 //!
 //! The PEM loading, rustls server/client config builders, and the
 //! Once-guarded crypto-provider install are generic across every service
-//! with a peer/replication port and live in `libs/service-tls` (#971); this
+//! with a peer/replication port and live in `libs/peer-tls` (#971); this
 //! module is a thin adapter over it that keeps lumen's `LUMEN_PEER_TLS_*`/
 //! `LUMEN_PEER_MTLS` env names and pub API unchanged.
 
@@ -66,7 +66,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-/// The prefix passed to `service_tls::PeerTlsConfig::from_env`: derives
+/// The prefix passed to `peer_tls::PeerTlsConfig::from_env`: derives
 /// `LUMEN_PEER_TLS_CERT` / `LUMEN_PEER_TLS_KEY` / `LUMEN_PEER_TLS_CA` /
 /// `LUMEN_PEER_MTLS`, preserving lumen's env contract byte-for-byte.
 const ENV_PREFIX: &str = "LUMEN_PEER";
@@ -81,8 +81,8 @@ pub struct PeerTlsConfig {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
-impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
-    fn from(cfg: service_tls::PeerTlsConfig) -> Self {
+impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
+    fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
             cert: cfg.cert,
             key: cfg.key,
@@ -93,7 +93,7 @@ impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
-impl From<PeerTlsConfig> for service_tls::PeerTlsConfig {
+impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
             cert: cfg.cert,
@@ -109,21 +109,21 @@ impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
     pub fn from_env() -> Result<Option<Self>> {
-        Ok(service_tls::PeerTlsConfig::from_env(ENV_PREFIX)?.map(Self::from))
+        Ok(peer_tls::PeerTlsConfig::from_env(ENV_PREFIX)?.map(Self::from))
     }
 
     /// Build a rustls server config for the peer transport.
     pub fn rustls_server_config(&self) -> Result<rustls::ServerConfig> {
-        service_tls::PeerTlsConfig::from(self.clone()).rustls_server_config()
+        peer_tls::PeerTlsConfig::from(self.clone()).rustls_server_config()
     }
 
     /// Build a rustls client config for dialing peer transports.
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
-        service_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
+        peer_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
     }
 }
 
-pub use service_tls::install_default_crypto_provider;
+pub use peer_tls::install_default_crypto_provider;
 
 #[cfg(test)]
 mod tests {
@@ -277,15 +277,15 @@ changes:
     description: |
       Thinned to an adapter (#971): PEM cert/key/CA loading, the rustls
       server/client config builders, and the Once-guarded crypto-provider
-      install moved verbatim to the new shared libs/service-tls crate
+      install moved verbatim to the new shared libs/peer-tls crate
       (parameterized by an env prefix instead of lumen's hardcoded env var
       names). This file keeps the LUMEN_PEER_TLS_*/LUMEN_PEER_MTLS env
       contract and the lumen-facing PeerTlsConfig struct, delegating to
-      service_tls::PeerTlsConfig via From conversions so the pub API (struct
+      peer_tls::PeerTlsConfig via From conversions so the pub API (struct
       fields, from_env/rustls_server_config/rustls_client_config,
       install_default_crypto_provider) is byte-compatible with the
       pre-extraction shape.
-  - path: libs/service-tls/src/lib.rs
+  - path: libs/peer-tls/src/lib.rs
     action: create
     section: rust-source-unit
     impl_mode: hand-written

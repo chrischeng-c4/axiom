@@ -72,7 +72,7 @@ impl AppState {
 
     /// Enable scoped claim-check token enforcement with `secret` (#446). Builds
     /// keep's [`auth::KeepVerifier`] so the shared `service_auth::Verifier`
-    /// composes `libs/claimtoken` while the per-handler scope decision stays in
+    /// composes `libs/claim-token` while the per-handler scope decision stays in
     /// keep (#746).
     pub fn with_token_secret(mut self, secret: Vec<u8>) -> Self {
         self.verifier = Some(Arc::new(auth::KeepVerifier::new(Arc::new(secret))));

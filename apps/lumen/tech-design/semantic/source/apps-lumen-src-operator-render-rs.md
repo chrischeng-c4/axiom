@@ -68,7 +68,7 @@ Public API manifest for `apps/lumen/src/operator/render.rs` generated from AST d
 use serde_json::{json, Value};
 
 use super::crd::Lumen;
-use operator::render::{
+use service_k8s::render::{
     self, HorizontalPodAutoscaler, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim,
 };
 
@@ -109,7 +109,7 @@ fn namespace(lumen: &Lumen) -> String {
         .unwrap_or_else(|| "default".to_string())
 }
 
-/// lumen's render identity for the shared [`operator::render`] helpers.
+/// lumen's render identity for the shared [`service_k8s::render`] helpers.
 fn ctx<'a>(lumen: &Lumen, name: &'a str, ns: &'a str) -> RenderCtx<'a> {
     RenderCtx {
         app: APP,
@@ -166,7 +166,7 @@ pub(crate) fn wants_hpa(lumen: &Lumen) -> bool {
 }
 
 /// The exact labels [`serving_hpa`] stamps on the rendered HPA object
-/// (mirrors [`operator::render::RenderCtx::labels`]'s five recommended
+/// (mirrors [`service_k8s::render::RenderCtx::labels`]'s five recommended
 /// labels). Exposed crate-private so `super::reconcile`'s HPA handoff loop
 /// (#1385, R2) can confirm a live HPA found at this CR's name was actually
 /// rendered by lumen — not a user-created object with a coincidentally
@@ -239,7 +239,7 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
 /// `apps/lumen/src/api.rs`); this CronJob adds nothing new to the
 /// WAL/snapshot path, it only *schedules and transports* that existing
 /// endpoint's bytes to a destination via `lumen backup`
-/// (`libs/service-backup`). The shared [`operator::render::cron_job`] helper
+/// (`libs/service-backup`). The shared [`service_k8s::render::cron_job`] helper
 /// stays manifest-only.
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
 fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {

@@ -33,12 +33,12 @@ No public Rust symbols detected by the source-unit capture pass.
 //!
 //! Run: `cargo run -p transport-h2c --example conn_sweep --release`
 use bytes::Bytes;
-use transport_h2c::{recommended_h2c_connections_for, H2cPool};
 use http_body_util::Full;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use std::convert::Infallible;
 use std::time::Instant;
+use transport_h2c::{recommended_h2c_connections_for, H2cPool};
 
 const BODY: &[u8] = br#"{"version":"0.4.3","ok":true}"#;
 

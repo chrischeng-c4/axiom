@@ -8,7 +8,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use server_core::ConnectionBudget;
+use server_lifecycle::ConnectionBudget;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -1074,15 +1074,16 @@ async fn draining_stops_new_admissions_while_in_flight_session_completes() {
 
     let proxy_config = test_config(backend_port, 10);
     let handler = SessionHandler::new(proxy_config);
-    let server_config = tcp_server::TcpServerConfig::new(server_core::BindConfig::localhost(0))
-        .with_drain_timeout(Duration::from_secs(2));
-    let listener = tcp_server::bind(&server_config)
+    let server_config =
+        server_tcp::TcpServerConfig::new(server_lifecycle::BindConfig::localhost(0))
+            .with_drain_timeout(Duration::from_secs(2));
+    let listener = server_tcp::bind(&server_config)
         .await
         .expect("bind proxy listener");
     let addr = listener.local_addr().expect("proxy listener addr");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-    let server = tokio::spawn(tcp_server::serve(
+    let server = tokio::spawn(server_tcp::serve(
         listener,
         server_config,
         handler,
@@ -1164,15 +1165,16 @@ async fn drain_timeout_elapses_and_abandons_still_running_session() {
 
     let proxy_config = test_config(backend_port, 10);
     let handler = SessionHandler::new(proxy_config);
-    let server_config = tcp_server::TcpServerConfig::new(server_core::BindConfig::localhost(0))
-        .with_drain_timeout(Duration::from_millis(200));
-    let listener = tcp_server::bind(&server_config)
+    let server_config =
+        server_tcp::TcpServerConfig::new(server_lifecycle::BindConfig::localhost(0))
+            .with_drain_timeout(Duration::from_millis(200));
+    let listener = server_tcp::bind(&server_config)
         .await
         .expect("bind proxy listener");
     let addr = listener.local_addr().expect("proxy listener addr");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-    let server = tokio::spawn(tcp_server::serve(
+    let server = tokio::spawn(server_tcp::serve(
         listener,
         server_config,
         handler,

@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use server_core::ConnectionBudget;
+use server_lifecycle::ConnectionBudget;
 
 use crate::pool::BackendPool;
 use crate::wire::WireCodecConfig;
@@ -23,7 +23,7 @@ pub struct BackendEndpointConfig {
 
 /// Full configuration for one `SessionHandler`: the backend it dials, the
 /// admission budget it enforces itself (deliberately not wired into
-/// `tcp_server::TcpServerConfig.connection_budget` so a rejection can write
+/// `server_tcp::TcpServerConfig.connection_budget` so a rejection can write
 /// a wire-level `ErrorResponse` before closing), and the timeouts/wire
 /// bounds that govern one session's lifetime.
 #[derive(Debug, Clone)]
@@ -31,12 +31,12 @@ pub struct SessionProxyConfig {
     pub backend: BackendEndpointConfig,
     /// The same budget `RuntimePlan::frontend_budget()` constructs; admission
     /// is checked here (inside `SessionHandler::handle`), not via
-    /// `tcp_server::TcpServerConfig.connection_budget`.
+    /// `server_tcp::TcpServerConfig.connection_budget`.
     pub frontend_budget: ConnectionBudget,
     /// Bounds the backend TCP connect (R3); exceeding this produces
     /// `RejectionReason::BackendUnreachable`.
     pub backend_connect_timeout: Duration,
-    /// Mirrors `tcp_server::TcpServerConfig.drain_timeout` — one source of
+    /// Mirrors `server_tcp::TcpServerConfig.drain_timeout` — one source of
     /// truth for AC4.
     pub drain_timeout: Duration,
     /// Frame bounds for the frontend-role/backend-role `FrameReader`

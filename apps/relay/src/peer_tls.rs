@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:279c2a3c" tracker="pending-tracker" reason="New always-compiled thin adapter over libs/service-tls (lumen src/tls.rs #971 pattern): ENV_PREFIX RELAY_PEER, pub PeerTlsConfig {cert,key,ca,required} + From conversions, from_env() deriving RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on|off, rustls_server_config/rustls_client_config passthroughs. Unit tests: none-set => None, all-set + on => required, partial => must-all-be-set error, mis-pointed cert path => error naming the path, PEM fixture builds both rustls configs."
+// HANDWRITE-BEGIN gap="missing-generator:logic:279c2a3c" tracker="pending-tracker" reason="New always-compiled thin adapter over libs/peer-tls (lumen src/tls.rs #971 pattern): ENV_PREFIX RELAY_PEER, pub PeerTlsConfig {cert,key,ca,required} + From conversions, from_env() deriving RELAY_PEER_TLS_CERT/KEY/CA + RELAY_PEER_MTLS=on|off, rustls_server_config/rustls_client_config passthroughs. Unit tests: none-set => None, all-set + on => required, partial => must-all-be-set error, mis-pointed cert path => error naming the path, PEM fixture builds both rustls configs."
 //! Peer-mTLS material for the raft peer surface (WI #1209).
 //!
 //! ## Env contract (lumen's names with the RELAY prefix)
@@ -11,7 +11,7 @@
 //!
 //! The PEM loading, the rustls server/client config builders, and the
 //! Once-guarded crypto-provider install are generic across every service with
-//! a peer/replication port and live in `libs/service-tls` (#971); this module
+//! a peer/replication port and live in `libs/peer-tls` (#971); this module
 //! is the thin adapter that pins relay's `RELAY_PEER_TLS_*` /
 //! `RELAY_PEER_MTLS` env names (lumen's `src/tls.rs` pattern).
 //!
@@ -21,11 +21,11 @@
 //! raft group spawns — partial config or a mis-pointed path is a startup
 //! error, never a silent fallback — and proves the rustls builders
 //! constructible. **mTLS termination on the raft peer port is NOT yet
-//! applied**: raft-host's peer transport is h2c prior-knowledge (the peer
+//! applied**: raft-runtime's peer transport is h2c prior-knowledge (the peer
 //! router rides the cleartext serve port; peers are dialed over `http://`)
 //! with no TLS acceptor/connector seam. Wiring real termination needs
-//! raft-host to accept a rustls `ServerConfig`/`ClientConfig` pair — a
-//! `libs/raft-host` change benefiting keep/lumen/relay alike. This module
+//! raft-runtime to accept a rustls `ServerConfig`/`ClientConfig` pair — a
+//! `libs/raft-runtime` change benefiting keep/lumen/relay alike. This module
 //! deliberately does not hack a parallel TLS stack into h2c; the env
 //! contract + startup validation land now so deployments can mount and
 //! verify material before the seam exists.
@@ -34,7 +34,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-/// The prefix passed to `service_tls::PeerTlsConfig::from_env`: derives
+/// The prefix passed to `peer_tls::PeerTlsConfig::from_env`: derives
 /// `RELAY_PEER_TLS_CERT` / `RELAY_PEER_TLS_KEY` / `RELAY_PEER_TLS_CA` /
 /// `RELAY_PEER_MTLS`, reproducing lumen's env contract with the RELAY prefix.
 const ENV_PREFIX: &str = "RELAY_PEER";
@@ -48,8 +48,8 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
-impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
-    fn from(cfg: service_tls::PeerTlsConfig) -> Self {
+impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
+    fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
             cert: cfg.cert,
             key: cfg.key,
@@ -59,7 +59,7 @@ impl From<service_tls::PeerTlsConfig> for PeerTlsConfig {
     }
 }
 
-impl From<PeerTlsConfig> for service_tls::PeerTlsConfig {
+impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
             cert: cfg.cert,
@@ -76,18 +76,18 @@ impl PeerTlsConfig {
     /// (all three paths must be set together) or a path does not exist
     /// (fail fast, naming the path).
     pub fn from_env() -> Result<Option<Self>> {
-        Ok(service_tls::PeerTlsConfig::from_env(ENV_PREFIX)?.map(Self::from))
+        Ok(peer_tls::PeerTlsConfig::from_env(ENV_PREFIX)?.map(Self::from))
     }
 
     /// Build a rustls server config for the peer transport (client-cert
     /// verification against the CA bundle when `required`).
     pub fn rustls_server_config(&self) -> Result<rustls::ServerConfig> {
-        service_tls::PeerTlsConfig::from(self.clone()).rustls_server_config()
+        peer_tls::PeerTlsConfig::from(self.clone()).rustls_server_config()
     }
 
     /// Build a rustls client config for dialing peer transports.
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
-        service_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
+        peer_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
     }
 }
 
@@ -95,7 +95,7 @@ impl PeerTlsConfig {
 mod tests {
     use super::*;
 
-    // The service-tls PEM fixture pair (a self-signed cert + its key), good
+    // The peer-tls PEM fixture pair (a self-signed cert + its key), good
     // enough to prove the rustls builders compose on real material.
     const TEST_CERT: &str = r#"-----BEGIN CERTIFICATE-----
 MIIC5zCCAc+gAwIBAgIJAPl6HZTX5LElMA0GCSqGSIb3DQEBCwUAMBUxEzARBgNV
@@ -250,7 +250,7 @@ LkjT2UdpFBDZGWHwqDRhXX8k
 
     /// R3 / AC3: the PEM fixture builds both rustls configs through the
     /// adapter passthroughs — the material is proven usable even though the
-    /// raft-host/h2c seam cannot terminate mTLS yet (filed gap).
+    /// raft-runtime/h2c seam cannot terminate mTLS yet (filed gap).
     #[test]
     fn builds_rustls_peer_configs_from_pem_material() {
         let cfg = write_tls_fixture("builder");

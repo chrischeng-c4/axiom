@@ -14,7 +14,7 @@ verify_cold = true
 [aw.ec.generated]
 version = 1
 project = "raft-runtime"
-generated_from_td_digest = "sha256:5c30ecd2b7377f649e349d552fd586ae4a331f0466a7bf31d700ff974d668df0"
+generated_from_td_digest = "sha256:d09f19bd1a0a3c90d174b0dfc28163aaf11cc58fa028254f5708f45070bf5b53"
 
 [[aw.ec.generated.cases]]
 id = "shared-raft-runtime-driver-contract"

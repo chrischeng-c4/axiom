@@ -1,10 +1,10 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:a36ab827" tracker="pending-tracker" reason="RelayMetrics on libs/service-metrics primitives (Latency = count + sum, render): publish / publish-batch / lease / ack / consume / other request counts + latency ms, plus the track route_layer middleware that maps the matched route pattern to its op family (mirrors keep's http/metrics.rs track)."
+// HANDWRITE-BEGIN gap="missing-generator:logic:a36ab827" tracker="pending-tracker" reason="RelayMetrics on libs/metrics-prometheus primitives (Latency = count + sum, render): publish / publish-batch / lease / ack / consume / other request counts + latency ms, plus the track route_layer middleware that maps the matched route pattern to its op family (mirrors keep's http/metrics.rs track)."
 //! relay HTTP request observability: per-op request counts + latency, rendered
 //! into the Prometheus exposition served at `/metrics`.
 //!
-//! Built on the shared `libs/service-metrics` primitives (`Latency` — a
+//! Built on the shared `libs/metrics-prometheus` primitives (`Latency` — a
 //! lock-free `sum`/`count` counter pair — plus the text-format encoder
-//! [`service_metrics::render`]); this module owns only relay's metric names
+//! [`metrics_prometheus::render`]); this module owns only relay's metric names
 //! and the route → op mapping. Recording happens in [`track`], a
 //! `route_layer` middleware over the `/v1` data plane (mirroring keep's
 //! `http/metrics.rs`), so the engine hot path never carries a metrics probe.
@@ -15,7 +15,7 @@ use std::time::Instant;
 use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use service_metrics::{Latency, Sample};
+use metrics_prometheus::{Latency, Sample};
 
 /// Per-op request metrics for the relay data plane. One [`Latency`]
 /// (count + latency-ms sum) per op family; `count` doubles as the request
@@ -56,9 +56,9 @@ impl RelayMetrics {
     }
 
     /// Render the Prometheus text exposition (0.0.4) for the recorded
-    /// request metrics, through the shared `service_metrics` encoder.
+    /// request metrics, through the shared `metrics_prometheus` encoder.
     pub fn render(&self) -> String {
-        service_metrics::render(&[
+        metrics_prometheus::render(&[
             Sample::new(
                 "relay_publish_requests_total",
                 "counter",

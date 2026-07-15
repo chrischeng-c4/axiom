@@ -1,6 +1,6 @@
 ---
 id: '1764'
-summary: (fill)
+summary: Rename ten ambiguous shared service libraries atomically across directory, Cargo package, Rust identifiers, consumers, and repository naming policy.
 fill_sections: [logic, changes, unit-test]
 ---
 

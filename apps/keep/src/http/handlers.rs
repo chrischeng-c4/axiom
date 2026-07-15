@@ -1003,7 +1003,7 @@ async fn claim_put(
 ///
 /// Delegates bearer extraction + token verification to keep's shared
 /// `service_auth::Verifier` (`auth::KeepVerifier`, which composes
-/// `libs/claimtoken`) and keeps the per-resource scope decision here: the token
+/// `libs/claim-token`) and keeps the per-resource scope decision here: the token
 /// scope is matched against the BARE url `id`, before the `X-Keep-Namespace`
 /// prefix is applied. Every failure — missing, invalid, expired, or
 /// out-of-scope — maps to the same `403 Forbidden` keep already returns; the

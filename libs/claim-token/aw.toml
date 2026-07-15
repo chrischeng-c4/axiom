@@ -13,8 +13,8 @@ verify_cold = true
 # AW-EC-BEGIN
 [aw.ec.generated]
 version = 1
-project = "claimtoken"
-generated_from_td_digest = "sha256:4a26d7cc808f4f597b12a6d40b4dc79517539d35425e6cd250d85c0eebee2ed8"
+project = "claim-token"
+generated_from_td_digest = "sha256:00570fc60c7ec54c8d516a37a6ab694d2cda5dd1193e2b9b9b9554843ba96d9b"
 
 [[aw.ec.generated.cases]]
 id = "scoped-claim-tokens-contract"

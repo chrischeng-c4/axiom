@@ -7,7 +7,7 @@ fill_sections: [e2e-test]
 # EC: Shard, Replica, And Bootstrap Topology
 
 This note keeps the topology contract readable without requiring an agent to
-reverse-engineer `raft-host`, the operator renderer, and backup code.
+reverse-engineer `raft-runtime`, the operator renderer, and backup code.
 
 ## Contract
 

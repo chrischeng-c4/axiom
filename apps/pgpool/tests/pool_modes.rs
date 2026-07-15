@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use server_core::{BindConfig, ConnectionBudget};
+use server_lifecycle::{BindConfig, ConnectionBudget};
 
 use pgpool::pool::{
     BackendPool, PoolConfig, PoolStats, TransactionHandler, TransactionProxyConfig,
@@ -127,13 +127,13 @@ async fn spawn_transaction_proxy(
         wire: WireCodecConfig::default(),
         drain_timeout: Duration::from_secs(5),
     });
-    let server_config = tcp_server::TcpServerConfig::new(BindConfig::localhost(0));
-    let listener = tcp_server::bind(&server_config)
+    let server_config = server_tcp::TcpServerConfig::new(BindConfig::localhost(0));
+    let listener = server_tcp::bind(&server_config)
         .await
         .expect("bind transaction proxy listener");
     let proxy_addr = listener.local_addr().expect("proxy listener addr");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(tcp_server::serve(
+    let server = tokio::spawn(server_tcp::serve(
         listener,
         server_config,
         handler,
@@ -169,13 +169,13 @@ async fn spawn_session_proxy(
         backend_pool,
     };
     let handler = SessionHandler::new(config);
-    let server_config = tcp_server::TcpServerConfig::new(BindConfig::localhost(0));
-    let listener = tcp_server::bind(&server_config)
+    let server_config = server_tcp::TcpServerConfig::new(BindConfig::localhost(0));
+    let listener = server_tcp::bind(&server_config)
         .await
         .expect("bind session proxy listener");
     let proxy_addr = listener.local_addr().expect("proxy listener addr");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(tcp_server::serve(
+    let server = tokio::spawn(server_tcp::serve(
         listener,
         server_config,
         handler,

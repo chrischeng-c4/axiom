@@ -1,5 +1,5 @@
-//! raft-host-backed consensus (HA phase C). keep's engine is wired as a
-//! [`raft_host::RaftStateMachine`] so writes go through the shared driver
+//! raft-runtime-backed consensus (HA phase C). keep's engine is wired as a
+//! [`raft_runtime::RaftStateMachine`] so writes go through the shared driver
 //! (propose → commit → apply); adopting [`RaftHost`] gives keep the proven h2c
 //! peer transport + sole-applier read-your-write it previously lacked.
 //!
@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::Router;
-use raft_host::{
+use raft_runtime::{
     FsyncPolicy, HostConfig, Index, Membership, NodeId, RaftHost, RaftStateMachine, RaftStore,
     SnapshotPolicy,
 };

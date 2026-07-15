@@ -139,9 +139,9 @@ e2e_tests:
   - id: existing-project-standardization-shared-service-kit-substrate
     capability_id: existing-project-standardization
     claim_id: shared-service-kit-substrate
-    command: cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http
+    command: cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http
     assertions:
-      - the shared server substrate crates (server-core, tcp-server, http-server, h2c, service-http) build and pass their unit and doc tests (#1241)
+      - the shared server substrate crates (server-lifecycle, server-tcp, server-http, transport-h2c, service-http) build and pass their unit and doc tests (#1241)
   - id: project-local-td-and-ec-gates-project-local-td-root-resolver
     capability_id: project-local-td-and-ec-gates
     claim_id: project-local-td-root-resolver

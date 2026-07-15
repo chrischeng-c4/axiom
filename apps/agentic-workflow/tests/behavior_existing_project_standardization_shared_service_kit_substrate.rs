@@ -7,14 +7,15 @@
 // @contract existing-project-standardization-shared-service-kit-substrate
 // @category behavior
 // @required_for_production true
-// @command cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http
+// @command cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http
 // AW-EC-END
 
-// Contract: the shared server substrate crates (server-core, tcp-server, http-server, h2c, service-http) build and pass their unit and doc tests (#1241)
+// Contract: the shared server substrate crates (server-lifecycle, server-tcp, server-http, transport-h2c, service-http) build and pass their unit and doc tests (#1241)
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn existing_project_standardization_shared_service_kit_substrate() {
-    let command = "cargo test -p server-core -p tcp-server -p http-server -p h2c -p service-http";
+    let command =
+        "cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http";
     let id = "existing-project-standardization-shared-service-kit-substrate";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

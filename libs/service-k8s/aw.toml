@@ -13,8 +13,8 @@ verify_cold = true
 # AW-EC-BEGIN
 [aw.ec.generated]
 version = 1
-project = "operator"
-generated_from_td_digest = "sha256:0eaf2afea3333b3b18a259cc71ae86beed0a6c42a31278194a332880d52e7c72"
+project = "service-k8s"
+generated_from_td_digest = "sha256:1c44ed90d1329fb579aece3f327be372016ffd6f7c604c3a4eb64babced08b9f"
 
 [[aw.ec.generated.cases]]
 id = "shared-kubernetes-operator-scaffold-contract"

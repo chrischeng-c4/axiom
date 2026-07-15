@@ -1,7 +1,7 @@
 //! The `Keep` custom resource (`keep.dev/v1alpha1`).
 //!
 //! One `Keep` object declares a keep deployment's HA topology. The spec flattens
-//! the shared [`operator::ClusterSpec`] (image + sharding/replication knobs +
+//! the shared [`service_k8s::ClusterSpec`] (image + sharding/replication knobs +
 //! per-pod resources) and adds keep's own runtime knobs (per-node engine shard
 //! count, log level, drain window, and the per-pod durable disk tier). The
 //! reconcile loop ([`super::reconcile`]) turns it into a ServiceAccount,
@@ -38,7 +38,7 @@ pub struct KeepSpec {
     /// Flattened so the CRD carries these fields directly (no `cluster:`
     /// nesting), exactly as the render toolkit expects.
     #[serde(flatten)]
-    pub cluster: operator::ClusterSpec,
+    pub cluster: service_k8s::ClusterSpec,
 
     /// Per-node engine shard count (`KEEP_SHARDS`) for multi-core scaling —
     /// distinct from `shardCount` (the cluster-routing fan-out). Defaults to 256.

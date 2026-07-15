@@ -8,7 +8,7 @@
 //! ```text
 //! Lumen (lumen.dev/v1alpha1)  --reconcile-->  ServiceAccount, ConfigMap,
 //!                                             Deployment/StatefulSet, Service,
-//!                                             HPA when applicable, PDB,
+//!                                             PDB,
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 

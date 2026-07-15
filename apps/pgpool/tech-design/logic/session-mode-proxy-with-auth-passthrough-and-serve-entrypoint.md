@@ -1,13 +1,13 @@
 ---
 id: apps-pgpool-session-proxy
-summary: pgpool `serve` entrypoint and session-mode (1:1) proxy - a tcp-server TcpHandler-backed frontend listener with ConnectionBudget admission and a wire-level ErrorResponse rejection when saturated, a per-client backend TCP connection with frame-aware auth passthrough (cleartext/MD5/SCRAM relayed via decode+re-encode of the wire codec's typed messages, credentials never persisted), bidirectional relay until Terminate/EOF, and server-core DrainController-driven graceful shutdown bounded by a drain timeout.
+summary: pgpool `serve` entrypoint and session-mode (1:1) proxy - a server-tcp TcpHandler-backed frontend listener with ConnectionBudget admission and a wire-level ErrorResponse rejection when saturated, a per-client backend TCP connection with frame-aware auth passthrough (cleartext/MD5/SCRAM relayed via decode+re-encode of the wire codec's typed messages, credentials never persisted), bidirectional relay until Terminate/EOF, and server-lifecycle DrainController-driven graceful shutdown bounded by a drain timeout.
 capability_refs:
   - id: postgres-pooler-core
     role: primary
     gap: serve-entrypoint-and-drain
     claim: serve-entrypoint-and-drain
     coverage: full
-    rationale: "Defines and closes the serve-entrypoint-and-drain work root: the pgpool serve CLI verb, tcp-server-backed frontend listener with ConnectionBudget admission, per-client 1:1 backend session proxy with auth passthrough, and drain-bounded graceful shutdown, verified by cargo test -p pgpool --test session_proxy against a real Postgres backend (graceful-skip) plus offline unit coverage."
+    rationale: "Defines and closes the serve-entrypoint-and-drain work root: the pgpool serve CLI verb, server-tcp-backed frontend listener with ConnectionBudget admission, per-client 1:1 backend session proxy with auth passthrough, and drain-bounded graceful shutdown, verified by cargo test -p pgpool --test session_proxy against a real Postgres backend (graceful-skip) plus offline unit coverage."
   - id: cli-interface
     role: contributes
     gap: serve-by-default-entrypoint
@@ -29,10 +29,10 @@ entry: cli_serve_entry
 nodes:
   cli_serve_entry:
     kind: start
-    label: "`pgpool serve` builds TcpServerConfig from RuntimePlan (bind, TcpSocketOptions, drain_timeout) with NO tcp-server-level ConnectionBudget wired in — admission moves into SessionHandler so a rejection can still write a wire frame — then calls tcp_server::bind + tcp_server::serve(listener, config, SessionHandler, server_core::signal::wait_shutdown_signal())"
+    label: "`pgpool serve` builds TcpServerConfig from RuntimePlan (bind, TcpSocketOptions, drain_timeout) with NO server-tcp-level ConnectionBudget wired in — admission moves into SessionHandler so a rejection can still write a wire frame — then calls server_tcp::bind + server_tcp::serve(listener, config, SessionHandler, server_lifecycle::signal::wait_shutdown_signal())"
   tcp_accept:
     kind: process
-    label: "tcp-server's serve_arc accepts a raw TCP connection and invokes SessionHandler::handle(stream, ConnectionContext) for every accepted socket"
+    label: "server-tcp's serve_arc accepts a raw TCP connection and invokes SessionHandler::handle(stream, ConnectionContext) for every accepted socket"
   admission_check:
     kind: decision
     label: "SessionHandler's own ConnectionBudget::try_acquire() (RuntimePlan::frontend_budget) succeeds for this connection (R1)?"
@@ -77,7 +77,7 @@ nodes:
     label: "Backend closed the connection, or a leg hit FrameError (malformed/oversized frame): close the client socket, release the permit; a FrameError never forwards the offending bytes, it only ends that leg"
   drain_interaction:
     kind: process
-    label: "Concurrently, DrainSignal (from ConnectionContext.drain) flips to Draining when the process receives SIGTERM/SIGINT: tcp-server's accept loop stops taking new connections immediately, while this session's bidi_relay keeps running unaffected until the client/backend end it or tcp_server's TcpServerConfig.drain_timeout elapses, at which point the task is abandoned (R4, AC4)"
+    label: "Concurrently, DrainSignal (from ConnectionContext.drain) flips to Draining when the process receives SIGTERM/SIGINT: server-tcp's accept loop stops taking new connections immediately, while this session's bidi_relay keeps running unaffected until the client/backend end it or server_tcp's TcpServerConfig.drain_timeout elapses, at which point the task is abandoned (R4, AC4)"
 edges:
   - from: cli_serve_entry
     to: tcp_accept
@@ -129,7 +129,7 @@ edges:
     label: "session task holds a DrainSignal for its whole lifetime"
 ---
 flowchart TD
-    cli_serve_entry([pgpool serve builds TcpServerConfig + SessionHandler, calls tcp_server::serve]) --> tcp_accept[serve_arc accepts a connection, calls SessionHandler::handle]
+    cli_serve_entry([pgpool serve builds TcpServerConfig + SessionHandler, calls server_tcp::serve]) --> tcp_accept[serve_arc accepts a connection, calls SessionHandler::handle]
     tcp_accept --> admission_check{ConnectionBudget::try_acquire succeeds?}
     admission_check -->|budget exhausted| reject_saturated([Write ErrorResponse 53300, close socket])
     admission_check -->|permit acquired| connect_backend[TCP-connect to configured backend endpoint]
@@ -177,7 +177,7 @@ nodes:
     label: "Established: AuthenticationOk + ReadyForQuery forwarded; bidirectional frame relay is live in both directions until Terminate/EOF/FrameError (R2). The backend-role FrameReader's TransactionStatus (idle/in_transaction/failed, see the wire codec TD's Transaction Status Tracking FSM) is observable here for the next slice's pooling decisions but does not gate session-mode behavior"
   draining:
     kind: normal
-    label: "Draining: the process received SIGTERM/SIGINT (DrainSignal flipped to Draining); tcp-server's accept loop has stopped admitting new connections, but this session's bidirectional relay keeps running unaffected, bounded by TcpServerConfig.drain_timeout (R4, AC4)"
+    label: "Draining: the process received SIGTERM/SIGINT (DrainSignal flipped to Draining); server-tcp's accept loop has stopped admitting new connections, but this session's bidirectional relay keeps running unaffected, bounded by TcpServerConfig.drain_timeout (R4, AC4)"
   closed:
     kind: terminal
     label: "Closed: permit released, both sockets closed — either a clean end (client Terminate, or backend/client EOF), a FrameError on either leg, or the drain_timeout elapsing while still Established/Draining (task abandoned)"
@@ -265,14 +265,14 @@ definitions:
       backend:
         $ref: "#/definitions/BackendEndpointConfig"
       frontend_budget:
-        x-rust-type: "server_core::ConnectionBudget"
-        description: "Same budget RuntimePlan::frontend_budget() constructs; admission is checked here (inside SessionHandler::handle), not via tcp_server::TcpServerConfig.connection_budget, so a rejection can still write a wire-level ErrorResponse before the socket closes (R1, AC3)."
+        x-rust-type: "server_lifecycle::ConnectionBudget"
+        description: "Same budget RuntimePlan::frontend_budget() constructs; admission is checked here (inside SessionHandler::handle), not via server_tcp::TcpServerConfig.connection_budget, so a rejection can still write a wire-level ErrorResponse before the socket closes (R1, AC3)."
       backend_connect_timeout:
         x-rust-type: "std::time::Duration"
         description: "Bounds the backend TCP connect attempt (R3); exceeding it produces RejectionReason::BackendUnreachable."
       drain_timeout:
         x-rust-type: "std::time::Duration"
-        description: "Mirrors tcp_server::TcpServerConfig.drain_timeout (itself from RuntimePlan.admin_drain_timeout-equivalent for the frontend listener) so the bounded-drain proof in AC4 has one source of truth."
+        description: "Mirrors server_tcp::TcpServerConfig.drain_timeout (itself from RuntimePlan.admin_drain_timeout-equivalent for the frontend listener) so the bounded-drain proof in AC4 has one source of truth."
       wire:
         x-rust-type: "crate::wire::WireCodecConfig"
         description: "Frame bounds/limits for the frontend-role and backend-role FrameReader instances this session constructs."
@@ -369,18 +369,18 @@ frontend_bind_override:
 
 # Drain timeout (R4 / AC4) — bounds how long an in-flight session may keep
 # running after SIGTERM/SIGINT before the drain loop abandons it; shared by
-# tcp_server::TcpServerConfig.drain_timeout and SessionProxyConfig.drain_timeout
+# server_tcp::TcpServerConfig.drain_timeout and SessionProxyConfig.drain_timeout
 # so there is one source of truth for the bounded-drain proof.
 drain_timeout_ms:
   env: PGPOOL_DRAIN_TIMEOUT_MS
   flag: --drain-timeout-ms
-  default: 30000        # 30s; matches server-core's shutdown_with_drain style bounded-wait convention
+  default: 30000        # 30s; matches server-lifecycle's shutdown_with_drain style bounded-wait convention
 
 # Frontend admission budget (R1 / AC3) — reused from RuntimePlan, not
 # reconfigured here; listed for traceability only.
 max_frontend_connections:
   source: "RuntimePlan::max_frontend_connections"
-  default: 10000        # ConnectionBudget::new(10_000); checked inside SessionHandler::handle, not via tcp_server::TcpServerConfig.connection_budget (see Schema: SessionProxyConfig.frontend_budget)
+  default: 10000        # ConnectionBudget::new(10_000); checked inside SessionHandler::handle, not via server_tcp::TcpServerConfig.connection_budget (see Schema: SessionProxyConfig.frontend_budget)
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -481,7 +481,7 @@ requirements:
     verify: proxy::draining_stops_new_admissions_while_in_flight_session_completes
   r4_drain_timeout_abandons_session:
     id: R4
-    text: "If an Established session has not ended by the time drain_timeout elapses, the drain loop returns and the session task is abandoned (not force-killed mid-write), matching server-core's bounded-drain contract."
+    text: "If an Established session has not ended by the time drain_timeout elapses, the drain loop returns and the session task is abandoned (not force-killed mid-write), matching server-lifecycle's bounded-drain contract."
     kind: regression
     risk: medium
     verify: proxy::drain_timeout_elapses_and_abandons_still_running_session

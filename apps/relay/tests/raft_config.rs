@@ -1,13 +1,13 @@
 // SPEC-MANAGED: apps/relay/tech-design/logic/adopt-raft-host-relaystatemachine-auto-mode-ha-drop-hand-rolled.md#unit-test
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:d0cba133" tracker="pending-tracker" reason="Topology smoke (#544): relay derives node id / membership / peer URLs from the standard downward-API quartet via raft_host::cluster (the hand-derived local ordinal math is deleted); replica_mode is off without cluster env; RELAY_PEERS overrides peer DNS for a local multi-node group."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:d0cba133" tracker="pending-tracker" reason="Topology smoke (#544): relay derives node id / membership / peer URLs from the standard downward-API quartet via raft_runtime::cluster (the hand-derived local ordinal math is deleted); replica_mode is off without cluster env; RELAY_PEERS overrides peer DNS for a local multi-node group."
 //! Topology smoke (#544): relay's cluster shape comes from
-//! `raft_host::cluster` and the STANDARD downward-API env — the hand-derived
+//! `raft_runtime::cluster` and the STANDARD downward-API env — the hand-derived
 //! ordinal/peer-DNS module is gone, per CONTRIBUTING's "never re-derive the
 //! ordinal math locally".
 
 use std::sync::Mutex;
 
-use raft_host::cluster::{replica_mode, ClusterTopology};
+use raft_runtime::cluster::{replica_mode, ClusterTopology};
 
 // The standard env vars are process-global; serialize the env tests.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -44,7 +44,7 @@ fn replica_mode_is_off_without_cluster_env() {
 /// group is node 1 with voters {0,1,2}; peer URLs use the headless-Service
 /// DNS template, and RELAY_PEERS replaces them for a local multi-node group.
 #[test]
-fn topology_derives_from_standard_env_via_raft_host() {
+fn topology_derives_from_standard_env_via_raft_runtime() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_env();
     for (k, v) in QUARTET {

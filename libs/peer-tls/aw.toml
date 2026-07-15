@@ -14,7 +14,7 @@ verify_cold = true
 [aw.ec.generated]
 version = 1
 project = "peer-tls"
-generated_from_td_digest = "sha256:7a31f6f1b34cfe121c5ae8aedd624cc6357f694f30ea1d107d1d56ecd45b4af4"
+generated_from_td_digest = "sha256:ea70ab6bd97a445f854c6ee61bc3ca65e74b4d2899cde35e6aca48b2dc551712"
 
 [[aw.ec.generated.cases]]
 id = "shared-peer-mtls-material-loading-contract"

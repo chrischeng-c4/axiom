@@ -34,7 +34,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use transport_h2c::{H2cError, H2cManager, ManagerConfig};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -44,6 +43,7 @@ use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, JoinSet};
+use transport_h2c::{H2cError, H2cManager, ManagerConfig};
 
 // ---------------------------------------------------------------------------
 // A controllable h2c test server: serves a few routes, counts requests, and

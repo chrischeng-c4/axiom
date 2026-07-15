@@ -6,7 +6,7 @@
 //! map, role inspection, read-consistency parsing, and the wire shape of
 //! `/debug/cluster` — plus [`ClusterState`]'s live-mutable role/leader/lag
 //! fields. Write ordering + replication is `libs/raft-core` via
-//! `libs/raft-host` (#515/#524); `lumen serve --wal raft` keeps
+//! `libs/raft-runtime` (#515/#524); `lumen serve --wal raft` keeps
 //! `ClusterState` current for the process lifetime by polling the same
 //! `RaftHost` the write path already drives (`spawn_cluster_state_poller` in
 //! `src/bin/lumen.rs`, #1349) — this module owns the DTOs and the
@@ -16,16 +16,16 @@
 //! Lumen's multi-pod auto path uses Lumen-owned primary/replica replication.
 //!
 //! `RaftGroup::from_config`'s peer enumeration (pod-ordinal math + the
-//! `LUMEN_PEERS` override parsing) delegates to `libs/raft-host::cluster`
-//! (#1002) so it can't drift from `raft_host::cluster::ClusterTopology::
+//! `LUMEN_PEERS` override parsing) delegates to `libs/raft-runtime::cluster`
+//! (#1002) so it can't drift from `raft_runtime::cluster::ClusterTopology::
 //! from_env`, the implementation the actual raft-wal peer wiring uses.
 //!
 //! The read-consistency header contract and the role/cluster-view model are
 //! the same shape every raft_core service exposes, so their canonical
-//! definitions now live in `libs/raft-host` (#1003). `ReadConsistency` is
+//! definitions now live in `libs/raft-runtime` (#1003). `ReadConsistency` is
 //! re-exported directly (it carries no OpenAPI surface); `RaftRole`,
 //! `PeerAddr`, and `ClusterStateView` keep lumen-side `utoipa::ToSchema`
-//! wrappers here — with `From<>` conversions to the `raft_host` shapes —
+//! wrappers here — with `From<>` conversions to the `raft_runtime` shapes —
 //! since deriving `ToSchema` on the shared types would force every adopter
 //! (keep/relay/loom) to pull in utoipa whether or not it exposes an OpenAPI
 //! doc.
@@ -42,7 +42,7 @@ use crate::config::ClusterConfig;
 const NO_LEADER: u32 = u32::MAX;
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
-pub use raft_host::ReadConsistency;
+pub use raft_runtime::ReadConsistency;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -71,13 +71,13 @@ impl RaftRole {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
-impl From<raft_host::RaftRole> for RaftRole {
-    fn from(role: raft_host::RaftRole) -> Self {
+impl From<raft_runtime::RaftRole> for RaftRole {
+    fn from(role: raft_runtime::RaftRole) -> Self {
         match role {
-            raft_host::RaftRole::Leader => Self::Leader,
-            raft_host::RaftRole::Follower => Self::Follower,
-            raft_host::RaftRole::Learner => Self::Learner,
-            raft_host::RaftRole::Candidate => Self::Candidate,
+            raft_runtime::RaftRole::Leader => Self::Leader,
+            raft_runtime::RaftRole::Follower => Self::Follower,
+            raft_runtime::RaftRole::Learner => Self::Learner,
+            raft_runtime::RaftRole::Candidate => Self::Candidate,
         }
     }
 }
@@ -103,8 +103,8 @@ pub struct PeerAddr {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
-impl From<raft_host::PeerAddr> for PeerAddr {
-    fn from(p: raft_host::PeerAddr) -> Self {
+impl From<raft_runtime::PeerAddr> for PeerAddr {
+    fn from(p: raft_runtime::PeerAddr) -> Self {
         Self {
             pod_name: p.pod_name,
             host: p.host,
@@ -127,9 +127,9 @@ impl RaftGroup {
         let shard = cfg.shard_index()?;
         let mut peers = Vec::with_capacity(cfg.replicas_per_shard as usize);
         for replica in 0..cfg.replicas_per_shard {
-            // Pod-ordinal math shared with `raft_host::cluster::ClusterTopology`
+            // Pod-ordinal math shared with `raft_runtime::cluster::ClusterTopology`
             // (#1002) — no local `%`/`/` peer-DNS arithmetic.
-            let ordinal = raft_host::cluster::peer_ordinal(cfg.shard_count, shard, replica);
+            let ordinal = raft_runtime::cluster::peer_ordinal(cfg.shard_count, shard, replica);
             let pod_name = format!("{prefix}-{ordinal}");
             let host = format!("{pod_name}.{headless_service}");
             let role = if replica < cfg.voter_count {
@@ -157,7 +157,7 @@ impl RaftGroup {
         // host:port pairs. Useful for running a 3-pod cluster on a
         // single machine; index N maps to replica N in this shard. Parsing
         // is shared with `ClusterTopology::from_env`'s peer override (#1002).
-        let overrides = raft_host::cluster::parse_peer_overrides("LUMEN_PEERS");
+        let overrides = raft_runtime::cluster::parse_peer_overrides("LUMEN_PEERS");
         for (i, peer) in peers.iter_mut().enumerate() {
             if let Some(addr) = overrides.get(i) {
                 if let Some((host, port)) = addr.rsplit_once(':') {
@@ -368,8 +368,8 @@ pub struct ClusterStateView {
 }
 
 /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
-impl From<raft_host::ClusterStateView> for ClusterStateView {
-    fn from(v: raft_host::ClusterStateView) -> Self {
+impl From<raft_runtime::ClusterStateView> for ClusterStateView {
+    fn from(v: raft_runtime::ClusterStateView) -> Self {
         Self {
             pod_name: v.pod_name,
             shard_index: v.shard_index,
@@ -388,34 +388,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wrapper_types_convert_from_raft_host_canonical_shape() {
+    fn wrapper_types_convert_from_raft_runtime_canonical_shape() {
         // The header contract itself is a pure re-export — no local wrapper —
-        // so its parsing tests moved down to raft-host (#1003).
+        // so its parsing tests moved down to raft-runtime (#1003).
         for (host_role, local_role) in [
-            (raft_host::RaftRole::Leader, RaftRole::Leader),
-            (raft_host::RaftRole::Follower, RaftRole::Follower),
-            (raft_host::RaftRole::Learner, RaftRole::Learner),
-            (raft_host::RaftRole::Candidate, RaftRole::Candidate),
+            (raft_runtime::RaftRole::Leader, RaftRole::Leader),
+            (raft_runtime::RaftRole::Follower, RaftRole::Follower),
+            (raft_runtime::RaftRole::Learner, RaftRole::Learner),
+            (raft_runtime::RaftRole::Candidate, RaftRole::Candidate),
         ] {
             assert_eq!(RaftRole::from(host_role), local_role);
         }
 
-        let host_peer = raft_host::PeerAddr {
+        let host_peer = raft_runtime::PeerAddr {
             pod_name: "lumen-1".into(),
             host: "lumen-1.lumen-peer".into(),
             raft_port: 8082,
             client_port: 8080,
-            role: raft_host::RaftRole::Follower,
+            role: raft_runtime::RaftRole::Follower,
         };
         let peer: PeerAddr = host_peer.clone().into();
         assert_eq!(peer.pod_name, host_peer.pod_name);
         assert_eq!(peer.role, RaftRole::Follower);
 
-        let host_view = raft_host::ClusterStateView {
+        let host_view = raft_runtime::ClusterStateView {
             pod_name: "lumen-1".into(),
             shard_index: 0,
             replica_index: 1,
-            role: raft_host::RaftRole::Follower,
+            role: raft_runtime::RaftRole::Follower,
             peers: vec![host_peer],
             applied_index: 5,
             leader_term: 2,

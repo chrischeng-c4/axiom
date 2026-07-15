@@ -13,8 +13,8 @@ verify_cold = true
 # AW-EC-BEGIN
 [aw.ec.generated]
 version = 1
-project = "h2c"
-generated_from_td_digest = "sha256:d3bddec6710216b69edfd82ac078e6c74960ea445e4d50df9d814b3b6fc0eb4c"
+project = "transport-h2c"
+generated_from_td_digest = "sha256:c0a72e8964fd0d45c74888fc1e089a5e8410cc051dfbc655f4eb12d5628e44e3"
 
 [[aw.ec.generated.cases]]
 id = "http2-cleartext-client-helpers-contract"

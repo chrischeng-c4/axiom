@@ -1,14 +1,14 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/logic/served-admin-plane-with-drain-aware-readiness.md#schema
 // <HANDWRITE gap="missing-generator:logic:pgpool-admin-plane" tracker="#1290" reason="Admin plane needs generator primitives that do not exist yet.">
 //! `AdminState`/`NamedPool` (TD Schema section): the axum shared state for
-//! the admin router — one shared `server_core::DrainController` clone (the
+//! the admin router — one shared `server_lifecycle::DrainController` clone (the
 //! SAME instance handed to the TCP frontend's `TcpServerConfig.drain` and
 //! the SIGTERM/SIGINT signal task in `serve()`, R2/R7) plus every named
 //! pool this process serves.
 
 use std::sync::Arc;
 
-use server_core::{ConnectionBudget, DrainController, DrainSignal};
+use server_lifecycle::{ConnectionBudget, DrainController, DrainSignal};
 
 use crate::pool::BackendPool;
 use crate::PoolMode;

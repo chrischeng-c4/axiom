@@ -106,7 +106,7 @@ pub struct LumenSpec {
     /// StatefulSet with no raft consensus (still durable — the same
     /// PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds
     /// raft-HA: a fixed peer set whose pods inject the downward-API env
-    /// `raft_host::cluster` reads (no HPA — raft needs a known membership).
+    /// `raft_runtime::cluster` reads (no HPA — raft needs a known membership).
     #[serde(default = "default_replicas_per_shard")]
     pub replicas_per_shard: u32,
 

@@ -11,7 +11,7 @@ capability_refs:
       pure quantity-parsing (`parse_storage_bytes`), the grow/no-op/shrink
       decision (`ResizeAction`/`decide`), the `PvcResizeOutcome` shape, and
       the impure PVC-list + `StorageClass`-gated patch driver
-      (`resize_instance`) all moved to the shared `libs/operator::resize`
+      (`resize_instance`) all moved to the shared `libs/service-k8s::resize`
       module (universal to every sharded-StatefulSet operator, e.g. keep).
       This file keeps only the Lumen-specific glue: fetch the named `Lumen`
       CR for `spec.serving.raftStorage`, then delegate to the lib with the
@@ -33,11 +33,11 @@ fill_sections: [overview, source, changes]
 reconcile does **not** resize anything — the rendered StatefulSet's `apply`
 is a silent no-op for that field. The generic detect-and-patch tool (quantity
 parsing, grow/no-op/shrink decision, PVC listing + `StorageClass`-gated
-patch) now lives in the shared `operator::resize` module (#970, universal to
+patch) now lives in the shared `service_k8s::resize` module (#970, universal to
 every sharded-StatefulSet operator); this file is the thin Lumen-specific
 adapter that fetches the CR's declared `spec.serving.raftStorage` and scopes
 the PVC listing to the instance's `raft-<name>-<n>` volumes via a label
-selector + name filter passed into `operator::resize::resize_instance`.
+selector + name filter passed into `service_k8s::resize::resize_instance`.
 Gated `#[cfg(feature = "operator")]`; the default (no-feature) build links no
 kube client.
 
@@ -48,7 +48,7 @@ kube client.
 | `resize_instance` | apps/lumen/src/operator/resize.rs | function | pub async | 28 | resize_instance(client: kube::Client, namespace: &str, name: &str, dry_run: bool) -> Result<Vec<PvcResizeOutcome>> |
 
 `decide`, `parse_storage_bytes`, `PvcResizeOutcome`, and `ResizeAction` are
-re-exported (`pub use operator::resize::{...}`) from `libs/operator::resize`,
+re-exported (`pub use service_k8s::resize::{...}`) from `libs/service-k8s::resize`,
 not defined in this file — see
 `apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-lease-rs.md`
 for the same re-export convention.
@@ -57,7 +57,7 @@ for the same re-export convention.
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// HANDWRITE-BEGIN gap="missing-generator:logic:7b95a80b" tracker="pending-tracker" reason="Thin Lumen-specific adapter over the shared `operator::resize` module (#970): fetches the named Lumen CR for spec.serving.raftStorage and delegates PVC listing/quantity-compare/patch logic (parse_storage_bytes, ResizeAction/decide, PvcResizeOutcome, resize_instance) to libs/operator, supplying the `app.kubernetes.io/instance=<name>` label selector and the `raft-<name>-` PVC name filter. No generator primitive exists yet for this shape, so it stays HANDWRITE per CLAUDE.md until one covers it."
+// HANDWRITE-BEGIN gap="missing-generator:logic:7b95a80b" tracker="pending-tracker" reason="Thin Lumen-specific adapter over the shared `service_k8s::resize` module (#970): fetches the named Lumen CR for spec.serving.raftStorage and delegates PVC listing/quantity-compare/patch logic (parse_storage_bytes, ResizeAction/decide, PvcResizeOutcome, resize_instance) to libs/service-k8s, supplying the `app.kubernetes.io/instance=<name>` label selector and the `raft-<name>-` PVC name filter. No generator primitive exists yet for this shape, so it stays HANDWRITE per CLAUDE.md until one covers it."
 //! `lumen k8s operator resize-storage` (#809) support module.
 //!
 //! StatefulSet `volumeClaimTemplates` are immutable after creation, so
@@ -66,7 +66,7 @@ for the same re-export convention.
 //! StatefulSet's `apply` is a silent no-op for that field. The generic
 //! detect-and-patch tool (quantity parsing, grow/no-op/shrink decision, PVC
 //! listing + `StorageClass`-gated patch) lives in the shared
-//! [`operator::resize`] module (#970); this module is the thin Lumen-specific
+//! [`service_k8s::resize`] module (#970); this module is the thin Lumen-specific
 //! adapter that fetches the CR's declared `spec.serving.raftStorage` and
 //! scopes the PVC listing to the instance's `raft-<name>-<n>` volumes.
 
@@ -75,7 +75,7 @@ use kube::api::Api;
 
 use super::crd::Lumen;
 
-pub use operator::resize::{decide, parse_storage_bytes, PvcResizeOutcome, ResizeAction};
+pub use service_k8s::resize::{decide, parse_storage_bytes, PvcResizeOutcome, ResizeAction};
 
 /// List the live `raft-<name>-<n>` PVCs for the named `Lumen` instance,
 /// compare each to the CR's declared `spec.serving.raftStorage`, and patch
@@ -100,7 +100,7 @@ pub async fn resize_instance(
     let label_selector = format!("app.kubernetes.io/instance={name}");
     let prefix = format!("raft-{name}-");
 
-    operator::resize::resize_instance(
+    service_k8s::resize::resize_instance(
         client,
         namespace,
         &label_selector,
@@ -125,25 +125,25 @@ changes:
     description: |
       Thinned to an adapter (#970): parse_storage_bytes, ResizeAction/decide,
       PvcResizeOutcome, and the PVC-list + quantity-compare + conditional-patch
-      driver (resize_instance) moved to the shared libs/operator::resize module
+      driver (resize_instance) moved to the shared libs/service-k8s::resize module
       (reusable by any sharded-StatefulSet operator, e.g. keep). This file
       keeps only the Lumen-specific glue: fetch the named Lumen CR for
       spec.serving.raftStorage, then delegate to
-      operator::resize::resize_instance with the
+      service_k8s::resize::resize_instance with the
       app.kubernetes.io/instance=<name> label selector and the raft-<name>-
       PVC name filter. Byte-compatible parsing/patch semantics — no behavior
       change, same --dry-run contract.
-  - path: libs/operator/src/resize.rs
+  - path: libs/service-k8s/src/resize.rs
     action: create
     section: rust-source-unit
     impl_mode: hand-written
     description: |
-      New shared module (#970), lifted from lumen's operator::resize: pure
+      New shared module (#970), lifted from lumen's service_k8s::resize: pure
       quantity parsing (parse_storage_bytes), grow/no-op/shrink decision
       (ResizeAction/decide, moved unit tests included), the PvcResizeOutcome
       shape, and the impure resize_instance driver — now parameterized by a
       PVC label selector, a PVC-name filter closure, and a desired-storage
-      accessor closure instead of a Lumen CR type, so no libs/operator caller
+      accessor closure instead of a Lumen CR type, so no libs/service-k8s caller
       needs a Lumen dependency. Parsing and patch semantics unchanged from the
       lumen-private implementation.
 ```

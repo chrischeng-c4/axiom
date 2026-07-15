@@ -85,13 +85,13 @@ async fn readyz_flips_to_503_on_drain() {
     assert_eq!(draining.text().await.unwrap(), "draining");
 }
 
-/// R2: an HTTP/2 prior-knowledge (h2c, via libs/h2c `h2c_client`) request AND
+/// R2: an HTTP/2 prior-knowledge (h2c, via libs/transport-h2c `h2c_client`) request AND
 /// an HTTP/1.1 request both succeed on the same serve port.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn h2c_and_http11_share_the_serve_port() {
     let (addr, _state) = start_server().await;
 
-    let h2 = h2c::h2c_client().unwrap();
+    let h2 = transport_h2c::h2c_client().unwrap();
     let resp = h2.get(url(addr, "/healthz")).send().await.unwrap();
     assert_eq!(resp.version(), reqwest::Version::HTTP_2);
     assert_eq!(resp.status(), 200);

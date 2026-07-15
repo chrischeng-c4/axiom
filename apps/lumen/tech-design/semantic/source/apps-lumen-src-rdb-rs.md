@@ -53,7 +53,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use service_durability::{FsyncPolicy, SnapshotFileStore};
+use storage_durable::{FsyncPolicy, SnapshotFileStore};
 
 use crate::storage::{Engine, SnapshotV1};
 

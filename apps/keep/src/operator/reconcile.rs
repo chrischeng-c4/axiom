@@ -1,7 +1,7 @@
-//! keep's operator wiring onto the shared `libs/operator` controller.
+//! keep's operator wiring onto the shared `libs/service-k8s` controller.
 //!
-//! The reconcile loop + leader-election lease live in `libs/operator`
-//! (`operator::run` drives the watch + leader-gated server-side apply over
+//! The reconcile loop + leader-election lease live in `libs/service-k8s`
+//! (`service_k8s::run` drives the watch + leader-gated server-side apply over
 //! kube-rs). keep supplies only its [`ManagedService`] impl — what to render,
 //! which workload to poll for readiness, and the `Keep` status subresource to
 //! write.
@@ -9,8 +9,8 @@
 //! @spec .aw/tech-design/projects/keep/interfaces/cli/adopt-libs-operator-keep-k8s-crd-operator-instance-cli.md
 
 use kube::ResourceExt;
-use operator::{ManagedService, ReadinessTarget, ReadyFacts};
 use serde_json::json;
+use service_k8s::{ManagedService, ReadinessTarget, ReadyFacts};
 
 use super::crd::Keep;
 use super::render;
@@ -55,7 +55,7 @@ impl ManagedService for Keep {
 }
 
 /// `keep k8s operator run` — run the reconcile controller on the shared
-/// `libs/operator` host (leader-gated; safe at `replicas > 1`).
+/// `libs/service-k8s` host (leader-gated; safe at `replicas > 1`).
 pub async fn run() -> anyhow::Result<()> {
-    operator::run::<Keep>().await
+    service_k8s::run::<Keep>().await
 }

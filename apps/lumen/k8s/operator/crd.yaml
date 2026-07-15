@@ -65,7 +65,7 @@ spec:
                 type: boolean
               replicasPerShard:
                 default: 1
-                description: 'Raft replicas per shard. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume — and still fronted by an HPA). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_host::cluster` reads (no HPA — raft needs a known membership).'
+                description: 'Starting/minimum replicas per shard. With the current startup-static raft-runtime membership it is also the fixed desired value. `1` (default) = a single-member serving StatefulSet with no raft consensus (still durable — the same PVC-backed `raft` volume). `> 1` adds raft-HA: a fixed peer set whose pods inject the downward-API env `raft_runtime::cluster` reads. Direct HPA scaling is never used because membership changes must be coordinated.'
                 type: integer
                 minimum: 0.0
               reshardPolicy:
@@ -74,6 +74,7 @@ spec:
                   urgentAtPercent: 85
                   workflow:
                     phase: Complete
+                    convergenceRemediationRestartCount: 0
                 description: Operator-owned storage reshard policy. HPA never changes storage ownership; this policy only prepares/recommends explicit shard topology changes.
                 properties:
                   maxShardBytes:
@@ -106,8 +107,34 @@ spec:
                   workflow:
                     default:
                       phase: Complete
+                      convergenceRemediationRestartCount: 0
                     description: '@spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source'
                     properties:
+                      convergedShardMapVersion:
+                        description: '`shardMap.version` the reshard driver has confirmed every serving pod is `Ready` on (#1458 R1) — the persisted checkpoint `reshard_driver::advance_convergence` compares `spec.shardMap. version` against to decide whether the post-cutover write-pause fence must stay armed. `None` (or a value behind the current `shardMap.version`) means convergence for the current map is still pending or was never confirmed.'
+                        type: integer
+                        minimum: 0.0
+                        nullable: true
+                      convergenceRemediationRestartCount:
+                        default: 0
+                        description: 'Count of bounded remediation rolling-restart re-triggers `reshard_driver::advance_convergence` has fired for the current convergence-stall episode — the same wait `convergenceWaitStartedAt` tracks (#1485 R1). Bounded to at most `1`: once the stall budget is exceeded with the ConfigMap-race signature (StatefulSet rollout complete but some pod still reporting the old shard-map version), the driver first persists this as `1`, then calls `ClusterControl::trigger_rolling_restart` exactly once per episode. The write-ahead checkpoint prevents a patch failure after a successful restart from causing a duplicate restart on the next tick. A later stall in the same episode never re-triggers. Reset to `0` alongside `convergenceWaitStartedAt` once the episode resolves.'
+                        type: integer
+                        minimum: 0.0
+                      convergenceRemediationRestartedAt:
+                        description: Epoch-seconds timestamp of the durable remediation rolling-restart claim for this episode, if any (#1485 R1) — surfaced alongside `convergenceRemediationRestartCount` in `status.reshard` so operators can see when the bounded self-heal was attempted without reading driver logs. `None` until `convergenceRemediationRestartCount` first becomes non-zero; cleared together with it once the episode resolves.
+                        type: integer
+                        minimum: 0.0
+                        nullable: true
+                      convergenceWaitStartedAt:
+                        description: Epoch-seconds wall-clock timestamp `reshard_driver::advance_convergence` first observed the *current* `shardMap.version`'s post-cutover convergence wait as pending (#1485 R2) — stamped once, on the first `AwaitingTopologyConvergence` tick, in the same `Patch::Merge` style `lastCutoverShardMapVersion` already uses (spec-is-checkpoint, not driver memory). Cleared (patched to `null`) the moment convergence is confirmed, so it is always either `None` or the start of the wait still in progress. `reshard_driver::convergence_stall_condition` computes the `topologyConvergenceStalled` budget directly from this field, so both the budget and the raised condition survive an operator restart — replacing the prior process-local-cache-only computation, which reset to zero on every restart.
+                        type: integer
+                        minimum: 0.0
+                        nullable: true
+                      lastCutoverShardMapVersion:
+                        description: '`shardMap.version` the reshard driver''s own cutover last patched into `spec.shardMap.version` (#1467 R7), stamped in the exact same `advance_catching_up_fenced` patch call that sets `shardMap. version`/`phase: Complete`. The ONLY writer of this field — a hand-authored or backup-restored `spec.shardMap` never sets it, so it stays behind (usually `None`) forever for such a CR. `advance_convergence` requires this to equal the current `shardMap.version` before engaging the post-cutover write-pause fence loop at all, closing the gap where convergence would otherwise fence indefinitely over a topology the driver never actually changed.'
+                        type: integer
+                        minimum: 0.0
+                        nullable: true
                       phase:
                         default: Complete
                         description: '@spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source'
@@ -129,7 +156,7 @@ spec:
                     minReplicas: 3
                     maxReplicas: 12
                     targetCpuUtilization: 70
-                  cpu: '2'
+                  cpu: '1'
                   memory: 4Gi
                   graceSecs: 30
                   raftStorage: 20Gi
@@ -141,14 +168,14 @@ spec:
                       minReplicas: 3
                       maxReplicas: 12
                       targetCpuUtilization: 70
-                    description: HPA bounds + CPU target.
+                    description: Legacy HPA bounds retained for CR compatibility. Direct StatefulSet HPA is disabled; new capacity control uses the shared replica-layer policy.
                     properties:
                       maxReplicas:
                         description: Ceiling.
                         format: int32
                         type: integer
                       minReplicas:
-                        description: Floor (also the StatefulSet's apply-time replica count in HPA mode).
+                        description: Historical HPA floor; no longer drives the data StatefulSet.
                         format: int32
                         type: integer
                       targetCpuUtilization:
@@ -199,8 +226,8 @@ spec:
                     - seedUri
                     type: object
                   cpu:
-                    default: '2'
-                    description: Per-pod CPU, applied as request==limit (Guaranteed QoS). e.g. `"2"`.
+                    default: '1'
+                    description: Per-pod CPU request. No CPU limit is emitted. Defaults to `"1"`.
                     type: string
                   graceSecs:
                     default: 30
@@ -209,7 +236,7 @@ spec:
                     minimum: 0.0
                   memory:
                     default: 4Gi
-                    description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
+                    description: Per-pod memory request. No memory limit is emitted. Defaults to `"4Gi"`.
                     type: string
                   raftStorage:
                     default: 20Gi
@@ -222,7 +249,7 @@ spec:
                 type: object
               shardCount:
                 default: 1
-                description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. HPA never changes this value.
+                description: Physical storage shard count. Data ownership is resolved through the versioned virtual-bucket map, not permanent `hash % shardCount` routing. Replica-layer capacity changes never change this value.
                 type: integer
                 minimum: 0.0
               shardMap:
@@ -268,7 +295,7 @@ spec:
             properties:
               desiredReplicas:
                 default: 0
-                description: Desired serving replicas (HPA floor at apply, or the live count).
+                description: Desired serving replicas from the declared shard/replica topology.
                 format: int32
                 type: integer
               message:
@@ -290,12 +317,29 @@ spec:
                   recommendationOnly: false
                   progressPercent: 0
                   message: ''
+                  convergenceRemediationRestartCount: 0
                 description: Reshard workflow status. Present even before a split starts so agents can distinguish "complete" from "unknown policy".
                 properties:
                   blockingConditions:
                     items:
                       type: string
                     type: array
+                  convergenceRemediationRestartCount:
+                    default: 0
+                    description: Mirrors `spec.reshardPolicy.workflow.convergenceRemediationRestartCount` (#1485 R1) — count of bounded remediation rolling-restart re-triggers the reshard driver has fired for the current convergence-stall episode, so operators can see the self-heal fired without reading `spec`. `status_patch` copies this straight from the spec field.
+                    type: integer
+                    minimum: 0.0
+                  convergenceRemediationRestartedAt:
+                    description: Mirrors `spec.reshardPolicy.workflow.convergenceRemediationRestartedAt` (#1485 R1) — epoch-seconds timestamp of the last remediation restart re-trigger, if any.
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  maxObservedPercent:
+                    description: Highest observed percent of `maxShardBytes` across shards, from the live per-shard usage measurement (#1319 R1; [`super::reconcile`]'s pod-`/metrics` measurement loop is the only caller of [`LumenSpec::reshard_status_with_usage`], which sets this). `None` when `maxShardBytes` is unset or usage has not been measured yet — the plain [`LumenSpec::reshard_status`] never sets it.
+                    format: uint8
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
                   message:
                     default: ''
                     type: string
@@ -312,9 +356,14 @@ spec:
                     minimum: 0.0
                     type: integer
                   recommendationOnly:
-                    default: false
+                    default: true
                     type: boolean
                   targetShardCount:
+                    type: integer
+                    minimum: 0.0
+                    nullable: true
+                  usageMeasuredAtMapVersion:
+                    description: 'The `spec.shardMap.version` live when [`Self::max_observed_percent`] was captured (#1386 R1/R2) — the usage measurement''s freshness generation. [`LumenSpec::reshard_status_with_usage`] only reports a crossed threshold when this equals the CR''s *current* `spec.shardMap.version`; a mismatch means the measurement predates the most recent split''s cutover (immediately after `Complete`, the shard-usage cache almost always still holds exactly this — the live #1384 proof bug this field closes) and the status instead reports `"usageStalePostCutover"`, holding until a fresh post-cutover scrape lands. `None` alongside `max_observed_percent == None` (no measurement yet).'
                     type: integer
                     minimum: 0.0
                     nullable: true
