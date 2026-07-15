@@ -14,7 +14,7 @@ captures. Source: `src/runtime/closure.rs` (runtime), `src/resolve/pass.rs` + `s
   and global reads/writes (`ACTIVE_CELLS`, `ACTIVE_MODULE_NAMES`).
 - Compile-time scoping decisions: local vs free vs cell-backed; PEP 572 walrus target placement.
 - Capture-introspection contract: read the closure's own arrays, never active-scope state
-  (see `241-getclosurevars-capture-cells.md`).
+  (see `getclosurevars-capture-cells.md`).
 
 ## Key structures & invariants
 
@@ -65,7 +65,7 @@ captures. Source: `src/runtime/closure.rs` (runtime), `src/resolve/pass.rs` + `s
 - **Active-module lookup inside native dispatchers** — `with_callable_module` makes the DISPATCHER's own
   `__module__` (e.g. "inspect") active for the call's duration; any user-scope name resolved through
   ACTIVE_CELLS / `mb_global_get_id_raw` in that window reads the wrong scope and comes back unset. →
-  `241-getclosurevars-capture-cells.md`.
+  `getclosurevars-capture-cells.md`.
 - **Call-time module fallback (#239)** — `callable_module_name` (closure.rs:251) falls back to "whatever
   module is currently active" when a callable has no registered `__module__`; wrong for callbacks invoked
   from another module's dispatch code, corrupting every global read/write. Hence `mb_func_prime_name`
@@ -91,7 +91,7 @@ captures. Source: `src/runtime/closure.rs` (runtime), `src/resolve/pass.rs` + `s
   but suppresses field type errors (check_expr.rs:497-515).
 - **Closure handle is an int** — dispatch paths that compute addresses from a method value must unwrap
   handles (`extract_registered_func_addr`), or construction silently no-ops. →
-  `../object-model/1594-closure-handle-init-dispatch.md`.
+  `../object-model/closure-handle-init-dispatch.md`.
 - **Unwind-safety asymmetry** — `with_callable_module` restores via a Drop guard; `with_closure_cells`
   (closure.rs:572-589) restores only after `call()` returns — a Rust unwind through the body skips the
   ACTIVE_CELLS restore. All state is thread-local; cross-thread use requires explicit snapshot/merge.

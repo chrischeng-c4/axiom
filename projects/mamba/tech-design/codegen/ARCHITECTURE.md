@@ -16,7 +16,7 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 | Structure | Rule that must hold |
 |---|---|
 | `ast_to_hir.rs:3533 next_local_sym` (starts `1_000_000`) | SymbolId ≥ 1_000_000 = lowerer-synthetic local, NEVER in `SymbolTable` — every `symbols.get_symbol` path must guard on the threshold (`hir_to_mir.rs:925`) or it panics. REPL advances past pre-seeded ids (`ast_to_hir.rs:3493`). |
-| `hir_to_mir.rs:1598-1653 pending_class_*` family (`pending_classes`, `_values`, `_cell_syms`, `_runtime_key_values`, `pending_runtime_class_bases`/`_base_lists`, `_slots` (#1492), `_attrs` (#1686), `_body_stmts`, `_finalizers`, `pending_abstract_methods`, `_decorators` (#1690), `pending_dataclass_fields`, `_docs`) | Drained ONLY at the class's textual `ClassDefPlaceholder` (or the fallback loop). Fixed drain order: register → runtime bases → slots → body stmts → attrs → finalizers → dataclass fields → decorators → bind (`hir_to_mir.rs:5670-5777`). Slots strictly after `mb_class_update_bases` — see `../object-model/1492-slots-registration-ordering.md`. |
+| `hir_to_mir.rs:1598-1653 pending_class_*` family (`pending_classes`, `_values`, `_cell_syms`, `_runtime_key_values`, `pending_runtime_class_bases`/`_base_lists`, `_slots` (#1492), `_attrs` (#1686), `_body_stmts`, `_finalizers`, `pending_abstract_methods`, `_decorators` (#1690), `pending_dataclass_fields`, `_docs`) | Drained ONLY at the class's textual `ClassDefPlaceholder` (or the fallback loop). Fixed drain order: register → runtime bases → slots → body stmts → attrs → finalizers → dataclass fields → decorators → bind (`hir_to_mir.rs:5670-5777`). Slots strictly after `mb_class_update_bases` — see `../object-model/slots-registration-ordering.md`. |
 | Class runtime key `__mamba_user_class__:{file}:{sym.0}:{name}` (`hir_to_mir.rs:944`) | Made execution-unique via `mb_class_runtime_key`; cached VReg fetched through `class_runtime_key_value(sym, fallback)` (`hir_to_mir.rs:6295`), never re-derived ad hoc. |
 | `hir_to_mir.rs:1615 classes_needing_textual_registration` (#82) | `emit_pending_class_registrations(None)` (`:5782`) must skip these and kwargs-classes; `Some(sym)` selects one class. |
 | `jit.rs:108 internal_funcs: HashMap<u32, FuncId>` | Keyed by `SymbolId.0`; declared name `_mb_<sym>`; `__main__` sentinel = `SymbolId(u32::MAX)` (`hir_to_mir.rs:3562`); entry = LAST body in `MirModule` (`jit.rs:3043`). |
@@ -46,13 +46,13 @@ Runtime semantics (class registry, exceptions, GC) belong to their own domains; 
 - **Arity-guard masking** (`jit.rs:2436`, `:102`): truncate/pad silently "fixes" wrong-arity calls — a lowering bug downgrades from verifier abort to wrong runtime values; don't trust a clean compile as proof of correct call shape.
 - **Synthetic-sym lookups**: new code that calls `symbols.get_symbol(sym)` without the `>= 1_000_000` guard — index-out-of-bounds panic only on pattern/synthetic-local paths.
 - **Eager class-side-effect emission**: emitting attrs/decorators/dataclass fields before the stmt loop resolves imports against an empty module (#1686/#1690 defect class) — anything class-scoped must ride the placeholder.
-- **Slots/bases ordering**: `mb_register_slots` before `mb_class_update_bases` drops inherited slots — see `../object-model/1492-slots-registration-ordering.md`.
+- **Slots/bases ordering**: `mb_register_slots` before `mb_class_update_bases` drops inherited slots — see `../object-model/slots-registration-ordering.md`.
 - **Entry-body releases** (`jit.rs:488`): removing the `!is_entry_body` guard resurfaces `stdlib/re` UAF (#1663); the perf motivation is already covered elsewhere.
 - **Recursion fast path** (`jit.rs:2688`): inline increment commits ONLY on the fast path; slow path defers wholly to `mb_recursion_enter` (no double count, byte-identical raise). Changing either side desyncs depth or the error message.
 - **`--emit` on `check`**: only `Ast` is honored (`driver/mod.rs:139`); use `build --emit hir|mir` for later stages.
 - **Entry = last body** (`jit.rs:3043`): reordering `MirModule.bodies` silently changes the program entry.
 - **Last-expression capture** (`hir_to_mir.rs:3465`): only a trailing *Call* expr becomes `__main__`'s return; typed-prim results route through `mb_unbox_*_if_boxed` (`:3529`) — new terminal shapes must follow it.
-- **settrace exception under-emission**: event fires once at the raising frame, not per unwound frame — the open fix is `1535-settrace-unwind-exception-events.md` (this dir); its seams are `emit_try_exception_guard` (`hir_to_mir.rs:12425`) and the epilogue unwind checks.
+- **settrace exception under-emission**: event fires once at the raising frame, not per unwound frame — the open fix is `settrace-unwind-exception-events.md` (this dir); its seams are `emit_try_exception_guard` (`hir_to_mir.rs:12425`) and the epilogue unwind checks.
 
 ## Extension points
 
