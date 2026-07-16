@@ -790,6 +790,19 @@ mod tests {
             cx.labels("server")["app.kubernetes.io/managed-by"],
             "svc-operator"
         );
+        assert_eq!(restricted_pod_security_context()["runAsNonRoot"], true);
+        assert_eq!(
+            restricted_pod_security_context()["seccompProfile"]["type"],
+            "RuntimeDefault"
+        );
+        assert_eq!(
+            restricted_container_security_context()["readOnlyRootFilesystem"],
+            true
+        );
+        assert_eq!(
+            restricted_container_security_context()["capabilities"]["drop"][0],
+            "ALL"
+        );
 
         let secret = TokenRegistryProjection {
             volume_name: "registry",
