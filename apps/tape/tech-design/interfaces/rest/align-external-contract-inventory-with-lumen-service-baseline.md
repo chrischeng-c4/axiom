@@ -97,57 +97,57 @@ changes:
 
 ```mermaid
 ---
-id: tape-lumen-ec-baseline-alignment-verification
+id: tape-lumen-ec-baseline-contract-verification
 requirements:
-  auth_ec_contract:
-    id: R6
-    text: "Tape's copied bearer/RBAC and access-control categories must enforce topic write and replay/checkpoint read grants."
-    kind: security
-    risk: high
-    verify: apps/tape/tests/service_auth.rs::append_requires_write_grant_on_topic
-  authz_ec_contract:
+  access_control:
     id: R7
-    text: "Tape's access-control EC category must prevent replay and checkpoint access without a topic read grant."
+    text: "The copied access-control EC case prevents unauthorized replay and checkpoint use in Tape."
     kind: security
     risk: high
     verify: apps/tape/tests/service_auth.rs::replay_and_checkpoint_require_read_grant_on_topic
-  cli_ec_contract:
+  bearer_rbac:
+    id: R6
+    text: "The copied bearer/RBAC EC case enforces topic write authorization in Tape."
+    kind: security
+    risk: high
+    verify: apps/tape/tests/service_auth.rs::append_requires_write_grant_on_topic
+  cli:
     id: R1
-    text: "Tape's copied CLI/DX EC category must exercise only the Tape offline spec, CLI, generated-client, h2c, and llm surfaces."
+    text: "The copied CLI/DX EC case runs Tape's real CLI contract test rather than a Lumen command."
     kind: functional
     risk: medium
     verify: apps/tape/tests/behavior_tape_claim_cli_interface.rs::tape_cli_interface_replay_verbs
-  meta_api_ec_contract:
+  operational_surface:
     id: R3
-    text: "Tape's operational EC category must preserve the standard liveness, readiness, metrics, and OpenAPI surface."
+    text: "The copied meta API EC case retains Tape's standard operational endpoint contract."
     kind: regression
     risk: medium
     verify: apps/tape/tests/behavior_tape_claim_standard_operational_endpoints.rs::tape_standard_operational_endpoints
-  operator_ec_contract:
+  operator:
     id: R2
-    text: "Tape's deployment-render EC category must prove the shared StatefulSet operator output and Tape-specific policy wiring."
+    text: "The copied deployment EC case verifies Tape's rendered StatefulSet resources through the operator test."
     kind: regression
     risk: high
     verify: apps/tape/tests/operator.rs::render_emits_expected_child_objects
-  stability_ec_contract:
-    id: R4
-    text: "Tape's resilience EC categories must retain committed append history and consumer checkpoint progress across repeated restarts."
-    kind: regression
-    risk: high
-    verify: apps/tape/tests/long_running_stability.rs::repeated_restarts_preserve_append_history_and_checkpoint_progress
-  topology_ec_contract:
+  raft_topology:
     id: R5
-    text: "Tape's topology EC category must prove leader loss, reelection, and no committed replay event loss."
+    text: "The copied topology EC case proves Tape leader failover without committed-event loss."
     kind: regression
     risk: high
     verify: apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss
+  restart_stability:
+    id: R4
+    text: "The copied stability EC cases retain Tape append history and checkpoint progress across repeated restart."
+    kind: regression
+    risk: high
+    verify: apps/tape/tests/long_running_stability.rs::repeated_restarts_preserve_append_history_and_checkpoint_progress
 ---
 flowchart TD
-    r1[R1 cli ec contract] --> apps_tape_tests_behavior_tape_claim_cli_interface_rs_tape_cli_interface_replay_verbs[apps/tape/tests/behavior_tape_claim_cli_interface.rs::tape_cli_interface_replay_verbs]
-    r2[R2 operator ec contract] --> apps_tape_tests_operator_rs_render_emits_expected_child_objects[apps/tape/tests/operator.rs::render_emits_expected_child_objects]
-    r3[R3 meta api ec contract] --> apps_tape_tests_behavior_tape_claim_standard_operational_endpoints_rs_tape_standard_operational_endpoints[apps/tape/tests/behavior_tape_claim_standard_operational_endpoints.rs::tape_standard_operational_endpoints]
-    r4[R4 stability ec contract] --> apps_tape_tests_long_running_stability_rs_repeated_restarts_preserve_append_history_and_checkpoint_progress[apps/tape/tests/long_running_stability.rs::repeated_restarts_preserve_append_history_and_checkpoint_progress]
-    r5[R5 topology ec contract] --> apps_tape_tests_raft_failover_rs_kill_9_leader_survivors_reelect_with_no_committed_event_loss[apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss]
-    r6[R6 auth ec contract] --> apps_tape_tests_service_auth_rs_append_requires_write_grant_on_topic[apps/tape/tests/service_auth.rs::append_requires_write_grant_on_topic]
-    r7[R7 authz ec contract] --> apps_tape_tests_service_auth_rs_replay_and_checkpoint_require_read_grant_on_topic[apps/tape/tests/service_auth.rs::replay_and_checkpoint_require_read_grant_on_topic]
+    r1[R1 cli] --> apps_tape_tests_behavior_tape_claim_cli_interface_rs_tape_cli_interface_replay_verbs[apps/tape/tests/behavior_tape_claim_cli_interface.rs::tape_cli_interface_replay_verbs]
+    r2[R2 operator] --> apps_tape_tests_operator_rs_render_emits_expected_child_objects[apps/tape/tests/operator.rs::render_emits_expected_child_objects]
+    r3[R3 operational surface] --> apps_tape_tests_behavior_tape_claim_standard_operational_endpoints_rs_tape_standard_operational_endpoints[apps/tape/tests/behavior_tape_claim_standard_operational_endpoints.rs::tape_standard_operational_endpoints]
+    r4[R4 restart stability] --> apps_tape_tests_long_running_stability_rs_repeated_restarts_preserve_append_history_and_checkpoint_progress[apps/tape/tests/long_running_stability.rs::repeated_restarts_preserve_append_history_and_checkpoint_progress]
+    r5[R5 raft topology] --> apps_tape_tests_raft_failover_rs_kill_9_leader_survivors_reelect_with_no_committed_event_loss[apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss]
+    r6[R6 bearer rbac] --> apps_tape_tests_service_auth_rs_append_requires_write_grant_on_topic[apps/tape/tests/service_auth.rs::append_requires_write_grant_on_topic]
+    r7[R7 access control] --> apps_tape_tests_service_auth_rs_replay_and_checkpoint_require_read_grant_on_topic[apps/tape/tests/service_auth.rs::replay_and_checkpoint_require_read_grant_on_topic]
 ```
