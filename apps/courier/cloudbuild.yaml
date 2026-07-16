@@ -1,0 +1,25 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        git clone --branch app/courier --depth 1 \
+          https://github.com/chrischeng-c4/axiom.git /workspace/src
+        docker build \
+          -t asia-east1-docker.pkg.dev/axiom-502607/courier/courier:$COMMIT_SHA \
+          -t asia-east1-docker.pkg.dev/axiom-502607/courier/courier:latest \
+          -f /workspace/src/apps/courier/Dockerfile \
+          /workspace/src
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', 'asia-east1-docker.pkg.dev/axiom-502607/courier/courier']
+
+images:
+  - 'asia-east1-docker.pkg.dev/axiom-502607/courier/courier:latest'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '1200s'
