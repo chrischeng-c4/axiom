@@ -49,22 +49,22 @@ changes:
 
 ```mermaid
 ---
-id: vat-dx-readme-surface-verification
+id: vat-dx-readme-surface-contract-verification
 requirements:
-  boundaries_are_explicit:
+  boundary_text:
     id: AC2
-    text: "README and offline llm guide state the bounded Apple Container support and reject Docker Engine/API, generic Compose, and persistent Kubernetes claims."
+    text: "The agent docs distinguish Apple Container support from unsupported Docker Engine/API, generic Compose, and persistent Kubernetes claims."
     kind: regression
     risk: medium
     verify: vat_cli_convention::dx_docs_state_supported_boundaries
-  documented_commands_match_help:
+  command_inventory:
     id: AC1
-    text: "The README agent command inventory names build, compose, docker, and k8s only when each is exposed by the built vat binary's top-level help."
+    text: "The README's agent command inventory is a subset of the top-level commands exposed by the built vat binary and includes build, compose, docker, and k8s."
     kind: regression
     risk: high
     verify: vat_cli_convention::documented_agent_commands_match_help
 ---
 flowchart TD
-    ac1[AC1 documented commands match help] --> vat_cli_convention_documented_agent_commands_match_help[vat_cli_convention::documented_agent_commands_match_help]
-    ac2[AC2 boundaries are explicit] --> vat_cli_convention_dx_docs_state_supported_boundaries[vat_cli_convention::dx_docs_state_supported_boundaries]
+    ac1[AC1 command inventory] --> vat_cli_convention_documented_agent_commands_match_help[vat_cli_convention::documented_agent_commands_match_help]
+    ac2[AC2 boundary text] --> vat_cli_convention_dx_docs_state_supported_boundaries[vat_cli_convention::dx_docs_state_supported_boundaries]
 ```
