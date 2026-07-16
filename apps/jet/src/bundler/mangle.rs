@@ -2976,12 +2976,45 @@ fn is_shorthand_property_position(source: &str, tokens: &[Tok], ti: usize) -> bo
         return false;
     }
 
+    // JSX attribute expressions use the same token shape as object shorthand:
+    // `<Component value={binding} />`. The braces are not an object literal,
+    // so expanding the renamed binding to `binding:alias` corrupts the TSX
+    // before the JSX transform runs.
+    if is_jsx_attribute_expression_opening(source, tokens, open_idx) {
+        return false;
+    }
+
     if next == "=" {
         return is_object_binding_pattern_opening(source, tokens, open_idx);
     }
 
     is_object_literal_opening(source, tokens, open_idx)
         || is_object_binding_pattern_opening(source, tokens, open_idx)
+}
+
+fn is_jsx_attribute_expression_opening(source: &str, tokens: &[Tok], open_idx: usize) -> bool {
+    if open_idx < 2
+        || !matches_punct(source, tokens, open_idx, "{")
+        || !matches_punct(source, tokens, open_idx - 1, "=")
+        || tokens[open_idx - 2].kind != TK::Ident
+    {
+        return false;
+    }
+
+    // A JSX attribute lives between an opening `<Tag` and its closing `>`.
+    // Scan back only through that still-open tag; ordinary JavaScript object
+    // literals encounter a statement boundary instead.
+    for idx in (0..open_idx - 2).rev() {
+        if tokens[idx].kind != TK::Punct {
+            continue;
+        }
+        match txt(source, &tokens[idx]) {
+            ">" | ";" | "{" | "}" => return false,
+            "<" => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn nearest_unclosed_opening_punct_index(source: &str, tokens: &[Tok], ti: usize) -> Option<usize> {

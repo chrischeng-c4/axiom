@@ -2590,7 +2590,9 @@ fn inline_module(
 /// Runtime external imports are blanked while the scoped rename runs, then
 /// emitted separately with local aliases rewritten. This preserves the
 /// imported export name (`Form`) while rewriting this module's uses to its
-/// unique local binding (`__jet_m1_Form`).
+/// unique local binding (`__jet_m1_Form`). JSX component aliases instead keep
+/// an uppercase first character so the later JSX transform continues to emit
+/// an identifier reference rather than an intrinsic tag string.
 fn isolate_library_module_scope(
     source: &str,
     root: tree_sitter::Node<'_>,
@@ -2598,6 +2600,7 @@ fn isolate_library_module_scope(
     module_index: usize,
     used_top_level_bindings: &mut HashSet<String>,
 ) -> (String, HashMap<String, String>) {
+    let jsx_component_bindings = collect_library_jsx_component_bindings(source, root);
     let mut external_import_renames = HashMap::new();
     let mut external_ranges = Vec::new();
     let mut cursor = root.walk();
@@ -2614,7 +2617,8 @@ fn isolate_library_module_scope(
         let statement = &source[child.start_byte()..child.end_byte()];
         for binding in external_import_bindings(statement) {
             let local_name = binding.local_name;
-            let alias = format!("__jet_m{module_index}_{local_name}");
+            let alias =
+                library_module_binding_alias(module_index, &local_name, &jsx_component_bindings);
             external_import_renames.entry(local_name).or_insert(alias);
         }
         external_ranges.push((child.start_byte(), child.end_byte()));
@@ -2632,13 +2636,16 @@ fn isolate_library_module_scope(
     let mut root_renames = HashMap::new();
     for name in private_bindings {
         used_top_level_bindings.insert(name.clone());
-        root_renames.insert(name.clone(), format!("__jet_m{module_index}_{name}"));
+        root_renames.insert(
+            name.clone(),
+            library_module_binding_alias(module_index, &name, &jsx_component_bindings),
+        );
     }
     for name in exported_bindings {
         if !used_top_level_bindings.insert(name.clone()) {
-            root_renames
-                .entry(name.clone())
-                .or_insert_with(|| format!("__jet_m{module_index}_{name}"));
+            root_renames.entry(name.clone()).or_insert_with(|| {
+                library_module_binding_alias(module_index, &name, &jsx_component_bindings)
+            });
         }
     }
 
@@ -2661,6 +2668,53 @@ fn isolate_library_module_scope(
         ),
         external_import_renames,
     )
+}
+
+fn library_module_binding_alias(
+    module_index: usize,
+    name: &str,
+    jsx_component_bindings: &HashSet<String>,
+) -> String {
+    if jsx_component_bindings.contains(name) {
+        format!("JetM{module_index}_{name}")
+    } else {
+        format!("__jet_m{module_index}_{name}")
+    }
+}
+
+fn collect_library_jsx_component_bindings(
+    source: &str,
+    root: tree_sitter::Node<'_>,
+) -> HashSet<String> {
+    fn visit(node: tree_sitter::Node<'_>, source: &str, names: &mut HashSet<String>) {
+        if matches!(
+            node.kind(),
+            "jsx_opening_element" | "jsx_self_closing_element"
+        ) {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() != "identifier" {
+                    continue;
+                }
+                let name = &source[child.start_byte()..child.end_byte()];
+                if name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+                    && is_js_identifier(name)
+                {
+                    names.insert(name.to_string());
+                }
+                break;
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            visit(child, source, names);
+        }
+    }
+
+    let mut names = HashSet::new();
+    visit(root, source, &mut names);
+    names
 }
 
 /// Public declarations retain their authored name so `export const A` still
@@ -3625,6 +3679,52 @@ mod tests {
         assert!(
             crate::bundler::dce::js_parses_without_errors(&cjs),
             "CJS output must remain syntactically valid:\n{cjs}"
+        );
+    }
+
+    #[test]
+    fn library_bundle_preserves_jsx_component_and_attribute_bindings_during_isolation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let entry = src.join("index.ts");
+        std::fs::write(
+            &entry,
+            "export * from \"./first\";\nexport * from \"./second\";\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("first.tsx"),
+            "import { AutoLinkPlugin } from \"first-plugin\";\n\
+             const MATCHERS = [\"first\"];\n\
+             export function FirstView() { return <AutoLinkPlugin matchers={MATCHERS} />; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("second.tsx"),
+            "import { AutoLinkPlugin } from \"second-plugin\";\n\
+             const MATCHERS = [\"second\"];\n\
+             export function SecondView() { return <AutoLinkPlugin matchers={MATCHERS} />; }\n",
+        )
+        .unwrap();
+
+        let esm = bundle_library_entry(&entry, &HashSet::new()).unwrap();
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&esm),
+            "JSX library output must remain syntactically valid:\n{esm}"
+        );
+        assert!(
+            esm.contains("jsx(JetM1_AutoLinkPlugin"),
+            "an isolated JSX component must remain an identifier reference: {esm}"
+        );
+        assert!(
+            esm.contains("jsx(JetM2_AutoLinkPlugin"),
+            "each isolated JSX component must retain its uppercase alias: {esm}"
+        );
+        assert!(
+            !esm.contains("matchers:__jet_m1_MATCHERS:")
+                && !esm.contains("matchers:__jet_m2_MATCHERS:"),
+            "JSX attribute expressions must not become object shorthand: {esm}"
         );
     }
 
