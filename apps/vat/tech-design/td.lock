@@ -2,16 +2,22 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-16T06:02:47.983695+00:00"
-digest = "sha256:ce0b3d89a72ba01226b559c37141a668836c67f53613bb20ab189520433444d3"
-source_digest = "sha256:ce0b3d89a72ba01226b559c37141a668836c67f53613bb20ab189520433444d3"
-ir_digest = "sha256:5460d9c3ff0b993f35a2be5c190ce7c689c4cf3bff6c65427873bf8eb8f39e4c"
+generated_at = "2026-07-16T07:50:24.616950+00:00"
+digest = "sha256:86952b63c422e7edb3bf71217aa392436a622ea195d93403e2d598663fe1963e"
+source_digest = "sha256:86952b63c422e7edb3bf71217aa392436a622ea195d93403e2d598663fe1963e"
+ir_digest = "sha256:48bfcfcecce1d405fd77a9ce36afa2b549224234ddb70fc71f21cdd65e3a0535"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
 digest = "sha256:476c1fc5769cb3b8225fc868ba4570421d4b738139f69fc5086c9449e929467d"
 ir_digest = "sha256:1aa1f31b6a166f051f94a4c5bdd092fb638aee0c577b6ac51ec504b48339112e"
 section_count = 7
+
+[[files]]
+path = "interfaces/cli/vat-dx-reconcile-readme-and-offline-docs-with-the-current-cli-su.md"
+digest = "sha256:a8d070c42fb6383ee186e4cbeaf8c17897672037146ecfea86668081c8593a97"
+ir_digest = "sha256:2338d5e760b61027983ab0812341fd0d151b269decb37b1f5c24275ea5441275"
+section_count = 3
 
 [[files]]
 path = "interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md"
