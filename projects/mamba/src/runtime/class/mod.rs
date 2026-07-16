@@ -9628,7 +9628,11 @@ fn make_code_object(func: MbValue) -> MbValue {
 /// Handles both the variadic (self, args-list) and plain two-arg JIT
 /// calling conventions.
 pub(crate) fn call_method_value2(method: MbValue, self_v: MbValue, arg: MbValue) -> MbValue {
-    let addr = extract_func_addr(method);
+    // Closure-handle bodies (#1379) are small tagged ints that never
+    // coincidentally match a registered address, so the raw extractor
+    // silently no-ops here; resolve via the registry instead (#1843,
+    // mirrors #1821).
+    let addr = extract_registered_func_addr(method);
     if addr == 0 {
         return MbValue::none();
     }
@@ -9656,7 +9660,9 @@ pub(crate) fn call_method_value_with_args(
     self_v: MbValue,
     args: MbValue,
 ) -> MbValue {
-    let addr = extract_func_addr(method);
+    // See call_method_value2 above: closure-handle bodies need the
+    // registry-resolving extractor, not the raw one (#1843, mirrors #1821).
+    let addr = extract_registered_func_addr(method);
     if addr == 0 {
         return MbValue::none();
     }
@@ -12034,7 +12040,15 @@ pub(crate) fn class_replace_method(class_name: &str, method_name: &str, value: M
     // native method (e.g. functools.total_ordering's synthesized comparison
     // ops) is dispatched with the wrong ABI and returns garbage.
     let (unwrapped, _dk) = unwrap_descriptor_method(value);
-    for addr in [extract_func_addr(unwrapped), extract_func_addr(value)] {
+    // Register the resolved real address, not a closure-handle's small
+    // tagged int (#1379), or dispatch sites' registry-membership checks
+    // fail even though they themselves unwrap correctly (#1843, mirrors
+    // #1821's mb_class_set_class_attr fix for the same registration-side
+    // gap).
+    for addr in [
+        extract_registered_func_addr(unwrapped),
+        extract_registered_func_addr(value),
+    ] {
         if addr != 0 {
             CALLABLE_REGISTRY.with(|reg| {
                 reg.borrow_mut().insert(addr);
@@ -12186,6 +12200,11 @@ fn class_slots_value(class_name: &str) -> Option<MbValue> {
 /// Find which registered class's OWN method table holds `func`, returning
 /// (class_name, method_name). Used by inspect.getdoc to inherit method
 /// docstrings through the MRO.
+///
+/// Safe with the raw extractor (#1843 review): this only ever compares
+/// `extract_func_addr` output for equality as an opaque identity key, never
+/// dereferences/transmutes it, so a closure handle's tagged int (#1379)
+/// compares correctly against itself on both sides.
 pub(crate) fn find_method_owner(func: MbValue) -> Option<(String, String)> {
     let addr = extract_func_addr(func);
     if addr == 0 {
@@ -12721,9 +12740,12 @@ fn invoke_binop_method(method: MbValue, slf: MbValue, arg: MbValue) -> Option<Mb
             return Some(f(slf, arg));
         }
     }
-    // CALLABLE_REGISTRY — heap-backed method values.
-    let addr = extract_func_addr(method);
-    if addr > 4096 {
+    // CALLABLE_REGISTRY — heap-backed method values. Closure-handle bodies
+    // (#1379) are small tagged ints that never coincidentally match a
+    // registered address, so the raw extractor silently no-ops here;
+    // resolve via the registry instead (#1843, mirrors #1821).
+    let addr = extract_registered_func_addr(method);
+    if addr != 0 {
         let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
         if is_reg {
             let f: extern "C" fn(MbValue, MbValue) -> MbValue =
@@ -14321,6 +14343,12 @@ fn slice_obj_as_tuple(key: MbValue) -> Option<MbValue> {
 /// convention), so an address in neither marks a genuine user method. When the
 /// address can't be resolved we conservatively report `false` (normalize — the
 /// prior behavior).
+///
+/// Safe with the raw extractor (#1843 review): a closure handle (#1379) raw-
+/// extracts to `CLOSURE_HANDLE_BASE + idx`, a sentinel range no real native/
+/// variadic stub address ever occupies, so the "absent from both sets" test
+/// correctly reports `true` for a closure-bodied dunder — that IS the
+/// definition of user-defined here, not a coincidental pass.
 fn obj_has_user_dunder(obj: MbValue, name: &str) -> bool {
     match try_get_dunder(obj, name) {
         Some(method) => {
@@ -14639,7 +14667,12 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         }
                         let getitem_method = lookup_method(s, "__class_getitem__");
                         if !getitem_method.is_none() {
-                            let addr = extract_func_addr(getitem_method);
+                            // Closure-handle bodies (#1379) are small tagged
+                            // ints that never coincidentally match a
+                            // registered address, so the raw extractor
+                            // silently no-ops here; resolve via the registry
+                            // instead (#1843, mirrors #1821).
+                            let addr = extract_registered_func_addr(getitem_method);
                             if addr != 0 {
                                 let is_registered =
                                     CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
@@ -14974,11 +15007,23 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                     }
                                     let missing = lookup_method(class_name, "__missing__");
                                     if !missing.is_none() {
-                                        let addr = extract_func_addr(missing);
-                                        if addr > 4096 {
-                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
-                                            return f(obj, key);
+                                        // Closure-handle __missing__ bodies (#1379's
+                                        // zero-arg super()/__class__ compilation) are
+                                        // small tagged ints far above the 4096 floor,
+                                        // so the raw extractor's old `addr > 4096`
+                                        // gate never caught them — wild-transmute-call
+                                        // SIGSEGV. Resolve via the registry and
+                                        // require CALLABLE_REGISTRY membership before
+                                        // any transmute (#1843, mirrors #1821 Site 1).
+                                        let addr = extract_registered_func_addr(missing);
+                                        if addr != 0 {
+                                            let is_reg = CALLABLE_REGISTRY
+                                                .with(|r| r.borrow().contains(&addr));
+                                            if is_reg {
+                                                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                                                    std::mem::transmute(addr as usize);
+                                                return f(obj, key);
+                                            }
                                         }
                                     }
                                     let key_repr = super::builtins::mb_repr(key);
@@ -16850,6 +16895,12 @@ pub fn mb_call_method_kwargs(
         if method_val.is_none() {
             return None;
         }
+        // Safe with the raw extractor (#1843 review): this only gates away
+        // native variadic/kwargs stubs, and a closure handle's (#1379)
+        // sentinel-range int can never coincidentally match those real
+        // addresses. The actual param data below keys off `method_val`'s own
+        // bit pattern (closure.rs::func_params), not a resolved address, so
+        // it needs no closure resolution here either.
         let method_addr = extract_func_addr(method_val);
         if method_addr != 0
             && (super::module::is_variadic_func(method_addr as u64)
@@ -26506,5 +26557,163 @@ mod tests {
              downstream dispatch sites' CALLABLE_REGISTRY membership checks \
              succeed (#1821)"
         );
+    }
+
+    // ── #1843: additional closure-handle-unaware extract_func_addr sites
+    // found during the #1821 sweep ───────────────────────────────────────
+
+    #[test]
+    fn test_1843_closure_handle_missing_dispatches_without_wild_call() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static MISSING_CALLED: AtomicBool = AtomicBool::new(false);
+
+        extern "C" fn closure_missing_1843(_self_v: MbValue, key: MbValue) -> MbValue {
+            MISSING_CALLED.store(true, Ordering::SeqCst);
+            key
+        }
+
+        let real_addr = closure_missing_1843 as *const () as usize;
+        CALLABLE_REGISTRY.with(|reg| {
+            reg.borrow_mut().insert(real_addr as u64);
+        });
+
+        // Wrap in a closure handle — a small tagged int, exactly what #1379
+        // produces for a __missing__ body referencing bare __class__ or
+        // zero-arg super(). Before the fix, extract_func_addr's `addr > 4096`
+        // gate let this raw tagged int through as if it were a real address,
+        // wild-transmute-calling it (SIGSEGV, live-reproduced pre-fix).
+        let missing_closure = super::super::closure::mb_closure_new(
+            s("missing_1843"),
+            MbValue::from_func(real_addr),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert!(
+            missing_closure.as_int().is_some() && missing_closure.as_func().is_none(),
+            "closure handle must be a tagged int, not TAG_FUNC — this is what \
+             makes the raw extractor unsafe (#1843)"
+        );
+
+        let mut methods = HashMap::new();
+        methods.insert("__missing__".to_string(), missing_closure);
+        // "UserDict" base makes user_wrapper_kind() recognize this class as a
+        // dict-backed wrapper, entering the __missing__ dispatch branch
+        // (#1843 site 1) instead of a plain dict lookup.
+        mb_class_register(
+            "ClosureMissingHost1843",
+            vec!["UserDict".to_string()],
+            methods,
+        );
+
+        let inst = mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str("ClosureMissingHost1843".to_string())),
+            MbValue::none(),
+        );
+        mb_setattr(inst, s("_data"), super::super::dict_ops::mb_dict_new());
+
+        let key = MbValue::from_ptr(MbObject::new_str("missing_key_1843".to_string()));
+        let _ = mb_obj_getitem(inst, key);
+
+        assert!(
+            MISSING_CALLED.load(Ordering::SeqCst),
+            "closure-handle __missing__ must dispatch via \
+             extract_registered_func_addr with an explicit CALLABLE_REGISTRY \
+             gate, not wild-transmute-call a garbage pseudo-address (#1843)"
+        );
+    }
+
+    #[test]
+    fn test_1843_closure_handle_binop_dispatches_not_silent_noop() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static EQ_CALLED: AtomicBool = AtomicBool::new(false);
+
+        extern "C" fn closure_eq_1843(_self_v: MbValue, _other: MbValue) -> MbValue {
+            EQ_CALLED.store(true, Ordering::SeqCst);
+            MbValue::from_bool(false)
+        }
+
+        let real_addr = closure_eq_1843 as *const () as usize;
+        CALLABLE_REGISTRY.with(|reg| {
+            reg.borrow_mut().insert(real_addr as u64);
+        });
+
+        let eq_closure = super::super::closure::mb_closure_new(
+            s("eq_1843"),
+            MbValue::from_func(real_addr),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert!(
+            eq_closure.as_int().is_some() && eq_closure.as_func().is_none(),
+            "closure handle must be a tagged int, not TAG_FUNC (#1843)"
+        );
+
+        // Before the fix, extract_func_addr's garbage pseudo-address never
+        // matched CALLABLE_REGISTRY, so invoke_binop_method silently
+        // returned None and the caller fell back to a different comparison
+        // (live-reproduced pre-fix: mamba printed True/True for a
+        // __eq__ that always returns False).
+        let result = invoke_binop_method(eq_closure, MbValue::from_int(1), MbValue::from_int(1));
+
+        assert!(
+            EQ_CALLED.load(Ordering::SeqCst),
+            "closure-handle binop dunder must dispatch via \
+             extract_registered_func_addr, not silently no-op (#1843)"
+        );
+        assert_eq!(
+            result.and_then(|v| v.as_bool()),
+            Some(false),
+            "closure-handle __eq__'s return value must propagate, not fall back (#1843)"
+        );
+    }
+
+    #[test]
+    fn test_1843_closure_handle_class_getitem_dispatches_not_silent_noop() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static GETITEM_CALLED: AtomicBool = AtomicBool::new(false);
+
+        extern "C" fn closure_class_getitem_1843(_cls: MbValue, _key: MbValue) -> MbValue {
+            GETITEM_CALLED.store(true, Ordering::SeqCst);
+            MbValue::from_ptr(MbObject::new_str("C1843[int]".to_string()))
+        }
+
+        let real_addr = closure_class_getitem_1843 as *const () as usize;
+        CALLABLE_REGISTRY.with(|reg| {
+            reg.borrow_mut().insert(real_addr as u64);
+        });
+
+        let getitem_closure = super::super::closure::mb_closure_new(
+            s("class_getitem_1843"),
+            MbValue::from_func(real_addr),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert!(
+            getitem_closure.as_int().is_some() && getitem_closure.as_func().is_none(),
+            "closure handle must be a tagged int, not TAG_FUNC (#1843)"
+        );
+
+        let mut methods = HashMap::new();
+        methods.insert("__class_getitem__".to_string(), getitem_closure);
+        mb_class_register("ClosureGetitem1843", vec![], methods);
+
+        let cls_name = MbValue::from_ptr(MbObject::new_str("ClosureGetitem1843".to_string()));
+        let key = MbValue::from_ptr(MbObject::new_str("int".to_string()));
+        let result = mb_obj_getitem(cls_name, key);
+
+        assert!(
+            GETITEM_CALLED.load(Ordering::SeqCst),
+            "closure-handle __class_getitem__ must dispatch via \
+             extract_registered_func_addr, not silently no-op (#1843)"
+        );
+        unsafe {
+            if let Some(ptr) = result.as_ptr() {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    assert_eq!(
+                        s, "C1843[int]",
+                        "closure-handle __class_getitem__ return value must propagate (#1843)"
+                    );
+                    return;
+                }
+            }
+        }
+        panic!("closure-handle __class_getitem__ must return the correct string result (#1843)");
     }
 }
