@@ -1,7 +1,7 @@
 <!-- HANDWRITE-BEGIN gap="missing-generator:logic:89579b13" tracker="pending-tracker" reason="Tape topic/subscription authorization, admission-limit, and malformed-request security contract. generator gap: missing-generator:tape-ec-lumen-baseline (#1815)." -->
 ---
 id: tape-security-hardening-access-control-ec
-summary: Topic and subscription authorization, bounded admission classification, and shared error-shape contract for Tape.
+summary: Topic and subscription authorization, bounded write admission, audited credential rotation, and shared error-shape contract for Tape.
 fill_sections: [e2e-test]
 ---
 
@@ -27,6 +27,7 @@ e2e_tests:
       - "Appending to a topic requires that topic's write grant."
       - "Replay and checkpoint operations require that topic's read grant and never expose data from an unauthorized topic."
       - "Authentication failures retain the shared service-auth error shape while operational probes remain tokenless."
-      - "Append is classified as write admission; no request-rate or abuse-limit threshold is claimed until a configured shared admission policy exists."
+      - "Append is classified as write admission and a configured shared policy returns bounded 429 responses without limiting probes."
+      - "A projected token registry rotates atomically with redacted authorization audit fields; successful admin backup emits a payload-free Tape management audit event."
 ```
 <!-- HANDWRITE-END -->
