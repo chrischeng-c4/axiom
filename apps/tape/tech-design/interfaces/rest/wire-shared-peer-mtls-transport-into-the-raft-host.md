@@ -102,31 +102,31 @@ id: 1805-verification
 requirements:
   compatibility:
     id: R3
-    text: "With no peer TLS configuration, Tape keeps the existing public-port h2c Raft topology and peer route behavior."
+    text: "With no configured peer TLS, Tape preserves the existing public-port h2c Raft topology, forwarding, election, replication, and failover behavior."
     kind: regression
     risk: medium
     verify: raft_cluster::three_node_group_elects_replicates_forwards_and_fails_over
   kubernetes_port:
     id: R5
-    text: "The Tape operator exposes a dedicated Raft container and headless-service port and injects TAPE_RAFT_PORT while preserving the client service on 7137."
+    text: "The Tape operator renders named http and raft ports on the StatefulSet and headless Service, injects TAPE_RAFT_PORT, and keeps the client Service on 7137 only."
     kind: integration
     risk: medium
     verify: operator::render_emits_expected_child_objects
   peer_rejection:
     id: R2
-    text: "A client whose certificate is not trusted by the Tape peer CA cannot dispatch a Raft request to the authenticated listener."
+    text: "A certificate not chained to Tape's configured peer CA is rejected before it can reach the Tape Raft router."
     kind: security
     risk: high
     verify: raft_peer_mtls::untrusted_peer_is_rejected_before_tape_raft_router
   public_isolation:
     id: R4
-    text: "When peer TLS is active, Tape's public application router excludes Raft peer routes while the dedicated peer listener owns them."
+    text: "Secure peer mode excludes Raft peer routes from Tape's public application router while the dedicated mTLS listener serves them."
     kind: security
     risk: high
     verify: server::secure_peer_mode_does_not_expose_raft_routes_on_public_router
   secure_replication:
     id: R1
-    text: "When complete Tape peer TLS material is configured, Tape constructs the shared PeerTransport, projects Raft peers as https URLs, and spawns the Raft host with that transport."
+    text: "Complete required Tape peer TLS configuration creates the shared PeerTransport, projects https peer URLs on TAPE_RAFT_PORT, and lets trusted TapeRaft peers elect and replicate over that listener."
     kind: functional
     risk: high
     verify: raft_peer_mtls::trusted_tape_raft_peers_replicate_over_mtls
