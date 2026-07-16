@@ -77,6 +77,7 @@ fn dx_docs_state_supported_boundaries() {
 }
 // </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in vat_cli_convention.rs is hand-written pending codegen support">
 #[test]
 fn cli_convention_llm_flags() {
     let outline = Command::new(vat())
@@ -100,6 +101,7 @@ fn cli_convention_llm_flags() {
         "llm --topic guide should print the detailed vat guide"
     );
 }
+// </HANDWRITE>
 
 #[test]
 fn cli_convention_issue_create_dry_run() {
