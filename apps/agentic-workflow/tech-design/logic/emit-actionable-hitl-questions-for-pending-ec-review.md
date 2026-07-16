@@ -87,7 +87,7 @@ requirements:
     verify: ec_review_pending_emits_structured_hitl_question
   semantic_checklist_visible:
     id: R2
-    text: "The pending question makes every required semantic check and each human decision path visible."
+    text: "The pending question names the review target, all six semantic checks, and human decision paths."
     kind: regression
     risk: high
     verify: ec_review_pending_emits_structured_hitl_question
