@@ -8042,32 +8042,3 @@ tool_contracts:
     }
 }
 // CODEGEN-END
-// SPEC-MANAGED: apps/agentic-workflow/tech-design/logic/emit-actionable-hitl-questions-for-pending-ec-review.md#logic
-// CODEGEN-BEGIN
-pub fn inspect() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Decision: Objective EC finding exists?
-    if todo!("decision: Objective EC finding exists?") /* yes */ {
-        todo!("terminal: Route to bounded EC fill");
-    } else { /* no */
-        // Decision: Current human review accepted?
-        if todo!("decision: Current human review accepted?") /* yes */ {
-            todo!("terminal: Run EC generation and verification");
-        } else { /* no */
-            // SPEC-REF: apps/agentic-workflow/tech-design/logic/emit-actionable-hitl-questions-for-pending-ec-review.md#emit-actionable-hitl-questions-for-pending-ec-review-flow-question
-            // TODO: Implement process step: Emit target, six checks, choices, payload, and resume
-            todo!("process: Emit target, six checks, choices, payload, and resume");
-            // Decision: Human accepts or requests revision
-            if todo!("decision: Human accepts or requests revision") /* accept with summary */ {
-                // SPEC-REF: apps/agentic-workflow/tech-design/logic/emit-actionable-hitl-questions-for-pending-ec-review.md#emit-actionable-hitl-questions-for-pending-ec-review-flow-persist
-                // TODO: Implement process step: Validate digest-bound human evidence
-                todo!("process: Validate digest-bound human evidence");
-                todo!("terminal: Run EC generation and verification");
-            } else { /* revision findings */
-                todo!("terminal: Route to bounded EC fill");
-            }
-        }
-    }
-    // Terminal: generate -> Run EC generation and verification
-    // Terminal: revise -> Route to bounded EC fill
-}
-// CODEGEN-END
