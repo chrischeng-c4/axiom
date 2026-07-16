@@ -14,6 +14,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY apps/ apps/
 COPY libs/ libs/
 COPY crates/ crates/
+COPY vendor/ vendor/
 
 # Keep only libs/ and apps/courier workspace members
 RUN python3 -c "import re; t=open('Cargo.toml').read(); keep=lambda m: m.group(0) if m.group(1).startswith('libs/') or m.group(1)=='apps/courier' else ''; open('Cargo.toml','w').write(re.sub(r'^\s*\"([^\"]+)\",?\n', keep, t, flags=re.MULTILINE))"
