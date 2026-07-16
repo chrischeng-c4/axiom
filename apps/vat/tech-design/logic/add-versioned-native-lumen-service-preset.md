@@ -120,43 +120,43 @@ changes:
 
 ```mermaid
 ---
-id: vat-versioned-native-lumen-preset-verification
+id: vat-versioned-native-lumen-preset-contract-verification
 requirements:
-  lumen_fail_closed:
-    id: R4
-    text: "Docker and MicroVM runtime requests, bad cache/download/checksum states, and absent native resolution emit actionable failures without Docker/image fallback."
-    kind: negative
-    risk: high
-    verify: lumen_preset_failure_tests
-  lumen_preset_config:
-    id: R1
-    text: "ServicePreset deserializes lumen and validation accepts only an omitted version or a lumen@X.Y.Z release selector with auto/native runtime."
-    kind: functional
-    risk: medium
-    verify: config_lumen_preset_validation
-  lumen_real_binary:
-    id: R5
-    text: "An opt-in real Lumen gate starts a cached or installed release binary, observes readyz and LUMEN_URL from the runner, and confirms VAT teardown."
-    kind: integration
-    risk: high
-    verify: lumen_preset_real_binary_e2e
-  lumen_release_cache:
+  cache_contract:
     id: R2
-    text: "The resolver selects the latest lumen tag or exact pinned tag, rejects malformed selectors, validates supplied SHA-256, and atomically reuses VAT-owned cached binaries without calling global upgrade."
+    text: "Target-native Lumen archives are selected by release tag, SHA-256 verified when published, atomically cached under VAT ownership, and never installed globally."
     kind: regression
     risk: high
     verify: lumen_release_cache_tests
-  lumen_runtime_contract:
-    id: R3
-    text: "A prepared Lumen service runs cached lumen serve on loopback, waits on readyz by default, and exports LUMEN_URL plus generic service endpoint variables."
+  real_process_contract:
+    id: R5
+    text: "An opt-in real release-binary gate proves readyz visibility, runner LUMEN_URL delivery, and teardown without modifying a global lumen installation."
+    kind: e2e
+    risk: high
+    verify: lumen_preset_real_binary_e2e
+  selector_contract:
+    id: R1
+    text: "The public lumen preset accepts no version for latest or an exact lumen@X.Y.Z tag and rejects all other selectors and container runtimes before execution."
     kind: functional
     risk: high
+    verify: config_lumen_preset_validation
+  service_contract:
+    id: R3
+    text: "VAT starts cached lumen serve on loopback, gates on readyz by default, sends LUMEN_URL to the runner, records service evidence, and cleans up the child."
+    kind: integration
+    risk: high
     verify: lumen_preset_plan_tests
+  unavailable_contract:
+    id: R4
+    text: "Malformed metadata, network/archive/checksum failure, missing executable cache, and unsupported runtime report actionable errors without a Docker or MicroVM fallback."
+    kind: negative
+    risk: high
+    verify: lumen_preset_failure_tests
 ---
 flowchart TD
-    r1[R1 lumen preset config] --> config_lumen_preset_validation[config_lumen_preset_validation]
-    r2[R2 lumen release cache] --> lumen_release_cache_tests[lumen_release_cache_tests]
-    r3[R3 lumen runtime contract] --> lumen_preset_plan_tests[lumen_preset_plan_tests]
-    r4[R4 lumen fail closed] --> lumen_preset_failure_tests[lumen_preset_failure_tests]
-    r5[R5 lumen real binary] --> lumen_preset_real_binary_e2e[lumen_preset_real_binary_e2e]
+    r1[R1 selector contract] --> config_lumen_preset_validation[config_lumen_preset_validation]
+    r2[R2 cache contract] --> lumen_release_cache_tests[lumen_release_cache_tests]
+    r3[R3 service contract] --> lumen_preset_plan_tests[lumen_preset_plan_tests]
+    r4[R4 unavailable contract] --> lumen_preset_failure_tests[lumen_preset_failure_tests]
+    r5[R5 real process contract] --> lumen_preset_real_binary_e2e[lumen_preset_real_binary_e2e]
 ```
