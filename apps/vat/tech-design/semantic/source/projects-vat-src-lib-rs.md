@@ -47,9 +47,10 @@ Public API manifest for `apps/vat/src/lib.rs` generated from AST during Score fo
 //!
 //! ## What vat is
 //!
-//! A container runtime for the one user who never gets a say in Docker's
-//! design: a coding/ML **agent**. Two things make it different from "Docker
-//! minus the GUI":
+//! A headless runtime for the one user who never gets a say in Docker's design:
+//! a coding/ML **agent**. vat never ships a GUI or Desktop surface; agents use
+//! its CLI and structured output. Two things make it different from
+//! developer-oriented Docker tooling:
 //!
 //! 1. **Agent-legible state.** Every vat projects its full current state as
 //!    one compact, structured [`state::VatState`] JSON value — what's
@@ -77,6 +78,7 @@ Public API manifest for `apps/vat/src/lib.rs` generated from AST during Score fo
 pub mod cluster;
 pub mod commands;
 pub mod config;
+pub mod docker_shim;
 #[cfg(feature = "emulator")]
 pub mod emulator;
 pub mod event;

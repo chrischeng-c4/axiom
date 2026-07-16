@@ -7,13 +7,17 @@
 //! so the binary can propagate a meaningful status (notably: `vat run`
 //! forwards the child's exit code).
 
+pub mod build;
 pub mod capabilities;
 pub mod cluster;
+pub mod compose;
 pub mod diff;
+pub mod docker_shim;
 pub mod doctor;
 pub mod emulator;
 pub mod gc;
 pub mod gpu;
+pub mod k8s;
 pub mod llm;
 pub mod logs;
 pub mod ls;
@@ -37,4 +41,8 @@ pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
     println!("{s}");
     Ok(())
 }
+// CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#cli
+// CODEGEN-BEGIN
+// Module registration and dispatch live in cli.rs
 // CODEGEN-END

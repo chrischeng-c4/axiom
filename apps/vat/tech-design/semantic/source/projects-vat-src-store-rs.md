@@ -22,20 +22,20 @@ Public API manifest for `apps/vat/src/store.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Vat` | apps/vat/src/store.rs | struct | pub | 26 |  |
-| `base_manifest` | apps/vat/src/store.rs | function | pub | 64 | base_manifest(&self) -> Result<Manifest> |
-| `base_manifest_path` | apps/vat/src/store.rs | function | pub | 44 | base_manifest_path(&self) -> PathBuf |
-| `changes` | apps/vat/src/store.rs | function | pub | 71 | changes(&self) -> Result<ChangeSet> |
-| `create` | apps/vat/src/store.rs | function | pub | 115 | create(     id: &str,     name: Option<String>,     spec: EnvSpec,     rootfs_source: Option<&std::path::Path>,     lineage: Vec<String>, ) -> Result<Vat> |
-| `events_path` | apps/vat/src/store.rs | function | pub | 41 | events_path(&self) -> PathBuf |
-| `list` | apps/vat/src/store.rs | function | pub | 175 | list() -> Result<Vec<Vat>> |
-| `load` | apps/vat/src/store.rs | function | pub | 161 | load(id: &str) -> Result<Vat> |
-| `log` | apps/vat/src/store.rs | function | pub | 60 | log(&self, ev: Event) -> Result<()> |
-| `meta_path` | apps/vat/src/store.rs | function | pub | 38 | meta_path(&self) -> PathBuf |
-| `project` | apps/vat/src/store.rs | function | pub | 78 | project(&self) -> Result<VatState> |
-| `remove` | apps/vat/src/store.rs | function | pub | 198 | remove(id: &str) -> Result<()> |
-| `rootfs` | apps/vat/src/store.rs | function | pub | 35 | rootfs(&self) -> PathBuf |
-| `save` | apps/vat/src/store.rs | function | pub | 51 | save(&mut self) -> Result<()> |
+| `Vat` | apps/vat/src/store.rs | struct | pub | 28 |  |
+| `base_manifest` | apps/vat/src/store.rs | function | pub | 67 | base_manifest(&self) -> Result<Manifest> |
+| `base_manifest_path` | apps/vat/src/store.rs | function | pub | 46 | base_manifest_path(&self) -> PathBuf |
+| `changes` | apps/vat/src/store.rs | function | pub | 74 | changes(&self) -> Result<ChangeSet> |
+| `create` | apps/vat/src/store.rs | function | pub | 154 | create(     id: &str,     name: Option<String>,     spec: EnvSpec,     rootfs_source: Option<&std::path::Path>,     lineage: Vec<String>, ) -> Result<Vat> |
+| `events_path` | apps/vat/src/store.rs | function | pub | 43 | events_path(&self) -> PathBuf |
+| `list` | apps/vat/src/store.rs | function | pub | 215 | list() -> Result<Vec<Vat>> |
+| `load` | apps/vat/src/store.rs | function | pub | 201 | load(id: &str) -> Result<Vat> |
+| `log` | apps/vat/src/store.rs | function | pub | 63 | log(&self, ev: Event) -> Result<()> |
+| `meta_path` | apps/vat/src/store.rs | function | pub | 40 | meta_path(&self) -> PathBuf |
+| `project` | apps/vat/src/store.rs | function | pub | 81 | project(&self) -> Result<VatState> |
+| `remove` | apps/vat/src/store.rs | function | pub | 238 | remove(id: &str) -> Result<()> |
+| `rootfs` | apps/vat/src/store.rs | function | pub | 37 | rootfs(&self) -> PathBuf |
+| `save` | apps/vat/src/store.rs | function | pub | 56 | save(&mut self) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -45,9 +45,11 @@ Public API manifest for `apps/vat/src/store.rs` generated from AST during Score 
 //! The vat store: create, load, list, and remove vats on disk, and project a
 //! [`VatState`] from persisted [`VatMeta`] plus live computation.
 
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::Utc;
 
 use crate::event::{self, Event, EventKind};
@@ -89,13 +91,14 @@ impl Vat {
 
     // --- persistence -----------------------------------------------------
 
-    /// Write `meta.json` (touches `updated_at`).
+    /// Atomically replace `meta.json` (touches `updated_at`). Readers such as
+    /// `vat compose ps` may reconcile a live VAT while its runner persists
+    /// service evidence, so they must observe either complete JSON revision,
+    /// never the truncate/write interval of a direct overwrite.
     pub fn save(&mut self) -> Result<()> {
         self.meta.updated_at = Utc::now();
         let json = serde_json::to_vec_pretty(&self.meta).context("serialize meta")?;
-        std::fs::write(self.meta_path(), json)
-            .with_context(|| format!("write {}", self.meta_path().display()))?;
-        Ok(())
+        atomic_write(&self.meta_path(), &json)
     }
 
     /// Append an event to this vat's log.
@@ -133,6 +136,7 @@ impl Vat {
             lineage: self.meta.lineage.clone(),
             last_run: self.meta.last_run.clone(),
             test_run: self.meta.test_run.clone(),
+            plan: self.meta.plan.clone(),
             workspace: WorkspaceInfo {
                 rootfs: self.rootfs().to_string_lossy().into_owned(),
                 file_count: now.len(),
@@ -143,6 +147,41 @@ impl Vat {
             events_tail,
         })
     }
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("VAT metadata path has no parent directory")?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("VAT metadata path has no UTF-8 file name")?;
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", crate::id::fresh()));
+    let result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| format!("create temporary VAT metadata {}", temporary.display()))?;
+        file.write_all(contents)
+            .with_context(|| format!("write temporary VAT metadata {}", temporary.display()))?;
+        file.sync_all()
+            .with_context(|| format!("sync temporary VAT metadata {}", temporary.display()))?;
+        drop(file);
+        fs::rename(&temporary, path).with_context(|| {
+            format!(
+                "atomically replace VAT metadata {} from {}",
+                path.display(),
+                temporary.display()
+            )
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 // --- store-level operations ----------------------------------------------
@@ -191,6 +230,7 @@ pub fn create(
             lineage,
             last_run: None,
             test_run: None,
+            plan: None,
         },
     };
     vat.save()?;

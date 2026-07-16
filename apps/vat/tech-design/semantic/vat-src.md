@@ -932,6 +932,32 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/vat/src/emulator"
+      - path: "apps/vat/src/compose.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["missing-generator:logic:compose-subset-parser"]
+        symbols:
+          - name: "ComposeFile"
+            kind: "struct"
+            public: true
+          - name: "source_path"
+            kind: "function"
+            public: true
+          - name: "parse"
+            kind: "function"
+            public: true
+          - name: "expand"
+            kind: "function"
+            public: true
+          - name: "materialize"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "apps/vat/src"
 ```
 
 ## Changes
@@ -940,6 +966,215 @@ semantic_domain:
 ```yaml
 coverage_kind: semantic
 changes:
+  - path: "apps/vat/src/docker_shim.rs"
+    action: create
+    section: schema
+    description: |
+      #1685 hand-written multicall compatibility layer owns the opt-in
+      docker-to-vat dispatch, fail-closed Docker command allowlist, Apple
+      Container argv translation, five strict native-JSON observations (`docker ps`,
+      `docker images`, direct `docker image inspect`, direct `docker inspect`, and
+      non-streaming `docker stats`)
+      plus a separate finite direct VAT-JSON `docker logs` wrapper, symlink installer, truthful
+      non-Engine identity surface,
+      bounded detached-only `docker compose up -d --wait`
+      parsing (one wait; positive 300-default/1200-max timeout after
+      import/build), and additive known-profile `docker compose ps` topology
+      JSON without Docker `--format` or application-healthcheck parity. Direct
+      inventory accepts only `docker ps --format json` / equals with optional
+      exactly-once `--all` or `-a`; only `docker container ls` and `docker
+      container list` share it, and `docker container ps` JSON is rejected;
+      inherited text behavior is unchanged. It normalizes to `container list
+      --format json [--all]`, validates one opaque
+      Apple-native JSON value, and byte-for-byte replays it without VAT/Docker
+      Engine ps schema. Templates/table output, filters, quiet plus JSON,
+      duplicate/unknown flags, and positionals fail before runtime. Image
+      inventory accepts only `docker images --format json` / equals through the
+      `docker image ls` and `docker image list` aliases, normalizes to `container
+      image list --format json`, bounded-captures and validates one opaque
+      Apple-native JSON value, then byte-for-byte replays it without VAT/Docker
+      Engine image schema. Template/table/YAML/TOML output, filters, quiet,
+      verbose, all, digests, no-trunc, positionals, duplicates, unknown flags,
+      and `--` fail before runtime; text/quiet image-list behavior is unchanged.
+      Direct image inspect accepts only `docker image inspect --format json IMAGE`
+      / equals: exactly one JSON selector precedes exactly one opaque safe image
+      reference (nonempty, no leading `-`, whitespace, or control characters).
+      Templates, `--`, extra references, and all other options fail before
+      runtime. VAT strips the selector, invokes only `container image inspect
+      IMAGE`, bounded-captures and validates one opaque Apple-native JSON document,
+      then byte-for-byte replays it without VAT/Docker image-inspect schema or
+      wrapper. A five-second bounded isolated observer caps each stream at 256 KiB,
+      preserves valid JSON plus a nonzero child exit, and suppresses malformed,
+      oversized, or escaped-pipe capture. It makes no Docker template/Engine API,
+      provenance, security, registry, build-completion, readiness, or
+      secret-redaction claim. Cargo check passed; canonical docker_shim lib passed
+      58/58; focused image-inspect integration passed 4/4 with 1 ignored; its
+      opt-in host E2E passed 1/1 (61 filtered) in 1.21s and proved only one direct
+      `container image inspect alpine:3.20` invocation and one native document.
+      Direct container inspect accepts only `docker inspect --format json
+      CONTAINER` / equals through `docker container inspect`: exactly one safe
+      explicit id follows exactly one VAT-only selector before runtime, while
+      unformatted inspect remains inherited. It invokes `container inspect
+      CONTAINER`, bounded-captures and validates one opaque Apple-native JSON
+      value, then byte-for-byte replays it without a VAT/Docker Engine inspect
+      schema. `--type`, `--size`, templates/table/YAML/TOML, filters, a second
+      id, `--`, and unknown flags fail before runtime. Direct logs is separate
+      from those five native forms: only `docker logs --format json --tail LINES
+      CONTAINER` / equals forms and the same form through `docker container logs`
+      are accepted, with exactly one format and tail before one safe final id and
+      `LINES` in 1..=1000; unformatted logs remains inherited. It invokes only
+      `container logs -n LINES CONTAINER`, never forwards the selector, and emits
+      one `vat.docker.logs.v1` / `vat_json` wrapper with untrusted
+      `apple_container_stdio`, bounded diagnostic stderr, truncation/lossy flags,
+      backend/container/requested_tail/runtime/child outcome, and safe inspect
+      next—not Docker schema or multiplex/demux. Ordinary child nonzero preserves
+      wrapper plus exit; follow, boot, timestamps, since/until, templates,
+      duplicate/misordered selectors, unsafe/second ids, and every other modifier
+      fail before runtime. A five-second observer plus one-second cleanup drains
+      both pipes, retains suffixes, and caps captures plus actual serialized JSON
+      string values at 64 KiB; timeout/setup/escaped-pipe paths emit no partial
+      wrapper. Direct exec JSON is a separate finite VAT wrapper: only `docker
+      exec --format json --timeout SECONDS CONTAINER -- COMMAND [ARG...]` / equals
+      forms and the same form through `docker container exec` are accepted. One
+      format and one 1..=1200 timeout occur in either order before one safe id;
+      the Docker-facing delimiter and a nonempty command are mandatory, while raw
+      or unformatted exec remains inherited. VAT removes its selectors and that
+      delimiter before `container exec CONTAINER COMMAND [ARG...]`, then emits one
+      `vat.docker.exec.v1` / `vat_json` wrapper with requested timeout,
+      `timeout_scope=host-container-client-observation`, backend/container/runtime
+      and child outcome, untrusted bounded stdout/stderr suffixes, truncation/lossy
+      flags, no secret-redaction guarantee, and safe inspect next. Ordinary child
+      nonzero preserves wrapper plus exit; timeout or setup/capture failure emits
+      no partial wrapper; both serialized stream values cap at 64 KiB. The timeout
+      is only host-client observation and does not claim guest command termination.
+      TTY, interactive, detach, env/user/workdir, templates, malformed delimiters,
+      and other exec flags fail before runtime. Strict direct run JSON is a
+      separate foreground owner-cleaned one-shot: only `docker run --format json
+      --timeout SECONDS IMAGE [COMMAND...]` / equals forms with one flexible-order
+      format and 1..=1200 timeout before IMAGE are accepted; command argv follows
+      IMAGE directly. A Docker `--` before IMAGE or immediately after IMAGE fails;
+      after the first non-`--` command token, later `--` remains opaque child argv.
+      Detach, TTY, interactive, caller name/label, ports, network, mounts, env,
+      and every other run option fail before runtime. VAT generates a high-entropy
+      name and independent owner label, captures
+      bounded stdout/stderr into one `vat.docker.run.v1` / `vat_json` document,
+      and emits it only after exact owner-label cleanup confirms absence. Normal
+      child nonzero preserves wrapper plus exit only then; timeout/setup/cleanup
+      uncertainty emits no partial wrapper, and only Apple's explicit
+      `Error: container not found: <name>` diagnostic proves absence. Its timeout
+      is host-client observation only; it makes no guest-wide termination,
+      crash-recovery cleanup, Docker Engine parity, or secret-redaction claim.
+      Focused `docker_run_json` passed 5 plus 1 ignored in 1.80s; local
+      `alpine:3.20` real E2E passed 1/1 (56 filtered) in 2.30s with exact cleanup.
+      Strict direct build JSON is a separate bounded VAT receipt, not native
+      Apple JSON: only direct `docker build --format json --timeout SECONDS --tag
+      TAG [--file DOCKERFILE] [--build-arg K=V ...] [--target STAGE] [--platform
+      PLATFORM] [--label K=V ...] CONTEXT` / documented equals forms pass. Exact
+      json/positive 1..=1200 timeout/tag selectors, optional-once file/target/
+      platform, repeated build args/labels, and one canonical existing local
+      directory context are required; `--`, second context, missing/duplicate/
+      misordered selectors, and unsupported flags fail before builder, while raw
+      unselected builds remain inherited. VAT strips only JSON/deadline selectors
+      for public `container build`, then emits one bounded `vat.docker.build.v1`
+      receipt after client exit. It retains image lifecycle with no product cleanup
+      or ownership claim; success safely hands off to strict image inspect, while
+      normal nonzero retains receipt/exit with build_failed/docker-help and no stale
+      inspect. Timeout/setup/capture emits no receipt; the deadline observes only
+      the host client and does not cancel/rollback/remove. Args/labels/output are
+      opaque/untrusted, and no Engine/API, provenance, ownership, readiness,
+      security, redaction, cancellation, or rollback proof follows. Evidence:
+      cargo check, docker_shim 62/62, focused 4 plus 1 ignored (63 filtered), owner
+      guard 1/1 (67 filtered), host E2E 1/1 (67 filtered) in 2.53s. Its high-
+      entropy tag/exact owner-label pre/post absence checks are test-only best
+      effort; absent conditional Apple build/delete, ambiguity leaks rather than
+      becoming product auto-cleanup.
+      Strict direct pull JSON is a separate bounded VAT receipt, not native Apple
+      JSON: only direct `docker pull --format json --timeout SECONDS IMAGE` /
+      documented equals forms pass. Exactly one json format and positive whole
+      1..=1200 timeout may occur in either order before one opaque image reference:
+      nonempty, no leading dash, whitespace/control, URL-style `://`, or leading
+      Git-style `git@` remote are rejected; ordinary OCI `@digest` remains opaque.
+      `--`, a second reference, missing/duplicate/misordered selectors, and
+      unsupported flags fail before the client; raw direct pull without either
+      selector and every `docker image pull` form remain inherited. VAT strips only
+      JSON/deadline selectors for public `container image pull IMAGE`, then emits
+      one bounded `vat.docker.pull.v1` receipt after client exit. It has untrusted
+      bounded stdout/stderr, truncation/lossy flags, timeout scope, child outcome,
+      and `image_lifecycle=not_owned_no_auto_cleanup`: no product cleanup,
+      ownership, or registry login/auth/credential lifecycle. Success safely points
+      to strict image inspect without image-state/download-completion proof; normal
+      child failure retains receipt/exit with pull_failed/docker-help and no stale
+      inspect. Timeout/setup/capture/pipe failure emits no receipt; deadline is
+      host client/pipes observation only, not transfer cancellation, download
+      completion, rollback, or local/backend image state. No Engine/API, registry
+      management, provenance, digest, platform, freshness, image state, ownership,
+      security, redaction, cancellation, download completion, or rollback proof
+      follows. Evidence: cargo check; docker_shim 65/65; focused 5 plus 1 ignored
+      (68 filtered); host E2E 1/1 (73 filtered) in 27.14s. The real shared/cacheable
+      `alpine:3.20` pull neither deletes the image nor asserts ownership on success
+      or failure.
+      Direct ps, image
+      inventory, and stats use a five-second bounded isolated-process-group
+      observation over root exit and both pipe EOFs, replay only complete
+      validated native JSON, and suppress malformed/oversized or escaped-pipe
+      stdout; direct inspect uses the same bounded observer, replays only
+      complete validated native JSON, suppresses raw stdout on malformed,
+      oversized, or flooding output, and preserves valid JSON plus a nonzero
+      child exit.
+      Inspect makes no ownership, provenance, security, image, registry,
+      build-status, health, readiness, liveness, or port-reachability claim and
+      gives no secret-redaction guarantee. The native surfaces and logs wrapper
+      make no ownership, provenance, security, executability, registry,
+      build-readiness, health, readiness, or liveness claim; logs additionally
+      gives no secret-redaction guarantee. The real-host direct-observation
+      gate passed 1/1 (50 filtered) on Apple Container 1.1.0:
+      ps/images are global read-only inventory smoke observations, while
+      inspect/stats/VAT logs and direct exec target the high-entropy nonce+PID
+      owner-labeled temporary nginx container. Exact-label rechecks are conservative
+      best-effort precautions, and the emergency guard retains the container on
+      uncertainty. Apple Container has no atomic conditional delete, so this is not
+      a race-free or impossible-to-misdelete cleanup guarantee; it does not clean up
+      the shared/cacheable nginx image. That host smoke proves one valid native JSON document
+      or VAT wrapper only, including an exec wrapper with both stdout and stderr
+      markers; fake/unit tests prove byte-preservation and fail-closed details. It
+      does not claim guest-timeout termination, Docker Engine parity, immutable
+      image identity, or image cleanup. Full
+      behavior is specified by
+      vat-headless-docker-command-shim.md.
+    impl_mode: hand-written
+  - path: "apps/vat/src/commands/compose.rs"
+    action: modify
+    section: schema
+    description: |
+      #1685 Compose lifecycle ownership is hand-written: a Docker-shaped wait
+      target pins known profile/generation/ticket, validates each durable VAT
+      observation under a claim and releases it between polls, retains timeout
+      runtime/registry safely, then a Docker-shaped ps observation is assembled
+      while its registry claim is held. It retains known shim provenance, orders
+      services by registered IDs, and exposes
+      all-or-none canonical loopback endpoints only from unique Ready
+      VAT-owned container_run/exact-MicroVM evidence with no cleanup error.
+      Missing or unsafe proof degrades readiness and withholds every endpoint;
+      ready wait owns one final topology result, terminal/replaced/bare-deadline
+      outcomes have no unsafe next, and generic and unknown provenance remain
+      fail-closed. The opt-in gated real Apple Container dual-service E2E passed
+      1/1 (50 filtered) on this host in 4.54 seconds for the bounded
+      host-facing-independent-v1 up-wait/endpoints, one-document JSON ps/logs/exec,
+      text logs, no-final-newline text-exec handoff, and down-cleanup contract
+      only, never service-name DNS, general Compose, Docker Engine API, or
+      Kubernetes.
+    impl_mode: hand-written
+  - path: "apps/vat/src/compose.rs"
+    action: modify
+    section: schema
+    description: |
+      #1529 source ownership is hand-written: canonical compose-source path
+      resolution, runtime-local build-store selection, build args, OCI-safe
+      project-scoped tags with raw-pair BLAKE3 identity suffixes, builder
+      preflight, atomic vat.toml materialization, and rollback support for a
+      failed matching-registry publication are mirrored by
+      projects-vat-src-compose-rs.md.
+    impl_mode: hand-written
   - path: "apps/vat/src/spec.rs"
     action: modify
     section: schema
@@ -2122,9 +2357,11 @@ changes:
       //! The vat store: create, load, list, and remove vats on disk, and project a
       //! [`VatState`] from persisted [`VatMeta`] plus live computation.
       
-      use std::path::PathBuf;
+      use std::fs::{self, OpenOptions};
+      use std::io::Write;
+      use std::path::{Path, PathBuf};
       
-      use anyhow::{bail, Context, Result};
+      use anyhow::{Context, Result, bail};
       use chrono::Utc;
       
       use crate::event::{self, Event, EventKind};
@@ -2166,13 +2403,14 @@ changes:
       
           // --- persistence -----------------------------------------------------
       
-          /// Write `meta.json` (touches `updated_at`).
+          /// Atomically replace `meta.json` (touches `updated_at`). Readers such as
+          /// `vat compose ps` may reconcile a live VAT while its runner persists
+          /// service evidence, so they must observe either complete JSON revision,
+          /// never the truncate/write interval of a direct overwrite.
           pub fn save(&mut self) -> Result<()> {
               self.meta.updated_at = Utc::now();
               let json = serde_json::to_vec_pretty(&self.meta).context("serialize meta")?;
-              std::fs::write(self.meta_path(), json)
-                  .with_context(|| format!("write {}", self.meta_path().display()))?;
-              Ok(())
+              atomic_write(&self.meta_path(), &json)
           }
       
           /// Append an event to this vat's log.
@@ -2210,6 +2448,7 @@ changes:
                   lineage: self.meta.lineage.clone(),
                   last_run: self.meta.last_run.clone(),
                   test_run: self.meta.test_run.clone(),
+                  plan: self.meta.plan.clone(),
                   workspace: WorkspaceInfo {
                       rootfs: self.rootfs().to_string_lossy().into_owned(),
                       file_count: now.len(),
@@ -2222,6 +2461,41 @@ changes:
           }
       }
       
+      fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+          let parent = path
+              .parent()
+              .context("VAT metadata path has no parent directory")?;
+          let file_name = path
+              .file_name()
+              .and_then(|name| name.to_str())
+              .context("VAT metadata path has no UTF-8 file name")?;
+          let temporary = parent.join(format!(".{file_name}.{}.tmp", crate::id::fresh()));
+          let result = (|| -> Result<()> {
+              let mut file = OpenOptions::new()
+                  .write(true)
+                  .create_new(true)
+                  .open(&temporary)
+                  .with_context(|| format!("create temporary VAT metadata {}", temporary.display()))?;
+              file.write_all(contents)
+                  .with_context(|| format!("write temporary VAT metadata {}", temporary.display()))?;
+              file.sync_all()
+                  .with_context(|| format!("sync temporary VAT metadata {}", temporary.display()))?;
+              drop(file);
+              fs::rename(&temporary, path).with_context(|| {
+                  format!(
+                      "atomically replace VAT metadata {} from {}",
+                      path.display(),
+                      temporary.display()
+                  )
+              })?;
+              Ok(())
+          })();
+          if result.is_err() {
+              let _ = fs::remove_file(&temporary);
+          }
+          result
+      }
+
       // --- store-level operations ----------------------------------------------
       
       /// Create a new vat directory with the given spec and a fresh rootfs.
@@ -2268,6 +2542,7 @@ changes:
                   lineage,
                   last_run: None,
                   test_run: None,
+                  plan: None,
               },
           };
           vat.save()?;
@@ -2525,11 +2800,52 @@ changes:
           pub command: Vec<String>,
           pub status: ProcessStatus,
           #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub preset: Option<String>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub host: Option<String>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub port: Option<u16>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub owned_by_vat: Option<bool>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub prepare_mode: Option<String>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub cache_key: Option<String>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub prepare_duration_ms: Option<u64>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub ready_duration_ms: Option<u64>,
+          #[serde(default, skip_serializing_if = "Vec::is_empty")]
+          pub exported_env: Vec<String>,
+          #[serde(default, skip_serializing_if = "Option::is_none")]
           pub pid: Option<u32>,
           #[serde(default, skip_serializing_if = "Option::is_none")]
           pub exit_code: Option<i32>,
           #[serde(default, skip_serializing_if = "Option::is_none")]
           pub ready_http: Option<String>,
+          /// VAT-owned Docker container name. Kept alongside microvm_name so a
+          /// failed teardown remains retryable after the VAT process exits.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub docker_name: Option<String>,
+          /// VAT-owned Apple `container` name for a MicroVM-backed service. Kept so
+          /// terminal readiness evidence identifies the exact resource cleanup owns.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub microvm_name: Option<String>,
+          /// Last terminal readiness observation, including MicroVM host-endpoint
+          /// diagnostics when a published port cannot satisfy its contract.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub readiness_error: Option<String>,
+          /// Cleanup outcome for a VAT-owned Docker or MicroVM resource. A
+          /// non-empty value means rm success was not confirmed, or nonzero rm
+          /// was not proven absent by a successful bounded exact-name list
+          /// query. Query failure, timeout, malformed output, or a matching
+          /// resource retains it. It forces runner/scenario nonzero retention
+          /// and prevents compose release.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub cleanup_error: Option<String>,
+          /// Present when this service is a local Kubernetes cluster.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub cluster: Option<ClusterRunRecord>,
           pub stdout_log: String,
           pub stderr_log: String,
       }
@@ -2545,6 +2861,11 @@ changes:
           pub exit_code: Option<i32>,
           #[serde(default, skip_serializing_if = "Option::is_none")]
           pub duration_ms: Option<u64>,
+          /// Live runner PID while the VAT parent owns the child. It is
+          /// reconciliation evidence only: compose asks that parent to stop rather
+          /// than treating this persisted value as a signal target.
+          #[serde(default, skip_serializing_if = "Option::is_none")]
+          pub pid: Option<u32>,
           pub stdout_log: String,
           pub stderr_log: String,
       }

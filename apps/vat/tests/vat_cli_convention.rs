@@ -12,6 +12,7 @@ fn vat() -> &'static str {
     env!("CARGO_BIN_EXE_vat")
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1817" reason="DX command-inventory regression is hand-written pending codegen support">
 #[test]
 fn cli_convention_help_lists_all_three() {
     let out = Command::new(vat()).arg("--help").output().unwrap();
@@ -41,6 +42,43 @@ fn cli_convention_help_lists_all_three() {
 }
 
 #[test]
+fn documented_agent_commands_match_help() {
+    let out = Command::new(vat()).arg("--help").output().unwrap();
+    assert!(out.status.success(), "vat --help should succeed");
+    let help = String::from_utf8_lossy(&out.stdout);
+    let readme = include_str!("../README.md");
+
+    for command in ["build", "compose", "docker", "k8s"] {
+        assert!(
+            help.lines().any(|line| line.trim_start().starts_with(command)),
+            "vat --help is missing documented `{command}` command:\n{help}"
+        );
+        assert!(
+            readme.contains(&format!("`vat {command}")),
+            "README is missing the `{command}` agent command inventory"
+        );
+    }
+}
+
+#[test]
+fn dx_docs_state_supported_boundaries() {
+    let readme = include_str!("../README.md");
+    for boundary in [
+        "Apple Container",
+        "Docker Engine/API",
+        "general Compose",
+        "persistent Kubernetes",
+    ] {
+        assert!(
+            readme.contains(boundary),
+            "README must state the `{boundary}` support boundary"
+        );
+    }
+}
+// </HANDWRITE>
+
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1818" reason="Task-scoped offline LLM topic regression is hand-written pending codegen support">
+#[test]
 fn cli_convention_llm_flags() {
     let outline = Command::new(vat())
         .args(["llm", "--topic", "outline", "--format", "json"])
@@ -63,6 +101,40 @@ fn cli_convention_llm_flags() {
         "llm --topic guide should print the detailed vat guide"
     );
 }
+
+#[test]
+fn cli_convention_llm_topics_are_task_scoped() {
+    let outline = Command::new(vat())
+        .args(["llm", "--topic", "outline", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(outline.status.success(), "llm outline should exit 0");
+    let outline = String::from_utf8_lossy(&outline.stdout);
+    for topic in ["core", "services", "container", "k8s", "guide"] {
+        assert!(
+            outline.contains(&format!("\"id\": \"{topic}\"")),
+            "outline is missing stable `{topic}` topic:\n{outline}"
+        );
+    }
+
+    for (topic, command) in [
+        ("core", "vat run"),
+        ("services", "vat.toml"),
+        ("container", "vat compose"),
+        ("k8s", "vat k8s ephemeral"),
+    ] {
+        let out = Command::new(vat())
+            .args(["llm", "--topic", topic])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "llm topic `{topic}` should exit 0");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(command),
+            "topic `{topic}` should name `{command}`"
+        );
+    }
+}
+// </HANDWRITE>
 
 #[test]
 fn cli_convention_issue_create_dry_run() {

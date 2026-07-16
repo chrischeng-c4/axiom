@@ -19,6 +19,7 @@
 
 pub mod process;
 pub mod seatbelt;
+pub mod microvm;
 
 use std::path::Path;
 
@@ -45,7 +46,7 @@ pub trait Sandbox {
 /// succeeds; the workspace clone still applies regardless of isolation, so a
 /// vat is never *less* isolated than plain `cd` + run on that front.
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-sandbox-mod-rs.md#source
-// HANDWRITE-BEGIN gap="missing-generator:logic:pick-fail-closed" tracker="pending-tracker" reason="Logic section edge: pick() must fail closed (return Err) instead of warn-and-continue when the selected backend cannot enforce a non-Open egress policy (isolation=none, or seatbelt requested but unavailable) — hand-written backend-selection logic per issue #1300."
+// HANDWRITE-BEGIN gap="missing-generator:logic:pick-fail-closed" tracker="#1300" reason="Logic section edge: pick() must fail closed (return Err) instead of warn-and-continue when the selected backend cannot enforce a non-Open egress policy (isolation=none, or seatbelt requested but unavailable) — hand-written backend-selection logic per issue #1300."
 pub fn pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String> {
     match spec.isolation {
         Isolation::None => {
@@ -77,6 +78,47 @@ pub fn pick(spec: &EnvSpec) -> Result<Box<dyn Sandbox>, String> {
                      using process backend (workspace is still copy-on-write)."
                 );
                 Ok(Box::new(process::ProcessBackend))
+            }
+        }
+        Isolation::MicroVm => {
+            // MicroVm requires a base image and fails closed on unsupported combinations.
+            if spec.gpu == crate::spec::GpuRequest::Required {
+                return Err(
+                    "isolation=micro_vm cannot satisfy --gpu required: GPU passthrough is \
+                     categorically impossible in an Apple Silicon microVM (Virtualization.framework \
+                     architecture constraint, not a vat limitation)."
+                        .to_string(),
+                );
+            }
+            let Some(image) = spec.microvm_image.clone() else {
+                return Err(
+                    "isolation=micro_vm requires an OCI base image (--microvm-image <ref>); \
+                     vat does not guess one."
+                        .to_string(),
+                );
+            };
+            if !microvm::available() {
+                return Err(
+                    "isolation=micro_vm requested but `container` CLI is not installed; \
+                     install it and re-run `vat doctor`."
+                        .to_string(),
+                );
+            }
+            match spec.egress {
+                EgressPolicy::Open | EgressPolicy::Deny => Ok(Box::new(microvm::MicroVmBackend {
+                    egress: spec.egress,
+                    env: spec.env.clone(),
+                    workdir: spec.workdir.clone(),
+                    image,
+                })),
+                EgressPolicy::LocalhostOnly => Err(
+                    "isolation=micro_vm cannot yet enforce egress=localhost-only: the guest \
+                     127.0.0.1 never reaches the host; the host is only reachable via a \
+                     per-network container VM gateway IP that ordinary applications do not know \
+                     to target (confirmed by the Phase 0 spike #1472). Use --isolation seatbelt, \
+                     or switch --network to open or deny."
+                        .to_string(),
+                ),
             }
         }
     }

@@ -18,6 +18,13 @@ capability_refs:
 
 Public API manifest for `apps/vat/tests/vat_toml_runner.rs` generated from AST during Score force-regeneration standardization.
 
+Its deterministic doctor coverage treats `services.docker_services` as a public
+tri-state availability string: a full Docker probe yields `available` or
+`unavailable`; an explicit Apple-Container-only selected doctor yields
+`not_probed` plus `docker.daemon_probe.state=skipped` provenance. In that
+deliberate no-probe state `daemon=false` is not unavailable evidence and the
+fake Docker command must not run.
+
 ### Symbols
 
 No public AST symbols.
@@ -682,12 +689,25 @@ fn llm_guide_mentions_core_agent_contract() {
         "vat diff <id>",
         "vat logs <id>",
         "vat.toml",
-        // Boundaries: vat is not a Docker replacement and never containerizes
-        // the runner, even though dependency services may be containers.
-        "not a Docker/OCI/Compose replacement",
+        // Boundaries: vat has a narrow opt-in Docker command shim, but is not
+        // a Docker Engine/general-Compose replacement, is permanently
+        // headless, and never containerizes the runner even though dependency
+        // services may be containers.
+        "not a Docker Engine/API or general-Compose replacement",
+        "It is permanently headless",
+        "does not expose a Docker Engine socket/API",
+        "vat docker install-shim",
+        "explicit host port",
+        "up -d --build",
+        "exec -T SERVICE -- COMMAND",
+        "child_exit_code",
+        "vat k8s ephemeral image build",
+        "VAT_K8S_CACHE_DIR",
+        "vat_k8s_ephemeral_result",
+        "does not use Docker",
         "never containerized",
-        // Native-or-Docker service contract is discoverable.
-        "native or Docker",
+        // Native/Docker/explicit-Apple-Container service contract is discoverable.
+        "native, Docker, or explicit Apple Container",
         "runtime = \"docker\"",
         "external = { host",
         "owned_by_vat = false",

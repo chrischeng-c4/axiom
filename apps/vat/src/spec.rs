@@ -49,6 +49,11 @@ pub struct EnvSpec {
     /// when admission control or throttling is required.
     #[serde(default)]
     pub limits: Limits,
+
+    /// OCI image reference for MicroVm isolation (required when isolation=microvm).
+    /// None for other isolation modes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub microvm_image: Option<String>,
 }
 
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-spec-rs.md#source
@@ -63,6 +68,7 @@ impl Default for EnvSpec {
             egress: EgressPolicy::default(),
             gpu: GpuRequest::default(),
             limits: Limits::default(),
+            microvm_image: None,
         }
     }
 }
@@ -94,6 +100,10 @@ pub enum Isolation {
     /// macOS seatbelt profile: reads allowed broadly, writes confined to the
     /// rootfs + temp. Opt-in; Metal still works (it's a host process).
     Seatbelt,
+    /// Apple Silicon microVM via the `container` CLI — one ephemeral VM per
+    /// run, real BuildKit-backed Dockerfile compatibility, GPU categorically
+    /// unreachable. Requires `EnvSpec::microvm_image`.
+    MicroVm,
 }
 
 /// Outbound network egress policy, enforced by the seatbelt backend

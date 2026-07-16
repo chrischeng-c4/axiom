@@ -3,9 +3,11 @@
 //! The vat store: create, load, list, and remove vats on disk, and project a
 //! [`VatState`] from persisted [`VatMeta`] plus live computation.
 
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::Utc;
 
 use crate::event::{self, Event, EventKind};
@@ -47,13 +49,14 @@ impl Vat {
 
     // --- persistence -----------------------------------------------------
 
-    /// Write `meta.json` (touches `updated_at`).
+    /// Atomically replace `meta.json` (touches `updated_at`). Readers such as
+    /// `vat compose ps` may reconcile a live VAT while its runner persists
+    /// service evidence, so they must observe either complete JSON revision,
+    /// never the truncate/write interval of a direct overwrite.
     pub fn save(&mut self) -> Result<()> {
         self.meta.updated_at = Utc::now();
         let json = serde_json::to_vec_pretty(&self.meta).context("serialize meta")?;
-        std::fs::write(self.meta_path(), json)
-            .with_context(|| format!("write {}", self.meta_path().display()))?;
-        Ok(())
+        atomic_write(&self.meta_path(), &json)
     }
 
     /// Append an event to this vat's log.
@@ -102,6 +105,41 @@ impl Vat {
             events_tail,
         })
     }
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("VAT metadata path has no parent directory")?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("VAT metadata path has no UTF-8 file name")?;
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", crate::id::fresh()));
+    let result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| format!("create temporary VAT metadata {}", temporary.display()))?;
+        file.write_all(contents)
+            .with_context(|| format!("write temporary VAT metadata {}", temporary.display()))?;
+        file.sync_all()
+            .with_context(|| format!("sync temporary VAT metadata {}", temporary.display()))?;
+        drop(file);
+        fs::rename(&temporary, path).with_context(|| {
+            format!(
+                "atomically replace VAT metadata {} from {}",
+                path.display(),
+                temporary.display()
+            )
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 // --- store-level operations ----------------------------------------------
