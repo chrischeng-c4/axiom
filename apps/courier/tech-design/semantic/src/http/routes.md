@@ -1,6 +1,11 @@
 ---
 id: routes
 fill_sections: [overview, schema, logic, changes]
+capability_refs:
+  - id: github-issues-proxy
+    role: primary
+    claim: github-issues-proxy-service
+    coverage: full
 ---
 
 ## Overview
@@ -90,7 +95,8 @@ schemas:
 ## Logic: search_issues
 <!-- type: logic lang: mermaid -->
 
-```yaml
+```mermaid
+---
 id: search_issues
 entry: start
 title: search_issues
@@ -115,12 +121,34 @@ edges:
   - { from: decision_1, to: decision_2 }
   - { from: decision_2, to: then_2, label: "else" }
   - { from: decision_2, to: else_2, label: "else" }
+---
+flowchart TD
+    decision_0{"let Err(deny) = authorize(&principal, &resource(&owner, &name), Role::Read)"}
+    decision_1{"!st.github().is_allowed(&owner, &name)"}
+    decision_2{"match"}
+    else_0["continue"]
+    else_1["continue"]
+    else_2["continue"]
+    start(["start"])
+    then_0(["ok"])
+    then_1(["ok"])
+    then_2["continue"]
+    start --> decision_0
+    decision_0 -->|"ok"| then_0
+    decision_0 -->|"else"| else_0
+    decision_0 --> decision_1
+    decision_1 -->|"ok"| then_1
+    decision_1 -->|"else"| else_1
+    decision_1 --> decision_2
+    decision_2 -->|"else"| then_2
+    decision_2 -->|"else"| else_2
 ```
 
 ## Logic: view_issue
 <!-- type: logic lang: mermaid -->
 
-```yaml
+```mermaid
+---
 id: view_issue
 entry: start
 title: view_issue
@@ -145,12 +173,34 @@ edges:
   - { from: decision_1, to: decision_2 }
   - { from: decision_2, to: then_2, label: "else" }
   - { from: decision_2, to: else_2, label: "else" }
+---
+flowchart TD
+    decision_0{"let Err(deny) = authorize(&principal, &resource(&owner, &name), Role::Read)"}
+    decision_1{"!st.github().is_allowed(&owner, &name)"}
+    decision_2{"match"}
+    else_0["continue"]
+    else_1["continue"]
+    else_2["continue"]
+    start(["start"])
+    then_0(["ok"])
+    then_1(["ok"])
+    then_2["continue"]
+    start --> decision_0
+    decision_0 -->|"ok"| then_0
+    decision_0 -->|"else"| else_0
+    decision_0 --> decision_1
+    decision_1 -->|"ok"| then_1
+    decision_1 -->|"else"| else_1
+    decision_1 --> decision_2
+    decision_2 -->|"else"| then_2
+    decision_2 -->|"else"| else_2
 ```
 
 ## Logic: create_issue
 <!-- type: logic lang: mermaid -->
 
-```yaml
+```mermaid
+---
 id: create_issue
 entry: start
 title: create_issue
@@ -175,12 +225,34 @@ edges:
   - { from: decision_1, to: decision_2 }
   - { from: decision_2, to: then_2, label: "else" }
   - { from: decision_2, to: else_2, label: "else" }
+---
+flowchart TD
+    decision_0{"let Err(deny) = authorize(&principal, &resource(&owner, &name), Role::Write)"}
+    decision_1{"!st.github().is_allowed(&owner, &name)"}
+    decision_2{"match"}
+    else_0["continue"]
+    else_1["continue"]
+    else_2["continue"]
+    start(["start"])
+    then_0(["ok"])
+    then_1(["ok"])
+    then_2["continue"]
+    start --> decision_0
+    decision_0 -->|"ok"| then_0
+    decision_0 -->|"else"| else_0
+    decision_0 --> decision_1
+    decision_1 -->|"ok"| then_1
+    decision_1 -->|"else"| else_1
+    decision_1 --> decision_2
+    decision_2 -->|"else"| then_2
+    decision_2 -->|"else"| else_2
 ```
 
 ## Logic: comment_issue
 <!-- type: logic lang: mermaid -->
 
-```yaml
+```mermaid
+---
 id: comment_issue
 entry: start
 title: comment_issue
@@ -205,18 +277,40 @@ edges:
   - { from: decision_1, to: decision_2 }
   - { from: decision_2, to: then_2, label: "else" }
   - { from: decision_2, to: else_2, label: "else" }
+---
+flowchart TD
+    decision_0{"let Err(deny) = authorize(&principal, &resource(&owner, &name), Role::Write)"}
+    decision_1{"!st.github().is_allowed(&owner, &name)"}
+    decision_2{"match"}
+    else_0["continue"]
+    else_1["continue"]
+    else_2["continue"]
+    start(["start"])
+    then_0(["ok"])
+    then_1(["ok"])
+    then_2["continue"]
+    start --> decision_0
+    decision_0 -->|"ok"| then_0
+    decision_0 -->|"else"| else_0
+    decision_0 --> decision_1
+    decision_1 -->|"ok"| then_1
+    decision_1 -->|"else"| else_1
+    decision_1 --> decision_2
+    decision_2 -->|"else"| then_2
+    decision_2 -->|"else"| else_2
 ```
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
+coverage_kind: semantic
 changes:
   - path: apps/courier/src/http/routes.rs
     action: modify
+    section: schema
     impl_mode: hand-written
-    description: |
-      Pre-existing module captured by `score fillback`.
-      Governance: hand-written until extended with
-      Schema / Logic / Interface sections.
+  - action: annotate
+    section: logic
+    impl_mode: hand-written
 ```
