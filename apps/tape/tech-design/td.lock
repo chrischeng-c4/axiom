@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-20T06:44:43.834359+00:00"
-digest = "sha256:9bd8bc3d3cff04e235956246bfbbc161abf41d6cd1c4be76382f6a6136226d99"
-source_digest = "sha256:9bd8bc3d3cff04e235956246bfbbc161abf41d6cd1c4be76382f6a6136226d99"
-ir_digest = "sha256:8a778fe0a5f45dfc24accd657e5b1a8903a31b5261472377501a3bde5be9d0ef"
+generated_at = "2026-07-16T04:30:53.209270+00:00"
+digest = "sha256:9ff19ffe5ef9bc814b8d188ad16b7279b8118b92956efaed5b5d6a98df31bb50"
+source_digest = "sha256:9ff19ffe5ef9bc814b8d188ad16b7279b8118b92956efaed5b5d6a98df31bb50"
+ir_digest = "sha256:dd0d238c242417eceb3e77e54c479852b5eafe18bcb3c23259a0793156b20762"
 
 [[files]]
 path = "README.md"
@@ -39,8 +39,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/rest/wire-shared-peer-mtls-transport-into-the-raft-host.md"
-digest = "sha256:fdb37cfef4d59b20198630147823f22525d0cebda70a94eb597a06b08aa9dbc5"
-ir_digest = "sha256:e1f065299f3d05d40bd9824eb3f758eb9c7940b4872ab4e943970a2cab0e1155"
+digest = "sha256:2ce7a20392cd596926ce58e7631d88b3c16eeb2d55a20323fddaf9c3d76feea8"
+ir_digest = "sha256:236303d9b6b2e81e586bdea8efad552d7ecd44367d4f87bde9fcd080b5f4caff"
 section_count = 3
 
 [[files]]
