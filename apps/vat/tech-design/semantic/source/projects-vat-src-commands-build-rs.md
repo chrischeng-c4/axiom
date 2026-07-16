@@ -1,3 +1,43 @@
+---
+id: vat-source-projects-vat-src-commands-build-rs
+summary: >
+  rust-source-unit mirror for apps/vat/src/commands/build.rs.
+fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    claim: compose-runtime-local-build-artifacts
+    coverage: full
+    rationale: "#1529 source mirror for runtime-to-image-store selection and bounded builder preflight."
+---
+
+# Source mirror: apps/vat/src/commands/build.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Hand-written image-build command source, mirrored in full. The public `vat build`
+surface remains Apple-Container-backed; #1529 exposes a crate-private selected-builder
+path so compose cannot build an image in a store different from the one its service
+will later run from.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Args` | apps/vat/src/commands/build.rs | struct | pub | 14 | |
+| `BuildReport` | apps/vat/src/commands/build.rs | struct | pub | 24 | |
+| `ImageBuilder` | apps/vat/src/commands/build.rs | enum | pub(crate) | 36 | |
+| `resolve_image_builder` | apps/vat/src/commands/build.rs | function | pub(crate) | 61 | resolve_image_builder(runtime: ServiceRuntime) -> Result<ImageBuilder> |
+| `image_builder_for_runtime` | apps/vat/src/commands/build.rs | function | pub(crate) | 70 | image_builder_for_runtime(runtime: ServiceRuntime) -> ImageBuilder |
+| `exec` | apps/vat/src/commands/build.rs | function | pub | 81 | exec(args: Args) -> Result<ExitCode> |
+| `build_image` | apps/vat/src/commands/build.rs | function | pub | 161 | build_image(context: &Path, dockerfile: &Path, tag: &str, build_args: &[(String, String)]) -> Result<BuildReport> |
+| `build_image_with_builder` | apps/vat/src/commands/build.rs | function | pub(crate) | 174 | build_image_with_builder(builder: ImageBuilder, context: &Path, dockerfile: &Path, tag: &str, build_args: &[(String, String)]) -> Result<BuildReport> |
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+````rust
 // HANDWRITE-BEGIN gap="missing-generator:logic:102c3b59" tracker="#1479" reason="R1-R4 plus #1529: `Args`/`BuildReport`, streamed-versus-captured builds, runtime-to-image-store selection, bounded Docker/Apple-Container preflight, and matching argv builders live together because compose must build into the exact store its generated service will run from. No generator owns this dual-runtime, dual-stdio subprocess protocol, so the file remains hand-authored (missing-generator:cli:streamed-subprocess-dual-mode; trackers #1479 and #1529)."
 
 use std::collections::BTreeMap;
@@ -444,3 +484,21 @@ mod tests {
     }
 }
 // HANDWRITE-END
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+````yaml
+changes:
+  - path: apps/vat/src/commands/build.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1529 synchronizes the full hand-written source mirror: ImageBuilder maps
+      Auto/Native/Docker to Docker and MicroVm to Apple Container, preflights the
+      chosen local store, and routes compose through build_image_with_builder().
+      Docker uses the same deterministic build argv shape but never shares the
+      Apple Container image store.
+````

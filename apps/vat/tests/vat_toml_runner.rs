@@ -1,7 +1,13 @@
 // SPEC-MANAGED: apps/vat/tech-design/semantic/source/projects-vat-tests-vat_toml_runner-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 use std::net::TcpListener;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::path::Path;
 use std::process::Command;
+#[cfg(unix)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde_json::Value;
 
@@ -37,8 +43,117 @@ fn result_event(events: &[Value]) -> &Value {
         .expect("missing result event")
 }
 
+#[cfg(unix)]
+fn write_doctor_executable(path: &Path, source: &str) {
+    std::fs::write(path, source).expect("write doctor fake runtime");
+    let mut permissions = std::fs::metadata(path)
+        .expect("doctor fake runtime metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("make doctor fake runtime executable");
+}
+
+#[cfg(unix)]
+fn write_builder_observation_fake(path: &Path) {
+    write_doctor_executable(
+        path,
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_BUILDER_LOG"
+case "$*" in
+  "builder status --format json")
+    case "${VAT_BUILDER_MODE:-valid}" in
+      valid|stats_hang|df_hang)
+        printf '%s\n' '[{"configuration":{"id":"buildkit","resources":{"cpus":2,"memoryInBytes":2147483648}},"status":{"state":"running"}}]'
+        ;;
+      empty)
+        printf '%s\n' '[]'
+        ;;
+      malformed)
+        printf '%s\n' '{not-json'
+        ;;
+      nonzero)
+        printf '%s\n' 'fake builder status failure' >&2
+        exit 73
+        ;;
+      status_hang)
+        exec /bin/sleep 5
+        ;;
+      *)
+        printf '%s\n' "unexpected builder mode: $VAT_BUILDER_MODE" >&2
+        exit 64
+        ;;
+    esac
+    ;;
+  "stats buildkit --no-stream --format json")
+    if [ "${VAT_BUILDER_MODE:-valid}" = "stats_hang" ]; then
+      exec /bin/sleep 5
+    fi
+    printf '%s\n' '[{"id":"buildkit","memoryUsageBytes":1578954752,"memoryLimitBytes":2147483648,"cpuUsageUsec":84301766,"numProcesses":21}]'
+    ;;
+  "system df --format json")
+    if [ "${VAT_BUILDER_MODE:-valid}" = "df_hang" ]; then
+      exec /bin/sleep 5
+    fi
+    printf '%s\n' '{"containers":{"total":2,"active":1,"sizeInBytes":1921540096,"reclaimable":4096},"images":{"total":12,"active":2,"sizeInBytes":4731920384,"reclaimable":2327961600}}'
+    ;;
+  *)
+    printf '%s\n' "unexpected fake container argv: $*" >&2
+    exit 64
+    ;;
+esac
+"#,
+    );
+}
+
+#[cfg(unix)]
+fn run_capabilities_with_builder_mode(
+    fake_bin: &Path,
+    log: &Path,
+    mode: &str,
+) -> std::process::Output {
+    Command::new(vat_bin())
+        .env("PATH", fake_bin)
+        .env("VAT_BUILDER_LOG", log)
+        .env("VAT_BUILDER_MODE", mode)
+        .args(["capabilities", "--json"])
+        .output()
+        .expect("run capabilities with fake Apple Container")
+}
+
+#[cfg(unix)]
+fn assert_builder_probe_never_mutates(calls: &str) {
+    for forbidden in [
+        "builder start",
+        "builder stop",
+        "builder delete",
+        "system start",
+        "system stop",
+        "image prune",
+        "image rm",
+    ] {
+        assert!(
+            !calls.lines().any(|call| call == forbidden),
+            "builder observation invoked forbidden mutation {forbidden:?}: {calls}"
+        );
+    }
+}
+
+/// The production timeout is deliberately tight (500ms). Serializing the
+/// fake-child checks keeps test-process scheduler contention from being
+/// mistaken for an Apple Container timeout while still exercising kill/reap.
+#[cfg(unix)]
+fn builder_observation_test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn vat_capabilities_json_reports_effective_backends() {
+    #[cfg(unix)]
+    let _lock = builder_observation_test_lock();
     let output = Command::new(vat_bin())
         .args(["capabilities", "--json"])
         .output()
@@ -67,6 +182,175 @@ fn vat_capabilities_json_reports_effective_backends() {
         json["docker"]["cli"].is_boolean(),
         "docker capability should be explicit even when Docker is absent"
     );
+    assert!(
+        json["docker"]["daemon_probe"].is_null(),
+        "direct vat capabilities must retain its normal Docker probe behavior"
+    );
+    assert!(
+        matches!(
+            json["services"]["docker_services"].as_str(),
+            Some("available" | "unavailable")
+        ),
+        "a full Docker probe must report a conclusive Docker service availability: {}",
+        json["services"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn vat_capabilities_reports_shared_builder_configuration_and_observed_stats() {
+    let _lock = builder_observation_test_lock();
+    let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+    let log = fake_bin.path().join("container.log");
+    write_builder_observation_fake(&fake_bin.path().join("container"));
+
+    let output = run_capabilities_with_builder_mode(fake_bin.path(), &log, "valid");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("capabilities JSON");
+    let builder = &json["apple_container"]["builder"];
+    assert_eq!(json["apple_container"]["cli"], true);
+    assert_eq!(builder["state"], "running");
+    assert_eq!(builder["ownership"], "shared_unknown");
+    assert_eq!(builder["automatic_cleanup"], false);
+    assert_eq!(builder["configuration"]["id"], "buildkit");
+    assert_eq!(builder["configuration"]["resources"]["cpus"], 2.0);
+    assert_eq!(
+        builder["configuration"]["resources"]["memory_bytes"],
+        2_147_483_648u64
+    );
+    assert_eq!(
+        builder["observed_stats"]["memory_usage_bytes"],
+        1_578_954_752u64
+    );
+    assert_eq!(
+        builder["observed_stats"]["memory_limit_bytes"],
+        2_147_483_648u64
+    );
+    assert_eq!(builder["observed_stats"]["process_count"], 21);
+    assert_eq!(builder["global_disk"]["scope"], "global_apple_container");
+    assert_eq!(
+        builder["global_disk"]["images"]["size_bytes"],
+        4_731_920_384u64
+    );
+    assert_eq!(
+        builder["global_disk"]["images"]["reclaimable_bytes"],
+        2_327_961_600u64
+    );
+
+    let calls = std::fs::read_to_string(&log).expect("read fake container calls");
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        vec![
+            "builder status --format json",
+            "stats buildkit --no-stream --format json",
+            "system df --format json",
+        ]
+    );
+    assert_builder_probe_never_mutates(&calls);
+}
+
+#[cfg(unix)]
+#[test]
+fn vat_capabilities_keeps_missing_malformed_and_nonzero_builder_status_advisory() {
+    let _lock = builder_observation_test_lock();
+    for (mode, state, error_fragment) in [
+        ("empty", "not_running", None),
+        ("malformed", "unknown", Some("invalid JSON")),
+        ("nonzero", "unknown", Some("fake builder status failure")),
+    ] {
+        let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+        let log = fake_bin.path().join("container.log");
+        write_builder_observation_fake(&fake_bin.path().join("container"));
+
+        let output = run_capabilities_with_builder_mode(fake_bin.path(), &log, mode);
+        assert!(
+            output.status.success(),
+            "mode={mode} stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("capabilities JSON");
+        let builder = &json["apple_container"]["builder"];
+        assert_eq!(builder["state"], state, "mode={mode}");
+        assert_eq!(builder["ownership"], "shared_unknown", "mode={mode}");
+        assert_eq!(builder["automatic_cleanup"], false, "mode={mode}");
+        assert!(builder["configuration"].is_null(), "mode={mode}: {builder}");
+        assert!(
+            builder["observed_stats"].is_null(),
+            "mode={mode}: {builder}"
+        );
+        assert!(builder["global_disk"].is_null(), "mode={mode}: {builder}");
+        match error_fragment {
+            Some(error_fragment) => assert!(
+                builder["probe_errors"]
+                    .as_array()
+                    .expect("advisory errors")
+                    .iter()
+                    .any(|error| error["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains(error_fragment))),
+                "mode={mode}: {builder}"
+            ),
+            None => assert!(
+                builder["probe_errors"].is_null(),
+                "empty builder status is an ordinary not-running observation: {builder}"
+            ),
+        }
+
+        let calls = std::fs::read_to_string(&log).expect("read fake container calls");
+        assert_eq!(calls.trim(), "builder status --format json", "mode={mode}");
+        assert_builder_probe_never_mutates(&calls);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn vat_capabilities_bounds_hung_builder_stats_and_disk_observations() {
+    let _lock = builder_observation_test_lock();
+    for (mode, missing_field, error_probe) in [
+        ("status_hang", "configuration", "builder_status"),
+        ("stats_hang", "observed_stats", "stats"),
+        ("df_hang", "global_disk", "system_df"),
+    ] {
+        let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+        let log = fake_bin.path().join("container.log");
+        write_builder_observation_fake(&fake_bin.path().join("container"));
+
+        let started = std::time::Instant::now();
+        let output = run_capabilities_with_builder_mode(fake_bin.path(), &log, mode);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "mode={mode} exceeded bounded advisory deadline: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            output.status.success(),
+            "mode={mode} stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).expect("capabilities JSON");
+        let builder = &json["apple_container"]["builder"];
+        assert!(builder[missing_field].is_null(), "mode={mode}: {builder}");
+        assert!(
+            builder["probe_errors"]
+                .as_array()
+                .expect("advisory error")
+                .iter()
+                .any(|error| error["probe"] == error_probe
+                    && error["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("timed out"))),
+            "mode={mode}: {builder}"
+        );
+        let calls = std::fs::read_to_string(&log).expect("read fake container calls");
+        assert_builder_probe_never_mutates(&calls);
+    }
 }
 
 #[test]
@@ -588,6 +872,546 @@ cmd = ["sh", "-c", "true"]
     assert_eq!(check["ok"], enforceable);
 }
 
+#[cfg(unix)]
+#[test]
+fn vat_doctor_routes_explicit_microvm_services_to_apple_container() {
+    let _lock = builder_observation_test_lock();
+    let project = tempfile::tempdir().expect("project");
+    let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+    let container_log = fake_bin.path().join("container.log");
+    let docker_log = fake_bin.path().join("docker.log");
+    write_doctor_executable(
+        &fake_bin.path().join("container"),
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_DOCTOR_CONTAINER_LOG"
+case "$*" in
+  "builder status --format json")
+    printf '%s\n' '[{"configuration":{"id":"buildkit","resources":{"cpus":2,"memoryInBytes":2147483648}},"status":{"state":"running"}}]'
+    ;;
+  "stats buildkit --no-stream --format json")
+    printf '%s\n' '[{"id":"buildkit","memoryUsageBytes":1578954752,"memoryLimitBytes":2147483648,"numProcesses":21}]'
+    ;;
+  "system df --format json")
+    printf '%s\n' '{"images":{"total":12,"active":2,"sizeInBytes":4731920384,"reclaimable":2327961600}}'
+    ;;
+  "system status")
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+"#,
+    );
+    write_doctor_executable(
+        &fake_bin.path().join("docker"),
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_DOCTOR_DOCKER_LOG"
+exit 91
+"#,
+    );
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+default_runner = "e2e"
+
+[network]
+egress = "open"
+
+[[services]]
+id = "image-microvm"
+image = "example.test/image:latest"
+container_port = 8080
+runtime = "micro_vm"
+
+[[services]]
+id = "preset-microvm"
+preset = "postgres"
+runtime = "micro_vm"
+
+[[services]]
+id = "unselected-docker"
+image = "example.test/unselected:latest"
+container_port = 8080
+
+[[runners]]
+id = "e2e"
+requires = ["image-microvm", "preset-microvm"]
+cmd = ["true"]
+
+[[runners]]
+id = "docker-runner"
+requires = ["unselected-docker"]
+cmd = ["true"]
+"#,
+    )
+    .expect("write MicroVM doctor config");
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("PATH", fake_bin.path())
+        .env("VAT_DOCTOR_CONTAINER_LOG", &container_log)
+        .env("VAT_DOCTOR_DOCKER_LOG", &docker_log)
+        .args(["doctor", "--json"])
+        .output()
+        .expect("run MicroVM doctor");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
+    let checks = json["checks"].as_array().expect("doctor checks");
+    for id in ["image-microvm", "preset-microvm"] {
+        let check = checks
+            .iter()
+            .find(|check| check["id"] == id && check["code"] == "apple_container_system")
+            .unwrap_or_else(|| panic!("missing Apple Container doctor check for {id}: {checks:?}"));
+        assert_eq!(check["component"], "apple_container");
+        assert_eq!(check["ok"], true);
+        assert!(check["message"]
+            .as_str()
+            .expect("Apple Container message")
+            .contains("container system status"));
+        let builder_advisory = checks
+            .iter()
+            .find(|check| check["id"] == id && check["code"] == "apple_container_builder_shared")
+            .unwrap_or_else(|| panic!("missing shared builder advisory for {id}: {checks:?}"));
+        assert_eq!(builder_advisory["component"], "apple_container");
+        assert_eq!(builder_advisory["ok"], true);
+        let message = builder_advisory["message"]
+            .as_str()
+            .expect("shared builder advisory message");
+        assert!(message.contains("ownership=shared_unknown"));
+        assert!(message.contains("automatic_cleanup=false"));
+        assert!(message.contains("state=running"));
+        assert!(message.contains("observed_memory_bytes=1578954752"));
+    }
+    assert!(
+        !checks.iter().any(|check| check["component"] == "docker"),
+        "explicit MicroVM doctor checks must not fall back to Docker: {checks:?}"
+    );
+    assert_eq!(json["capabilities"]["docker"]["cli"], true);
+    assert_eq!(
+        json["capabilities"]["docker"]["daemon_probe"]["state"],
+        "skipped"
+    );
+    assert_eq!(
+        json["capabilities"]["docker"]["daemon_probe"]["reason"],
+        "Docker daemon probe skipped for Apple-Container-only selected plan"
+    );
+    assert_eq!(
+        json["capabilities"]["docker"]["error"],
+        "Docker daemon probe skipped for Apple-Container-only selected plan"
+    );
+    assert_eq!(
+        json["capabilities"]["services"]["docker_services"], "not_probed",
+        "a deliberately skipped Docker daemon probe must not be reported as unavailable"
+    );
+    assert!(
+        !docker_log.exists(),
+        "selected Apple-Container-only plan must not execute Docker even when an unselected Docker service and Docker binary exist: {}",
+        docker_log.display()
+    );
+    let calls_text = std::fs::read_to_string(&container_log).expect("read container status calls");
+    let calls: Vec<_> = calls_text.lines().collect();
+    assert_eq!(
+        calls,
+        vec![
+            "builder status --format json",
+            "stats buildkit --no-stream --format json",
+            "system df --format json",
+            "system status",
+        ]
+    );
+    assert_builder_probe_never_mutates(&calls_text);
+}
+
+#[cfg(unix)]
+#[test]
+fn vat_doctor_rejects_unsupported_microvm_preset_without_docker_fallback() {
+    let _lock = builder_observation_test_lock();
+    let project = tempfile::tempdir().expect("project");
+    let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+    let container_log = fake_bin.path().join("container.log");
+    let docker_log = fake_bin.path().join("docker.log");
+    write_doctor_executable(
+        &fake_bin.path().join("container"),
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_DOCTOR_CONTAINER_LOG"
+case "$*" in
+  "builder status --format json")
+    printf '%s\n' '[]'
+    ;;
+  "system status")
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+"#,
+    );
+    write_doctor_executable(
+        &fake_bin.path().join("docker"),
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_DOCTOR_DOCKER_LOG"
+exit 91
+"#,
+    );
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+default_runner = "e2e"
+
+[network]
+egress = "open"
+
+[[services]]
+id = "firebase-microvm"
+preset = "firebase"
+runtime = "micro_vm"
+
+[[runners]]
+id = "e2e"
+requires = ["firebase-microvm"]
+cmd = ["true"]
+"#,
+    )
+    .expect("write unsupported MicroVM preset config");
+    std::fs::write(project.path().join("firebase.json"), "{}")
+        .expect("write required Firebase workspace config");
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("PATH", fake_bin.path())
+        .env("VAT_DOCTOR_CONTAINER_LOG", &container_log)
+        .env("VAT_DOCTOR_DOCKER_LOG", &docker_log)
+        .args(["doctor", "--json"])
+        .output()
+        .expect("run unsupported MicroVM preset doctor");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        !output.stdout.is_empty(),
+        "unsupported MicroVM preset doctor emitted no JSON\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
+    let checks = json["checks"].as_array().expect("doctor checks");
+    let preset = checks
+        .iter()
+        .find(|check| {
+            check["id"] == "firebase-microvm" && check["code"] == "microvm_preset_unsupported"
+        })
+        .expect("unsupported MicroVM preset check");
+    assert_eq!(preset["component"], "preset");
+    assert_eq!(preset["ok"], false);
+    let message = preset["message"]
+        .as_str()
+        .expect("unsupported preset message");
+    assert!(message.contains("no declared Apple Container OCI image route"));
+    assert!(message.contains("will not fall back to Docker"));
+    assert!(
+        !checks.iter().any(|check| check["component"] == "docker"),
+        "unsupported MicroVM preset must not fall back to Docker: {checks:?}"
+    );
+    assert!(
+        !docker_log.exists(),
+        "unsupported MicroVM preset doctor must not invoke Docker"
+    );
+    let calls = std::fs::read_to_string(&container_log).expect("read fake container calls");
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        vec!["builder status --format json", "system status"]
+    );
+    assert_builder_probe_never_mutates(&calls);
+}
+
+#[cfg(unix)]
+#[test]
+fn vat_doctor_selected_cluster_forces_a_docker_probe() {
+    let _lock = builder_observation_test_lock();
+    let project = tempfile::tempdir().expect("project");
+    let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+    let docker_log = fake_bin.path().join("docker.log");
+    write_doctor_executable(
+        &fake_bin.path().join("container"),
+        r#"#!/bin/sh
+set -eu
+[ "$#" -eq 2 ]
+[ "$1" = "system" ]
+[ "$2" = "status" ]
+"#,
+    );
+    write_doctor_executable(
+        &fake_bin.path().join("docker"),
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_DOCTOR_DOCKER_LOG"
+case "$1" in
+  context)
+    [ "${2:-}" = "show" ]
+    printf '%s\n' fake-context
+    ;;
+  version)
+    [ "${2:-}" = "--format" ]
+    printf '%s\n' 1.0
+    ;;
+  info)
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+"#,
+    );
+    write_doctor_executable(&fake_bin.path().join("kind"), "#!/bin/sh\nexit 0\n");
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+default_runner = "e2e"
+
+[network]
+egress = "open"
+
+[[services]]
+id = "image-microvm"
+image = "example.test/image:latest"
+container_port = 8080
+runtime = "micro_vm"
+
+[[services]]
+id = "local-cluster"
+cluster = "kind"
+
+[[runners]]
+id = "e2e"
+requires = ["image-microvm", "local-cluster"]
+cmd = ["true"]
+"#,
+    )
+    .expect("write cluster doctor config");
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("PATH", fake_bin.path())
+        .env("VAT_DOCTOR_DOCKER_LOG", &docker_log)
+        .args(["doctor", "--json"])
+        .output()
+        .expect("run cluster doctor");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
+    assert_eq!(json["capabilities"]["docker"]["daemon"], true);
+    assert!(
+        json["capabilities"]["docker"]["daemon_probe"].is_null(),
+        "selected cluster must use the normal Docker capability probe: {}",
+        json["capabilities"]["docker"]
+    );
+    assert_eq!(
+        json["capabilities"]["services"]["docker_services"], "available",
+        "the fake selected cluster has a reachable Docker daemon"
+    );
+    let calls = std::fs::read_to_string(&docker_log).expect("read Docker calls");
+    for expected in ["version --format {{.Server.Version}}", "info"] {
+        assert!(
+            calls.lines().any(|call| call == expected),
+            "selected cluster omitted required Docker probe {expected:?}: {calls}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn vat_doctor_microvm_status_failure_names_apple_container_remediation() {
+    let _lock = builder_observation_test_lock();
+    let project = tempfile::tempdir().expect("project");
+    let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+    let container_log = fake_bin.path().join("container.log");
+    write_doctor_executable(
+        &fake_bin.path().join("container"),
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_DOCTOR_CONTAINER_LOG"
+exit 75
+"#,
+    );
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+default_runner = "e2e"
+
+[network]
+egress = "open"
+
+[[services]]
+id = "image-microvm"
+image = "example.test/image:latest"
+container_port = 8080
+runtime = "micro_vm"
+
+[[runners]]
+id = "e2e"
+requires = ["image-microvm"]
+cmd = ["true"]
+"#,
+    )
+    .expect("write failing MicroVM doctor config");
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("PATH", fake_bin.path())
+        .env("VAT_DOCTOR_CONTAINER_LOG", &container_log)
+        .args(["doctor", "--json"])
+        .output()
+        .expect("run failing MicroVM doctor");
+
+    assert_eq!(output.status.code(), Some(1));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
+    let checks = json["checks"].as_array().expect("doctor checks");
+    let check = checks
+        .iter()
+        .find(|check| check["id"] == "image-microvm")
+        .expect("MicroVM doctor check");
+    assert_eq!(check["component"], "apple_container");
+    assert_eq!(check["code"], "apple_container_system");
+    assert_eq!(check["ok"], false);
+    let message = check["message"].as_str().expect("Apple Container message");
+    assert!(message.contains("Apple Container"));
+    assert!(message.contains("container system status"));
+    assert!(
+        !message.contains("Docker"),
+        "MicroVM remediation must not suggest Docker fallback: {message}"
+    );
+    assert!(
+        !checks.iter().any(|check| check["component"] == "docker"),
+        "failing MicroVM doctor checks must not fall back to Docker: {checks:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&container_log)
+            .expect("read container status calls")
+            .lines()
+            .collect::<Vec<_>>(),
+        vec!["builder status --format json", "system status"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn vat_doctor_retains_docker_checks_for_docker_runtime_and_auto_image() {
+    let project = tempfile::tempdir().expect("project");
+    let fake_bin = tempfile::tempdir().expect("fake runtime bin");
+    let docker_log = fake_bin.path().join("docker.log");
+    write_doctor_executable(
+        &fake_bin.path().join("docker"),
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$VAT_DOCTOR_DOCKER_LOG"
+case "$1" in
+  context)
+    [ "${2:-}" = "show" ]
+    printf '%s\n' fake-context
+    ;;
+  version)
+    [ "${2:-}" = "--format" ]
+    printf '%s\n' 1.0
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+"#,
+    );
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+default_runner = "e2e"
+
+[network]
+egress = "open"
+
+[[services]]
+id = "image-auto"
+image = "example.test/image:latest"
+container_port = 8080
+
+[[services]]
+id = "preset-docker"
+preset = "postgres"
+runtime = "docker"
+
+[[services]]
+id = "preset-auto"
+preset = "postgres"
+
+[[runners]]
+id = "e2e"
+requires = ["image-auto", "preset-docker", "preset-auto"]
+cmd = ["true"]
+"#,
+    )
+    .expect("write Docker doctor config");
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("PATH", fake_bin.path())
+        .env("VAT_DOCTOR_DOCKER_LOG", &docker_log)
+        .args(["doctor", "--json"])
+        .output()
+        .expect("run Docker doctor");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("doctor JSON");
+    let checks = json["checks"].as_array().expect("doctor checks");
+    for id in ["image-auto", "preset-docker"] {
+        let check = checks
+            .iter()
+            .find(|check| check["id"] == id && check["code"] == "docker_daemon")
+            .unwrap_or_else(|| panic!("missing Docker doctor check for {id}: {checks:?}"));
+        assert_eq!(check["component"], "docker");
+        assert_eq!(check["ok"], true);
+    }
+    let fallback = checks
+        .iter()
+        .find(|check| check["id"] == "preset-auto" && check["code"] == "preset_runtime")
+        .expect("auto preset fallback doctor check");
+    assert_eq!(fallback["component"], "preset");
+    assert_eq!(fallback["ok"], true);
+    assert!(fallback["message"]
+        .as_str()
+        .expect("auto preset fallback message")
+        .contains("Docker fallback"));
+    let calls = std::fs::read_to_string(&docker_log).expect("read Docker calls");
+    assert!(calls.lines().any(|call| call == "context show"));
+    assert!(
+        calls
+            .lines()
+            .any(|call| call.starts_with("version --format")),
+        "Docker daemon capability probe was not preserved: {calls}"
+    );
+}
+
 #[test]
 fn vat_run_plan_records_plan_evidence_and_injects_env() {
     let project = tempfile::tempdir().unwrap();
@@ -978,12 +1802,27 @@ fn llm_guide_mentions_core_agent_contract() {
         "vat diff <id>",
         "vat logs <id>",
         "vat.toml",
-        // Boundaries: vat is not a Docker replacement and never containerizes
-        // the runner, even though dependency services may be containers.
-        "not a Docker/OCI/Compose replacement",
+        // Boundaries: vat has a narrow opt-in Docker command shim, but is not
+        // a Docker Engine/general-Compose replacement, is permanently
+        // headless, and never containerizes the runner even though dependency
+        // services may be containers.
+        "not a Docker Engine/API or general-Compose replacement",
+        "It is permanently headless",
+        "does not expose a Docker Engine socket/API",
+        "vat docker install-shim",
+        "explicit host port",
+        "up -d --build",
+        "exec -T SERVICE -- COMMAND",
+        "child_exit_code",
+        "cleanup_next",
+        "VAT-owned `images`",
+        "vat k8s ephemeral image build",
+        "VAT_K8S_CACHE_DIR",
+        "vat_k8s_ephemeral_result",
+        "does not use Docker",
         "never containerized",
-        // Native-or-Docker service contract is discoverable.
-        "native or Docker",
+        // Native/Docker/explicit-Apple-Container service contract is discoverable.
+        "native, Docker, or explicit Apple Container",
         "runtime = \"docker\"",
         "external = { host",
         "owned_by_vat = false",
@@ -1001,6 +1840,15 @@ fn llm_guide_mentions_core_agent_contract() {
         assert!(
             stdout.contains(expected),
             "missing {expected:?} in:\n{stdout}"
+        );
+    }
+    for obsolete in [
+        "The shim has one strict Compose profile only",
+        "It rejects build, multiple services",
+    ] {
+        assert!(
+            !stdout.contains(obsolete),
+            "obsolete Compose guidance {obsolete:?} remains in:\n{stdout}"
         );
     }
 }

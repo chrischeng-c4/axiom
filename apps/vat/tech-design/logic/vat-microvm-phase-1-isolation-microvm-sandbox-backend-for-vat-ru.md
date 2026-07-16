@@ -21,7 +21,7 @@ capability_refs:
 id: vat-microvm-phase1-pick-logic
 entry: start
 nodes:
-  start: { kind: start, label: "vat run resolves EnvSpec isolation gpu egress microvm_image for the run" }
+  start: { kind: start, label: "vat run resolves EnvSpec isolation gpu egress microvm_image for the run or prepares an image-backed MicroVm service" }
   preflight: { kind: decision, label: "gpu_satisfied gpu isolation info checked at the three run.rs GpuRequest Required call sites before any workspace clone begins" }
   preflight_err: { kind: terminal, label: "hard Err isolation micro_vm can never satisfy gpu required no workspace clone begins AC4 first fail-closed layer" }
   isolation_kind: { kind: decision, label: "sandbox pick spec isolation branch" }
@@ -36,6 +36,9 @@ nodes:
   egress_kind: { kind: decision, label: "spec egress policy" }
   err_localhost: { kind: terminal, label: "pick returns hard Err localhost-only not enforceable guest 127.0.0.1 never reaches the host only a per-network container VM gateway IP is reachable and ordinary applications do not know to target it confirmed by the Phase 0 spike 1472" }
   construct: { kind: process, label: "construct MicroVmBackend from egress env workdir and image" }
+  service_system_gate: { kind: decision, label: "for image-backed MicroVm service preparation, bounded container system status reports ready before container run" }
+  service_system_wait: { kind: process, label: "ensure_system_started repeatedly uses the one-second stdio-closed spawn/try_wait/kill-and-reap system_up probe until its deadline; it never lets an unresponsive runtime hang startup" }
+  err_system_unavailable: { kind: terminal, label: "return elapsed-time container-unavailable error; do not auto-install or launch a service against a wedged Apple runtime" }
   effect: { kind: terminal, label: "container run resolved argv exec'd rootfs bind-mounted workdir set egress enforced via network none or left open" }
 edges:
   - { from: start, to: preflight }
@@ -52,7 +55,12 @@ edges:
   - { from: avail_check, to: egress_kind, label: "available" }
   - { from: egress_kind, to: construct, label: "open or deny" }
   - { from: egress_kind, to: err_localhost, label: "localhost-only" }
-  - { from: construct, to: effect }
+  - { from: construct, to: effect, label: "generic sandbox workload" }
+  - { from: construct, to: service_system_gate, label: "image-backed service" }
+  - { from: service_system_gate, to: service_system_wait, label: "not yet ready" }
+  - { from: service_system_gate, to: effect, label: "ready" }
+  - { from: service_system_wait, to: service_system_gate, label: "probe again before deadline" }
+  - { from: service_system_wait, to: err_system_unavailable, label: "deadline elapsed" }
 ---
 ```
 ## Schema
@@ -95,6 +103,14 @@ properties:
         type: string
         const: "pub fn available() -> bool"
         description: "Checks the `container` binary is resolvable on PATH (mirrors seatbelt::available()'s sandbox-exec check); no real container invocation, no image pull."
+      system_up_fn:
+        type: string
+        const: "pub fn system_up() -> bool"
+        description: "Runs `container system status` as a bounded probe: spawn with all stdio closed, poll try_wait for one second, kill and wait on timeout or wait failure, and return true only for a successful exit. A wedged runtime cannot bypass the caller's readiness deadline."
+      ensure_system_started_fn:
+        type: string
+        const: "pub fn ensure_system_started(timeout: Duration) -> Result<(), String>"
+        description: "Polls the bounded system_up probe until the supplied deadline. Image-backed MicroVM service preparation uses this fail-closed gate before `container run`; it returns an elapsed-time error instead of hanging or auto-installing a runtime."
 additionalProperties: true
 ```
 ## Config
@@ -124,13 +140,21 @@ commands:
       - "New flag `--microvm-image <ref>` on Cmd::Run, threaded into the three `EnvSpec { ... }` construction sites in run.rs (~163/334/518) as `microvm_image` (R7). `--isolation micro_vm` is already accepted (Isolation derives clap::ValueEnum); this flag is the only new one."
       - "`sandbox::pick(spec)` gains a fail-closed `Isolation::MicroVm` branch (R3): `GpuRequest::Required` is rejected outright; a missing `microvm_image` is rejected (vat never guesses a base image); `microvm::available()` (container CLI on PATH) is required; `EgressPolicy::Open`/`Deny` are enforced, `EgressPolicy::LocalhostOnly` is rejected with the Phase-0-confirmed gateway-IP reasoning, not a generic 'no bridge' message."
       - "GPU preflight bug fix (R4): the three existing `GpuRequest::Required` checks in run.rs (~163/334/518) now call a shared `gpu_satisfied(gpu, isolation, info)` helper that also factors in isolation mode, so `--isolation micro_vm --gpu required` is rejected before any workspace clone begins \u2014 a second, independent fail-closed layer alongside `pick()`'s own rejection (dual-defense pattern per #1300 precedent)."
+      - "For image-backed MicroVm service preparation (the Phase 3 compose path), no new CLI flag is added: `ensure_system_started` uses the bounded `container system status` probe from this backend before `container run`. A hung status process is killed/reaped and deadline expiry fails closed with container-unavailable diagnostics (R11/R12)."
       - "`--isolation none`/`--isolation seatbelt` behavior is unchanged (out of scope)."
   - name: vat capabilities --json
     behavior:
       - "The `vm` row (R5) reports real probing instead of a hardcoded stub: `implemented: true`, `available: sandbox::microvm::available()`, `gpu_native: false` (GPU passthrough is categorically impossible in an Apple Silicon microVM), `network_egress` mirrors `available` (Open/Deny enforceable, LocalhostOnly not), with a reason string naming the LocalhostOnly gap explicitly."
+      - "This remains full host discovery and executes its normal Docker daemon probe; it is not the selected-plan optimization used by vat doctor."
+      - "Phase A adds `apple_container.builder` as bounded, read-only shared-host evidence: `container builder status --format json` reports `ownership=shared_unknown` and `automatic_cleanup=false`; a parseable configuration is kept distinct from optional live `container stats` observations, while optional `container system df` is marked `global_apple_container`, not VAT-owned disk."
+      - "Builder status, stats, and disk probes may be unsupported, malformed, absent, or time out. They record advisory `state`/`probe_errors` without failing `vat capabilities`; a real live state is emitted only when the installed Apple Container CLI supports and returns it. VAT never starts, stops, deletes, or prunes shared builder/cache state."
   - name: vat doctor
     behavior:
       - "`check_network_isolation()` adds `\"vm\"` to its existing OR condition (R6), so a MicroVm-isolated run is recognized as network-isolation-capable on hosts where the `container` CLI is available, consistent with how `seatbelt` is already recognized."
+      - "Doctor scopes capability discovery to the selected RunPlan. A plan consisting only of explicit MicroVm image/preset services performs one read-only `container system status` check per invocation and projects it to every selected MicroVm service; it neither autostarts Apple Container nor falls back to Docker, even when Docker is on PATH. Unsupported MicroVm presets without a declared OCI route and MicroVm preset named volumes fail closed rather than choosing Docker."
+      - "For that Apple-Container-only selected plan, JSON maps `services.docker_services` to `not_probed` and records `docker.daemon_probe.state=skipped` with the truthful reason `Docker daemon probe skipped for Apple-Container-only selected plan`; that field is provenance for the deliberately skipped probe. `daemon=false` is not Docker-unavailable evidence because no Docker command ran. An unselected Docker service cannot affect the selected MicroVm runner; a full Docker probe maps services.docker_services to available or unavailable."
+      - "Doctor surfaces the shared-builder record only as a successful advisory check. A bounded builder-status/stats/disk timeout, unknown state, or probe error never changes Apple Container runtime success or the doctor exit result."
+      - "Doctor retains the normal Docker daemon probe whenever the selected plan has a Docker-runtime service, an Auto image service, an eligible Auto preset Docker fallback, or a cluster; a selected cluster needs its Docker backend."
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -199,6 +223,18 @@ requirements:
     kind: regression
     risk: high
     verify: commands::run::tests::gpu_satisfied_rejects_microvm_required_before_workspace_clone
+  bounded_system_status_probe_kills_hung_runtime:
+    id: R11
+    text: "A hung `container system status` child is killed and reaped within the one-second internal probe bound; it returns false rather than inheriting pipes or blocking MicroVM service readiness indefinitely."
+    kind: regression
+    risk: high
+    verify: sandbox::microvm::tests::bounded_runtime_probe_kills_a_hung_status_command
+  system_start_gate_times_out_fail_closed:
+    id: R12
+    text: "ensure_system_started returns an elapsed-time error when the bounded probe never reports a responsive container system; callers receive a clean unavailable failure rather than a hang."
+    kind: functional
+    risk: high
+    verify: sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable
 ---
 flowchart TD
     r1[R1 argv rootfs workdir shape] --> sandbox_microvm_tests_resolve_builds_rootfs_mount_and_workdir[sandbox::microvm::tests::resolve_builds_rootfs_mount_and_workdir]
@@ -211,6 +247,8 @@ flowchart TD
     r8[R8 pick rejects localhost only with gateway reasoning] --> vat_sandbox_microvm_fail_closed_localhost_only_rejected_with_gateway_reasoning[vat_sandbox_microvm_fail_closed::localhost_only_rejected_with_gateway_reasoning]
     r9[R9 pick rejects container unavailable] --> vat_sandbox_microvm_fail_closed_container_unavailable_rejected[vat_sandbox_microvm_fail_closed::container_unavailable_rejected]
     r10[R10 run preflight rejects microvm gpu required before clone] --> commands_run_tests_gpu_satisfied_rejects_microvm_required_before_workspace_clone[commands::run::tests::gpu_satisfied_rejects_microvm_required_before_workspace_clone]
+    r11[R11 bounded system status probe kills hung runtime] --> sandbox_microvm_tests_bounded_runtime_probe_kills_a_hung_status_command[sandbox::microvm::tests::bounded_runtime_probe_kills_a_hung_status_command]
+    r12[R12 system start gate times out fail closed] --> sandbox_microvm_tests_ensure_system_started_times_out_when_unavailable[sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable]
 ```
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
@@ -237,6 +275,18 @@ e2e_tests:
     assertions:
       - "AC1/R2: `vat run --isolation micro_vm --microvm-image <ref> -- <cmd>` resolves and executes a real `container run` invocation, rootfs bind-mounted at /workspace, workdir honored, env vars visible inside the guest, and `--network none` enforced under EgressPolicy::Deny. Skips cleanly (does not fail) when the `container` CLI is not installed \u2014 mirrors the existing Docker-gated test pattern."
       - "Registered in `apps/vat/tests/aw-ec.toml` alongside the fail-closed integration test so `aw ec gen --verify` / `aw health --verify-tests` pick both up as configured EC-gated test commands for this capability."
+  - id: vat-doctor-selected-plan-docker-probe
+    name: "selected-plan doctor skips Docker only for explicit Apple-Container plans"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: microvm-sandbox-backend-for-vat-run
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_toml_runner -- --nocapture"
+    assertions:
+      - "A fake explicit MicroVm image/preset plan with an unselected Docker service invokes exactly one read-only container system status probe per invocation plus bounded read-only builder advisory probes, never Docker even when Docker is on PATH, maps services.docker_services to not_probed, and emits docker.daemon_probe.state=skipped with the selected-plan reason as provenance rather than unavailable evidence; daemon=false has no unavailable meaning because no Docker command ran."
+      - "The builder advisory records shared_unknown ownership, automatic_cleanup=false, separate configuration/observed stats/global disk, and nonfatal unknown/timeout/probe errors without lifecycle mutation or a change to doctor runtime success; a real state is reported only when supported by the installed CLI."
+      - "An unsupported selected MicroVm preset without a declared OCI route fails closed without Docker fallback. A selected Docker runtime, Auto image, eligible Auto preset fallback, or cluster retains normal Docker probing; a selected cluster requires Docker. Doctor never autostarts Apple Container or changes runtime through fallback."
+      - "Recorded implementation validation: `cargo test -p vat --test vat_toml_runner -- --nocapture` passed 26/26; `cargo test -p vat --lib sandbox::microvm::tests -- --nocapture` passed 7/7."
   - id: vat-microvm-build
     name: "default + lean build compile"
     capability_id: agent-native-gpu-native-dev-containers
@@ -261,7 +311,7 @@ changes:
     action: create
     section: schema
     impl_mode: codegen
-    reason: "R2: new `MicroVmBackend` struct (egress, env: BTreeMap<String,String>, workdir, image) implementing the existing `Sandbox` trait; `resolve()` builds the `container run --rm -v <rootfs>:/workspace -w /workspace/<workdir> -e K=V... [--network none] <image> <program> <args...>` argv; `pub fn available() -> bool` checks `container` is on PATH. Mirrors `sandbox/seatbelt.rs`'s structure (struct + trait impl + embedded `#[cfg(test)]` argv-builder unit tests), which is itself codegen-owned end to end."
+    reason: "R2/R11/R12 plus Phase A: new `MicroVmBackend` struct (egress, env: BTreeMap<String,String>, workdir, image) implementing the existing `Sandbox` trait; `resolve()` builds the `container run --rm -v <rootfs>:/workspace -w /workspace/<workdir> -e K=V... [--network none] <image> <program> <args...>` argv; `pub fn available()` checks PATH. The same codegen-owned module owns a bounded `container system status` probe plus a deadline-based `ensure_system_started` gate, and read-only shared-builder advisory probes that distinguish configuration, observed stats, and host-global disk while never taking builder lifecycle ownership. Spawn/try_wait/kill/reap with null stdio bounds unresponsive Apple commands. Mirrors `sandbox/seatbelt.rs`'s structure (struct + trait impl + embedded `#[cfg(test)]` argv-builder unit tests)."
   - path: apps/vat/src/sandbox/mod.rs
     action: modify
     section: logic
@@ -276,12 +326,12 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    reason: "R5: replace the hardcoded `vm` row stub with real probing: `implemented: true`, `available: sandbox::microvm::available()`, `gpu_native: false`, `network_egress` mirroring `available`, and a reason string naming that Open/Deny are enforceable but LocalhostOnly is not yet."
+    reason: "R5 plus Phase A/selected-plan doctor support: retain full host capabilities probing with services.docker_services=available|unavailable and expose a bounded read-only shared-builder advisory with no lifecycle ownership, while Apple-Container-only doctor invocations publish services.docker_services=not_probed plus a caller-owned skipped Docker-daemon provenance reason, never treating skipped or daemon=false as unavailable."
   - path: apps/vat/src/commands/doctor.rs
     action: modify
     section: cli
     impl_mode: hand-written
-    reason: "R6: add `\"vm\"` to the existing OR condition in `check_network_isolation()` so a MicroVm-isolated run is recognized as network-isolation-capable wherever `container` is available, matching how `seatbelt` is already recognized."
+    reason: "R6 plus Phase A/P1 selected-plan preflight: recognize MicroVm egress capability, scope Docker probing to selected services, issue one read-only Apple system-status probe per invocation without autostart/fallback, report shared-builder evidence as nonblocking advisory only, preserve Docker probing for Docker/Auto/cluster selections, and keep unselected Docker services out of an explicit MicroVm runner's doctor result."
   - path: apps/vat/src/cli.rs
     action: modify
     section: cli

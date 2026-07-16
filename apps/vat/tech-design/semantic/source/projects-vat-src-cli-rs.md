@@ -16,7 +16,7 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/vat/src/cli.rs` generated from AST during Score force-regeneration standardization.
+Public API manifest for `apps/vat/src/cli.rs` generated from AST during Score force-regeneration standardization. The hand-written #1693 CLI extension adds `K8sSessionCmd::Exec { format, timeout }`: omitted timeout uses remaining lease TTL, while explicit timeout is 1..=14400 seconds and cannot exceed it. Text and JSON both dispatch a credentialed command with exact lease/backing/API/private-credential proof, owned-process-group cleanup, and private-lock ownership through cleanup; a starting/live crash marker blocks later exec/delete/cleanup fail-closed rather than claiming recovery termination. The documented `--format json` form emits one VAT-native bounded agent result. The independent-kubectl leased E2E passed 1/1 (36 filtered) in 29.97s, including strict JSON exec with `--timeout 30`, status verification, and exact delete. It also adds `K8sSessionCmd::PortForward` with nested `K8sSessionPortForwardCmd::Run { format }`, then dispatches its parsed `ActiveSessionPortForwardArgs` to `commands::k8s::session_port_forward`. Port-forward text remains unchanged; its only JSON form is `run --format json ID service/NAME PORT -- COMMAND`. That Service-only foreground path keeps the loopback and credential-free host-child boundary, shared authenticated process group, and private `CLOEXEC` operation lock through cleanup. It emits one `vat.k8s.session.port-forward.v1` result only after cleanup confirmation, with separately 64 KiB serialized-capped streams, child exit, no raw replay, and a `status --verify-api` next step. VAT-owned setup/API/tunnel/cleanup failures are masked, but opaque credential-free child output is preserved. Silent post-API and pre-spawn lease checks prevent a crossed TTL from opening a tunnel; partial reader setup reaps the direct child and completes outer cleanup before reader joining. The independent-kubectl Service-forward E2E passed 1/1 (36 filtered) in 49.57s and covers one Service-only loopback strict JSON tunnel, confirmed cleanup, and closed local ports. The port-forward host child is cooperative and non-daemonizing, not a detached-process guarantee. That filtering is not a same-UID OS sandbox or adversarial-child security boundary.
 
 ### Symbols
 
@@ -536,6 +536,37 @@ fn issue_cmd(_cmd: IssueCmd) -> Result<ExitCode> {
 
 ```yaml
 changes:
+  - path: apps/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: |
+      #1693 adds bounded vat k8s ephemeral and leased-session hierarchies,
+      including `K8sSessionCmd::Exec { format, timeout }`: omitted timeout uses
+      remaining TTL; explicit 1..=14400 seconds cannot exceed it. Text and JSON
+      both retain the private lock through owned-process-group cleanup, and a
+      starting/live crash marker blocks later lifecycle operations fail-closed.
+      JSON emits the VAT-native result; the independent-kubectl leased E2E passed
+      1/1 (36 filtered) in 29.97s with JSON `--timeout 30`, status, and delete.
+      It also includes verified local-image delivery. The opt-in local-image
+      E2E passed 1/1 (36 filtered) in 49.73s: one already-local Apple
+      `alpine:3.20` loaded into one lease, a pod ran it with
+      `imagePullPolicy=Never` and emitted its marker log, then exact session
+      cleanup completed. This is not registry-pull generality, persistence, GUI,
+      or Docker Engine/API evidence. It also includes the nested
+      K8sSessionCmd::PortForward / K8sSessionPortForwardCmd::Run { format }
+      dispatch into commands::k8s::session_port_forward. Text remains unchanged;
+      only `run --format json ID service/NAME PORT -- COMMAND` emits one
+      post-cleanup `vat.k8s.session.port-forward.v1` document with bounded
+      separate streams, child exit, no raw replay, and status-verify next.
+      The Service-only foreground tunnel shares the authenticated kubectl process
+      group with one credential-free cooperative, non-daemonizing child; it holds
+      the private CLOEXEC lock through cleanup, masks VAT-owned failures, and
+      silently rejects a lease that crosses its post-API/pre-spawn checks. Its
+      recovery behavior is fail-closed, not a general process-manager or
+      security-sandbox API. The independent-kubectl Service-forward E2E passed
+      1/1 (36 filtered) in 49.57s with one Service-only loopback strict JSON
+      tunnel, confirmed cleanup, and closed local ports.
   - path: apps/vat/src/cli.rs
     action: modify
     section: rust-source-unit

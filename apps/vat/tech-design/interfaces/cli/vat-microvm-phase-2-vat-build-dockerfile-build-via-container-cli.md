@@ -1,6 +1,6 @@
 ---
 id: vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli
-summary: Add `vat build`, a CLI command wrapping Apple's `container build` (real BuildKit, confirmed by the Phase 0 spike #1472) to build a tagged local OCI image from an existing, unmodified Dockerfile, plus a reusable in-process `build_image()` entry point Phase 3's `vat compose` will call directly. Phase 2 of the microVM epic (#1471); Phase 1 (#1474, merged) added `Isolation::MicroVm` for `vat run`.
+summary: Add `vat build`, a CLI command wrapping Apple's `container build` (real BuildKit, confirmed by the Phase 0 spike #1472) to build a tagged local OCI image from an existing, unmodified Dockerfile. #1529 factors its in-process build primitive into a runtime-selected image-store contract for `vat compose`: `auto`, `native`, and `docker` build into Docker; `microvm` builds into Apple Container. The public `vat build` command remains Apple-Container-backed. Phase 2 of the microVM epic (#1471); Phase 1 (#1474, merged) added `Isolation::MicroVm` for `vat run`.
 fill_sections: [logic, schema, config, cli, unit-test, e2e-test, changes]
 capability_refs:
   - id: agent-native-gpu-native-dev-containers
@@ -8,7 +8,7 @@ capability_refs:
     gap: vat-build-dockerfile-build-via-container-cli
     claim: vat-build-dockerfile-build-via-container-cli
     coverage: full
-    rationale: "Adds commands/build.rs (Args/BuildReport, exec(), build_image(), container_build_command(), ensure_microvm_available()), the Cmd::Build CLI variant, the additive sandbox/microvm.rs system_up()/ensure_system_started() probes, and the serde_yaml unconditional-dependency promotion — the complete Phase 2 design for the new vat build work root."
+    rationale: "Adds commands/build.rs (Args/BuildReport, exec(), build_image(), container_build_command(), ensure_microvm_available()), the Cmd::Build CLI variant, the additive sandbox/microvm.rs system_up()/ensure_system_started() probes, and the serde_yaml unconditional-dependency promotion. #1529 adds the private ImageBuilder mapping, Docker argv/probe, and build_image_with_builder() path that lets compose build and later run from one local image store."
 ---
 
 # vat MicroVm Phase 2: vat build (Dockerfile build via container CLI)
@@ -25,15 +25,15 @@ nodes:
   resolve_paths: { kind: process, label: "resolve file default Dockerfile and context default current directory to absolute paths" }
   dockerfile_check: { kind: decision, label: "dockerfile path exists on disk" }
   err_missing_dockerfile: { kind: terminal, label: "hard Err dockerfile not found before any container CLI invocation AC3 no subprocess spawned" }
-  avail_check: { kind: decision, label: "ensure_microvm_available container binary on PATH via microvm available and system responsive via microvm system_up or bounded microvm ensure_system_started poll mirrors run.rs ensure_docker_available" }
+  avail_check: { kind: decision, label: "standalone vat build resolves MicroVm and proves Apple's container CLI is available and responsive; compose instead resolves its requested image-service runtime through ImageBuilder before materialization" }
   err_unavailable: { kind: terminal, label: "hard Err container CLI not installed or system not running install it and run container system start" }
-  argv_build: { kind: process, label: "container_build_command builds argv container build -f dockerfile -t tag --build-arg K=V repeated context exact order per R2" }
+  argv_build: { kind: process, label: "build_command selects container build for MicroVm or docker build for Docker; both preserve -f, -t, repeated --build-arg K=V, then context in caller order" }
   mode_check: { kind: decision, label: "json flag on Args" }
-  human_run: { kind: process, label: "exec spawns the container_build_command argv directly with inherited stdio so live BuildKit layer progress streams to the terminal in real time" }
+  human_run: { kind: process, label: "exec spawns the standalone MicroVm/container argv directly with inherited stdio so live BuildKit layer progress streams to the terminal in real time" }
   human_result: { kind: decision, label: "child process exit status success" }
   human_err: { kind: terminal, label: "failure already visible in the streamed output exec returns a non-zero ExitCode no BuildReport constructed" }
   human_ok: { kind: terminal, label: "print a one-line tag and elapsed-time summary exec returns ExitCode SUCCESS" }
-  json_run: { kind: process, label: "exec calls build_image the reusable in-process entry point Phase 3 compose will call directly which spawns container_build_command argv with captured stdout and stderr internally" }
+  json_run: { kind: process, label: "exec calls standalone build_image; compose separately calls resolve_image_builder plus build_image_with_builder so its captured build enters the same store its service will use" }
   json_result: { kind: decision, label: "build_image result" }
   json_err: { kind: terminal, label: "propagate the Err as a structured json error object exec returns a non-zero ExitCode" }
   json_ok: { kind: terminal, label: "print only the structured BuildReport as json the captured build log is never echoed exec returns ExitCode SUCCESS" }
@@ -69,13 +69,25 @@ properties:
     description: "New apps/vat/src/commands/build.rs struct Args: file: Option<PathBuf> (defaults to `Dockerfile` inside the resolved context dir), context: Option<PathBuf> (defaults to the current directory), tag: Option<String> (defaults to `<context-dir-basename>:latest`, sanitized to a valid OCI reference — lowercased, non [a-z0-9._-] runs collapsed to `-` — resolved once in exec() before any subprocess is spawned; build_image() itself never guesses a tag, it always receives a concrete &str), build_args: Vec<(String,String)> (one pair per repeated --build-arg K=V flag, parsed via split_once('='), CLI-supplied order preserved — no BTreeMap reordering needed here since the input is already a deterministic Vec, unlike Phase 1's EnvSpec.env map), json: bool."
   build_report_struct:
     type: object
-    description: "New apps/vat/src/commands/build.rs struct BuildReport (derives serde::Serialize): tag: String, dockerfile: String (resolved absolute path), context: String (resolved absolute path), build_args: BTreeMap<String,String> (sorted for deterministic JSON field ordering in the report, independent of the argv-ordering rule above), duration_ms: u64. Constructed only on a successful build — build_image()'s Result<BuildReport> Err variant covers every failure path (missing Dockerfile, container CLI/system unavailable, nonzero container build exit); there is no success:false variant."
+    description: "New apps/vat/src/commands/build.rs struct BuildReport (derives serde::Serialize): tag: String, dockerfile: String (resolved absolute path), context: String (resolved absolute path), build_args: BTreeMap<String,String> (sorted for deterministic JSON field ordering in the report, independent of the argv-ordering rule above), duration_ms: u64. Constructed only on a successful build — the selected builder's Result<BuildReport> Err variant covers every failure path (missing Dockerfile, unavailable store, nonzero build exit); there is no success:false variant."
   container_build_command_fn:
     type: object
     description: "New apps/vat/src/commands/build.rs fn container_build_command(dockerfile: &Path, tag: &str, build_args: &[(String,String)], context: &Path) -> Vec<String>. Pure, deterministic argv builder (no subprocess, no I/O) producing exactly: [\"container\", \"build\", \"-f\", <dockerfile>, \"-t\", <tag>, \"--build-arg\", \"K=V\", ... one --build-arg pair per entry in the given slice order ..., <context>] (R2), matching the real invocation Phase 0 verified (`container build -f \"$WORKDIR/Dockerfile\" -t vat-spike-test:latest \"$WORKDIR\"`). Unlike sandbox/microvm.rs's resolve() (which returns a (program, argv) tuple), this fn returns the program name (\"container\") as argv[0] itself."
+  image_builder_mapping:
+    type: object
+    description: "apps/vat/src/commands/build.rs ImageBuilder maps ServiceRuntime::Auto, ::Native, and ::Docker to Docker, and ::MicroVm to Apple Container. resolve_image_builder(runtime) performs this mapping and proves the chosen store is usable before compose may build or materialize a generated vat.toml. The mapping intentionally mirrors image-service dispatch so an image cannot be built in one local store and started from another."
   build_image_fn:
     type: object
-    description: "New apps/vat/src/commands/build.rs fn build_image(context: &Path, dockerfile: &Path, tag: &str, build_args: &[(String,String)]) -> Result<BuildReport> — the in-process entry point Phase 3's `vat compose` will call directly for compose `build:` keys (not a shell-out to the vat binary). Validates the dockerfile path exists (AC3, no subprocess on failure), calls ensure_microvm_available(), builds argv via container_build_command(), spawns `container` with captured stdout/stderr (never inherited — the always-captured behavior a reusable in-process caller like compose needs), waits for exit, and returns Err on a nonzero exit or Ok(BuildReport) on success."
+    description: "apps/vat/src/commands/build.rs fn build_image(context, dockerfile, tag, build_args) -> Result<BuildReport> remains the in-process Apple-Container entry point for the public `vat build` surface. It resolves MicroVm and delegates to build_image_with_builder(), preserving Phase 2's captured-output behavior."
+  build_image_with_builder_fn:
+    type: object
+    description: "apps/vat/src/commands/build.rs fn build_image_with_builder(builder, context, dockerfile, tag, build_args) -> Result<BuildReport> is compose's in-process primitive. It revalidates the Dockerfile, invokes the already-preflighted Docker or Apple Container argv with captured stdout/stderr, and returns the concrete tag/path/args report. Compose never shells out to the vat binary."
+  docker_build_command_fn:
+    type: object
+    description: "Private docker_build_command() mirrors container_build_command() exactly except argv[0] is `docker`. Docker and Apple Container have independent local image stores, so the identical flag shape is not permission to substitute one command for the other."
+  ensure_docker_builder_available_fn:
+    type: object
+    description: "Private ensure_docker_builder_available() runs a bounded two-second `docker info` probe. Missing Docker, a nonzero probe, or a timeout is a fail-closed compose-import error with explicit remediation; import must not hang before materialization."
   ensure_microvm_available_fn:
     type: object
     description: "New apps/vat/src/commands/build.rs fn ensure_microvm_available() -> Result<()>, mirroring run.rs's ensure_docker_available: requires sandbox::microvm::available() (container binary on PATH); if sandbox::microvm::system_up() is not immediately true, waits via sandbox::microvm::ensure_system_started(<bounded timeout>) before failing. Fail-closed and clean — never auto-installs the container CLI, never silently proceeds without a responsive system."
@@ -134,12 +146,12 @@ commands:
       - "--context defaults to the current working directory when omitted; both --file and --context are resolved to absolute paths before any other step."
       - "--tag defaults to `<context-dir-basename>:latest` (sanitized to a valid OCI reference: lowercased, non [a-z0-9._-] runs collapsed to `-`) when omitted; this default is resolved once in exec() — build_image() itself always receives a concrete tag: &str and never guesses."
       - "--build-arg K=V may be repeated; each occurrence parses into a (String,String) pair via split_once('='); CLI-supplied order is preserved into the argv builder (no reordering)."
-      - "exec() calls ensure_microvm_available() before anything else (fail-closed, mirrors run.rs's ensure_docker_available for `vat run`): requires the `container` binary on PATH and a responsive system (system_up(), or a bounded ensure_system_started() wait)."
-      - "Human mode (json=false): exec() spawns the container_build_command() argv directly with inherited stdio, so live BuildKit layer/cache progress streams to the terminal in real time (R3); on success prints a one-line tag + elapsed-time summary."
+      - "The public `vat build` surface resolves ServiceRuntime::MicroVm and calls resolve_image_builder() before execution (fail-closed): it requires the `container` binary on PATH and a responsive system (system_up(), or a bounded ensure_system_started() wait)."
+      - "Human mode (json=false): exec() spawns the selected standalone Apple-Container argv directly with inherited stdio, so live BuildKit layer/cache progress streams to the terminal in real time (R3); on success prints a one-line tag + elapsed-time summary."
       - "JSON mode (json=true): exec() calls build_image() (captured stdout/stderr, never echoed) and prints only the structured BuildReport as JSON on success; this is an intentional divergence from gc.rs's compute-then-report pattern because build progress has real value and no other vat command proxies a long-running streamed subprocess today (R3)."
       - "AC5: vat build never edits, lints, or otherwise mutates the Dockerfile it is given — it only reads the path and passes it to `container build -f`; works unmodified against any existing repo Dockerfile."
-      - "vat build is container-only: it does not touch Docker-backed ServiceRuntime::Docker, and it does not alter Isolation::MicroVm's resolve() argv shape or pick()'s fail-closed branch (Phase 1, merged, untouched)."
-      - "Out of scope for this command: compose YAML parsing / `vat compose` (Phase 3, will call build_image() in-process), and registry push/pull (not part of this rollout)."
+      - "The public command remains Apple-Container-backed. #1529 adds a private compose-only Docker builder for ServiceRuntime::Auto|Native|Docker and a private Apple-Container builder for ServiceRuntime::MicroVm; it does not alter Isolation::MicroVm's resolve() argv shape or pick()'s fail-closed branch."
+      - "Out of scope for this command: compose YAML parsing and registry push/pull. Compose owns canonical source-relative path resolution, tags, args, and its import transaction; it calls the selected in-process primitive only after that contract is established."
   - name: "vat run / vat capabilities / vat doctor (unaffected)"
     usage: "(no change)"
     behavior:
@@ -170,11 +182,25 @@ requirements:
     kind: regression
     risk: medium
     verify: sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable
+  runtime_store_mapping:
+    id: "#1529"
+    text: "image_builder_for_runtime maps Auto, Native, and Docker to ImageBuilder::Docker and MicroVm to ImageBuilder::MicroVm, matching image-service runtime dispatch; Docker and Apple Container builds therefore cannot cross local image stores."
+    kind: regression
+    risk: high
+    verify: commands::build::tests::image_builder_resolution_matches_image_service_runtime_dispatch
+  docker_argv_exact_shape:
+    id: "#1529"
+    text: "docker_build_command preserves the same deterministic -f/-t/repeated --build-arg/context shape as container_build_command while selecting Docker as argv[0]."
+    kind: functional
+    risk: medium
+    verify: commands::build::tests::docker_build_command_shape
 ---
 flowchart TD
     r2[R2 argv exact shape] --> commands_build_tests_container_build_command_shape[commands::build::tests::container_build_command_shape]
     ac3[AC3 missing dockerfile clean error] --> vat_build_build_fails_missing_dockerfile[vat_build::build_fails_missing_dockerfile]
     r4[R4 system started bounded timeout] --> sandbox_microvm_tests_ensure_system_started_times_out_when_unavailable[sandbox::microvm::tests::ensure_system_started_times_out_when_unavailable]
+    runtime_store_mapping[#1529 runtime store mapping] --> commands_build_tests_image_builder_resolution_matches_image_service_runtime_dispatch[commands::build::tests::image_builder_resolution_matches_image_service_runtime_dispatch]
+    docker_argv_exact_shape[#1529 docker argv shape] --> commands_build_tests_docker_build_command_shape[commands::build::tests::docker_build_command_shape]
 ```
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
@@ -212,7 +238,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "R1-R4: new `Args`/`BuildReport` structs, `exec()`, `build_image()`, `container_build_command()`, and `ensure_microvm_available()`. `container_build_command()` is a mechanical argv builder mirroring `sandbox/microvm.rs`'s `resolve()` (itself codegen-owned), and `ensure_microvm_available()` structurally mirrors `run.rs`'s `ensure_docker_available`; but `exec()`'s R3 divergence — streaming build output live (inherited stdio) in human mode vs. capturing output and returning only the structured `BuildReport` in JSON mode — is a genuinely new pattern (no other vat command proxies a long-running streamed subprocess today), so the whole file is hand-authored this WI (missing-generator:cli:streamed-subprocess-dual-mode, tracker #1479)."
+    reason: "R1-R4: new `Args`/`BuildReport` structs, `exec()`, `build_image()`, `container_build_command()`, and `ensure_microvm_available()`. #1529 adds ImageBuilder, resolve_image_builder(), build_image_with_builder(), Docker argv generation, and a bounded Docker preflight so compose builds into exactly the store selected by its later image-service runtime. `container_build_command()` is a mechanical argv builder mirroring `sandbox/microvm.rs`'s `resolve()` (itself codegen-owned), and `ensure_microvm_available()` structurally mirrors `run.rs`'s `ensure_docker_available`; but `exec()`'s R3 divergence — streaming build output live (inherited stdio) in human mode vs. capturing output and returning only the structured `BuildReport` in JSON mode — is a genuinely new pattern (no other vat command proxies a long-running streamed subprocess today), so the whole file is hand-authored this WI (missing-generator:cli:streamed-subprocess-dual-mode, tracker #1479)."
   - path: apps/vat/src/commands/mod.rs
     action: modify
     section: cli

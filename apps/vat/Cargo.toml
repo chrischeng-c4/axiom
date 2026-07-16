@@ -45,6 +45,10 @@ url = { workspace = true }
 dirs = "5"
 toml = "0.8"
 libc = "0.2"
+signal-hook = "0.3"
+getrandom = "0.3"
+blake3 = "1"
+tempfile = "3"
 
 # Shared agent-facing CLI commands (llm / upgrade / issue); offline paths build
 # without features, the `online` HTTPS path is pulled by self-update/issue.
@@ -78,7 +82,6 @@ tonic-build = "0.12"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
-tempfile = "3"
 tokio = { workspace = true }
 tonic = "0.12"
 tokio-stream = "0.1"

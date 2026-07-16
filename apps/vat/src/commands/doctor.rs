@@ -16,6 +16,11 @@ use crate::commands::plan::{self, PlanTarget, RunPlan};
 use crate::config::{self, ServiceConfig, ServicePreset, ServiceRuntime};
 use crate::lumen_release;
 
+const APPLE_CONTAINER_ONLY_DOCKER_PROBE_SKIP: &str =
+    "Docker daemon probe skipped for Apple-Container-only selected plan";
+const DOCKER_FREE_DOCKER_PROBE_SKIP: &str =
+    "Docker daemon probe skipped because selected plan has no Docker runtime";
+
 #[derive(Debug, Serialize)]
 struct DoctorReport {
     ok: bool,
@@ -33,10 +38,22 @@ struct DoctorCheck {
     message: String,
 }
 
+/// One doctor invocation probes Apple's runtime once, then projects that
+/// read-only result onto each selected MicroVM service. This keeps a hung
+/// runtime bounded to one probe rather than one timeout per service.
+#[derive(Debug, Clone)]
+struct AppleContainerRuntimeProbe {
+    ok: bool,
+    message: String,
+}
+
 pub fn exec(target: PlanTarget, json: bool) -> Result<ExitCode> {
     let plan = plan::build(target)?;
-    let capabilities = capabilities::report();
     let cfg = config::load_file(Path::new(&plan.config.path))?;
+    let capabilities = match selected_plan_docker_probe_skip_reason(&cfg, &plan) {
+        Some(reason) => capabilities::report_without_docker_daemon_probe(reason),
+        None => capabilities::report(),
+    };
     let checks = checks_for(&cfg, &plan, &capabilities);
     let ok = checks.iter().all(|check| check.ok);
     let report = DoctorReport {
@@ -72,6 +89,11 @@ fn checks_for(
         format!("workspace base exists: {}", plan.workspace.base),
     );
     check_network_isolation(&mut checks, plan, capabilities);
+    let needs_apple_container_runtime = plan.services.iter().any(|planned| {
+        cfg.service(&planned.id)
+            .is_ok_and(service_uses_apple_container_runtime)
+    });
+    let apple_container_runtime = needs_apple_container_runtime.then(apple_container_runtime_probe);
     for service in &plan.services {
         let Ok(cfg_service) = cfg.service(&service.id) else {
             push_check(
@@ -85,9 +107,70 @@ fn checks_for(
             continue;
         };
         check_service_files(&mut checks, cfg, cfg_service);
-        check_service_host(&mut checks, cfg_service, capabilities);
+        check_service_host(
+            &mut checks,
+            cfg_service,
+            capabilities,
+            apple_container_runtime.as_ref(),
+        );
     }
     checks
+}
+
+/// Docker is probed only when the selected plan can use it. Looking at
+/// `plan.services` rather than every service in vat.toml keeps an unrelated
+/// Docker service from breaking a deliberate Apple-Container-only invocation.
+/// A cluster is intentionally conservative: `cluster::resolve_backend` itself
+/// executes `docker info`, so selected clusters must take the normal path.
+fn selected_plan_docker_probe_skip_reason(
+    cfg: &config::VatConfig,
+    plan: &RunPlan,
+) -> Option<&'static str> {
+    if selected_plan_requires_docker_probe(cfg, plan) {
+        return None;
+    }
+    if !plan.services.is_empty()
+        && plan.services.iter().all(|planned| {
+            cfg.service(&planned.id).is_ok_and(|service| {
+                matches!(service.runtime, ServiceRuntime::MicroVm)
+                    && (service.image.is_some() || service.preset.is_some())
+            })
+        })
+    {
+        Some(APPLE_CONTAINER_ONLY_DOCKER_PROBE_SKIP)
+    } else {
+        Some(DOCKER_FREE_DOCKER_PROBE_SKIP)
+    }
+}
+
+fn selected_plan_requires_docker_probe(cfg: &config::VatConfig, plan: &RunPlan) -> bool {
+    plan.services.iter().any(|planned| {
+        cfg.service(&planned.id)
+            .map(service_requires_docker_probe)
+            // A malformed plan/config relationship must never cause a false
+            // no-Docker claim.
+            .unwrap_or(true)
+    })
+}
+
+fn service_requires_docker_probe(service: &ServiceConfig) -> bool {
+    if service.cluster.is_some() {
+        return true;
+    }
+    if service.image.is_some() {
+        return service.runtime != ServiceRuntime::MicroVm;
+    }
+    let Some(preset) = service.preset else {
+        return matches!(service.runtime, ServiceRuntime::Docker);
+    };
+    match service.runtime {
+        ServiceRuntime::Docker => true,
+        // Auto may select Docker as its fallback except for VAT's built-in
+        // emulators and Firebase-family presets, which deliberately do not
+        // offer a Docker fallback.
+        ServiceRuntime::Auto => !preset.is_builtin() && !firebase_family(preset),
+        ServiceRuntime::Native | ServiceRuntime::MicroVm => false,
+    }
 }
 
 fn check_network_isolation(
@@ -147,6 +230,7 @@ fn check_service_host(
     checks: &mut Vec<DoctorCheck>,
     service: &ServiceConfig,
     capabilities: &CapabilitiesReport,
+    apple_container_runtime: Option<&AppleContainerRuntimeProbe>,
 ) {
     if let Some(external) = &service.external {
         push_check(
@@ -159,6 +243,16 @@ fn check_service_host(
                 "external endpoint reachable: {}:{}",
                 external.host, external.port
             ),
+        );
+    } else if service_uses_apple_container_runtime(service) {
+        let runtime = apple_container_runtime.expect(
+            "selected MicroVM service must have one precomputed Apple Container runtime probe",
+        );
+        check_apple_container_runtime(checks, service, runtime);
+        check_apple_container_builder_advisory(
+            checks,
+            service,
+            &capabilities.apple_container.builder,
         );
     } else if service.image.is_some() || matches!(service.runtime, ServiceRuntime::Docker) {
         push_check(
@@ -238,7 +332,33 @@ fn check_preset(
 
     match service.runtime {
         ServiceRuntime::Docker => {}
-        ServiceRuntime::MicroVm => {}
+        ServiceRuntime::MicroVm => {
+            if !crate::commands::run::preset_has_microvm_image_route(preset) {
+                push_check(
+                    checks,
+                    "preset",
+                    &service.id,
+                    false,
+                    "microvm_preset_unsupported",
+                    format!(
+                        "preset `{}` has no declared Apple Container OCI image route for runtime `micro_vm`; VAT will not fall back to Docker",
+                        service_preset_name(preset)
+                    ),
+                );
+            } else if !service.volumes.is_empty() {
+                push_check(
+                    checks,
+                    "preset",
+                    &service.id,
+                    false,
+                    "microvm_preset_volumes_unsupported",
+                    format!(
+                        "preset `{}` with runtime `micro_vm` and named volumes is unsupported until VAT proves its Apple Container volume ownership/cleanup contract; VAT will not fall back to Docker",
+                        service_preset_name(preset)
+                    ),
+                );
+            }
+        }
         ServiceRuntime::Native => {
             for binary in required_binaries(preset) {
                 check_binary(checks, "preset", &service.id, binary);
@@ -283,6 +403,92 @@ fn check_preset(
     }
 }
 // </HANDWRITE>
+
+fn service_uses_apple_container_runtime(service: &ServiceConfig) -> bool {
+    service.external.is_none()
+        && matches!(service.runtime, ServiceRuntime::MicroVm)
+        && (service.image.is_some() || service.preset.is_some())
+}
+
+/// Read-only preflight for an explicit Apple Container (MicroVM) service.
+/// Never starts the system or falls back to Docker: `vat doctor` only reports
+/// whether `container system status` is already usable once per invocation.
+fn apple_container_runtime_probe() -> AppleContainerRuntimeProbe {
+    let (ok, message) = if !crate::sandbox::microvm::available() {
+        (
+            false,
+            "Apple Container CLI `container` is not on PATH; install it, then run `container system status`."
+                .to_string(),
+        )
+    } else if !crate::sandbox::microvm::system_up() {
+        (
+            false,
+            "Apple Container `container system status` did not succeed; start or repair Apple Container, then retry `container system status`."
+                .to_string(),
+        )
+    } else {
+        (
+            true,
+            "Apple Container `container system status` succeeded.".to_string(),
+        )
+    };
+    AppleContainerRuntimeProbe { ok, message }
+}
+
+fn check_apple_container_runtime(
+    checks: &mut Vec<DoctorCheck>,
+    service: &ServiceConfig,
+    runtime: &AppleContainerRuntimeProbe,
+) {
+    push_check(
+        checks,
+        "apple_container",
+        &service.id,
+        runtime.ok,
+        "apple_container_system",
+        runtime.message.clone(),
+    );
+}
+
+/// A shared builder is useful host evidence but never a readiness gate. Apple
+/// Container does not expose VAT/project ownership, and the bounded capability
+/// probes may time out independently of a healthy MicroVM runtime.
+fn check_apple_container_builder_advisory(
+    checks: &mut Vec<DoctorCheck>,
+    service: &ServiceConfig,
+    advisory: &crate::sandbox::microvm::AppleContainerBuilderAdvisory,
+) {
+    let mut message = format!(
+        "Apple Container shared builder advisory: state={} ownership={} automatic_cleanup={}",
+        advisory.state, advisory.ownership, advisory.automatic_cleanup
+    );
+    if let Some(configuration) = &advisory.configuration {
+        message.push_str(&format!(" configuration.id={}", configuration.id));
+    }
+    if let Some(stats) = &advisory.observed_stats {
+        if let Some(memory_usage_bytes) = stats.memory_usage_bytes {
+            message.push_str(&format!(" observed_memory_bytes={memory_usage_bytes}"));
+        }
+    }
+    if !advisory.probe_errors.is_empty() {
+        let probes = advisory
+            .probe_errors
+            .iter()
+            .map(|error| error.probe.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        message.push_str(&format!(" unavailable_probes={probes}"));
+    }
+    message.push_str("; VAT does not start, stop, delete, or prune shared builder resources.");
+    push_check(
+        checks,
+        "apple_container",
+        &service.id,
+        true,
+        "apple_container_builder_shared",
+        message,
+    );
+}
 
 fn check_binary(checks: &mut Vec<DoctorCheck>, component: &str, id: &str, binary: &str) {
     push_check(

@@ -18,6 +18,7 @@ pub struct CapabilitiesReport {
     pub host: HostInfo,
     pub workspace: WorkspaceCapabilities,
     pub isolation: Vec<IsolationCapability>,
+    pub apple_container: AppleContainerCapability,
     pub docker: DockerCapability,
     pub services: ServiceCapabilities,
 }
@@ -51,6 +52,11 @@ pub struct IsolationCapability {
 pub struct DockerCapability {
     pub cli: bool,
     pub daemon: bool,
+    /// Present only when this caller deliberately did not execute a Docker
+    /// daemon probe. `cli` remains a PATH observation; `daemon=false` is not
+    /// evidence that a daemon was unavailable in this state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daemon_probe: Option<DockerDaemonProbe>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,12 +67,70 @@ pub struct DockerCapability {
     pub error: Option<String>,
 }
 
+/// Apple Container is the headless MicroVM backend. Its BuildKit instance is
+/// singleton/shared host state, so the nested builder record is observation
+/// only and never grants VAT lifecycle ownership.
+#[derive(Debug, Clone, Serialize)]
+pub struct AppleContainerCapability {
+    pub cli: bool,
+    pub builder: sandbox::microvm::AppleContainerBuilderAdvisory,
+}
+
+/// Explicit evidence that a caller intentionally omitted the Docker daemon
+/// probe rather than inferring Docker is unavailable.
+#[derive(Debug, Clone, Serialize)]
+pub struct DockerDaemonProbe {
+    pub state: DockerDaemonProbeState,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DockerDaemonProbeState {
+    Skipped,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ServiceCapabilities {
     pub builtin_emulators: Vec<String>,
     pub external_attach: bool,
-    pub docker_services: bool,
+    /// Docker-backed service availability is distinct from the Docker daemon
+    /// boolean: selected-plan callers can intentionally omit the daemon probe.
+    /// `not_probed` means no availability conclusion was made.
+    pub docker_services: DockerServiceAvailability,
     pub native_preset_services: bool,
+}
+
+/// Agent-facing availability of Docker-backed service presets. This must not
+/// collapse an intentionally skipped daemon probe into an unavailable claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DockerServiceAvailability {
+    Available,
+    Unavailable,
+    NotProbed,
+}
+
+impl DockerServiceAvailability {
+    fn from_docker_capability(docker: &DockerCapability) -> Self {
+        // Provenance wins even for an internally inconsistent report: an
+        // explicit skipped probe cannot be evidence that a daemon is usable.
+        if docker.daemon_probe.is_some() {
+            Self::NotProbed
+        } else if docker.daemon {
+            Self::Available
+        } else {
+            Self::Unavailable
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+            Self::NotProbed => "not_probed",
+        }
+    }
 }
 
 pub fn exec(json: bool) -> Result<ExitCode> {
@@ -80,7 +144,19 @@ pub fn exec(json: bool) -> Result<ExitCode> {
 }
 
 pub fn report() -> CapabilitiesReport {
-    let docker = docker_capability();
+    report_with_docker(docker_capability())
+}
+
+/// Build the same host capability report without spawning Docker. This is for
+/// a selected plan whose runtime surface is already proven not to need Docker;
+/// the returned Docker section explicitly records the caller-supplied reason
+/// rather than claiming Docker is absent.
+pub fn report_without_docker_daemon_probe(reason: impl Into<String>) -> CapabilitiesReport {
+    report_with_docker(docker_capability_probe_skipped(reason.into()))
+}
+
+fn report_with_docker(docker: DockerCapability) -> CapabilitiesReport {
+    let apple_container = apple_container_capability();
     CapabilitiesReport {
         host: HostInfo {
             os: std::env::consts::OS.to_string(),
@@ -88,6 +164,7 @@ pub fn report() -> CapabilitiesReport {
         },
         workspace: workspace_capabilities(),
         isolation: isolation_capabilities(),
+        apple_container,
         services: ServiceCapabilities {
             builtin_emulators: vec![
                 "gcloud-pubsub".to_string(),
@@ -100,10 +177,17 @@ pub fn report() -> CapabilitiesReport {
                 "openapi".to_string(),
             ],
             external_attach: true,
-            docker_services: docker.daemon,
+            docker_services: DockerServiceAvailability::from_docker_capability(&docker),
             native_preset_services: true,
         },
         docker,
+    }
+}
+
+fn apple_container_capability() -> AppleContainerCapability {
+    AppleContainerCapability {
+        cli: sandbox::microvm::available(),
+        builder: sandbox::microvm::builder_advisory(),
     }
 }
 
@@ -212,6 +296,7 @@ fn docker_capability() -> DockerCapability {
         return DockerCapability {
             cli: false,
             daemon: false,
+            daemon_probe: None,
             context: None,
             provider: None,
             server_version: None,
@@ -231,6 +316,7 @@ fn docker_capability() -> DockerCapability {
         Ok(version) => DockerCapability {
             cli,
             daemon: true,
+            daemon_probe: None,
             context,
             provider,
             server_version: if version.is_empty() {
@@ -243,11 +329,27 @@ fn docker_capability() -> DockerCapability {
         Err(error) => DockerCapability {
             cli,
             daemon: false,
+            daemon_probe: None,
             context,
             provider,
             server_version: None,
             error: Some(error),
         },
+    }
+}
+
+fn docker_capability_probe_skipped(reason: String) -> DockerCapability {
+    DockerCapability {
+        cli: which("docker").is_some(),
+        daemon: false,
+        daemon_probe: Some(DockerDaemonProbe {
+            state: DockerDaemonProbeState::Skipped,
+            reason: reason.clone(),
+        }),
+        context: None,
+        provider: None,
+        server_version: None,
+        error: Some(reason),
     }
 }
 
@@ -337,10 +439,59 @@ fn print_human(report: &CapabilitiesReport) {
         report.docker.context.as_deref().unwrap_or("unknown")
     );
     println!(
+        "apple_container cli={} builder_state={} ownership={} automatic_cleanup={}",
+        report.apple_container.cli,
+        report.apple_container.builder.state,
+        report.apple_container.builder.ownership,
+        report.apple_container.builder.automatic_cleanup,
+    );
+    println!(
         "services builtin_emulators={} external_attach={} docker_services={}",
         report.services.builtin_emulators.join(","),
         report.services.external_attach,
-        report.services.docker_services
+        report.services.docker_services.as_str()
     );
 }
 // CODEGEN-END
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DockerCapability, DockerDaemonProbe, DockerDaemonProbeState, DockerServiceAvailability,
+    };
+
+    fn docker(daemon: bool, daemon_probe: Option<DockerDaemonProbe>) -> DockerCapability {
+        DockerCapability {
+            cli: true,
+            daemon,
+            daemon_probe,
+            context: None,
+            provider: None,
+            server_version: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn docker_service_availability_keeps_skipped_probe_nonconclusive() {
+        assert_eq!(
+            DockerServiceAvailability::from_docker_capability(&docker(true, None)),
+            DockerServiceAvailability::Available
+        );
+        assert_eq!(
+            DockerServiceAvailability::from_docker_capability(&docker(false, None)),
+            DockerServiceAvailability::Unavailable
+        );
+        assert_eq!(
+            DockerServiceAvailability::from_docker_capability(&docker(
+                true,
+                Some(DockerDaemonProbe {
+                    state: DockerDaemonProbeState::Skipped,
+                    reason: "test-only skipped probe".to_string(),
+                }),
+            )),
+            DockerServiceAvailability::NotProbed,
+            "probe provenance must win over an inconsistent daemon boolean"
+        );
+    }
+}

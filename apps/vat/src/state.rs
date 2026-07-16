@@ -133,6 +133,23 @@ pub struct ServiceRunRecord {
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_http: Option<String>,
+    /// VAT-owned Docker container name. Kept alongside `microvm_name` so a
+    /// failed teardown remains retryable after the VAT process exits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_name: Option<String>,
+    /// VAT-owned Apple `container` name for a MicroVM-backed service. Kept so
+    /// terminal readiness evidence identifies the exact resource cleanup owns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub microvm_name: Option<String>,
+    /// Last terminal readiness observation, including MicroVM host-endpoint
+    /// diagnostics when a published port cannot satisfy its contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness_error: Option<String>,
+    /// Cleanup outcome for a VAT-owned runtime resource. A non-empty value
+    /// means teardown was not confirmed, so a compose binding must not be
+    /// released for another run that could collide on the same host port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_error: Option<String>,
     /// Present when this service is a local Kubernetes cluster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<ClusterRunRecord>,
