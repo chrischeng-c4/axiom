@@ -9,30 +9,29 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: tape-storage-durable-adoption
-entry: domain
+id: tape-storage-durable-adoption-contract
+entry: snapshot
 nodes:
-  domain:
+  snapshot:
     kind: start
-    label: "Tape serializes its domain JournalSnapshot and applied marker bytes"
-  shared:
+    label: "Tape owns JournalSnapshot JSON and marker value bytes"
+  write:
     kind: process
-    label: "storage-durable atomically writes bytes with FsyncPolicy Always and parent-dir sync"
-  recovery:
+    label: "storage_durable::atomic_write writes each file with FsyncPolicy Always"
+  order:
     kind: process
-    label: "Tape restores the unchanged domain snapshot and applied floor on restart"
-  invariant:
+    label: "Tape preserves snapshot-before-marker bootstrap ordering and best-effort runtime warnings"
+  result:
     kind: terminal
-    label: "No Tape-local temp-file fsync rename implementation remains"
+    label: "Restart reads unchanged Tape domain state without a local atomic helper"
 edges:
-  - { from: domain, to: shared }
-  - { from: shared, to: recovery }
-  - { from: recovery, to: invariant }
+  - { from: snapshot, to: write }
+  - { from: write, to: order }
+  - { from: order, to: result }
 ---
-flowchart LR
-  domain["Tape snapshot bytes"] --> shared["storage-durable atomic_write Always"] --> recovery["Tape recovery"] --> invariant(["No local durability mechanism"])
+flowchart TD
+  snapshot["Tape snapshot and marker bytes"] --> write["storage-durable atomic write Always"] --> order["Preserve Tape ordering"] --> result(["Unchanged recovery"])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
