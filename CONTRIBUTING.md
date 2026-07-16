@@ -250,9 +250,9 @@ meta-doc producer/check after a trait changes.
 | `competitive_replacement` | `competitor-feature-parity`, `competitor-performance` | — | Project aims to replace or match an existing competitor tool; no settled CONTRIBUTING.md doc home yet. |
 | `long_running` | `long-running-stability` | — | Project runs as a long-lived process; no settled CONTRIBUTING.md doc home yet. |
 | `network_exposed` | `security-hardening` | — | Project exposes a network-reachable surface; no settled CONTRIBUTING.md doc home yet. |
-| `agent_facing` |  | — | Project is primarily driven by agents rather than humans; prompt-only, no enforced baseline capability yet. |
-| `stateful_storage` |  | — | Project owns durable stateful storage; prompt-only, no enforced baseline capability yet. |
-| `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for a full service-archetype adopter; expands to the transport, deploy, operational, EC-gate, and CLI baseline traits, deduped against any of its members also declared directly. |
+| `agent_facing` | `developer-agent-experience` | [DX convention: every service and CLI ships a Developer & Agent Experience capability](#dx-convention-every-service-and-cli-ships-a-developer-agent-experience-capability) | Project is primarily driven by agents rather than humans and must own the Developer & Agent Experience capability baseline. |
+| `stateful_storage` | `stateful-service-workload` | [Service workload profiles — common, StatefulSet, Deployment](#service-workload-profiles-common-statefulset-deployment) | Service owns durable application state, so it selects the StatefulSet profile: stable identity, PVC/storage durability, peer topology, backup/restore, and an explicit workload-kind migration handoff. |
+| `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for the common service baseline; expands to transport, deploy artifacts, operational endpoints, EC gates, and CLI conventions. Without stateful_storage the primary workload is a Deployment; stateful_storage selects the StatefulSet profile. |
 <!-- aw:trait-table:end -->
 
 ### The shared service kit — compose these libs, do not hand-roll
@@ -938,3 +938,15 @@ the others. A few crates still inherit `[workspace.package].version`; until they
 are migrated, their `build.sh` must explicitly name the version source and every
 manifest it edits. Do not silently bump the workspace version for an unrelated
 project release.
+
+<!-- aw:meta-doc-matrix:start -->
+| Layer | Doc | Fact owner | Required headings | Inherits |
+|---|---|---|---|---|
+| repo | `/AGENTS.md` | Codex checkout operations; CLAUDE projection plus the fixed Codex whitelist | `## Agentic Workflow CLI Surface` | none |
+| repo | `/CLAUDE.md` | Claude checkout operations and shared agent workflow guidance | `## Agentic Workflow CLI Surface` | none |
+| repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
+| repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
+| project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |
+| project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
+| project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index` | repo capability schema policy |
+<!-- aw:meta-doc-matrix:end -->
