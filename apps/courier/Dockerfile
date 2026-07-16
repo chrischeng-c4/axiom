@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM rust:1.87-slim AS builder
+FROM rust:slim AS builder
 
 # Build deps for OpenSSL / native-tls (reqwest uses rustls, but keep for flexibility)
 RUN apt-get update && apt-get install -y --no-install-recommends \
