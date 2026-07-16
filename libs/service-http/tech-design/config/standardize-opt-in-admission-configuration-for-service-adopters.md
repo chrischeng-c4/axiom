@@ -58,29 +58,29 @@ changes:
 
 ```mermaid
 ---
-id: service-http-admission-config-verification
+id: service-http-admission-config-contract-verification
 requirements:
-  disabled:
-    id: R1
-    text: "No configured class capacities leave admission disabled without changing existing service behavior."
-    kind: regression
-    risk: medium
-    verify: libs/service-http/src/admission.rs::tests::config_without_capacities_is_disabled
-  invalid:
-    id: R3
-    text: "Malformed values and common settings without enabled classes fail with the exact environment key in the error."
-    kind: negative
-    risk: medium
-    verify: libs/service-http/src/admission.rs::tests::config_rejects_invalid_or_orphaned_common_values
-  valid:
+  controller:
     id: R2
-    text: "A valid prefix config creates independently enabled read/write/admin policies with shared refill and key bounds."
+    text: "The parser creates policies that preserve the shared controller's real allow and deny semantics."
     kind: functional
     risk: high
     verify: libs/service-http/src/admission.rs::tests::config_builds_multi_class_controller
+  disabled:
+    id: R1
+    text: "The parser returns no controller when all class capacity settings are absent."
+    kind: regression
+    risk: medium
+    verify: libs/service-http/src/admission.rs::tests::config_without_capacities_is_disabled
+  errors:
+    id: R3
+    text: "Invalid or orphaned common configuration is rejected with an exact key name."
+    kind: negative
+    risk: medium
+    verify: libs/service-http/src/admission.rs::tests::config_rejects_invalid_or_orphaned_common_values
 ---
 flowchart TD
     r1[R1 disabled] --> libs_service_http_src_admission_rs_tests_config_without_capacities_is_disabled[libs/service-http/src/admission.rs::tests::config_without_capacities_is_disabled]
-    r2[R2 valid] --> libs_service_http_src_admission_rs_tests_config_builds_multi_class_controller[libs/service-http/src/admission.rs::tests::config_builds_multi_class_controller]
-    r3[R3 invalid] --> libs_service_http_src_admission_rs_tests_config_rejects_invalid_or_orphaned_common_values[libs/service-http/src/admission.rs::tests::config_rejects_invalid_or_orphaned_common_values]
+    r2[R2 controller] --> libs_service_http_src_admission_rs_tests_config_builds_multi_class_controller[libs/service-http/src/admission.rs::tests::config_builds_multi_class_controller]
+    r3[R3 errors] --> libs_service_http_src_admission_rs_tests_config_rejects_invalid_or_orphaned_common_values[libs/service-http/src/admission.rs::tests::config_rejects_invalid_or_orphaned_common_values]
 ```
