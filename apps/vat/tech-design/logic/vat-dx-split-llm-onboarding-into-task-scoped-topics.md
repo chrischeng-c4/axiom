@@ -45,22 +45,22 @@ changes:
 
 ```mermaid
 ---
-id: vat-llm-task-topics-verification
+id: vat-llm-task-topics-contract-verification
 requirements:
-  compact_outline:
-    id: R1
-    text: "Default outline exposes the stable core, services, container, k8s, and guide topic IDs without rendering the full guide."
-    kind: regression
+  command_guidance:
+    id: R2
+    text: "Each non-legacy task topic gives the primary runnable commands for its domain."
+    kind: functional
     risk: medium
     verify: vat_cli_convention::cli_convention_llm_topics_are_task_scoped
-  offline_topic_contract:
-    id: R2
-    text: "Each advertised topic resolves offline and names its primary runnable VAT commands."
-    kind: functional
+  stable_ids:
+    id: R1
+    text: "The outline exposes exactly the stable task-topic IDs core, services, container, k8s, and guide."
+    kind: regression
     risk: high
     verify: vat_cli_convention::cli_convention_llm_topics_are_task_scoped
 ---
 flowchart TD
-    r1[R1 compact outline] --> vat_cli_convention_cli_convention_llm_topics_are_task_scoped[vat_cli_convention::cli_convention_llm_topics_are_task_scoped]
-    r2[R2 offline topic contract] --> vat_cli_convention_cli_convention_llm_topics_are_task_scoped
+    r1[R1 stable ids] --> vat_cli_convention_cli_convention_llm_topics_are_task_scoped[vat_cli_convention::cli_convention_llm_topics_are_task_scoped]
+    r2[R2 command guidance] --> vat_cli_convention_cli_convention_llm_topics_are_task_scoped
 ```
