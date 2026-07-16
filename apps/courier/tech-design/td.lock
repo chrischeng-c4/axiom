@@ -2,10 +2,10 @@ version = 2
 project = "courier"
 ir_kind = "td"
 td_path = "apps/courier/tech-design"
-generated_at = "2026-07-16T04:53:08.829887+00:00"
-digest = "sha256:7f595e4cc02f339492da89c806964a1ca8a2c054fd3f9e160dbe1f6d286a873d"
-source_digest = "sha256:7f595e4cc02f339492da89c806964a1ca8a2c054fd3f9e160dbe1f6d286a873d"
-ir_digest = "sha256:db0bb1863a25784bdb5193bbe14350fb6d0323d4e0ed52c63fe939b2051fbdde"
+generated_at = "2026-07-16T04:53:27.469789+00:00"
+digest = "sha256:3d66ccdf64ed93fee9a095d5cb57a7c97ffeb90a22ad6978adc8ecd96cdfb905"
+source_digest = "sha256:3d66ccdf64ed93fee9a095d5cb57a7c97ffeb90a22ad6978adc8ecd96cdfb905"
+ir_digest = "sha256:bea367c882fe20b836ade57a17d050742e598245baee4d8b01bb9dea41868c6f"
 
 [[files]]
 path = "semantic/_dependency-graph.md"
@@ -18,6 +18,12 @@ path = "semantic/_overview.md"
 digest = "sha256:3fd2476e565fc19a989caf245fc5aa8c3f3cbe43f58216a44784ed270e4f6bc3"
 ir_digest = "sha256:4c2cb2dc3081c54d83ba91570751a53bf1c3e901a73ebd05e84274d36ac16fc0"
 section_count = 1
+
+[[files]]
+path = "semantic/apps/courier/build.md"
+digest = "sha256:1a69e624eb86e99c75127fde07f10e98c69b8a68a769e24ecaa7549c10f0e7b6"
+ir_digest = "sha256:8b055cafdbc09f9590b856895e291b676bd8f39086a8ff9dc2972b1e59c2d70c"
+section_count = 2
 
 [[files]]
 path = "semantic/src/bin/courier.md"
