@@ -51,15 +51,19 @@ pub enum CoreTy {
     /// this only for the seed set of typeshed names whose structural
     /// requirements the hook can check positively (currently `"PathLike"` —
     /// `os.PathLike`/`StrPath`/`BytesPath`/`StrOrBytesPath`/`GenericPath` —
-    /// and `"SupportsIndex"`). Behaves exactly like `Typed` for the bare-class
-    /// fallback (same rejection, same skip-when-unsure default for every
-    /// value shape it doesn't recognize), PLUS a hardcoded positive predicate
-    /// in `check_expr.rs` for those two names: `PathLike` rejects a concrete
-    /// int/float/bool actual (str/bytes stay accepted, matching
-    /// `__fspath__`'s two valid return shapes); `SupportsIndex` rejects a
-    /// concrete str/float actual (int/bool stay accepted, matching
-    /// `__index__`). Any other name — reserved for future seeds — falls back
-    /// to the bare-class-only check, identical to plain `Typed`.
+    /// `"SupportsIndex"`, and `"AbstractSet"`). Behaves exactly like `Typed`
+    /// for the bare-class fallback (same rejection, same skip-when-unsure
+    /// default for every value shape it doesn't recognize), PLUS a hardcoded
+    /// positive predicate in `check_expr.rs` for those names: `PathLike`
+    /// rejects a concrete int/float/bool actual (str/bytes stay accepted,
+    /// matching `__fspath__`'s two valid return shapes); `SupportsIndex`
+    /// rejects a concrete str/float actual (int/bool stay accepted, matching
+    /// `__index__`); `AbstractSet` rejects any user class instance whose base
+    /// chain does not reach `set`/`frozenset` (`collections.abc.Set` defines
+    /// no `__subclasshook__`, so it is NOMINAL, unlike the structural
+    /// `Iterable`/`Sized`/`Container` — a class defining only `__contains__`
+    /// does not satisfy it). Any other name — reserved for future seeds —
+    /// falls back to the bare-class-only check, identical to plain `Typed`.
     TypedNamed(&'static str),
     /// A type/class object contract. Reject bare user instances and concrete
     /// scalar values; keep real class-like expressions skip-safe until the type
@@ -5226,7 +5230,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__and__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5235,7 +5239,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__ge__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5244,7 +5248,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__gt__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5253,7 +5257,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__iand__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5262,7 +5266,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__ior__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5271,7 +5275,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__isub__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5280,7 +5284,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__ixor__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5289,7 +5293,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__le__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5298,7 +5302,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__lt__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5307,7 +5311,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__or__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5316,7 +5320,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__sub__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5325,7 +5329,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "set",
         name: "__xor__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5356,7 +5360,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__and__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5365,7 +5369,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__ge__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5374,7 +5378,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__gt__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5383,7 +5387,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__le__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5392,7 +5396,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__lt__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5410,7 +5414,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__or__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5419,7 +5423,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__sub__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },
@@ -5428,7 +5432,7 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         qualifier: "frozenset",
         name: "__xor__",
         kind: SigKind::Method,
-        params: &[p("value", CoreTy::Typed)],
+        params: &[p("value", CoreTy::TypedNamed("AbstractSet"))],
         enforceable: true,
         ret: CoreTy::Unknown,
     },

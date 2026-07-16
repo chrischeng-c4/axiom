@@ -41,13 +41,16 @@ pub fn try_bytes_like(v: MbValue) -> Option<Vec<u8>> {
             }
             ObjData::Dict(lock) => {
                 let map = lock.read().unwrap();
-                let class_v = map.get("__class__").copied()?;
+                // `DictKey::Str` hashes in the Python-semantic domain, which
+                // does not match a bare `&str`'s native `Hash` impl — route
+                // through dict_get_exact_str (module-hazards.md).
+                let class_v = crate::runtime::dict_ops::dict_get_exact_str(&map, "__class__")?;
                 let cp = class_v.as_ptr()?;
                 let is_array = matches!(&(*cp).data, ObjData::Str(s) if s == "array");
                 if !is_array {
                     return None;
                 }
-                let typecode_v = map.get("typecode").copied();
+                let typecode_v = crate::runtime::dict_ops::dict_get_exact_str(&map, "typecode");
                 let typecode = typecode_v
                     .and_then(|tv| tv.as_ptr())
                     .and_then(|tp| match &(*tp).data {
@@ -58,7 +61,7 @@ pub fn try_bytes_like(v: MbValue) -> Option<Vec<u8>> {
                 if typecode != "B" && typecode != "b" {
                     return None;
                 }
-                let data_v = map.get("data").copied()?;
+                let data_v = crate::runtime::dict_ops::dict_get_exact_str(&map, "data")?;
                 let dp = data_v.as_ptr()?;
                 let ObjData::List(items_lock) = &(*dp).data else {
                     return None;

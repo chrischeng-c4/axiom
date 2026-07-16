@@ -135,6 +135,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "non-empty")]
     fn render_installer_panics_on_empty_name_in_debug() {
         let _ = render_installer("");

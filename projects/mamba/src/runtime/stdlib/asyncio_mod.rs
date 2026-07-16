@@ -2034,6 +2034,11 @@ mod tests {
         PARALLEL_PEAK.store(0, Ordering::SeqCst);
 
         let func = MbValue::from_func(test_pseudo_jit_add as usize);
+        // test_pseudo_jit_add returns an already-boxed MbValue (from_int), so it
+        // must be registered boxed-return or dispatch_thread_jit_frame will
+        // re-interpret the boxed bit pattern as a raw int and corrupt it (see
+        // the identical setup in test_call_spread_kwargs_binds_keyword_only_params).
+        crate::runtime::module::register_boxed_return_func(test_pseudo_jit_add as usize as u64);
         crate::runtime::closure::mb_func_set_module(func, new_str("__main__"));
         let params = MbValue::from_ptr(MbObject::new_list(vec![
             make_param("seed", false, MbValue::none(), Some("int")),

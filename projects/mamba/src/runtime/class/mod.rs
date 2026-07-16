@@ -1681,7 +1681,18 @@ pub(crate) fn dispatch_type_new_creation_hooks(name: &str) {
         for base_name in &bases {
             let hook = lookup_method(base_name, "__init_subclass__");
             if !hook.is_none() {
-                let addr = extract_func_addr(hook);
+                // R1594-pattern: an `__init_subclass__` body referencing
+                // zero-arg `super()`/`__class__` compiles as a closure
+                // (int-tagged handle), not a raw TAG_FUNC value.
+                // `extract_func_addr` doesn't unwrap closures — it falls
+                // back to treating the handle's raw int as an "address",
+                // which is never in `CALLABLE_REGISTRY`, so `is_registered`
+                // below computed `false` and this silently skipped the
+                // whole hook (no error, no dispatch). Use
+                // `extract_registered_func_addr` to unwrap the closure to
+                // its real underlying function address first, matching the
+                // `__init__` fast-path fix above.
+                let addr = extract_registered_func_addr(hook);
                 if addr != 0 {
                     let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                     if is_registered {
