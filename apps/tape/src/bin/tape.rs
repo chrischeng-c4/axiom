@@ -968,6 +968,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
+// <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="pending-tracker" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
 /// Resolve the local journal path for a serving process. Replica mode owns
 /// durability through Raft; only a single-node process derives a store from
 /// its mounted data directory.
@@ -984,6 +985,7 @@ fn resolve_journal_store(
         }
     })
 }
+// </HANDWRITE>
 
 fn spec(args: SpecArgs) -> Result<()> {
     // `spec gen` writes a typed client; everything else prints to stdout.

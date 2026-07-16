@@ -114,6 +114,7 @@ fn crd_flattens_cluster_spec() {
     );
 }
 
+// <HANDWRITE gap="missing-generator:kubernetes-peer-port-test" tracker="pending-tracker" reason="kubernetes-peer-port-test section in operator.rs is hand-written pending codegen support">
 /// R5 — the rendered StatefulSet carries exactly the downward-API env tape's
 /// serve reads, the right replica count (single group), tape's runtime env +
 /// disk tier, the probe contract, and the sibling child objects.
@@ -197,6 +198,7 @@ fn render_emits_expected_child_objects() {
         1
     );
 }
+// </HANDWRITE>
 
 /// R6 — TAPE_AUTH / TAPE_TOKEN_REGISTRY_FILE + the Secret volume render only
 /// when the CR sets `auth: required` AND names a `tokensSecret` (off by

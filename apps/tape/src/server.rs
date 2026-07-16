@@ -152,11 +152,13 @@ impl service_http::MetricsProvider for AppState {
     }
 }
 
+// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="pending-tracker" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
 /// Build the HTTP router for the tape transport: the `/topics` data plane
 /// merged onto the shared service shell's standard probe routes.
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
 }
+// </HANDWRITE>
 
 /// Build Tape with optional shared request admission. Tape owns the
 /// read/write/admin route classes; `service-http` owns opaque-key retention,
