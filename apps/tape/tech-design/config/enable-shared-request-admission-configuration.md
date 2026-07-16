@@ -28,3 +28,28 @@ flowchart TD
   config -->|absent| disabled(["Existing unlimited behavior"])
   config -->|configured| enabled["Inject shared controller into Tape classes"] --> reject(["429 Retry-After"])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: router_without_raft_routes
+    description: "Accept optional shared admission for both public router shapes. generator gap: missing-generator:tape-admission-adoption (#1827)."
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: serve_main
+    description: "Resolve TAPE admission config at startup and inject the shared controller. generator gap: missing-generator:tape-admission-adoption (#1827)."
+  - path: apps/tape/tests/service_admission.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: tape_default_router_keeps_admission_disabled
+    description: "Prove configured write admission returns shared 429 without limiting probes. generator gap: missing-generator:tape-admission-adoption (#1827)."
+```
