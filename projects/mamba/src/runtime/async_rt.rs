@@ -159,6 +159,19 @@ pub(crate) static COMPLETED_COROUTINES: std::sync::LazyLock<MbRwLock<CompletedCo
 pub static TASKS: std::sync::LazyLock<MbRwLock<FxHashMap<u64, MbTask>>> =
     std::sync::LazyLock::new(|| MbRwLock::new(FxHashMap::default()));
 
+/// Serializes any two executions that could race on the process-global
+/// COROUTINES/COMPLETED_COROUTINES/TASKS state above.
+///
+/// A real `mamba` process runs exactly one script per process, so this is
+/// always uncontended in production. It only matters under `cargo test`,
+/// where many `#[test]` fns share one process: `Driver::execute_jit_entry`
+/// (driver/mod.rs) holds it for a script's whole JIT run + teardown, and any
+/// test that drives coroutines/tasks directly (bypassing the Driver, e.g.
+/// asyncio_mod.rs's `cleanup_all_async`-bracketed tests) must hold it too —
+/// otherwise one test's `cleanup_all_async()` can wipe another's in-flight
+/// coroutines mid-run (#1845).
+pub(crate) static ASYNC_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const CORO_ID_BASE: u64 = 1 << 40;
 
 /// Atomic counter for globally unique coroutine IDs (R7).
