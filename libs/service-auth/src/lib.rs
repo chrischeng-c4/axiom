@@ -74,8 +74,10 @@ mod verifier;
 pub use error::AuthError;
 pub use middleware::{auth_middleware, bearer_token};
 pub use reload::{
+    spawn_registry_file_watcher, spawn_registry_file_watcher_with_interval,
     AuditedRoleMapPrincipal, AuthEvent, AuthEventSink, AuthorizationDecision, AuthorizationReason,
     NoopAuthEventSink, ReloadFailure, ReloadableRoleMapVerifier, TracingAuthEventSink,
+    DEFAULT_REGISTRY_FILE_WATCH_INTERVAL,
 };
 pub use role_map::{
     load_registry, Role, RoleMapDenied, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims,
