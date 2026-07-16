@@ -520,6 +520,124 @@ fn direct_assignment_counts(stmts: &[Spanned<Stmt>]) -> HashMap<String, usize> {
     assignments
 }
 
+/// Plain `x = expr`-shape reassignment counts found *inside loop bodies*
+/// (while/for/async for) and *inside try's non-handler bodies* (the `try`
+/// body itself, `else`, and `finally` — all of which run along the same
+/// single sequential path as the statement sequence they're nested in) one
+/// level or deeper below the statement sequence passed to
+/// `same_scope_loop_reassign_counts` — additive with, and deliberately
+/// non-overlapping against, the top-level-only `direct_assignment_counts`.
+/// Also deliberately narrower than
+/// `same_scope_binding_events`/`same_scope_augassign_counts`, which also
+/// recurse into if/elif/else and except-handler branches. A loop body (or a
+/// try's body/else/finally) runs along a single control path relative to the
+/// scope it's nested in, so the accumulator idiom spelled `total = total +
+/// x` (rather than `total += x`) is exactly as safe to trust as #1775's
+/// AugAssign case — #1775 only added recursive counting for AugAssign, so
+/// this same idiom without `+=` still fell through to the pessimistic
+/// Any-forcing (e.g. `total = total + d[i]` inside a `while`, or `total =
+/// total + i` inside a `try` nested in a `while`, corrupting the result to a
+/// float). If/elif/else branches and except-handler bodies are
+/// mutually-exclusive alternatives and are deliberately excluded here, so
+/// genuinely branch-divergent reassignments keep the existing Any-forcing
+/// (#1794).
+fn collect_same_scope_loop_reassign_counts(
+    stmts: &[Spanned<Stmt>],
+    counts: &mut HashMap<String, usize>,
+) {
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::Assign { target, .. } => {
+                if let Expr::Ident(name) = &target.node {
+                    *counts.entry(name.clone()).or_default() += 1;
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            } => {
+                collect_same_scope_loop_reassign_counts(body, counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_loop_reassign_counts(body, counts);
+                }
+            }
+            Stmt::For {
+                body, else_body, ..
+            }
+            | Stmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                collect_same_scope_loop_reassign_counts(body, counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_loop_reassign_counts(body, counts);
+                }
+            }
+            Stmt::Try {
+                body,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                collect_same_scope_loop_reassign_counts(body, counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_loop_reassign_counts(body, counts);
+                }
+                if let Some(body) = finally_body {
+                    collect_same_scope_loop_reassign_counts(body, counts);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Entry point for `collect_same_scope_loop_reassign_counts`: walks `stmts`
+/// looking only for loop/try constructs to descend into — a top-level
+/// `Stmt::Assign` in `stmts` itself is intentionally NOT counted here (that
+/// is `direct_assignment_counts`'s job), so the two counters can be summed
+/// without double-counting.
+fn same_scope_loop_reassign_counts(stmts: &[Spanned<Stmt>]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::While {
+                body, else_body, ..
+            } => {
+                collect_same_scope_loop_reassign_counts(body, &mut counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_loop_reassign_counts(body, &mut counts);
+                }
+            }
+            Stmt::For {
+                body, else_body, ..
+            }
+            | Stmt::AsyncFor {
+                body, else_body, ..
+            } => {
+                collect_same_scope_loop_reassign_counts(body, &mut counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_loop_reassign_counts(body, &mut counts);
+                }
+            }
+            Stmt::Try {
+                body,
+                else_body,
+                finally_body,
+                ..
+            } => {
+                collect_same_scope_loop_reassign_counts(body, &mut counts);
+                if let Some(body) = else_body {
+                    collect_same_scope_loop_reassign_counts(body, &mut counts);
+                }
+                if let Some(body) = finally_body {
+                    collect_same_scope_loop_reassign_counts(body, &mut counts);
+                }
+            }
+            _ => {}
+        }
+    }
+    counts
+}
+
 /// `x += expr`-shape counts anywhere in the same Python scope, recursing
 /// through same-scope compound bodies (if/while/for/try/with/match) exactly
 /// like `collect_same_scope_binding_events` does — an accumulator's
@@ -648,6 +766,14 @@ pub struct TypeChecker {
     /// — an accumulator idiom (`total = 0; for x in xs: total += x`) does not
     /// need the pessimistic control-flow-ambiguous treatment (#1775).
     preregister_augassign_counts: HashMap<String, usize>,
+    /// Plain `x = expr`-shape reassignment counts, recursing only through
+    /// loop bodies (unlike `preregister_direct_assignments`, and narrower
+    /// than `preregister_augassign_counts`, which also recurses into
+    /// if/try/with/match). Extends #1775's accumulator exemption to the
+    /// non-augmented idiom `total = 0; for x in xs: total = total + x`,
+    /// which `preregister_direct_assignments` alone cannot see because it
+    /// never looks inside loop bodies (#1794).
+    preregister_loop_reassign_counts: HashMap<String, usize>,
     /// Names whose assignments target an outer scope via global/nonlocal.
     preregister_declared_bindings: HashSet<String>,
     /// Aliases shadowed by nested PEP 695 type-parameter scopes. Each
@@ -728,6 +854,16 @@ pub struct TypeChecker {
     /// [`TypeChecker::numeric_root`].
     pub(crate) numeric_derived_classes: std::collections::HashMap<String, NumericRoot>,
     pub(crate) numeric_derived_class_symbols: HashMap<SymbolId, NumericRoot>,
+    /// User classes whose base chain reaches `set` or `frozenset`. `AbstractSet`
+    /// is a NOMINAL typeshed contract (`collections.abc.Set` has no
+    /// `__subclasshook__`, unlike `Iterable`/`Sized`/`Container`), so a user
+    /// class satisfies it only via real inheritance — defining `__contains__`
+    /// alone is never enough. Mirrors [`TypeChecker::numeric_derived_classes`]'s
+    /// single-forward-lookup pattern: classes are visited in declaration order,
+    /// so a base's own entry here is already populated before a subclass needs
+    /// it, resolving multi-level chains without explicit recursion.
+    pub(crate) set_derived_classes: std::collections::HashSet<String>,
+    pub(crate) set_derived_class_symbols: HashSet<SymbolId>,
     /// #1041: maps a user class name to the identifier bases it declares
     /// (`class W(V): pass` -> `"W" -> ["V"]`), letting the unary/shift dunder
     /// wall (`check_expr.rs::class_defines_dunder`) walk the inheritance
@@ -820,6 +956,7 @@ impl TypeChecker {
             preregister_binding_events: HashMap::new(),
             preregister_direct_assignments: HashMap::new(),
             preregister_augassign_counts: HashMap::new(),
+            preregister_loop_reassign_counts: HashMap::new(),
             preregister_declared_bindings: HashSet::new(),
             type_param_alias_scopes: Vec::new(),
             resolved_type_exprs: HashMap::new(),
@@ -846,6 +983,8 @@ impl TypeChecker {
             user_bare_class_symbols: HashSet::new(),
             numeric_derived_classes: std::collections::HashMap::new(),
             numeric_derived_class_symbols: HashMap::new(),
+            set_derived_classes: std::collections::HashSet::new(),
+            set_derived_class_symbols: HashSet::new(),
             class_bases: HashMap::new(),
             class_base_symbols: HashMap::new(),
             class_inheritance_open: HashSet::new(),
@@ -2225,6 +2364,7 @@ impl TypeChecker {
             self.preregister_binding_events = same_scope_binding_events(stmts);
             self.preregister_direct_assignments = direct_assignment_counts(stmts);
             self.preregister_augassign_counts = same_scope_augassign_counts(stmts);
+            self.preregister_loop_reassign_counts = same_scope_loop_reassign_counts(stmts);
             let mut assigned = Vec::new();
             let mut declared = Vec::new();
             crate::resolve::pass::collect_assignment_targets(stmts, &mut assigned, &mut declared);
@@ -2368,9 +2508,28 @@ impl TypeChecker {
                             }),
                         }
                     });
+                    let set_root = bases.iter().any(|base| {
+                        let Expr::Ident(base_name) = &base.node else {
+                            return false;
+                        };
+                        match base_name.as_str() {
+                            "set" | "frozenset" => true,
+                            _ => self.symbols.lookup(base_name).is_some_and(|symbol| {
+                                match self.tcx.get(self.get_sym_type(symbol.0)) {
+                                    Ty::Class {
+                                        role: ClassRole::Object,
+                                        user: Some(user),
+                                        ..
+                                    } => self.set_derived_class_symbols.contains(&user.symbol),
+                                    _ => self.set_derived_classes.contains(base_name),
+                                }
+                            }),
+                        }
+                    });
                     self.typed_dict_classes.remove(name);
                     self.user_bare_classes.remove(name);
                     self.numeric_derived_classes.remove(name);
+                    self.set_derived_classes.remove(name);
                     self.class_bases.remove(name);
                     let sym = if let Some(symbol) = self.declaration_symbol(stmt) {
                         self.symbols.bind_symbol_in_scope(
@@ -2491,6 +2650,15 @@ impl TypeChecker {
                     if let Some(root) = numeric_root {
                         self.numeric_derived_classes.insert(name.clone(), root);
                         self.numeric_derived_class_symbols.insert(sym, root);
+                    }
+
+                    // AbstractSet is a nominal typeshed contract (no
+                    // `__subclasshook__`), so only real `set`/`frozenset`
+                    // inheritance satisfies it. Same single-forward-lookup
+                    // reasoning as `numeric_root` above.
+                    if set_root {
+                        self.set_derived_classes.insert(name.clone());
+                        self.set_derived_class_symbols.insert(sym);
                     }
 
                     // Clean up type parameter aliases to prevent leaking
@@ -2675,6 +2843,11 @@ impl TypeChecker {
                                 .get(name)
                                 .copied()
                                 .unwrap_or_default();
+                            let loop_reassign_events = self
+                                .preregister_loop_reassign_counts
+                                .get(name)
+                                .copied()
+                                .unwrap_or_default();
                             // #1775: an accumulator idiom (`total = 0; for x in
                             // xs: total += x`) accounts for every binding event
                             // via one direct `Assign` plus some same-scope
@@ -2683,8 +2856,14 @@ impl TypeChecker {
                             // derived result) instead of pessimistically
                             // forcing `Any` here, the same way an all-direct
                             // multi-assign chain already does below.
+                            // #1794: the same idiom spelled without `+=`
+                            // (`total = 0; for x in xs: total = total + x`) is
+                            // accounted for by a direct `Assign` plus some
+                            // same-scope loop-nested `Assign`s instead —
+                            // equally safe to trust for the same reason.
                             let only_direct_assignments = binding_events > 0
-                                && binding_events == direct_assignments + augassign_events;
+                                && binding_events
+                                    == direct_assignments + augassign_events + loop_reassign_events;
                             if binding_events != 1 && !only_direct_assignments {
                                 let symbol = existing.unwrap_or_else(|| {
                                     self.symbols.define(name.clone(), SymbolKind::Variable)
@@ -2788,6 +2967,7 @@ impl TypeChecker {
             self.preregister_binding_events.clear();
             self.preregister_direct_assignments.clear();
             self.preregister_augassign_counts.clear();
+            self.preregister_loop_reassign_counts.clear();
             self.preregister_declared_bindings.clear();
         }
     }

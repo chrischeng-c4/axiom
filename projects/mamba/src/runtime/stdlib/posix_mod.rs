@@ -458,7 +458,12 @@ mod tests {
             .map(|ptr| unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    !map.is_empty() && map.contains_key("PATH")
+                    // `DictKey::Str` hashes in the Python-semantic domain, which
+                    // does not match a bare `&str`'s native `Hash` impl — route
+                    // through `dict_get_exact_str` (module-hazards.md).
+                    !map.is_empty()
+                        && super::super::super::dict_ops::dict_get_exact_str(&map, "PATH")
+                            .is_some()
                 } else {
                     false
                 }

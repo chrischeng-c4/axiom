@@ -2565,7 +2565,11 @@ mod tests {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let m = lock.read().unwrap();
-                    let a_val = m.get("a").copied().unwrap();
+                    // `DictKey::Str` hashes in the Python-semantic domain,
+                    // which does not match a bare `&str`'s native `Hash`
+                    // impl — route through `dict_get_exact_str`
+                    // (module-hazards.md).
+                    let a_val = super::super::super::dict_ops::dict_get_exact_str(&m, "a").unwrap();
                     if let Some(lp) = a_val.as_ptr() {
                         if let ObjData::List(ref lk) = (*lp).data {
                             let items = lk.read().unwrap();

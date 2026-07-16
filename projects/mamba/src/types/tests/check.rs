@@ -5321,8 +5321,8 @@ fn test_stdlib_classmethod_wrong_bare_instance_rejected() {
         "from builtins import classmethod\nclass _W:\n    pass\nobj = classmethod(lambda cls: None)\nobj.__get__(_W())\n",
     );
     assert!(
-        errors.is_empty(),
-        "classmethod.__get__ accepts an unconstrained instance operand: {errors:?}"
+        has_parameter_error(&errors, "instance"),
+        "classmethod.__get__ is force-typed and must reject a provably wrong-typed instance (mamba-strict-type, see #1611): {errors:?}"
     );
 
     let errors =
@@ -5347,8 +5347,8 @@ fn test_stdlib_staticmethod_wrong_bare_instance_rejected() {
         "from builtins import staticmethod\nclass _W:\n    pass\nobj = staticmethod(lambda: None)\nobj.__get__(_W())\n",
     );
     assert!(
-        errors.is_empty(),
-        "staticmethod.__get__ accepts an unconstrained instance operand: {errors:?}"
+        has_parameter_error(&errors, "instance"),
+        "staticmethod.__get__ is force-typed and must reject a provably wrong-typed instance (mamba-strict-type, see #1611): {errors:?}"
     );
 
     let errors =

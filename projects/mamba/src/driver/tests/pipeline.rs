@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::lower::{lower_hir_to_mir, lower_module};
+use crate::lower::{lower_hir_to_mir, lower_hir_to_mir_with_symbols, lower_module};
 use crate::mir::*;
 /// Integration tests for the full compiler pipeline (parse → HIR → MIR).
 /// Covers features from issues #283–#294.
@@ -19,6 +19,20 @@ fn pipeline(src: &str) -> MirModule {
     let _ = checker.check_module(&module);
     let hir = lower_module(&module, &checker).unwrap();
     lower_hir_to_mir(&hir, &checker.tcx)
+}
+
+/// Like `pipeline`, but lowers via `lower_hir_to_mir_with_symbols` — the
+/// symbol-table-aware entry point the real compiler driver uses
+/// (conformance/bench). Required for any source whose classes need textual
+/// registration (e.g. class-body attributes with defaults trigger
+/// `ClassDefPlaceholder`, #1794): the plain `lower_hir_to_mir` skips the
+/// class pre-registration pass entirely and has no non-test callers.
+fn pipeline_with_symbols(src: &str) -> MirModule {
+    let module = parse(src);
+    let mut checker = TypeChecker::new();
+    let _ = checker.check_module(&module);
+    let hir = lower_module(&module, &checker).unwrap();
+    lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols)
 }
 
 fn body_externs(body: &MirBody) -> Vec<&str> {
@@ -930,8 +944,11 @@ fn test_pipeline_match_as_pattern() {
 
 #[test]
 fn test_pipeline_match_class_pattern() {
-    // Class pattern: match against class name and extract keyword fields
-    let mir = pipeline(
+    // Class pattern: match against class name and extract keyword fields.
+    // Uses pipeline_with_symbols: Point's annotated class-body attrs with
+    // defaults trigger ClassDefPlaceholder textual registration, which
+    // requires the symbol-table-aware lowering entry point (#1794).
+    let mir = pipeline_with_symbols(
         "class Point:\n    x: int = 0\n    y: int = 0\np = Point()\nmatch p:\n    case Point(x=1):\n        z: int = 1\n    case _:\n        z: int = 0\n"
     );
     let all_insts: Vec<&MirInst> = mir

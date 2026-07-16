@@ -1415,7 +1415,10 @@ mod tests {
         assert_eq!(get_field(st, "tm_wday").as_int(), Some(4));
         assert_eq!(get_field(st, "tm_yday").as_int(), Some(75));
         assert_eq!(get_field(st, "tm_isdst").as_int(), Some(0));
-        assert_eq!(get_field(st, "n_fields").as_int(), Some(9));
+        // CPython's structseq metadata: n_fields=11 counts 9 sequence fields
+        // plus the 2 named-only extras (tm_gmtoff, tm_zone); n_sequence_fields
+        // (checked elsewhere) is the 9 that participate in len()/unpacking.
+        assert_eq!(get_field(st, "n_fields").as_int(), Some(11));
     }
 
     #[test]

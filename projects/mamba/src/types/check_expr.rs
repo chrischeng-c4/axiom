@@ -4434,6 +4434,41 @@ impl TypeChecker {
         {
             return None;
         }
+        // #1794: `isinstance`'s two parameters are positional-only in real
+        // CPython (`isinstance(obj, class_or_tuple, /)`), so passing either
+        // by keyword is always illegal — a rejection independent of the
+        // #1775 tuple-literal false positive handled by the bypass right
+        // below. `evaluate_stdlib_spec_candidate`'s own arg-binding walk
+        // would normally catch this (no `PosOrKw`/`KwOnly` param matches
+        // the keyword name), but `isinstance` never reaches it: the bypass
+        // defers the whole call to the legacy `check_stdlib_call` path,
+        // whose `ParamSig` model has no positional-only marker — its
+        // keyword-arg loop matches params by NAME alone (skip-when-unsure),
+        // so `obj=`/`class_or_tuple=` bind "successfully" and only their
+        // TYPES get checked, never the call shape. Reject keyword-shaped
+        // calls here, before the bypass, so the #1775 fix's
+        // positional-call path is unaffected.
+        if target.access == StdlibSpecAccess::ModuleFn
+            && target.module == "builtins"
+            && target.name == "isinstance"
+        {
+            if let Some(span) = args.iter().find_map(|arg| match arg {
+                CallArg::Keyword { value, .. } => Some(value.span),
+                _ => None,
+            }) {
+                for arg in args {
+                    let value = match arg {
+                        CallArg::Positional(value)
+                        | CallArg::StarArg(value)
+                        | CallArg::Keyword { value, .. }
+                        | CallArg::DoubleStarArg(value) => value,
+                    };
+                    self.check_expr(value);
+                }
+                self.error(span, "call has an argument that no parameter accepts");
+                return Some(None);
+            }
+        }
         // #1775: `all`/`any`/`max`/`min` typeshed overloads type their
         // iterable-consuming positional as `Iterable[Any]`/`SupportsRichComparisonT`
         // with no non-iterable fallback overload, so a scalar like `all(42)`
@@ -4513,6 +4548,40 @@ impl TypeChecker {
             && target.module == "builtins"
             && target.qualifier == "bytearray"
             && matches!(target.name.as_str(), "join" | "translate")
+        {
+            return None;
+        }
+        // #1794: typeshed's `set`/`frozenset` rich/in-place operators type
+        // their `value` parameter as `AbstractSet[object]`.
+        // `collections.abc.Set` defines no `__subclasshook__` (unlike
+        // `Iterable`/`Sized`/`Container`), so it is NOMINAL — a user class
+        // satisfies it only via real `set`/`frozenset` inheritance, never by
+        // structurally matching methods like `__contains__`. The generated
+        // overload evaluator here has no class-hierarchy model: it happens
+        // to reject a bare `_W()` instance too (no candidate overload
+        // matches any shape), but silently accepts a non-bare one such as a
+        // class defining only `__contains__`. Defer to the legacy
+        // `check_stdlib_call` path instead, whose `TypedNamed("AbstractSet")`
+        // wall uses the dedicated `set_derived_class(_symbols)` base-chain
+        // check to enforce the nominal requirement correctly.
+        if target.access == StdlibSpecAccess::BoundMember
+            && target.module == "builtins"
+            && matches!(target.qualifier.as_str(), "set" | "frozenset")
+            && matches!(
+                target.name.as_str(),
+                "__and__"
+                    | "__or__"
+                    | "__sub__"
+                    | "__xor__"
+                    | "__iand__"
+                    | "__ior__"
+                    | "__isub__"
+                    | "__ixor__"
+                    | "__ge__"
+                    | "__gt__"
+                    | "__le__"
+                    | "__lt__"
+            )
         {
             return None;
         }
@@ -4840,6 +4909,17 @@ impl TypeChecker {
                             super::stdlib_sigs::get("builtins", "list", attr)
                         } else if matches!(self.tcx.get(self.get_sym_type(sym.0)), Ty::Tuple(_)) {
                             super::stdlib_sigs::get("builtins", "tuple", attr)
+                        } else if matches!(self.tcx.get(self.get_sym_type(sym.0)), Ty::Set(_)) {
+                            // `set()`/`frozenset()` share a single unified
+                            // `Ty::Set` type-system variant (no mutable-vs-
+                            // frozen distinction), unlike `Ty::Class` external
+                            // instances. Resolve via the `set` qualifier: its
+                            // STDLIB_SIGS rows are a superset of frozenset's
+                            // (same 8 shared comparison/bitwise dunders plus
+                            // 4 set-only in-place ones), so every method a
+                            // `Ty::Set` receiver can legally call resolves
+                            // here regardless of which of the two it is.
+                            super::stdlib_sigs::get("builtins", "set", attr)
                         } else if self.symbols.get_symbol(sym).kind == SymbolKind::Function {
                             // User-defined Python functions are instances of
                             // builtins.function. This keeps descriptor walls such as
@@ -5007,6 +5087,48 @@ impl TypeChecker {
                     ),
                 );
                 return;
+            }
+        }
+        // AbstractSet is NOMINAL (`collections.abc.Set` defines no
+        // `__subclasshook__`, unlike the structural `Iterable`/`Sized`/
+        // `Container`), so a user class instance satisfies it only via real
+        // `set`/`frozenset` inheritance — defining `__contains__` is never
+        // enough. Unlike the concrete-scalar-only `TypedNamed` predicates
+        // below, this must inspect any class shape (not just bare
+        // zero-method ones), so it runs as its own early check rather than
+        // through the shared `violates`/bare-instance paths.
+        if let super::stdlib_sigs::CoreTy::TypedNamed("AbstractSet") = param.ty {
+            if let Ty::Class {
+                name,
+                role: ClassRole::Instance,
+                user,
+                ..
+            } = self.tcx.get(actual)
+            {
+                // A bare `set`/`frozenset` instance (`user: None`, the
+                // builtin itself) is never in `set_derived_classes` — that
+                // set only records USER classes whose base chain reaches
+                // `set`/`frozenset` (populated from `Stmt::ClassDef`), never
+                // the builtin root itself, since it has no such statement.
+                // Without this, `s.__and__(set())` would wrongly reject a
+                // genuine set argument as not satisfying `AbstractSet`.
+                let is_set_derived = match user {
+                    Some(u) => self.set_derived_class_symbols.contains(&u.symbol),
+                    None => {
+                        matches!(name.as_str(), "set" | "frozenset")
+                            || self.set_derived_classes.contains(name)
+                    }
+                };
+                if !is_set_derived {
+                    self.error(
+                        a.span,
+                        format!(
+                            "argument type mismatch: `{name}` does not satisfy parameter `{}`'s type",
+                            param.name,
+                        ),
+                    );
+                    return;
+                }
             }
         }
         // A BARE user class instance (`class _W: pass` -> `_W()`) satisfies NO

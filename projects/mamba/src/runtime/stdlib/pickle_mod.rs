@@ -2044,13 +2044,16 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*rt.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                let a = map.get("a").copied().unwrap();
+                // `DictKey::Str` hashes in the Python-semantic domain, which
+                // does not match a bare `&str`'s native `Hash` impl — route
+                // through `dict_get_exact_str` (module-hazards.md).
+                let a = super::super::super::dict_ops::dict_get_exact_str(&map, "a").unwrap();
                 if let ObjData::List(ref l) = (*a.as_ptr().unwrap()).data {
                     assert_eq!(l.read().unwrap().len(), 2);
                 } else {
                     panic!("a should be list");
                 }
-                let b = map.get("b").copied().unwrap();
+                let b = super::super::super::dict_ops::dict_get_exact_str(&map, "b").unwrap();
                 assert!(matches!((*b.as_ptr().unwrap()).data, ObjData::Tuple(_)));
             } else {
                 panic!("expected dict");

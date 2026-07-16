@@ -44,7 +44,14 @@ fn dict_str(v: MbValue, key: &str) -> Option<String> {
     };
     v.as_ptr().and_then(|ptr| unsafe {
         match (*ptr).data {
-            ObjData::Dict(ref lock) => lock.read().unwrap().get(key).and_then(&str_of),
+            // `DictKey::Str` hashes in the Python-semantic domain, which
+            // does not match a bare `&str`'s native `Hash` impl — route
+            // through dict_get_exact_str (module-hazards.md).
+            ObjData::Dict(ref lock) => {
+                crate::runtime::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
+                    .as_ref()
+                    .and_then(&str_of)
+            }
             ObjData::Instance { ref fields, .. } => {
                 fields.read().unwrap().get(key).and_then(&str_of)
             }
@@ -56,7 +63,13 @@ fn dict_str(v: MbValue, key: &str) -> Option<String> {
 fn dict_bool(v: MbValue, key: &str) -> Option<bool> {
     v.as_ptr().and_then(|ptr| unsafe {
         match (*ptr).data {
-            ObjData::Dict(ref lock) => lock.read().unwrap().get(key).and_then(|val| val.as_bool()),
+            // `DictKey::Str` hashes in the Python-semantic domain, which
+            // does not match a bare `&str`'s native `Hash` impl — route
+            // through dict_get_exact_str (module-hazards.md).
+            ObjData::Dict(ref lock) => {
+                crate::runtime::dict_ops::dict_get_exact_str(&lock.read().unwrap(), key)
+                    .and_then(|val| val.as_bool())
+            }
             ObjData::Instance { ref fields, .. } => fields
                 .read()
                 .unwrap()
