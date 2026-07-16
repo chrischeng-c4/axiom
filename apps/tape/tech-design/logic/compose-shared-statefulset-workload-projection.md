@@ -69,22 +69,22 @@ changes:
 
 ```mermaid
 ---
-id: tape-shared-statefulset-projection-verification
+id: tape-shared-statefulset-projection-contract
 requirements:
-  optional_auth_secret_remains_tape_policy:
+  token_secret_is_still_opt_in:
     id: R2
-    text: "The shared projection retains Tape's opt-in token-registry Secret mount and never enables it for an incomplete auth configuration."
+    text: "Tape alone selects token-registry Secret usage, and the shared projection must render no auth environment or Secret mount for an incomplete configuration."
     kind: functional
     risk: medium
     verify: apps/tape/tests/operator.rs::token_registry_secret_wiring_is_opt_in
-  shared_projection_preserves_tape_workload_contract:
+  typed_shared_statefulset_is_behavior_preserving:
     id: R1
-    text: "Tape's typed ServiceStatefulSet adoption preserves the public and peer ports, durable PVC, standard probes, secure non-root/read-only pod settings, rollout policy, and shared topology environment contract."
+    text: "Refactoring Tape to ServiceStatefulSet preserves the rendered runtime contract: Raft topology env, http/raft ports, durable journal PVC, health probes, secure pod/container context, update policy, and Prometheus annotations."
     kind: regression
-    risk: medium
+    risk: high
     verify: apps/tape/tests/operator.rs::render_emits_expected_child_objects
 ---
 flowchart TD
-    r1[R1 shared projection preserves tape workload contract] --> apps_tape_tests_operator_rs_render_emits_expected_child_objects[apps/tape/tests/operator.rs::render_emits_expected_child_objects]
-    r2[R2 optional auth secret remains tape policy] --> apps_tape_tests_operator_rs_token_registry_secret_wiring_is_opt_in[apps/tape/tests/operator.rs::token_registry_secret_wiring_is_opt_in]
+    r1[R1 typed shared statefulset is behavior preserving] --> apps_tape_tests_operator_rs_render_emits_expected_child_objects[apps/tape/tests/operator.rs::render_emits_expected_child_objects]
+    r2[R2 token secret is still opt in] --> apps_tape_tests_operator_rs_token_registry_secret_wiring_is_opt_in[apps/tape/tests/operator.rs::token_registry_secret_wiring_is_opt_in]
 ```
