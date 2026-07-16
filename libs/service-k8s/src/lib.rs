@@ -15,6 +15,7 @@
 //! `service-backup` + `cli-std` + this).
 
 pub mod controller;
+pub mod crd;
 pub mod lease;
 pub mod llm;
 pub mod render;
