@@ -417,6 +417,7 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
             };
 
             let file_name = output_file_name(&entry.subpath, format);
+            ensure_library_output_parses(&code, &file_name)?;
             let out_path = options.out_dir.join(&file_name);
             let code = apply_library_sourcemap(&options, &entry_path, &file_name, code)
                 .with_context(|| format!("emitting source map for {}", out_path.display()))?;
@@ -458,6 +459,18 @@ pub fn build_library(options: LibBuildOptions) -> Result<LibBuildResult> {
         types: types_outputs,
         assets,
     })
+}
+
+/// A library build must not claim success for an artifact Node cannot parse.
+/// This is a final safety net for lowering and scope-isolation regressions.
+fn ensure_library_output_parses(code: &str, output_name: &str) -> Result<()> {
+    if crate::bundler::dce::js_parses_without_errors(code) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "jet build --lib generated invalid JavaScript for `{output_name}`; refusing to write a successful artifact"
+        )
+    }
 }
 
 /// Emit declarations for one public entry and every internal module reachable
@@ -1132,6 +1145,23 @@ fn wrap_iife(
         body.push('\n');
     }
 
+    // TypeScript lowering may erase an unused external import before this IIFE
+    // pass sees it. Preserve the entry's external-global contract anyway: an
+    // IIFE library declares every entry peer/dependency global it authored,
+    // whether or not the current optimizer retained a local reference.
+    for line in entry_source.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("import ") {
+            continue;
+        }
+        if let Some(rewritten) = rewrite_iife_import(trimmed, externals) {
+            if !prelude.contains(&rewritten) {
+                prelude.push_str(&rewritten);
+                prelude.push('\n');
+            }
+        }
+    }
+
     // Build the returned namespace.
     let mut out = String::new();
     out.push_str(&format!("var {global_name} = (function () {{\n"));
@@ -1360,6 +1390,7 @@ fn build_library_preserve_modules(
                 OutputFormat::Cjs => esm_to_cjs(&code),
                 OutputFormat::Iife => unreachable!("validated above"),
             };
+            ensure_library_output_parses(&code, &out_rel.display().to_string())?;
             std::fs::write(&out_path, &code)
                 .with_context(|| format!("writing {}", out_path.display()))?;
 
@@ -1979,6 +2010,7 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
     let mut seen_external: HashSet<String> = HashSet::new();
     let mut inlined_files: HashSet<PathBuf> = HashSet::new();
     let mut used_top_level_bindings: HashSet<String> = HashSet::new();
+    let mut external_binding_owners: HashMap<String, (String, String)> = HashMap::new();
 
     let body = inline_module(
         entry,
@@ -1988,6 +2020,7 @@ fn bundle_library_entry(entry: &Path, externals: &HashSet<String>) -> Result<Str
         &mut inlined_files,
         false,
         &mut used_top_level_bindings,
+        &mut external_binding_owners,
     )?;
 
     // Inlined modules can each import the same external package.  Deduplicating
@@ -2390,6 +2423,7 @@ fn inline_module(
     inlined_files: &mut HashSet<PathBuf>,
     make_private: bool,
     used_top_level_bindings: &mut HashSet<String>,
+    external_binding_owners: &mut HashMap<String, (String, String)>,
 ) -> Result<String> {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !inlined_files.insert(canonical.clone()) {
@@ -2427,6 +2461,7 @@ fn inline_module(
         externals,
         module_index,
         used_top_level_bindings,
+        external_binding_owners,
     );
 
     // Walk top-level statements in order, splicing internal modules inline.
@@ -2446,7 +2481,9 @@ fn inline_module(
         let stmt_start = child.start_byte();
         let stmt_end = child.end_byte();
         // Emit any interstitial text (comments / other statements) verbatim.
-        out.push_str(&module_source[last_end..stmt_start]);
+        let rewritten_start = module_source.output_offset_for_input_offset(last_end);
+        let rewritten_end = module_source.output_offset_for_input_offset(stmt_start);
+        out.push_str(&module_source.source()[rewritten_start..rewritten_end]);
         last_end = stmt_end;
 
         let stmt_text = &source[stmt_start..stmt_end];
@@ -2510,6 +2547,7 @@ fn inline_module(
                         inlined_files,
                         false,
                         used_top_level_bindings,
+                        external_binding_owners,
                     )?;
                     out.push_str(&inlined);
                 } else {
@@ -2524,6 +2562,7 @@ fn inline_module(
                         inlined_files,
                         true,
                         used_top_level_bindings,
+                        external_binding_owners,
                     )?;
                     out.push_str(&inlined);
                     if let Some(clause) = export_named_clause(stmt_text) {
@@ -2550,7 +2589,9 @@ fn inline_module(
                     // package's own published CSS exports, so do not inline or
                     // preserve a browser-unresolvable SCSS import here.
                 } else {
-                    out.push_str(&module_source[stmt_start..stmt_end]);
+                    let rewritten_start = module_source.output_offset_for_input_offset(stmt_start);
+                    let rewritten_end = module_source.output_offset_for_input_offset(stmt_end);
+                    out.push_str(&module_source.source()[rewritten_start..rewritten_end]);
                 }
             } else if let Some(target) = resolve_relative(path, &spec)? {
                 let inlined = inline_module(
@@ -2561,17 +2602,21 @@ fn inline_module(
                     inlined_files,
                     false,
                     used_top_level_bindings,
+                    external_binding_owners,
                 )?;
                 out.push_str(&inlined);
             } else {
                 // Unresolved relative import: keep verbatim rather than drop it.
-                out.push_str(&module_source[stmt_start..stmt_end]);
+                let rewritten_start = module_source.output_offset_for_input_offset(stmt_start);
+                let rewritten_end = module_source.output_offset_for_input_offset(stmt_end);
+                out.push_str(&module_source.source()[rewritten_start..rewritten_end]);
             }
         }
     }
 
     // Trailing text after the last handled statement.
-    out.push_str(&module_source[last_end..]);
+    let rewritten_start = module_source.output_offset_for_input_offset(last_end);
+    out.push_str(&module_source.source()[rewritten_start..]);
 
     // When this module was inlined to satisfy a *named* re-export, strip its
     // (and every module it transitively inlined — all concatenated at this
@@ -2599,7 +2644,8 @@ fn isolate_library_module_scope(
     externals: &HashSet<String>,
     module_index: usize,
     used_top_level_bindings: &mut HashSet<String>,
-) -> (String, HashMap<String, String>) {
+    external_binding_owners: &mut HashMap<String, (String, String)>,
+) -> (super::mangle::ScopedModuleRename, HashMap<String, String>) {
     let jsx_component_bindings = collect_library_jsx_component_bindings(source, root);
     let mut external_import_renames = HashMap::new();
     let mut external_ranges = Vec::new();
@@ -2617,22 +2663,33 @@ fn isolate_library_module_scope(
         let statement = &source[child.start_byte()..child.end_byte()];
         for binding in external_import_bindings(statement) {
             let local_name = binding.local_name;
-            let alias =
-                library_module_binding_alias(module_index, &local_name, &jsx_component_bindings);
-            external_import_renames.entry(local_name).or_insert(alias);
+            let owner = (binding.specifier, binding.imported_name);
+            let same_external_owner = external_binding_owners
+                .get(&local_name)
+                .is_some_and(|previous| previous == &owner);
+            if !same_external_owner
+                && (external_binding_owners.contains_key(&local_name)
+                    || used_top_level_bindings.contains(&local_name))
+            {
+                let alias = library_module_binding_alias(
+                    module_index,
+                    &local_name,
+                    &jsx_component_bindings,
+                );
+                external_import_renames.entry(local_name).or_insert(alias);
+            } else {
+                external_binding_owners
+                    .entry(local_name.clone())
+                    .or_insert(owner);
+                used_top_level_bindings.insert(local_name);
+            }
         }
         external_ranges.push((child.start_byte(), child.end_byte()));
     }
 
-    let private_bindings = collect_library_private_top_level_bindings(source, root);
+    let mut private_bindings = collect_library_private_top_level_bindings(source, root);
     let exported_bindings = collect_library_exported_top_level_bindings(source, root);
-    if private_bindings.is_empty()
-        && exported_bindings.is_empty()
-        && external_import_renames.is_empty()
-    {
-        return (source.to_string(), external_import_renames);
-    }
-
+    private_bindings.retain(|name| !exported_bindings.contains(name));
     let mut root_renames = HashMap::new();
     for name in private_bindings {
         used_top_level_bindings.insert(name.clone());
@@ -2661,7 +2718,7 @@ fn isolate_library_module_scope(
         .expect("replacing UTF-8 source bytes with ASCII spaces stays valid UTF-8");
 
     (
-        super::mangle::apply_scoped_module_renames(
+        super::mangle::apply_scoped_module_renames_with_offsets(
             &without_external_imports,
             &root_renames,
             &external_import_renames,
@@ -2739,7 +2796,8 @@ fn collect_library_private_top_level_bindings(
 /// inlined modules declare the same exported root binding, the later module
 /// still needs a private alpha-name so concatenation cannot emit duplicate ESM
 /// declarations. Bare `export { local as public }` clauses introduce no new
-/// declaration and are therefore intentionally excluded.
+/// declaration, but their local side still marks an existing binding public so
+/// it must not be isolated as a private module-local name.
 fn collect_library_exported_top_level_bindings(
     source: &str,
     root: tree_sitter::Node<'_>,
@@ -2753,6 +2811,22 @@ fn collect_library_exported_top_level_bindings(
         let mut export_cursor = child.walk();
         for exported in child.named_children(&mut export_cursor) {
             collect_library_declaration_bindings(source, exported, &mut names);
+        }
+        let statement = &source[child.start_byte()..child.end_byte()];
+        if !statement.contains(" from ") {
+            if let Some(clause) = export_named_clause(statement) {
+                for binding in clause.split(',').map(str::trim) {
+                    let local = binding
+                        .strip_prefix("type ")
+                        .unwrap_or(binding)
+                        .split_once(" as ")
+                        .map(|(local, _)| local.trim())
+                        .unwrap_or(binding);
+                    if is_js_identifier(local) {
+                        names.insert(local.to_string());
+                    }
+                }
+            }
         }
     }
     names
@@ -3544,6 +3618,28 @@ mod tests {
     }
 
     #[test]
+    fn library_output_parse_gate_rejects_invalid_javascript() {
+        let err = ensure_library_output_parses("const incomplete = ;", "index.js")
+            .expect_err("invalid JavaScript must not be emitted as a successful library artifact");
+        assert!(
+            err.to_string().contains("refusing to write"),
+            "parse gate error must explain the refused output: {err}"
+        );
+    }
+
+    #[test]
+    fn library_export_binding_collector_finds_exported_functions() {
+        let source = "export function getSelectedNode() { return 1; }\nexport const value = 2;\n";
+        let mut parser = tree_sitter::Parser::new();
+        let language: tree_sitter::Language = tree_sitter_typescript::LANGUAGE_TSX.into();
+        parser.set_language(&language).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        let names = collect_library_exported_top_level_bindings(source, tree.root_node());
+        assert!(names.contains("getSelectedNode"), "{names:?}");
+        assert!(names.contains("value"), "{names:?}");
+    }
+
+    #[test]
     fn derive_global_name_camel_cases_and_drops_scope() {
         assert_eq!(derive_global_name("my-lib"), "myLib");
         assert_eq!(derive_global_name("@scope/widget-kit"), "widgetKit");
@@ -3725,6 +3821,41 @@ mod tests {
             !esm.contains("matchers:__jet_m1_MATCHERS:")
                 && !esm.contains("matchers:__jet_m2_MATCHERS:"),
             "JSX attribute expressions must not become object shorthand: {esm}"
+        );
+    }
+
+    #[test]
+    fn library_bundle_keeps_statement_boundaries_after_scoped_renames() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let entry = src.join("index.tsx");
+        std::fs::write(
+            &entry,
+            "import { Widget } from \"widget-lib\";\n\
+             const sharedProps = { label: \"ready\" };\n\
+             export function RenderWidget() { return <Widget props={sharedProps} />; }\n\
+             export * from \"./types\";\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("types.ts"),
+            "export const typeMarker = \"type\";\n",
+        )
+        .unwrap();
+
+        let esm = bundle_library_entry(&entry, &HashSet::new()).unwrap();
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&esm),
+            "library output must remain valid after a renamed JSX module is followed by a re-export:\n{esm}"
+        );
+        assert!(
+            esm.contains("jsx(JetM0_Widget"),
+            "the JSX component must remain an identifier reference: {esm}"
+        );
+        assert!(
+            esm.contains("typeMarker"),
+            "the following re-export must be inlined without truncation: {esm}"
         );
     }
 
