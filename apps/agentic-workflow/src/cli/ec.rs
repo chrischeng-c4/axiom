@@ -1733,6 +1733,7 @@ fn run_lock(project: &str, args: EcLockArgs) -> Result<()> {
     Ok(())
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1806" reason="EC review HITL question requires bounded integration in run_review.">
 /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
 fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
@@ -1888,6 +1889,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
         EcReviewDecision::Pending => unreachable!("pending review returned above"),
     }
 }
+// </HANDWRITE>
 
 fn emit_ec_review_summary(summary: &EcReviewSummary, json: bool) -> Result<()> {
     if json {
