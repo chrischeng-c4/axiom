@@ -7,15 +7,15 @@ capability_refs:
     claim: cli-interface-root
     coverage: full
   - id: cli-standard-surface
-    role: secondary
+    role: contributes
     claim: cli-standard-surface-root
     coverage: full
   - id: chainable-output-conformance
-    role: secondary
+    role: contributes
     claim: chainable-output-conformance-root
     coverage: full
   - id: kubernetes-native-deployment
-    role: secondary
+    role: contributes
     claim: kubernetes-native-deployment-root
     coverage: full
 ---
