@@ -169,9 +169,11 @@ struct AdmissionInner {
     epoch: Instant,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in admission.rs is hand-written pending codegen support">
 /// Cloneable shared admission controller. An empty policy set is disabled.
 #[derive(Clone)]
 pub struct AdmissionController(Arc<AdmissionInner>);
+// </HANDWRITE>
 
 impl fmt::Debug for AdmissionController {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
