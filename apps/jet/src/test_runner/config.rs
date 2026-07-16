@@ -7,8 +7,8 @@ use crate::test_runner::wire::WireTraceMode;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-/// Fully-resolved runner config — sourced from defaults → optional
-/// `jet.test.config.json` → CLI flags.
+/// Fully-resolved runner config — sourced from defaults, static Jest project
+/// configuration, then explicit CLI selections.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
 #[derive(Debug, Clone)]
 pub struct RunnerConfig {
@@ -74,7 +74,8 @@ pub struct RunnerConfig {
     /// case, page-action, and console events to this JSONL file and blocks at
     /// per-case checkpoints when the control file requests pause/next mode.
     pub live_e2e: Option<LiveE2eConfig>,
-    /// Declared test environment shape. Defaults to `Node`.
+    /// Declared test environment shape. Defaults to `Node`, unless a static
+    /// root Jest config declares `testEnvironment: "jsdom"`.
     // @spec enhancement-define-component-and-browser-like-test-environment-boundary
     pub environment: TestEnvironment,
 }
@@ -93,19 +94,16 @@ pub struct LiveE2eConfig {
 ///
 /// `jet test` covers three test shapes — unit, component, and
 /// frontend-integration — while product-flow E2E lives behind `jet e2e`.
-/// This enum lets a spec or the CLI declare the environment a test expects;
-/// today only `Node` is fully wired. Component/DOM modes return a clear
-/// "not yet implemented" error so callers don't silently get a Node sandbox
-/// when they ask for a browser-like environment.
+/// This enum lets a project or CLI declare the environment a test expects.
+/// `Dom` uses the project's installed `jsdom` package; `Component` remains a
+/// future real-renderer boundary.
 // @spec enhancement-define-component-and-browser-like-test-environment-boundary
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestEnvironment {
     /// Plain Node.js sandbox — no DOM globals, no browser APIs. Covers
     /// unit tests and pure-logic frontend tests. (Default.)
     Node,
-    /// Browser-like DOM (jsdom/happy-dom). Reserved for component and
-    /// frontend-integration tests. Not yet implemented — selecting this
-    /// fails fast with a clear error.
+    /// Browser-like DOM backed by the project's installed `jsdom` package.
     Dom,
     /// Component-mount DOM (Vitest browser / Playwright CT-style).
     /// Reserved for component tests that need a real renderer. Not yet
@@ -122,7 +120,7 @@ impl TestEnvironment {
     pub fn parse(s: &str) -> Result<Self, String> {
         match s.trim().to_lowercase().as_str() {
             "node" => Ok(Self::Node),
-            "dom" | "jsdom" | "happy-dom" => Ok(Self::Dom),
+            "dom" | "jsdom" | "happy-dom" | "jest-environment-jsdom" => Ok(Self::Dom),
             "component" => Ok(Self::Component),
             other => Err(format!(
                 "unknown --env value: {other}. expected one of: node, dom, component"
@@ -130,27 +128,30 @@ impl TestEnvironment {
         }
     }
 
-    /// Return `Ok(())` if the runner can actually execute this environment
-    /// today, or a clear error describing the missing surface and the
-    /// supported alternative.
-    ///
-    /// `Node` is supported; `Dom`/`Component` are reserved boundary slots
-    /// and currently fail.
+    /// Return `Ok(())` if the runner can execute this environment, or a clear
+    /// error naming the unsupported surface.
     pub fn ensure_supported(&self) -> Result<(), String> {
         match self {
-            Self::Node => Ok(()),
-            Self::Dom => Err(
-                "test environment `dom` is not yet implemented in the native jet test runner. \
-                 use `--env=node` for unit and pure-logic tests, or `jet e2e` for product-flow \
-                 cases that need a real browser."
-                    .to_string(),
-            ),
+            Self::Node | Self::Dom => Ok(()),
             Self::Component => Err(
                 "test environment `component` is not yet implemented in the native jet test \
                  runner. use `--env=node` for unit and pure-logic tests, or `jet e2e` for \
                  product-flow cases that need a real browser."
                     .to_string(),
             ),
+        }
+    }
+
+    /// Select a CLI environment without discarding a project-level jsdom
+    /// declaration. `--env node` is Jet's compatibility fallback, so a static
+    /// Jest `testEnvironment: "jsdom"` remains authoritative; explicit
+    /// browser-like selections still replace the project default.
+    pub fn with_cli_request(self, requested: &str) -> Result<Self, String> {
+        let requested = Self::parse(requested)?;
+        if requested == Self::Node && self == Self::Dom {
+            Ok(Self::Dom)
+        } else {
+            Ok(requested)
         }
     }
 }
@@ -198,6 +199,7 @@ impl RunnerConfig {
             .canonicalize()
             .with_context(|| format!("Invalid project root: {}", project_root.display()))?;
         let test_results = root.join("test-results");
+        let environment = project_test_environment(&root);
         Ok(Self {
             test_dir: root.clone(),
             // Default HTML report dir relative to project root.
@@ -249,9 +251,96 @@ impl RunnerConfig {
             // @spec .aw/tech-design/projects/jet/logic/auto-artifacts.md#A2
             auto_artifacts: true,
             // @spec enhancement-define-component-and-browser-like-test-environment-boundary
-            environment: TestEnvironment::Node,
+            environment,
         })
     }
+}
+
+const JEST_CONFIG_FILENAMES: &[&str] = &[
+    "jest.config.ts",
+    "jest.config.js",
+    "jest.config.cjs",
+    "jest.config.mjs",
+    "jest.config.json",
+    "jest.preset.ts",
+    "jest.preset.js",
+    "jest.preset.cjs",
+    "jest.preset.mjs",
+    "package.json",
+];
+
+fn project_test_environment(root: &Path) -> TestEnvironment {
+    JEST_CONFIG_FILENAMES
+        .iter()
+        .filter_map(|filename| {
+            std::fs::read_to_string(root.join(filename))
+                .ok()
+                .map(|source| (*filename, source))
+        })
+        .find_map(|(filename, source)| {
+            if filename == "package.json" {
+                jest_environment_from_package_json(&source)
+            } else {
+                jest_environment_from_source(&source)
+            }
+        })
+        .unwrap_or(TestEnvironment::Node)
+}
+
+fn jest_environment_from_package_json(source: &str) -> Option<TestEnvironment> {
+    let package: serde_json::Value = serde_json::from_str(source).ok()?;
+    let value = package.get("jest")?.get("testEnvironment")?.as_str()?;
+    TestEnvironment::parse(value).ok()
+}
+
+fn jest_environment_from_source(source: &str) -> Option<TestEnvironment> {
+    let mut search_start = 0usize;
+    const KEY: &str = "testEnvironment";
+    while let Some(offset) = source[search_start..].find(KEY) {
+        let start = search_start + offset;
+        if source[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            search_start = start + KEY.len();
+            continue;
+        }
+        let after_key = &source[start + KEY.len()..];
+        if after_key
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            search_start = start + KEY.len();
+            continue;
+        }
+        let Some(separator) = after_key.find(|ch| ch == ':' || ch == '=') else {
+            break;
+        };
+        if !after_key[..separator].trim().is_empty() {
+            search_start = start + KEY.len();
+            continue;
+        }
+        let value = after_key[separator + 1..].trim_start();
+        let Some(quote) = value.chars().next() else {
+            break;
+        };
+        if quote != '\'' && quote != '"' {
+            search_start = start + KEY.len();
+            continue;
+        }
+        let quoted = &value[quote.len_utf8()..];
+        let Some(end) = quoted.find(quote) else {
+            search_start = start + KEY.len();
+            continue;
+        };
+        if let Ok(environment) = TestEnvironment::parse(&quoted[..end]) {
+            return Some(environment);
+        }
+        search_start = start + KEY.len();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -298,6 +387,44 @@ mod tests {
     }
 
     #[test]
+    fn root_jest_jsdom_config_selects_dom_environment() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("jest.config.ts"),
+            r#"export default { testEnvironment: "jsdom" };"#,
+        )
+        .unwrap();
+
+        let cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+        assert_eq!(cfg.environment, TestEnvironment::Dom);
+    }
+
+    #[test]
+    fn package_jest_jsdom_config_selects_dom_environment() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"jest":{"testEnvironment":"jsdom"}}"#,
+        )
+        .unwrap();
+
+        let cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+        assert_eq!(cfg.environment, TestEnvironment::Dom);
+    }
+
+    #[test]
+    fn node_cli_request_preserves_root_jest_jsdom_environment() {
+        assert_eq!(
+            TestEnvironment::Dom.with_cli_request("node").unwrap(),
+            TestEnvironment::Dom
+        );
+        assert_eq!(
+            TestEnvironment::Dom.with_cli_request("component").unwrap(),
+            TestEnvironment::Component
+        );
+    }
+
+    #[test]
     fn test_environment_parses_known_kinds() {
         assert_eq!(
             TestEnvironment::parse("node").unwrap(),
@@ -317,6 +444,10 @@ mod tests {
             TestEnvironment::Dom
         );
         assert_eq!(
+            TestEnvironment::parse("jest-environment-jsdom").unwrap(),
+            TestEnvironment::Dom
+        );
+        assert_eq!(
             TestEnvironment::parse("component").unwrap(),
             TestEnvironment::Component
         );
@@ -325,11 +456,9 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_environments_fail_clearly() {
+    fn supported_and_unsupported_environments_are_explicit() {
         assert!(TestEnvironment::Node.ensure_supported().is_ok());
-        let dom_err = TestEnvironment::Dom.ensure_supported().unwrap_err();
-        assert!(dom_err.contains("dom"));
-        assert!(dom_err.contains("jet e2e"));
+        assert!(TestEnvironment::Dom.ensure_supported().is_ok());
         let comp_err = TestEnvironment::Component.ensure_supported().unwrap_err();
         assert!(comp_err.contains("component"));
         assert!(comp_err.contains("--env=node"));

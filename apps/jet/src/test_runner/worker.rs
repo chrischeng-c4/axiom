@@ -14,7 +14,7 @@ use crate::browser::{Browser, LaunchOptions};
 use crate::cdp_driver::{dispatch_page_request, parse_page_request, write_page_response};
 use crate::resolver::alias::AliasResolver;
 use crate::resolver::{is_node_builtin_specifier, ModuleResolver, ResolveOptions};
-use crate::test_runner::config::{LiveE2eConfig, RunnerConfig};
+use crate::test_runner::config::{LiveE2eConfig, RunnerConfig, TestEnvironment};
 use crate::test_runner::discovery::SpecFile;
 use crate::test_runner::reporter::{
     BrowserSessionReport, MultiReporter, Outcome, Summary, TestReport, TestStepReport,
@@ -45,6 +45,54 @@ const PAGE_SHIM: &str = include_str!("../../data/runtime/test/page.js");
 
 /// Matchers shim — polling Locator/Page matchers module imported by index.mjs.
 const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
+
+/// DOM globals installed before loading a spec whose root Jest config selects
+/// `testEnvironment: "jsdom"`. The boot module lives under the project root,
+/// so Node resolves `jsdom` from the same project dependency tree as Jest.
+const JSDOM_BOOTSTRAP: &str = r#"
+let __jetJSDOM;
+try {
+  ({ JSDOM: __jetJSDOM } = await import("jsdom"));
+} catch (error) {
+  throw new Error(
+    "Jet selected the jsdom test environment but could not import the project's `jsdom` package. Install `jsdom` as a project dev dependency. " +
+      (error?.message ?? error),
+  );
+}
+if (typeof __jetJSDOM !== "function") {
+  throw new Error("Jet selected the jsdom test environment but its `jsdom` package does not export JSDOM.");
+}
+const __jetDom = new __jetJSDOM("<!doctype html><html><head></head><body></body></html>", {
+  url: "http://localhost/",
+  pretendToBeVisual: true,
+});
+const __jetWindow = __jetDom.window;
+for (const key of [
+  "document", "navigator", "location", "history", "HTMLElement", "HTMLMediaElement", "Element", "Node", "Text",
+  "Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "FocusEvent", "InputEvent", "UIEvent",
+  "MutationObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
+  "DOMParser", "URL", "URLSearchParams", "FormData", "File", "Blob",
+]) {
+  if (key in __jetWindow) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value: __jetWindow[key],
+    });
+  }
+}
+Object.defineProperty(globalThis, "window", {
+  configurable: true,
+  writable: true,
+  value: __jetWindow,
+});
+Object.defineProperty(globalThis, "self", {
+  configurable: true,
+  writable: true,
+  value: __jetWindow,
+});
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+"#;
 
 /// Node 18-compatible ESM loader used only by the native test worker.
 ///
@@ -91,6 +139,73 @@ function isUnsupportedCommonJsFacadeSpecifier(specifier) {
     || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier) && !specifier.startsWith("file:"));
 }
 
+function skipJavaScriptQuotedLiteral(source, index, quote) {
+  for (index += 1; index < source.length; index += 1) {
+    if (source[index] === "\\") {
+      index += 1;
+    } else if (source[index] === quote) {
+      return index + 1;
+    }
+  }
+  return source.length;
+}
+
+function hasTopLevelStaticEsmSyntax(source) {
+  // `nextResolve` reports legacy `.js` packages as CommonJS. Some packages
+  // nevertheless ship static ESM through that path, so preserve the existing
+  // compatibility upgrade. This must be lexical rather than a line regex:
+  // bundled CommonJS can contain an ESM-looking line inside a template literal,
+  // which is data rather than module syntax.
+  let braceDepth = 0;
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "/" && source[index + 1] === "/") {
+      const newline = source.indexOf("\n", index + 2);
+      index = newline === -1 ? source.length : newline + 1;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      index = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      index = skipJavaScriptQuotedLiteral(source, index, char);
+      continue;
+    }
+    if (char === "{") {
+      braceDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      index += 1;
+      continue;
+    }
+    if (braceDepth === 0 && /[A-Za-z_$]/.test(char)) {
+      const start = index;
+      index += 1;
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index])) {
+        index += 1;
+      }
+      const word = source.slice(start, index);
+      const next = source.slice(index).trimStart();
+      const propertyAccess = start > 0 && source[start - 1] === ".";
+      if (!propertyAccess && word === "export") {
+        return true;
+      }
+      if (word === "import" && !next.startsWith("(")) {
+        return true;
+      }
+      continue;
+    }
+    index += 1;
+  }
+  return false;
+}
+
 function inferredEsmModuleResolution(resolved) {
   if (
     (resolved.format && resolved.format !== "commonjs")
@@ -101,7 +216,7 @@ function inferredEsmModuleResolution(resolved) {
 
   try {
     const source = readFileSync(fileURLToPath(resolved.url), "utf8");
-    const hasEsmSyntax = /(?:^|[\r\n])\s*(?:import\s*(?:["']|[A-Za-z_$*{])|export\s+(?:default\b|\*|\{|(?:async\s+)?(?:const|let|var|function|class)\b))/.test(source);
+    const hasEsmSyntax = hasTopLevelStaticEsmSyntax(source);
     return hasEsmSyntax
       ? { ...resolved, format: "module", shortCircuit: true }
       : null;
@@ -3182,9 +3297,13 @@ fn build_boot(spec_path: &Path, spec: &SpecFile, config: &RunnerConfig) -> Strin
     };
     let artifacts_dir_js =
         serde_json::to_string(&config.auto_artifacts_dir.display().to_string()).unwrap();
+    let environment_bootstrap = match config.environment {
+        TestEnvironment::Dom => JSDOM_BOOTSTRAP,
+        TestEnvironment::Node | TestEnvironment::Component => "",
+    };
 
     format!(
-        r#"import {{ __jetRun }} from "@jet/test";
+        r#"{environment_bootstrap}import {{ __jetRun }} from "@jet/test";
 await __jetRun({{
   specUrl: {spec},
   file: {file},
@@ -3205,6 +3324,7 @@ await __jetRun({{
         auto_artifacts = auto_artifacts_js,
         artifacts_dir = artifacts_dir_js,
         live_control = live_control_js,
+        environment_bootstrap = environment_bootstrap,
     )
 }
 
@@ -3243,6 +3363,30 @@ mod tests {
         assert!(out.contains("const x"));
         // `: number` annotation should be gone
         assert!(!out.contains(": number"));
+    }
+
+    #[test]
+    fn transform_spec_elides_dayjs_type_import_beside_default_import() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("dayjs-type-default-import.test.ts");
+        std::fs::write(
+            &p,
+            r#"
+import dayjs, { Dayjs } from "dayjs";
+const formatDay = (value: Dayjs) => dayjs(value).format();
+"#,
+        )
+        .unwrap();
+
+        let out = transform_spec(&p).unwrap();
+        assert!(
+            out.contains("import dayjs from \"dayjs\";"),
+            "test-spec transform must preserve the default import: {out}"
+        );
+        assert!(
+            !out.contains("Dayjs"),
+            "test-spec transform must erase the type-only import: {out}"
+        );
     }
 
     #[test]
@@ -3396,6 +3540,41 @@ const quoted = 'jet:test';
     }
 
     #[test]
+    fn emitter_elides_dayjs_type_import_beside_default_import() {
+        let tmp = TempDir::new().unwrap();
+        let dayjs = tmp.path().join("node_modules/dayjs");
+        std::fs::create_dir_all(&dayjs).unwrap();
+        std::fs::write(
+            dayjs.join("package.json"),
+            r#"{"name":"dayjs","main":"./dayjs.min.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(dayjs.join("dayjs.min.js"), "module.exports = () => ({});\n").unwrap();
+        let spec = tmp.path().join("dayjs-type-default-import.test.ts");
+        std::fs::write(
+            &spec,
+            r#"
+import dayjs, { Dayjs } from "dayjs";
+const formatDay = (value: Dayjs) => dayjs(value);
+"#,
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
+        let emitted = emitter.emit(&spec, None).unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("import dayjs from \"file://"),
+            "emitter must retain only the default dayjs import: {code}"
+        );
+        assert!(
+            !code.contains("Dayjs"),
+            "emitter must not restore the type-only Dayjs named import: {code}"
+        );
+    }
+
+    #[test]
     fn worker_runtime_exposes_jest_globals_and_table_helpers() {
         assert!(
             WORKER_RUNTIME.contains("globalThis.jest = jest"),
@@ -3483,6 +3662,38 @@ const quoted = 'jet:test';
             !tree.root_node().has_error(),
             "embedded runtime has JavaScript syntax errors"
         );
+    }
+
+    #[test]
+    fn test_asset_loader_is_valid_javascript() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(TEST_ASSET_LOADER, None).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "embedded asset loader has JavaScript syntax errors"
+        );
+        assert!(
+            TEST_ASSET_LOADER.contains("hasTopLevelStaticEsmSyntax"),
+            "asset loader must classify static ESM syntax lexically"
+        );
+    }
+
+    #[test]
+    fn jsdom_bootstrap_is_valid_javascript() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(JSDOM_BOOTSTRAP, None).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "embedded jsdom bootstrap has JavaScript syntax errors"
+        );
+        assert!(JSDOM_BOOTSTRAP.contains("await import(\"jsdom\")"));
+        assert!(JSDOM_BOOTSTRAP.contains("\"document\", \"navigator\""));
     }
 
     #[test]

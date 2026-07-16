@@ -496,14 +496,24 @@ mod tests {
     }
 
     #[test]
-    fn resolve_discovery_rejects_unsupported_environment() {
+    fn resolve_discovery_accepts_dom_environment() {
         // @spec #2709
         let tmp = TempDir::new().unwrap();
         let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
         cfg.environment = TestEnvironment::Dom;
+        let discovery = resolve_discovery(&cfg).unwrap();
+        assert_eq!(discovery.environment, "dom");
+    }
+
+    #[test]
+    fn resolve_discovery_rejects_component_environment() {
+        // @spec #2709
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+        cfg.environment = TestEnvironment::Component;
         let err = resolve_discovery(&cfg).unwrap_err();
         assert_eq!(err.code, "unsupported_environment");
-        assert!(err.message.to_lowercase().contains("dom"));
+        assert!(err.message.to_lowercase().contains("component"));
     }
 
     #[test]
