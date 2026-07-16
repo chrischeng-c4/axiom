@@ -27,7 +27,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
-use lumen::auth::AuthConfig;
+use lumen::auth::{AuthConfig, TOKEN_REGISTRY_FILE_ENV};
 use lumen::coordinator::WriteCoordinator;
 use lumen::rdb::{LocalFsRdbStore, RdbSnapshot, RdbStore};
 use lumen::storage::Engine;
@@ -2178,8 +2178,29 @@ async fn serve(args: ServeArgs) -> Result<()> {
     } else {
         tracing::warn!("auth=off — set LUMEN_AUTH=required for production");
     }
+    let admission = service_http::AdmissionConfig::from_env("LUMEN")?.controller(
+        "lumen.read",
+        "lumen.write",
+        "lumen.admin",
+    );
+    if admission.is_some() {
+        tracing::info!("request admission enabled (LUMEN_ADMISSION_*; probes stay exempt)");
+    }
 
     let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    if let Some(path) = std::env::var_os(TOKEN_REGISTRY_FILE_ENV) {
+        let path = PathBuf::from(path);
+        // `AppState` owns the exact verifier its router uses, so a
+        // Secret/CSI replacement becomes visible to live requests without a
+        // Lumen restart. Invalid replacements remain on the shared
+        // last-known-good snapshot and emit redacted auth audit events.
+        let _ =
+            service_auth::spawn_registry_file_watcher(state.verifier().registry_verifier(), &path);
+        tracing::info!(
+            path = %path.display(),
+            "watching bearer token registry for credential rotation"
+        );
+    }
     // #1389: wire a real on-demand checkpoint (`POST /admin/checkpoint`) only
     // when segment persistence is actually configured — the raft path has
     // its own snapshot mechanism and is out of the reshard driver's scope
@@ -2285,7 +2306,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         state = state.with_routed(Arc::new(router));
     }
     #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
-    let mut app = lumen::api::router(state);
+    let mut app = lumen::api::router_with_admission(state, admission);
     // Plain local/backward-compatible Raft RPCs share the public h2c port.
     // Configured mTLS peers are served only by the dedicated listener below.
     #[cfg(feature = "raft-wal")]

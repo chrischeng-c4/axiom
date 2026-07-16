@@ -64,6 +64,7 @@ use crate::wal::{MemWal, SharedWal};
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub auth: Arc<AuthConfig>,
+    verifier: Arc<LumenVerifier>,
     pub cluster: Option<Arc<crate::raft::ClusterState>>,
     /// Read/search backend. Defaults to the local engine; sharded serving can
     /// replace it with a fan-in router while keeping writes/stats local.
@@ -447,6 +448,7 @@ impl AppState {
                 writer: writer.clone(),
             }),
             engine,
+            verifier: Arc::new(LumenVerifier::new(auth.clone())),
             auth,
             cluster: None,
             writer,
@@ -492,6 +494,13 @@ impl AppState {
     pub fn with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self {
         self.routed = Some(routed);
         self
+    }
+
+    /// The exact auth verifier used by every router built from this state.
+    /// Serving uses this handle for projected-registry rotation so a live
+    /// router and its watcher cannot diverge onto separate snapshots.
+    pub fn verifier(&self) -> Arc<LumenVerifier> {
+        Arc::clone(&self.verifier)
     }
 
     /// No-auth state over an in-process log. Used by tests and the
@@ -671,7 +680,7 @@ pub fn router_with_admission(
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) stay open so K8s probes and Prometheus scrape can hit
     // them without a token even when auth is required.
-    let auth_state = Arc::new(LumenVerifier::new(state.auth.clone()));
+    let auth_state = state.verifier();
     let data_plane = Router::new()
         .route(
             "/collections",

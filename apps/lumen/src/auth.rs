@@ -49,7 +49,10 @@ pub use service_auth::{Role, TokenClaims};
 
 use crate::types::ApiError;
 
-const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
+/// Environment variable naming the Secret/CSI-projected token registry.
+/// The serving adapter watches this exact file after successful startup so a
+/// validated replacement updates the live request verifier without a restart.
+pub const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
 const LEGACY_TOKENS_ENV: &str = "LUMEN_TOKENS";
 
 #[derive(Debug, Clone)]
@@ -95,16 +98,23 @@ impl AuthConfig {
 /// thin newtype over `service_auth::ReloadableRoleMapVerifier`.
 #[derive(Debug, Clone)]
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
-pub struct LumenVerifier(ReloadableRoleMapVerifier);
+pub struct LumenVerifier(Arc<ReloadableRoleMapVerifier>);
 
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
 impl LumenVerifier {
     pub fn new(cfg: Arc<AuthConfig>) -> Self {
-        Self(ReloadableRoleMapVerifier::with_sink(
+        Self(Arc::new(ReloadableRoleMapVerifier::with_sink(
             cfg.required,
             cfg.tokens.clone(),
             Arc::new(TracingAuthEventSink),
-        ))
+        )))
+    }
+
+    /// The shared reloadable verifier owned by this service wrapper. The
+    /// serving adapter passes this same instance to the Secret/CSI file
+    /// watcher, while the HTTP middleware keeps using the wrapper itself.
+    pub fn registry_verifier(&self) -> Arc<ReloadableRoleMapVerifier> {
+        Arc::clone(&self.0)
     }
 
     /// Explicit credential-rotation boundary. Parsing/validation completes
@@ -290,6 +300,27 @@ mod tests {
         let ctx = verifier.authenticate(&rotated).unwrap();
         assert_eq!(ctx.subject(), Some("next"));
         assert!(ctx.ensure("u", Role::Admin).is_ok());
+    }
+
+    #[test]
+    fn registry_handle_reloads_the_live_lumen_verifier() {
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
+            required: true,
+            tokens: HashMap::from([("old".to_string(), token(&[("u", Role::Read)]))]),
+        }));
+        verifier
+            .registry_verifier()
+            .reload_json(r#"{"rotated":{"subject":"next","roles":{"u":"admin"}}}"#)
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer rotated".parse().unwrap(),
+        );
+        let context = verifier.authenticate(&headers).unwrap();
+        assert_eq!(context.subject(), Some("next"));
+        assert!(context.ensure("u", Role::Admin).is_ok());
     }
 
     #[test]
