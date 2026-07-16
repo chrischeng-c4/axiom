@@ -593,7 +593,15 @@ async fn test_worker_handles_physical_esm_directory_imports_and_workspace_tsx_in
     .unwrap();
     fs::write(
         workspace_source.join("source/index.tsx"),
-        "export function WorkspacePanel() { return <section>workspace</section>; }\n",
+        r#"
+type WorkspaceOptions = { isNullable?: boolean };
+
+export const workspaceValue = (
+  { isNullable = true }: WorkspaceOptions = {},
+) => isNullable ? "workspace-default" : "workspace-explicit";
+
+export function WorkspacePanel() { return <section>workspace</section>; }
+"#,
     )
     .unwrap();
     fs::write(
@@ -615,7 +623,7 @@ export const jsxs = jsx;
         r#"
 import { test, expect } from "@jet/test";
 import { affixValue } from "physical-esm";
-import { WorkspacePanel } from "workspace-source";
+import { WorkspacePanel, workspaceValue } from "workspace-source";
 import { calendarAddon } from "calendar-wrapper";
 import { tableHook } from "table-wrapper";
 
@@ -624,6 +632,8 @@ test("loads physical ESM directory indexes and workspace TSX package indexes", (
   expect(calendarAddon).toBe("legacy-calendar-addon");
   expect(tableHook).toBe("legacy-table-hook");
   expect(typeof WorkspacePanel).toBe("function");
+  expect(workspaceValue()).toBe("workspace-default");
+  expect(workspaceValue({ isNullable: false })).toBe("workspace-explicit");
 });
 "#,
     )
