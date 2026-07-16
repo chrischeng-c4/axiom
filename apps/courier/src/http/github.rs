@@ -57,7 +57,7 @@ impl GithubClient {
                 "{GITHUB_TOKEN_ENV} must be set — courier holds the real GitHub credential \
                  server-side"
             )
-        })?;
+        })?.trim().to_string();
         let allowed_repos = match std::env::var(ALLOWED_REPOS_ENV) {
             Ok(v) if !v.trim().is_empty() => v.split(',').map(|s| s.trim().to_string()).collect(),
             _ => vec![DEFAULT_ALLOWED_REPO.to_string()],
