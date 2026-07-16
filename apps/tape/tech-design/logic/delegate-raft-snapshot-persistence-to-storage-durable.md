@@ -50,3 +50,28 @@ changes:
     anchor: prepare_bootstrap_seed
     description: "Replace Tape-local atomic file persistence with storage_durable::atomic_write while retaining the JournalSnapshot codec and recovery ordering."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-storage-durable-adoption-verification
+requirements:
+  failover_keeps_committed_events:
+    id: R2
+    text: "Shared marker and snapshot writes preserve committed Tape events through leader loss and restart."
+    kind: regression
+    risk: high
+    verify: apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss
+  snapshot_recovery_remains_durable:
+    id: R1
+    text: "Shared atomic persistence preserves Tape Raft snapshot install and recovery semantics."
+    kind: regression
+    risk: high
+    verify: apps/tape/tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot
+---
+flowchart TD
+    r1[R1 snapshot recovery remains durable] --> apps_tape_tests_raft_cluster_rs_fresh_node_catches_up_via_install_snapshot[apps/tape/tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot]
+    r2[R2 failover keeps committed events] --> apps_tape_tests_raft_failover_rs_kill_9_leader_survivors_reelect_with_no_committed_event_loss[apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss]
+```
