@@ -9,7 +9,7 @@ details.
 <!-- aw:projects-table:start -->
 | Project | What it is |
 |---------|------------|
-| [agentic-workflow](apps/agentic-workflow/README.md) | Agentic Workflow (`aw`) is an agent-first project-iteration CLI for coding agents. |
+| [agentic-workflow](apps/agentic-workflow/README.md) | Agentic Workflow (`aw`) is a project-iteration CLI that lets coding agents ship bounded, verified work without a human steering every step. |
 | [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
 | [vat](apps/vat/README.md) | `vat` is a local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
 | [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI. |

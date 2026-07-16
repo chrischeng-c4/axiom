@@ -33,6 +33,11 @@ authoring, CLI, service, and meta-doc rules remain in
   returns to bounded TD/codegen adaptation, while EC green permits terminal
   code-check and parent rollup. `aw health` is read-only evidence, never an
   authoring phase.
+- Milestone persistence is CLI-owned: mutating TD/CB verbs create scoped
+  lifecycle commits, and `aw wi run`/`aw capability run` block completion with
+  structured persistence details while configured repo scopes hold uncommitted
+  lifecycle changes — treat local-only persistence as incomplete evidence,
+  never as published outward evidence.
 - For CLI surface changes, update the command implementation, generated or
   mirrored agent docs, active skill templates, and focused CLI tests together.
 - For `SPEC-MANAGED` or generated files, update the owning TD/source unit and
