@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-16T07:50:24.616950+00:00"
-digest = "sha256:86952b63c422e7edb3bf71217aa392436a622ea195d93403e2d598663fe1963e"
-source_digest = "sha256:86952b63c422e7edb3bf71217aa392436a622ea195d93403e2d598663fe1963e"
-ir_digest = "sha256:48bfcfcecce1d405fd77a9ce36afa2b549224234ddb70fc71f21cdd65e3a0535"
+generated_at = "2026-07-16T07:52:24.845665+00:00"
+digest = "sha256:bc625e7db6f1c37310f6a2d171b5aa784a8859c09e5d7ea3e12efb32ed298429"
+source_digest = "sha256:bc625e7db6f1c37310f6a2d171b5aa784a8859c09e5d7ea3e12efb32ed298429"
+ir_digest = "sha256:9318c098cb2c98304c40eb279363f3283f39c982b3083a8224300373d50ebd9d"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -15,8 +15,8 @@ section_count = 7
 
 [[files]]
 path = "interfaces/cli/vat-dx-reconcile-readme-and-offline-docs-with-the-current-cli-su.md"
-digest = "sha256:a8d070c42fb6383ee186e4cbeaf8c17897672037146ecfea86668081c8593a97"
-ir_digest = "sha256:2338d5e760b61027983ab0812341fd0d151b269decb37b1f5c24275ea5441275"
+digest = "sha256:8c70b5b7d9bb7e1385f7f570e5213c340496c75ce7090d462ee71fad6a8e3e5e"
+ir_digest = "sha256:e997e606d589cafe6a078881ff43eaf69240c8e295161ed2a7d4f64a0e6317ba"
 section_count = 3
 
 [[files]]
