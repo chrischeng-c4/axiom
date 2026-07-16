@@ -6,7 +6,9 @@
 //! server. The stamping logic lives in the shared `libs/build-stamp` crate;
 //! this file only supplies courier's `COURIER` env-var prefix.
 
+// <HANDWRITE gap="missing-generator:schema" tracker="pending-tracker" reason="schema section in build.rs is hand-written pending codegen support">
 fn main() {
     build_stamp::stamp("COURIER");
 }
+// </HANDWRITE>
 // HANDWRITE-END

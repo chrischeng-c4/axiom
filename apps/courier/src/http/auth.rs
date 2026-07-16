@@ -54,12 +54,14 @@ pub const TOKEN_REGISTRY_FILE_ENV: &str = "COURIER_TOKEN_REGISTRY_FILE";
 /// Legacy/dev inline token-registry JSON (never the production path).
 pub const LEGACY_TOKENS_ENV: &str = "COURIER_TOKENS";
 
+// <HANDWRITE gap="missing-generator:schema" tracker="pending-tracker" reason="schema section in auth.rs is hand-written pending codegen support">
 /// Resolved auth settings: the mode plus the token→claims registry.
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     pub required: bool,
     pub tokens: HashMap<String, TokenClaims>,
 }
+// </HANDWRITE>
 
 impl AuthConfig {
     /// Open/dev config: auth off, no tokens.

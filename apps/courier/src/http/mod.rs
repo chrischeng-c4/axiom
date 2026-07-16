@@ -34,6 +34,7 @@ use service_http::MetricsProvider;
 
 use crate::http::github::GithubClient;
 
+// <HANDWRITE gap="missing-generator:schema" tracker="pending-tracker" reason="schema section in mod.rs is hand-written pending codegen support">
 /// Shared application state: the drain flag `/readyz` reports, the bearer
 /// verifier the data-plane auth layer runs, and the GitHub client every
 /// handler forwards through.
@@ -43,6 +44,7 @@ pub struct AppState {
     draining: Arc<AtomicBool>,
     verifier: Arc<StaticRoleMapVerifier>,
 }
+// </HANDWRITE>
 
 impl AppState {
     /// Build state from a resolved [`github::GithubClient`] and
