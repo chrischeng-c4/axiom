@@ -2,10 +2,16 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-17T08:17:11.632244+00:00"
-digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
-source_digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
-ir_digest = "sha256:54e9c6fba4bb68ab977a994ac4984c937be11f2d0b11f6066ea9898944cb17d6"
+generated_at = "2026-07-19T16:48:34.145258+00:00"
+digest = "sha256:9d430c4cabd6ee8bd185582342ea82f92ee984a05d87db6f03defa2cea58c637"
+source_digest = "sha256:9d430c4cabd6ee8bd185582342ea82f92ee984a05d87db6f03defa2cea58c637"
+ir_digest = "sha256:3d070cd2db7984caab55592f1eeb7dbf5143a543a5d53a4c0b19eb6712b384d5"
+
+[[files]]
+path = "config/standardize-opt-in-admission-configuration-for-service-adopters.md"
+digest = "sha256:95c7b70bb24b8a4490d416a1e285626f8ead2e7af61fd14333a580e6dde84365"
+ir_digest = "sha256:32922624dcd24af1a6a32e7aa7d17a93b45cde6463eab5b256a192a092de89b5"
+section_count = 3
 
 [[files]]
 path = "interfaces/rest/extract-protocol-neutral-service-observability-integration.md"
