@@ -57,6 +57,7 @@ const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
 /// Both behaviors stay test-only and leave package export resolution intact.
 const TEST_ASSET_LOADER: &str = r##"
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ASSET_EXTENSIONS = new Set([
@@ -88,6 +89,25 @@ function isUnsupportedCommonJsFacadeSpecifier(specifier) {
     || specifier.startsWith("\0")
     || specifier.startsWith("#")
     || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier) && !specifier.startsWith("file:"));
+}
+
+function inferredEsmModuleResolution(resolved) {
+  if (
+    (resolved.format && resolved.format !== "commonjs")
+    || !resolved.url?.startsWith("file:")
+  ) {
+    return null;
+  }
+
+  try {
+    const source = readFileSync(fileURLToPath(resolved.url), "utf8");
+    const hasEsmSyntax = /(?:^|[\r\n])\s*(?:import\s*(?:["']|[A-Za-z_$*{])|export\s+(?:default\b|\*|\{|(?:async\s+)?(?:const|let|var|function|class)\b))/.test(source);
+    return hasEsmSyntax
+      ? { ...resolved, format: "module", shortCircuit: true }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function namedCommonJsFacadeUrl(specifier, context, resolved) {
@@ -146,6 +166,10 @@ function isTestStylesheetUrl(url) {
 export async function resolve(specifier, context, nextResolve) {
   try {
     const resolved = await nextResolve(specifier, context);
+    const inferredEsm = inferredEsmModuleResolution(resolved);
+    if (inferredEsm) {
+      return inferredEsm;
+    }
     const facadeUrl = namedCommonJsFacadeUrl(specifier, context, resolved);
     if (facadeUrl) {
       return { url: facadeUrl, shortCircuit: true };
@@ -2500,12 +2524,13 @@ fn rewrite_test_module_imports(
     source_path: &Path,
     emitter: &mut TempModuleGraphEmitter<'_>,
 ) -> Result<String> {
+    let source = rewrite_top_level_jest_mocked_imports(source)?;
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_javascript::LANGUAGE.into())
         .context("setting tree-sitter JavaScript language")?;
     let tree = parser
-        .parse(source, None)
+        .parse(&source, None)
         .context("parsing transformed test module")?;
     let root = tree.root_node();
 
@@ -2540,7 +2565,7 @@ fn rewrite_test_module_imports(
     }
 
     if replacements.is_empty() {
-        return Ok(source.to_string());
+        return Ok(source);
     }
 
     replacements.sort_by_key(|(start, _, _)| *start);
@@ -2553,6 +2578,291 @@ fn rewrite_test_module_imports(
     }
     out.push_str(&source[last..]);
     Ok(out)
+}
+
+#[derive(Debug)]
+struct TopLevelJestMock {
+    start: usize,
+    end: usize,
+    specifier: String,
+    has_factory: bool,
+}
+
+#[derive(Debug)]
+struct MockedStaticImport {
+    start: usize,
+    end: usize,
+    specifier: String,
+    bindings: Vec<(String, String)>,
+    namespace_binding: Option<String>,
+}
+
+/// Jest hoists top-level `jest.mock()` registrations before imports. Native
+/// ESM does not, so convert imports that match a top-level mock into registry
+/// bindings after moving the registration ahead of the module body. This
+/// preserves `jest.fn()` objects returned by factories and gives no-factory
+/// auto-mocks the imported function surface.
+fn rewrite_top_level_jest_mocked_imports(source: &str) -> Result<String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .context("setting JavaScript language for jest mock rewriting")?;
+    let tree = parser
+        .parse(source, None)
+        .context("parsing transformed module for jest mock rewriting")?;
+
+    let mut mocks = Vec::new();
+    let mut imports = Vec::new();
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let text = &source[child.start_byte()..child.end_byte()];
+        match child.kind() {
+            "expression_statement" => {
+                if let Some((specifier, has_factory)) = parse_top_level_jest_mock(text) {
+                    mocks.push(TopLevelJestMock {
+                        start: child.start_byte(),
+                        end: child.end_byte(),
+                        specifier,
+                        has_factory,
+                    });
+                }
+            }
+            "import_statement" => {
+                if let Some(mut import) = parse_mocked_static_import(text) {
+                    import.start = child.start_byte();
+                    import.end = child.end_byte();
+                    imports.push(import);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if mocks.is_empty() || imports.is_empty() {
+        return Ok(source.to_string());
+    }
+
+    let mocked_specs: HashMap<&str, &TopLevelJestMock> = mocks
+        .iter()
+        .map(|mock| (mock.specifier.as_str(), mock))
+        .collect();
+    let matched_imports: Vec<&MockedStaticImport> = imports
+        .iter()
+        .filter(|import| mocked_specs.contains_key(import.specifier.as_str()))
+        .collect();
+    if matched_imports.is_empty() {
+        return Ok(source.to_string());
+    }
+
+    let mut auto_mock_exports: HashMap<&str, Vec<String>> = HashMap::new();
+    for import in &matched_imports {
+        let Some(mock) = mocked_specs.get(import.specifier.as_str()) else {
+            continue;
+        };
+        if mock.has_factory {
+            continue;
+        }
+        let exports = auto_mock_exports
+            .entry(mock.specifier.as_str())
+            .or_default();
+        for (imported, _) in &import.bindings {
+            if !exports.contains(imported) {
+                exports.push(imported.clone());
+            }
+        }
+    }
+
+    let matched_specs: std::collections::HashSet<&str> = matched_imports
+        .iter()
+        .map(|import| import.specifier.as_str())
+        .collect();
+    let mut prelude = String::new();
+    for mock in &mocks {
+        if !matched_specs.contains(mock.specifier.as_str()) {
+            continue;
+        }
+        if mock.has_factory {
+            prelude.push_str(&source[mock.start..mock.end]);
+        } else {
+            let exports = auto_mock_exports
+                .get(mock.specifier.as_str())
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let properties = exports
+                .iter()
+                .map(|name| format!("{name}: jest.fn()"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            prelude.push_str(&format!(
+                "jest.mock({}, () => ({{ {properties} }}));",
+                serde_json::to_string(&mock.specifier).expect("mock specifier serializes")
+            ));
+        }
+        prelude.push('\n');
+    }
+
+    let mut replacements: Vec<(usize, usize, String)> = mocks
+        .iter()
+        .filter(|mock| matched_specs.contains(mock.specifier.as_str()))
+        .map(|mock| (mock.start, mock.end, String::new()))
+        .collect();
+    replacements.extend(
+        matched_imports
+            .into_iter()
+            .map(|import| (import.start, import.end, render_jest_mock_binding(import))),
+    );
+    replacements.sort_by_key(|(start, _, _)| *start);
+
+    let mut out = String::with_capacity(source.len() + prelude.len());
+    out.push_str(&prelude);
+    let mut last = 0usize;
+    for (start, end, replacement) in replacements {
+        if start < last {
+            continue;
+        }
+        out.push_str(&source[last..start]);
+        out.push_str(&replacement);
+        last = end;
+    }
+    out.push_str(&source[last..]);
+    Ok(out)
+}
+
+fn parse_top_level_jest_mock(statement: &str) -> Option<(String, bool)> {
+    let call = statement.trim().strip_prefix("jest.mock")?.trim_start();
+    let args = call.strip_prefix('(')?.trim_start();
+    let (specifier, end) = parse_javascript_string(args)?;
+    let rest = args[end..].trim_start();
+    match rest.chars().next()? {
+        ')' => Some((specifier, false)),
+        ',' => Some((specifier, true)),
+        _ => None,
+    }
+}
+
+fn parse_mocked_static_import(statement: &str) -> Option<MockedStaticImport> {
+    let import = statement.trim().strip_prefix("import")?.trim_start();
+    let (clause, module) = import.rsplit_once(" from ")?;
+    let (specifier, _) = parse_javascript_string(module.trim_start())?;
+    let clause = clause.trim();
+
+    if let Some(namespace) = clause.strip_prefix("* as ") {
+        let namespace = namespace.trim();
+        if is_javascript_binding_name(namespace) {
+            return Some(MockedStaticImport {
+                start: 0,
+                end: 0,
+                specifier,
+                bindings: Vec::new(),
+                namespace_binding: Some(namespace.to_string()),
+            });
+        }
+        return None;
+    }
+
+    let (default_binding, named) = if let Some(open) = clause.find('{') {
+        let close = clause.rfind('}')?;
+        let default = clause[..open].trim().trim_end_matches(',').trim();
+        (
+            if default.is_empty() {
+                None
+            } else {
+                Some(default)
+            },
+            &clause[open + 1..close],
+        )
+    } else {
+        (Some(clause), "")
+    };
+
+    let mut bindings = Vec::new();
+    if let Some(default) = default_binding {
+        if !is_javascript_binding_name(default) {
+            return None;
+        }
+        bindings.push(("default".to_string(), default.to_string()));
+    }
+    for raw in named.split(',') {
+        let spec = raw
+            .trim()
+            .strip_prefix("type ")
+            .unwrap_or(raw.trim())
+            .trim();
+        if spec.is_empty() {
+            continue;
+        }
+        let (imported, local) = spec
+            .split_once(" as ")
+            .map(|(imported, local)| (imported.trim(), local.trim()))
+            .unwrap_or((spec, spec));
+        if !is_javascript_binding_name(imported) || !is_javascript_binding_name(local) {
+            return None;
+        }
+        bindings.push((imported.to_string(), local.to_string()));
+    }
+    if bindings.is_empty() {
+        return None;
+    }
+
+    Some(MockedStaticImport {
+        start: 0,
+        end: 0,
+        specifier,
+        bindings,
+        namespace_binding: None,
+    })
+}
+
+fn parse_javascript_string(value: &str) -> Option<(String, usize)> {
+    let quote = value.chars().next()?;
+    if !matches!(quote, '\'' | '"') {
+        return None;
+    }
+    let mut escaped = false;
+    for (index, ch) in value.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return Some((value[1..index].to_string(), index + ch.len_utf8()));
+        }
+    }
+    None
+}
+
+fn is_javascript_binding_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
+fn render_jest_mock_binding(import: &MockedStaticImport) -> String {
+    let specifier = serde_json::to_string(&import.specifier).expect("mock specifier serializes");
+    if let Some(namespace) = &import.namespace_binding {
+        return format!("const {namespace} = jest.requireMock({specifier});");
+    }
+    let bindings = import
+        .bindings
+        .iter()
+        .map(|(imported, local)| {
+            if imported == local {
+                imported.clone()
+            } else {
+                format!("{imported}: {local}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("const {{ {bindings} }} = jest.requireMock({specifier});")
 }
 
 /// Resolve an import from an original source path before it is moved into the
@@ -2781,9 +3091,55 @@ fn normalize_jet_test_virtual_imports(source: String) -> String {
         return source;
     }
 
-    source
-        .replace("\"jet:test\"", "\"@jet/test\"")
-        .replace("'jet:test'", "'@jet/test'")
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .is_err()
+    {
+        return source;
+    }
+    let Some(tree) = parser.parse(&source, None) else {
+        return source;
+    };
+    if tree.root_node().has_error() {
+        return source;
+    }
+
+    let root = tree.root_node();
+    let mut replacements = Vec::new();
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if statement.kind() != "import_statement" {
+            continue;
+        }
+        let mut import_cursor = statement.walk();
+        for child in statement.children(&mut import_cursor) {
+            if child.kind() != "string" {
+                continue;
+            }
+            let specifier = &source[child.byte_range()];
+            let replacement = match specifier {
+                "\"jet:test\"" => "\"@jet/test\"",
+                "'jet:test'" => "'@jet/test'",
+                _ => continue,
+            };
+            replacements.push((child.start_byte(), child.end_byte(), replacement));
+        }
+    }
+
+    if replacements.is_empty() {
+        return source;
+    }
+
+    let mut normalized = String::with_capacity(source.len() + replacements.len() * 2);
+    let mut last = 0usize;
+    for (start, end, replacement) in replacements {
+        normalized.push_str(&source[last..start]);
+        normalized.push_str(replacement);
+        last = end;
+    }
+    normalized.push_str(&source[last..]);
+    normalized
 }
 
 /// Build the boot ESM module that wires the runtime to the spec and writes
@@ -2887,6 +3243,22 @@ mod tests {
         assert!(out.contains("const x"));
         // `: number` annotation should be gone
         assert!(!out.contains(": number"));
+    }
+
+    #[test]
+    fn normalize_jet_test_virtual_imports_only_rewrites_import_specifiers() {
+        let source = r#"
+import { test } from "jet:test";
+import 'jet:test';
+const label = "jet:test";
+const quoted = 'jet:test';
+"#;
+
+        let normalized = normalize_jet_test_virtual_imports(source.to_string());
+        assert!(normalized.contains("from \"@jet/test\""));
+        assert!(normalized.contains("import '@jet/test'"));
+        assert!(normalized.contains("const label = \"jet:test\""));
+        assert!(normalized.contains("const quoted = 'jet:test'"));
     }
 
     #[test]

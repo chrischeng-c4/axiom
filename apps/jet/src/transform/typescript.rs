@@ -17,13 +17,27 @@ pub fn transform_typescript(source: &str, options: &TransformOptions) -> Result<
     let mut parser = Parser::new();
     parser.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())?;
 
-    let tree = parser
+    let initial_tree = parser
         .parse(source, None)
         .ok_or_else(|| anyhow::anyhow!("Failed to parse TypeScript"))?;
 
+    // tree-sitter can recover an untyped function-type parameter such as
+    // `(callback: (value) => Promise<string>)` as an arrow parameter. Remove
+    // that malformed annotation before the normal type-stripping walk so the
+    // outer return annotation remains parseable too.
+    let normalized_source =
+        strip_malformed_function_type_parameter_annotations(source, &initial_tree.root_node());
+    let tree = if normalized_source == source {
+        initial_tree
+    } else {
+        parser
+            .parse(&normalized_source, None)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse normalized TypeScript"))?
+    };
+
     let root = tree.root_node();
 
-    let transformed = strip_unused_named_imports(&remove_types(source, &root)?);
+    let transformed = strip_unused_named_imports(&remove_types(&normalized_source, &root)?);
 
     Ok(TransformResult {
         code: transformed,
@@ -33,6 +47,148 @@ pub fn transform_typescript(source: &str, options: &TransformOptions) -> Result<
             None
         },
     })
+}
+
+/// Drop function-type annotations whose parameter is missing its own type.
+///
+/// `tree-sitter-typescript` represents `callback: (value) => Promise<T>` as a
+/// runtime arrow parameter during error recovery. That makes a generic outer
+/// return annotation appear to be JavaScript as well. Limit this pre-pass to
+/// annotations on formal parameters, so ordinary arrow expressions are never
+/// rewritten.
+pub(super) fn strip_malformed_function_type_parameter_annotations(
+    source: &str,
+    root: &Node<'_>,
+) -> String {
+    let mut ranges = Vec::new();
+    collect_malformed_function_type_parameter_ranges(source, *root, &mut ranges);
+
+    if ranges.is_empty() {
+        return source.to_string();
+    }
+
+    ranges.sort_unstable();
+    let mut normalized = String::with_capacity(source.len());
+    let mut last_end = 0;
+    for (start, end) in ranges {
+        if start < last_end {
+            continue;
+        }
+        normalized.push_str(&source[last_end..start]);
+        last_end = end;
+    }
+    normalized.push_str(&source[last_end..]);
+    normalized
+}
+
+fn collect_malformed_function_type_parameter_ranges(
+    source: &str,
+    node: Node<'_>,
+    ranges: &mut Vec<(usize, usize)>,
+) {
+    if matches!(node.kind(), "required_parameter" | "optional_parameter") {
+        let annotation = {
+            let mut cursor = node.walk();
+            let annotation = node
+                .children(&mut cursor)
+                .find(|child| child.kind() == "type_annotation");
+            annotation
+        };
+        if let Some(annotation) = annotation {
+            if let Some(end) =
+                malformed_function_type_annotation_end(source, annotation.start_byte())
+            {
+                ranges.push((annotation.start_byte(), end));
+                return;
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_malformed_function_type_parameter_ranges(source, child, ranges);
+    }
+}
+
+fn malformed_function_type_annotation_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut pos = start;
+
+    if bytes.get(pos) != Some(&b':') {
+        return None;
+    }
+    pos = skip_ascii_whitespace(bytes, pos + 1);
+    if bytes.get(pos) != Some(&b'(') {
+        return None;
+    }
+    pos = skip_ascii_whitespace(bytes, pos + 1);
+
+    if !bytes
+        .get(pos)
+        .is_some_and(|byte| is_identifier_start(*byte))
+    {
+        return None;
+    }
+    pos += 1;
+    while bytes
+        .get(pos)
+        .is_some_and(|byte| is_identifier_continue(*byte))
+    {
+        pos += 1;
+    }
+    pos = skip_ascii_whitespace(bytes, pos);
+    if bytes.get(pos) != Some(&b')') {
+        return None;
+    }
+    pos = skip_ascii_whitespace(bytes, pos + 1);
+    if bytes.get(pos) != Some(&b'=') || bytes.get(pos + 1) != Some(&b'>') {
+        return None;
+    }
+    pos = skip_ascii_whitespace(bytes, pos + 2);
+    if pos == bytes.len() {
+        return None;
+    }
+
+    let mut angles = 0usize;
+    let mut parens = 0usize;
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+
+    while let Some(byte) = bytes.get(pos) {
+        match byte {
+            b'=' if bytes.get(pos + 1) != Some(&b'>') => return None,
+            b'<' => angles += 1,
+            b'>' if angles > 0 => angles -= 1,
+            b'(' => parens += 1,
+            b')' if parens > 0 => parens -= 1,
+            b'[' => brackets += 1,
+            b']' if brackets > 0 => brackets -= 1,
+            b'{' => braces += 1,
+            b'}' if braces > 0 => braces -= 1,
+            b',' | b')' if angles == 0 && parens == 0 && brackets == 0 && braces == 0 => {
+                return Some(pos);
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+
+    None
+}
+
+fn skip_ascii_whitespace(bytes: &[u8], mut pos: usize) -> usize {
+    while bytes.get(pos).is_some_and(u8::is_ascii_whitespace) {
+        pos += 1;
+    }
+    pos
+}
+
+fn is_identifier_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$')
+}
+
+fn is_identifier_continue(byte: u8) -> bool {
+    is_identifier_start(byte) || byte.is_ascii_digit()
 }
 
 /// Remove type annotations from TypeScript code

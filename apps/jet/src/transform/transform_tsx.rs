@@ -139,13 +139,25 @@ pub fn transform_tsx(source: &str, options: &TransformOptions) -> Result<Transfo
     let mut parser = Parser::new();
     parser.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())?;
 
-    let tree = parser
+    let initial_tree = parser
         .parse(source, None)
         .ok_or_else(|| anyhow::anyhow!("Failed to parse TSX"))?;
 
+    let normalized_source = super::typescript::strip_malformed_function_type_parameter_annotations(
+        source,
+        &initial_tree.root_node(),
+    );
+    let tree = if normalized_source == source {
+        initial_tree
+    } else {
+        parser
+            .parse(&normalized_source, None)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse normalized TSX"))?
+    };
+
     let root = tree.root_node();
 
-    let mut transformed = transform_node(source, &root, opts)?;
+    let mut transformed = transform_node(&normalized_source, &root, opts)?;
 
     if use_automatic && has_jsx(&root) {
         let runtime_import =
@@ -155,7 +167,11 @@ pub fn transform_tsx(source: &str, options: &TransformOptions) -> Result<Transfo
 
     // React Fast Refresh injection (dev mode only, JSX files only)
     if opts.dev_mode && has_jsx(&root) {
-        transformed = super::react_refresh::inject_react_fast_refresh(&transformed, source, &root);
+        transformed = super::react_refresh::inject_react_fast_refresh(
+            &transformed,
+            &normalized_source,
+            &root,
+        );
     }
     transformed = strip_unused_named_imports(&transformed);
 
@@ -1060,7 +1076,7 @@ fn extract_jsx_expression(source: &str, node: &Node, options: &TransformOptions)
 
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "{" | "}" | "!" => continue,
+            "{" | "}" | "!" | "comment" => continue,
             "jsx_element" | "jsx_self_closing_element" => {
                 return transform_jsx_element(source, &child, options);
             }

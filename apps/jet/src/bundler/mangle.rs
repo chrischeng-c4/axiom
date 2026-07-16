@@ -1389,7 +1389,15 @@ fn tokenize(source: &str) -> Vec<Tok> {
             continue;
         }
         let s = i;
-        i += 1;
+        // Identifiers and punctuation are ASCII-only in this lightweight
+        // tokenizer, but source text is not.  Keep the fallback token's byte
+        // range on UTF-8 character boundaries so later `txt()` calls can
+        // safely slice it (for example, JSX text containing `⌘` or CJK).
+        i += source[i..]
+            .chars()
+            .next()
+            .expect("tokenizer index is within source")
+            .len_utf8();
         toks.push(Tok {
             kind: TK::Punct,
             start: s,
@@ -2968,12 +2976,45 @@ fn is_shorthand_property_position(source: &str, tokens: &[Tok], ti: usize) -> bo
         return false;
     }
 
+    // JSX attribute expressions use the same token shape as object shorthand:
+    // `<Component value={binding} />`. The braces are not an object literal,
+    // so expanding the renamed binding to `binding:alias` corrupts the TSX
+    // before the JSX transform runs.
+    if is_jsx_attribute_expression_opening(source, tokens, open_idx) {
+        return false;
+    }
+
     if next == "=" {
         return is_object_binding_pattern_opening(source, tokens, open_idx);
     }
 
     is_object_literal_opening(source, tokens, open_idx)
         || is_object_binding_pattern_opening(source, tokens, open_idx)
+}
+
+fn is_jsx_attribute_expression_opening(source: &str, tokens: &[Tok], open_idx: usize) -> bool {
+    if open_idx < 2
+        || !matches_punct(source, tokens, open_idx, "{")
+        || !matches_punct(source, tokens, open_idx - 1, "=")
+        || tokens[open_idx - 2].kind != TK::Ident
+    {
+        return false;
+    }
+
+    // A JSX attribute lives between an opening `<Tag` and its closing `>`.
+    // Scan back only through that still-open tag; ordinary JavaScript object
+    // literals encounter a statement boundary instead.
+    for idx in (0..open_idx - 2).rev() {
+        if tokens[idx].kind != TK::Punct {
+            continue;
+        }
+        match txt(source, &tokens[idx]) {
+            ">" | ";" | "{" | "}" => return false,
+            "<" => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn nearest_unclosed_opening_punct_index(source: &str, tokens: &[Tok], ti: usize) -> Option<usize> {
@@ -5019,11 +5060,10 @@ function module(ReactSharedInternals, ReactDOMSharedInternals) {
     // UTF-8 multi-byte safety tests (issue #904)
     //
     // The tokenizer operates on raw bytes (`source.as_bytes()`) and only
-    // matches ASCII identifier characters, so multi-byte UTF-8 sequences
-    // pass through as opaque Punct tokens.  `apply_renames` reconstructs
-    // the output via `result.splice(byte_start..byte_end, ...)` where
-    // offsets come from the byte-level scan — no char-index-as-byte-offset
-    // bug is possible.  These tests verify that.
+    // matches ASCII identifier characters. Multi-byte UTF-8 sequences pass
+    // through as opaque Punct tokens, whose ranges must still be valid string
+    // boundaries for `txt()` and replacement collection. These tests verify
+    // that contract.
     // ──────────────────────────────────────────────────────────────────
 
     #[test]
@@ -5094,6 +5134,33 @@ function module(ReactSharedInternals, ReactDOMSharedInternals) {
             "other should be mangled, got: {}",
             out
         );
+    }
+
+    #[test]
+    fn test_utf8_punct_tokens_stay_on_character_boundaries() {
+        // Raw JSX text is neither a string literal nor an identifier, so it
+        // exercises the tokenizer fallback that previously split `⌘` after
+        // its first byte and panicked in `txt()` (GH #1784).
+        let src = "const collidingHelper = render(<span>⌘重</span>); collidingHelper;";
+        let tokens = tokenize(src);
+        let unicode_tokens: Vec<&Tok> = tokens
+            .iter()
+            .filter(|token| token.kind == TK::Punct)
+            .filter(|token| {
+                let text = txt(src, token);
+                text == "⌘" || text == "重"
+            })
+            .collect();
+
+        assert_eq!(
+            unicode_tokens.len(),
+            2,
+            "token ranges must retain each UTF-8 character"
+        );
+        assert!(src.is_char_boundary(unicode_tokens[0].start));
+        assert!(src.is_char_boundary(unicode_tokens[0].end));
+        assert!(src.is_char_boundary(unicode_tokens[1].start));
+        assert!(src.is_char_boundary(unicode_tokens[1].end));
     }
 }
 // CODEGEN-END

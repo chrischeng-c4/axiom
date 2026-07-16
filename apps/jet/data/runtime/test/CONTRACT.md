@@ -67,12 +67,17 @@ named `@jet/test` export. The native runner supports `jest.fn`, call/result
 metadata, implementation and return-value helpers, `jest.spyOn`, and the
 explicit `jest.mock(name, factory)` / `jest.requireMock(name)` registry.
 
+Top-level `jest.mock()` calls whose specifier is statically imported by the
+same spec are hoisted before that import is resolved. Factory mocks retain
+their returned `jest.fn()` values; no-factory mocks create `jest.fn()` values
+for the statically imported named bindings.
+
 `test.each`, `it.each`, and `describe.each` expand array rows into ordinary
 Jet tests or suites. Titles support `%s`, `%d`/`%i`, `%f`, `%j`, `%o`, `%%`,
 and `$#` substitutions.
 
-The registry does not intercept ESM static imports. Code that needs an
-import-substitution loader should keep using an explicit fake or access a
+Nested `jest.mock()` calls and imports not statically declared by the same
+spec are not rewritten. Those cases should use an explicit fake or access a
 registered factory through `jest.requireMock`; full Jest module-loader
 semantics are not part of this virtual-module contract yet.
 
