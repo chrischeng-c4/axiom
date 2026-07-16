@@ -3470,6 +3470,50 @@ changes:
       a stale fresh phase has already become `td_merged`, and keeps the lease
       through the full terminal transition. Thus both overlapping callers and
       late-acquiring stale readers execute one VAT/Cargo inventory.
+      #1829: `aw ec review` now accepts independent agent-backed evidence
+      alongside human evidence, gated by the project's `ec_review_backing`
+      policy (`human` default | `agent` | `either`, resolved from
+      `Project::ec_review_backing` via `resolve_ec_project_context` into a
+      new `EcProjectContext.review_backing` field, normalized by
+      `normalize_review_backing`/checked by `ec_review_backing_allows`).
+      `run_gen` now writes a durable `ec-author.json` record
+      (`EcAuthorRecord`, best-effort, never blocks `ec gen`) via
+      `write_ec_author_record`, capturing `current_actor_identity()`
+      (`AW_ACTOR_ID`/`AW_AGENT_ID` env, else `unknown-actor`) for the
+      finalized `generated_from_td_digest`. Independence is enforced by
+      `ec_reviewer_is_independent`: an agent `reviewed_by` identity matching
+      the recorded author for the same digest is rejected in both
+      `validate_ec_review_payload` (submission time) and
+      `ec_review_record_findings` (terminal-gate re-check), regardless of
+      policy; a legacy/missing author record is treated as independent
+      (backward compatible). `validate_ec_review_payload` also rejects
+      `reviewer_kind: "agent"` outright when the policy doesn't allow it, and
+      rejects any `reviewer_kind` other than `human`/`agent`.
+      `EcReviewSummary` gained `backing: Option<String>` (the accepted
+      record's `reviewer_kind`) and `agent_review_prompt: Option<String>`.
+      When the policy allows agent backing and no current accepted/
+      needs-revision record exists, `run_review` now emits a non-blocking
+      `status: "pending_agent_review"` envelope (`requires_hitl: false`)
+      carrying `agent_review_prompt` — the structured inspection-checklist
+      prompt from `agent_ec_review_prompt` covering the six #1504 dimensions
+      (capability_claim_coverage, required_dimensions, assertions_specific,
+      oracle_independent, loopholes_checked, false_green_risk_checked) plus
+      the independence requirement — instead of the blocking human HITL
+      question; the host dispatches its own subagent reviewer and submits
+      the verdict back through the existing `--evidence-file` mechanism
+      (`reviewer_kind: "agent"`), which resumes the same validation path. An
+      agent `needs_revision` verdict routes to bounded `aw ec fill` exactly
+      like the human path (same `ec_fill_command_for_target` remediation). A
+      human `--evidence-file` submission (`reviewer_kind: "human"`) always
+      remains valid regardless of policy, so a post-completion human audit
+      can reopen (`needs_revision`) an EC whose current accepted record is
+      agent-backed. New pub helper `project_ec_review_backing(project) ->
+      Result<String>` resolves a project's policy for `aw health`/reporting
+      (see this file's `project.rs`/`cb.rs` entries) without duplicating
+      `resolve_ec_project_context`. Default behavior (`ec_review_backing`
+      absent from `aw.toml`) is unchanged: `review_backing` normalizes to
+      `"human"`, so `reviewer_kind: "agent"` evidence is rejected exactly as
+      before #1829.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify

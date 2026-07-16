@@ -4902,7 +4902,10 @@ fn terminal_ec_failure_envelope(
     let (error_kind, remediation_detail) = if semantic_review_required {
         (
             "terminal_ec_semantic_review_required",
-            "obtain independent human-backed EC review evidence, then retry",
+            // #1829: review evidence may be human- or agent-backed
+            // depending on the project's `review_backing` policy; the
+            // remediation is the same command either way.
+            "obtain independent (human- or agent-backed, per project review_backing policy) EC review evidence, then retry",
         )
     } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SingleFlight) {
         (
@@ -8234,7 +8237,10 @@ fn terminal_ec_failure_envelope(
     let (error_kind, remediation_detail) = if semantic_review_required {
         (
             "terminal_ec_semantic_review_required",
-            "obtain independent human-backed EC review evidence, then retry",
+            // #1829: review evidence may be human- or agent-backed
+            // depending on the project's `review_backing` policy; the
+            // remediation is the same command either way.
+            "obtain independent (human- or agent-backed, per project review_backing policy) EC review evidence, then retry",
         )
     } else if has_failure_kind(crate::cli::ec::EcVerifyFailureKind::SingleFlight) {
         (

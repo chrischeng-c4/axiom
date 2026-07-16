@@ -21,10 +21,11 @@ registry types shared between `project_discovery` (writes) and `project_registry
 Seven structs declared in this spec:
 
 - `Project` — a discovered or manually declared project entry in `.aw/projects.toml`.
-  Five fields: `name`, `path` (PathBuf), optional `tech_design_dir`,
+  Six fields: `name`, `path` (PathBuf), optional `tech_design_dir`,
   `ec: BTreeMap<String, EcBinding>` (EC tool bindings by category, declared
-  before `workspaces` so the contract reads before the implementation), and
-  `workspaces: Vec<Workspace>`.
+  before `workspaces` so the contract reads before the implementation),
+  optional `ec_review_backing` (`human` | `agent` | `either` EC review policy,
+  #1829), and `workspaces: Vec<Workspace>`.
 - `EcBinding` — binds one EC category to an external measurement tool.
   Four fields: `tool` (`arena` | `rig` | `meter` | `vat`, validated by the command
   builder rather than serde), and the per-tool argument carriers: optional
@@ -76,6 +77,10 @@ definitions:
         x-serde-default: true
         x-serde-skip-if: "BTreeMap::is_empty"
         description: "EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation."
+      ec_review_backing:
+        type: string
+        description: "Per-project EC review-backing policy: `human` (default when absent), `agent`, or `either`. Controls which reviewer_kind values in the durable EC review record satisfy the production-required EC review gate (#1829)."
+        x-serde-skip-if: "Option::is_none"
       workspaces:
         type: array
         items:

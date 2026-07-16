@@ -79,6 +79,9 @@ pub struct Project {
     /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ec: BTreeMap<String, EcBinding>,
+    /// Per-project EC review-backing policy: `human` (default when absent), `agent`, or `either`. Controls which reviewer_kind values in the durable EC review record satisfy the production-required EC review gate (#1829).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ec_review_backing: Option<String>,
     /// Non-empty list of workspaces contained in this project.
     pub workspaces: Vec<Workspace>,
 }
