@@ -39,3 +39,15 @@ flowchart TD
   parse -->|valid| controller["Build shared AdmissionController"]
   parse -->|invalid| error(["Named config error"])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: libs/service-http/src/admission.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Add a typed, service-prefix admission configuration parser that produces an optional shared AdmissionController. generator gap: missing-generator:service-http-admission-config (#1823)."
+```
