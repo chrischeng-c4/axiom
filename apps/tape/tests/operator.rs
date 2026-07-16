@@ -162,6 +162,7 @@ fn render_emits_expected_child_objects() {
     // Probe contract on the serve port: /readyz readiness, /healthz liveness
     // + startup — what service-http's standard probe routes answer.
     let container = &sts["spec"]["template"]["spec"]["containers"][0];
+    let pod = &sts["spec"]["template"]["spec"];
     assert_eq!(container["readinessProbe"]["httpGet"]["path"], "/readyz");
     assert_eq!(container["livenessProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["startupProbe"]["httpGet"]["path"], "/healthz");
@@ -172,9 +173,20 @@ fn render_emits_expected_child_objects() {
     assert_eq!(container["resources"]["requests"]["cpu"], "1");
     assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
     assert!(container["resources"].get("limits").is_none());
+    assert_eq!(sts["spec"]["revisionHistoryLimit"], 5);
+    assert_eq!(sts["spec"]["updateStrategy"]["type"], "RollingUpdate");
     assert_eq!(
-        sts["spec"]["template"]["spec"]["affinity"]["podAntiAffinity"]
-            ["requiredDuringSchedulingIgnoredDuringExecution"][0]["topologyKey"],
+        sts["spec"]["template"]["metadata"]["annotations"]["prometheus.io/path"],
+        "/metrics"
+    );
+    assert_eq!(pod["securityContext"]["runAsNonRoot"], true);
+    assert_eq!(
+        pod["securityContext"]["seccompProfile"]["type"],
+        "RuntimeDefault"
+    );
+    assert_eq!(
+        pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+            ["topologyKey"],
         "kubernetes.io/hostname"
     );
 
@@ -183,7 +195,17 @@ fn render_emits_expected_child_objects() {
         sts["spec"]["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"],
         "10Gi"
     );
-    assert_eq!(container["volumeMounts"][0]["mountPath"], "/data");
+    let mounts = container["volumeMounts"].as_array().unwrap();
+    let data_mount = mounts
+        .iter()
+        .find(|mount| mount["name"] == "data")
+        .expect("data PVC mount");
+    assert_eq!(data_mount["mountPath"], "/data");
+    assert!(pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|volume| volume["name"] == "tmp" && volume["emptyDir"] == serde_json::json!({})));
 
     // The rest of the child set is present.
     assert_eq!(of_kind(&objs, "ServiceAccount")["metadata"]["name"], "tape");
