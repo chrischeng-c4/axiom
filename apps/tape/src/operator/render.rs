@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:c41fb0fe" tracker="pending-tracker" reason="Pure render (no I/O), everything via the shared service_k8s::render toolkit: RenderCtx (app tape, manager tape-operator, owner_ref from CR uid) -> ServiceAccount, StatefulSet via sharded_statefulset (command [tape, serve], port http 7137, shard_count pinned 1, headless_env_key TAPE_PEER_SERVICE, /data PVC with storage/storageClass, extra_env TAPE_BIND 0.0.0.0:7137 + TAPE_DATA_DIR /data + TAPE_GRACE_SECS + optional RUST_LOG + opt-in TAPE_AUTH/TAPE_TOKEN_REGISTRY_FILE with the token-registry Secret volume mounted read-only at /var/run/secrets/tape, off unless auth: required AND tokensSecret), then harden(): RollingUpdate + revisionHistoryLimit 5 + prometheus annotations + nonroot 65532 pod/container security contexts + readOnlyRootFilesystem + writable /tmp + terminationGracePeriodSeconds = graceSecs + readiness /readyz + liveness/startup /healthz probes; headless + client Services on 7137; PDB maxUnavailable 1."
+// HANDWRITE-BEGIN gap="missing-generator:logic:c41fb0fe" tracker="#1809" reason="Pure render (no I/O), composing shared service_k8s::render::ServiceStatefulSet with Tape-owned image, ports, journal PVC, TAPE_* environment names, auth Secret policy, and typed workload defaults; ServiceAccount, headless/client Services, and PDB remain shared helper outputs."
 //! Pure rendering: a [`Tape`] spec → the child Kubernetes objects that
 //! realize it. No cluster, no I/O — each object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels
@@ -18,7 +18,7 @@
 use serde_json::{json, Value};
 
 use super::crd::Tape;
-use service_k8s::render::{self, RenderCtx, ShardedStatefulSet};
+use service_k8s::render::{self, RenderCtx, ServiceStatefulSet, WorkloadVolumeClaim};
 
 const APP: &str = "tape";
 const MANAGER: &str = "tape-operator";
@@ -158,7 +158,24 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         extra_env.push(json!({ "name": "TAPE_BOOTSTRAP_SEED_URI", "value": seed_uri }));
     }
 
-    let mut sts = render::sharded_statefulset(ShardedStatefulSet {
+    let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
+    let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
+    if let Some(secret) = token_registry_secret(tape) {
+        volumes.push(json!({
+            "name": TOKEN_REGISTRY_VOLUME,
+            "secret": {
+                "secretName": secret,
+                "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
+            },
+        }));
+        volume_mounts.push(json!({
+            "name": TOKEN_REGISTRY_VOLUME,
+            "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
+            "readOnly": true,
+        }));
+    }
+
+    render::service_statefulset(ServiceStatefulSet {
         cx,
         name: cx.name,
         component: COMPONENT,
@@ -169,7 +186,11 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
             .as_deref()
             .unwrap_or("IfNotPresent"),
         command: vec!["tape".into(), "serve".into()],
-        ports: vec![("http", CLIENT_PORT), ("raft", RAFT_PORT)],
+        args: vec![],
+        ports: vec![
+            json!({ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" }),
+            json!({ "name": "raft", "containerPort": RAFT_PORT, "protocol": "TCP" }),
+        ],
         headless_service: headless,
         // tape is a single raft group: shardCount is part of the shared CRD
         // shape but the render pins it to 1 (replicasPerShard is the scale
@@ -178,89 +199,51 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         replicas_per_shard: s.cluster.replicas_per_shard,
         voter_count: s.cluster.voter_count,
         headless_env_key: "TAPE_PEER_SERVICE",
-        cpu,
-        memory,
-        extra_env,
-        volume_claim: Some(pvc),
-    });
-    harden(tape, &mut sts);
-    sts
-}
-// </HANDWRITE>
-
-/// Layer tape's production hardening onto the toolkit's base StatefulSet:
-/// rolling-update policy, prometheus scrape annotations, non-root
-/// pod/container security contexts, health/liveness/startup probes, a
-/// writable `/tmp` (required by `readOnlyRootFilesystem`), and the opt-in
-/// token-registry Secret mount.
-fn harden(tape: &Tape, sts: &mut Value) {
-    if let Some(spec) = sts["spec"].as_object_mut() {
-        spec.insert("revisionHistoryLimit".into(), json!(5));
-        spec.insert("updateStrategy".into(), json!({ "type": "RollingUpdate" }));
-    }
-    sts["spec"]["template"]["metadata"]["annotations"] = json!({
-        "prometheus.io/scrape": "true",
-        "prometheus.io/port": CLIENT_PORT.to_string(),
-        "prometheus.io/path": "/metrics",
-    });
-    let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
-    let mut mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
-    if let Some(secret) = token_registry_secret(tape) {
-        volumes.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "secret": {
-                "secretName": secret,
-                "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
-            },
-        }));
-        mounts.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
-            "readOnly": true,
-        }));
-    }
-    if let Some(pod) = sts["spec"]["template"]["spec"].as_object_mut() {
-        pod.insert(
-            "terminationGracePeriodSeconds".into(),
-            json!(tape.spec.grace_secs),
-        );
-        pod.insert(
-            "securityContext".into(),
-            json!({
-                "runAsNonRoot": true,
-                "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
-                "seccompProfile": { "type": "RuntimeDefault" },
-            }),
-        );
-        match pod.get_mut("volumes").and_then(|v| v.as_array_mut()) {
-            Some(vols) => vols.extend(volumes),
-            None => {
-                pod.insert("volumes".into(), json!(volumes));
-            }
-        }
-    }
-    let container = &mut sts["spec"]["template"]["spec"]["containers"][0];
-    container["readinessProbe"] = json!({
-        "httpGet": { "path": "/readyz", "port": "http" },
-        "initialDelaySeconds": 2, "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 60,
-    });
-    container["livenessProbe"] = json!({
-        "httpGet": { "path": "/healthz", "port": "http" },
-        "initialDelaySeconds": 5, "periodSeconds": 15, "timeoutSeconds": 5, "failureThreshold": 3,
-    });
-    container["startupProbe"] = json!({
-        "httpGet": { "path": "/healthz", "port": "http" },
-        "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
-    });
-    container["securityContext"] = json!({
-        "runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532,
-        "allowPrivilegeEscalation": false,
-        "readOnlyRootFilesystem": true,
-        "capabilities": { "drop": ["ALL"] },
-    });
-    match container["volumeMounts"].as_array_mut() {
-        Some(existing) => existing.extend(mounts),
-        None => container["volumeMounts"] = json!(mounts),
-    }
+        service_account_name: Some(cx.name),
+        env: extra_env,
+        env_from: vec![],
+        resources: render::requested_resources(cpu, memory),
+        pod_annotations: Some(json!({
+            "prometheus.io/scrape": "true",
+            "prometheus.io/port": CLIENT_PORT.to_string(),
+            "prometheus.io/path": "/metrics",
+        })),
+        pod_security_context: Some(json!({
+            "runAsNonRoot": true,
+            "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
+            "seccompProfile": { "type": "RuntimeDefault" },
+        })),
+        container_security_context: Some(json!({
+            "runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532,
+            "allowPrivilegeEscalation": false,
+            "readOnlyRootFilesystem": true,
+            "capabilities": { "drop": ["ALL"] },
+        })),
+        termination_grace_period_seconds: Some(s.grace_secs),
+        readiness_probe: Some(json!({
+            "httpGet": { "path": "/readyz", "port": "http" },
+            "initialDelaySeconds": 2, "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 60,
+        })),
+        liveness_probe: Some(json!({
+            "httpGet": { "path": "/healthz", "port": "http" },
+            "initialDelaySeconds": 5, "periodSeconds": 15, "timeoutSeconds": 5, "failureThreshold": 3,
+        })),
+        startup_probe: Some(json!({
+            "httpGet": { "path": "/healthz", "port": "http" },
+            "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 120,
+        })),
+        volumes,
+        volume_mounts,
+        affinity: Some(render::dedicated_node_affinity(cx.selector(COMPONENT))),
+        topology_spread_constraints: vec![],
+        revision_history_limit: Some(5),
+        update_strategy: Some(json!({ "type": "RollingUpdate" })),
+        volume_claim: Some(WorkloadVolumeClaim {
+            name: "data".to_owned(),
+            template: pvc,
+            mount_path: "/data",
+            read_only: false,
+        }),
+    })
 }
 // HANDWRITE-END
