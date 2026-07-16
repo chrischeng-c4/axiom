@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-16T13:36:16.822774+00:00"
-digest = "sha256:7257de4e059813bebda5dc2f714aa806cd8d157e6776218d1662ca906062efa3"
-source_digest = "sha256:7257de4e059813bebda5dc2f714aa806cd8d157e6776218d1662ca906062efa3"
-ir_digest = "sha256:3b169d6345846f58c478092dd9812c329170ec4ce95455c564818279cf263445"
+generated_at = "2026-07-16T13:41:08.162139+00:00"
+digest = "sha256:cacf7d174896403b681f49c4bbe12b6ef0e08039906513326c317ced4bab9fc9"
+source_digest = "sha256:cacf7d174896403b681f49c4bbe12b6ef0e08039906513326c317ced4bab9fc9"
+ir_digest = "sha256:def5aec55ff349d5c98d7db52651761cab0c37f500fedb8ddb2b7a89a1a33d8c"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4953,8 +4953,8 @@ section_count = 2
 
 [[files]]
 path = "surface/generate/project-health-test-source.md"
-digest = "sha256:51666d7517f6c07ad7eb661571698d4425559b956a7112ad385c1f8deb0340ac"
-ir_digest = "sha256:4ea82f75c308e936c3b50d26fba48cb86dd1ff22306fc34e3630d55871af9f4a"
+digest = "sha256:afd558d8a3a0c652ca489d6e7e72aa3770c9d99a58c6e0780931336d11e83fc4"
+ir_digest = "sha256:8a5bf85fe715beeef54650d3368a5d0857c449bfbee89b7601299770a599256f"
 section_count = 2
 
 [[files]]
