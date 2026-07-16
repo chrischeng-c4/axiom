@@ -62,6 +62,7 @@ fn run(e: &Engine, query: QueryNode) -> Vec<(String, f32)> {
         SearchRequest {
             query,
             limit: 100,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,

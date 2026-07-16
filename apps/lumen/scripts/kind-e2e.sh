@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# HANDWRITE-BEGIN gap="missing-generator:e2e-test:kind-service-journey" tracker="1646" reason="The live kind cluster/image/API/restart journey remains hand-authored until the shared stateful-service EC template can generate app-specific fixture and endpoint steps."
 # lumen — kind-based end-to-end happy-path test.
 #
 # Implements the Lumen-only kind happy path: spin up a single-node kind
@@ -210,6 +211,12 @@ configure_lumen_only_deployment() {
   fi
 
   # The hand-written overlay is the legacy single-node dogfood path.
+  # Shipped manifests intentionally default to the user-tunable 1 CPU / 4Gi
+  # request-only baseline. A single-node kind cluster is a constrained test
+  # fixture, so make its smaller footprint explicit instead of weakening the
+  # production default or relying on whatever capacity the local VM exposes.
+  kubectl -n "$NAMESPACE" set resources deploy/"${LUMEN_CR_NAME}" \
+    --requests="cpu=${SERVING_CPU},memory=${SERVING_MEMORY}"
   kubectl -n "$NAMESPACE" set env deploy/"${LUMEN_CR_NAME}" LUMEN_WAL=embedded
   kubectl -n "$NAMESPACE" rollout status deploy/"${LUMEN_CR_NAME}" --timeout=180s
 }
@@ -433,13 +440,16 @@ if [[ "$DUP_GROUPS" -le 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Kill all serving pods. The replacement pod uses embedded WAL, so this
-#    proves k8s rollout/recovery and fresh-write readiness for the single-node
-#    dogfood path.
+# 5. Kill all serving pods and wait until the old pod objects are gone before
+#    looking for replacements. Without `--wait=true`, `kubectl wait` can bind
+#    to an old Ready pod during its termination race and then fail by name.
+#    The replacement pod uses embedded WAL, so this proves k8s
+#    rollout/recovery and fresh-write readiness for the single-node dogfood
+#    path.
 # ---------------------------------------------------------------------------
 
 step "5. kubectl delete pod -l $APP_LABEL (serving-pod restart)" \
-  kubectl -n "$NAMESPACE" delete pod -l "$APP_LABEL" --wait=false
+  kubectl -n "$NAMESPACE" delete pod -l "$APP_LABEL" --wait=true
 
 # ---------------------------------------------------------------------------
 # 6. Wait for the replacement serving pods to come back and catch up
@@ -471,3 +481,4 @@ echo ">> 7. serving restart recovered + fresh writes work — PASS"
 # ---------------------------------------------------------------------------
 
 echo ">> kind-e2e PASS"
+# HANDWRITE-END

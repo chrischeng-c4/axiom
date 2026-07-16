@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-14T10:51:59.248944+00:00"
-digest = "sha256:a4469c6bc47c35abd8a545e07256cdfb7b1806777488b27ae041b626a1f1ba12"
-source_digest = "sha256:a4469c6bc47c35abd8a545e07256cdfb7b1806777488b27ae041b626a1f1ba12"
-ir_digest = "sha256:1b8a83f8862f807d6b201860920439cc2bf09f4617ffbc0dc28b2bf9f61fc477"
+generated_at = "2026-07-16T02:52:40.440632+00:00"
+digest = "sha256:3149531c4a18b6d176874775eef65a367fea9d1fb5471fe5f9647c3241c22074"
+source_digest = "sha256:3149531c4a18b6d176874775eef65a367fea9d1fb5471fe5f9647c3241c22074"
+ir_digest = "sha256:e5f2c3a27c79f219f042491e3a6f931755482b9d916c803759d63bdf3fa67f73"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -21,32 +21,32 @@ section_count = 9
 
 [[files]]
 path = "core/config/agents.md"
-digest = "sha256:aae2aadf35a084bf90d99bfa92370efe022e1420f73825a70dafa900e4489c63"
-ir_digest = "sha256:eed08627a4d083c5cd4caa661eb490b66c5a6c98516bfff0821f98e250c0440a"
+digest = "sha256:fba6e36d40915865094377e42fee3da53e439d0f50d265642f13b4eb4b08a619"
+ir_digest = "sha256:5bb8ae2d05e81089d36c39885109cd0ea5831362ed2c3254f7d0248c3b9b5f02"
 section_count = 18
 
 [[files]]
 path = "core/config/platform.md"
-digest = "sha256:4d61d25829066b69926d4e8508913ad9aa8a4e648244e85aee6aa2102abec869"
-ir_digest = "sha256:42fde7c740f0d17e88f824a5e2c7215af6860e2cb103ff2f25f155f9281be754"
+digest = "sha256:b23f7b073b8ea07e4622e19244f01f6671a97d6d4497f01e37a56627f1c0cb12"
+ir_digest = "sha256:e0b4d69bf79ba1a2abc6cdd9134d5e90c0346a274968214e7fdbbdab091be2d9"
 section_count = 5
 
 [[files]]
 path = "core/config/platform_sync.md"
-digest = "sha256:f79e40ea12b1235ccec071cd14f1a15c695c7cde3a8ed448efd4f0cb2d49e0ce"
-ir_digest = "sha256:97040339158ff3a125bbb95c91d1595820b23498d8ad008dd0e3b9f51af62eb7"
+digest = "sha256:10919e252ba0d2ebdaac58c181a94a41ddd79195294fa83d65ed08d8e5542204"
+ir_digest = "sha256:dc3f819b450d924ba95153c7ba308cc77fd43b2cec49e5ffb9b4c7af3602530a"
 section_count = 4
 
 [[files]]
 path = "core/config/platform_sync_config_preamble_source.md"
-digest = "sha256:46332fc2761545637a70d1846424c9e3780e80d8b0c9fd9174f1a062008ff16f"
-ir_digest = "sha256:b42da8ace0fadfdb4f007bf2e9a152120b95ae0f7b539dcaaa7b9baee6feac99"
+digest = "sha256:746fb98230548cba79d10fe5d256690f2ac9a602b23abb98a449b9842203d6a4"
+ir_digest = "sha256:714770427cd5a82f8750f12c867b7a9c955f678b91dda3af8fe5f4818cd11610"
 section_count = 2
 
 [[files]]
 path = "core/config/platform_sync_config_runtime_source.md"
-digest = "sha256:84549da6865c912f50642a5eec6e1a4b6cd6e82b9a7696a34c96216100e35a2d"
-ir_digest = "sha256:a1fba51df27c7dcc943f5597cc6969fc30fab723da5fe2f8141d5e2ae94bc325"
+digest = "sha256:683489ee64db3215a3eaa97ae2004e2d1fac909f8a4b80a0bc67030ad4a68c61"
+ir_digest = "sha256:714932fe439eb7bd3407538bd83e18b4e01d963398a1d15346ad8eb24c78b4c3"
 section_count = 2
 
 [[files]]
@@ -57,8 +57,8 @@ section_count = 4
 
 [[files]]
 path = "core/generate/apply.md"
-digest = "sha256:492be61b17f63e98d02564623300c9122b7b778cb0f1589c1901f0e6bb0a4ae1"
-ir_digest = "sha256:1c8f9b077fe682d6e408bd47b1254ecb8836542cc86ff758f4b8dd2450f7af41"
+digest = "sha256:8d327e223201dbdb58348be7350ae19dd483a883b997399587eb9828d720c27a"
+ir_digest = "sha256:13ee9bbd6e65a1f66279037e565dd55e76d8778f9e251de93009b6289009be50"
 section_count = 3
 
 [[files]]
@@ -69,8 +69,8 @@ section_count = 1
 
 [[files]]
 path = "core/generate/audit.md"
-digest = "sha256:589b9a6016d02d9641da231742bfc1f7cd5be6d5e6f628694095507f6f42525a"
-ir_digest = "sha256:4e3620740257ac8da8493e529b4e23e1dde53c0dc9ac1c6fa2bf9314900bae6c"
+digest = "sha256:815dcfcfe00eeeaa1286ae1e56c05d736338940166a2d4d2bff411020e7e3d44"
+ir_digest = "sha256:1647045285c833eda12994d6d1f414770f4ee29ca9f4dccf574ebff7b1db1295"
 section_count = 3
 
 [[files]]
@@ -297,7 +297,7 @@ section_count = 6
 
 [[files]]
 path = "core/generate/diagrams/mermaid_plus/migrate.md"
-digest = "sha256:6178b35d1ebb0266ae7eada0270f7c6387781bfe040869b4fbf60feb74b70461"
+digest = "sha256:aae03132accf6cbde49ecba3563a2587c37388d9b20343379b36325bebf3c222"
 ir_digest = "sha256:bfe22005c77719651081ecee8a7ee9eb02fdca6c1f8c5e1e051f303e6f61ab99"
 section_count = 8
 
@@ -663,8 +663,8 @@ section_count = 2
 
 [[files]]
 path = "core/generate/gen/rust/logic-cycle-detection.md"
-digest = "sha256:4c164ddb53f6af19092417136964f5e126de5dcf1c6442bf3bf2dbac6d1cc819"
-ir_digest = "sha256:314d6d3b58bba70aa00da34282e0669b95209ddb4f23fb0b4b2b59089e5caa0e"
+digest = "sha256:4c3c84b965b0fabe9c244b66e01a57b019998d90ceca24944511660a216ee18c"
+ir_digest = "sha256:b6ca60512279d13ab1420955bdc452b50a6b139cf3e98085544c9fb780c5eff7"
 section_count = 7
 
 [[files]]
@@ -675,8 +675,8 @@ section_count = 9
 
 [[files]]
 path = "core/generate/gen/rust/logic.md"
-digest = "sha256:ae9b1839f9bf1d7b5c7c60a9cf87405db4a1301d20df0f5497a5bd0bfca0c47b"
-ir_digest = "sha256:97d7262d79721c9a8658e496994e0940bdfa81ca37cb7eb97f0c47022e11c0c3"
+digest = "sha256:ccf3827bb1ced73dcba3d3499e8a0f17d02f14374d072ef150b6cd10ce2440fc"
+ir_digest = "sha256:1e584c288efa9ecbebff414a3b909a85960065db43b6c8cb3eb437b1301ccee7"
 section_count = 2
 
 [[files]]
@@ -1016,8 +1016,8 @@ section_count = 4
 
 [[files]]
 path = "core/generate/generators/jsonl-str-primitives.md"
-digest = "sha256:e84a5b5650a3fe08b20862a79c1ca07fb646122e94418211e491d41428aa5f5d"
-ir_digest = "sha256:9e53d1118e9ba05aad10b433059c75d272ea06cd1bb73af869328da8734c6d73"
+digest = "sha256:b3cb9d334895a3c672d205ea4d446e270ebd30b0400e1061ff9b80d475aca65c"
+ir_digest = "sha256:dd1abf936de4d89e39e169f741b8d0d71ea59f10a3279017dcd31ded50705487"
 section_count = 6
 
 [[files]]
@@ -1082,8 +1082,8 @@ section_count = 4
 
 [[files]]
 path = "core/generate/generators/primitive_registry.md"
-digest = "sha256:3d37704b0ed2dc70b3db47286acc2899e8a89aee0cb912434b5d78a62f4273a3"
-ir_digest = "sha256:a1755353593a93bf35002ad73f079b94c1f06b4b4c769feb5f6a16bc62369725"
+digest = "sha256:9b58b760aea402108f4bededac1bd8fe37e7d53108db4f604711b1271392b07c"
+ir_digest = "sha256:a0eb309dd2265bd9f758eade3f84f6b4dd4da93394014ddbd9d0e975763426c6"
 section_count = 2
 
 [[files]]
@@ -1328,8 +1328,8 @@ section_count = 6
 
 [[files]]
 path = "core/generate/mod_types.md"
-digest = "sha256:6ab40a538977af4421cc3b7256b1588d03f79fa82f3f20e5685be5683d09101b"
-ir_digest = "sha256:b4ae72d1371975c99c7aed7a3fed65fcbc8e38d9e3f690b54dd00e8d40d94a0c"
+digest = "sha256:ec0d81986343e6c9a48d0f424d36d287284a25f0bc386ca8619999cc6107d753"
+ir_digest = "sha256:773cfb46a09c4390b8b95db541205dc265dec99757dca4f23a46047941b98929"
 section_count = 4
 
 [[files]]
@@ -1568,92 +1568,74 @@ section_count = 4
 
 [[files]]
 path = "core/interfaces/agents/analyst.md"
-digest = "sha256:30ce69dc18d35d4559edf9f9be3aca5df7e3a345663a49887d6c3e23a21427a8"
-ir_digest = "sha256:d5b8a888a33d0c227847544348f43e6d8be659c27d6e332c21a770f099583612"
+digest = "sha256:ece848bcfdd45754ebf953d2f32dd71d6189449776e74e4f893a4d42a1221dc4"
+ir_digest = "sha256:4e91a02e7a899849ad44fb0dc10dffb6c994d75f37731ec3894c9b6c45639051"
 section_count = 5
 
 [[files]]
 path = "core/interfaces/agents/change_spec.md"
-digest = "sha256:e1210b0c8bcbee8f8345ef581559e6fbafa053cfba4c4cf4730fe8228fd9c5c7"
-ir_digest = "sha256:34a6caf1cd79574f7e91a783af62bd70bb96e78a15520fce4264ae430a288c3d"
-section_count = 4
+digest = "sha256:1745f5079423a4545b1acf1a656feda60c96fd00df357091e135e7c58a4540f4"
+ir_digest = "sha256:6f29911e11f6412fa667ae408853ebd23a7ddee5b3c8d136299d0dcdf9cd322b"
+section_count = 3
 
 [[files]]
 path = "core/interfaces/agents/code_agent/file_block.md"
-digest = "sha256:9b009f35c106ead0384ccf0344a0cdd83caa2cd7f674e6cb9b33aa0041a73304"
-ir_digest = "sha256:2f4208d25041b4de4ee5864a8b990bccea228dbcc7d2c714660f2631c068d60f"
+digest = "sha256:9c69ebcab6b255d4d496bfdf4e3e06299cebb5f77b716d4e0f7a742797ddcc48"
+ir_digest = "sha256:d13cdc45bdca0edc831b4f05b5423b685b0e869bb20bd4d067a7a35c9d433ee0"
 section_count = 5
 
 [[files]]
 path = "core/interfaces/agents/code_agent/mod.md"
-digest = "sha256:e776ce81c2855bdd1d42197e3e1e6b31d1a9c2b7b68c2e5374b5aca1da78e6e8"
-ir_digest = "sha256:8f18efd3778b60e70f7c55e34563ae43e101d61f5230b98443f0edae67b8d7b4"
-section_count = 2
+digest = "sha256:652243be33f60be548d80814d0606c174610604ffe53e784c419996952e51e8b"
+ir_digest = "sha256:d42544aaee096144edec83a5edfe81b5771b5864c4d58d033cc0b08b45d4a274"
+section_count = 3
 
 [[files]]
 path = "core/interfaces/agents/code_agent/tasks.md"
-digest = "sha256:673633fd3c9aeb98b5e38c6a94852f572c35db24c2303a438d822c60529929a8"
-ir_digest = "sha256:9d2e4d3fe5d1db0543666390f5da3a91ec3328c8b8907257498a3b06e90fb6b2"
+digest = "sha256:121d8f2972acdb0781712ef00d678d81153007ae39afdbd4294d8b6a17e26930"
+ir_digest = "sha256:886b43cc7a4c3207ca9a10ae77926f34922abf9c9cf1dec696813caf54810964"
 section_count = 5
 
 [[files]]
 path = "core/interfaces/agents/codebase_to_spec.md"
-digest = "sha256:946a28703f0d3c1bce3b8f0d30420c5aba8fab0726aaf218d00f8ecf20e01c92"
-ir_digest = "sha256:01a11cf51ae180532ce37c12c1ac0be714df2746479602e0275a08d8042e5148"
-section_count = 4
+digest = "sha256:ca0c85d0d3a1789c76c8e05c6fabe14f104b57e537ced6ae6707020d5f7f28cb"
+ir_digest = "sha256:01dfdaca58065529a22d466b265f8a8d6d6af0730e00d82eb7200d889d95dad4"
+section_count = 3
 
 [[files]]
 path = "core/interfaces/agents/coding_config.md"
-digest = "sha256:b6592a76196cb288c013cda5be550e7203b42291610c97d607ce742e0755eab0"
-ir_digest = "sha256:d6bc675c7279e24c7c865b31ddc3fa713ba8ad446c104e30c722ac55e942bf30"
+digest = "sha256:28c1bd23501b020b4e165baac6aff759aa04f457658fdcd66e55480069bd05e5"
+ir_digest = "sha256:9c6412a254ba4c868ef5239a9823666d5157575dac5a44974aa5f50d9e17b1d0"
 section_count = 4
 
 [[files]]
-path = "core/interfaces/agents/crr.md"
-digest = "sha256:d74b0270861ed69c89e219a641edf40f85f26300064ff254b604ac0ac691ea78"
-ir_digest = "sha256:72bd98cd584139699595d5c3e525685f9c1c48eb76a069d4be900d88f53baa47"
-section_count = 2
-
-[[files]]
 path = "core/interfaces/agents/mod.md"
-digest = "sha256:fa2e4f2b4d0a9f80818d1358daf6125539903348db254ef3510f21bfa5cbc058"
-ir_digest = "sha256:57611260dd08e13ae6c7f136af368c3d5f94cf42497be41c4a1683c05ef9f99f"
-section_count = 5
+digest = "sha256:ee2c8aff6d374f0eec34e49213f128d4ead0f23dd48b2eca1df013a6726966a6"
+ir_digest = "sha256:cd08e1b2b31011e04861907c6351f351c85c61e02a5888d4ae9fd87448669779"
+section_count = 3
 
 [[files]]
 path = "core/interfaces/agents/reference_codebase_context.md"
-digest = "sha256:e8f601b7bd98b45e603cee567cedae2511d00c452313a8ab5f9819c1555fe146"
-ir_digest = "sha256:567c57669c6475a0837209665361ead8cd66b3cf2630693aadd0efd0b118f5c6"
+digest = "sha256:601ae1f85510f6f8fa6f41151fd0c1e006de15134070d383ef64f7855ee01f3d"
+ir_digest = "sha256:928b08f5e95a59e97bbec0b0cdb93c4369b12008355af9b8b4b440c1d40b8466"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/agents/reference_spec_context.md"
-digest = "sha256:03ba828eec4d9e06eee780024c7eeefb685192b88228cfd9aa058c28a4704a25"
-ir_digest = "sha256:910f0c17c5fc6ba2ba3b3b88b67fcc7f1c2c534bc5a03fa652ec402856918438"
-section_count = 2
+digest = "sha256:48f6e30d6e5d5c8f30eb32ef5042c9008c8bb16dc9fc14762c69876a70a46a07"
+ir_digest = "sha256:167ce771222bb1f47581a151540cd1b4a233450f822453389c3bd50f95365fca"
+section_count = 3
 
 [[files]]
 path = "core/interfaces/agents/restructure_codebase.md"
-digest = "sha256:e8af5e3d99177ec7273fec92dcbf8ad4fe1ab4eda9a171dd725eb0210607f92c"
-ir_digest = "sha256:42113b7b357635ddc4a8ca62913d80fb601dc681ca9aaa3a41562ef11414c701"
+digest = "sha256:5d9ecdc7d63aa465cea09d130e15abe251aa86c8f181af253c09e554abc43320"
+ir_digest = "sha256:3df77dae1ac9c6bca3a3a9c2efddb51594c5be1c8f75874429c9150201cb9b9b"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/agents/restructure_types.md"
-digest = "sha256:4f4192b048019c0ec33fef5abdbe8faa6c4eaca99b1eee4ab06b49e672b1fae0"
-ir_digest = "sha256:807d2f66b9bb4035142c018845a1da105c47471033cb37d4be1e99620c77741c"
-section_count = 5
-
-[[files]]
-path = "core/interfaces/agents/review/mod.md"
-digest = "sha256:db6e5f449b4df0653ee49399a5b83b417bd6c681b7b2b89ddf5016c1e69c73f6"
-ir_digest = "sha256:8298ef1d217ae143653941798c3bc2d814b8edde1b5161b9f1b241d107a8f5b9"
-section_count = 5
-
-[[files]]
-path = "core/interfaces/agents/review/types.md"
-digest = "sha256:5dc38642dcf146c8e0a2aed93ff0e740221163168f8b2fec51c2fefcf16c8139"
-ir_digest = "sha256:197d45af61e18bc40c3ffba0f71d3dba5aac07780366ca1a05349b8fb0aef71a"
+digest = "sha256:b4f8494a3702563e2fc6241261e86160952514e664d5da21bd57e427440c1847"
+ir_digest = "sha256:7a6e10b824650365f5ba8039355fc8e956f064a7d423d3babde425b90e968921"
 section_count = 5
 
 [[files]]
@@ -1694,170 +1676,170 @@ section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backend.md"
-digest = "sha256:f17e24515cea6d97f6fbe741fcfc85a6f152f3512a1c19014974ed5178940e64"
-ir_digest = "sha256:f0b511234747c37550f213513cdb2e3892fd7e2f93f3dea391441082654030ca"
+digest = "sha256:9f700d9583bde960aee01b9aafaaac72f4966209cb7791b930824f17d362a498"
+ir_digest = "sha256:b56efd3e36d7345968cf276ac303457aab83e65acf8f430431010ae3d2eaec35"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/issues/backends/github.md"
-digest = "sha256:c76c30e67ab4caa4efb1da36788af883bb53117b8246ce16b100596bff2a5e6f"
-ir_digest = "sha256:c0bde7a9078655e8cda98c6e41628d5e7eb8bf72c7e470a881682531114720ce"
+digest = "sha256:888ff3ee176784eae774523e3b12de83aae5b605d2827812986fe228d5e6bbab"
+ir_digest = "sha256:3faaf96f61708598d5bb60b970d345348618184600447b2c8ce4fec8c39b7d02"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/issues/backends/github_preamble_source.md"
-digest = "sha256:73137b6ca3f5b7f071edc3e00480ed7c74edab6735afafc377cb9d0b3a0e7b6b"
-ir_digest = "sha256:7e2c6ecbce821ce80480cc78b1e91553b6be1037d3a39e21b0cb15fc0433a1c2"
+digest = "sha256:6e7d646fb53d3f8b5cc597b68e075174974fd40fa94b71443a5c68339f051254"
+ir_digest = "sha256:e5de105c651490a76e1569a2e9bf8030bd34f2fc9ed60b2944afc775cc55701b"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/github_runtime_source.md"
-digest = "sha256:f1ab3f452771101e17cc2a8ec476429afe5ab278780ab550eea2f87e1a1da0f5"
-ir_digest = "sha256:a80db7390abd48b8708b657c498aa029c52bf3562feebbdfcda0e9f6ab8d963e"
+digest = "sha256:22c3f63b8ebd5be8ce8fdbcec8e39034fecc857ab9630cdcb253234ff05a482f"
+ir_digest = "sha256:7cf51025057e7223831afc28509bf0a31596bd86119828c04b4bef87ea0e5c09"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/gitlab.md"
-digest = "sha256:4c7c72a497e184909a053a715117881d27715ac7fbbf3b9f0a4703ea73ed0ba0"
-ir_digest = "sha256:f07ef147c248c9f212dbddc33b863a348b8eb38ce187bd4706230ec9dcdabb94"
+digest = "sha256:cd45bdd214a361f90a7a0e6bc5b4c4b21b4809076e2084d9825ab08605639b70"
+ir_digest = "sha256:10bce55c5b31976f6e95cb84c5a2e8309111e390c8b168612f3a3b03ebc90674"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/issues/backends/gitlab_preamble_source.md"
-digest = "sha256:64d19f09e595fadbd57dbb497d7fe78d4f3464d1d47ec5c4acc8a776209d29e2"
-ir_digest = "sha256:3f0cec4a82850ead112354dfd64c7397358b583d479d02aff19d44ad5554ac3a"
+digest = "sha256:eb13c0e4b72c5ad2458741477ba3f92f7d71ed1edee9b24d87d514d4c17e3cce"
+ir_digest = "sha256:18f007b00e6b6cc16ce069d07ae42a9a04d7cb6eae3ff455e96a27eb7f333815"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/gitlab_runtime_source.md"
-digest = "sha256:17414b1a79629560d773d988301874e1566e64cd3816d5ebe226f4bc7b2a64a4"
-ir_digest = "sha256:9a8c619e2f8e1062217c29bfa38ecfdc57bb6cacc7fc99ac42225fec0f717d1d"
+digest = "sha256:d37b08efd863822340aae0cc3863264bf8a0c54f9780fc6bf3cb91612016bbfe"
+ir_digest = "sha256:d60c9457b08f86174d3aba42853054b2ec37c4a1221665c0242e8a4fd7ae124e"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/local.md"
-digest = "sha256:842d489fb12b660da41685e7761d3c92c714bd7006932e6d6ccbdbaab0f1107d"
-ir_digest = "sha256:7a79cad5bc7d346de89cd44723ec6016d1ad55b071fd5ff831b35bd1a0f4db05"
+digest = "sha256:aba797bd36ebc1798f5bdc94b6bacc84f0c8eb31fa919abd53cb2b3b1af2a7f4"
+ir_digest = "sha256:e0b517bf91db38a3e0ab629fc0b8fa543fce535bfb316bc9ec2c57943f7d7a5e"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/issues/backends/local_frontmatter_source.md"
-digest = "sha256:13294c82cbb41cc9935e955cea2326e836b249a159dfdfc5361f9d7eccb27bae"
-ir_digest = "sha256:e4785c6e5cc9ba62f46a90513d116510ee4ca4e9ff15a27fde5585743df878aa"
+digest = "sha256:6ef7b562c0f07379f98d3daac4a90759126ccdac0fbe83e910431f26c2f861f6"
+ir_digest = "sha256:65dbea383b87ddfa62e1a968d14f6bf724709a1dafd31030642134704de1b1b8"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/local_helpers_source.md"
-digest = "sha256:c4823c22cf2cd09862e46403729d40008108dff67315d8243db40a6eaba49c8f"
-ir_digest = "sha256:cd884c8223345536fc9f2ac844fd2f7feeb3417efd1172019dfc64e1a8730115"
+digest = "sha256:15281f2a9615975bc58e7b3714569bb1257d244cd0b5ecd99b9427a7f52362fb"
+ir_digest = "sha256:5b57065b7893322a4ddb029ce668ab26cf1e1774673f600865938d0420ecbc3a"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/local_persistence_source.md"
-digest = "sha256:3045f4aa3ca51f7424aa89d2c6b81945317b29bcc869cf9854fcefbb5daeb9fd"
-ir_digest = "sha256:b4e29b98fee65cb99fb82d4c723615cf5fb3cf917e840fb4fcda1597deee2182"
+digest = "sha256:9e4fe5eaccc77f0c1aadc3ea8e66686c8b85153ec6e0bb0fb4850c1974796cc8"
+ir_digest = "sha256:3133fb6cbb027a0255ebd2f88b6d771e2dcc34a520306df96cc6dce45c242e59"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/local_preamble_source.md"
-digest = "sha256:ad7c1c911eb561368799491fe124b036b182f26e1667f64f9f2d0253b043a6cc"
-ir_digest = "sha256:aeb517d649ca1afdb35436a6dc87fcdfc6ac4df3e2edc1f7844eadbaec89aabf"
+digest = "sha256:9881ac797572d99a7006b6813ce2f87f54537d36cf3fa1aff2bd841bc368da86"
+ir_digest = "sha256:20e29af629b8584b8ecb6b06bd2a5561a08d2770242cda071c4d060973c2f42d"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/local_runtime_source.md"
-digest = "sha256:85839653aed8e9290dc34af15347b033601b87512ec04cf85c069a542565e520"
-ir_digest = "sha256:94914c5dfccead2f2e225ccbcf57a4a3d0cf16ea0750a8e987caa149f07ccbd5"
+digest = "sha256:33cae45b9d0e23750195646750ad540233240e7d005379ffd7fb23da8cf5c752"
+ir_digest = "sha256:5ef542ef3a5549f059736fc46968aa79376ff1eb33913d4c52847d876d38702a"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/local_tests_source.md"
-digest = "sha256:6143ece9a2d208decab789cc0b54bf10cb8efd1bd5b9d637333276c3271ff4e1"
-ir_digest = "sha256:646ec31f90fcb09d1ae0e47011fdd0b89dfbb5a82f9673f00f32b6ee9a9c646d"
+digest = "sha256:456cd59d22b560daf3019c1552843f59b4128850ecc7e1bf87b33708fc3d4df1"
+ir_digest = "sha256:695e9c4b657854788800258b098721dfa1370849a2d717036fa82e45df4161a5"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/backends/mod.md"
-digest = "sha256:75b73f6fc4f63554e3e012b0d350d04fe53bcc45b4788417f8a742ca8fe8eda5"
-ir_digest = "sha256:9b264d35f3dc3a433c0deb27be7097b96aeac8b8277b1b9b0d0de02fe2e48262"
+digest = "sha256:560e4af535a640c1eff46c4dcb9dec72c763d5797c26fc4072d5f8c1685ba930"
+ir_digest = "sha256:01d4364297342f197fc82367b250f4ea33039c32b1daf1c8d14869a4cffe9dc5"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/issue-merge-target.md"
-digest = "sha256:73921138dd6cf20052014556fd2773c762590ffa5928888643f0e171b8cae1c8"
-ir_digest = "sha256:d7d62dd23d6d4c34bcc90da188eac872ee9e073637139a9e5025c9ece4189bdf"
+digest = "sha256:71464746c198441d7020051e79f6589e22659d19fe2239164b08993a7e85f4c2"
+ir_digest = "sha256:a8897fcb8cb82e04c4aa610d2063bba511e184c176678dc713c91b718b109183"
 section_count = 7
 
 [[files]]
 path = "core/interfaces/issues/issues_module_preamble_source.md"
-digest = "sha256:57f45a6f34b3d6cacf9b253ac9291cf0fe983c112c0ea072532cca67a66c5e4f"
-ir_digest = "sha256:08b301eebc3fdf70f6291a9dcac09e8cb0d6400ea6b48226c4d5b40a2b4ccafb"
+digest = "sha256:21faf57a6b522d6da18d1111117226cf492311bfe1b74c997aa7ac531117aeca"
+ir_digest = "sha256:bbb411621bfe5de7aaac0759d8c74006d311adbce06dfd274510728226106e09"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/issues_module_runtime_source.md"
-digest = "sha256:3606f409cbe2f1cbb14106040a22459bb0c1c9f7e1b731666d5babbbab9eb856"
-ir_digest = "sha256:92c01bd6816132d1336307f1b1241d55ca5f77ad1d502edea6cf623f630c8c64"
+digest = "sha256:6dae34a9138db7c4c4abadf4c9a8e9a90b362919f358a97f92f6073ae934aa8a"
+ir_digest = "sha256:c4ca5aed2c70ca6fe9e2a1d60a14ac72e4e18cf5ee43f0323f06635b602bbaa7"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/labels.md"
-digest = "sha256:a063fb60c62286e1546e2793600d3f31d32cf8eeba65102fa6deb41f630884a6"
-ir_digest = "sha256:2a9e46f4bb9f502cfb9ecc9918a1461d4c19c4137499136d5268710f58d8f484"
+digest = "sha256:72a438e64f474d2a41df3658e3ccc818aa1ae1bbf50725d4453dfb891347d8d4"
+ir_digest = "sha256:a0d0b214c5d45fcc743511cbce5edc32dadcfa5658381bc234efb06531aaa0a7"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/slug_preamble_source.md"
-digest = "sha256:c2cb3641b543c9c7977e9a41e1abd9f932ffa3f0a19cf3628056540d3fe83b88"
-ir_digest = "sha256:4529dced3d17d94d70ce88e319b552c6b4c4a676bc527c9490d60c525583b94b"
+digest = "sha256:c58661084372484c9d57b4a34861ad3ac81dd9243cdd948644d4cb1cb550a556"
+ir_digest = "sha256:cc3a6a01f6d11802965ec8cbb6c0647b08b98f327ddc256d300a27a4ce427b53"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/slug_runtime_source.md"
-digest = "sha256:99d66745e95b6fe064fb11584ca6c573c4327274b3021c84e1bd51509dbc149d"
-ir_digest = "sha256:29cc8d35ecb99ce68ef85f8bbeb1cb8ddd6cc738b11e48d809c09a035bb1913b"
+digest = "sha256:c4152064c26aca1338eb9a5c93ea563066679f91419462a6fcf9a944deb9544a"
+ir_digest = "sha256:8ece520dc1fc67e48808b8ce4bc0886e22f0fafd3265da6e00ecb3102af63d97"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/slug_tests_source.md"
-digest = "sha256:2ddddcc1bd41fe528819f99b32487fcbc3b8db966af4b3ba074478b7e4c89472"
-ir_digest = "sha256:79e2f8d70713314e411fe81ecda0ff6ac63ff77a71fa44f9b5060adc395768c5"
+digest = "sha256:cb1d24ee418b9997a638b7ab74c777b1d7443429a9fd2b7a8ff518ae7611f099"
+ir_digest = "sha256:442799f688ae6cde6533081d4a6f8233105ebfee0a8abaf88ddb114bae436279"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/types.md"
-digest = "sha256:b1d37f490894cd848b7852db819c27544919fc392cb251e2de9acb1999bd0b82"
-ir_digest = "sha256:bf5c77089b211d3edb3723231651a435d4faba7fcda6a9b4c0ab314cd556ddf4"
+digest = "sha256:6952229cfc31a37b8448b7d26e2f73919e9c59c10671392ad297783444335a08"
+ir_digest = "sha256:ff09a8371b2e073cde9d9200853d2fbb83b2dd960055b5e9edd4ded807a2f815"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/issues/types_error_slug_tests_source.md"
-digest = "sha256:3bd82035e9283f284dacc42bca366f00836f67fc3e347f11ebf841a1c34c3750"
-ir_digest = "sha256:ef23720176b135c5c9baeef842111d925a1ead5859410462e07f1e7250fe538a"
+digest = "sha256:5cdceab261137114a4d592a9682445b59c2524862be08efbb2734cc60f7cd78e"
+ir_digest = "sha256:0d98d369b983ec8d85a3b4e06967f62a3f0393cfd11faee296e800de2fdf10ac"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/types_patch_apply_source.md"
-digest = "sha256:ef7ff14e90e6140dcc26fa501bc0d3a8683ba276d7c85b72ab1995e741c46b26"
-ir_digest = "sha256:41c34690b1cdec5e54b12c94e23160f495af9bc6760b63f7d9e949419479f823"
+digest = "sha256:30457b832b580aa40c1c6e918b42fcabb56a768ad51287e066817a55c5a12682"
+ir_digest = "sha256:5ea1d51d9a265561c272a6f488a53acd5b85e85bab4e42cbd994c2b373136396"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/types_phase_namespaces_source.md"
-digest = "sha256:8f8dd28c260659a87228c9ca4abaed840badb8c8d81c3b05dc0db559c6e74fdb"
-ir_digest = "sha256:e5afd8360d3aea89b283c87113a4588ec99b7a448547590ac68462c985838b67"
+digest = "sha256:ce52f88d70d9cd25f32d2fd7cc73d871ceb5d9a9d9f58f2221b7dbd819319a2a"
+ir_digest = "sha256:4dbfe09b85c3a217ae4b6e406d51f781825355362fba16889476c5a1353295cf"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/types_preamble_source.md"
-digest = "sha256:708833a0868d7dc277ddf64d6116fda6b64acc740e12d75dd2dcb63287d9d5ec"
-ir_digest = "sha256:11da2cc2bdc8948fcf10ca55439bb12f8171019c1da0a48691a0c37444d06d1f"
+digest = "sha256:9ecbbba7bbaef09d27fac5bed919896e97cc5a87c47cccf3ce37fb810ef2417f"
+ir_digest = "sha256:ba05d52aef6b2fb600de0c12ceea012644c7c95a0d787b03514ba9d970ed34ec"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/issues/types_runtime_helpers_source.md"
-digest = "sha256:ca323e2cad97fe61910b81f7636b6ff3a595cfe951df6478b2b7532d39e0a3b6"
-ir_digest = "sha256:582cedfb3e86e3e69a5d42853c32f6e7847d94c2f71f33258c67d10d97c8d577"
+digest = "sha256:06d0697c7c5780789afe7fdc668d856ec3708bbf02e18c9eab252fc38391d5c0"
+ir_digest = "sha256:f240a98a992554573b979cb13b1502fa1784c3a55916ecdc927e623eb8672456"
 section_count = 2
 
 [[files]]
@@ -1993,354 +1975,6 @@ ir_digest = "sha256:6048c10f821baa1dd01d503b71ee1d102419da1eda6ade4db536e882d49e
 section_count = 5
 
 [[files]]
-path = "core/interfaces/packages/@sdd/app/src/index.md"
-digest = "sha256:f9f56d1c7bd017c9be6351259d589048ecc2d3e94c60952f389a3498d30ddb49"
-ir_digest = "sha256:94a1bdce5630f6f49c13985235a599a04b26b98ee022d668ecd47e4069cf3d9c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/main.md"
-digest = "sha256:09f07a699396beec76aff8b7f670698351f5cec9ca7e4d959e30d609fb913cfc"
-ir_digest = "sha256:e8f5e5e5ebffd4c61e32897b264b5c1bab7c1edbb770d789578e96133478386f"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/pages/ChangeDetail.md"
-digest = "sha256:50abd08fd0c7f23457909e51e25c8b716e3cd3d0326469b639224b491059e40d"
-ir_digest = "sha256:b94638f2466310a5c8b51eb1ce6a6f7e0f639c9395e66caf6cb2daef67313d02"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/pages/ChangeList.md"
-digest = "sha256:5cc5bb16dd4ac2940e13ee38e37f44ffc23a6193941cb65f523cf089a73f9a5c"
-ir_digest = "sha256:423838b657faa5eb88721511618236e1ed3e550efd0fa11d2860fb993f3643cc"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/pages/IssueDetail.md"
-digest = "sha256:e2b1a2a4107b8d6588da8be8ee0aebb97d4d0cf9b1c08dcd68008a494523518f"
-ir_digest = "sha256:4c09eca8b7376516b65f9cb3e440cbd1abeea218c1c16a4bbab49c8724c17419"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/pages/IssueList.md"
-digest = "sha256:d437b211ed1948fa3466034fc6cc6a879117c6cc05e29a37ce9ba9fc1c5fccf0"
-ir_digest = "sha256:60f5b0d6970126f2a4242be2e2d5bb7a552dde719a48689902d359759b6f0dbf"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/pages/Lineage.md"
-digest = "sha256:5d4304261abb504077ff7a6f31946b76dd33a257a62cc74da23ac49e266f2c07"
-ir_digest = "sha256:bcf8a13c98ca944bd0cc1adf58763483ea965217a7747910e2b585571052cef2"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/pages/TechDesignDetail.md"
-digest = "sha256:3fe81960783d7b6eb17c92873b4f854186751134226b5947ba42474507c60a58"
-ir_digest = "sha256:30ec1ce89bfe356cdfa3ba793b6cbf8d9cf533733515b43ce4314ea2e225018b"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/pages/TechDesignList.md"
-digest = "sha256:6f0fd5955e3bad305e7d029994f46355d48eb5b0702c0b380b8a5a3538daca88"
-ir_digest = "sha256:4a42920c57d1cd5e4b1e987b5948cb158e19a3caa46d0cdb7e79164d85eed43a"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/app/src/routes.md"
-digest = "sha256:f3373688c64adae401165d172a4d7fdcc8a36ba096aed6ab39924a2ca74adc7a"
-ir_digest = "sha256:0436c8cd8afae838de44d487a0cc98a591a6f306711a6243584ed6d4b047b627"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/core/src/context.md"
-digest = "sha256:e274b929e6ff1f82017a27a00a188d5adf486783466ad20fa6af0209c6d511c1"
-ir_digest = "sha256:840189f6d6d00622e13a1069d7f0289d2f9a45de6a3530c8ca06c26903ec0770"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/core/src/data-source.md"
-digest = "sha256:27dbe48a02f3505e34fcb86ad309de285e146758e39a6f0c50089dba9bb8d33e"
-ir_digest = "sha256:b95658ad83f2ba7cbc7dd5b1c125788c25bec9b417ae7713f01ab67203d4faf9"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/core/src/index.md"
-digest = "sha256:7ab85c067c6a922dd0c24f4120865c6e005a47a13e005b25c847aafc2cb73df8"
-ir_digest = "sha256:2f265fdef838db2779362122ea662d99042b132cd5819b31b2eccc26a48bb228"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/core/src/local-data-source.md"
-digest = "sha256:91d29cb3852de5b1385e20bbdbd6ee9fb36c2b27e9054146152a647e66faff0d"
-ir_digest = "sha256:858d238c7139acfdd626f8889093e4a78b26f44a500c0b04d4a53d806b131f12"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/core/src/remote-data-source.md"
-digest = "sha256:f790016555cc53432a5f75b285d27df22cec6662eba0d87a59e4f2ecc7a00292"
-ir_digest = "sha256:a77ae3ed4e5f4216d53c747a8a6cee2dbe4eb863793d79d7b7b943470cf327d5"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/core/src/types.md"
-digest = "sha256:9782ecd67f84894004adf6916ddd42615d5f50bc0b18e674845d7c594eaf0934"
-ir_digest = "sha256:bdee8e3c35af0c8aa5d697a10b6ed8a9455cfdbac614147508160eff934650d2"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/pipeline/src/NodeDetail.md"
-digest = "sha256:4bed029fecde5ce1597c06bc6115e9665430b3ec8e2a2551c73960bd6ca482c3"
-ir_digest = "sha256:33e727f40f538f227ceac5795bef37e799d94bab8245989891d25fd01558b25c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/pipeline/src/PipelineDAG.md"
-digest = "sha256:8a75a330fcae2b533f3392076ad3d28e55b46695d16b30176a830c0460613c6d"
-ir_digest = "sha256:930974ae0709d97f012f5991c668873eabc3ee02fe5986f752ea8d8f5efc12c1"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/pipeline/src/PipelineNode.md"
-digest = "sha256:acde12864159ca73b858122a758c030a368887310acb5956d4d4acbe94b88304"
-ir_digest = "sha256:0764251b3527ba5c427dca85f49a2d0264a5812c05120f492d7fb255951bfea7"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/pipeline/src/index.md"
-digest = "sha256:3849db08f95dd4c29a67e33ac048ba6b1d3fdfb714cb6f8e5940dc40088c0fa1"
-ir_digest = "sha256:d497ef026ac5622aaf70dc4fe8f2fd88ef86d17f8da5abd34a791b9e00e8f433"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/pipeline/src/layout.md"
-digest = "sha256:e816800e7e8ccda5597c41f6d8693f7147a0c875d1da9698996cc7d3e340f566"
-ir_digest = "sha256:8c8f40c27a007db528f91f02b4fa7c35150632601e061d552b8de62bad91fe2d"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/pipeline/src/types.md"
-digest = "sha256:e14e50a1ddd8a21a05c384167b13a76b9248e1312b85a3a2e1d2a28461906f27"
-ir_digest = "sha256:bdf285dd685a8f85ac42fba5644a452d7bab01fd84a660cdde6c2d9e9abbd62e"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/spec-viewer/src/CodeBlock.md"
-digest = "sha256:a64c1b46ea5e1cb0e869d0fffba20c648dccbf5622d3b098b956f4bb46efa3bf"
-ir_digest = "sha256:4b90c8bebdafead68231c256ebb4c17f232c9740d43b2796cf4ad73a262a1599"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/spec-viewer/src/MermaidDiagram.md"
-digest = "sha256:b700790732985f53abbad3332026418e1e6e58f777e60de4ae55e3ce75b8c07b"
-ir_digest = "sha256:cd844bd49fdc808ffbf3c2fbf2eed95d9a55876e21c31e68639a6a6250f51a3b"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/spec-viewer/src/SpecViewer.md"
-digest = "sha256:29c4d0bee918a899d88fa889776b369599fbcb35afb857d88e3bc4ffc7b756bb"
-ir_digest = "sha256:0fe5891bf12b3e5031d908f65229f31e656f76dd438db724467aac28372313f9"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/spec-viewer/src/index.md"
-digest = "sha256:0d11fa4ba5e795c82e4116c4a3de6631b78264e06a8e938586e0a51713565418"
-ir_digest = "sha256:b907aad9884169a7b0892cb379aedb7e130c4e4473619c41f520e94fe5b84e03"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/spec-viewer/src/types.md"
-digest = "sha256:ce07146b7e7e68fac12adbf10a6bf111deb56833a1a9d08e2e9640efc9edade5"
-ir_digest = "sha256:688638a1f0d6808c57ab89beae9e5a4852f68cb301aed1885f4a36ad255b2c4b"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/changes/ChangeList.md"
-digest = "sha256:20f5d6656777f7bf96f80257ae79b0a0ea32ea5a135ab888bcda2aae6e351c03"
-ir_digest = "sha256:75c269375f213279ab400ba72d38c84184775038c42e03cb2b83a0e103f6ae7f"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/changes/CommentsSection.md"
-digest = "sha256:c245a20da124502a3100d49d6f17aeeabd53d51d26069d8d9b09dece5b8447bb"
-ir_digest = "sha256:71e0ab13b5a8b5e2005f43027a8fb7d19ca4eef8bb664b8e72638716c29eeacf"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/changes/index.md"
-digest = "sha256:6416c29de5e9179a7af9c61b93061daac475a799bca61b3096f1ecd360a54254"
-ir_digest = "sha256:26638793c5fe1fb3da360826429528e46869b992b06a61577a7148321964bb3d"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/editing/InlineEditDescription.md"
-digest = "sha256:323ad5f1ee4e07f05d70158208098a2fce3afb722cb3936662665fea65abe6c8"
-ir_digest = "sha256:43ef6c33825d599c134e65a228bda18057fe3cfa460b8c495bb1577f17291db7"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/editing/InlineEditLabels.md"
-digest = "sha256:6593f0323118ab6844f14a074d728d58203d61ee7ba291cce74aeeafd303db81"
-ir_digest = "sha256:0495d9aa1f439e630c2de6cbd222982317a09e920db6bb00ce89aca929c852d7"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/editing/InlineEditSelect.md"
-digest = "sha256:816474254993b7794e8b4b7707ede7af285f568fab8512173ace0dc2a8cd061c"
-ir_digest = "sha256:22aeb55433e850eae3e6f9914bbffb99e5b43ae2b54ffc0c708fce10b1e3b01c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/editing/InlineEditText.md"
-digest = "sha256:c56da67526818bbbfccd96df4e3a9c9606b38af9ca5b86d9ee6f79009c95546f"
-ir_digest = "sha256:5e6199dc67720333a9929b088de0af60dbb6a01debfe05a6f8da8eb24841c157"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/editing/index.md"
-digest = "sha256:8d83bcbf42d274428a8b26a53869c75461d4b34813cec3f12b544122026ff64d"
-ir_digest = "sha256:0bb732bfdd1ffb87102f5eda73f2011ddbfc79242c488bbb1bb1f624a2ba949d"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/feedback/ConfirmDialog.md"
-digest = "sha256:78e2020d3b5f6d1123c16f1c81337062c7f502d54b535b5d4a8777e3d135dec6"
-ir_digest = "sha256:d834d3cf998924b6aaa8c36d71e075d5262c1ba300b288f1fc84ce082d1bb465"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/feedback/ConnectRepoForm.md"
-digest = "sha256:d9dd6d845a3ab803e21fc643024e1bdad2c572c25da8b544471eb87bf77016ba"
-ir_digest = "sha256:d40f203529e3468bfe5e8437404707e938c289b1cc4729f74604bd383628866c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/feedback/SyncStatusBadge.md"
-digest = "sha256:588ab2e9d38a6dab3ee08cbf35d2ac045ce3909f5cbefaa7fc3db2a01502cd11"
-ir_digest = "sha256:5aea2d99cffa00aac655b951809022ff5f69cec9cc55a95a51d05cea0d06bfb6"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/feedback/index.md"
-digest = "sha256:f48cfc9334bf8a7217fbb4fcc7967b0ceb8e4000fbd312e750b7ca157dea63bf"
-ir_digest = "sha256:f90e5c2381125e73563bbbc1137eeb88655eb7f8be43aabd40f7c798eef8c27a"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/file-browser/FileBrowser.md"
-digest = "sha256:1e3139b212418ff940c406f97ec8ef5c149d9c6ebf86c6231ea1116b5a9aca31"
-ir_digest = "sha256:1cd4aa35c13814bbbaa8baf109e20997cc42e1e3db818313830ce04d9714042e"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/file-browser/FileTreeItem.md"
-digest = "sha256:6666980cfd4218da9c87a5ae44be2569ce8bd0f58d071c50c8cad0723d32d40c"
-ir_digest = "sha256:6f23a2468ee5fee084a3c9eeccfa960ec80d4256e7cf0ed736bf0e5fad0489e9"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/file-browser/FileViewer.md"
-digest = "sha256:b63c447e11cbbd6a00743d295055569feefc6e66fbb68c603c3bc5c6189f94c6"
-ir_digest = "sha256:c92b6e38ac7ca1d4006a454af4aa9772f100c008fe75b0110fbf87395a55cf60"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/file-browser/index.md"
-digest = "sha256:32314a35c47972bc747f014c34553a2bb88e77c4814f8dbba8d99837888daa93"
-ir_digest = "sha256:f019c247cbf4db2cbbf31c7753d03f7122d20ef55ab98644a1c2693920331904"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/index.md"
-digest = "sha256:9e3d302a78f86497b0b29665a5cdfdbd166e9d7be988a45906fc13cb3e6a164d"
-ir_digest = "sha256:8fe7eb1b2e9016c865fb6e5a8c206a4acfb53ac0cc97489579f84dd30c324a2c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/layout/Header.md"
-digest = "sha256:495e56e9f8a6d9eec56b3e9edc12df5e15d56beb38ecd098e2805afe22d93845"
-ir_digest = "sha256:09403434af5837d36648ee62f478561c71a9c49587f80241dfa51e459e48549c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/layout/index.md"
-digest = "sha256:da5a4a8e23bd80f09837081d90519a211253c3c8321f6daa4d72f49f58504ab5"
-ir_digest = "sha256:26d283fe640d48512b1b68f182b35cb015f570f8a2c9f5d4813fb0011b94e402"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/lib/utils.md"
-digest = "sha256:ccd634219594de092d47e3df17ee9d0cd75a034660a45d3aff3b2fb62f3913e0"
-ir_digest = "sha256:c744fdd2bac1fee5ab7f10fe3b90440de6942067907d8bb5dffb00fb7561a73e"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/pipeline/SpecPipelineHistory.md"
-digest = "sha256:8896d757a0802daa21c78d579d02782514745bf044143bf94df779f931da4f30"
-ir_digest = "sha256:c3257f0b3d06324ba78f1921ea46f671c1df7c42848772ad60f8d7ce7c1051e3"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/pipeline/index.md"
-digest = "sha256:0eb76fa4ad8002dae6348d9ef967db5f35da1f3349788b6353d108fabee15c33"
-ir_digest = "sha256:352817fe32191a7a8a84962c61d87364e8e1e50261ef4e16eaf439e23b3f2c1d"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/primitives/badge.md"
-digest = "sha256:2aa558cc8000fd2ed711b5e060dbd91fa32956d1ea2c33ff473bdfc185611d0f"
-ir_digest = "sha256:144dc1a1f9650971a837d86b083d770ae2133a9248d08a2a235c7c6a6dfa5935"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/primitives/card.md"
-digest = "sha256:c4ffc607355f2e65ab8b11772bc0b7d31821501d3ba069310a1c17a15297d7d9"
-ir_digest = "sha256:8579a0661a71254eec4b78a4eaadc9e9124dc763b392eb1554b5cf18ea958dd9"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/primitives/index.md"
-digest = "sha256:933d150e5233f2a33589499c00de08abc9084977b6bda9e6fcf417eb9696631f"
-ir_digest = "sha256:9e76b1ab9cbf456bcceb1e4c7b8e5735369c54d147054b69db78574e86623071"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/spec-viewer/MarkdownSpecRenderer.md"
-digest = "sha256:e84e8460717a8884794fc53ebfaada9b84c88c71c00b965e22b7289543302390"
-ir_digest = "sha256:08a92ab23fd85cdca3ffa6703c09bfe4147933f622b043ede6917389df1d748c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/spec-viewer/MermaidDiagram.md"
-digest = "sha256:4700e5d67a9343c079deb81684100d81badc60c56def9110f35eb7ea07b83645"
-ir_digest = "sha256:dcea463d75c3c60cb31045c1c058d3b711616c8260ca5cbb9b590e9851fdae4a"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/spec-viewer/OpenAPIViewer.md"
-digest = "sha256:323a40b78da2009740345ef9d3e37d9ff8bdf4d14632bd8d86376d1b39373559"
-ir_digest = "sha256:a69fa2203bfd62aa157488f65e4ae4de545475d408b803c3158f6b44d15ed6e4"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/spec-viewer/SpecFileBrowser.md"
-digest = "sha256:39d6d13c0f4ca68f77f62363b1e7089ed523d3aef53ef310b0148f55e193837f"
-ir_digest = "sha256:4bcc51b2d946fdf94d21d651438d60c7811db96814af41689e84468cdfce3c80"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/spec-viewer/index.md"
-digest = "sha256:336a01eaa3887842b4f48aa986f823380de18216e91f8981eef0d8cb39ba211b"
-ir_digest = "sha256:616a7bf5533f3707b7f7f0e5586917560c2ea568e5a1501ab63e000b270136c0"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/packages/@sdd/ui/src/types.md"
-digest = "sha256:f685efb4d599912b94dfae023752506b7139fd1da60ba67e685f73931e44fa78"
-ir_digest = "sha256:2b983a9087f6d28ce33cca2bbdf216952c7f32c31361d62c6107873c0e8ebb75"
-section_count = 2
-
-[[files]]
 path = "core/interfaces/parser/archive_review.md"
 digest = "sha256:74c5da9001913a6b8d663190af87abd3940db2d055b30598ebe15a1b9f573ac5"
 ir_digest = "sha256:b25261a494dc1ac8b67dc36497826150fd95b0af385530ff7aa847f1c2c8c4b3"
@@ -2450,20 +2084,20 @@ section_count = 2
 
 [[files]]
 path = "core/interfaces/services/issue_parser.md"
-digest = "sha256:791f760ba59f0a896896585203b18cbe36266771c94a598a9eddef335e20793f"
-ir_digest = "sha256:dd2a0978cdd7281c81e0f5b0567c98ef833e98e40653f703e74973b8e38c3a81"
+digest = "sha256:f8e2fcd955206f7151ed5e62a012e4b328849758385d28d338b5d205f8a1b1f5"
+ir_digest = "sha256:01d00a7ad20e98c8e3881a6e078a475cc7c241ee0a5d602867b62fad0501701c"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/services/issue_parser_preamble_source.md"
-digest = "sha256:05544c1a33c4fb52f9d18fb1684deafea064ca07298c8c38a91cdfa3059d2b7d"
-ir_digest = "sha256:1d523ea956659265d1e241d51f9bb4e54fc02885d5cb2d7ff6e1d10ca54e7f76"
+digest = "sha256:be8ec81ec19e7d6152a8ceaa9108ed9ccb2b2789a71cc6bf1d4533f6b743d496"
+ir_digest = "sha256:dd98afb13c8d4f5b89ab5c62fb2660ef45ff7b3be488a329f274006dadffe415"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/services/issue_parser_runtime_source.md"
-digest = "sha256:53351d12a9caa74c8053e4bf8716632dce397196c4a56e15b58dbeee5ba0d829"
-ir_digest = "sha256:edd173c424e827ba219da23d7d20f3b9f87964305e5dd9eba3c66844df06078f"
+digest = "sha256:950e18211a338bd39afa6fad7680fb5ecc5a55f312a2612af15c29484fb6157c"
+ir_digest = "sha256:5a890f24f0a47ab68bee7a477765122f52aec533442fec22f2a6b9d6a3b86975"
 section_count = 2
 
 [[files]]
@@ -2492,50 +2126,50 @@ section_count = 2
 
 [[files]]
 path = "core/interfaces/services/platform_sync/github.md"
-digest = "sha256:762bb60600012a0de63debbc0c8404ee556465cb6e356022ffe1f6d54fcf4cb1"
-ir_digest = "sha256:189f704aea3a15d76dc51979fbe92e389cc96276343bd671c6eb6ac4e312b39e"
+digest = "sha256:e4ae61383c5afe4f73e718d57f73f246733fd95e39636f16f96be9e787a3170c"
+ir_digest = "sha256:5195cb65a7826ed5093194f2a94281ba6b205f4594a4e02b1a34d1cd65f0802a"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/services/platform_sync/github_preamble_source.md"
-digest = "sha256:c5d327bf409f60af60eec7c2ec20158787352b02d4f7752377750f05792ebf5d"
-ir_digest = "sha256:d99d2f3cbd5648b9c15c3573b953d999aa1c119eed36e0bb8b0cf14696d6ec20"
+digest = "sha256:b7c4beb2cf2e0899ac26ed3373eca64416a4d25f5e05800381e43c3b92a443a1"
+ir_digest = "sha256:414d91a53e74f12400a93f54833bb4feb90895ea5c7b984ddef7d1886067d921"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/services/platform_sync/github_runtime_source.md"
-digest = "sha256:f247984ed7296a39e0c4e6aded451d3397405884cf93c1d841312ea1ce1505d1"
-ir_digest = "sha256:8b123024b56606d4de6c10460737976bd903e8b4a0a6006dc3e0ba42e82ef706"
+digest = "sha256:35995da3e1d01776af5de6710b34159ac3a630e2ded80f51febe66336b26034d"
+ir_digest = "sha256:f76755eb752364e5381c44cfed685a31bee2eaf689130ef26591f01fbc506e1d"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/services/platform_sync/mod.md"
-digest = "sha256:0b6f8a51b05933d4243f8f3ee355c9356309f72125a5db3b829e5de49ed702a3"
-ir_digest = "sha256:a6e9ea2470ad3f81a8021f1aac4941eddfed83f0558a93bafcd3943ca0fea194"
+digest = "sha256:6c9109adf00e22b2ad9de4913df56d1944c0a876ac6b794f7d0bfc26a10b6dc4"
+ir_digest = "sha256:4e34a627e7ed6d951541152ae15cc4388382dce149d514fb31d83278e5075ce0"
 section_count = 4
 
 [[files]]
 path = "core/interfaces/services/platform_sync/mod_facade_source.md"
-digest = "sha256:5b90b28727e5f83fe6a30638c9924f251837bf97da8d69631700da240e4ed976"
-ir_digest = "sha256:dc8db6cd71c686bf49ca44aba7421c801cc11ee1af945948190e12217907e19e"
+digest = "sha256:aab87e9b5b3c7e72f669fdb3ef8e77db554a4cc67ad5f54a07b6b67a3848a942"
+ir_digest = "sha256:2b5a05978890ef75b3f48bbcc6f7a3285a1875e3a95158e4767a490cf65693b4"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/services/platform_sync/mod_runtime_source.md"
-digest = "sha256:5de9c8a6ec279617230450836f664cbe99a06da2d31a7a3948e57dc540701c39"
-ir_digest = "sha256:ed33ea8c8e566f0189c0ec19770591866099fb4951cc2189b19846afea62ef09"
+digest = "sha256:43b50cddff6981f588da695bcd8bf8012f4118f349425eef862856dcdc1560d9"
+ir_digest = "sha256:58c747e2c51a65b693209932ce5cf3a45f05fc88971ed3c007d852dde37eb465"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/services/platform_sync/payload.md"
-digest = "sha256:c9bc66c7a8f1611cd6e5a3c4f0d5953c07e7b0ff8fc2e8d207adc80b99a4c25e"
-ir_digest = "sha256:7f4504d007430582d1eba4e08c80a8efe65a66e6e694d5549d1f54f15bc752f4"
+digest = "sha256:99eba5e0e4de6223928fdc249b989bd7efe65229a85d58ba58a8b772d141469f"
+ir_digest = "sha256:90ef9f4600cd9c954aab49845a4a8b5ed81f7b448d750908e3c8b48dce9e23bd"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/services/platform_sync/types.md"
-digest = "sha256:330ccf90fc82f2d8a79675daf9dbb9e86bd71b05e4e813eac241f6e6aba8fc20"
-ir_digest = "sha256:563cbff62fe6a801de019e07929d9ff998641d2fe24ef0e08b85b5020e0831e9"
+digest = "sha256:4c1befa0930b56db72b58f96c7a0e388fa313891f0c01be16e36817fcaf700a3"
+ir_digest = "sha256:3e73ff70c1d2ccf2d3438b774826e79484396e18b98b98de19f034daf1102dec"
 section_count = 4
 
 [[files]]
@@ -2576,14 +2210,14 @@ section_count = 2
 
 [[files]]
 path = "core/interfaces/services/project_discovery.md"
-digest = "sha256:6c6f3a8203f63f38025209012fe98f89ec08da07a994da3260984b37996c3d49"
-ir_digest = "sha256:e68e248384168ee8428122ee045b30ccdf835f8f5a5412e24d2364f572bad288"
+digest = "sha256:2021a122eab6c3018254bc95df46110c66052647110925a8fb32f666c2a9596e"
+ir_digest = "sha256:b3295f1da4fa6f2e49464b633135995462bd8e51cf2fdffe98f4f9762f6a9465"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/services/project_registry.md"
-digest = "sha256:cfbef23ff3cdab4945737754f56d575d6bddf2b227fa5cb0c3862c9f10a843b0"
-ir_digest = "sha256:525614d9638af3cc2a7d13e10f2fe5c077676229971086984ea97bc8a750b9d7"
+digest = "sha256:4f9a7f8819cadf7a9f6b4ed54130ad1e2043ffee59c7ef3f0056121c9c1b905a"
+ir_digest = "sha256:01cdfa6176c2c783ce20f25e07e1673552e07aa28bb9eb98f99e8abcc679d278"
 section_count = 2
 
 [[files]]
@@ -2660,26 +2294,26 @@ section_count = 2
 
 [[files]]
 path = "core/interfaces/shared/mod.md"
-digest = "sha256:502e519db0c057d3943823bd4beccfa06d9c04cc90c76778716d63572b3c9738"
-ir_digest = "sha256:4025431e94aae6583a3a591d3473acf9eb551b6ebc334aebafe25e035827a8e4"
+digest = "sha256:126cedb5ed609a9b6cab8a7ad4bc42d37c2e52752ed3ae894b337ef198c8cbdc"
+ir_digest = "sha256:aa7c090434beef7b27d00f8d236227ffb8f188cc48b284c3238054478a00d6e8"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/shared/services.md"
-digest = "sha256:c88232becd85ef135afb9219915e88e157c99d7b9d4de12632282338812739ab"
-ir_digest = "sha256:da8e600331fb3c446ab915d3b9c5a3c43f51f8e3b94ff741eb4da3911ff003f6"
+digest = "sha256:37174aa3591627d8df1069e3eb7269bd48235496e2ce079a93ecd982311136f3"
+ir_digest = "sha256:352577ddd0d9d82f6a1704463efee2dc40c81c70dac155b62e83cde3c983f525"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/shared/tools.md"
-digest = "sha256:b3bff4d89ef07fdadc94511d5ad9c80e4bc4063a83d8a95f7078867a7d7bbc2e"
-ir_digest = "sha256:d00d487efb4f5dd55443f7c98735e024e87d911cbe99821feb69285be5947447"
+digest = "sha256:e7ddb665bd84292417a44045cd4320ef9a277af8e6bcd96484b7cb870107429e"
+ir_digest = "sha256:97ac2233d76b904adbdc230a60c7a6b9ea86d1453ef88f8f90caf64a0e867de8"
 section_count = 2
 
 [[files]]
 path = "core/interfaces/shared/workspace.md"
-digest = "sha256:dd738a05ed11eadc0c76d34abde18299b3bdebe3d14a01a717abf1dd2cf2254c"
-ir_digest = "sha256:a9499cda5cf2671954b3534a5c30097971bb09c041858adf39038c7e9223af7b"
+digest = "sha256:c5ab3869b6b96122ecc5c1751523431c3630be064829f68664d4db5293d00821"
+ir_digest = "sha256:043833b971b3da921440629971ccfba57227f16333b1365c482b7ff519cd961e"
 section_count = 2
 
 [[files]]
@@ -2822,8 +2456,8 @@ section_count = 2
 
 [[files]]
 path = "core/interfaces/td_ast/payloads.md"
-digest = "sha256:d733f3620afbd2bc6c45700fadcffeb80345e1cfdb180663c662b6b26ed67d41"
-ir_digest = "sha256:c89bb76c886a39b7f5f869399a7a54191ca0af09802b524bf5d6ce038e98d6b1"
+digest = "sha256:52e02e09b03e6472bc4911d3b7fca9ce2979e4e16b5543c662a09139180b2b32"
+ir_digest = "sha256:b6dd75417c1cef72421e88ef2bf8aefd406e692e0d7a24c68777faa3d6db2022"
 section_count = 4
 
 [[files]]
@@ -2834,8 +2468,8 @@ section_count = 4
 
 [[files]]
 path = "core/interfaces/td_ast/types.md"
-digest = "sha256:7058ccd1c07d3e39756cd76f6297b5e231dc889ff2c3d7b6a97cd0ebf308b43d"
-ir_digest = "sha256:23fd3a948ede7fa8dd87505e33f17c76d5f8c75e9f0ef084d76c98070043a035"
+digest = "sha256:d1b1e7dc90c707e473522e94d846e464a439413bce2f6e3b783ea3afc3601e78"
+ir_digest = "sha256:94056ddb00fd8f70c351544360ef180e729aae7e8334c74cb3313bc29eed6919"
 section_count = 5
 
 [[files]]
@@ -2852,8 +2486,8 @@ section_count = 3
 
 [[files]]
 path = "core/interfaces/ui/mod.md"
-digest = "sha256:cc4fd22be17e54257d64bc16898352ea065b77d861871aef6eb0ce41bf103964"
-ir_digest = "sha256:eeb67e79c2f7ba5ad0996767ca5c2c2eb3c70243a13e870d1311cb4eaaa18f46"
+digest = "sha256:20d8b4f92282c199cff4b023407b86bdd7570fbd22b367bf786ad63bf38ecd62"
+ir_digest = "sha256:08573c504243f8444ec834c42ad67df734dc419d49eb5e3f35884611452b311f"
 section_count = 2
 
 [[files]]
@@ -2866,54 +2500,6 @@ section_count = 3
 path = "core/interfaces/ui/tables_types.md"
 digest = "sha256:198246581806bcc7f30e2df9b1b21e7737d7226cae45c6ad61592855ee7862d9"
 ir_digest = "sha256:3b3cea6dc3354bde6f68da26156efb9090e0feb28714bfa12bb76d3dc7ec430c"
-section_count = 3
-
-[[files]]
-path = "core/interfaces/ui/viewer/api.md"
-digest = "sha256:ee10fdeeb2f3071d038e363bbe1bf1e250a7b96cba072bbfa79015db93a98e9f"
-ir_digest = "sha256:a924a3f501abaa7a56aa5cd47c6c852f5ebf6059ea18b69acac553a25a18d66b"
-section_count = 3
-
-[[files]]
-path = "core/interfaces/ui/viewer/assets/app.md"
-digest = "sha256:c1bac23bc0a5af2f36ad776fc7a0405b7dd77e84d82248bc4860829f3374bbbb"
-ir_digest = "sha256:3fa5c468c235962f905a55afdb3b7e5200ce7bfc125990f56e5659dd260cc97e"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/ui/viewer/assets/highlight.min.md"
-digest = "sha256:f0474e30351ff07da883a510e695514751baaacabac097e00d1939af78f3f943"
-ir_digest = "sha256:3283da5f88d80b5ea2cfc523f595a0a766306e16e77b485f13ffe9a0f863d48f"
-section_count = 1
-
-[[files]]
-path = "core/interfaces/ui/viewer/assets/mermaid.min.md"
-digest = "sha256:0dcdd423f3671a272645ac18cd99d6b32a0d833192c5105257a149e8dc34c37a"
-ir_digest = "sha256:5d9d61fd744b7018f8539247f86521469d923cedbee5c4d7dc87e2f0b20b5da3"
-section_count = 1
-
-[[files]]
-path = "core/interfaces/ui/viewer/ipc_error.md"
-digest = "sha256:a32c325edf088af713af8768c8910c6a3ebd42d04c81d24d4b35c9c67f90b474"
-ir_digest = "sha256:2e6a3b633e25b9a8b579827a5e02d5763bf765d1926d851a0610317266af58d4"
-section_count = 3
-
-[[files]]
-path = "core/interfaces/ui/viewer/mod.md"
-digest = "sha256:7badbe1ae7af7d0ddba4fe45b0f7f68184c09dedce93fe0f2ba59fca9722c4cc"
-ir_digest = "sha256:1201e27d0b135b3d80fa00b7c6b7206df41475f266067af0bdc3bfe482714722"
-section_count = 3
-
-[[files]]
-path = "core/interfaces/ui/viewer/render.md"
-digest = "sha256:954ad920e618ae96257bba6d33f356d75b40cff70f60d7c0676be501155a726f"
-ir_digest = "sha256:de8a7c5ad8268a3ef8223f739da50b9e76aced294eadcd2e7739976f9770917c"
-section_count = 2
-
-[[files]]
-path = "core/interfaces/ui/viewer/types.md"
-digest = "sha256:cf13e1688a6605cff3e9f1119ab94ee581f12aec48c1f890eb4ec58a210474a2"
-ir_digest = "sha256:405e9dc3624725106f21dc7059f5bfe97e23fab64460a1d004ba3d8c4c9a3294"
 section_count = 3
 
 [[files]]
@@ -3109,38 +2695,38 @@ section_count = 2
 
 [[files]]
 path = "core/logic/issues-backend.md"
-digest = "sha256:60203312e3714548dcc3fcd9474e5842cb1936c155eb441cda0f7b2043c6a0f2"
-ir_digest = "sha256:14a696b392c9861c4cb9bcee508cc1f85ec685fbb7e5e2258ff25a54fcedf66b"
+digest = "sha256:1bc2ae79527caa924cdcb5fb263b9f27d506e6c7a529611d0d160a12bc780b75"
+ir_digest = "sha256:fb214cb2ccab352e8c58c862827196ff22468faa8572332135c6433aa6c49e07"
 section_count = 18
 
 [[files]]
 path = "core/logic/issues/backend-resolution.md"
-digest = "sha256:3e5d50e5330291788f2f8fe426bb00d4f85d8f2d9b874e6f804d7f51fdc15b06"
-ir_digest = "sha256:174cddb09ec74fed0aa53c321fe1a5cf907f2e1155b81d79451fd8a4583198f8"
+digest = "sha256:d9557b53320b254746a7430b4cb6b6e5eac21eee4fb5278c761990e32155bbf7"
+ir_digest = "sha256:1ba5f911a684791ea0b1e7c2d43cf316608bfe62ea8386412f1f573359f4bfde"
 section_count = 5
 
 [[files]]
 path = "core/logic/issues/next_id_source.md"
-digest = "sha256:c83a4689d533d289cc03a47568aae85240a171bf783cab43fb434be27b6b9806"
-ir_digest = "sha256:dedf8638990a54f5777c61825785b027b27908e6e96c14b5135a232e8a2b76d7"
+digest = "sha256:418cbe3567da3f9080b6e12d963720204358cd29927b01a7cf1186399ebf167e"
+ir_digest = "sha256:ed43bd6be8eacdb96cc9d5765c5148f6097b3e68a19dcab131ae63f19b06c36b"
 section_count = 2
 
 [[files]]
 path = "core/logic/issues/push_through_source.md"
-digest = "sha256:ba1b4c3613932177474256d58a678d843a8239a14143c04654a259c8a83682ad"
-ir_digest = "sha256:f3d4bfb16e3f8a0251d583148aab64fccbb7c7957f5e24c35faf4d66963fe7db"
+digest = "sha256:340e72b259f636ac4e78a5d4f28fb9b8f73d1c8bfc9521b1249057b5b13d89e8"
+ir_digest = "sha256:aa1f0f867df193180817b2c63bda332a99ca5348e3707fae0c9f821d5f51bdab"
 section_count = 2
 
 [[files]]
 path = "core/logic/issues/remote-as-source.md"
-digest = "sha256:00d1a74db5622f6e3920be214bbaddbf9bb8129e93b141a76e1a071f09defeec"
-ir_digest = "sha256:7998c1497aca0ee99a4e1590cc98a15fc81a4aee3e564235979f2beac912f757"
+digest = "sha256:4e0c42a693e0f2f73ae0fef182ace8826a5d652b2608f3686702cbb78aa20f23"
+ir_digest = "sha256:18a7f789e70a7d7cd3b0f3a97fa0e1f4bd7838d2a5585ccc85ea7ade9ec7348a"
 section_count = 4
 
 [[files]]
 path = "core/logic/issues/slug-and-id.md"
-digest = "sha256:ff66c4a389c42f62c50246ed7724e6c89d66bc6ed1e6798a6644f9752730b6b6"
-ir_digest = "sha256:8bc98d11676f8c13f8abca9c8e6decd80509a0f3b8f767cfdc322400991027c2"
+digest = "sha256:5ac07f199450c1920e683a4f65c57b50347696851a1436c2ebc2bbff61bed38b"
+ir_digest = "sha256:b2b5c7cb3ef824eed7a051a426b321b97327e271c4749efd561fddac614099ac"
 section_count = 5
 
 [[files]]
@@ -3259,50 +2845,50 @@ section_count = 5
 
 [[files]]
 path = "core/logic/runtime/envelope.md"
-digest = "sha256:9724ee11af57ed38296a9f276ca3ee4f5f835ff157cfc5c10450e3fd966bc6b3"
-ir_digest = "sha256:290698eb71844b4a100296a3cb4579fdffdc23453b6287e64fdb6f87f44c5cab"
+digest = "sha256:115986024f32be32828cbc7115e6c6c10de595693863a2a1d806699901d73709"
+ir_digest = "sha256:7f2075c3b51077596a8540aae0f7873940748ddf1077a942aa954212fc2adecb"
 section_count = 2
 
 [[files]]
 path = "core/logic/runtime/github_backend.md"
-digest = "sha256:700d131ae3ef29bccf86915972ffa5ef8c63c796f6e57347e88b3d96bc602529"
-ir_digest = "sha256:bd7fb6af430166c0578897f39b24fd9fc5513ccdced5fcb0679d1a6b53305045"
+digest = "sha256:d888feb475e1876e9c931dbfeccb029673b4962bb65c0a923df683a44e932cfe"
+ir_digest = "sha256:f02eac8b5decc22ec1bf4695327d7608f79ee6604b272f4185d87d79da4a18a1"
 section_count = 4
 
 [[files]]
 path = "core/logic/runtime/gitlab_backend.md"
-digest = "sha256:6f98ec582cecedee6b0e4333e43886366e447ab7dadf65ffd3b511d25f2f884d"
-ir_digest = "sha256:df9ec3cb4125843ef7ee5e215e7ad269730d042a49dbfe3e3b6a417a257d60bf"
+digest = "sha256:2bc3cd84723176120ba1a8b1e40c49a4f36e7715e08c6e78d1fb28b7723efc0c"
+ir_digest = "sha256:c05c6356861bd8a0777d2db7ead82923565d5966674d744bafb0194334f9a90d"
 section_count = 4
 
 [[files]]
 path = "core/logic/runtime/issue_backend.md"
-digest = "sha256:d3d88aa69e0abab31ead4a0cac6183b9329e1b874c1c39c99bf86453395057b1"
-ir_digest = "sha256:4847b2557a8abfa012bb8ffc6ce27f3c9d17a3fba8022e8f64ade914ac4a8ac8"
+digest = "sha256:6013df9feea8bb5b7ad77e3fd01a415b4ba57717a8d847180d4cc151a6f837ce"
+ir_digest = "sha256:c80fe871713eb26a70f1430e7045545f82d8802a58a467b0b18ffeff8bcb009e"
 section_count = 5
 
 [[files]]
 path = "core/logic/runtime/jira_backend.md"
-digest = "sha256:514528a69ce50e1922abe902229e3b313eacecf20a3318c3d64bada3844cdb6a"
-ir_digest = "sha256:7d87f06a702483666099c79a84195b48bd138656ccdeeb52f46589781a6d2f90"
+digest = "sha256:c300e438fc16edd6fb05837384a99a0bd9cf71501bf0ec4f16820a58fdda4e34"
+ir_digest = "sha256:bd48aaeb5450d6de2a52424227c2ad230d7f37cdd21676fd1c4b480210e803ff"
 section_count = 4
 
 [[files]]
 path = "core/logic/runtime/mainthread.md"
-digest = "sha256:ee76056f2549dba31b7ffb1d2ff9535c36f0762fea165e19fa8127e2d243caec"
-ir_digest = "sha256:c7a03368eeb90e16212459e3832d734da609159a2300062c6c5ace2283c65f67"
+digest = "sha256:01df352c9d623e3182f184c0de918ef25b336b3c24895dcd9de5878aaa673d3b"
+ir_digest = "sha256:75737f3988c05bd4d43364eb50ec5c62624ece8b75ea81b40c3fdafc15add98b"
 section_count = 4
 
 [[files]]
 path = "core/logic/runtime/mod.md"
-digest = "sha256:09ebb2c88c637755e3293bdadcfd64ad3a4a5e038b25c08013e27ea499ad6799"
-ir_digest = "sha256:01d967b7b95696697f73ac3a235fc54b684d31516e1cb4169a86ae488090e516"
+digest = "sha256:e0bc7c0769eda72e21cd695095a4145f1f8a557263f34fc29d6c7fe51ce19fa3"
+ir_digest = "sha256:c40784318f05afdbe3738967214fe4d1a2f56b4469d08a7522867f5285b23179"
 section_count = 2
 
 [[files]]
 path = "core/logic/runtime/session.md"
-digest = "sha256:efb2602a1b02812dc1640d2cbf9c6e233cae034584bc3b7ef12150b806078215"
-ir_digest = "sha256:983faba03afadb30baeffbb966cba6ca873d63eac3abe65afce0598ed49cc33f"
+digest = "sha256:8c15e0820c85ced4b420c70add85ad751c32c7eaebcaf9538537656800e0f47c"
+ir_digest = "sha256:8213f1f34a5814e3f865045610c8ead9f9fd4570fb4f5303922c97d159d31505"
 section_count = 4
 
 [[files]]
@@ -3373,12 +2959,6 @@ path = "core/logic/tech-stack-inference.md"
 digest = "sha256:7f0f339acd384f236563923bd7f93649d4b59bfa9ba9e191280a431165a54717"
 ir_digest = "sha256:fd594261c31d007b39ef8ed4d785fe526ebc8dcb504cec383bcfd330eb08f4f0"
 section_count = 24
-
-[[files]]
-path = "core/logic/unified-frontend.md"
-digest = "sha256:a00516a9c4cd4a6a2b8eced73faec0bc95bd240ad29ed8ce7130532a2aa737bd"
-ir_digest = "sha256:fd2b93407bdb2e9073e9dcf0043e10fc9f73d0eaa1845ff778b3187c203cf4cb"
-section_count = 23
 
 [[files]]
 path = "core/logic/usage-examples.md"
@@ -3458,8 +3038,8 @@ section_count = 4
 
 [[files]]
 path = "core/specs/td-root-resolver.md"
-digest = "sha256:c2c52896d5ae76e79c1a3ec3392ee01adc57169acabe0d34c97f381ca30e45fb"
-ir_digest = "sha256:55089bac858e2731bc9f56a7766a842c94e6d741f03e45cdce046c2cc0c9a64b"
+digest = "sha256:39cf0d703f2f34f9eed9c72d7c4bbddc12002c83df7cf87f5936ba27825cdfc5"
+ir_digest = "sha256:3c6f00f72342981ff3f1a73f7a86d1e69080966c0b941e2550f85ecafd16ed2f"
 section_count = 4
 
 [[files]]
@@ -3859,20 +3439,20 @@ section_count = 2
 
 [[files]]
 path = "core/tools/fetch_issues.md"
-digest = "sha256:6720d919d7d134064bd9012aa56343dd5f87122ed535f14bbf0019429f42519c"
-ir_digest = "sha256:cb02cd6a638152bcf68ee953339cbe4802139bfce5746147401d7e04c0084b16"
+digest = "sha256:f7e733345e0710a9c56ac8c1a0ff5b123c6e834fdb88d624ee0ed2821bd24a31"
+ir_digest = "sha256:2e6680f11baa277075c2ce2394692fc503d7ae474a036bceda65211063196266"
 section_count = 2
 
 [[files]]
 path = "core/tools/fetch_issues/runtime.md"
-digest = "sha256:9fcdcb4a4ed6681bea112ea3cb45819b5c2864bb06ebd18f74c3bf13e085ca92"
-ir_digest = "sha256:f2c309be945eccab4c88c328a152ce32c334baec918dbfc4886318292988f8fe"
+digest = "sha256:297292309cd6b248174bdddb0758a93aa3993e36d8b2bf2fd62b20e4eb522c26"
+ir_digest = "sha256:6cee7a2b2395fe265db17cfcdf18daaf351f592f2878b23c2a8acf9ab51c8d72"
 section_count = 2
 
 [[files]]
 path = "core/tools/fetch_issues/tests.md"
-digest = "sha256:4c70671d146b04f357e03f6dd2a5a09ff20a56d33230da64aa990191ceaa3bf3"
-ir_digest = "sha256:d7a58fa3024f384272ad89339719489cfc4d7b6f245b55212738dd53e67514c6"
+digest = "sha256:7f3000b64b33e37f3075827c9fc506e65d6ae7f0dfe10f6aa30744743b4a94bb"
+ir_digest = "sha256:cc61c64948c5dfe1c03a74783ad2b9df03958501a2054be85760a5c06c85437c"
 section_count = 2
 
 [[files]]
@@ -4033,14 +3613,14 @@ section_count = 2
 
 [[files]]
 path = "core/tools/platform_sync.md"
-digest = "sha256:345eb8aa7bca701a0b6965fd125cf193746fc52b0df6bce5ecc0cd03abb60baa"
-ir_digest = "sha256:64057edc204724bb69bb6d5553e7a0cd77813da3260b73cb7d61d4d908a97f3d"
+digest = "sha256:ff5f40bda52145ef2d84f415ced5ef571e16dbb936999168f2cc10eea1a5abfd"
+ir_digest = "sha256:0d4b8655915d52a4d3dbe6446d9070761ee3c2ff48f20d2b772f65217c204c15"
 section_count = 1
 
 [[files]]
 path = "core/tools/platform_sync/source.md"
-digest = "sha256:6d0c93e961ba010866ef532e1a7cea69c2ea44a8c2efa10ef1bbcb88aaa9b485"
-ir_digest = "sha256:c65ce86140b576fbb398f17681f6a282fd2bdc38add01b61f595052944dc4617"
+digest = "sha256:28f6bd8be84147c87c055468870ff78b07ef75aa9795d3fde2e41a4a344a7b2a"
+ir_digest = "sha256:bf416ffb65234f03d2b72daffe5fb01889eda9a3ce569859c8824e178b2965b5"
 section_count = 2
 
 [[files]]
@@ -4410,8 +3990,8 @@ section_count = 3
 
 [[files]]
 path = "core/tools/utils/platform-sync.md"
-digest = "sha256:bf52bc0298956468c4cff100f9b544786291a0927d975dc7d38fc03a245b6626"
-ir_digest = "sha256:223a196ab0ba8c766fb8e6ae137d92777fdda399674f1971debfc6609a19a876"
+digest = "sha256:b5289473339a76ce59b5fbe5db354554d6ea21e5333f1100ce03ff336719511f"
+ir_digest = "sha256:883881dcc015b55921844243e0b99c9f09a54c51e44e945bf40026bc02edea18"
 section_count = 6
 
 [[files]]
@@ -4578,26 +4158,26 @@ section_count = 3
 
 [[files]]
 path = "core/validate/github_backend_tests.md"
-digest = "sha256:e14f15891516f0342f10f639c81804ce856404f3b3752ff139c5f5e40f7616ba"
-ir_digest = "sha256:1f1ecf808f802c9003448af98d1d8928256b0157b1ff2fd735ecf84bb9e24491"
+digest = "sha256:da959e29ea29b98f74e30607b9fbca9c41f2bef13309efdbfb3b6fead3f05b38"
+ir_digest = "sha256:386a4ae920f5a57819c41ee3e4f4482da5fb2fa8e3ff0ca725774aac07b29e14"
 section_count = 3
 
 [[files]]
 path = "core/validate/gitlab_backend_tests.md"
-digest = "sha256:428430bee74ba25a979e3597307fcaadb2ae431d85da9761e66d4a88353d7ae1"
-ir_digest = "sha256:66f68fd2984e28cb7781270daf965a708f02e1cb9b8515c37c0d4cbab5807704"
+digest = "sha256:86ff7a213af6cfda5180843ccfe12c54ab595d1fc0c94ab73c2eb7234d556c8c"
+ir_digest = "sha256:7a5bc2f008689e1fab12168791fcbc99b77fee3c16d675026ec276c5b0e41b36"
 section_count = 3
 
 [[files]]
 path = "core/validate/issues_remote_round_trip.md"
-digest = "sha256:61e26ca78de3bac28fa567559f2b6082ca2eef20589ac58acebd014125c3c553"
-ir_digest = "sha256:b6f679f7754b558f7db1cf7894d06d3303a8b4f62da846b4b608b3e441a25da8"
+digest = "sha256:6ccdf4fe65c1daeeacf586cf90c8870538ca33004a28e491a9294474eccfbc52"
+ir_digest = "sha256:c8346ce36f1c0e9ecb94f1aaaa480c1f466fe6005df5476024099a576c2dc789"
 section_count = 3
 
 [[files]]
 path = "core/validate/issues_remote_round_trip_regen.md"
-digest = "sha256:52f4a18e85981103f04fbbee873684b1d36868bd17b2dbdb4510802340f73664"
-ir_digest = "sha256:0b3b59c825930503022811ce668e7241a09f4b9931833fe3e50d932b797f8482"
+digest = "sha256:074e407ea47a0c2f6ec8b601528720a594dba5a10560c1eea42ce0d2dc22f585"
+ir_digest = "sha256:4f7b35b4bb707fcc4cf2fb59d3520035dcb146f9042e39c270aa6b0c9234704a"
 section_count = 4
 
 [[files]]
@@ -4614,20 +4194,20 @@ section_count = 1
 
 [[files]]
 path = "core/validate/project_discovery_test.md"
-digest = "sha256:fca151c478fe8479e7c0584640608985b78e8d2f587b2a4fec643809c6de33f5"
-ir_digest = "sha256:fe72171f82910aa4cc939e5a4b03b280e9df9d4dc2f225d7a21011689a82edaf"
+digest = "sha256:5c067edbbc61a574c84c02ef386b8e648cae36d579580aebb5dab89ad784e38c"
+ir_digest = "sha256:435d496f277a5ac498e859efe976e2c9f3a721771bacdd9cf29219121fe81c4b"
 section_count = 3
 
 [[files]]
 path = "core/validate/project_registry_check_test.md"
-digest = "sha256:44d11dab6a4fc833437adb36bf6a40e511089cfcd99474fab55aa4e1ecf4f2a2"
-ir_digest = "sha256:e19a94e9236e4ba4c2f477fab625f15d79c7e45013ac95bde6dabe052996c207"
+digest = "sha256:f0427d40a3125b88d4d3a7a2a2c8159dd7d11bd98e506a18cdf3e9ae06cd2473"
+ir_digest = "sha256:700381caf3979bdc28c072e40e36f80a2e9e2c5db840302046b1a149959a340f"
 section_count = 3
 
 [[files]]
 path = "core/validate/project_registry_test.md"
-digest = "sha256:2a3ab7048e31a3af7003370d99b110819ca91c1bfd6d03f4a7d24272c78e3971"
-ir_digest = "sha256:3be3bace9e8919cf296fcfc47ebb34ead8f438fbd91fa1bd0c7edeb147222ab7"
+digest = "sha256:d6dd3036033dcc8f07b3c6a0d5e75438746e0714fc910dbcc35d18c453856552"
+ir_digest = "sha256:6db3ce421d9f0b584b93f9c7f35d7a0675620a815c187e6e106c821eebd158c5"
 section_count = 3
 
 [[files]]
@@ -4689,12 +4269,6 @@ path = "core/validate/rules/r6-r7-rule-specs.md"
 digest = "sha256:3493667235053481b7389dbe9c3c5c3d1ca8d44afb259af6fee98ae856cc9355"
 ir_digest = "sha256:9d05a54df8a7a9d28b3caf8c4acb8c65b77a6758bdde8ebdd30983677890e2bb"
 section_count = 5
-
-[[files]]
-path = "core/validate/sdd_viewer_test.md"
-digest = "sha256:99ac3fbe86a8e7fca50e454bed48848ef69274e733bb0f0fe79b56e922a26628"
-ir_digest = "sha256:5142e72b4f0ca175a63c4072de4cf216ebfc9fa8bf0d242d71aca6074fd5a094"
-section_count = 3
 
 [[files]]
 path = "core/validate/section-format-rule.md"
@@ -4920,8 +4494,8 @@ section_count = 2
 
 [[files]]
 path = "logic/aw-llm-offline-agent-orientation-command.md"
-digest = "sha256:c37789de5593f211c6292907a2850c7730f447c0446f2673c45ed194d1c7e39f"
-ir_digest = "sha256:d771b44fa4f870c5f2472c06c9b2bd4201ffb52c1155b178d17a590f419f8faa"
+digest = "sha256:9e37b19112880c6127261b65a1028a51fdff0a20c906d7792e4e30696ddef834"
+ir_digest = "sha256:724a7a708375dac38061014a234db0262deae90640eac10abc1cee06e8e4cc7a"
 section_count = 2
 
 [[files]]
@@ -4986,8 +4560,8 @@ section_count = 3
 
 [[files]]
 path = "logic/shared-server-substrate-performance-layers.md"
-digest = "sha256:9f41c86da9702bec962c3e4cdd46b9a42e8b97cf7d0ebb0d73057c80262f2ca2"
-ir_digest = "sha256:c9a2a195c2f7ea2ef7161cea09a3eb4f99f478b8231d11ea71c58b5d913e4a38"
+digest = "sha256:ba9132a5a6470bbe4bf6e5fbb43c2b695dabbe6c945e93de2a626075610d1992"
+ir_digest = "sha256:87d7f870dd78fb0cd7b2f7a53a9959a439ca8f6c8571460f192761def93ff513"
 section_count = 2
 
 [[files]]
@@ -5010,8 +4584,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:856a25eaf29c210e830e363fe4d6ad96366dd0bd26d897c8162ad39574045769"
-ir_digest = "sha256:465d27fe34fdd68ed19be34b212b2c9a3f6be141accafa42560c35ec6fe89c89"
+digest = "sha256:cfbb0654a456ac148584e3b9030b5158e37450f55ccab94dab2e5578ce327ccb"
+ir_digest = "sha256:ae0ee13c706fe748c01499eaada51c77815416822dec2e367dc17f7eb7ddf302"
 section_count = 2
 
 [[files]]
@@ -5130,14 +4704,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/agentic-workflow-models.md"
-digest = "sha256:7b70042ca2f672729f0b017e1f2fd09e45db4f17b7cf04df93669ed8571e0361"
-ir_digest = "sha256:9a8cf952efff6f04f4ef539aacd7afc6a3901062f437dfb7f10e8682984a8cae"
-section_count = 3
-
-[[files]]
-path = "semantic/agentic-workflow-packages-sdd.md"
-digest = "sha256:62087c54a7f54f068cc7a3da44e6bbfd322a7eab074dd1d43b64979944878e13"
-ir_digest = "sha256:097056f595adcf882202b44ce39d0fe47d2f789137f3fc2a77ab76b8f19177e3"
+digest = "sha256:c8ec4b4e4cc5753186a1d44cf5f2ce975e3a84234351fa554123ab0636568b18"
+ir_digest = "sha256:25fea3bb5c49bd142cf4748a65fcb203a86e34136e46a08d99fb9adf64c48f19"
 section_count = 3
 
 [[files]]
@@ -5148,14 +4716,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/agentic-workflow-runtime.md"
-digest = "sha256:81c95669eb8b17ead86178b57f8e9bae46dea90faa5d60d9d5ad872347a4cc09"
-ir_digest = "sha256:0aa45cd7ad3d3b315707108dcb75b7797261e44539a39352f65f313f383d1621"
+digest = "sha256:6f3c2079a728561eb05010c96cc85d403ec2942a333b685e9b4650060b9890e1"
+ir_digest = "sha256:6866f007cc8fd5451fa097b8540ffa8f71f05a9852d60f05aac9317cd616a3de"
 section_count = 3
 
 [[files]]
 path = "semantic/agentic-workflow-services-platform-sync.md"
-digest = "sha256:79e041203b8bde4010f572d223addbb3ad37e07d169109ae9cb166fbf9338228"
-ir_digest = "sha256:805a4a8b40ad7f712e6749893b39c176215ab268cd8eec598668526fec096325"
+digest = "sha256:5ff46ba5bcbeae792be66552f86ebf832d130e85367cabca4aee7c154c1ca99b"
+ir_digest = "sha256:efabdd9ae8c7d3c29503e40c6805fd7dc3da60474860d6de259a53f2b72bf146"
 section_count = 3
 
 [[files]]
@@ -5166,31 +4734,19 @@ section_count = 3
 
 [[files]]
 path = "semantic/agentic-workflow-tests-cli-tests.md"
-digest = "sha256:bb2b5d8d657957bd873b2d5c284eb39846f9e05c20aa64c82e7426edca781f1e"
-parse_error = "schema:64-1062: section 'schema' at lines 64..1062: JSON Schema typed-payload parse error: did not find expected key at line 431 column 11, while parsing a block mapping at line 426 column 11"
+digest = "sha256:e7a2868c196524e22ee709b6dba565c5ade3a04901b97d56d4f6c78baf5701f8"
+parse_error = "schema:76-1077: section 'schema' at lines 76..1077: JSON Schema typed-payload parse error: did not find expected key at line 434 column 11, while parsing a block mapping at line 429 column 11"
 
 [[files]]
 path = "semantic/agentic-workflow-tests.md"
-digest = "sha256:d40a715e52107167413a34d5513bbf0952b04bdeef6a7e41c87fcbed8fa83fcd"
-ir_digest = "sha256:a9eb581f02793b2960958a903058503180d6471392d493fd0ceaca21408d21ac"
-section_count = 3
-
-[[files]]
-path = "semantic/agentic-workflow-ui-viewer-assets.md"
-digest = "sha256:bcea1f1cdf069cd759dfb037785674af01086f6961a9aaacb744d02edbf1aeb5"
-ir_digest = "sha256:91aa9dc6bf3e0ab7691c367556eb8bae33890fd2ff42539196f334a7e9f47cec"
-section_count = 3
-
-[[files]]
-path = "semantic/agentic-workflow-ui-viewer.md"
-digest = "sha256:575cc05959fa831f78365e65f452cd8c9251a99e92320930446a88cff337e06d"
-ir_digest = "sha256:e54f625e8eee57893e41185ce904c30689873e86aa809e6ad0767a012eaef617"
+digest = "sha256:aa6554f6d2e69ede2927332fbce6a8fa0bc7589caa52c93c6167b87b427c38ec"
+ir_digest = "sha256:150093f76ed634609f4aaf268ed201e272025dab614d497d7bcfc54a6f47c046"
 section_count = 3
 
 [[files]]
 path = "semantic/agentic-workflow-ui.md"
-digest = "sha256:1cc52d43e3f35aa5babad75fbcfea85b966186b10fe8675558343cb3558343a5"
-ir_digest = "sha256:24ce68f660682bda3c3434b4aa31ef7be97b82631955ce628aaa850b98446ad5"
+digest = "sha256:8ef456c4f0859e4e1476afbb8994603ae2de009503249c67841d845ff49be46f"
+ir_digest = "sha256:f31cf2cb5f7d73533ae0f54add0cb5a4b5e4e9ab26bd02059db7f0ea9af8baa3"
 section_count = 3
 
 [[files]]
@@ -5224,6 +4780,18 @@ ir_digest = "sha256:f56780626be2c7339194f643fac6a59d09714b1f65e123cc3cc83adece65
 section_count = 3
 
 [[files]]
+path = "semantic/rename-shared-service-libraries-around-semantic-responsibility-t.md"
+digest = "sha256:5934234b1ceca1ce77f5d6315612ef9a7efc4238eae9668e71bb58011e8e0bfa"
+ir_digest = "sha256:70701b17dfe0e6af42a6e636c8267edee4bc471d1b0d94c9f8c4133f3055c7ac"
+section_count = 3
+
+[[files]]
+path = "semantic/td-code-check-touched-codegen-drift.md"
+digest = "sha256:c8b27ae204f52994f8736261028a92db91fd8cf9db317a62f113280dd5308890"
+ir_digest = "sha256:9848bfa36206a4318771b7e9f2e46f8f53e19f87a79399b6358f6b42932c3b50"
+section_count = 4
+
+[[files]]
 path = "semantic/td-gen-source-source-snapshot-projection.md"
 digest = "sha256:fc8ea0a9bb0b31fd016efd1e1806239fbebf93735240b5030528799d5e40c25d"
 ir_digest = "sha256:7b5fec2cca5e216d440f240bb8f0aca864016839381abbac4b499c307bc36170"
@@ -5231,8 +4799,8 @@ section_count = 4
 
 [[files]]
 path = "semantic/td-generation-target-ownership.md"
-digest = "sha256:d3ea83b1f7dc87a355bb1ac6fa99a417cd59b5ea0526fba346feab9cc1aacd1f"
-ir_digest = "sha256:3d4a95e30a037d312a497f64b831297923dac2766c4d1c65d5412a0e51dc9005"
+digest = "sha256:0e90c7b3279b275d22409d0169c8de2e094904e5f67789ef24c5ee77b483f681"
+ir_digest = "sha256:702e0b2016b1a08c33e532427dbde621effafea3f349923588ad2c6faa2664d7"
 section_count = 4
 
 [[files]]
@@ -5325,8 +4893,8 @@ parse_error = "changes:27-75: section 'changes' at lines 27..75: Changes typed-p
 
 [[files]]
 path = "surface/changes/r4-bulk-drop-deprecated-h2.md"
-digest = "sha256:a5e20b9d98341ab0aa4409aead7bffadda29e09fd3ee699eb5a3b01e371472d6"
-ir_digest = "sha256:9da8ad6901cf18d6f91d9d0aaf2d2cc61f36dc7681aa2d9088518c18f0468625"
+digest = "sha256:97acc42bab3016c37613772daec7f45ce3c4d8b4cc9f32439438d417922bc82c"
+ir_digest = "sha256:20b5a488be8fd26bfc0e57bf4f3f649f3ca8517d4fa3588baef62499a2c2781a"
 section_count = 1
 
 [[files]]
@@ -5367,27 +4935,33 @@ section_count = 2
 
 [[files]]
 path = "surface/generate/build.md"
-digest = "sha256:1f9176e4f74a5ac5756ca427340e7c256beb21b057431fefcebac42bd68a68a5"
-ir_digest = "sha256:840b3dcbaf28a0a6c50e34ff9aebb02df9a4151f73bcf386784e8fa921d2aaa1"
+digest = "sha256:0156f49583eed6ac33130650d715307aacc3378dc58063084d6c5ec6ba8d1256"
+ir_digest = "sha256:a04932a3e856cf18b7abc99379ecd62a194a1bb54d0f9de320f5515eb78dd8a0"
 section_count = 2
 
 [[files]]
 path = "surface/generate/project-health-source.md"
-digest = "sha256:b18386c1c16121a369a3bf70670d1a6bd2b5889535bd4e41b0b7ce6d2ab49701"
-ir_digest = "sha256:3c4ff949f86f0e0c12d1709e505e05b1aaf3cd04045be95e5fc2e724d3f18a67"
+digest = "sha256:e462ce66dea2cf43fed3a06464ecceab46417009f43c36fe7c2fd500a51a08f3"
+ir_digest = "sha256:ab5ade22b3313d1afe0af09eb5cc8c10c297fcc2a00fc5cce7e6ce579a494de0"
 section_count = 2
 
 [[files]]
 path = "surface/generate/project-health-test-source.md"
-digest = "sha256:519a640e0eaf9918c19520cd595889615779cb2134d8c44cf9dc4683e5eed8ec"
-ir_digest = "sha256:a6350e70ec4f7b5634df76b3d9e1a2b7418a3afda668f3b4f787ce27242e64ef"
+digest = "sha256:a006db87c5cb875944d636db4fa94598c66200005a9a667f138d844b0dbf0c6c"
+ir_digest = "sha256:5797c3c8337443edfc5c1a954f0346dd9ea103cac9b9bc219542c9901804921b"
 section_count = 2
 
 [[files]]
+path = "surface/interfaces/src/artifact_producer.md"
+digest = "sha256:910cbff99c31828d2d01d4ba17192b7ca617f335613b3a7a2f6defc4980d61d2"
+ir_digest = "sha256:e86202e97174a84c845d6be3ddf3a04fa6aa264fef82881b28c0b7eee10f4403"
+section_count = 1
+
+[[files]]
 path = "surface/interfaces/src/cb.md"
-digest = "sha256:7bd347d8cd66235ef54e330721129dccd2419aaab24e511dd29b8d97a4a3b4fc"
-ir_digest = "sha256:00016ec2372fae5adc4fc2e264b2298bfd62b4b603c72a48e3a4fc3e03832597"
-section_count = 3
+digest = "sha256:048a0b1d5bd36ed45f2a9042521fd8dec67bdfbe323552a1341a7774b7747ced"
+ir_digest = "sha256:7e686ff4cb1e77b7d2b297703acda939dbdc2fc6ab81efed5852a0bbced20278"
+section_count = 4
 
 [[files]]
 path = "surface/interfaces/src/cb_arbitrate.md"
@@ -5397,8 +4971,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/cb_fill.md"
-digest = "sha256:4c5f5326f288a254391ff818e8d0d6acdb66008bdf5006132a0b6a4f0c0afdfc"
-ir_digest = "sha256:7979dd9e7592c07215be367aeda4c29375ea6c65b36d776587ebfbea4068544e"
+digest = "sha256:20e3633e810be798de23c2caa214add4027f2975be11347feb670e79ef5f5ae4"
+ir_digest = "sha256:7fafb6eef90cff27eff0c430429d2d926845a34f1d2f8fdff6b2782cbc523b0c"
 section_count = 2
 
 [[files]]
@@ -5415,32 +4989,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/chain.md"
-digest = "sha256:758c5b1ad2ebdcd666021e68fb578271cbf77de4a4ad1b814d20d46fb64b8bd9"
-ir_digest = "sha256:e0a5154e3d1fc55f75d060364d0c2c24cc270390b823749d0c94f6bc38a4733d"
-section_count = 2
-
-[[files]]
-path = "surface/interfaces/src/chat.md"
-digest = "sha256:1422f5b56bc9ec49f1f1dc2822930081a30393631445b4be8b66f3cc0d7aad29"
-ir_digest = "sha256:a4969f135015d1eb4c473ef514fad4736a6c34aaf3c8ed2eec90ee7709bb69de"
-section_count = 2
-
-[[files]]
-path = "surface/interfaces/src/chat/helpers.md"
-digest = "sha256:1837a362da83e8036cb57286c694265f3101399b0ec4a4c4dd5e9169e680bf3e"
-ir_digest = "sha256:6f3e3bfc7b3205071e0c7a50eb6c26f2817d9e6dcc22291cf8875e00fe38287e"
-section_count = 2
-
-[[files]]
-path = "surface/interfaces/src/chat/mod.md"
-digest = "sha256:c846a90994c6aa25e396d7ed0fa6b00ce1d9b9b82843edc88bcd87bcc41f033d"
-ir_digest = "sha256:08b44ae5281143c6723a18659af0a6b497bb2f8b906ffda3f0d9877291b12577"
-section_count = 2
-
-[[files]]
-path = "surface/interfaces/src/chat_members.md"
-digest = "sha256:64f893bda5545fdf72aa2a0785333ad859edf0f182f4b6cc05a1c32ac8ad39ac"
-ir_digest = "sha256:8202eaa7045ae21aa0e6b7365175ed21afeb1a3f849ff40405f7243ced2d42f9"
+digest = "sha256:722de56ec97fad064e26aa803d9c7819d49c785ab7587446ee954cfe3f3b5b1d"
+ir_digest = "sha256:d0751a6a6b112c288b89833dc17a738d1057554f5ed4fe095909ccc74e9b0e20"
 section_count = 2
 
 [[files]]
@@ -5451,14 +5001,14 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/commands.md"
-digest = "sha256:03d0d187e7b53d7deab7fd6e413000639f8d149046529ad8a20bced0fe8207c9"
-ir_digest = "sha256:d0ed8a4b43fe512603c9ea3ca744a85f18e7fc9be521d74392e528715c28a2b2"
+digest = "sha256:bbc977507a7301569cb5f2c393eb0bdabbc6c5f5623b896d5b9b71a9040d4687"
+ir_digest = "sha256:285d9886f2a936c14759b2849662c615a43086f3840921bc479c03e67fe8fa15"
 section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/doc_mirror.md"
-digest = "sha256:f28187ac1d8c65183d92fcbac217c6e188ea96d4767f367f6c34103159b88450"
-ir_digest = "sha256:9902e71eb010b6c7fcbee75ffc9d9cb20ad796d9d20b81423dd45e49e2240b60"
+digest = "sha256:180a4dad5ddfc5429ce75e6219acc297129dc9f25c8539e9768e0fa441b6383d"
+ir_digest = "sha256:d8ee6e1c47f6f7431a916934b89b661d74b84a6b6d5249930cf767a1a0c05d12"
 section_count = 2
 
 [[files]]
@@ -5481,20 +5031,20 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/init.md"
-digest = "sha256:482a332f740de8414f549b5464efffc8bee348c0b22d0f4c7a125718356b8e18"
-ir_digest = "sha256:f29a718d92415dfb3dc4518a8fdc2708e44b6f18d5e499a747d30e308e02bd92"
+digest = "sha256:79e837d6d17f03f5417adbbb97ced044af9f29e2f94025b89efe68a45d0df557"
+ir_digest = "sha256:82f2dc9f73c84758fa8e31d4e566a6733487bc05f6273faa717489bfb8f3e851"
 section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/issues.md"
-digest = "sha256:91a89858a15602d99fa850d9f5af3ce238acf1d9aa595d417b3210c99c65aedb"
-ir_digest = "sha256:bfccb7ce2e4cc5eb9a462ac3d4f6042374f3a9591189477faa03ffa8b5803c09"
+digest = "sha256:f0aa2a28149608d62db55cb8d0a47a67286b63662f0937e47e66232734df87ea"
+ir_digest = "sha256:defdec5e7936f8d76a62b81ec1ef34daa7a48c4163810ecb87fcc9bff164639d"
 section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/lib.md"
-digest = "sha256:fb722c44520f000227aa286b328cd55c7e9fd1e2698a861e3ca66fb36d1b9e90"
-ir_digest = "sha256:5dcd523348084d7d73014678a263227f092a166eb74debaa8f80e2ca51beda4b"
+digest = "sha256:c25b64a10fc611ca10965629c9000daa62478453f1009dd6d8b351faf7460b37"
+ir_digest = "sha256:c7dcd4d3124fb6fcb747ed69fd53509fa1cc5cd3648dbec1a92a8a9a3d257816"
 section_count = 2
 
 [[files]]
@@ -5508,6 +5058,18 @@ path = "surface/interfaces/src/merge_target.md"
 digest = "sha256:5bdd1ccb1cebec3daf2f5e890821bee5bb8383d0946bef9f10a6c4ef266551fc"
 ir_digest = "sha256:2219fd269aeda6748f5d441a7d9923c18467816ca2971d83d3d68fa415a6a950"
 section_count = 2
+
+[[files]]
+path = "surface/interfaces/src/meta.md"
+digest = "sha256:90bb3c60fcef2af3e7ea4e47dade86fcac78085b1b1f353f65a2f1501500723c"
+ir_digest = "sha256:6841480026c7f4b8667d74adcc6120b2d2c17b4c29d6a718b5d72a77fb7714c9"
+section_count = 1
+
+[[files]]
+path = "surface/interfaces/src/meta_docs.md"
+digest = "sha256:8d9ad256f21255abb5e1f16c82be2c83c664a25f44c23dae2349934cc8edf80c"
+ir_digest = "sha256:e1de4c55d4188fd2df1918453da23e0958d61cfc5c27e83969f51883aedb40a6"
+section_count = 1
 
 [[files]]
 path = "surface/interfaces/src/migrate.md"
@@ -5535,9 +5097,9 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/standardize.md"
-digest = "sha256:a7682e4b321a290b8a5bff3973077350660feee5f580f673b91c24ebe42e7abe"
-ir_digest = "sha256:c8f9403a38724d2f75b0511ece839a128718391afc5aa311d28ca084c4dea2e2"
-section_count = 3
+digest = "sha256:ecda69efe04eddbb1635f82b208501a77a83fb79583cee8f74819f8ab9a34f4e"
+ir_digest = "sha256:bb1f1adf2e5d2906fdff98fa8cbecd49728c8883a8b66c0338acc7d67e0156a4"
+section_count = 31
 
 [[files]]
 path = "surface/interfaces/src/standardize_audit.md"
@@ -5553,8 +5115,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:baad118123dfda31fd91b503d743445fcfd637ad905f49a0ddc9691e2485866b"
-ir_digest = "sha256:78ea2b00c2b478df90a3e9523b8243dacd35617e7f6f243904e01930be9c0eb4"
+digest = "sha256:2b5deedfe8a377d28cd9bc410edd9a6b98d1d5ed004e97727608f55164a93733"
+ir_digest = "sha256:cc3298759e3f4dc9905b46ef15c46d0a71dbd74ad0930cf81fd4f3506f0187f9"
 section_count = 2
 
 [[files]]
@@ -5589,8 +5151,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/workflow_guard.md"
-digest = "sha256:5f7ffdf9a4ac7701d83e165f7e669f69a74806fcd8c263abbf7b393c830280a5"
-ir_digest = "sha256:9c8a754f72bf97fb63e056ec8bdfdcee99df184cd3a91b1f83dfd7a8bd182b01"
+digest = "sha256:b997984dc4856abdf51ac55aa3655bfdd4f611243020cc0ce0184c55e2a902d1"
+ir_digest = "sha256:b8a5c9e48f6712d451421a063901b76a838b2d8ef8674045321ba08f0d262cc4"
 section_count = 2
 
 [[files]]
@@ -5612,14 +5174,20 @@ ir_digest = "sha256:ba241fda816c2edf3d122f77221cf85da50a5d84f86cc5313b23e9794921
 section_count = 7
 
 [[files]]
+path = "surface/specs/aw-artifact-skeleton-fill-protocol.md"
+digest = "sha256:37923e6a0f05e640d2190cb952777f0ace78dc7faa77af0783efd4653d14ffc5"
+ir_digest = "sha256:eca6176d854e7bd5ba7b1a421763f15e6e84f03ed3a5796730950786c70955f8"
+section_count = 5
+
+[[files]]
 path = "surface/specs/aw-capability-alignment-wi-planning.md"
 digest = "sha256:0ba3829bc8f8054a52493e2dcd72c176feed745ca2ad9a6b6c79fe2e56e6a4dc"
 parse_error = "cli:353-484: section 'cli' at lines 353..484: CLI manifest typed-payload parse error: commands[0]: missing field `name` at line 2 column 5"
 
 [[files]]
 path = "surface/specs/aw-capability-claim-closure-ec-inventory.md"
-digest = "sha256:dc804bee691b563774345bf94b0b7144bff5838f34e19882d14a82be0ae2fafc"
-ir_digest = "sha256:f521a094744cdc93535f8f71d23b7f543242f854fcd45da65f8819a8de7dd6b3"
+digest = "sha256:fb099ed965ef69d4c144b2592575b3586e83794424b7bdc7e04fa61bf5b42a51"
+ir_digest = "sha256:1605496a252b0879418ce3b1768e85d63e1e12129a7d45ae1c76d6aa9b0b4a73"
 section_count = 1
 
 [[files]]
@@ -5628,9 +5196,15 @@ digest = "sha256:e7b6a930e8785e8e8cf8ff3258c2532a0b9da1cfb833be30dbcf0983bbccaf3
 parse_error = "cli:22-198: section 'cli' at lines 22..198: CLI manifest typed-payload parse error: commands: invalid type: map, expected a sequence at line 14 column 3"
 
 [[files]]
+path = "surface/specs/aw-chat-removal.md"
+digest = "sha256:07d46383a843e0fff1cd664c59bdfd8d59f1b298cd72dc2964f228d0556a8d04"
+ir_digest = "sha256:1f50cc2ad5fab6da5fb4c4186ca96706df31fe2d96f23807944efb19b4ae1f04"
+section_count = 4
+
+[[files]]
 path = "surface/specs/aw-client-boundaries.md"
-digest = "sha256:9821b504ff7c56ecb65b1eed48fa8eeefa871b71970d10798bef464d205a19df"
-ir_digest = "sha256:eac8f2cab421b155be5b10cc000ef69b68a8c65e4e10ef3ba2f6a3ddf9bc14f9"
+digest = "sha256:f74781784ce4cf967107addb344617ad17cf7111aa8037ad9a4e9b39bd60c5b1"
+ir_digest = "sha256:4ab1babb0065a9949486cb81913aee1324538c91602ab76df190b22f7d054f9f"
 section_count = 4
 
 [[files]]
@@ -5641,9 +5215,21 @@ section_count = 7
 
 [[files]]
 path = "surface/specs/aw-core-client-model.md"
-digest = "sha256:833cd14fdc58f0bacc56a74713cef1e98b471daa8d66bab2c12a9f31c4db225c"
-ir_digest = "sha256:db787a275c71b4ede422f3c72d77d78af00fb7dead30023c00e90506805ef8db"
+digest = "sha256:3391315127c98b2bd360b15662e2e15287b9f1bfb854dcf4d7f5b3b7be67af65"
+ir_digest = "sha256:e94a64d4bbce8be4b946ad6f442d71fa38fc0d527cf79aab8a48283fb9b8da84"
 section_count = 4
+
+[[files]]
+path = "surface/specs/aw-dx-trait-derivation.md"
+digest = "sha256:aac064a7f2f7ec4030d03611d144a90a53ac32695985a71e94a0fe16b27ba80d"
+ir_digest = "sha256:340c784a205b6189dcb1f6ead72bb3cfb79dc948b665ebc9ebfb79521838ee60"
+section_count = 4
+
+[[files]]
+path = "surface/specs/aw-ec-only-semantic-approval.md"
+digest = "sha256:b601105e395ee334e442a0bf91b333372749407eb8aba568f676d663685f95c2"
+ir_digest = "sha256:a1253351fbf4259b1b2ffcf0e797af217050ec23ffecdf53e33c2a178e299772"
+section_count = 5
 
 [[files]]
 path = "surface/specs/aw-ec-zero-test-false-green.md"
@@ -5664,16 +5250,28 @@ ir_digest = "sha256:3eb69046d041855e1926ca471604698ab63803dceab1a8e4f6be7e692b4d
 section_count = 2
 
 [[files]]
+path = "surface/specs/aw-meta-doc-ownership-matrix.md"
+digest = "sha256:d12dab44bea61ece82e88563a7dd75f8b83220878862b6115874633d931bed1c"
+ir_digest = "sha256:34779d2d56fa38e722c1e6313ebb957418e43f1fbeb184410c3dff6324fc128c"
+section_count = 5
+
+[[files]]
+path = "surface/specs/aw-meta-doc-producer.md"
+digest = "sha256:2a4e1d715d83dc9eabbc53368dea2300c59812877a6c524d710b68ec1b99d714"
+ir_digest = "sha256:ea65113e36b2666583136216fe4c414c4199e7ad6051c3860ed5d91ab5c1f245"
+section_count = 5
+
+[[files]]
 path = "surface/specs/aw-quality-primitive-metadata.md"
 digest = "sha256:132155ed4e18058367f64073e313855271a39a443aa6a93147966ec3ad9500e2"
 ir_digest = "sha256:d470ad8afcecc35941a60eaba10822883a49605ae41e4830f3cc1d686e4124b3"
 section_count = 5
 
 [[files]]
-path = "surface/specs/aw-repo-view-desktop-app.md"
-digest = "sha256:d37c58764f35b998ba9ba401d4c503263966629e6d10fb7f5158cb6e7e428776"
-ir_digest = "sha256:2d9c4bceea7d8ba6944cf824418e79097d2b1653247bb1b1f9a6ba0da5c3ff84"
-section_count = 1
+path = "surface/specs/aw-self-hosting-runner-policy.md"
+digest = "sha256:833663181a363c4fef6513b3b0e6f35a922963815f0e79730438a4ad29dbda63"
+ir_digest = "sha256:5f5366597fbe113cf7cc6f4961e32fbca57a016f7cfa7c9c753159a2e990fd24"
+section_count = 5
 
 [[files]]
 path = "surface/specs/aw-source-first-reference-artifacts.md"
@@ -5687,16 +5285,34 @@ digest = "sha256:cda61c872e7e2090c13073ad5995c0c6e0e240c88dccbca319f0ac464467d3a
 parse_error = "schema:60-123: section 'schema' at lines 60..123: JSON Schema typed-payload parse error: did not find expected '-' indicator at line 41 column 3, while parsing a block collection at line 36 column 3"
 
 [[files]]
+path = "surface/specs/aw-view-removal.md"
+digest = "sha256:851c3f9eeee63d89b705513fb663f6a09a3503dec4268cd1d1a3eb8066e2840f"
+ir_digest = "sha256:13b1ede5a14b1625619b9a1a85da2d661bae8d829a7191f4f2f551b4359f2a91"
+section_count = 4
+
+[[files]]
 path = "surface/specs/aw-wi-create-remove-remote-flag.md"
 digest = "sha256:fb0ccab3becc7bfe1263ddd481807065696cb5383c78ad6e4a5d9bdeedb260d9"
 ir_digest = "sha256:a5e50420c1ab10c77323ce398737721c2115f3601be1b8d281848e3fd6f9541a"
 section_count = 6
 
 [[files]]
+path = "surface/specs/aw-wi-crrr-removal.md"
+digest = "sha256:0132eb722cecf5b53ff9aab8cacbc4cefaccf4aefcfc17d5befb5483528f2423"
+ir_digest = "sha256:19e6444b110cdf23b48a58b68a554c2a99c2c23d332db2da702ca5f266c7fc3e"
+section_count = 4
+
+[[files]]
 path = "surface/specs/aw-wi-draft-valid-by-construction.md"
 digest = "sha256:da921e0773fb76473cee087523b9da6daa003e2cc44cc99063b817d6f071016b"
 ir_digest = "sha256:f0c1ab5f80c90e0949c6a0666fc814851948d9a02044a0faf687e48ab19b3d8a"
 section_count = 4
+
+[[files]]
+path = "surface/specs/aw-wi-ec-td-root-loop.md"
+digest = "sha256:bab4bc21cb99161d6f16822ecf5d0be49664bea1106cefcf5724333d67a511ae"
+ir_digest = "sha256:b183a398de6150ee28759a8ffde2f7274ea6f862c545ed7920a2ddb937017e34"
+section_count = 5
 
 [[files]]
 path = "surface/specs/aw-wi-remove-agent-estimate.md"
@@ -5706,8 +5322,8 @@ section_count = 6
 
 [[files]]
 path = "surface/specs/aw-workitem-artifact-gate.md"
-digest = "sha256:34adc13f46a330ea7dec6b3d7bdc974728cef03089f222d736c1da5350ed214f"
-ir_digest = "sha256:d9cdebf5dc49b64a456f86adc9c9bced7caf4a22ac878c6480b429f3752f7a93"
+digest = "sha256:9bb5a865238e0473660751308a7f6c2f775799ba31d32ff6c9990d1914b06d99"
+ir_digest = "sha256:8dd83ffaa38b7f351777f048eae073c4e30075036980a0768e3341b998ee92d6"
 section_count = 4
 
 [[files]]
@@ -5736,7 +5352,7 @@ section_count = 4
 
 [[files]]
 path = "surface/specs/issue-crrr-state-machine.md"
-digest = "sha256:5bd92e1bacf45d9b476b65dcbdcc0e9548969aba06ca9cfe1c7d24605c529789"
+digest = "sha256:f1f2ac4ee86746abfbf3d42f86c0096347c711c403ad0cbd8ab5e24d4b9af838"
 ir_digest = "sha256:dc423004e481e6976be4bd19e8d73b3fea27d5d4d9666ebc8ceb2777cf82f191"
 section_count = 0
 
@@ -5748,7 +5364,7 @@ section_count = 4
 
 [[files]]
 path = "surface/specs/mermaid-plus-primitive-vocabulary.md"
-digest = "sha256:311eafc105c115d2149e0fd0915dbf398cd121fe15fdfd8cc0f071e586b17d1d"
+digest = "sha256:0b4d0a8ffac3f04317367c86284106e449eb309027d281d33b45da0e81d9353b"
 ir_digest = "sha256:9c3ae2bc56a745f8f873ca99d411f9fdf143d2b9193821f3c60202c649f49424"
 section_count = 3
 
@@ -5799,34 +5415,6 @@ digest = "sha256:af42a6159055deb43958450ac17ddaf44d6b516c95b5d5eaac423e7acc9ee75
 parse_error = "cli:25-194: section 'cli' at lines 25..194: CLI manifest typed-payload parse error: commands: invalid type: map, expected a sequence at line 13 column 3"
 
 [[files]]
-path = "surface/specs/score-chat-cli-contract.md"
-digest = "sha256:b95f2e65bf26dc030b641e6126b50a28a7fe4c661f7c7ecc8a08d968d509d55a"
-ir_digest = "sha256:d814d09c336c7a7697e5a65f54f00f8f66f2110f48711df6d7de8653c71ce4b0"
-section_count = 4
-
-[[files]]
-path = "surface/specs/score-chat-jsonl-migration.md"
-digest = "sha256:9da2423b471374dc4c850ede010e76ab1006f45cb50fb3305caf1f30adec6cc2"
-parse_error = "cli:241-321: section 'cli' at lines 241..321: CLI manifest typed-payload parse error: commands: invalid type: map, expected a sequence at line 8 column 3"
-
-[[files]]
-path = "surface/specs/score-chat-listen-filter.md"
-digest = "sha256:e5b7808c2114fd87691fc3d020af2aa1059f997a202dfdeae1b022e9d6012341"
-ir_digest = "sha256:f5450143fffa11e49bdeada1475905f7258397287fa23be6505a1a8bfd2df407"
-section_count = 4
-
-[[files]]
-path = "surface/specs/score-chat-msg-members-schema.md"
-digest = "sha256:3b571dacaa7767fa2b3919ccc671c1f5d246bec1fa2253f116e0dd73999e522d"
-ir_digest = "sha256:959ab1d58ce9176e1330ec0e606913de6c85b72f4e92b0fdf7d478a466f37ca6"
-section_count = 4
-
-[[files]]
-path = "surface/specs/score-chat.md"
-digest = "sha256:3e9a05d677b071a0a7cf89178d361ac743d40394e9b089a047d03db8f17cadae"
-parse_error = "schema:21-295: section 'schema' at lines 21..295: JSON Schema typed-payload parse error: mapping values are not allowed in this context at line 197 column 49"
-
-[[files]]
 path = "surface/specs/score-gen-reconstructability.md"
 digest = "sha256:bee79dd9210ff74d4e76c5c4f788f7385135559cfb69a0933fcb39b7e50313ba"
 ir_digest = "sha256:8fc435c852fb547de3cd4c572a7bdaf0a2d1dd3cab85d15ddb604a7db63f0117"
@@ -5855,8 +5443,8 @@ section_count = 2
 
 [[files]]
 path = "surface/specs/score-section-type-registry.md"
-digest = "sha256:6c9db0d86ed1c38869eda60b03a3476ba3e1b8f899dd877f9b3b831a784ff46a"
-ir_digest = "sha256:eda50596736fa0cc8a7fafaada60df96d8610f68df3a39f5c5a01e56bb8b9db4"
+digest = "sha256:d205726b4cc7a75534bf8a6a8ffa02c2b211c63c6ffb4abbd3bfee00ac3ee816"
+ir_digest = "sha256:8c4265842a93f9578665d4997f083757e6b79da1027e902afeec15a8c98b1de1"
 section_count = 2
 
 [[files]]
@@ -5949,8 +5537,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/cb_fill_test.md"
-digest = "sha256:7f200f4f341c29a6a3060dbe473346b876a272cbd83f8ae239546e4e1fe12cac"
-ir_digest = "sha256:ed385985419bf99b9e62985c865ea137c3fa2c328753d544862186687152e068"
+digest = "sha256:248a2633f0110f482dfb22e27e58b53db292d281f1d0712daee9aa912f85ea3f"
+ir_digest = "sha256:5a8fe34cfc6152594ee858a9cba7bdae5445a56d828a5da9ef8954d5f345055e"
 section_count = 2
 
 [[files]]
@@ -5979,8 +5567,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/inplace_mode_test.md"
-digest = "sha256:e7619398005143ced2f6fac3d0692e1f436beefdb1c0801ed4159d8912121620"
-ir_digest = "sha256:7f88b3de3b11b4a9bf7d095ddd08dc378f7f7895f0a805de5ed29fd9c2a5dc2f"
+digest = "sha256:7b3a4088bec761d4df82316a0b69f538538a17cf5201dc4a655ae2a3bb6d6b1c"
+ir_digest = "sha256:8be206931698d90a207704f71cdefd05fdd22bfd294ca7db52e06901840c7c7b"
 section_count = 2
 
 [[files]]
@@ -6009,14 +5597,14 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/root_doc_allowlist_test.md"
-digest = "sha256:7af5f58affdd4c8fd982393920f821cfa1303c803d8f801f9f588039e88af5a0"
-ir_digest = "sha256:f9eebfde8b6e6df80fe95497c753d56ea49f0a4344f407c007b30c22c46b9253"
+digest = "sha256:d67f229049704663ab13c58075b31c7cb8f6d79748980324b7856492e8dbc048"
+ir_digest = "sha256:c07049b1e128f5fcb1f5dbd7cdbbd25cc3d7d69ff6011c121bc3f465cd1b8b1f"
 section_count = 2
 
 [[files]]
 path = "surface/validate/tests/root_doc_mirror_test.md"
-digest = "sha256:b5d35f9b653c13731237e5e88beb663bb77245946320d2b582d05d81dbf46b6b"
-ir_digest = "sha256:26720a7dcf3442f43de17dd021dfb85722e0553ccd43728e38edde3e9202a214"
+digest = "sha256:76ca2a7646b46c18769a1de538e9138c18f942e0ec52a2c24494a4ff13b0f26f"
+ir_digest = "sha256:934a3d62e05d888227963b5ef6002f2760e14e0ed0d7864c7f77dd8884f337dc"
 section_count = 2
 
 [[files]]
@@ -6045,8 +5633,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/td_no_merge_test.md"
-digest = "sha256:55b1ff17b7f9d03bb712ae98159059e7b2f050b9bbd8798b58fe3905fd07f89e"
-ir_digest = "sha256:85743f1837ec8cb8a9060f0d45c486eb2fb3034508485c9055583d85fe10fa8f"
+digest = "sha256:f98a7871c5247df390944f581ffbf3bdb58acc39ebebc04525897b3d18abf234"
+ir_digest = "sha256:88adaf463b19cd3a694489c7055667ab23e577f959e8c249ae126ec675dfc880"
 section_count = 2
 
 [[files]]

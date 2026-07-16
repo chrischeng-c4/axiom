@@ -35,10 +35,10 @@ concept, only the caller's `external_id` is.
   data ownership.
 - **Agent-first offline integration surface**: `lumen spec` emits the exact
   machine schema, including `lumen spec --format openapi-yaml` for LLM-readable
-  OpenAPI, while `lumen llm --topic outline`, `lumen llm --topic workflow`,
-  `lumen llm --topic integration`, `lumen llm --topic quickstart`, and
-  `lumen llm --topic recipes` let an agent pick the smallest context needed to
-  wire lumen into an app without a docs site or running server.
+  OpenAPI, while `lumen llm --topic outline --format json` emits a typed
+  `cclab.llm.v2` task manifest and `lumen llm --topic <id>` emits the smallest
+  source-backed runbook needed to wire Lumen into an app without a docs site or
+  running server.
 
 ## Capabilities
 
@@ -76,6 +76,7 @@ agent integration remain first-class domain roots.
 | Kubernetes-Native Deployment | - | implemented | verified | dogfood | ready | domain: kustomize manifests, Lumen CRD, and kube-rs operator |
 | Stateful Service Workload | #1553 | implemented | verified | smoke | ready | mandatory stateful profile: composes durable index/checkpoint state, PVC identity, raft topology, backup/bootstrap, observability, security, and StatefulSet lifecycle without duplicating those domain roots |
 | Developer & Agent Experience | 4143 | implemented | verified | conformance | ready | domain: installed binary teaches offline (spec/llm topics, committed OpenAPI contract) and interactive (connect/query) integration, with client-visible contracts test-asserted against drift |
+| Agent Task Navigation | 1683 | verified | passing | conformance | ready | non-domain DX baseline: typed offline task manifest and runbooks generated from the DX contract, runtime field capabilities, and canonical OpenAPI surface |
 
 ### CLI Interface
 
@@ -97,7 +98,7 @@ Gate Inventory:
 | service-process-interface | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/tests/api_e2e.rs |
 | lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | 4143 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
 | query-shape-cookbook-field-analyzer-catalog | epic | 4143 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
-| lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
+| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/tests/spec_cli.rs |
 | lumen-connect-query-k8s-agent-workflow | change | 1321 | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs |
 | deployment-operator-command-surface | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/src/operator |
 
@@ -221,6 +222,7 @@ Gate Inventory:
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
 | kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | apps/lumen/scripts/kind-e2e.sh |
 | meta-api-health-ready-metrics-version | epic | - | implemented | passing | conformance | apps/lumen/tests/api_e2e.rs |
+| shared-stateful-foundation-adoption | epic | 1646 | implemented | passing | conformance | `cargo test -p lumen --test shared_stateful_foundations`; `cargo test -p lumen --lib auth`; `cargo test -p lumen --test admission_e2e`; `cargo test -p lumen --lib tls`; `cargo test -p lumen --features operator --test operator_render`; `cargo test -p lumen --test rig_stateful_adapter` |
 
 ### Security Hardening
 
@@ -244,7 +246,7 @@ Gate Inventory:
 | role-based-authz-matrix-per-route | epic | - | implemented | passing | conformance | apps/lumen/tests/authz_matrix_e2e.rs |
 | adversarial-query-safety | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
 | score-confidentiality | epic | - | implemented | passing | negative | apps/lumen/tests/coverage_gaps_e2e.rs |
-| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>apps/lumen/src/tls.rs |
+| tls-rustls | epic | - | implemented | passing | smoke | `cargo test -p lumen --lib tls`<br>`cargo test -p lumen --test shared_stateful_foundations`<br>apps/lumen/src/tls.rs |
 
 ### HTTP/2 API List
 
@@ -587,7 +589,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | prometheus-metrics-endpoint | epic | - | implemented | passing | smoke | apps/lumen/tests/api_e2e.rs |
 | servicemonitor-prometheusrule-bundle | epic | - | implemented | passing | smoke | apps/lumen/k8s/components/observability |
-| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/compose.yaml |
+| otlp-traces-and-metrics | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/compose.yaml<br>apps/lumen/tests/shared_stateful_foundations.rs |
 
 ### Kubernetes-Native Deployment
 
@@ -614,8 +616,8 @@ Gate Inventory:
 | lumen-crd-reconcile-loop-kube-rs-operator | epic | - | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
 | kind-api-recovery-no-relay | epic | - | implemented | passing | dogfood | apps/lumen/scripts/kind-e2e.sh |
 | operator-owned-storage-topology-and-reshard-status | epic | 1180 | implemented | passing | conformance | apps/lumen/src/operator<br>apps/lumen/tests/operator_render.rs |
-| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs (live kind pod-delete-and-recreate proof) |
-| topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator (live kind proof: stale single-member HPA deleted on split) |
+| single-member-durable-persistence-render | change | 1387 | implemented | passing | dogfood | apps/lumen/src/operator/render.rs<br>apps/lumen/scripts/kind-e2e.sh |
+| topology-transition-hpa-handoff-deletion | change | 1385 | implemented | passing | dogfood | apps/lumen/src/operator<br>apps/lumen/scripts/kind-e2e.sh |
 
 ### Stateful Service Workload
 
@@ -654,7 +656,7 @@ Gate Inventory:
 
 ID: developer-agent-experience
 Type: AgentFirst
-Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm --topic outline` + `lumen llm --topic workflow` + `lumen llm --topic integration` + `lumen llm --topic quickstart` + `lumen llm --topic recipes` + `lumen llm --topic storage` + `lumen llm --topic deployment` + `lumen connect` + `lumen query` - offline self-description, agent onboarding, and interactive CLI commands.; Artifact: `clients/openapi.json` - committed OpenAPI contract regenerated from and byte-diff-enforced against the live document.
+Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm --topic outline --format json` + `lumen llm --topic <id> [--format md|json]` + `lumen connect` + `lumen query` - offline self-description, typed agent onboarding, and interactive CLI commands.; Artifact: `clients/openapi.json` - committed OpenAPI contract regenerated from and byte-diff-enforced against the live document.
 EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline schema, LLM topic, committed-contract-freshness, and client-integration-contract-disclosure conformance
 Root WI: 4143
 Status: verified
@@ -665,9 +667,8 @@ agent or operator how to use it, offline and interactively, and its
 contracts cannot silently lag what is actually shipped. `lumen spec` emits
 machine schemas and query catalogs whose committed `clients/openapi.json`
 snapshot is byte-diff-enforced against the live document; `lumen llm --topic
-<topic>` emits workflow, integration, quickstart, recipes, storage, and
-deployment topics, including the full admin-verb and client-visible
-retry/rejection contract; `lumen connect` and `lumen query` give an
+outline --format json` emits the typed `cclab.llm.v2` task manifest and each
+task emits one source-backed Markdown/JSON runbook; `lumen connect` and `lumen query` give an
 interactive CLI onto a running instance without hand-built HTTP calls; and
 client-visible integration semantics (routed-mode retry codes, read
 consistency, bounded staleness, the reshard write-fence 503 contract) are
@@ -678,11 +679,34 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | - | implemented | passing | conformance | sub-domain: offline-contract; apps/lumen/tests/spec_cli.rs<br>apps/lumen/clients/openapi.json |
-| query-shape-cookbook-field-analyzer-catalog | epic | - | implemented | passing | conformance | sub-domain: offline-contract; apps/lumen/tests/spec_cli.rs |
-| lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes | epic | 4143 | implemented | passing | conformance | sub-domain: agent-onboarding; apps/lumen/tests/spec_cli.rs |
-| interactive-tooling | epic | - | implemented | passing | conformance | sub-domain: interactive-tooling; apps/lumen/src/bin/lumen.rs (`lumen connect`, `lumen query`) |
-| integration-contract | epic | 1480 | implemented | passing | conformance | sub-domain: integration-contract; apps/lumen/tests/spec_cli.rs (routed-mode retry contract, read consistency, reshard admin verbs incl. `reshard:fence`) |
+| lumen-spec-schema-openapi-json-yaml-json-schema-offline | epic | - | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs<br>apps/lumen/clients/openapi.json |
+| query-shape-cookbook-field-analyzer-catalog | epic | - | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
+| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/tests/spec_cli.rs |
+| interactive-tooling | epic | - | implemented | passing | conformance | apps/lumen/src/bin/lumen.rs<br>apps/lumen/tests/cli_convention.rs |
+| integration-contract | epic | 1480 | implemented | passing | conformance | apps/lumen/tests/spec_cli.rs |
+
+### Agent Task Navigation
+
+ID: agent-task-navigation
+Type: AgentFirst
+Surfaces: CLI: `lumen llm --topic outline --format json` and `lumen llm --topic <id> [--format md|json]` - offline, typed task selection and deterministic runbooks; Artifact: `apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md` - DX decisions that drive the task registry.
+EC Dimensions: behavior: `cargo test -p lumen --test spec_cli dx_llm_v2_json_and_markdown_share_one_typed_contract -- --exact` - manifest, typed runbook, and markdown/JSON provenance; behavior: `cargo test -p lumen --test cli_convention llm_outline_advertised_topic_commands_parse -- --exact` - every advertised task is a valid CLI topic
+Root WI: 1683
+Status: verified
+Required Verification: conformance
+Promise:
+Lumen exposes an offline `cclab.llm.v2` task manifest rather than accepting
+free-form intent: each task identifies when it applies, its prerequisites,
+evidence it reads and produces, risk, contract refs, and either a fully-bound
+command or a typed command template. Long-text (`text`) BM25 behavior and
+varchar-like (`keyword`) range/sort behavior are projected from the same
+`FieldType` capability mapping runtime validation consults.
+Gate Inventory:
+- apps/lumen/src/dx.rs; apps/lumen/src/types.rs; apps/lumen/src/storage.rs; apps/lumen/tests/spec_cli.rs; apps/lumen/tests/cli_convention.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| lumen-llm-v2-task-navigation | epic | 1683 | implemented | passing | conformance | apps/lumen/tech-design/interfaces/dx/lumen-dx-contract.md<br>apps/lumen/src/dx.rs<br>apps/lumen/tests/spec_cli.rs |
 
 ## Benchmarks
 
@@ -1225,8 +1249,11 @@ LUMEN_TOKEN_REGISTRY_FILE=/var/run/secrets/lumen/token-registry.json
 The registry file is a JSON map of bearer token to subject/roles, mounted from a
 Kubernetes Secret. On GKE, keep GCP Secret Manager as the source of truth and
 materialize that file through External Secrets Operator or Secret Store CSI.
-Lumen reads the registry at startup; token rotation should roll the serving pods
-or use a Secret reloader controller.
+Lumen's adapter delegates validation and atomic last-known-good replacement to
+`service-auth`; `LumenVerifier::reload_file` and `reload_json` are the explicit
+in-process rotation boundary. The default `serve` bootstrap loads once, so a
+deployment that does not call that boundary should roll serving pods through a
+Secret reloader controller when the mounted file changes.
 
 `token-registry.json` shape:
 

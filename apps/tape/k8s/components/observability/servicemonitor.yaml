@@ -1,0 +1,25 @@
+# HANDWRITE-BEGIN gap="missing-generator:logic:3c73ca53" tracker="#1588" reason="Select the Tape server Service, scrape port http at /metrics, and propagate app/role service labels into metric targets. generator gap: missing-generator:servicemonitor (#1588)."
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tape
+  namespace: tape
+  labels:
+    app: tape
+    role: server
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames: [tape]
+  selector:
+    matchLabels:
+      app: tape
+      role: server
+  targetLabels: [app, role]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      honorLabels: true
+# HANDWRITE-END

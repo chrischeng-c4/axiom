@@ -63,6 +63,7 @@ use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::config::{HostConfig, SnapshotPolicy};
+use crate::peer_transport::PeerTransport;
 use crate::state_machine::{Command, RaftStateMachine};
 use crate::store::RaftStore;
 
@@ -108,12 +109,20 @@ struct Shared {
     sm: Arc<dyn RaftStateMachine>,
     peers: HashMap<NodeId, String>,
     client: reqwest::Client,
+    peer_transport: Option<PeerTransport>,
     /// Fires (with the SM's applied head) whenever apply advances.
     applied_tx: watch::Sender<Index>,
     cfg: HostConfig,
 }
 
 impl Shared {
+    fn http_client(&self) -> reqwest::Client {
+        self.peer_transport
+            .as_ref()
+            .map(PeerTransport::http_client)
+            .unwrap_or_else(|| self.client.clone())
+    }
+
     fn persist(&self, node: &RaftNode) {
         let _ = self.store.save(&node.persisted());
     }
@@ -221,7 +230,14 @@ impl Shared {
     }
 
     async fn post<T: Serialize>(&self, url: &str, body: &T) -> Option<Vec<u8>> {
-        match self.client.post(url).json(body).send().await {
+        match self
+            .http_client()
+            .post(url)
+            .timeout(self.cfg.rpc_timeout)
+            .json(body)
+            .send()
+            .await
+        {
             Ok(r) => r.bytes().await.ok().map(|b| b.to_vec()),
             Err(_) => None,
         }
@@ -294,6 +310,33 @@ impl RaftHost {
         sm: Arc<dyn RaftStateMachine>,
         cfg: HostConfig,
     ) -> RaftHost {
+        Self::spawn_inner(id, membership, peers, store, sm, cfg, None)
+    }
+
+    /// Spawn a host whose outgoing peer RPCs use the current generation of a
+    /// shared mutually authenticated HTTPS transport. Callers serve
+    /// [`Self::router`] on [`PeerTransport::serve`] using the same clone.
+    pub fn spawn_with_peer_transport(
+        id: NodeId,
+        membership: Membership,
+        peers: HashMap<NodeId, String>,
+        store: RaftStore,
+        sm: Arc<dyn RaftStateMachine>,
+        cfg: HostConfig,
+        peer_transport: PeerTransport,
+    ) -> RaftHost {
+        Self::spawn_inner(id, membership, peers, store, sm, cfg, Some(peer_transport))
+    }
+
+    fn spawn_inner(
+        id: NodeId,
+        membership: Membership,
+        peers: HashMap<NodeId, String>,
+        store: RaftStore,
+        sm: Arc<dyn RaftStateMachine>,
+        cfg: HostConfig,
+        peer_transport: Option<PeerTransport>,
+    ) -> RaftHost {
         let mut node = match store.load().ok().flatten() {
             Some(state) => RaftNode::from_persisted(id, &membership, state),
             None => RaftNode::new(id, &membership),
@@ -324,6 +367,7 @@ impl RaftHost {
             sm,
             peers,
             client,
+            peer_transport,
             applied_tx,
             cfg,
         });
@@ -401,8 +445,9 @@ impl RaftHost {
     async fn forward(&self, leader_url: &str, command: &[u8]) -> Result<Index> {
         let resp = self
             .shared
-            .client
+            .http_client()
             .post(format!("{leader_url}/raft/publish"))
+            .timeout(self.shared.cfg.rpc_timeout)
             .body(command.to_vec())
             .send()
             .await?;

@@ -29,15 +29,15 @@ Public API manifest for `apps/lumen/src/tls.rs` generated from AST during Score 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `PeerTlsConfig` | apps/lumen/src/tls.rs | struct | pub | 37 |  |
-| `from_env` | apps/lumen/src/tls.rs | function | pub | 70 | from_env() -> Result<Option<Self>> |
-| `rustls_client_config` | apps/lumen/src/tls.rs | function | pub | 80 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
-| `rustls_server_config` | apps/lumen/src/tls.rs | function | pub | 75 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
-| `install_default_crypto_provider` | apps/lumen/src/tls.rs | function | pub use (re-export) | 85 | re-exported from `peer_tls::install_default_crypto_provider` |
+| `from_env` | apps/lumen/src/tls.rs | function | pub | 72 | from_env() -> Result<Option<Self>> |
+| `peer_transport` | apps/lumen/src/tls.rs | function | pub | 89 | peer_transport(&self) -> Result<raft_runtime::PeerTransport> |
+| `rustls_client_config` | apps/lumen/src/tls.rs | function | pub | 82 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
+| `rustls_server_config` | apps/lumen/src/tls.rs | function | pub | 77 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! mTLS configuration for the peer (`:8082`) transport.
 //!
@@ -72,7 +72,7 @@ use anyhow::Result;
 const ENV_PREFIX: &str = "LUMEN_PEER";
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 pub struct PeerTlsConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -80,7 +80,7 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
@@ -92,7 +92,7 @@ impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
@@ -104,7 +104,7 @@ impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
@@ -120,6 +120,14 @@ impl PeerTlsConfig {
     /// Build a rustls client config for dialing peer transports.
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
         peer_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
+    }
+
+    /// Construct the shared reloadable Raft peer transport. Lumen owns only
+    /// env naming; TLS connection, identity, and reload semantics stay in
+    /// `raft-runtime`.
+    pub fn peer_transport(&self) -> Result<raft_runtime::PeerTransport> {
+        let config = peer_tls::PeerTlsConfig::from(self.clone());
+        raft_runtime::PeerTransport::from_config(&config)
     }
 }
 
@@ -259,6 +267,7 @@ LkjT2UdpFBDZGWHwqDRhXX8k
             .expect("server config should build");
         cfg.rustls_client_config()
             .expect("client config should build");
+        assert_eq!(cfg.peer_transport().unwrap().generation(), 1);
         std::fs::remove_dir_all(cfg.cert.parent().unwrap()).ok();
     }
 }

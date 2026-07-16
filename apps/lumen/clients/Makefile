@@ -39,7 +39,7 @@ all: spec go ts python
 # Regenerate the committed OpenAPI spec from the live lumen source.
 spec:
 	@echo ">> regenerating $(SPEC)"
-	cd $(WORKSPACE_ROOT) && cargo run -q -p lumen --bin lumen-openapi-dump > $(SPEC)
+	cd $(WORKSPACE_ROOT) && cargo run -q -p lumen --bin lumen -- spec --format openapi > $(SPEC)
 
 go: spec
 	@echo ">> generating Go client into $(GO_DIR)"

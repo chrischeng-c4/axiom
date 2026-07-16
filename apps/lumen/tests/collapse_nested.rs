@@ -58,6 +58,7 @@ fn base(query: QueryNode) -> SearchRequest {
     SearchRequest {
         query,
         limit: 1_000_000,
+        offset: 0,
         cursor: None,
         routing_key: None,
         sort: None,
@@ -215,6 +216,7 @@ fn collapse_early_term_correct() {
         let req = SearchRequest {
             query: q(),
             limit,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,
@@ -423,6 +425,7 @@ fn has_child_composes_in_boolean_tree() {
             SearchRequest {
                 query: q,
                 limit: 1000,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort: None,

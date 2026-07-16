@@ -1565,6 +1565,13 @@ async fn openapi_spec_served() {
     assert!(body["paths"]["/collections/{collection_id}/duplicates"].is_object());
 }
 
+#[tokio::test]
+async fn live_openapi_uses_the_canonical_offline_bytes() {
+    let s = server();
+    let body = s.get("/openapi.json").await.text();
+    assert_eq!(body, lumen::spec::openapi_json());
+}
+
 // ---------------------------------------------------------------------------
 // QUERY (RFC 10008) — dual-registered POST twins (#1297, epic #1296 R1)
 // ---------------------------------------------------------------------------

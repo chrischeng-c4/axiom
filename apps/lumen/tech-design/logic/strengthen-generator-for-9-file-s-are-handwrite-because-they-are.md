@@ -58,13 +58,13 @@ changes:
   - path: apps/lumen/build.rs
     action: modify
     section: rust-source-unit
-    impl_mode: codegen
-    description: "Promote the build script from HANDWRITE ownership to a per-file rust-source-unit TD."
+    impl_mode: hand-written
+    description: "The exact per-file rust-source-unit TD owns replay; this workflow TD only records the completed promotion."
   - path: apps/lumen/src/raft_sm.rs
     action: modify
     section: rust-source-unit
-    impl_mode: codegen
-    description: "Promote the raft state-machine implementation to a per-file rust-source-unit TD."
+    impl_mode: hand-written
+    description: "The exact per-file rust-source-unit TD owns replay; this workflow TD only records the completed promotion."
   - path: apps/lumen/tests/spec_gen_e2e.rs
     action: modify
     section: rust-source-unit

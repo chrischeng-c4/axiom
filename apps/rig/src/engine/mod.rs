@@ -15,6 +15,7 @@ pub mod http;
 pub mod loadgen;
 pub mod rss;
 pub mod sample;
+pub mod stateful;
 pub mod timeout;
 pub mod transport;
 

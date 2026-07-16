@@ -17,7 +17,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "tape"
-generated_from_td_digest = "sha256:73473ba517308b10dce9e32bd2ad2deb0e7e72410ce968864ed8fe7423de382e"
+generated_from_td_digest = "sha256:c8276274f519c94d90fae5f23c45534f1b2c9181d79b59c5673aa26f6866a000"
 
 [[aw.ec.generated.cases]]
 id = "tape-chainable-output-conformance"
@@ -85,9 +85,25 @@ test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance_claim_cl
 command = "cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
 required_for_production = true
 assertions = [
-    "The local Tape performance regression gate passes for append, replay, and checkpoint operations.",
+    "The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations.",
     "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
     "Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-competitor-performance-kafka-replay-win"
+capability_id = "competitor-performance"
+claim_id = "topic-replay-competitor-performance-baseline"
+contract_id = "topic-replay-kafka-local-backlog-win"
+category = "efficiency"
+td_ref = "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-kafka-replay-win"
+test_path = "apps/tape/tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs"
+command = "cargo test -p tape --test tape_vs_kafka -- --nocapture"
+required_for_production = true
+assertions = [
+    "The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable.",
+    "Tape and Kafka replay the same 20,000-event, 128-byte-payload backlog workload from the beginning, using a real rskafka consumer for the Kafka side.",
+    "Tape's zero-copy full-replay latency is at least 20x faster than Kafka for the local backlog replay workload, calibrated from an actual measured run (~110-120x observed).",
 ]
 
 [[aw.ec.generated.cases]]
@@ -101,8 +117,8 @@ test_path = "apps/tape/tests/behavior_tape_claim_competitor_performance.rs"
 command = "cargo test -p tape --test tape_perf_gate -- --nocapture"
 required_for_production = true
 assertions = [
-    "Tape's local append/replay/checkpoint benchmark stays inside conservative regression budgets.",
-    "Kafka, Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.",
+    "Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets.",
+    "Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.",
     "RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.",
 ]
 
@@ -167,6 +183,22 @@ assertions = [
     "The local Tape performance regression gate passes for append, replay, and checkpoint operations.",
     "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate.",
     "The gate is executed by meter inside a vat workspace, not by a direct-cargo-only dispatch path.",
+]
+
+[[aw.ec.generated.cases]]
+id = "tape-pull-subscription-cursor"
+capability_id = "subscription-delivery-resources"
+claim_id = "pull-subscription-cursor-contract"
+contract_id = "tape-bounded-pull-cursor-and-explicit-ack"
+category = "behavior"
+td_ref = "apps/tape/external-contracts/claim-closure/production-claims.md#tape-pull-subscription-cursor"
+test_path = "apps/tape/tests/behavior_tape_claim_pull_subscription.rs"
+command = "cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact --nocapture && cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact --nocapture"
+required_for_production = true
+assertions = [
+    "Bounded pull reads start from the durable topic/name checkpoint and never implicitly advance it.",
+    "Explicit pull ack reuses stale and beyond-end checkpoint rejection.",
+    "No push delivery reliability claim is made by the pull cursor contract.",
 ]
 
 [[aw.ec.generated.cases]]

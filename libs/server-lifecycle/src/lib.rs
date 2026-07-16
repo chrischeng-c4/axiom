@@ -11,10 +11,12 @@ pub mod config;
 pub mod drain;
 pub mod limits;
 pub mod metrics;
+pub mod readiness;
 pub mod signal;
 
 pub use config::BindConfig;
 pub use drain::{DrainController, DrainSignal, DrainState};
 pub use limits::{ConnectionBudget, ConnectionLimitExceeded, ConnectionPermit};
 pub use metrics::{ConnectionMetrics, NoopConnectionMetrics};
+pub use readiness::Readiness;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};

@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-claim-dynamic-reshard-durability
 // @capability dynamic-shard-topology
-// @claim reshard-driver-admin-verb-and-cold-start-migration-durability
+// @claim reshard-apply-evict-synchronous-checkpoint
 // @contract dynamic-reshard-durability
 // @category behavior
 // @required_for_production true

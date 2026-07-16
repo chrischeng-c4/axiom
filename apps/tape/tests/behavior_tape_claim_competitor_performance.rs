@@ -10,8 +10,8 @@
 // @command cargo test -p tape --test tape_perf_gate -- --nocapture
 // AW-EC-END
 
-// Contract: Tape's local append/replay/checkpoint benchmark stays inside conservative regression budgets.
-// Contract: Kafka, Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.
+// Contract: Tape's local bounded pull/replay and explicit checkpoint-ack benchmark stays inside conservative regression budgets.
+// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins are not claimed without calibrated real-service peer runs.
 // Contract: RabbitMQ topic exchange remains routing-only and is not treated as a replay performance baseline.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

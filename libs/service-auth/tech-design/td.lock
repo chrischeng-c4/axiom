@@ -2,10 +2,16 @@ version = 2
 project = "service-auth"
 ir_kind = "td"
 td_path = "libs/service-auth/tech-design"
-generated_at = "2026-07-07T15:58:25.472970+00:00"
-digest = "sha256:34d9407bef17ac9f70226ae73e8a835dde791a16447b895be494eba732a6c647"
-source_digest = "sha256:34d9407bef17ac9f70226ae73e8a835dde791a16447b895be494eba732a6c647"
-ir_digest = "sha256:6bb880114bdb391296c5aa0021e631161d066f180589ad0f92a0c7548bcf66be"
+generated_at = "2026-07-15T16:43:04.344410+00:00"
+digest = "sha256:21bcd597e2fee10d48449b234adeab4dec633abfa1fe55bfb285ebb25380ec84"
+source_digest = "sha256:21bcd597e2fee10d48449b234adeab4dec633abfa1fe55bfb285ebb25380ec84"
+ir_digest = "sha256:538e8be73c6a3280de6800f2171d5486c0a5b669414cf81ee3d322f69105ac9d"
+
+[[files]]
+path = "logic/add-shared-credential-reload-and-redacted-authorization-audit.md"
+digest = "sha256:00ce0c545ff93399433d057f0012ad4083accdfead4f207b9fe912b116a89f05"
+ir_digest = "sha256:33c87c6409fb5828410193030536d8cb7648db137a050f4c23925d0e8247e500"
+section_count = 3
 
 [[files]]
 path = "semantic/service-auth-libs-service-auth.md"
@@ -20,8 +26,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-auth-src-lib-rs.md"
-digest = "sha256:8185bda6c90e9a29fcb732947473dc138b10e3a500fbd09f824fd81dd57d50d5"
-ir_digest = "sha256:c5d79a17ff7a45cba6cb1f850629291be587eb70a00ff65f4f16a169c5566f6b"
+digest = "sha256:ef93bea5a6f3c83461ffd2bdf37785d7e531c7caf991f77c2312d564b3d4d5bf"
+ir_digest = "sha256:13803cb4d1400b0a11c99ab9b3dabb0cf32c95c3158a170c31e5a17e4f9cb951"
 section_count = 3
 
 [[files]]
@@ -44,6 +50,6 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-auth-src-verifier-rs.md"
-digest = "sha256:93db7d0f8b0c1df2d3a8c24e70a03bd8b676d17142ab9ecdbc3998bd3d1b9f21"
-ir_digest = "sha256:4feef4fdc64943ac35c79234e0945b8e598c22e1b67f36629ae4e9381991346d"
+digest = "sha256:a0587d2889b31f697c8ae4599c50999a5340525ab27c6f028ae2ed69e281e748"
+ir_digest = "sha256:2930fd8cfb2e3f899d2230651609be450ac8f13b324f3f5740146141c6122f01"
 section_count = 3

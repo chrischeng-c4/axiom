@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-build-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-build-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Build script: stamp `LUMEN_GIT_SHA` and `LUMEN_BUILT_AT` into the binary
 //! so `GET /version` can report provenance.

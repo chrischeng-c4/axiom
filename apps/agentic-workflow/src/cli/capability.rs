@@ -805,6 +805,17 @@ pub struct CapabilityProfileReport {
     pub unknown_traits: Vec<String>,
     pub required_baseline_caps: Vec<String>,
     pub missing_baseline_caps: Vec<String>,
+    pub families: Vec<CapabilityFamilyProjection>,
+}
+
+/// Read-only grouping of trait-derived baseline capabilities. The source of
+/// truth is `doc_mirror::CAPABILITY_FAMILIES`, not a hand-maintained README
+/// capability-index column.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityFamilyProjection {
+    pub id: String,
+    pub title: String,
+    pub baseline_capabilities: Vec<String>,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -2573,6 +2584,7 @@ fn profile_baseline_candidate(
 
 fn baseline_capability_title(capability_id: &str) -> &'static str {
     match capability_id {
+        "agent-task-navigation" => "Agent Task Navigation",
         "cli-interface" => "CLI Interface",
         "competitor-feature-parity" => "Competitor Feature Parity",
         "competitor-performance" => "Competitor Performance",
@@ -2786,6 +2798,23 @@ fn render_project_traits_draft_section(profile: &CapabilityProfileReport) -> Str
                 .join(", "),
         );
         out.push_str(".\n\n");
+    }
+    if !profile.families.is_empty() {
+        out.push_str("## Non-domain Capability Families\n\n");
+        out.push_str("| Family | Family ID | Required Baseline Capabilities |\n|---|---|---|\n");
+        for family in &profile.families {
+            let capabilities = family
+                .baseline_capabilities
+                .iter()
+                .map(|capability| format!("`{capability}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "| {} | `{}` | {} |\n",
+                family.title, family.id, capabilities
+            ));
+        }
+        out.push('\n');
     }
     if !profile.missing_baseline_caps.is_empty() {
         out.push_str("Missing baseline caps in current README: ");
@@ -5434,9 +5463,31 @@ fn load_capability_profile_report(
     Ok(CapabilityProfileReport {
         traits,
         unknown_traits,
+        families: capability_families_for_baselines(&required_baseline_caps),
         required_baseline_caps,
         missing_baseline_caps: Vec::new(),
     })
+}
+
+fn capability_families_for_baselines(
+    baseline_capabilities: &[String],
+) -> Vec<CapabilityFamilyProjection> {
+    doc_mirror::CAPABILITY_FAMILIES
+        .iter()
+        .filter_map(|family| {
+            let baseline_capabilities = family
+                .baseline_caps
+                .iter()
+                .filter(|capability| baseline_capabilities.iter().any(|id| id == **capability))
+                .map(|capability| (*capability).to_string())
+                .collect::<Vec<_>>();
+            (!baseline_capabilities.is_empty()).then(|| CapabilityFamilyProjection {
+                id: family.id.to_string(),
+                title: family.title.to_string(),
+                baseline_capabilities,
+            })
+        })
+        .collect()
 }
 
 fn project_capability_profile_path(project_root: &Path, project: &str) -> Result<PathBuf> {
@@ -11838,6 +11889,7 @@ fn capability_profile_summary(report: &CapabilityReport) -> serde_json::Value {
         "unknown_traits": profile.unknown_traits,
         "required_baseline_caps": profile.required_baseline_caps,
         "missing_baseline_caps": profile.missing_baseline_caps,
+        "families": profile.families,
     })
 }
 
@@ -11901,6 +11953,19 @@ fn print_capability_profile(report: &CapabilityReport) {
             "baseline caps: {}",
             profile.required_baseline_caps.join(", ")
         );
+    }
+    if !profile.families.is_empty() {
+        println!("non-domain capability families:");
+        println!("  | Family | ID | Required baseline capabilities |");
+        println!("  |---|---|---|");
+        for family in &profile.families {
+            println!(
+                "  | {} | {} | {} |",
+                family.title,
+                family.id,
+                family.baseline_capabilities.join(", ")
+            );
+        }
     }
     if !profile.unknown_traits.is_empty() {
         println!("unknown traits: {}", profile.unknown_traits.join(", "));
@@ -12885,6 +12950,52 @@ traits = ["service"]
     }
 
     #[test]
+    fn lumen_agent_facing_trait_adds_dx_without_expanding_service_obligations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("apps/lumen");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "lumen"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["service", "long_running", "cli_facing", "competitive_replacement", "network_exposed", "agent_facing"]
+"#,
+        )
+        .unwrap();
+        let profile = load_capability_profile_report(tmp.path(), "lumen").unwrap();
+
+        assert!(profile.traits.contains(&"agent_facing".to_string()));
+        assert!(profile
+            .required_baseline_caps
+            .contains(&"agent-task-navigation".to_string()));
+        for unchanged_service_baseline in [
+            "http2-api-list",
+            "kubernetes-native-deployment",
+            "standard-operational-endpoints",
+            "ec-gates-configured",
+            "cli-standard-surface",
+            "chainable-output-conformance",
+        ] {
+            assert!(profile
+                .required_baseline_caps
+                .contains(&unchanged_service_baseline.to_string()));
+        }
+        assert!(!profile
+            .required_baseline_caps
+            .contains(&"primary-replicas".to_string()));
+        assert_eq!(profile.families.len(), 8);
+        assert!(profile.families.iter().any(|family| {
+            family.id == "developer-agent-experience"
+                && family
+                    .baseline_capabilities
+                    .contains(&"agent-task-navigation".to_string())
+        }));
+    }
+
+    #[test]
     fn project_declaring_service_umbrella_and_a_member_does_not_duplicate() {
         // Issue #1078 AC1: umbrella+member double-declaration doesn't
         // duplicate the derived baseline caps.
@@ -12982,6 +13093,14 @@ traits = ["cli_facing", "forever_service"]
                 "kubernetes-native-deployment".to_string(),
                 "primary-replicas".to_string(),
             ],
+            families: capability_families_for_baselines(&[
+                "cli-interface".to_string(),
+                "competitor-feature-parity".to_string(),
+                "competitor-performance".to_string(),
+                "http2-api-list".to_string(),
+                "kubernetes-native-deployment".to_string(),
+                "primary-replicas".to_string(),
+            ]),
         };
         let candidates = draft_candidates_with_profile_baseline(&[], &profile);
 
@@ -12994,6 +13113,10 @@ traits = ["cli_facing", "forever_service"]
         );
 
         assert!(artifact.contains("## Project Traits"));
+        assert!(artifact.contains("## Non-domain Capability Families"));
+        assert!(artifact.contains(
+            "| Developer & Agent Experience | `developer-agent-experience` | `cli-interface` |"
+        ));
         assert!(artifact.contains("## Existing Capability Merge"));
         assert!(artifact.contains(
             "already has 1 canonical capability roots. This draft is an additive baseline worksheet"
@@ -13022,6 +13145,7 @@ traits = ["cli_facing", "forever_service"]
             unknown_traits: Vec::new(),
             required_baseline_caps: vec!["cli-interface".to_string()],
             missing_baseline_caps: vec!["cli-interface".to_string()],
+            families: capability_families_for_baselines(&["cli-interface".to_string()]),
         };
         let types = all_typed(&report, &document);
 

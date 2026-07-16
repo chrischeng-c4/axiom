@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
-use tape::{spec, TapeJournal};
+use tape::{spec, SubscriptionDelivery, TapeJournal};
 
 #[derive(Parser)]
 #[command(name = "tape", version, about = "tape - topic replay journal service")]
@@ -24,6 +24,8 @@ enum Command {
     Replay(ReplayArgs),
     /// Manage durable consumer replay checkpoints.
     Checkpoint(CheckpointArgs),
+    /// Manage named topic delivery resources (pull checkpoints or push endpoint metadata).
+    Subscription(SubscriptionArgs),
     /// Serve the topic journal over HTTP (h2c + HTTP/1.1 on one port).
     Serve(ServeArgs),
     /// Print Tape's machine-readable API contract, offline.
@@ -118,6 +120,90 @@ struct CheckpointPutArgs {
     store: PathBuf,
 }
 
+#[derive(clap::Args)]
+struct SubscriptionArgs {
+    #[command(subcommand)]
+    command: SubscriptionCommand,
+}
+
+#[derive(Subcommand)]
+enum SubscriptionCommand {
+    /// Create a topic delivery resource with pull or push configuration.
+    Create(SubscriptionCreateArgs),
+    /// List the delivery resources for one topic.
+    List(SubscriptionListArgs),
+    /// Show one topic delivery resource and its pull checkpoint, if any.
+    Show(SubscriptionShowArgs),
+    /// Read one bounded event window from a pull subscription cursor.
+    Pull(SubscriptionPullArgs),
+    /// Advance a pull subscription cursor after the caller processes a window.
+    Ack(SubscriptionAckArgs),
+    /// Delete resource metadata while preserving a matching pull checkpoint.
+    Delete(SubscriptionDeleteArgs),
+}
+
+#[derive(clap::Args)]
+struct SubscriptionCreateArgs {
+    /// Topic that owns the subscription.
+    topic: String,
+    /// Subscription name. Pull subscriptions use this as their checkpoint consumer name.
+    name: String,
+    /// Use the existing durable checkpoint API as the pull cursor.
+    #[arg(long, conflicts_with = "push")]
+    pull: bool,
+    /// Persist a push callback endpoint without starting a delivery worker.
+    #[arg(long, value_name = "ENDPOINT", required_unless_present = "pull")]
+    push: Option<String>,
+    /// Journal file. Defaults to `.tape/journal.json`.
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionListArgs {
+    topic: String,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionShowArgs {
+    topic: String,
+    name: String,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionPullArgs {
+    topic: String,
+    name: String,
+    /// Maximum events to return; defaults to the bounded pull window.
+    #[arg(long)]
+    limit: Option<usize>,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionAckArgs {
+    topic: String,
+    name: String,
+    /// Next unread offset after the events this caller processed.
+    #[arg(long)]
+    offset: u64,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
+#[derive(clap::Args)]
+struct SubscriptionDeleteArgs {
+    topic: String,
+    name: String,
+    #[arg(long, default_value = ".tape/journal.json")]
+    store: PathBuf,
+}
+
 #[derive(clap::Args, Debug)]
 struct ServeArgs {
     /// h2c + HTTP/1.1 listen address.
@@ -147,9 +233,15 @@ struct ServeArgs {
     token_registry_file: Option<PathBuf>,
     /// Durable directory for raft hard state + the applied-index marker
     /// (#1327). Required in replica/HA mode (`REPLICAS_PER_SHARD > 1`);
-    /// unused in single-node serving.
+    /// in single-node mode it selects `journal.json` unless `--store` is
+    /// supplied explicitly.
     #[arg(long, env = "TAPE_DATA_DIR")]
     data_dir: Option<PathBuf>,
+    /// Exact `file://` (or backup-enabled `s3://`) journal snapshot used only
+    /// to seed a fresh replica PVC before Raft starts. Refuses non-empty
+    /// `TAPE_DATA_DIR`; this is cold recovery, not a live restore endpoint.
+    #[arg(long, env = "TAPE_BOOTSTRAP_SEED_URI")]
+    bootstrap_seed_uri: Option<String>,
     /// Headless service name peers are resolved against in replica/HA mode
     /// (`ClusterTopology::from_env`).
     #[arg(long, env = "TAPE_PEER_SERVICE", default_value = "tape")]
@@ -523,11 +615,16 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // kube-rs (operator), raft peer TLS, and online CLI paths can link
+    // different rustls providers. Install the shared aws-lc-rs default before
+    // any of those paths construct a TLS client or server.
+    peer_tls::install_default_crypto_provider();
     let cli = Cli::parse();
     match cli.command {
         Command::Append(args) => append(args),
         Command::Replay(args) => replay(args),
         Command::Checkpoint(args) => checkpoint(args),
+        Command::Subscription(args) => subscription(args),
         Command::Serve(args) => serve_main(args).await,
         Command::Spec(args) => spec(args),
         Command::Llm(args) => llm(args),
@@ -602,6 +699,116 @@ fn checkpoint(args: CheckpointArgs) -> Result<()> {
     }
 }
 
+// @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
+fn subscription(args: SubscriptionArgs) -> Result<()> {
+    match args.command {
+        SubscriptionCommand::Create(args) => {
+            let delivery = if args.pull {
+                SubscriptionDelivery::Pull
+            } else {
+                SubscriptionDelivery::Push {
+                    endpoint: args
+                        .push
+                        .expect("clap requires --push when --pull is absent"),
+                }
+            };
+            let mut journal = load_journal(&args.store)?;
+            let subscription = journal.create_subscription(args.topic, args.name, delivery)?;
+            save_journal(&args.store, &journal)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "subscription": subscription }))?
+            );
+            println!(
+                "next: tape subscription show {} {} --store {}",
+                subscription.topic,
+                subscription.name,
+                args.store.display()
+            );
+            Ok(())
+        }
+        SubscriptionCommand::List(args) => {
+            let journal = load_journal(&args.store)?;
+            let subscriptions = journal.subscriptions(&args.topic);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "subscriptions": subscriptions }))?
+            );
+            println!("next: done");
+            Ok(())
+        }
+        SubscriptionCommand::Show(args) => {
+            let journal = load_journal(&args.store)?;
+            let subscription = journal
+                .subscription(&args.topic, &args.name)
+                .cloned()
+                .with_context(|| {
+                    format!(
+                        "subscription {} does not exist for topic {}",
+                        args.name, args.topic
+                    )
+                })?;
+            let checkpoint = matches!(&subscription.delivery, SubscriptionDelivery::Pull)
+                .then(|| journal.checkpoint(&subscription.topic, &subscription.name))
+                .flatten();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &json!({ "subscription": subscription, "checkpoint": checkpoint })
+                )?
+            );
+            println!("next: done");
+            Ok(())
+        }
+        SubscriptionCommand::Pull(args) => {
+            let journal = load_journal(&args.store)?;
+            let batch = journal.pull_subscription(&args.topic, &args.name, args.limit)?;
+            let next = if batch.events.is_empty() {
+                "done".to_string()
+            } else {
+                format!(
+                    "tape subscription ack {} {} --offset {} --store {}",
+                    batch.topic,
+                    batch.subscription,
+                    batch.next_offset,
+                    args.store.display()
+                )
+            };
+            println!("{}", serde_json::to_string_pretty(&batch)?);
+            println!("next: {next}");
+            Ok(())
+        }
+        SubscriptionCommand::Ack(args) => {
+            let mut journal = load_journal(&args.store)?;
+            let checkpoint = journal.ack_subscription(&args.topic, &args.name, args.offset)?;
+            save_journal(&args.store, &journal)?;
+            println!("{}", serde_json::to_string_pretty(&checkpoint)?);
+            println!(
+                "next: tape subscription pull {} {} --store {}",
+                args.topic,
+                args.name,
+                args.store.display()
+            );
+            Ok(())
+        }
+        SubscriptionCommand::Delete(args) => {
+            let mut journal = load_journal(&args.store)?;
+            let subscription = journal.delete_subscription(&args.topic, &args.name)?;
+            save_journal(&args.store, &journal)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "deleted": subscription }))?
+            );
+            println!(
+                "next: tape subscription list {} --store {}",
+                args.topic,
+                args.store.display()
+            );
+            Ok(())
+        }
+    }
+}
+
 /// Run the tape HTTP server: load the journal from `--store` (or start
 /// empty), serve the shared service shell (standard probes merged with the
 /// `/topics` data plane) over HTTP/1.1 + h2c on one port, with a
@@ -635,27 +842,44 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         "request auth resolved (TAPE_AUTH; probes stay tokenless)"
     );
 
-    let journal = match &args.store {
+    // The operator mounts `/data` for every StatefulSet member. In its
+    // single-node topology there is no Raft state machine to own durability,
+    // so use that PVC for the ordinary journal store. An explicit --store
+    // still wins, and replica mode continues to keep journal durability in
+    // the Raft state machine instead of a second local store.
+    let replica_mode = raft_runtime::cluster::replica_mode();
+    let store = resolve_journal_store(args.store.clone(), args.data_dir.as_deref(), replica_mode);
+    let journal = match &store {
         Some(path) => load_journal(path)?,
         None => TapeJournal::default(),
     };
-    let mut state = tape::server::AppState::with_auth(journal, args.store.clone(), auth);
+    let mut state = tape::server::AppState::with_auth(journal, store, auth);
 
     // Auto-mode HA (#1327): the standard downward-API quartet flips replica
     // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. Topology comes
-    // from raft-host (never re-derive the ordinal math locally); the raft
+    // from raft-runtime (never re-derive the ordinal math locally); the raft
     // group replicates append/checkpoint-put into this process's journal and
     // its peer router rides the serve port OUTSIDE the bearer-auth data plane
     // (cluster traffic, tokenless like probes; mTLS termination is a later
-    // slice — raft-host's h2c transport has no TLS seam yet). Held for the
+    // slice — raft-runtime's h2c transport has no TLS seam yet). Held for the
     // process lifetime via `state` — dropping it would abort the tick/pump
     // tasks.
-    if raft_runtime::cluster::replica_mode() {
+    if args.bootstrap_seed_uri.is_some() {
+        anyhow::ensure!(
+            replica_mode,
+            "--bootstrap-seed-uri (TAPE_BOOTSTRAP_SEED_URI) requires replica/HA mode"
+        );
+        anyhow::ensure!(
+            args.store.is_none(),
+            "--bootstrap-seed-uri cannot be combined with --store; seed only a fresh replica PVC"
+        );
+    }
+    if replica_mode {
         // Peer-mTLS material (#1327): load + validate BEFORE the raft group
         // spawns, so a misconfigured deployment (partial TAPE_PEER_TLS_* set,
         // mis-pointed path, unusable PEM) exits nonzero at startup instead of
         // failing at dial time. Termination on the peer port is NOT yet
-        // applied — raft-host's h2c transport has no TLS seam (the filed gap
+        // applied — raft-runtime's h2c transport has no TLS seam (the filed gap
         // in the TD); this proves the mounted material is usable today.
         match tape::peer_tls::from_env()? {
             Some(tls) => {
@@ -665,14 +889,14 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
                     tracing::warn!(
                         cert = %tls.cert.display(),
                         "peer TLS material validated; TAPE_PEER_MTLS=on requested but mTLS \
-                         termination on the raft peer port is not yet applied (raft-host/h2c \
+                         termination on the raft peer port is not yet applied (raft-runtime/h2c \
                          TLS seam gap) — peer RPCs stay h2c"
                     );
                 } else {
                     tracing::info!(
                         cert = %tls.cert.display(),
                         "peer TLS material validated (not required); peer RPCs stay h2c until \
-                         the raft-host TLS seam lands"
+                         the raft-runtime TLS seam lands"
                     );
                 }
             }
@@ -701,6 +925,16 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
             !data_dir.as_os_str().is_empty(),
             "replica/HA mode requires a durable --data-dir (TAPE_DATA_DIR)"
         );
+        if let Some(seed_uri) = args.bootstrap_seed_uri.as_deref() {
+            let bytes = service_backup::fetch_backup_object(seed_uri)
+                .with_context(|| format!("read bootstrap seed {seed_uri}"))?;
+            tape::raft::prepare_bootstrap_seed(&data_dir, topo.node_id, &bytes)?;
+            tracing::info!(
+                seed_uri,
+                bytes = bytes.len(),
+                "bootstrap seed prepared before raft catch-up"
+            );
+        }
         let raft = std::sync::Arc::new(tape::raft::TapeRaft::from_topology(
             state.journal_handle(),
             &data_dir,
@@ -732,6 +966,23 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     )
     .await;
     Ok(())
+}
+
+/// Resolve the local journal path for a serving process. Replica mode owns
+/// durability through Raft; only a single-node process derives a store from
+/// its mounted data directory.
+fn resolve_journal_store(
+    explicit_store: Option<PathBuf>,
+    data_dir: Option<&std::path::Path>,
+    replica_mode: bool,
+) -> Option<PathBuf> {
+    explicit_store.or_else(|| {
+        if replica_mode {
+            None
+        } else {
+            data_dir.map(|dir| dir.join("journal.json"))
+        }
+    })
 }
 
 fn spec(args: SpecArgs) -> Result<()> {
@@ -1013,22 +1264,22 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
     match body {
         InstanceBody::Dev => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  resources:\n    cpu: \"250m\"\n    memory: 256Mi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: debug\n  storage: 1Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Staging => {
             yaml.push_str(
-                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  resources:\n    cpu: \"1\"\n    memory: 2Gi\n",
+                "  replicasPerShard: 1\n  voterCount: 1\n  logLevel: info\n  storage: 20Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Prod => {
             yaml.push_str(
-                "  imagePullPolicy: Always\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  storage: 100Gi\n  graceSecs: 30\n  auth: required\n  tokensSecret: tape-token-registry\n  resources:\n    cpu: \"4\"\n    memory: 8Gi\n",
+                "  imagePullPolicy: Always\n  replicasPerShard: 3\n  voterCount: 3\n  logLevel: info\n  storage: 100Gi\n  graceSecs: 30\n  auth: required\n  tokensSecret: tape-token-registry\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
         InstanceBody::Template => {
             yaml.push_str(
-                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  resources:\n    cpu: \"1\"\n    memory: 1Gi\n",
+                "  imagePullPolicy: IfNotPresent\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  storage: 10Gi\n  resources:\n    cpu: \"1\"\n    memory: 4Gi\n",
             );
         }
     }
@@ -1200,6 +1451,29 @@ mod tests {
         let cli =
             Cli::try_parse_from(["tape", "append", "orders", "--payload", "{\"n\":1}"]).unwrap();
         assert!(matches!(cli.command, Command::Append(_)));
+    }
+
+    #[test]
+    fn single_node_data_dir_resolves_to_the_pvc_journal_store() {
+        let data_dir = PathBuf::from("/data");
+        assert_eq!(
+            resolve_journal_store(None, Some(&data_dir), false),
+            Some(PathBuf::from("/data/journal.json"))
+        );
+        assert_eq!(
+            resolve_journal_store(
+                Some(PathBuf::from("/tmp/override.json")),
+                Some(&data_dir),
+                false,
+            ),
+            Some(PathBuf::from("/tmp/override.json")),
+            "an explicit --store must keep precedence over TAPE_DATA_DIR"
+        );
+        assert_eq!(
+            resolve_journal_store(None, Some(&data_dir), true),
+            None,
+            "replica mode persists through Raft rather than a parallel journal file"
+        );
     }
 
     /// #1328: `tape k8s <crd|operator|instance>` parses with the expected

@@ -397,7 +397,11 @@ fn parse_handwrite_begin_end(content: &str) -> Vec<BeginEndMarker> {
         let trimmed = raw.trim_start();
         let body = strip_lead(trimmed);
 
-        if body.contains(HANDWRITE_BEGIN_TOKEN) {
+        // A marker token inside a Rust/TypeScript/Python string literal is
+        // fixture data, not a source-ownership marker. `strip_lead` removes
+        // supported comment prefixes, so a real comment-style marker starts
+        // with the token while `format!("// HANDWRITE-BEGIN ...")` does not.
+        if body.starts_with(HANDWRITE_BEGIN_TOKEN) {
             // Already inside a block — skip nested/duplicate.
             if open.is_some() {
                 continue;
@@ -434,7 +438,7 @@ fn parse_handwrite_begin_end(content: &str) -> Vec<BeginEndMarker> {
             open = Some((line_no, id, reason, None, raw.to_string()));
             continue;
         }
-        if body.contains(HANDWRITE_END_TOKEN) {
+        if body.starts_with(HANDWRITE_END_TOKEN) {
             if let Some((start, id, reason, spec_ref, _open_line)) = open.take() {
                 out.push(BeginEndMarker {
                     id,
@@ -1529,6 +1533,15 @@ mod tests {
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].id, "missing-generator:cli");
         assert_eq!(m[0].reason, "the why");
+    }
+
+    #[test]
+    fn parse_begin_end_ignores_marker_tokens_inside_string_literals() {
+        let src = concat!(
+            "let fixture = \"// HANDWRITE-BEGIN gap=\\\"fixture\\\" reason=\\\"unfilled\\\"\\n\",\n",
+            "let end = \"// HANDWRITE-END\\n\";\n",
+        );
+        assert!(parse_handwrite_begin_end(src).is_empty());
     }
 
     #[test]

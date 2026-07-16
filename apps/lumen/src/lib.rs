@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-lib-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen — standalone search and duplicate-detection index.
 //!
@@ -35,6 +35,7 @@ pub mod backup_sink;
 pub mod config;
 pub mod consumer;
 pub mod coordinator;
+pub mod dx;
 /// Write-log entry vocabulary (always compiled; the active write path uses it).
 pub mod log_entry;
 pub mod metrics;

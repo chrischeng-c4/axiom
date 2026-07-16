@@ -20,21 +20,21 @@ Public API manifest for `apps/lumen/src/wal.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `MemWal` | apps/lumen/src/wal.rs | struct | pub | 361 |  |
-| `SharedWal` | apps/lumen/src/wal.rs | type | pub | 340 |  |
-| `WAL_FORMAT_VERSION` | apps/lumen/src/wal.rs | constant | pub | 45 |  |
-| `WalRecord` | apps/lumen/src/wal.rs | struct | pub | 59 |  |
-| `WalStream` | apps/lumen/src/wal.rs | type | pub | 320 |  |
-| `decode` | apps/lumen/src/wal.rs | function | pub | 84 | decode(bytes: &[u8]) -> Result<Self> |
-| `encode` | apps/lumen/src/wal.rs | function | pub | 74 | encode(&self) -> Result<Vec<u8>> |
-| `new` | apps/lumen/src/wal.rs | function | pub | 66 | new(entry: RaftLogEntry) -> Self |
+| `MemWal` | apps/lumen/src/wal.rs | struct | pub | 359 |  |
+| `SharedWal` | apps/lumen/src/wal.rs | type | pub | 338 |  |
+| `WAL_FORMAT_VERSION` | apps/lumen/src/wal.rs | constant | pub | 43 |  |
+| `WalRecord` | apps/lumen/src/wal.rs | struct | pub | 57 |  |
+| `WalStream` | apps/lumen/src/wal.rs | type | pub | 318 |  |
+| `decode` | apps/lumen/src/wal.rs | function | pub | 82 | decode(bytes: &[u8]) -> Result<Self> |
+| `encode` | apps/lumen/src/wal.rs | function | pub | 72 | encode(&self) -> Result<Vec<u8>> |
+| `new` | apps/lumen/src/wal.rs | function | pub | 64 | new(entry: RaftLogEntry) -> Self |
 | `new` | apps/lumen/src/wal.rs | function | pub | 414 | new() -> Self |
 | `starting_at` | apps/lumen/src/wal.rs | function | pub | 429 | starting_at(base_seq: u64) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Write-ahead log abstraction — the data-plane backbone.
 //!
@@ -89,13 +89,13 @@ const WAL_VALUE_STRING_LIST: u8 = 4;
 /// and delivered alongside the record on subscribe (`MemWal` uses the append
 /// index; external-log or primary/replica backends own sequence assignment).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 pub struct WalRecord {
     pub version: u8,
     pub entry: RaftLogEntry,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 impl WalRecord {
     pub fn new(entry: RaftLogEntry) -> Self {
         Self {
@@ -350,14 +350,14 @@ impl<'a> FastCursor<'a> {
 /// A live, ordered subscription: `(seq, record)` pairs with strictly
 /// increasing `seq`, delivered as they become available. Never
 /// completes on its own (it tails the log) unless the backend closes.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 pub type WalStream = Pin<Box<dyn Stream<Item = Result<(u64, WalRecord)>> + Send>>;
 
 /// The log seam. `publish` appends and returns the assigned global
 /// sequence; `subscribe` tails from a sequence; `latest_seq` reports the
 /// head. Object-safe so it can live behind `Arc<dyn WalLog>`.
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 pub trait WalLog: Send + Sync {
     /// Append `record`, returning the global sequence assigned to it.
     async fn publish(&self, record: WalRecord) -> Result<u64>;
@@ -370,7 +370,7 @@ pub trait WalLog: Send + Sync {
     async fn latest_seq(&self) -> Result<u64>;
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 pub type SharedWal = Arc<dyn WalLog>;
 
 // ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ pub type SharedWal = Arc<dyn WalLog>;
 /// definition ≤ what each one has already consumed. With no subscribers,
 /// nothing is dropped (a future `subscribe(0)` can still replay).
 #[derive(Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 pub struct MemWal {
     shared: Arc<Mutex<MemWalInner>>,
     len_tx: Arc<watch::Sender<u64>>,
@@ -404,7 +404,7 @@ struct MemWalInner {
     next_sub_id: u64,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 impl MemWalInner {
     fn latest(&self) -> u64 {
         self.base + self.records.len() as u64
@@ -429,7 +429,7 @@ struct SubGuard {
     id: u64,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 impl Drop for SubGuard {
     fn drop(&mut self) {
         if let Ok(mut s) = self.shared.lock() {
@@ -438,14 +438,14 @@ impl Drop for SubGuard {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 impl Default for MemWal {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 impl MemWal {
     pub fn new() -> Self {
         Self::starting_at(0)
@@ -477,7 +477,7 @@ impl MemWal {
 }
 
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-wal-rs.md#source
 impl WalLog for MemWal {
     async fn publish(&self, record: WalRecord) -> Result<u64> {
         let seq = {

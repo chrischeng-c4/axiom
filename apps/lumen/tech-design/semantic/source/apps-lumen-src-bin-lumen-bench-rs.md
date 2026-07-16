@@ -22,8 +22,8 @@ No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-bench-rs.md#rust-source-unit
+```rust
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-bench-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // @spec apps/lumen/tech-design/logic/gate-the-filter-sort-deep-page-chain-bench-cell-pg-competitive-p.md#logic
 use std::collections::BTreeMap;
@@ -209,6 +209,7 @@ fn run_bool_filter(args: &RunArgs) -> Result<BenchReport> {
                         }),
                     ]),
                     limit: 20,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,
@@ -259,6 +260,7 @@ fn sorted_page_request(limit: u32) -> SearchRequest {
             lte: None,
         }),
         limit,
+        offset: 0,
         cursor: None,
         routing_key: None,
         sort: Some(vec![SortSpec {
@@ -322,7 +324,7 @@ fn spec(field_type: FieldType) -> FieldSpec {
     }
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

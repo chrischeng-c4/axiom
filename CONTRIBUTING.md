@@ -259,6 +259,50 @@ meta-doc producer/check after a trait changes.
 | `service` | expands: `http2_api`, `kubernetes_native`, `standard_endpoints`, `ec_gated`, `cli_std`, `chainable_output` | — | Umbrella for the common service baseline; expands to transport, deploy artifacts, operational endpoints, EC gates, and CLI conventions. Without stateful_storage the primary workload is a Deployment; stateful_storage selects the StatefulSet profile. |
 <!-- aw:trait-table:end -->
 
+### Shared-library naming grammar
+
+*(validator-backed —
+`apps/agentic-workflow/tests/fixtures/shared_service_library_names/assert_semantic_names.sh`)*
+
+`libs/<name>` must expose both the library's stable responsibility and its
+abstraction level before an agent opens `Cargo.toml`. A shared library is named
+for what it owns, not for an implementation accident (`h2c`), an ambiguous
+role (`host`, `operator`), or an outcome broader than its actual mechanism
+(`durability`, `metrics`). Use these responsibility families:
+
+| Family | Owns | Current examples |
+|--------|------|------------------|
+| `server-*` | Protocol-neutral lifecycle and concrete protocol server runtimes. | `server-lifecycle`, `server-tcp`, `server-http` |
+| `transport-*` | Client/server wire transport and connection management, independent of app policy. | `transport-h2c` |
+| `service-*` | A complete cross-app integration capability or policy shell that a service wires directly. | `service-http`, `service-observability`, `service-auth`, `service-backup`, `service-k8s` |
+| `storage-*` | Storage mechanics below a service's domain durability and ack-boundary policy. | `storage-durable` |
+| `metrics-*` | Metric primitives and a named exposition/backend contract, not the whole observability capability. | `metrics-prometheus` |
+| `peer-*` | Peer/replication-specific security material and policy. | `peer-tls` |
+| `raft-*` | Consensus algorithm and its executing runtime. | `raft-core`, `raft-runtime` |
+| `cli-*`, `ui-*` | Shared CLI or renderer-neutral UI layers. | `cli-std`, `ui-runtime` |
+
+Within a family, parallel names mean parallel abstraction levels. Reserve
+`core` for an actual algorithmic core such as `raft-core`; lifecycle,
+transport, orchestration, or integration crates use the more precise noun.
+Protocol terms remain valid domain vocabulary (`h2c`, HTTP, Raft), but a bare
+protocol is not enough as a library path when the layer would otherwise be
+ambiguous. Likewise, app modules and commands may still be named `operator` —
+`<cli> k8s operator run` is a product role — while the reusable library that
+implements the wider Kubernetes integration is `service-k8s`.
+
+A rename is atomic across all three identities:
+
+```text
+libs/server-http/       # semantic directory
+package = server-http   # Cargo package
+crate = server_http     # Rust identifier
+```
+
+Do not keep internal compatibility aliases for retired library identities;
+update Cargo dependencies, Rust imports, specs, EC gates, scripts, and active
+docs in the same change. Existing app API/CLI vocabulary is unaffected unless
+the product contract itself changes.
+
 ### The shared service kit — compose these libs, do not hand-roll
 
 *(policy-only — judgment, not trait-enforced)*
@@ -279,14 +323,17 @@ operator defaults.
 | **`libs/service-k8s`** | the **k8s operator scaffold + render toolkit**: `ManagedService`, `ClusterSpec`, resources, owner refs, Services/PDB/CronJobs, StatefulSet primitives, and PVC resize. It owns common operator mechanics; apps supply domain policy and defaults. |
 | **`libs/server-lifecycle`** | bind configuration, shutdown/drain, readiness signals, connection budgets, and metrics hooks shared by servers. |
 | **`libs/server-tcp`** | accept loop, per-connection supervision, admission budgeting, and drain-aware shutdown for raw protocols and poolers. |
-| **`libs/server-http`** | HTTP/1.1 + h2c serving composition and common request tracing. |
-| **`libs/transport-h2c`** | HTTP/2 cleartext client helpers and server transport used by `server-http`. |
-| **`libs/service-http`** | the **HTTP service shell**: standard probe/admin routes, tracing init, graceful drain, metrics/readiness hooks, HTTP runtime composition, and the shared **HTTP error envelope** (`ErrorEnvelope` + the `ApiErr` status/kind builder) so error JSON is uniform across services. |
-| **`libs/service-auth`** | the request-auth shell: bearer extraction, middleware, `Verifier`, and the standard token-registry verifier. Token crypto belongs in **`libs/claim-token`**; resource-policy decisions stay in handlers. |
-| **`libs/storage-durable`** | durable local storage primitives: fsync policy, atomic replace, CRC-framed logs, and local snapshot stores. |
-| **`libs/service-backup`** | the **backup contract**: destination/policy schema, `BackupSink`, local + S3-compatible object-store sinks (feature `s3`; GCS destinations parse/round-trip but runners fail loudly until a real GCS adapter lands), and a runner primitive. Services produce consistent snapshot bytes; runners upload them; operators schedule/manage the runner. |
-| **`libs/peer-tls`** | peer mTLS material loading and rustls server/client configuration. |
-| **`libs/metrics-prometheus`** | dep-free counter/gauge primitives plus the Prometheus text-format encoder behind the `/metrics` endpoint. |
+| **`libs/server-http`** | the **listener-level HTTP runtime**: the sole HTTP accept owner, composing `server-tcp` admission, connection metrics, supervision, and bounded drain with `transport-h2c` per-connection HTTP/1.1+h2c handling. |
+| **`libs/transport-h2c`** | the **HTTP/2 wire transport/client**: h2c client helpers (`h2c_client`/`H2cPool`) plus an optional per-connection HTTP/1.1+h2c handler; it never binds or owns a listener. |
+| **`libs/service-observability`** | the **protocol-neutral observability integration**: typed logging configuration, stable service identity, optional OTLP exporter + W3C propagation primitives, the `MetricsProvider` contract, and lifecycle connection counters backed by `metrics-prometheus`. It owns no HTTP routes or request middleware. |
+| **`libs/service-http`** | the **HTTP service policy shell**: standard probe/admin routes, lifecycle readiness/signal adapters, HTTP request-context propagation, runtime delegation, and the shared **HTTP error envelope** (`ErrorEnvelope` + the `ApiErr` status/kind builder). Existing observability names are compatibility re-exports from `service-observability`; it owns no protocol-neutral observability state, listener, or drain state. |
+| **`libs/service-auth`** | the **request-auth shell**: shared `Authorization: Bearer` extraction, reject/inject middleware, the `Verifier` trait every service implements, and **`role_map`** — the standard token-registry verifier (`Role` hierarchy, `TokenClaims` with wildcard grants, registry-file loader, `StaticRoleMapVerifier`) implementing the archetype's `<SVC>_TOKEN_REGISTRY_FILE` contract. Token crypto belongs in **`libs/claim-token`** when signed tokens are needed; resource-policy *decisions* stay in the service handlers (`role_map` supplies the mechanism). |
+| **`libs/claim-token`** | the **scoped claim-check token primitive**: HMAC signing and verification over bounded key scopes shared by issuers and storage services. |
+| **`libs/storage-durable`** | the **durable local storage primitive layer**: shared `FsyncPolicy`, temp-file atomic replace with file + parent-dir sync, CRC-framed append logs with torn-tail recovery/compaction, and sequence-named local snapshot stores. Services supply domain codecs and state-machine semantics; they do not hand-roll fsync/rename/frame parsing. |
+| **`libs/service-backup`** | the **backup contract**: tagged runtime destination/policy schema, the flat CRD-safe `ScheduledBackupPolicy` (`schedule`/`destination`/`retentionSecs`) with validated runtime conversion, `BackupSink`, local + S3-compatible object-store sinks (feature `s3`; GCS destinations parse/round-trip but runners fail loudly until a real GCS adapter lands), and a runner primitive. Services produce consistent snapshot bytes; runners upload them; operators add only app-specific auth/secret fields around the shared schedule policy. |
+| **`libs/peer-tls`** | **peer mTLS material loading**: `PeerTlsConfig::from_env(<PREFIX>)`, PEM cert/key/CA loaders, rustls server/client config builders, and the Once-guarded default-crypto-provider install. (h2c stays cleartext by design; this covers the mutually-authenticated peer/replication port.) |
+| **`libs/metrics-prometheus`** | the **Prometheus metric primitives**: dep-free counter/gauge primitives + the text-format encoder — the standard implementation behind `service-observability`'s `MetricsProvider` implementations and HTTP `/metrics` adapters. |
+| **`libs/openapi-codegen`** | the **typed client generator**: one OpenAPI IR with TypeScript, Python, and Rust emitters consumed by each service's `spec gen` command. |
 | **`libs/cli-std`** | the **standard CLI** commands (`llm` / `upgrade` / `issue`). |
 | **`libs/build-stamp`** | the **build stamp** (a `[build-dependencies]` crate): `stamp("<PREFIX>")` emits the `<PREFIX>_GIT_SHA` / `<PREFIX>_BUILT_AT` / `<PREFIX>_TARGET` rustc-env lines that feed `cli-std`'s `ToolInfo` — one implementation instead of a per-service `build.rs` copy. |
 
@@ -878,11 +925,9 @@ Experience` (`developer-agent-experience`, `AgentFirst`) with
 `lumen spec --format openapi`), `agent-onboarding` (`lumen llm` topics
 test-asserted by `tests/spec_cli.rs`), `interactive-tooling` (`lumen
 connect`, `lumen query`), and `integration-contract` (the routed
-multi-shard retry-code contract, test-asserted). Wiring this convention
-into `[capability.profile].traits` derivation (so it becomes a
-trait-derived baseline capability like `cli-interface`) is tracked
-separately as agentic-workflow work item #1481 — not implemented by this
-section.
+multi-shard retry-code contract, test-asserted). A project that declares
+the `agent_facing` trait derives the `agent-task-navigation` baseline; the
+trait does not imply Kubernetes, HA, backup, or performance traits.
 
 ## Meta-doc content contract
 

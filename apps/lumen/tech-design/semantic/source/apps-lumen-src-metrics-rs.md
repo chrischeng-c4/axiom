@@ -25,17 +25,17 @@ Public API manifest for `apps/lumen/src/metrics.rs` generated from AST during Sc
 | `incr_duplicates` | apps/lumen/src/metrics.rs | function | pub | 82 | incr_duplicates(&self) |
 | `incr_index` | apps/lumen/src/metrics.rs | function | pub | 71 | incr_index(&self, items: u64, bytes: u64) |
 | `incr_replace_skipped` | apps/lumen/src/metrics.rs | function | pub | 87 | incr_replace_skipped(&self, fields: u64) |
-| `incr_scatter_map_version_mismatch` | apps/lumen/src/metrics.rs | function | pub | 107 | #1467 R6: increments the scatter map-version-mismatch counter when a keyless scatter sub-request's forwarded map version disagrees with this pod's own live shard map — an availability-over-completeness signal, not a rejection. incr_scatter_map_version_mismatch(&self) |
+| `incr_scatter_map_version_mismatch` | apps/lumen/src/metrics.rs | function | pub | 107 | incr_scatter_map_version_mismatch(&self) |
 | `new` | apps/lumen/src/metrics.rs | function | pub | 67 | new() -> Self |
 | `observe_search` | apps/lumen/src/metrics.rs | function | pub | 76 | observe_search(&self, latency_ms: u64) |
 | `render` | apps/lumen/src/metrics.rs | function | pub | 113 | render(&self) -> String |
-| `set_shard_map_version` | apps/lumen/src/metrics.rs | function | pub | 101 | #1467 R5: publishes this pod's live shard-map version onto the `lumen_shard_map_version` gauge so the reshard driver's convergence check can scrape it and require every serving pod to report the new version before declaring topology converged, not just the StatefulSet's rollout status. set_shard_map_version(&self, version: u64) |
+| `set_shard_map_version` | apps/lumen/src/metrics.rs | function | pub | 101 | set_shard_map_version(&self, version: u64) |
 | `set_storage_bytes` | apps/lumen/src/metrics.rs | function | pub | 96 | set_storage_bytes(&self, bytes: u64) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-metrics-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Lightweight in-process Prometheus exposition.
 //!
@@ -61,7 +61,7 @@ use metrics_prometheus::{Counter, Gauge, Sample};
 /// `shard="0", partition="0"` as constants; future LSM/Raft tiers will
 /// vary `partition` and `shard` respectively.
 #[derive(Debug, Default)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-metrics-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#source
 pub struct Metrics {
     pub index_writes_total: Counter,
     pub index_bytes_total: Counter,
@@ -99,7 +99,7 @@ pub struct Metrics {
     pub scatter_map_version_mismatches_total: Counter,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-metrics-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-metrics-rs.md#source
 impl Metrics {
     pub fn new() -> Self {
         Self::default()

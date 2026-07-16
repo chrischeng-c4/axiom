@@ -9,6 +9,7 @@ use lumen::spec::{
     llm_outline_md, llm_quickstart_md, llm_recipes_md, llm_storage_md, llm_workflow_md,
     openapi_json, openapi_yaml, query_shapes,
 };
+use lumen::{dx, types::FieldType};
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 
@@ -217,6 +218,7 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
     for required in [
         "term",
         "terms",
+        "prefix",
         "range",
         "match_bm25",
         "autocomplete_ngram",
@@ -228,6 +230,8 @@ fn query_shapes_cover_core_node_types_and_carry_requests() {
         "has_child_nested_group",
         "collapse_group_by",
         "filter_then_sort",
+        "native_offset",
+        "search_all",
     ] {
         assert!(
             names.contains(&required),
@@ -966,30 +970,163 @@ fn openapi_json_declares_3_2_and_describes_query_twins() {
 
 /// #1480 R1: `clients/openapi.json` is a committed snapshot of
 /// `lumen spec --format openapi`'s live output, not a hand-maintained copy —
-/// it must byte-match live generation (normalized only for a trailing
-/// newline) so the offline contract can never silently lag the surface it
+/// it must byte-match live generation exactly so the offline contract cannot
+/// silently lag the surface it
 /// describes. Modeled on `openapi_is_valid_json_with_search_path`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn openapi_committed_snapshot_matches_live_generation() {
     let committed = include_str!("../clients/openapi.json");
     let live = openapi_json();
-    fn normalize(s: &str) -> &str {
-        s.trim_end_matches('\n')
-    }
     assert_eq!(
-        normalize(committed),
-        normalize(&live),
+        committed,
+        live,
         "clients/openapi.json is stale: regenerate via \
          `./target/debug/lumen spec --format openapi > clients/openapi.json` \
          (CONTRIBUTING.md DX convention: offline-contract must not lag the live surface)"
     );
 }
 
+#[test]
+fn dx_field_catalog_matches_runtime_field_capabilities() {
+    let catalog = dx::field_catalog();
+    let fields = catalog["field_types"]
+        .as_array()
+        .expect("field catalogue is an array");
+    assert_eq!(fields.len(), FieldType::ALL.len());
+
+    for field_type in FieldType::ALL {
+        let name = match field_type {
+            FieldType::Text => "text",
+            FieldType::Keyword => "keyword",
+            FieldType::Number => "number",
+            FieldType::Set => "set",
+            FieldType::Vector => "vector",
+            FieldType::Hash => "hash",
+        };
+        let entry = fields
+            .iter()
+            .find(|entry| entry["type"] == name)
+            .unwrap_or_else(|| panic!("catalogue omits {name}"));
+        let operations = &entry["operations"];
+        let expected = field_type.capabilities();
+        assert_eq!(operations["bm25"], expected.bm25);
+        assert_eq!(operations["exact"], expected.exact);
+        assert_eq!(operations["prefix"], expected.prefix);
+        assert_eq!(operations["range"], expected.range);
+        assert_eq!(operations["sort"], expected.sort);
+        assert_eq!(operations["set_membership"], expected.set_membership);
+        assert_eq!(operations["vector_search"], expected.vector_search);
+        assert_eq!(operations["hamming"], expected.hamming);
+    }
+
+    let text = fields.iter().find(|entry| entry["type"] == "text").unwrap();
+    assert_eq!(text["operations"]["bm25"], true);
+    assert_eq!(text["operations"]["prefix"], false);
+    assert_eq!(text["operations"]["range"], false);
+    assert_eq!(text["operations"]["sort"], false);
+    for field in ["keyword", "number"] {
+        let entry = fields.iter().find(|entry| entry["type"] == field).unwrap();
+        assert_eq!(entry["operations"]["range"], true);
+        assert_eq!(entry["operations"]["sort"], true);
+    }
+    let keyword = fields
+        .iter()
+        .find(|entry| entry["type"] == "keyword")
+        .unwrap();
+    assert_eq!(keyword["operations"]["prefix"], true);
+    assert!(keyword["queries"]
+        .as_array()
+        .expect("keyword queries")
+        .contains(&json!("prefix")));
+}
+
+#[test]
+fn openapi_exposes_native_offset_prefix_and_search_all_contracts() {
+    let spec: Value = serde_json::from_str(&openapi_json()).expect("valid OpenAPI JSON");
+    let search_request = &spec["components"]["schemas"]["SearchRequest"];
+    assert_eq!(search_request["properties"]["offset"]["type"], "integer");
+    assert_eq!(search_request["properties"]["offset"]["default"], 0);
+
+    let query_node = &spec["components"]["schemas"]["QueryNode"];
+    assert!(query_node.to_string().contains("PrefixQuery"));
+    assert!(!spec["components"]["schemas"]["PrefixQuery"].is_null());
+
+    let operation = &spec["paths"]["/collections/{collection_id}/search:all"]["post"];
+    assert_eq!(operation["operationId"], "search_all");
+    assert_eq!(
+        operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchAllRequest"
+    );
+    assert_eq!(
+        operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SearchAllResponse"
+    );
+}
+
+#[test]
+fn dx_llm_v2_json_and_markdown_share_one_typed_contract() {
+    let protocol = dx::llm_protocol();
+    assert_eq!(protocol.topics().len(), 10);
+    for topic in protocol.topics() {
+        let json = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Json).unwrap();
+        let value: Value = serde_json::from_str(&json).expect("runbook JSON parses");
+        let markdown = dx::render_llm(&topic.task.topic, cli_std::llm::Format::Md).unwrap();
+        assert_eq!(value["protocol"], "cclab.llm.v2");
+        assert_eq!(value["topic"], topic.task.topic);
+        assert!(value["markdown"].is_string());
+        assert!(value["runbook"]["purpose"].is_string());
+        assert_eq!(
+            value["markdown"].as_str(),
+            Some(markdown.as_str()),
+            "Markdown must be rendered from the JSON runbook model"
+        );
+        assert!(
+            value.get("next").is_none(),
+            "LLM output never advertises an unbound next command"
+        );
+        for step in &topic.runbook.steps {
+            assert_ne!(step.command.is_some(), step.command_template.is_some());
+            if let Some(command) = &step.command {
+                assert!(step.inputs.is_empty());
+                assert!(!command.contains('{') && !command.contains('<'));
+            }
+            if step.command_template.is_some() {
+                assert!(!step.inputs.is_empty());
+            }
+        }
+    }
+
+    let outline: Value =
+        serde_json::from_str(&dx::render_llm("outline", cli_std::llm::Format::Json).unwrap())
+            .unwrap();
+    for required in [
+        "local-search",
+        "model-schema",
+        "select-query",
+        "integrate-source-db",
+        "authenticate",
+        "connect-kubernetes",
+        "deploy-kubernetes",
+        "backup-restore",
+        "generate-client",
+        "diagnose",
+    ] {
+        assert!(
+            outline["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["id"] == required),
+            "outline omits {required}"
+        );
+    }
+}
+
 /// #1480 R2: the reshard admin verbs section must cover all six
 /// `Role::Admin`-gated verbs, including `POST /admin/reshard:fence`'s TTL
 /// semantics, driver-owned framing, and manual-use risk warning.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_storage_documents_reshard_fence_admin_verb() {
     let storage = llm_storage_md();
@@ -1015,7 +1152,7 @@ fn llm_storage_documents_reshard_fence_admin_verb() {
 /// #1480 R3: the workflow topic must disclose the routed multi-shard client
 /// retry contract — the three retryable `503` codes and the two rejected
 /// (not retryable) verbs with their alternatives.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_workflow_discloses_routed_mode_retry_contract() {
     let g = llm_workflow_md();
@@ -1040,7 +1177,7 @@ fn llm_workflow_discloses_routed_mode_retry_contract() {
 /// `lumen_scatter_map_version_mismatches_total` counter, and the
 /// `awaitingTopologyConvergence`/`topologyConvergenceStalled` status
 /// conditions) into the deployment topic.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 #[test]
 fn llm_deployment_documents_reshard_convergence_observability() {
     let deployment = llm_deployment_md();

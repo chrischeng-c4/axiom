@@ -2,10 +2,16 @@ version = 2
 project = "service-backup"
 ir_kind = "td"
 td_path = "libs/service-backup/tech-design"
-generated_at = "2026-07-08T05:29:44.711017+00:00"
-digest = "sha256:95086e982656d0946e6039b2693de52752b1995a2d3ff22b9eb500a530bd2c3b"
-source_digest = "sha256:95086e982656d0946e6039b2693de52752b1995a2d3ff22b9eb500a530bd2c3b"
-ir_digest = "sha256:c46e440a54fe8abb5a5fdf71e997acbd8b4d9c007bde29b9409776652fcbe2a3"
+generated_at = "2026-07-15T10:05:59.446060+00:00"
+digest = "sha256:7672456958a722e88877c3bcaaaf1ac45023c900445dac29d02553a5cb4d150d"
+source_digest = "sha256:7672456958a722e88877c3bcaaaf1ac45023c900445dac29d02553a5cb4d150d"
+ir_digest = "sha256:422d0922cba8f7f5febe917994c9d69a5c57232fd47eb28adfde1be8c3e52512"
+
+[[files]]
+path = "logic/provide-a-crd-safe-shared-scheduled-backup-policy.md"
+digest = "sha256:8d4ef427a83f6958290ffd6ff76d3a66894070849a57380a38c8c353fed52efa"
+ir_digest = "sha256:4b72d1c723b65e2287beb6bfcf461638045eb9e34787fd868b2f7c40a5cc02c2"
+section_count = 3
 
 [[files]]
 path = "semantic/service-backup-libs-service-backup.md"
@@ -20,8 +26,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-backup-src-lib-rs.md"
-digest = "sha256:945fd5e1d0f4a1f048dcff74ec930760e5d37af4049ab2626d635ffe3a02f3f5"
-ir_digest = "sha256:868b02174bdde661f27787db240817c53fc510b86ba8a72d3c0426e81da3c966"
+digest = "sha256:621688a60d58f3fdd8792a834ce9985cff411b98f950a6d91055e6da6383484b"
+ir_digest = "sha256:7987dfecf7ad0cfdb699c3fef03bf30be3f53f3dd5e8d6186fca6efb858cca8f"
 section_count = 3
 
 [[files]]
@@ -32,8 +38,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-backup-src-policy-rs.md"
-digest = "sha256:cf102bf1869f15bfd08ad911b613540d0d61259fb1d974299a5f46bed6973e70"
-ir_digest = "sha256:551343e562a71a18ff9c34f9cb3abde76fd868ba7e824bfcd5775d39b82322fe"
+digest = "sha256:1db7563592f93e7c52d3c718c4d5a7f487faeb1c2071cac0d88ddc6a391cd2cb"
+ir_digest = "sha256:8455848cf76f319f6a6f79d31db1031c3d93b01154fc86cb87a00430d246a328"
 section_count = 3
 
 [[files]]
@@ -50,8 +56,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-backup-src-sink-rs.md"
-digest = "sha256:18bef2dfdf4dd70097fe43700211368baece27ed5b343068023bbb7fd33dc97c"
-ir_digest = "sha256:799115f231fa49df5d70a0959411168adbf6e9fe416f67c20c67f7e40a9a1e48"
+digest = "sha256:e59bed42b2ba734296641afe62fda84b92c88248596881cd192225834d76777e"
+ir_digest = "sha256:398dcaa8f5a360470f26f25128efd8d6add2b9f931ac61867322c1a0b7d6b1eb"
 section_count = 3
 
 [[files]]

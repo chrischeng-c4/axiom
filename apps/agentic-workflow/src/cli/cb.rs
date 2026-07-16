@@ -50,8 +50,8 @@ enum CbCommand {
 pub struct CbFillArgs {
     // Issue slug identifying the approved tech-design branch.
     pub slug: String,
-    // Active TD spec path. Used by brief mode to scope markers to the
-    // spec's Changes paths.
+    // Active TD spec path. Used by brief and apply modes to scope markers to
+    // the spec's Changes paths.
     #[arg(long)]
     pub spec_path: Option<String>,
     // Merge mode. When set, --marker is required. Merges the payload at

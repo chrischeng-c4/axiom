@@ -28,30 +28,31 @@ Public API manifest for `apps/lumen/src/lib.rs` generated from AST during Score 
 | `config` | apps/lumen/src/lib.rs | module | pub | 35 |  |
 | `consumer` | apps/lumen/src/lib.rs | module | pub | 36 |  |
 | `coordinator` | apps/lumen/src/lib.rs | module | pub | 37 |  |
-| `log_entry` | apps/lumen/src/lib.rs | module | pub | 39 |  |
-| `metrics` | apps/lumen/src/lib.rs | module | pub | 40 |  |
-| `native_wire` | apps/lumen/src/lib.rs | module | pub | 43 |  |
-| `operator` | apps/lumen/src/lib.rs | module | pub | 48 |  |
-| `raft` | apps/lumen/src/lib.rs | module | pub | 51 |  |
-| `raft_sm` | apps/lumen/src/lib.rs | module | pub | 57 |  |
-| `rdb` | apps/lumen/src/lib.rs | module | pub | 58 |  |
-| `reshard` | apps/lumen/src/lib.rs | module | pub | 59 |  |
-| `routing` | apps/lumen/src/lib.rs | module | pub | 60 |  |
-| `routing_remote` | apps/lumen/src/lib.rs | module | pub | 67 |  |
-| `segment_rdb` | apps/lumen/src/lib.rs | module | pub | 79 |  |
-| `spec` | apps/lumen/src/lib.rs | module | pub | 83 |  |
-| `storage` | apps/lumen/src/lib.rs | module | pub | 84 |  |
-| `tls` | apps/lumen/src/lib.rs | module | pub | 85 |  |
-| `tokenize` | apps/lumen/src/lib.rs | module | pub | 86 |  |
-| `types` | apps/lumen/src/lib.rs | module | pub | 87 |  |
-| `vector_index` | apps/lumen/src/lib.rs | module | pub | 88 |  |
-| `wal` | apps/lumen/src/lib.rs | module | pub | 89 |  |
-| `wal_nats` | apps/lumen/src/lib.rs | module | pub | 90 |  |
+| `dx` | apps/lumen/src/lib.rs | module | pub | 38 |  |
+| `log_entry` | apps/lumen/src/lib.rs | module | pub | 40 |  |
+| `metrics` | apps/lumen/src/lib.rs | module | pub | 41 |  |
+| `native_wire` | apps/lumen/src/lib.rs | module | pub | 44 |  |
+| `operator` | apps/lumen/src/lib.rs | module | pub | 49 |  |
+| `raft` | apps/lumen/src/lib.rs | module | pub | 52 |  |
+| `raft_sm` | apps/lumen/src/lib.rs | module | pub | 58 |  |
+| `rdb` | apps/lumen/src/lib.rs | module | pub | 59 |  |
+| `reshard` | apps/lumen/src/lib.rs | module | pub | 60 |  |
+| `routing` | apps/lumen/src/lib.rs | module | pub | 61 |  |
+| `routing_remote` | apps/lumen/src/lib.rs | module | pub | 68 |  |
+| `segment_rdb` | apps/lumen/src/lib.rs | module | pub | 80 |  |
+| `spec` | apps/lumen/src/lib.rs | module | pub | 84 |  |
+| `storage` | apps/lumen/src/lib.rs | module | pub | 85 |  |
+| `tls` | apps/lumen/src/lib.rs | module | pub | 86 |  |
+| `tokenize` | apps/lumen/src/lib.rs | module | pub | 87 |  |
+| `types` | apps/lumen/src/lib.rs | module | pub | 88 |  |
+| `vector_index` | apps/lumen/src/lib.rs | module | pub | 89 |  |
+| `wal` | apps/lumen/src/lib.rs | module | pub | 90 |  |
+| `wal_nats` | apps/lumen/src/lib.rs | module | pub | 91 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-lib-rs.md#rust-source-unit
+```rust
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! lumen — standalone search and duplicate-detection index.
 //!
@@ -88,6 +89,7 @@ pub mod backup_sink;
 pub mod config;
 pub mod consumer;
 pub mod coordinator;
+pub mod dx;
 /// Write-log entry vocabulary (always compiled; the active write path uses it).
 pub mod log_entry;
 pub mod metrics;
@@ -142,7 +144,7 @@ pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

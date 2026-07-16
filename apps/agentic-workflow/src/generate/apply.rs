@@ -1352,7 +1352,7 @@ fn canonical_whole_file_source_block(
         .and_then(|ext| ext.to_str())?
         .to_ascii_lowercase();
     let comment = match extension.as_str() {
-        "py" => "# ",
+        "py" | "sh" | "bash" | "zsh" => "# ",
         "rs" | "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "go" => "// ",
         _ => return None,
     };
@@ -4758,6 +4758,18 @@ changes:
         let incomplete_rust = "pub fn outside() {}\n// SPEC-MANAGED: tech-design/direct.md#rust-source-unit\n// CODEGEN-BEGIN\npub fn selected( {\n// CODEGEN-END\n";
         assert!(parse_source_codegen_blocks(Path::new("src/lib.rs"), incomplete_rust).is_err());
         assert!(!is_unix_shebang("#![allow(dead_code)]"));
+    }
+
+    #[test]
+    fn canonical_shell_text_source_unit_accepts_shebang_and_hash_markers() {
+        let shell = "#!/usr/bin/env bash\n# SPEC-MANAGED: tech-design/build.md#text-source-unit\n# CODEGEN-BEGIN\nset -euo pipefail\n# CODEGEN-END\n";
+        let blocks = parse_source_codegen_blocks(Path::new("build.sh"), shell).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].spec_ref, "tech-design/build.md#text-source-unit");
+        assert_eq!(blocks[0].content, "set -euo pipefail");
+
+        let partial = "echo outside\n# SPEC-MANAGED: tech-design/build.md#text-source-unit\n# CODEGEN-BEGIN\nset -e\n# CODEGEN-END\n";
+        assert!(parse_source_codegen_blocks(Path::new("build.sh"), partial).is_err());
     }
 
     fn hw_open(attrs: &str) -> String {

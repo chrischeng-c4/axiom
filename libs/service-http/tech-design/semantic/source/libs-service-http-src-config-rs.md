@@ -35,61 +35,21 @@ Public API manifest for `libs/service-http/src/config.rs` captured during libs c
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-//! `HttpConfig` — the env-driven runtime knobs every k8s-native service shares.
+//! HTTP-specific runtime knobs and observability-config projection.
 //!
 //! Each service binary already parses these (under its own `SERVICE_*`
 //! prefix via clap `env =`); this is the resolved, prefix-agnostic struct the
-//! shared scaffolding (`logging::init_tracing`, `signal::shutdown_with_drain`,
-//! the body-limit on the data-plane router) reads, so the common shape lives in
-//! one place instead of being threaded through four hand-rolled `serve()` fns.
+//! shared HTTP scaffolding reads. Protocol-neutral logging/tracing types live
+//! in `service-observability` and are re-exported here for compatibility.
 
-/// Log output format for the fmt layer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LogFormat {
-    /// Human/agent-readable multi-line output (local dev default).
-    Pretty,
-    /// One JSON object per line (structured log shipping in-cluster).
-    Json,
-}
-
-/// Stable resource identity attached to optional shared trace export.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ServiceIdentity {
-    name: String,
-    version: String,
-}
-
-impl ServiceIdentity {
-    /// Create an identity for the `service.name` and `service.version`
-    /// resource attributes. Empty fields are rejected before startup.
-    pub fn new(name: impl Into<String>, version: impl Into<String>) -> anyhow::Result<Self> {
-        let name = name.into();
-        let version = version.into();
-        if name.trim().is_empty() {
-            anyhow::bail!("service tracing identity name must not be empty");
-        }
-        if version.trim().is_empty() {
-            anyhow::bail!("service tracing identity version must not be empty");
-        }
-        Ok(Self { name, version })
-    }
-
-    /// Stable service name supplied by the owning application.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Stable service version supplied by the owning application.
-    pub fn version(&self) -> &str {
-        &self.version
-    }
-}
+pub use service_observability::{LogFormat, ServiceIdentity};
 
 /// Resolved HTTP-service configuration.
 ///
 /// Built by a service binary from its flags/env and handed to the shared
 /// scaffolding. Construct with [`HttpConfig::new`].
 #[derive(Clone, Debug)]
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
 pub struct HttpConfig {
     /// Bind host. k8s passes `0.0.0.0`; local dev defaults to `127.0.0.1`.
     pub host: String,
@@ -112,6 +72,7 @@ pub struct HttpConfig {
     pub otlp_endpoint: Option<String>,
 }
 
+/// @spec libs/service-http/tech-design/semantic/source/libs-service-http-src-config-rs.md#source
 impl HttpConfig {
     /// Construct a config from already-resolved values. Every field is explicit
     /// so a service binary maps its own flags/env in one place.
@@ -140,6 +101,16 @@ impl HttpConfig {
     pub fn bind_addr(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
+
+    /// Project only protocol-neutral fields into the shared observability
+    /// owner. Bind, grace, and body-limit policy remain HTTP-specific.
+    pub fn observability_config(&self) -> service_observability::ObservabilityConfig {
+        service_observability::ObservabilityConfig::new(
+            self.log_level.clone(),
+            self.log_format,
+            self.otlp_endpoint.clone(),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -165,19 +136,23 @@ mod tests {
         assert_eq!(cfg.body_limit_bytes, 8 * 1024 * 1024);
         assert_eq!(cfg.otlp_endpoint.as_deref(), Some("http://otel:4317"));
         assert_eq!(cfg.bind_addr(), "0.0.0.0:7373");
+        assert_eq!(
+            cfg.observability_config(),
+            service_observability::ObservabilityConfig::new(
+                "debug",
+                LogFormat::Json,
+                Some("http://otel:4317".to_string()),
+            )
+        );
     }
 
     #[test]
     fn service_identity_rejects_blank_fields() {
         assert!(ServiceIdentity::new("", "0.1.0").is_err());
         assert!(ServiceIdentity::new("service", " ").is_err());
-        assert_eq!(
-            ServiceIdentity::new("service", "0.1.0").unwrap(),
-            ServiceIdentity {
-                name: "service".to_string(),
-                version: "0.1.0".to_string(),
-            }
-        );
+        let identity = ServiceIdentity::new("service", "0.1.0").unwrap();
+        assert_eq!(identity.name(), "service");
+        assert_eq!(identity.version(), "0.1.0");
     }
 }
 ````

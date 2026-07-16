@@ -7,6 +7,30 @@ capability_refs:
     claim: "storage-pressure-operator-split-policy"
     coverage: full
     rationale: "This source unit is the autonomous phase driver (#1319 R2 executor) that turns a reported crossed-threshold reshard policy into a real, checkpointed, resumable topology change end to end (#1381)."
+  - id: "dynamic-shard-topology"
+    role: primary
+    gap: "autonomous-reshard-workflow"
+    claim: "autonomous-reshard-workflow"
+    coverage: full
+    rationale: "This source unit executes the autonomous reshard state machine end to end."
+  - id: "dynamic-shard-topology"
+    role: primary
+    gap: "checkpointed-reshard-phase-driver"
+    claim: "checkpointed-reshard-phase-driver"
+    coverage: full
+    rationale: "The driver persists phases and gates cutover on durable checkpoints."
+  - id: "dynamic-shard-topology"
+    role: primary
+    gap: "post-cutover-usage-freshness-split-gate"
+    claim: "post-cutover-usage-freshness-split-gate"
+    coverage: full
+    rationale: "The driver requires a fresh post-cutover usage sample before another split."
+  - id: "dynamic-shard-topology"
+    role: primary
+    gap: "reshard-apply-evict-synchronous-checkpoint"
+    claim: "reshard-apply-evict-synchronous-checkpoint"
+    coverage: full
+    rationale: "The driver orders apply, synchronous checkpoint, cutover, and eviction durably."
 fill_sections: [overview, source, changes]
 ---
 
@@ -15,3434 +39,2607 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/lumen/src/operator/reshard_driver.rs`.
+Public API manifest for `apps/lumen/src/operator/reshard_driver.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 820 | #1458 R1: gained `AwaitingTopologyConvergence { map_version: u64 }` and `TopologyConverged { map_version: u64 }` variants, returned by the new `Complete`-phase `advance_convergence` step. |
-| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 638 |  |
-| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 264 | #1444 R2: distinguishes an apply failure caused by exactly one document's batch serializing past `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (the `snapshot_reshard_batches`/`byte_cap_chunk` floor case) from any other reason `POST /admin/reshard:apply` can fail — surfaced as a distinct `status.reshard` blocking condition and used to skip re-arming the write-pause fence on a tick already known to fail identically. |
-| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 935 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
-| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 448 | #1485 R2: the production [`CONVERGENCE_STALL_SECS`] wall-clock stall-budget value, exposed so `reconcile.rs`'s tests and `reshard_driver_e2e.rs` can back-date `workflow.convergenceWaitStartedAt` past the real budget without sleeping. convergence_stall_budget_secs() -> u64 |
-| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 541 | #1485 R2: whether an `awaitingTopologyConvergence` wait that began at the given `workflow.convergenceWaitStartedAt` value has run longer than [`CONVERGENCE_STALL_SECS`] — computed purely from that one persisted CR timestamp (not driver memory), so `reconcile.rs`'s `status_patch` reports the same `topologyConvergenceStalled` condition whether or not the driver process has restarted since the wait began. convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
-| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 920 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
-| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 234 | #1443 R1/AC1: the production default [`ClusterControl::write_fence_ttl_secs`] value, exposed so integration tests can fall back to the real default from a `fence_ttl_secs: Option<u64>`-style override field without needing the private `WRITE_FENCE_TTL_SECS` const itself to be `pub`. default_write_fence_ttl_secs() -> u64 |
-| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2348 | #1458 R1: the `Complete`-phase branch now calls `clear_oversize_block` then `advance_convergence` before falling through to `should_start_split`/`NoOp`, so a completed cutover keeps driving `AwaitingTopologyConvergence`/`TopologyConverged` outcomes until every serving pod is confirmed Ready on the new topology. drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
-| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 644 | new(client: Client) -> Self |
-| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 399 | #1444 R2 / #1458 R4: now keyed by `(namespace, name, uid)` — the oversized-document block currently recorded for the live CR identified by its `metadata.uid`, if any, so a deleted-and-recreated same-name CR never inherits a stale wedge cached under the old uid. `reconcile.rs`'s `status_patch` calls this to layer a distinct `status.reshard` blocking condition + remediation message onto the policy/usage-derived status. oversize_block_condition(namespace: &str, name: &str, uid: &str) -> Option<OversizedDocumentBlock> |
-| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1411 | One migration pass: every bucket `bucket_moves` says moved, fetched via `POST /admin/backup:scoped` and applied to its new owner via `POST /admin/reshard:apply` (`snapshot_reshard_batches` builds the bounded, purely-additive batches — #1457 R1). Thin wrapper over the shared `run_migration_pass_impl(..., final_pass: bool, moving_buckets: Option<&BTreeSet<u32>>)`, called here with `final_pass=false`; the final fenced `CatchingUp` pass calls `run_migration_pass_impl` directly with `final_pass=true` to additionally send each moved bucket's authoritative-replace scope via `POST /admin/reshard:prune` (`snapshot_reshard_prune_chunks`). #1458 R3: `run_migration_pass_impl` now re-arms the write-pause fence on a time basis (whenever more than TTL/4 has elapsed since the last arm) rather than a fixed batch-count interval. run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
-| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 857 | #1396 R5: also requires `status.reshard.usage_measured_at_map_version == spec.shardMap.version` — a lagging/stale status subresource can never start a split. should_start_split(lumen: &Lumen) -> bool |
-| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2395 | #1458 R4: the live-CR listing now also drives `prune_oversize_cache`, dropping any cached oversize-block entry whose uid is no longer among the live CRs' `metadata.uid`s. spawn_reshard_driver_loop(client: Client) |
-
-Not listed above (matching this project's existing mirrors' convention of
-only capturing top-level `pub` structs/enums/consts/modules and inherent-impl
-`pub fn`s, never trait definitions, trait methods, or trait-impl methods):
-the `pub trait ClusterControl` definition and its methods (including
-`shard_base_url`, the #1443 R1 `write_fence_ttl_secs` default-impl method,
-which returns the private `WRITE_FENCE_TTL_SECS` const unless a test fake
-overrides it, and the new #1458 R1 `serving_topology_converged` method,
-which reports whether every serving pod is confirmed `Ready` on the current
-shard-map topology), and `KubeClusterControl`'s `impl ClusterControl for
-KubeClusterControl` block. Also not listed (private): `checkpoint_shard`
-(#1389, rewritten #1396 R3 to require `persisted == true`) and
-`checkpoint_shards` (#1389 as `checkpoint_touched_shards`, generalized and
-renamed by #1396 R1 to take an explicit shard set — called once for just
-the target shard right after migration, and again for every source shard
-after eviction; #1458 R3 adds an in-loop time-based re-arm check via
-`maybe_rearm_fence` around each shard's checkpoint/prune step), plus three
-#1396 R1/R2 private helpers: `reshard_fence_call`, `set_write_fence`
-(arm/clear `POST /admin/reshard:fence` on every current source shard;
-rewritten by #1443 R4 to track which shards it has successfully armed and
-best-effort clear them before returning an error, so a mid-sequence arm
-failure never leaves a partially-fenced cluster), and
-`advance_catching_up_fenced` (the actual migrate -> checkpoint(target) ->
-evict -> checkpoint(sources) -> cutover sequence `advance_catching_up`
-brackets with a fence arm/clear; #1443 R1 adds intra-sequence re-arm calls
-before each of those steps so a slow real pass — checkpoints, evictions —
-never outlives a single TTL window, and a failed re-arm aborts to `Blocked`
-before the next step runs rather than silently reopening the write window).
-Also not listed (private, new, #1458 R3): `FENCE_REARM_FRACTION` const
-(replaces the retired `FENCE_REARM_BATCH_INTERVAL` count-based const — a
-re-arm now fires whenever more than `write_fence_ttl_secs() /
-FENCE_REARM_FRACTION` has elapsed since the last arm, checked between batch
-applies in `run_migration_pass_impl` and around each fetch/checkpoint/prune
-step in `checkpoint_shards`), `maybe_rearm_fence` (the shared elapsed-time
-re-arm helper both call), and the `default_write_fence_ttl_secs`-backing
-`WRITE_FENCE_TTL_SECS` const itself. Also not listed (private, new, #1458
-R1): `buckets_on_newest_shard` (reads `buckets_on_newest_shard` off a
-`VirtualBucketShardMap` for the `serving_topology_converged` desired-replica
-math) and `advance_convergence` (the `Complete`-phase driver: returns `None`
-when there is nothing to converge or convergence already landed; otherwise
-re-arms/clears the write-pause fence around a
-`ClusterControl::serving_topology_converged` probe and, on success, patches
-`status.reshard.convergedShardMapVersion`/`spec.reshardPolicy.workflow.convergedShardMapVersion`
-so convergence state is derived from persisted state, not driver memory, and
-is resumable across a driver restart). Also not listed (private/`pub(crate)`,
-#1444 R2, re-keyed by #1458 R4): `OVERSIZE_RECHECK_TICKS` const, the
-`OversizeBlockCache` type alias (`pub(crate) fn prune_oversize_cache`, new
-#1458 R4, drops any cached entry whose uid is absent from a live-CR
-`BTreeSet<String>` of uids, called from `spawn_reshard_driver_loop`'s
-per-tick live-CR listing and whenever a workflow returns to phase
-`Complete`), `oversize_block_cache`, `oversize_cache_key` (private, now
-keyed by `(namespace, name)` with the uid carried as the cached tuple's
-first element so a uid mismatch is detected without changing the cache's
-key shape), `record_oversize_block` and `clear_oversize_block`
-(`pub(crate)` rather than private so `reconcile.rs`'s `status_patch` tests
-can drive the exact cache `oversize_block_condition` reads, without
-widening either past crate-internal visibility; `record_oversize_block`
-now takes the CR's `uid` as an explicit argument), `should_skip_for_oversize`
-(private; the mutating cache read/write helpers backing
-`oversize_block_condition`, now uid-aware), and `detect_oversized_batch`
-(pre-flight oversize check called from `apply_reshard_batch`, which now
-returns the downcastable `OversizedDocumentBlock` error instead of only a
-generic `bail!` on both the pre-flight miss and a live 413 response). Also
-not listed (private, #1457 R1/R2, new): `run_migration_pass_impl` (the
-shared `final_pass: bool` implementation `run_migration_pass` now wraps),
-`fetch_all_collection_ids` (fetches a source shard's complete `GET
-/collections` id list independently of the bucket-scoped snapshot, so
-`snapshot_reshard_prune_chunks` can seed an empty `keep_ids` scope for a
-collection a moved bucket emptied entirely — #1457 R2), and
-`apply_reshard_prune_chunk` (this driver's `POST /admin/reshard:prune`
-caller for one `ReshardPruneChunk`, mirroring `apply_reshard_batch`'s
-existing `POST /admin/reshard:apply` caller). Also not listed (#1467 R5/R7,
-new): the `ClusterControl::serving_pods_report_map_version` trait method
-(default-impl `Ok(true)`; `KubeClusterControl`'s impl scrapes every serving
-pod's `/metrics` for `lumen_shard_map_version == map_version`, gated behind
-`rollout_converged` so it only scrapes once the StatefulSet rollout itself
-has finished), `advance_convergence`'s now-two-stage check (`rollout_converged`
-from `serving_topology_converged`, then `converged` from
-`serving_pods_report_map_version`) and its `workflow.
-lastCutoverShardMapVersion`-gated engagement (the only writer is
-`advance_catching_up_fenced`'s cutover patch, closing the gap where
-convergence would otherwise fence indefinitely over a hand-authored/restored
-`spec.shardMap`), `evict_old_shards`'s new `moving_buckets`/`last_armed_at`
-parameters (an in-loop time-based fence re-arm via `maybe_rearm_fence` before
-every old-shard eviction call, not just once at the phase boundary), and
-(private/`pub(crate)`) `CONVERGENCE_STALL_TICKS` const, `ConvergenceStallCache`
-type alias, `convergence_stall_cache`/`convergence_stall_key`, and
-`pub(crate) record_convergence_await`/`clear_convergence_stall`/
-`prune_convergence_stall_cache` (the driver-memory-only consecutive-tick
-budget tracker `reconcile.rs`'s tests previously drove directly; #1485 R2
-keeps this cache as a fast-path/logging-only signal). Also not listed
-(#1485 R1/R2, new): (private) `now_epoch_secs` (the `SystemTime::now()`
-epoch-seconds helper backing every durable timestamp this module stamps),
-and the `workflow.convergenceWaitStartedAt`/`convergenceRemediationRestartCount`/
-`convergenceRemediationRestartedAt` read/patch logic `advance_convergence`
-now threads through its not-yet-converged branch — the durable stall budget
-and bounded one-shot remediation-restart re-trigger both `convergence_stall_
-budget_secs` and `convergence_stall_condition` (table above) expose the pure
-parts of.
-
+| `CONVERGENCE_STALL_SECS` | apps/lumen/src/operator/reshard_driver.rs | constant | pub | 439 |  |
+| `DriveOutcome` | apps/lumen/src/operator/reshard_driver.rs | enum | pub | 833 |  |
+| `KubeClusterControl` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 651 |  |
+| `OversizedDocumentBlock` | apps/lumen/src/operator/reshard_driver.rs | struct | pub | 264 |  |
+| `clear_convergence_stall` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 513 | clear_convergence_stall(namespace: &str, name: &str) |
+| `clear_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 345 | clear_oversize_block(namespace: &str, name: &str) |
+| `compute_target_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 948 | compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> |
+| `convergence_stall_budget_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 448 | convergence_stall_budget_secs() -> u64 |
+| `convergence_stall_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 541 | convergence_stall_condition(wait_started_at: Option<u64>) -> bool |
+| `current_shard_map` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 933 | current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> |
+| `default_write_fence_ttl_secs` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 234 | default_write_fence_ttl_secs() -> u64 |
+| `drive_tick` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2370 | drive_tick(     control: &dyn ClusterControl,     http: &reqwest::Client,     lumen: &Lumen, ) -> DriveOutcome |
+| `new` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 657 | new(client: Client) -> Self |
+| `oversize_block_condition` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 399 | oversize_block_condition(     namespace: &str,     name: &str,     uid: &str, ) -> Option<OversizedDocumentBlock> |
+| `prune_convergence_stall_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 523 | prune_convergence_stall_cache(live_uids: &BTreeSet<String>) |
+| `prune_oversize_cache` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 358 | prune_oversize_cache(live_uids: &BTreeSet<String>) |
+| `record_convergence_await` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 489 | record_convergence_await(     namespace: &str,     name: &str,     uid: &str,     map_version: u64, ) -> bool |
+| `record_oversize_block` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 325 | record_oversize_block(     namespace: &str,     name: &str,     uid: &str,     block: OversizedDocumentBlock, ) |
+| `run_migration_pass` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 1424 | run_migration_pass(     control: &dyn ClusterControl,     http: &reqwest::Client,     namespace: &str,     name: &str,     lumen: &Lumen, ) -> Result<usize> |
+| `should_start_split` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 870 | should_start_split(lumen: &Lumen) -> bool |
+| `spawn_reshard_driver_loop` | apps/lumen/src/operator/reshard_driver.rs | function | pub | 2417 | spawn_reshard_driver_loop(client: Client) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
-
-````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#rust-source-unit
-// CODEGEN-BEGIN
-//! Autonomous reshard phase driver (#1319 R2 executor; #1381).
-//!
-//! [`super::reconcile`]'s live per-shard usage loop only *reports* a crossed
-//! `prepareAtPercent` / `urgentAtPercent` threshold into
-//! `status.reshard.blockingConditions`; this module is the piece that acts on
-//! it — a second, independently leader-gated background loop that drives
-//! `spec.reshardPolicy.workflow.phase` through
-//! `PrepareSplit -> Splitting -> CatchingUp -> Complete`, growing storage by
-//! exactly one physical shard per split via [`crate::routing::
-//! VirtualBucketShardMap::split_one_shard`] and moving data with the already
-//!-landed admin verbs (`POST /admin/backup:scoped`, `POST
-//! /admin/reshard:apply`, `POST /admin/reshard:evict`, #1380).
-//!
-//! ## Checkpointing and resume
-//!
-//! There is no separate checkpoint record. Every phase's actions are
-//! recomputed deterministically from three already-persisted **spec** fields
-//! — `reshardPolicy.workflow.phase`, `reshardPolicy.workflow.
-//! targetShardCount`, and `shardMap` (left untouched until the cutover) —
-//! plus `shardCount`. `spec` (not `status`) is the checkpoint because it is
-//! the operator's own desired-state write target and survives an operator
-//! restart or leader handover unchanged; `status` stays a read-only
-//! projection. Concretely:
-//!
-//! - **Complete** (idle): [`should_start_split`] gates on a crossed
-//!   threshold (`status.reshard.blockingConditions` already carries
-//!   `prepareThresholdCrossed` / `urgentThresholdCrossed`, computed by
-//!   [`super::crd::LumenSpec::reshard_status_with_usage`]), `maxShardBytes`
-//!   set (R3 safety rail — recommendation-only otherwise), single-member
-//!   (`replicasPerShard <= 1`; see below), and no `maxShards` ceiling
-//!   reached. On a match: compute the target map, patch `shardCount` and
-//!   `workflow.{phase,targetShardCount}` in one merge patch, phase ->
-//!   `PrepareSplit`.
-//! - **PrepareSplit**: wait for the StatefulSet's `readyReplicas` to reach
-//!   `targetShardCount` (the new pod exists once `shardCount` is bumped, via
-//!   the *existing*, independently-leader-gated `libs/service-k8s` apply loop —
-//!   this driver never applies child objects itself). Once ready, phase ->
-//!   `Splitting`. Restart-safe: re-reads the same live readiness fact every
-//!   tick.
-//! - **Splitting**: run one migration pass ([`run_migration_pass`] — the
-//!   production caller of [`crate::reshard::bucket_moves`] /
-//!   [`crate::reshard::snapshot_reshard_batches`]) copying every moved
-//!   bucket from its old shard to the new shard via the admin verbs, then
-//!   phase -> `CatchingUp`. `POST /admin/reshard:apply` is an idempotent
-//!   additive merge (#1380), so re-running this same pass after a restart
-//!   (still `Splitting`) is safe and simply re-applies the same batches.
-//! - **CatchingUp** ([`advance_catching_up`], resequenced by #1396 R1/R2):
-//!   arm a write-pause fence over every still-moving bucket on its current
-//!   (source) owner (R2, see below), run the *same* migration pass again —
-//!   an idempotent re-sync that, under the fence, is guaranteed a converged
-//!   snapshot of every moving bucket — checkpoint **only the new/target
-//!   shard** durably, evict every moved bucket from every old shard
-//!   ([`crate::reshard`]'s `evict` is also idempotent), checkpoint every
-//!   **source** shard durably, then flip `spec.shardMap` to the target map
-//!   in the same patch that clears `workflow.targetShardCount` and resets
-//!   phase -> `Complete`, followed by [`trigger_rolling_restart`], then
-//!   clear the fence (unconditionally, on every exit path). Calling evict
-//!   against the **new**, already-committed map (not the stale old one)
-//!   means the driver never needs to retain the old map across a restart —
-//!   the source of the classic "lost the old map after cutover" resumability
-//!   trap. Checkpointing the target *before* evicting sources — rather than
-//!   checkpointing everything only after both migration and eviction, as
-//!   this driver did before #1396 — is R1: an eviction becoming durable (or
-//!   even being attempted) before the target's copy of the same data is
-//!   durably checkpointed can lose data that exists on no durable shard at
-//!   all if the process crashes in between; see [`advance_catching_up`]'s
-//!   own doc for the full crash-at-every-step analysis.
-//!
-//! A driver-side error at any step ([`DriveOutcome::Blocked`]) leaves the CR
-//! spec untouched; the next tick retries the same phase from the same
-//! persisted fields (R3).
-//!
-//! ## Write-pause fence during the final CatchingUp pass (#1396 R2)
-//!
-//! Even with the `Splitting` + `CatchingUp` double migration pass, a write
-//! that lands on a moved bucket's old (source) shard after the *last*
-//! migration-copy read but before that bucket's eviction is never re-copied
-//! anywhere — eviction then silently drops it. [`advance_catching_up`] closes
-//! this gap with a bounded, status-visible write pause (the mechanism #1381's
-//! R5 review sanctioned: "a bounded final pause of writes to still-moving
-//! buckets is acceptable if needed for convergence, but must be bounded and
-//! reported in status") rather than a repeat-until-converged loop: arming the
-//! fence *before* the tick's migration pass means that single pass is already
-//! a complete snapshot of every fenced bucket, because no write can land on
-//! them while it runs. [`crate::api::WriteFence`] (`POST
-//! /admin/reshard:fence`) is the serving-side seam; a fenced write gets `503
-//! bucket_write_paused` rather than being silently dropped or racing the map
-//! flip. The fence is armed on every **source** shard (the live owners until
-//! this tick's own cutover patch), and cleared — unconditionally, on every
-//! exit path of [`advance_catching_up`], success or `Blocked` — once the
-//! sequence finishes. A driver process that crashes before that explicit
-//! clear cannot wedge writes forever: [`WriteFence::blocks`] enforces
-//! [`WRITE_FENCE_TTL_SECS`] as a deadline on the *serving* pod itself,
-//! independent of the driver's liveness.
-//!
-//! ## Migration durability (#1389)
-//!
-//! `Engine::apply_reshard_batch`/`evict_not_owned` (`storage.rs`, #1380)
-//! mutate engine state directly rather than through `WriteCoordinator`/the
-//! AOF, so — unlike ordinary writes — their durability is not implied by the
-//! engine's normal write path; with #1387's embedded persistence it was
-//! previously captured only by the next periodic `LUMEN_SNAPSHOT_SECS`
-//! checkpoint (default 300s), well after this driver's own cutover restart
-//! (~60-90s later) — observed live as 806 migrated batches lost on the
-//! target and an eviction silently undone on the source (#1387's report).
-//!
-//! Two designs were considered: (a) route `:apply`/`:evict` through the AOF/
-//! `WriteCoordinator` path as new `RaftLogEntry` variants, or (b) an explicit
-//! synchronous checkpoint step the driver invokes and awaits per touched
-//! shard before cutover. **(b) was chosen**: a whole `ReshardBatch`'s
-//! `SnapshotV1` delta can be large (bounded by `MAX_EXTERNAL_IDS_PER_BATCH`,
-//! but still potentially many collections/fields), which sits awkwardly as a
-//! single `WalRecord`/AOF frame designed around one bounded mutation
-//! (`Index`/`ReplaceDocs`/etc); it would also need new apply-loop branches
-//! and idempotency semantics distinct from every existing `RaftLogEntry`
-//! variant, whose apply methods mutate exactly one collection deterministically
-//! rather than merge a whole delta. (b) reuses `segment_rdb.rs`'s
-//! `SegmentRdbStore::save` verbatim — the exact call the periodic snapshotter
-//! already makes, just invoked synchronously on demand via a new
-//! `POST /admin/checkpoint` admin verb ([`crate::api::CheckpointSink`]) — no
-//! new WAL record shape, no new apply-loop branch, no new idempotency
-//! reasoning: `save` already re-seals the *entire* current engine state
-//! (including whatever `:apply`/`:evict` already mutated) atomically
-//! (stage-then-rename), so one checkpoint call captures every migration
-//! mutation made so far, not just the most recent one.
-//!
-//! [`checkpoint_shards`] calls `POST /admin/checkpoint` on an explicit shard
-//! set; [`advance_catching_up_fenced`] calls it twice per tick — once for
-//! just the new/target shard immediately after migration and before any
-//! source eviction is attempted (#1396 R1), and again for every source shard
-//! (`0..current.physical_shard_count()`, `evict_old_shards`'s target set)
-//! after eviction and before the `shardMap` cutover patch and
-//! [`trigger_rolling_restart`]. A checkpoint failure on either call reports
-//! [`DriveOutcome::Blocked`] and leaves `spec` at `CatchingUp` untouched
-//! (R3): the next tick re-runs the whole idempotent
-//! migrate/checkpoint/evict/checkpoint sequence, consistent with #1381's
-//! spec-is-the-checkpoint semantics — cutover never fires on a shard whose
-//! migration mutations are not yet durable, and eviction is never even
-//! attempted before the target's copy of the same data is durable.
-//! `checkpoint_shard` (#1396 R3) also now requires the response body to
-//! report `persisted == true`; a `200 {"persisted": false}` — the vacuous
-//! "no durable store configured" response `admin_checkpoint` returns for
-//! [`crate::api::NoopCheckpoint`] deployments — is treated as a failed
-//! checkpoint, not a satisfied durability gate.
-//!
-//! ## Scope rail: single-member only
-//!
-//! [`should_start_split`] refuses to start a split when `replicasPerShard >
-//! 1`. Growing `shardCount` reassigns `shard_index = ordinal % shardCount`
-//! for *every* existing pod ordinal once raft has more than one replica per
-//! shard (a full raft-group reshuffle, not an added shard), which is unsafe
-//! without additional raft-membership migration this WI does not implement.
-//! At `replicasPerShard <= 1`, `ordinal % (shardCount+1) == ordinal` for
-//! every existing ordinal (`ordinal < shardCount`), so growing by exactly
-//! one is pod-ordinal-stable: every existing pod keeps its shard/PVC
-//! identity and exactly one new pod (ordinal == old `shardCount`) becomes
-//! the new shard — see [`super::crd::LumenSpec::storage_pod_count`].
-//!
-//! ## Live query routing consumes `spec.shardMap` (#1384)
-//!
-//! [`super::render::render`] writes `shardMap.{version,assignments}` into the
-//! serving ConfigMap, `serving_env` maps `SHARD_MAP_VERSION`/
-//! `VIRTUAL_BUCKET_COUNT`/`SHARD_MAP_ASSIGNMENTS` onto container env, and
-//! `src/bin/lumen.rs`'s `serve()` builds its `EngineShardSearch` via
-//! `EngineShardSearch::new_with_shard_map` fed by
-//! `crate::config::shard_map_from_env`, so a pod started after this driver's
-//! cutover routes queries by the minimal-move target map computed by
-//! [`crate::routing::VirtualBucketShardMap::split_one_shard`] rather than the
-//! balanced default. [`trigger_rolling_restart`] is driven in the same
-//! cutover tick that patches `spec.shardMap` so every serving pod picks up
-//! the new map without manual intervention: it patches the serving
-//! StatefulSet's pod-template annotations, which Kubernetes' native
-//! `RollingUpdate` strategy (`serving_statefulset`'s `updateStrategy`) turns
-//! into a rolling recreation of every pod against the already-updated
-//! ConfigMap — no separate watch/poll loop is needed.
-
-use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use anyhow::{anyhow, bail, Context, Result};
-use async_trait::async_trait;
-use kube::api::{Api, ApiResource, DynamicObject, Patch, PatchParams};
-use kube::{Client, ResourceExt};
-use serde_json::json;
-
-use crate::auth::{Role, TokenClaims};
-use crate::operator::crd::{AuthMode, Lumen, ReshardPhase};
-use crate::operator::lease::{self, Election};
-use crate::reshard::{
-    bucket_moves, snapshot_reshard_batches, snapshot_reshard_prune_chunks, ReshardBatch,
-    ReshardPruneChunk,
-};
-use crate::routing::VirtualBucketShardMap;
-use crate::storage::SnapshotV1;
-
-/// The client-facing port lumen's serving Service/StatefulSet expose. Kept
-/// duplicated from `render::CLIENT_PORT`/`reconcile::CLIENT_PORT` the same
-/// way those two already duplicate it from each other — the smallest private
-/// constant beats a new `pub` cross-module symbol-table row.
-const CLIENT_PORT: u16 = 7373;
-
-/// Poll interval for the reshard driver loop.
-const DRIVER_POLL_INTERVAL: Duration = Duration::from_secs(20);
-
-/// Leader-election Lease name for [`spawn_reshard_driver_loop`] — distinct
-/// from `libs/service-k8s`'s own `S::MANAGER`-named apply-loop Lease so the two
-/// independently-leader-gated loops (which may pick different leaders) never
-/// contend on one Lease object.
-const DRIVER_LEASE_NAME: &str = "lumen-reshard-driver";
-
-/// Upper bound on external_ids carried per `POST /admin/reshard:apply` call,
-/// matching the batching contract [`crate::reshard::snapshot_reshard_batches`]
-/// already documents (checkpoint after every batch, not after one full-shard
-/// copy).
-const MAX_EXTERNAL_IDS_PER_BATCH: usize = 2000;
-
-/// TTL for the write-pause fence [`advance_catching_up`] arms over still-moving
-/// buckets during its final migration pass (#1396 R2) — generous relative to
-/// one tick's HTTP round trips (a scoped-backup fetch + apply batches across
-/// however many source shards a split touches, then evict + checkpoint) while
-/// still bounded; the fence is a crash-safety backstop the *serving* pod
-/// enforces independent of the driver's own liveness, see
-/// [`crate::api::WriteFence`]. Re-armed fresh every tick that needs one, so a
-/// healthy, slow-but-progressing driver never races its own TTL.
-const WRITE_FENCE_TTL_SECS: u64 = 120;
-
-/// The production default [`ClusterControl::write_fence_ttl_secs`] value
-/// (#1443 R1/AC1), exposed so integration tests can fall back to the real
-/// default from a `fence_ttl_secs: Option<u64>`-style override field without
-/// needing [`WRITE_FENCE_TTL_SECS`] itself to be `pub`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn default_write_fence_ttl_secs() -> u64 {
-    WRITE_FENCE_TTL_SECS
-}
-
-/// How many consecutive [`advance_catching_up`] ticks short-circuit on a
-/// recorded [`OversizedDocumentBlock`] (#1444 R2) before attempting the full
-/// fenced migration pass again. Bounds how long a document an operator has
-/// since fixed (deleted or shrunk) stays wedged after the fix without
-/// re-arming the write-pause fence — and reopening the recurring 503 window
-/// the fix closes — on every single tick while the condition is genuinely
-/// unchanged. `DRIVER_POLL_INTERVAL * OVERSIZE_RECHECK_TICKS` (5 minutes at
-/// the current 20s poll interval) is the same order of magnitude as
-/// [`WRITE_FENCE_TTL_SECS`]/`SHARD_USAGE_POLL_INTERVAL`-style bounds
-/// elsewhere in this driver.
-const OVERSIZE_RECHECK_TICKS: u32 = 15;
-
-/// Distinguishes an apply failure caused by exactly one document's batch
-/// serializing past [`crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`] — the
-/// `snapshot_reshard_batches`/`byte_cap_chunk` floor case
-/// (`crate::reshard`'s module doc's "one document cannot be split further")
-/// — from any other reason `POST /admin/reshard:apply` can fail (#1444 R2).
-/// Deterministic every retry (nothing about the data or the byte cap changes
-/// tick to tick), unlike a transient network/5xx error, so this is surfaced
-/// as a distinct `status.reshard` blocking condition (see
-/// [`oversize_block_condition`]) instead of the generic
-/// [`DriveOutcome::Blocked`] message every other failure produces, and used
-/// to skip re-arming the write-pause fence on a tick already known to fail
-/// identically (see [`advance_catching_up`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub struct OversizedDocumentBlock {
-    pub collection: String,
-    pub external_id: String,
-    pub bytes: usize,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-impl std::fmt::Display for OversizedDocumentBlock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "reshard blocked: collection `{}` document `{}` serializes to {} bytes, over the \
-             {} byte /admin/reshard:apply body limit; this single document cannot be split into \
-             a smaller batch — shrink or remove its large field values (long text, vectors, \
-             hashes), or exclude it from the collection, before this split can continue",
-            self.collection,
-            self.external_id,
-            self.bytes,
-            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES
-        )
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-impl std::error::Error for OversizedDocumentBlock {}
-
-/// `"<namespace>/<name>" -> (owning CR's metadata.uid, block, ticks skipped
-/// on it so far)`, written by [`run_migration_pass_impl`] and consumed by
-/// [`advance_catching_up`] (mutating, to decide/count a skip) and
-/// [`oversize_block_condition`] (read-only, for `reconcile.rs`'s
-/// `status_patch`) — #1444 R2. Mirrors `reconcile.rs`'s own
-/// `ShardUsageCache` pattern: a synchronous status projection reads a cache
-/// a background loop writes, rather than doing I/O itself.
-///
-/// Keyed by `namespace/name` (not `uid`, which is not stable input for a
-/// lookup before an object exists) but every entry carries the `uid` of the
-/// CR it was recorded for (#1458 R4): a namespace/name pair is not a stable
-/// identity across a delete-and-recreate — the new CR gets a fresh `uid`
-/// from the API server — so every read compares the stored `uid` against
-/// the caller's current one and treats a mismatch as no entry, giving a
-/// recreated CR a clean `status.reshard` immediately rather than inheriting
-/// a stale wedge left by the deleted CR's last tick. [`prune_oversize_cache`]
-/// bounds the map by dropping entries whose `uid` is no longer live.
-type OversizeBlockCache = std::sync::Mutex<BTreeMap<String, (String, OversizedDocumentBlock, u32)>>;
-
-fn oversize_block_cache() -> &'static OversizeBlockCache {
-    static CACHE: std::sync::OnceLock<OversizeBlockCache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()))
-}
-
-fn oversize_cache_key(namespace: &str, name: &str) -> String {
-    format!("{namespace}/{name}")
-}
-
-/// Record (or refresh) a discovered oversize wedge for `namespace/name`'s
-/// `uid`, resetting its skip counter — a fresh discovery, whether this is
-/// the first tick to hit it or a periodic recheck (#1444 R2, see
-/// [`OVERSIZE_RECHECK_TICKS`]) that hit the same wedge again. `pub(crate)`
-/// rather than private so `reconcile.rs`'s `status_patch` tests can drive the
-/// exact cache [`oversize_block_condition`] reads, without widening this past
-/// crate-internal visibility.
-pub(crate) fn record_oversize_block(
-    namespace: &str,
-    name: &str,
-    uid: &str,
-    block: OversizedDocumentBlock,
-) {
-    oversize_block_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(
-            oversize_cache_key(namespace, name),
-            (uid.to_string(), block, 0),
-        );
-}
-
-/// Clear any recorded oversize wedge for `namespace/name`, regardless of
-/// which `uid` recorded it — called whenever a migration pass for it
-/// completes without hitting one (whatever was wedged is resolved) and when
-/// the workflow returns to phase `Complete` (#1458 R4). `pub(crate)` for the
-/// same test-seam reason as [`record_oversize_block`].
-pub(crate) fn clear_oversize_block(namespace: &str, name: &str) {
-    oversize_block_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(&oversize_cache_key(namespace, name));
-}
-
-/// Drop every cached entry whose `uid` is not in `live_uids` (#1458 R4) —
-/// called once per [`spawn_reshard_driver_loop`] poll, which already lists
-/// every live `Lumen` CR cluster-wide, so this needs no extra k8s API call.
-/// Bounds the cache's growth across an unbounded number of past
-/// delete-and-recreate cycles on the same `namespace/name`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub(crate) fn prune_oversize_cache(live_uids: &BTreeSet<String>) {
-    oversize_block_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .retain(|_, (uid, _, _)| live_uids.contains(uid));
-}
-
-/// If `namespace/name`'s current `uid` has a recorded oversize wedge AND has
-/// not yet used up its [`OVERSIZE_RECHECK_TICKS`] skip budget, bump its skip
-/// counter and return it — the caller ([`advance_catching_up`]) should
-/// short-circuit to [`DriveOutcome::Blocked`] without arming the
-/// write-pause fence. Returns `None` (no skip) once the budget is exhausted
-/// or the cached entry belongs to a different `uid` (#1458 R4 — a stale
-/// entry from a deleted-and-recreated CR), letting the next real attempt
-/// either clear the wedge (if fixed) or re-record it with a fresh budget.
-fn should_skip_for_oversize(
-    namespace: &str,
-    name: &str,
-    uid: &str,
-) -> Option<OversizedDocumentBlock> {
-    let mut cache = oversize_block_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let (cached_uid, block, ticks) = cache.get_mut(&oversize_cache_key(namespace, name))?;
-    if cached_uid != uid || *ticks >= OVERSIZE_RECHECK_TICKS {
-        return None;
-    }
-    *ticks += 1;
-    Some(block.clone())
-}
-
-/// The oversized-document block currently recorded for `namespace/name`'s
-/// current `uid`, if any (#1444 R2; `uid`-scoped by #1458 R4) — read-only,
-/// does not affect [`should_skip_for_oversize`]'s skip budget. `reconcile.
-/// rs`'s `status_patch` calls this to layer a distinct `status.reshard`
-/// blocking condition + remediation message onto the policy/usage-derived
-/// status. A cached entry belonging to a different `uid` (a deleted-and-
-/// recreated CR under the same `namespace/name`) is treated as no entry, so
-/// the recreated CR's status is clean immediately rather than waiting for
-/// [`prune_oversize_cache`]'s next poll.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn oversize_block_condition(
-    namespace: &str,
-    name: &str,
-    uid: &str,
-) -> Option<OversizedDocumentBlock> {
-    oversize_block_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&oversize_cache_key(namespace, name))
-        .filter(|(cached_uid, _, _)| cached_uid == uid)
-        .map(|(_, block, _)| block.clone())
-}
-
-/// #1467 R7: bounded escalation budget for [`advance_convergence`] — after
-/// this many consecutive `AwaitingTopologyConvergence` ticks for the same
-/// `(uid, map_version)` pair without observing convergence, the driver
-/// raises a distinct `topologyConvergenceStalled` status condition. The
-/// fence itself is NEVER dropped when this budget is exceeded — re-arming
-/// continues every tick exactly as before — this only makes an
-/// abnormally-long convergence wait observable to operators.
-/// `DRIVER_POLL_INTERVAL * CONVERGENCE_STALL_TICKS` = 10 minutes at the
-/// current 20s poll interval, the same order of magnitude as
-/// `OVERSIZE_RECHECK_TICKS`'s ~5 minutes.
-///
-/// #1485 R2: [`convergence_stall_cache`]/[`record_convergence_await`] below
-/// (this tick-count budget) stay in place as a fast, driver-memory-only
-/// signal, but they are no longer the authoritative source for whether the
-/// stall budget has been exceeded — [`CONVERGENCE_STALL_SECS`], checked
-/// against the durable `workflow.convergenceWaitStartedAt` timestamp, is.
-const CONVERGENCE_STALL_TICKS: u32 = 30;
-
-/// #1485 R2: wall-clock equivalent of [`CONVERGENCE_STALL_TICKS`] at the
-/// current [`DRIVER_POLL_INTERVAL`] — the durable stall budget
-/// [`convergence_stall_condition`] applies to `workflow.
-/// convergenceWaitStartedAt`. Computing the budget this way (elapsed time
-/// since a persisted CR timestamp) rather than from an in-process tick
-/// count is what makes both the budget and the `topologyConvergenceStalled`
-/// condition it gates survive an operator restart mid-wait. `pub(crate)` so
-/// `reconcile.rs`'s own tests can position a wait-start timestamp precisely
-/// past the budget without sleeping in a unit test.
-pub(crate) const CONVERGENCE_STALL_SECS: u64 =
-    CONVERGENCE_STALL_TICKS as u64 * DRIVER_POLL_INTERVAL.as_secs();
-
-/// The production [`CONVERGENCE_STALL_SECS`] value (#1485 R2), exposed the
-/// same way [`default_write_fence_ttl_secs`] exposes [`WRITE_FENCE_TTL_SECS`]
-/// — so integration tests can back-date `workflow.convergenceWaitStartedAt`
-/// past the real budget (simulating an extended wait without sleeping)
-/// without needing the constant itself to be `pub`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn convergence_stall_budget_secs() -> u64 {
-    CONVERGENCE_STALL_SECS
-}
-
-/// Current wall-clock time as epoch seconds, saturating to `0` on a clock
-/// error (mirrors [`KubeClusterControl::trigger_rolling_restart`]'s own
-/// inline `SystemTime::now()` call) — the source of every `#1485` durable
-/// timestamp this module stamps into `workflow.convergenceWaitStartedAt` /
-/// `workflow.convergenceRemediationRestartedAt`.
-fn now_epoch_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-/// `"<namespace>/<name>" -> (uid, map_version being awaited, consecutive
-/// awaiting ticks)` — tracks how long [`advance_convergence`] has been
-/// waiting for [`ClusterControl::serving_topology_converged`] to confirm
-/// one particular `map_version`, for the R7 stall escalation. Mirrors
-/// [`OversizeBlockCache`]'s shape and `uid`-scoping rationale (a
-/// namespace/name pair is not stable identity across delete-and-recreate).
-type ConvergenceStallCache = std::sync::Mutex<BTreeMap<String, (String, u64, u32)>>;
-
-fn convergence_stall_cache() -> &'static ConvergenceStallCache {
-    static CACHE: std::sync::OnceLock<ConvergenceStallCache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()))
-}
-
-fn convergence_stall_key(namespace: &str, name: &str) -> String {
-    format!("{namespace}/{name}")
-}
-
-/// Bump (or start) `namespace/name`'s consecutive-awaiting-ticks counter
-/// for `map_version` and return `true` once [`CONVERGENCE_STALL_TICKS`] has
-/// been exceeded (this tick should report the stalled condition). A
-/// `uid`/`map_version` change (a delete-and-recreate, or a fresh split
-/// starting a new convergence wait before the prior one finished) resets
-/// the counter rather than carrying over an unrelated wait's budget.
-/// `pub(crate)` for the same test-seam reason as
-/// [`record_oversize_block`].
-pub(crate) fn record_convergence_await(
-    namespace: &str,
-    name: &str,
-    uid: &str,
-    map_version: u64,
-) -> bool {
-    let mut cache = convergence_stall_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let entry = cache
-        .entry(convergence_stall_key(namespace, name))
-        .or_insert_with(|| (uid.to_string(), map_version, 0));
-    if entry.0 != uid || entry.1 != map_version {
-        *entry = (uid.to_string(), map_version, 0);
-    }
-    entry.2 = entry.2.saturating_add(1);
-    entry.2 > CONVERGENCE_STALL_TICKS
-}
-
-/// Clear `namespace/name`'s convergence-stall tracker — called once
-/// convergence is observed (or the workflow is no longer awaiting it), so a
-/// resolved wait never leaves the next, unrelated wait starting from a
-/// stale budget. `pub(crate)` for the same test-seam reason as
-/// [`clear_oversize_block`].
-pub(crate) fn clear_convergence_stall(namespace: &str, name: &str) {
-    convergence_stall_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(&convergence_stall_key(namespace, name));
-}
-
-/// Drop every cached convergence-stall entry whose `uid` is not in
-/// `live_uids` — the [`prune_oversize_cache`] counterpart for this cache,
-/// called from the same poll loop with the same already-listed live-CR set.
-pub(crate) fn prune_convergence_stall_cache(live_uids: &BTreeSet<String>) {
-    convergence_stall_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .retain(|_, (uid, _, _)| live_uids.contains(uid));
-}
-
-/// Whether an `awaitingTopologyConvergence` wait that began at
-/// `wait_started_at` (`workflow.convergenceWaitStartedAt`, #1485 R2) has run
-/// longer than [`CONVERGENCE_STALL_SECS`], for `reconcile.rs`'s
-/// `status_patch` to layer a `topologyConvergenceStalled` blocking condition
-/// onto the policy/usage-derived status. Computed purely from this one
-/// persisted CR timestamp — not driver memory — so the answer is the same
-/// whether or not the driver process has restarted since the wait began;
-/// [`advance_convergence`]'s own bounded-remediation gate uses the exact
-/// same computation. `None` (convergence not pending, or no wait recorded
-/// yet) is never stalled.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn convergence_stall_condition(wait_started_at: Option<u64>) -> bool {
-    wait_started_at
-        .is_some_and(|started| now_epoch_secs().saturating_sub(started) > CONVERGENCE_STALL_SECS)
-}
-
-/// Everything [`drive_tick`] needs from a live cluster, abstracted so the
-/// state machine is testable without a real k8s API server. [`KubeClusterControl`]
-/// is the production implementation; tests supply an in-memory fake.
-#[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub trait ClusterControl: Send + Sync {
-    /// JSON-merge-patch this `Lumen`'s `.spec` (see `Patch::Merge` semantics:
-    /// nested objects merge recursively, a `null` leaf deletes that key,
-    /// sibling fields not mentioned are untouched).
-    async fn patch_spec(&self, namespace: &str, name: &str, patch: serde_json::Value)
-        -> Result<()>;
-
-    /// The serving StatefulSet's `.status.readyReplicas` (0 if absent/not
-    /// found yet).
-    async fn statefulset_ready_replicas(&self, namespace: &str, name: &str) -> Result<i64>;
-
-    /// Bump a `kubectl rollout restart`-style pod-template annotation so a
-    /// shard-map-only ConfigMap change gets picked up by a fresh generation
-    /// of pods (see the module-level "known gap" note: a no-op today until
-    /// serving actually reads that ConfigMap data, but still the correct
-    /// operator action to take at cutover).
-    async fn trigger_rolling_restart(&self, namespace: &str, name: &str) -> Result<()>;
-
-    /// A bearer token carrying wildcard `Role::Admin`, if `lumen.spec.auth`
-    /// requires one. `Ok(None)` when auth is off.
-    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<String>>;
-
-    /// The client-facing admin API base URL for one shard's serving pod.
-    /// [`KubeClusterControl`] resolves the real per-shard headless-Service
-    /// DNS name (matching [`super::reconcile::pod_metrics_urls`]'s
-    /// convention); an integration-test fake resolves to whatever real local
-    /// address that shard's `TestServer` is actually bound to — the seam
-    /// that lets [`run_migration_pass`] / [`evict_old_shards`] run against
-    /// real HTTP servers + real `Engine`s without a live cluster.
-    fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String;
-
-    /// TTL (seconds) [`advance_catching_up`]/[`advance_catching_up_fenced`]
-    /// arm/re-arm the write-pause fence with (#1443 R1). Defaults to
-    /// [`WRITE_FENCE_TTL_SECS`] — production behavior is unchanged; this
-    /// exists purely as a test seam so a short-TTL/slow-checkpoint scenario
-    /// can be exercised deterministically without waiting 120 real seconds.
-    fn write_fence_ttl_secs(&self) -> u64 {
-        WRITE_FENCE_TTL_SECS
-    }
-
-    /// Whether every serving pod is confirmed `Ready` on the serving
-    /// StatefulSet's current rollout (#1458 R1) — the same k8s "rollout
-    /// status" pattern `kubectl rollout status` checks:
-    /// `.status.updateRevision == .status.currentRevision` (no rollout
-    /// in-flight) and `.status.readyReplicas == desired_replicas`. Reuses
-    /// [`advance_prepare_split`]'s existing readiness-polling seam rather
-    /// than adding a new one. Defaults to `Ok(true)` — production behavior
-    /// only changes once [`KubeClusterControl`]'s override actually observes
-    /// an in-progress rollout; every test double that does not override this
-    /// keeps its prior "instantly converged" behavior.
-    async fn serving_topology_converged(
-        &self,
-        _namespace: &str,
-        _name: &str,
-        _desired_replicas: i64,
-    ) -> Result<bool> {
-        Ok(true)
-    }
-
-    /// #1467 R5: whether every serving pod (`0..shard_count`, one pod per
-    /// shard — the reshard driver's admin plane already assumes
-    /// `replicas_per_shard <= 1` in the routed topology it operates over,
-    /// same as [`Self::shard_base_url`]) reports `lumen_shard_map_version
-    /// == map_version` on its `/metrics` endpoint. [`Self::
-    /// serving_topology_converged`] alone only proves the StatefulSet
-    /// rollout *finished* (every pod `Ready` on the latest pod template) —
-    /// not that each pod's process actually holds `map_version`, since the
-    /// shard map itself is read from a ConfigMap the pod loads at startup,
-    /// and a ConfigMap write racing a rollout's pod-recreate order is not
-    /// something StatefulSet status observes at all. Defaults to `Ok(true)`
-    /// for the same test-seam reason as `serving_topology_converged` —
-    /// every test double that does not override this keeps its prior
-    /// "instantly converged" behavior.
-    async fn serving_pods_report_map_version(
-        &self,
-        _http: &reqwest::Client,
-        _namespace: &str,
-        _name: &str,
-        _shard_count: u32,
-        _map_version: u64,
-    ) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-/// Production [`ClusterControl`]: real `kube::Client` calls.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub struct KubeClusterControl {
-    client: Client,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-impl KubeClusterControl {
-    pub fn new(client: Client) -> Self {
-        Self { client }
-    }
-}
-
-fn statefulset_api_resource() -> ApiResource {
-    ApiResource {
-        group: "apps".to_string(),
-        version: "v1".to_string(),
-        api_version: "apps/v1".to_string(),
-        kind: "StatefulSet".to_string(),
-        plural: "statefulsets".to_string(),
-    }
-}
-
-#[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-impl ClusterControl for KubeClusterControl {
-    async fn patch_spec(
-        &self,
-        namespace: &str,
-        name: &str,
-        patch: serde_json::Value,
-    ) -> Result<()> {
-        let api: Api<Lumen> = Api::namespaced(self.client.clone(), namespace);
-        api.patch(name, &PatchParams::default(), &Patch::Merge(&patch))
-            .await
-            .context("patch Lumen spec")?;
-        Ok(())
-    }
-
-    async fn statefulset_ready_replicas(&self, namespace: &str, name: &str) -> Result<i64> {
-        let ar = statefulset_api_resource();
-        let api: Api<DynamicObject> = Api::namespaced_with(self.client.clone(), namespace, &ar);
-        let ready = api
-            .get_opt(name)
-            .await
-            .context("read serving StatefulSet")?
-            .and_then(|o| o.data["status"]["readyReplicas"].as_i64())
-            .unwrap_or(0);
-        Ok(ready)
-    }
-
-    async fn trigger_rolling_restart(&self, namespace: &str, name: &str) -> Result<()> {
-        let ar = statefulset_api_resource();
-        let api: Api<DynamicObject> = Api::namespaced_with(self.client.clone(), namespace, &ar);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let patch = json!({
-            "spec": {
-                "template": {
-                    "metadata": {
-                        "annotations": {
-                            "lumen.dev/reshard-restarted-at": now.to_string(),
-                        }
-                    }
-                }
-            }
-        });
-        api.patch(name, &PatchParams::default(), &Patch::Merge(&patch))
-            .await
-            .context("trigger serving StatefulSet rolling restart")?;
-        Ok(())
-    }
-
-    async fn admin_token(&self, namespace: &str, lumen: &Lumen) -> Result<Option<String>> {
-        if !matches!(lumen.spec.auth, AuthMode::Required) {
-            return Ok(None);
-        }
-        let Some(secret_name) = lumen.spec.tokens_secret.as_deref() else {
-            // CSI-only (`tokensSecretProviderClass`) deployments have no
-            // Secret object for the driver to read here — a documented,
-            // not-yet-closed gap (#1381): every admin call this tick fails
-            // closed (401), which `run_migration_pass`/`evict_old_shards`
-            // surface as `DriveOutcome::Blocked`, leaving the workflow
-            // resumable rather than silently stuck.
-            bail!(
-                "tokensSecretProviderClass-only auth is not supported by the reshard driver yet; \
-                 set spec.tokensSecret so the driver can resolve an admin-role bearer token"
-            );
-        };
-        let api: kube::Api<k8s_openapi::api::core::v1::Secret> =
-            kube::Api::namespaced(self.client.clone(), namespace);
-        let secret = api.get(secret_name).await.context("read tokens secret")?;
-        let bytes = secret
-            .data
-            .as_ref()
-            .and_then(|d| d.get("token-registry.json"))
-            .ok_or_else(|| {
-                anyhow!("tokens secret `{secret_name}` missing token-registry.json key")
-            })?;
-        let registry: BTreeMap<String, TokenClaims> =
-            serde_json::from_slice(&bytes.0).context("parse token-registry.json")?;
-        let token = registry
-            .into_iter()
-            .find(|(_, claims)| claims.roles.get("*") == Some(&Role::Admin))
-            .map(|(token, _)| token);
-        Ok(token)
-    }
-
-    fn shard_base_url(&self, namespace: &str, name: &str, shard: u32) -> String {
-        format!("http://{name}-{shard}.{name}-headless.{namespace}.svc.cluster.local:{CLIENT_PORT}")
-    }
-
-    async fn serving_topology_converged(
-        &self,
-        namespace: &str,
-        name: &str,
-        desired_replicas: i64,
-    ) -> Result<bool> {
-        let ar = statefulset_api_resource();
-        let api: Api<DynamicObject> = Api::namespaced_with(self.client.clone(), namespace, &ar);
-        let Some(sts) = api
-            .get_opt(name)
-            .await
-            .context("read serving StatefulSet for topology convergence")?
-        else {
-            // No StatefulSet yet is not "converged" — the caller keeps
-            // treating this as pending rather than assuming success.
-            return Ok(false);
-        };
-        let status = &sts.data["status"];
-        let ready_replicas = status["readyReplicas"].as_i64().unwrap_or(0);
-        let updated_replicas = status["updatedReplicas"].as_i64().unwrap_or(0);
-        // A rollout still in flight has distinct current/update revisions;
-        // once it completes, k8s converges them onto the same value. Absent
-        // fields (any StatefulSet old enough not to report them) fail this
-        // check open on the safe side — never assumed identical.
-        let current_revision = status["currentRevision"].as_str();
-        let update_revision = status["updateRevision"].as_str();
-        let revisions_converged =
-            matches!((current_revision, update_revision), (Some(c), Some(u)) if c == u);
-        Ok(revisions_converged
-            && ready_replicas >= desired_replicas
-            && updated_replicas >= desired_replicas)
-    }
-
-    async fn serving_pods_report_map_version(
-        &self,
-        http: &reqwest::Client,
-        namespace: &str,
-        name: &str,
-        shard_count: u32,
-        map_version: u64,
-    ) -> Result<bool> {
-        for shard in 0..shard_count {
-            let url = format!("{}/metrics", self.shard_base_url(namespace, name, shard));
-            // An unreachable pod (mid-rollout, mid-restart) or a decode
-            // failure is "not converged yet", not an error — the caller
-            // just keeps the fence armed and retries next tick, exactly
-            // like an unready StatefulSet replica.
-            let Ok(resp) = http.get(&url).send().await else {
-                return Ok(false);
-            };
-            if !resp.status().is_success() {
-                return Ok(false);
-            }
-            let Ok(body) = resp.text().await else {
-                return Ok(false);
-            };
-            if super::reconcile::parse_metric(&body, "lumen_shard_map_version") != Some(map_version)
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-}
-
-/// What one [`drive_tick`] call did, for logging/tests. Never panics; a
-/// failed step reports [`DriveOutcome::Blocked`] and leaves the CR spec
-/// exactly as it was, so the next tick retries from the same persisted phase.
-#[derive(Debug, Clone, PartialEq)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub enum DriveOutcome {
-    /// Nothing to do this tick (`Complete` with no crossed threshold, an
-    /// unsupported topology, or a `maxShards` ceiling reached).
-    NoOp(&'static str),
-    /// `Complete -> PrepareSplit`: `shardCount`/`targetShardCount` patched.
-    StartedSplit { target_shard_count: u32 },
-    /// Still `PrepareSplit`: the new pod is not `Ready` yet.
-    WaitingForNewShard { target_shard_count: u32 },
-    /// `PrepareSplit -> Splitting`: the new pod is `Ready`.
-    AdvancedToSplitting,
-    /// Still `Splitting`: one migration pass ran (batch count included; `0`
-    /// only if there is nothing to move, which should not happen for a
-    /// freshly started split).
-    MigratedBatches { batches: usize },
-    /// `Splitting -> CatchingUp`.
-    AdvancedToCatchingUp,
-    /// `CatchingUp -> Complete`: re-sync pass ran, old shards evicted, and
-    /// `shardMap` flipped to the new version.
-    CompletedSplit { new_map_version: u64 },
-    /// #1458 R1: `Complete`, but not every serving pod is confirmed `Ready`
-    /// on `map_version` yet — the write-pause fence over the buckets that
-    /// moved into `map_version` was re-armed this tick, and
-    /// `awaitingTopologyConvergence` should surface in `status.reshard`.
-    AwaitingTopologyConvergence { map_version: u64 },
-    /// #1458 R1: `Complete`, and every serving pod just got confirmed
-    /// `Ready` on `map_version` — `workflow.convergedShardMapVersion` was
-    /// patched to `map_version` and the write-pause fence was cleared.
-    TopologyConverged { map_version: u64 },
-    /// A step failed; phase unchanged, safe to retry next tick.
-    Blocked(String),
-}
-
-/// Pure trigger gate (R3 safety rail; AC4): whether `lumen` should start a
-/// **new** split this tick. `false` whenever `maxShardBytes` is unset —
-/// recommendation-only mode never auto-splits, regardless of any other
-/// field, including a stale/manually-forced `status.reshard`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn should_start_split(lumen: &Lumen) -> bool {
-    if lumen.spec.reshard_policy.max_shard_bytes.is_none() {
-        return false;
-    }
-    if lumen.spec.replicas_per_shard > 1 {
-        // Raft-HA: growing shardCount reshuffles ordinal->shard for every
-        // existing pod, not just an added one. See the module doc's "Scope
-        // rail" note.
-        return false;
-    }
-    if !matches!(
-        lumen.spec.reshard_policy.workflow.phase,
-        ReshardPhase::Complete
-    ) {
-        // Already mid-workflow: PrepareSplit/Splitting/CatchingUp resume via
-        // drive_tick's other branches, never restart from should_start_split.
-        return false;
-    }
-    if let Some(max) = lumen.spec.reshard_policy.max_shards {
-        if lumen.spec.shard_count >= max {
-            return false;
-        }
-    }
-    let Some(status) = lumen.status.as_ref() else {
-        return false;
-    };
-    // #1396 R5: re-derive freshness here rather than trusting the status
-    // subresource's own `blockingConditions` alone. `reshard_status_with_usage`
-    // (crd.rs) already refuses to report a *threshold* condition against a
-    // stale usage measurement (it reports `usageStalePostCutover` instead —
-    // see the #1386 tests below), but that only protects the write path: a
-    // status write from an in-flight scrape can still be the one currently
-    // stored when a *later* `spec.shardMap` cutover lands (a second,
-    // independent split racing this one, or an operator restart reordering
-    // writes), leaving a `prepareThresholdCrossed`/`urgentThresholdCrossed`
-    // condition on disk that was computed against a map version the CR has
-    // already moved past. Requiring the status's `usageMeasuredAtMapVersion`
-    // to equal the CR's *current* `spec.shardMap.version` at the moment this
-    // trigger decision is made closes that race without needing the status
-    // writer and this reader to be perfectly ordered.
-    if status.reshard.usage_measured_at_map_version != Some(lumen.spec.shard_map.version) {
-        return false;
-    }
-    status
-        .reshard
-        .blocking_conditions
-        .iter()
-        .any(|c| c == "prepareThresholdCrossed" || c == "urgentThresholdCrossed")
-}
-
-/// The virtual-bucket map `lumen.spec.shardMap` currently describes — the
-/// map still live for routing/data placement right now, as opposed to
-/// `spec.shardCount`'s StatefulSet-sizing intent.
-///
-/// While a split is in flight (`workflow.targetShardCount` is set),
-/// `start_split` has already bumped `spec.shardCount` to the target so the
-/// new StatefulSet replica can come up, but the actual live topology —
-/// what `bucket_moves`/`snapshot_reshard_batches` must diff against, and
-/// what eviction must iterate — is still the pre-split shard count until
-/// the `Complete`-phase cutover commits `shardMap`. This driver only ever
-/// grows a map by exactly one shard per split (R1), so the pre-split count
-/// is always `targetShardCount - 1`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn current_shard_map(lumen: &Lumen) -> Result<VirtualBucketShardMap> {
-    let sm = &lumen.spec.shard_map;
-    let physical = match lumen.spec.reshard_policy.workflow.target_shard_count {
-        Some(target) => target.saturating_sub(1).max(1),
-        None => lumen.spec.shard_count.max(1),
-    };
-    if sm.assignments.is_empty() {
-        VirtualBucketShardMap::balanced(sm.version, sm.virtual_bucket_count, physical)
-    } else {
-        VirtualBucketShardMap::new(sm.version, sm.assignments.clone(), physical)
-    }
-}
-
-/// The target map for growing `current` by exactly one shard (R1).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn compute_target_map(current: &VirtualBucketShardMap) -> Result<VirtualBucketShardMap> {
-    current.split_one_shard(current.version() + 1)
-}
-
-async fn fetch_scoped_backup(
-    http: &reqwest::Client,
-    base_url: &str,
-    token: Option<&str>,
-    virtual_bucket_count: u32,
-    buckets: &BTreeSet<u32>,
-) -> Result<SnapshotV1> {
-    let mut req = http
-        .post(format!("{base_url}/admin/backup:scoped"))
-        .json(&json!({
-            "virtual_bucket_count": virtual_bucket_count,
-            "buckets": buckets,
-        }));
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("POST {base_url}/admin/backup:scoped"))?;
-    if !resp.status().is_success() {
-        bail!("{base_url}/admin/backup:scoped returned {}", resp.status());
-    }
-    resp.json::<SnapshotV1>()
-        .await
-        .context("decode backup:scoped response")
-}
-
-/// `GET /collections` (#1457 R2): the full list of collections that exist on
-/// this shard right now, independent of any bucket scope. The reshard
-/// driver's admin token carries wildcard `Role::Admin` on `"*"`, which
-/// already satisfies this data-plane route's per-collection `Role::Read`
-/// filter for every collection id, so no new admin-only endpoint is needed
-/// here. This is deliberately **not** derived from a bucket-scoped
-/// snapshot's own `collections` keys: [`crate::reshard::snapshot_bucket_subset`]
-/// (backing `POST /admin/backup:scoped`) omits a collection entirely from
-/// its output when it has zero matching docs in the requested buckets — a
-/// collection a batch of deletes emptied out of a moved bucket would then be
-/// silently skipped by [`snapshot_reshard_prune_chunks`], leaving its stale
-/// copies on the target unpruned (the exact edge #1443 disclosed and #1457
-/// R2 closes).
-async fn fetch_all_collection_ids(
-    http: &reqwest::Client,
-    base_url: &str,
-    token: Option<&str>,
-) -> Result<BTreeSet<String>> {
-    let mut req = http.get(format!("{base_url}/collections"));
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("GET {base_url}/collections"))?;
-    if !resp.status().is_success() {
-        bail!("{base_url}/collections returned {}", resp.status());
-    }
-    let ids: Vec<String> = resp
-        .json()
-        .await
-        .with_context(|| format!("decode {base_url}/collections response"))?;
-    Ok(ids.into_iter().collect())
-}
-
-/// If `batch`'s actual wire payload is over
-/// [`crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`], name the collection and
-/// external_id to blame (#1444 R2). `snapshot_reshard_batches`'
-/// `byte_cap_chunk` only ever emits an over-the-limit batch when it floored
-/// at a single external_id (a bucket group's byte cap already keeps every
-/// multi-id batch under half the route limit), so the first id found in
-/// `external_ids` is that one document.
-fn detect_oversized_batch(batch: &ReshardBatch) -> Option<OversizedDocumentBlock> {
-    let bytes = serde_json::to_vec(batch)
-        .map(|bytes| bytes.len())
-        .unwrap_or(usize::MAX);
-    if bytes <= crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES {
-        return None;
-    }
-    let (collection, external_id) = batch.external_ids.iter().find_map(|(collection, ids)| {
-        ids.iter()
-            .next()
-            .map(|external_id| (collection.clone(), external_id.clone()))
-    })?;
-    Some(OversizedDocumentBlock {
-        collection,
-        external_id,
-        bytes,
-    })
-}
-
-async fn apply_reshard_batch(
-    http: &reqwest::Client,
-    base_url: &str,
-    token: Option<&str>,
-    batch: &ReshardBatch,
-) -> Result<()> {
-    // Pre-flight (#1444 R2): a batch this crate can already tell is over the
-    // route's body limit is skipped rather than sent — no wasted round trip,
-    // and the classification never depends on how a given HTTP stack renders
-    // its own 413.
-    if let Some(oversized) = detect_oversized_batch(batch) {
-        return Err(oversized.into());
-    }
-    let mut req = http
-        .post(format!("{base_url}/admin/reshard:apply"))
-        .json(batch);
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("POST {base_url}/admin/reshard:apply"))?;
-    if !resp.status().is_success() {
-        // Defense in depth: even if the pre-flight estimate above missed it
-        // (e.g. framing/compression skew), classify a live 413 on this exact
-        // batch shape the same way rather than a generic Blocked message.
-        if resp.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
-            if let Some(oversized) = detect_oversized_batch(batch) {
-                return Err(oversized.into());
-            }
-        }
-        bail!("{base_url}/admin/reshard:apply returned {}", resp.status());
-    }
-    Ok(())
-}
-
-/// `POST /admin/reshard:prune` (#1457 R1): send one [`ReshardPruneChunk`] of
-/// the final migration pass's authoritative keep set. Unlike
-/// [`apply_reshard_batch`], a chunk carries only external_id strings (no
-/// document content), so it never needs the same pre-flight/live-413
-/// oversize classification — `snapshot_reshard_prune_chunks`'s recursive
-/// byte-cap halving already keeps every chunk under `max_chunk_bytes` short
-/// of a single id long enough alone to exceed it, an unrealistic edge this
-/// function does not special-case. A failure here
-/// propagates as a generic error, surfaced by every caller as
-/// [`DriveOutcome::Blocked`] the same as any other step; the next tick's
-/// retry recomputes and re-sends the same deterministic chunk set (the final
-/// pass runs under the write fence, so bucket population cannot change
-/// between ticks), converging via [`crate::storage::Engine::
-/// apply_reshard_prune_chunk`]'s idempotent accumulator.
-async fn apply_reshard_prune_chunk(
-    http: &reqwest::Client,
-    base_url: &str,
-    token: Option<&str>,
-    chunk: &ReshardPruneChunk,
-) -> Result<()> {
-    let mut req = http
-        .post(format!("{base_url}/admin/reshard:prune"))
-        .json(chunk);
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("POST {base_url}/admin/reshard:prune"))?;
-    if !resp.status().is_success() {
-        bail!("{base_url}/admin/reshard:prune returned {}", resp.status());
-    }
-    Ok(())
-}
-
-/// `POST /admin/reshard:fence` (#1396 R2) against one shard: `buckets`
-/// non-empty arms a bounded write pause over those virtual buckets;
-/// `buckets` empty clears any currently-armed pause. See
-/// [`crate::api::WriteFence`].
-async fn reshard_fence_call(
-    http: &reqwest::Client,
-    base_url: &str,
-    token: Option<&str>,
-    virtual_bucket_count: u32,
-    buckets: &BTreeSet<u32>,
-    ttl_secs: u64,
-) -> Result<()> {
-    let mut req = http
-        .post(format!("{base_url}/admin/reshard:fence"))
-        .json(&json!({
-            "virtual_bucket_count": virtual_bucket_count,
-            "buckets": buckets,
-            "ttl_secs": ttl_secs,
-        }));
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("POST {base_url}/admin/reshard:fence"))?;
-    if !resp.status().is_success() {
-        bail!("{base_url}/admin/reshard:fence returned {}", resp.status());
-    }
-    Ok(())
-}
-
-/// Arm (non-empty `buckets`) or clear (empty `buckets`) the write-pause
-/// fence on every shard `current` owns — the live map's current owners,
-/// where writes to a still-moving bucket land until this tick's own cutover
-/// patch flips `spec.shardMap`.
-///
-/// #1443 R4: arming loops over shards sequentially and can fail partway
-/// through (one shard unreachable). A failure used to return immediately via
-/// `?`, leaving every shard armed *before* the failing one fenced with no
-/// caller ever reaching the clear bracket — an indefinite intermittent write
-/// outage on those shards (re-armed every tick) even though the migration
-/// made zero progress. Now tracks which shards actually armed and, on
-/// failure, best-effort clears exactly those before surfacing the original
-/// error, so a partial arm never outlives this call.
-async fn set_write_fence(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-    current: &VirtualBucketShardMap,
-    buckets: &BTreeSet<u32>,
-    ttl_secs: u64,
-) -> Result<()> {
-    let token = control.admin_token(namespace, lumen).await?;
-    let mut armed_urls: Vec<String> = Vec::new();
-    for shard in 0..current.physical_shard_count() {
-        let url = control.shard_base_url(namespace, name, shard);
-        if let Err(err) = reshard_fence_call(
-            http,
-            &url,
-            token.as_deref(),
-            current.virtual_bucket_count(),
-            buckets,
-            ttl_secs,
-        )
-        .await
-        {
-            if !buckets.is_empty() {
-                for armed_url in &armed_urls {
-                    if let Err(clear_err) = reshard_fence_call(
-                        http,
-                        armed_url,
-                        token.as_deref(),
-                        current.virtual_bucket_count(),
-                        &BTreeSet::new(),
-                        0,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            shard_url = %armed_url,
-                            error = %clear_err,
-                            "reshard driver: best-effort fence clear after a partial arm \
-                             failure also failed; this shard stays fenced until its own TTL \
-                             expires"
-                        );
-                    }
-                }
-            }
-            return Err(err);
-        }
-        if !buckets.is_empty() {
-            armed_urls.push(url);
-        }
-    }
-    Ok(())
-}
-
-async fn evict_shard(
-    http: &reqwest::Client,
-    base_url: &str,
-    token: Option<&str>,
-    shard: u32,
-    map_version: u64,
-    assignments: &[u32],
-    physical_shard_count: u32,
-) -> Result<()> {
-    let mut req = http
-        .post(format!("{base_url}/admin/reshard:evict"))
-        .json(&json!({
-            "shard": shard,
-            "map_version": map_version,
-            "assignments": assignments,
-            "physical_shard_count": physical_shard_count,
-        }));
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("POST {base_url}/admin/reshard:evict"))?;
-    if !resp.status().is_success() {
-        bail!("{base_url}/admin/reshard:evict returned {}", resp.status());
-    }
-    Ok(())
-}
-
-/// `POST /admin/checkpoint` (#1389 R1/R2; durability gate hardened by #1396
-/// R3) against one shard: force its migration mutations (`:apply`/`:evict`,
-/// which bypass `WriteCoordinator`/the AOF) into the same durability domain
-/// ordinary writes reach, and wait for the response before this shard is
-/// considered safe to restart.
-///
-/// A 200 response alone is not proof of durability: [`crate::api`]'s
-/// `admin_checkpoint` handler returns `200 {"persisted": false}` — not an
-/// error status — when the shard has no durable store configured (the
-/// vacuous, RAM-only [`crate::api::NoopCheckpoint`] sink; see that type's
-/// docs), which is exactly the "checkpoint looked like it worked but nothing
-/// was actually made durable" gap #1396's review confirmed (a bare
-/// `is_success()` check treated that response as a satisfied gate). This
-/// function now parses the body and requires `persisted == true`; anything
-/// else — `false`, or a body this shard's response doesn't even carry the
-/// key for — is treated as a failed checkpoint, surfacing as
-/// [`DriveOutcome::Blocked`] naming the shard rather than a cutover that
-/// proceeds over undurable data.
-async fn checkpoint_shard(
-    http: &reqwest::Client,
-    base_url: &str,
-    token: Option<&str>,
-) -> Result<()> {
-    let mut req = http.post(format!("{base_url}/admin/checkpoint"));
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("POST {base_url}/admin/checkpoint"))?;
-    if !resp.status().is_success() {
-        bail!("{base_url}/admin/checkpoint returned {}", resp.status());
-    }
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .with_context(|| format!("decode {base_url}/admin/checkpoint response"))?;
-    let persisted = body
-        .get("persisted")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if !persisted {
-        bail!(
-            "{base_url}/admin/checkpoint did not report persisted=true (shard has no durable \
-             checkpoint sink configured, or the checkpoint failed) — cutover cannot proceed \
-             over undurable migration mutations on this shard"
-        );
-    }
-    Ok(())
-}
-
-/// #1389 R3, generalized by #1396 R1 into an explicit shard set: checkpoint
-/// exactly `shards`. [`advance_catching_up`] now calls this twice per tick —
-/// once for just the target/new shard immediately after migration and
-/// *before* any source eviction is attempted, and again for every source
-/// shard after eviction — rather than once for `0..target.physical_shard_
-/// count()` after both migration and eviction had already run (the ordering
-/// #1396's review found: an eviction becoming durable, or even being
-/// attempted, before the target's copy of the same data was durably
-/// checkpointed, could lose data on a crash between the two). A failure here
-/// leaves the workflow in `CatchingUp` — resumable, never mid-cutover with
-/// undurable data — and the next tick retries the same idempotent
-/// migration/checkpoint/eviction/checkpoint sequence.
-///
-/// `moving_buckets`/`last_armed_at` (#1458 R3) thread the same
-/// [`maybe_rearm_fence`] time-based re-arm into this loop: a real cutover
-/// can checkpoint many source shards sequentially, and the caller's
-/// unconditional phase-boundary re-arm (immediately before this call) only
-/// covers the moment this loop starts, not however long the loop itself
-/// takes.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-async fn checkpoint_shards(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-    shards: impl Iterator<Item = u32>,
-    current: &VirtualBucketShardMap,
-    moving_buckets: Option<&BTreeSet<u32>>,
-    last_armed_at: &mut Instant,
-) -> Result<()> {
-    let token = control.admin_token(namespace, lumen).await?;
-    for shard in shards {
-        maybe_rearm_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            current,
-            moving_buckets,
-            last_armed_at,
-        )
-        .await?;
-        let url = control.shard_base_url(namespace, name, shard);
-        checkpoint_shard(http, &url, token.as_deref()).await?;
-    }
-    Ok(())
-}
-
-fn map_assignments(map: &VirtualBucketShardMap) -> Vec<u32> {
-    (0..map.virtual_bucket_count())
-        .map(|bucket| map.assignment_for_bucket(bucket).unwrap_or(0))
-        .collect()
-}
-
-/// Every virtual bucket currently assigned to `map`'s highest-index
-/// (newest) physical shard (#1458 R1). [`VirtualBucketShardMap::
-/// split_one_shard`] only ever moves a bucket directly into the new shard
-/// it appends — never between two pre-existing shards — so immediately
-/// after a cutover to `map`, this is exactly the set of buckets that just
-/// moved, recoverable purely from the already-persisted `spec.shardMap`
-/// with no separate bookkeeping. [`advance_convergence`] re-fences this same
-/// set every tick until every serving pod is confirmed Ready on `map`.
-fn buckets_on_newest_shard(map: &VirtualBucketShardMap) -> BTreeSet<u32> {
-    let newest = map.physical_shard_count().saturating_sub(1);
-    (0..map.virtual_bucket_count())
-        .filter(|&bucket| map.assignment_for_bucket(bucket) == Some(newest))
-        .collect()
-}
-
-/// #1458 R3: re-arm the write fence once more than
-/// `write_fence_ttl_secs() / FENCE_REARM_FRACTION` has elapsed since the
-/// last arm. Replaces the earlier fixed-count re-arm (#1443 R1, every
-/// `FENCE_REARM_BATCH_INTERVAL = 20` applied batches/chunks): a count-based
-/// clock can still be outrun by a sequence whose batches are individually
-/// slow (a large scoped-backup fetch, a slow network, or a handful of huge
-/// byte-capped batches) even though few *batches* have been applied — a
-/// time-based clock, checked between every batch/chunk apply and around
-/// each fetch/prune step, cannot.
-const FENCE_REARM_FRACTION: u32 = 4;
-
-/// Re-arm the write-pause fence if more than `write_fence_ttl_secs() /
-/// [`FENCE_REARM_FRACTION`]` has elapsed since `*last_armed_at` (#1458 R3).
-/// No-op — and leaves `*last_armed_at` untouched — when `moving_buckets` is
-/// `None`/empty (this pass/step is not running under a fence) or the
-/// fraction has not yet elapsed. A re-arm failure propagates as `Err`,
-/// which every caller already surfaces as [`DriveOutcome::Blocked`] before
-/// eviction ever runs (R3's "a failed re-arm still aborts to `Blocked`
-/// before eviction").
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-async fn maybe_rearm_fence(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-    current: &VirtualBucketShardMap,
-    moving_buckets: Option<&BTreeSet<u32>>,
-    last_armed_at: &mut Instant,
-) -> Result<()> {
-    let Some(buckets) = moving_buckets.filter(|b| !b.is_empty()) else {
-        return Ok(());
-    };
-    let ttl_secs = control.write_fence_ttl_secs();
-    let rearm_after = Duration::from_secs(ttl_secs) / FENCE_REARM_FRACTION;
-    if last_armed_at.elapsed() < rearm_after {
-        return Ok(());
-    }
-    set_write_fence(
-        control, http, namespace, name, lumen, current, buckets, ttl_secs,
-    )
-    .await
-    .context("re-arm write fence mid migration pass")?;
-    *last_armed_at = Instant::now();
-    Ok(())
-}
-
-/// One migration pass: every bucket [`bucket_moves`] says moved between
-/// `current_shard_map` and [`compute_target_map`], grouped by its old
-/// (`from_shard`) owner, fetched via `POST /admin/backup:scoped` and applied
-/// to its new owner via `POST /admin/reshard:apply`
-/// ([`snapshot_reshard_batches`] builds the bounded batches). Real,
-/// non-test caller of both — AC3. Idempotent: re-running against unchanged
-/// data re-applies the same batches, which `POST /admin/reshard:apply`
-/// already treats as a no-op (#1380).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub async fn run_migration_pass(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-) -> Result<usize> {
-    run_migration_pass_impl(control, http, namespace, name, lumen, false, None).await
-}
-
-/// Shared migration-pass implementation. `final_pass` is `true` only for the
-/// final, fenced `CatchingUp` pass: every `snapshot_reshard_batches` apply
-/// below stays purely additive regardless (#1457 R1), but a `final_pass`
-/// additionally sends the authoritative-replace scope for every moved bucket
-/// via `POST /admin/reshard:prune` — see [`snapshot_reshard_prune_chunks`].
-/// `moving_buckets` (#1443 R1), when `Some`, marks this pass as running
-/// under a write fence and re-arms it with a fresh
-/// [`ClusterControl::write_fence_ttl_secs`] deadline via [`maybe_rearm_fence`]
-/// (#1458 R3: time-based, checked around every fetch/apply/prune step, not
-/// a fixed applied-batch count) — a re-arm failure aborts the whole pass
-/// immediately (propagated as `Err`, which every caller already surfaces as
-/// `DriveOutcome::Blocked` before eviction ever runs).
-async fn run_migration_pass_impl(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-    final_pass: bool,
-    moving_buckets: Option<&BTreeSet<u32>>,
-) -> Result<usize> {
-    let current = current_shard_map(lumen)?;
-    let target = compute_target_map(&current)?;
-    let moves = bucket_moves(&current, &target)?;
-    if moves.is_empty() {
-        return Ok(0);
-    }
-
-    let mut buckets_by_from_shard: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
-    let mut to_shard_by_bucket: BTreeMap<u32, u32> = BTreeMap::new();
-    for mv in &moves {
-        buckets_by_from_shard
-            .entry(mv.from_shard)
-            .or_default()
-            .insert(mv.bucket);
-        to_shard_by_bucket.insert(mv.bucket, mv.to_shard);
-    }
-
-    let token = control.admin_token(namespace, lumen).await?;
-    let mut total_batches = 0usize;
-    // #1458 R3: the fence was armed by the caller immediately before this
-    // call, so `Instant::now()` here is that arm's timestamp — the clock
-    // [`maybe_rearm_fence`] measures elapsed time against at every
-    // fetch/apply/prune step below, independent of which of the two loops
-    // is currently running or how many calls each has made.
-    let mut last_armed_at = Instant::now();
-    for (from_shard, buckets) in buckets_by_from_shard {
-        maybe_rearm_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            &current,
-            moving_buckets,
-            &mut last_armed_at,
-        )
-        .await?;
-        let source_url = control.shard_base_url(namespace, name, from_shard);
-        let snapshot = fetch_scoped_backup(
-            http,
-            &source_url,
-            token.as_deref(),
-            current.virtual_bucket_count(),
-            &buckets,
-        )
-        .await?;
-        let batches =
-            snapshot_reshard_batches(&snapshot, &current, &target, MAX_EXTERNAL_IDS_PER_BATCH)?;
-        for batch in &batches {
-            let dest_url = control.shard_base_url(namespace, name, batch.to_shard);
-            if let Err(err) = apply_reshard_batch(http, &dest_url, token.as_deref(), batch).await {
-                // #1444 R2: record the wedge distinctly before propagating, so
-                // callers that turn this `Err` into `DriveOutcome::Blocked`
-                // still leave a structured trace behind for `status.reshard`
-                // and for `advance_catching_up`'s fence-skip check, even
-                // though the `Err` itself stays a generic message.
-                if let Some(oversized) = err.downcast_ref::<OversizedDocumentBlock>() {
-                    record_oversize_block(
-                        namespace,
-                        name,
-                        &lumen.uid().unwrap_or_default(),
-                        oversized.clone(),
-                    );
-                }
-                return Err(err);
-            }
-            total_batches += 1;
-            maybe_rearm_fence(
-                control,
-                http,
-                namespace,
-                name,
-                lumen,
-                &current,
-                moving_buckets,
-                &mut last_armed_at,
-            )
-            .await?;
-        }
-
-        // #1457 R1/R2: the final pass's authoritative-replace scope, sent as
-        // its own independently byte-capped `POST /admin/reshard:prune`
-        // chunks rather than stamped onto every `ReshardBatch` above — see
-        // `reshard.rs`'s `ReshardBatch`/`ReshardPruneChunk` docs for why. The
-        // full collection list is fetched from the source shard directly
-        // (#1457 R2) rather than derived from `snapshot`'s own keys, so a
-        // collection a batch of deletes emptied out of these buckets still
-        // gets an (empty) keep scope instead of being silently skipped.
-        if final_pass {
-            let collection_ids = fetch_all_collection_ids(http, &source_url, token.as_deref())
-                .await
-                .context("fetch source shard's full collection list for the final reshard pass")?;
-            maybe_rearm_fence(
-                control,
-                http,
-                namespace,
-                name,
-                lumen,
-                &current,
-                moving_buckets,
-                &mut last_armed_at,
-            )
-            .await?;
-            let prune_chunks = snapshot_reshard_prune_chunks(
-                &snapshot,
-                &target,
-                &buckets,
-                &collection_ids,
-                crate::reshard::MAX_BATCH_BYTES,
-            )?;
-            for chunk in &prune_chunks {
-                let Some(&to_shard) = to_shard_by_bucket.get(&chunk.bucket) else {
-                    bail!(
-                        "prune chunk for bucket {} has no known destination shard",
-                        chunk.bucket
-                    );
-                };
-                let dest_url = control.shard_base_url(namespace, name, to_shard);
-                apply_reshard_prune_chunk(http, &dest_url, token.as_deref(), chunk).await?;
-                maybe_rearm_fence(
-                    control,
-                    http,
-                    namespace,
-                    name,
-                    lumen,
-                    &current,
-                    moving_buckets,
-                    &mut last_armed_at,
-                )
-                .await?;
-            }
-        }
-    }
-    // A full pass completed without hitting the oversize wedge (whether or
-    // not one was ever recorded) — clear any stale block so a fixed document
-    // doesn't leave `status.reshard` reporting a condition that no longer
-    // applies.
-    clear_oversize_block(namespace, name);
-    Ok(total_batches)
-}
-
-/// Post-cutover eviction (idempotent, #1380) on every **old** shard, using
-/// only the already-committed target map — the driver never needs to retain
-/// the old map across a restart.
-///
-/// `moving_buckets`/`last_armed_at` (#1467 R3) thread the same
-/// [`maybe_rearm_fence`] time-based re-arm [`checkpoint_shards`] already
-/// has into this loop: eviction round-trips one HTTP call per **old**
-/// physical shard, and a slow round (many old shards, a slow network) could
-/// otherwise outlive the fence TTL mid-eviction with no re-arm to catch it
-/// — the caller's unconditional phase-boundary re-arm immediately before
-/// this call only covers the moment the loop starts.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-async fn evict_old_shards(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-    current: &VirtualBucketShardMap,
-    target: &VirtualBucketShardMap,
-    moving_buckets: Option<&BTreeSet<u32>>,
-    last_armed_at: &mut Instant,
-) -> Result<()> {
-    let token = control.admin_token(namespace, lumen).await?;
-    let assignments = map_assignments(target);
-    for shard in 0..current.physical_shard_count() {
-        maybe_rearm_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            current,
-            moving_buckets,
-            last_armed_at,
-        )
-        .await?;
-        let url = control.shard_base_url(namespace, name, shard);
-        evict_shard(
-            http,
-            &url,
-            token.as_deref(),
-            shard,
-            target.version(),
-            &assignments,
-            target.physical_shard_count(),
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-async fn start_split(
-    control: &dyn ClusterControl,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-) -> DriveOutcome {
-    let current = match current_shard_map(lumen) {
-        Ok(m) => m,
-        Err(err) => return DriveOutcome::Blocked(err.to_string()),
-    };
-    let target = match compute_target_map(&current) {
-        Ok(m) => m,
-        Err(err) => return DriveOutcome::Blocked(err.to_string()),
-    };
-    let target_shard_count = target.physical_shard_count();
-    let patch = json!({
-        "spec": {
-            "shardCount": target_shard_count,
-            "reshardPolicy": {
-                "workflow": {
-                    "phase": "PrepareSplit",
-                    "targetShardCount": target_shard_count,
-                }
-            }
-        }
-    });
-    match control.patch_spec(namespace, name, patch).await {
-        Ok(()) => DriveOutcome::StartedSplit { target_shard_count },
-        Err(err) => DriveOutcome::Blocked(err.to_string()),
-    }
-}
-
-async fn advance_prepare_split(
-    control: &dyn ClusterControl,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-) -> DriveOutcome {
-    let Some(target_shard_count) = lumen.spec.reshard_policy.workflow.target_shard_count else {
-        return DriveOutcome::Blocked("PrepareSplit with no targetShardCount set".to_string());
-    };
-    let ready = match control.statefulset_ready_replicas(namespace, name).await {
-        Ok(r) => r,
-        Err(err) => return DriveOutcome::Blocked(err.to_string()),
-    };
-    if ready < i64::from(target_shard_count) {
-        return DriveOutcome::WaitingForNewShard { target_shard_count };
-    }
-    let patch = json!({
-        "spec": { "reshardPolicy": { "workflow": { "phase": "Splitting" } } }
-    });
-    match control.patch_spec(namespace, name, patch).await {
-        Ok(()) => DriveOutcome::AdvancedToSplitting,
-        Err(err) => DriveOutcome::Blocked(err.to_string()),
-    }
-}
-
-async fn advance_splitting(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-) -> DriveOutcome {
-    let batches = match run_migration_pass(control, http, namespace, name, lumen).await {
-        Ok(n) => n,
-        Err(err) => return DriveOutcome::Blocked(err.to_string()),
-    };
-    let patch = json!({
-        "spec": { "reshardPolicy": { "workflow": { "phase": "CatchingUp" } } }
-    });
-    match control.patch_spec(namespace, name, patch).await {
-        Ok(()) => {
-            if batches == 0 {
-                // Nothing moved on this pass (already caught up from a prior
-                // attempt); still safe to advance.
-                DriveOutcome::AdvancedToCatchingUp
-            } else {
-                DriveOutcome::MigratedBatches { batches }
-            }
-        }
-        Err(err) => DriveOutcome::Blocked(err.to_string()),
-    }
-}
-
-/// #1396 R1/R2: durably ordered cutover. Old order was migrate -> evict ->
-/// checkpoint-everything -> cutover, which could make a source shard's
-/// eviction durable (or even attempt it) before the target shard's copy of
-/// the same data was durably checkpointed — a crash between eviction and
-/// that too-late checkpoint could lose data that, at that instant, existed
-/// on no durable shard at all (#1387's exact failure shape, reintroduced by
-/// evicting ahead of a per-shard-ordered checkpoint). New order: migrate ->
-/// checkpoint target only -> evict sources -> checkpoint sources -> cutover.
-/// Crash-safety at every boundary (moved data is durable on at least one
-/// shard at every point once migration completes):
-/// - Crash after migrate, before the target checkpoint: sources still hold
-///   their data (not yet evicted); retry re-migrates (idempotent, #1380)
-///   and the target checkpoint eventually succeeds.
-/// - Crash after the target checkpoint, before eviction: the target already
-///   durably holds the moved data; retry replays migrate (no-op) and the
-///   target checkpoint (no-op re-confirm), then proceeds to evict.
-/// - Crash after eviction (RAM-only until its own checkpoint), before the
-///   source checkpoint: even if the pod restart the driver is about to
-///   trigger loses the in-RAM eviction, a retry is still safe — the target
-///   already durably has the moved data from the earlier target checkpoint,
-///   so a retried migrate is a no-op, a retried evict is idempotent, and the
-///   source checkpoint retries until it succeeds. Eviction is never durable
-///   nor attempted before the target's copy is durable, so this crash can
-///   never lose data.
-/// - Crash after the source checkpoint, before the cutover patch: both
-///   sides are durable; retry replays every step as a no-op until the
-///   cutover patch finally lands.
-///
-/// R2: the whole sequence below runs under a write-pause fence (`POST
-/// /admin/reshard:fence`) armed over every still-moving bucket on its
-/// current (source) owners, so this tick's migration pass is guaranteed a
-/// converged snapshot of those buckets — closing the gap where a write
-/// lands on a source shard after the last migration-copy read but before
-/// that bucket's eviction and is silently dropped. See
-/// [`crate::api::WriteFence`] for why a crashed driver can never leave it
-/// armed permanently.
-///
-/// The fence is cleared immediately on every exit path *except*
-/// [`DriveOutcome::CompletedSplit`] (#1442 R2): a completed split just
-/// called [`ClusterControl::trigger_rolling_restart`], and pods only read
-/// `SHARD_MAP_*`/`SHARD_COUNT` env at boot, so old-map pods keep serving
-/// (and, without this, keep accepting local writes for) the just-evicted
-/// source buckets until the rolling restart actually reaches them —
-/// clearing the fence right after triggering the restart would open exactly
-/// that mixed-map window back up. Leaving it armed here lets
-/// [`WRITE_FENCE_TTL_SECS`] bound the window instead (the design's simpler,
-/// non-blocking alternative to synchronously polling every serving pod
-/// Ready on the new topology from inside one CR's tick, which would stall
-/// `drive_tick`'s other CRs); the next split for this CR can only start once
-/// `drive_tick` sees the phase back at `Complete`, well after the TTL, so
-/// there is no risk of a subsequent tick trying to arm a fence that is
-/// already armed from a prior split.
-async fn advance_catching_up(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-) -> DriveOutcome {
-    let current = match current_shard_map(lumen) {
-        Ok(m) => m,
-        Err(err) => return DriveOutcome::Blocked(err.to_string()),
-    };
-    let target = match compute_target_map(&current) {
-        Ok(m) => m,
-        Err(err) => return DriveOutcome::Blocked(err.to_string()),
-    };
-    let moves = match bucket_moves(&current, &target) {
-        Ok(m) => m,
-        Err(err) => return DriveOutcome::Blocked(err.to_string()),
-    };
-    let moving_buckets: BTreeSet<u32> = moves.iter().map(|m| m.bucket).collect();
-
-    // #1444 R2: a tick already known-wedged on an oversized single-document
-    // batch is a permanent no-progress condition until the document shrinks
-    // (see [`OversizedDocumentBlock`]) — arming the write fence anyway would
-    // pause writes to these buckets for a pass that cannot possibly finish,
-    // recurring every tick's `WRITE_FENCE_TTL_SECS` window for no benefit.
-    // `should_skip_for_oversize` still periodically lets a real attempt
-    // through (`OVERSIZE_RECHECK_TICKS`) so a fixed document self-heals.
-    if let Some(block) = should_skip_for_oversize(namespace, name, &lumen.uid().unwrap_or_default())
-    {
-        return DriveOutcome::Blocked(block.to_string());
-    }
-
-    if !moving_buckets.is_empty() {
-        if let Err(err) = set_write_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            &current,
-            &moving_buckets,
-            control.write_fence_ttl_secs(),
-        )
-        .await
-        {
-            return DriveOutcome::Blocked(err.to_string());
-        }
-    }
-
-    let outcome = advance_catching_up_fenced(
-        control,
-        http,
-        namespace,
-        name,
-        lumen,
-        &current,
-        &target,
-        &moving_buckets,
-    )
-    .await;
-
-    let completed_split = matches!(outcome, DriveOutcome::CompletedSplit { .. });
-    if !moving_buckets.is_empty() && !completed_split {
-        // Clear on every exit path except a completed split (#1442 R2, see
-        // this fn's doc comment): the fence must not outlive this tick
-        // *unless* the cutover it guarded just triggered a rolling restart,
-        // in which case leaving it armed and TTL-bounded closes the
-        // mixed-map window instead of reopening it. If this clear itself
-        // fails (or the process dies before reaching it), WRITE_FENCE_TTL_SECS
-        // still bounds how long writes to these buckets stay paused — the
-        // serving pod enforces that deadline on its own, independent of the
-        // driver ever coming back.
-        if let Err(err) = set_write_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            &current,
-            &BTreeSet::new(),
-            0,
-        )
-        .await
-        {
-            tracing::warn!(
-                error = %err,
-                "reshard driver: failed to clear write fence after CatchingUp tick; \
-                 bounded by WRITE_FENCE_TTL_SECS"
-            );
-        }
-    } else if !moving_buckets.is_empty() && completed_split {
-        tracing::info!(
-            "reshard driver: split completed and rolling restart triggered; leaving write fence \
-             armed for WRITE_FENCE_TTL_SECS={WRITE_FENCE_TTL_SECS}s to close the old-map pods' \
-             mixed-map window instead of clearing it immediately (#1442 R2)"
-        );
-    }
-
-    outcome
-}
-
-/// The migrate/checkpoint/evict/checkpoint/cutover sequence proper, run
-/// under [`advance_catching_up`]'s write fence. Split out so the fence's
-/// arm/clear bracket is unconditional (always runs, regardless of which
-/// step below fails) without duplicating the sequence itself.
-///
-/// #1443 R1: this sequence's migration pass is `final_pass` (R2, reworked
-/// #1457 R1 into a separate `POST /admin/reshard:prune` step) and runs
-/// under time-based in-loop re-arming (#1458 R3); the fence is additionally
-/// re-armed with a fresh TTL at every phase boundary below (after the
-/// migration pass and before the target checkpoint, again before eviction,
-/// and again before the sources' checkpoint round) so a real pass —
-/// hundreds of sequential batch/checkpoint HTTP round trips — can never
-/// silently outlive [`ClusterControl::write_fence_ttl_secs`] mid-sequence.
-/// [`checkpoint_shards`] itself also re-arms on the same TTL/4 clock between
-/// individual shard checkpoints (#1458 R3), so a slow multi-shard
-/// checkpoint round is covered too, not just the boundary before it. Any
-/// re-arm failure aborts to [`DriveOutcome::Blocked`] immediately, always
-/// strictly before [`evict_old_shards`] runs.
-async fn advance_catching_up_fenced(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-    current: &VirtualBucketShardMap,
-    target: &VirtualBucketShardMap,
-    moving_buckets: &BTreeSet<u32>,
-) -> DriveOutcome {
-    if let Err(err) = run_migration_pass_impl(
-        control,
-        http,
-        namespace,
-        name,
-        lumen,
-        true,
-        Some(moving_buckets),
-    )
-    .await
-    {
-        return DriveOutcome::Blocked(err.to_string());
-    }
-
-    // #1458 R3: re-armed (unconditionally) at every phase boundary below;
-    // reset alongside each one so `checkpoint_shards`' own in-loop
-    // time-based re-arm measures elapsed time from the boundary that
-    // actually just armed the fence, not from this sequence's start.
-    let mut last_armed_at = Instant::now();
-    let fence_buckets = (!moving_buckets.is_empty()).then_some(moving_buckets);
-
-    if !moving_buckets.is_empty() {
-        if let Err(err) = set_write_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            current,
-            moving_buckets,
-            control.write_fence_ttl_secs(),
-        )
-        .await
-        {
-            return DriveOutcome::Blocked(format!(
-                "re-arm write fence before target checkpoint: {err}"
-            ));
-        }
-        last_armed_at = Instant::now();
-    }
-
-    // R1: the target/new shard's copy of the just-migrated data must be
-    // durable BEFORE any source eviction is even attempted.
-    let new_shard = target.physical_shard_count().saturating_sub(1);
-    if let Err(err) = checkpoint_shards(
-        control,
-        http,
-        namespace,
-        name,
-        lumen,
-        std::iter::once(new_shard),
-        current,
-        fence_buckets,
-        &mut last_armed_at,
-    )
-    .await
-    {
-        return DriveOutcome::Blocked(err.to_string());
-    }
-
-    if !moving_buckets.is_empty() {
-        if let Err(err) = set_write_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            current,
-            moving_buckets,
-            control.write_fence_ttl_secs(),
-        )
-        .await
-        {
-            return DriveOutcome::Blocked(format!("re-arm write fence before eviction: {err}"));
-        }
-        last_armed_at = Instant::now();
-    }
-
-    if let Err(err) = evict_old_shards(
-        control,
-        http,
-        namespace,
-        name,
-        lumen,
-        current,
-        target,
-        fence_buckets,
-        &mut last_armed_at,
-    )
-    .await
-    {
-        return DriveOutcome::Blocked(err.to_string());
-    }
-
-    if !moving_buckets.is_empty() {
-        if let Err(err) = set_write_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            current,
-            moving_buckets,
-            control.write_fence_ttl_secs(),
-        )
-        .await
-        {
-            return DriveOutcome::Blocked(format!(
-                "re-arm write fence before sources' checkpoint round: {err}"
-            ));
-        }
-        last_armed_at = Instant::now();
-    }
-
-    // R1: sources' eviction must itself be durable before cutover, same
-    // rationale #1389 already established — a crash-then-restart must never
-    // resurrect data this shard no longer owns.
-    if let Err(err) = checkpoint_shards(
-        control,
-        http,
-        namespace,
-        name,
-        lumen,
-        0..current.physical_shard_count(),
-        current,
-        fence_buckets,
-        &mut last_armed_at,
-    )
-    .await
-    {
-        return DriveOutcome::Blocked(err.to_string());
-    }
-
-    let patch = json!({
-        "spec": {
-            "shardMap": {
-                "version": target.version(),
-                "virtualBucketCount": target.virtual_bucket_count(),
-                "assignments": map_assignments(target),
-            },
-            "reshardPolicy": {
-                "workflow": {
-                    "phase": "Complete",
-                    "targetShardCount": null,
-                    // #1467 R7: stamped in the SAME patch as `shardMap.
-                    // version` — proof this cutover, and not a hand-authored
-                    // or restored `shardMap`, is what produced this map
-                    // version, gating `advance_convergence`'s engagement.
-                    "lastCutoverShardMapVersion": target.version(),
-                }
-            }
-        }
-    });
-    if let Err(err) = control.patch_spec(namespace, name, patch).await {
-        return DriveOutcome::Blocked(err.to_string());
-    }
-    if let Err(err) = control.trigger_rolling_restart(namespace, name).await {
-        // Non-fatal: the map has already flipped; a failed restart trigger
-        // only delays picking up the new ConfigMap once consumption exists
-        // (see the module doc's "known gap"), it does not corrupt data.
-        tracing::warn!(error = %err, "reshard driver: cutover rolling-restart trigger failed");
-    }
-    DriveOutcome::CompletedSplit {
-        new_map_version: target.version(),
-    }
-}
-
-/// #1458 R1: `Complete`-phase convergence step, checked ahead of
-/// [`should_start_split`] so a CR is never allowed to start a *new* split
-/// while a prior one's serving pods have not all confirmed `Ready` on the
-/// map that prior split cutover to. Keeps the write-pause fence armed over
-/// [`buckets_on_newest_shard`] — the buckets that moved into the current
-/// `spec.shardMap` — re-arming it every tick this returns `Some(
-/// AwaitingTopologyConvergence)`, until [`ClusterControl::
-/// serving_topology_converged`] confirms every serving pod is `Ready` on
-/// the new topology, at which point the fence is cleared and
-/// `workflow.convergedShardMapVersion` is patched to the converged version.
-///
-/// "Converging" is derived purely from persisted state (`spec.shardMap.
-/// version` compared against `workflow.convergedShardMapVersion`), not
-/// driver memory, so this resumes correctly across a driver restart:
-/// [`buckets_on_newest_shard`] recomputes the exact same bucket set from
-/// `spec.shardMap` alone (see that function's doc for the invariant this
-/// relies on), and [`ClusterControl::serving_topology_converged`] reuses
-/// the same StatefulSet readiness plumbing [`advance_prepare_split`]
-/// already polls rather than adding a new seam.
-///
-/// This replaces #1442 R2's "leave the fence armed once for a fixed
-/// [`WRITE_FENCE_TTL_SECS`]" behavior: a slow rolling restart across many
-/// pods could outlive that single fixed TTL, silently reopening the
-/// mixed-map write-loss window the fence exists to close.
-///
-/// Returns `None` when convergence is not pending — either `shard_map.
-/// version == 0` (a CR that has never resharded; no cutover has ever run
-/// to converge from), the current version is already recorded converged, or
-/// (#1467 R7) `workflow.lastCutoverShardMapVersion` does not equal the
-/// current `shard_map.version` — letting the caller fall through to
-/// [`should_start_split`].
-///
-/// #1467 R7: the `lastCutoverShardMapVersion` check is what keeps this
-/// function from ever engaging the write-pause fence for a CR whose
-/// `spec.shardMap` was hand-authored (or restored from a backup/migration)
-/// rather than reached via a cutover this driver actually ran —
-/// `advance_catching_up_fenced`'s cutover patch is the ONLY writer of
-/// `lastCutoverShardMapVersion`, and it always sets it to the exact
-/// `target.version()` it patches into `shardMap.version` in the same call,
-/// so the two fields are equal immediately after every real cutover. A
-/// manually-set `shardMap.version` therefore leaves
-/// `lastCutoverShardMapVersion` unequal (usually `None`) forever, and this
-/// function never engages for it — closing the gap where convergence would
-/// otherwise fence indefinitely over a topology the driver never actually
-/// changed.
-async fn advance_convergence(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    namespace: &str,
-    name: &str,
-    lumen: &Lumen,
-) -> Option<DriveOutcome> {
-    let map_version = lumen.spec.shard_map.version;
-    let workflow = &lumen.spec.reshard_policy.workflow;
-    if map_version == 0
-        || workflow.converged_shard_map_version == Some(map_version)
-        || workflow.last_cutover_shard_map_version != Some(map_version)
-    {
-        clear_convergence_stall(namespace, name);
-        return None;
-    }
-
-    let current = match current_shard_map(lumen) {
-        Ok(m) => m,
-        Err(err) => return Some(DriveOutcome::Blocked(err.to_string())),
-    };
-    let moving_buckets = buckets_on_newest_shard(&current);
-    let desired_replicas = lumen.spec.storage_pod_count() as i64;
-
-    let rollout_converged = match control
-        .serving_topology_converged(namespace, name, desired_replicas)
-        .await
-    {
-        Ok(converged) => converged,
-        Err(err) => return Some(DriveOutcome::Blocked(err.to_string())),
-    };
-
-    // #1467 R5: StatefulSet rollout completion alone doesn't prove every
-    // serving pod actually holds the new shard map — it only proves the
-    // pod template/generation converged. Require every pod to also report
-    // the new map version on its own `/metrics` before treating topology
-    // as converged. Gated behind `rollout_converged` so we don't scrape
-    // every shard on every tick while a rollout is still in flight.
-    let converged = if rollout_converged {
-        match control
-            .serving_pods_report_map_version(
-                http,
-                namespace,
-                name,
-                current.physical_shard_count(),
-                map_version,
-            )
-            .await
-        {
-            Ok(reported) => reported,
-            Err(err) => return Some(DriveOutcome::Blocked(err.to_string())),
-        }
-    } else {
-        false
-    };
-
-    if converged {
-        // #1467 R7: convergence resolved — clear the stall tracker so a
-        // future, unrelated wait (a later split's own convergence) starts
-        // from a fresh budget instead of inheriting this one's tick count.
-        //
-        // #1467 R5: once every serving pod has been observed reporting
-        // `map_version` on `/metrics`, the fence is cleared below. A
-        // *subsequent* rollout that only changes the pod template (image,
-        // resources, env — not the shard map) is safe by construction:
-        // every pod already holds `map_version` before that rollout
-        // starts, so no re-arm or re-verification is needed for it. Only a
-        // *new* cutover (which bumps `shardMap.version` again and re-stamps
-        // `lastCutoverShardMapVersion`) re-engages this convergence gate.
-        clear_convergence_stall(namespace, name);
-        if !moving_buckets.is_empty() {
-            if let Err(err) = set_write_fence(
-                control,
-                http,
-                namespace,
-                name,
-                lumen,
-                &current,
-                &BTreeSet::new(),
-                0,
-            )
-            .await
-            {
-                tracing::warn!(
-                    error = %err,
-                    "reshard driver: failed to clear write fence after topology convergence; \
-                     bounded by WRITE_FENCE_TTL_SECS"
-                );
-            }
-        }
-        let patch = json!({
-            "spec": {
-                "reshardPolicy": {
-                    "workflow": {
-                        "convergedShardMapVersion": map_version,
-                        // #1485 R1/R2: episode resolved — clear the durable
-                        // wait-start/remediation bookkeeping in the SAME
-                        // patch so a future, unrelated wait (a later
-                        // split's own convergence) starts from a fresh
-                        // budget and a fresh one-shot remediation slot,
-                        // instead of inheriting this episode's state.
-                        "convergenceWaitStartedAt": null,
-                        "convergenceRemediationRestartCount": 0,
-                        "convergenceRemediationRestartedAt": null,
-                    }
-                }
-            }
-        });
-        if let Err(err) = control.patch_spec(namespace, name, patch).await {
-            return Some(DriveOutcome::Blocked(err.to_string()));
-        }
-        return Some(DriveOutcome::TopologyConverged { map_version });
-    }
-
-    // #1467 R7: bounded escalation — bump this map_version's
-    // consecutive-awaiting-ticks counter. This in-process cache stays as a
-    // fast-path/logging-only signal (#1485 R2); it is no longer what decides
-    // whether the budget is exceeded (see below).
-    record_convergence_await(
-        namespace,
-        name,
-        &lumen.uid().unwrap_or_default(),
-        map_version,
-    );
-
-    // #1485 R2: the durable wait-start checkpoint. Stamped once, on the
-    // first tick this map_version is observed unconverged — every later
-    // tick (including after an operator restart, when the in-process cache
-    // above is empty again) reads the SAME persisted value back off `lumen`,
-    // so the elapsed-time budget below is computed identically regardless of
-    // driver process lifetime.
-    let now = now_epoch_secs();
-    let wait_started_at = workflow.convergence_wait_started_at;
-    if wait_started_at.is_none() {
-        let patch = json!({
-            "spec": {
-                "reshardPolicy": {
-                    "workflow": {
-                        "convergenceWaitStartedAt": now,
-                    }
-                }
-            }
-        });
-        if let Err(err) = control.patch_spec(namespace, name, patch).await {
-            return Some(DriveOutcome::Blocked(format!(
-                "persist convergence-wait start: {err}"
-            )));
-        }
-    }
-    // `wait_started_at.or(Some(now))`: on this very first tick the patch
-    // above just persisted `now`, but `lumen` itself (this tick's snapshot)
-    // still predates it — treat this tick as freshly started (elapsed 0),
-    // exactly like the pre-#1485 tick-count budget did.
-    let stalled = convergence_stall_condition(wait_started_at.or(Some(now)));
-    if stalled {
-        tracing::warn!(
-            namespace,
-            name,
-            map_version,
-            "reshard driver: topology convergence has not been confirmed after \
-             CONVERGENCE_STALL_SECS; fence stays armed, raising topologyConvergenceStalled"
-        );
-    }
-
-    // #1485 R1: bounded remediation restart. The ConfigMap-race signature is
-    // exactly what this branch already establishes above: the StatefulSet
-    // rollout itself is done (`rollout_converged`) but at least one pod is
-    // still reporting the old shard-map version (`!converged`, this
-    // function's outer `if converged` already returned). Bounded to exactly
-    // one re-trigger per episode via `convergenceRemediationRestartCount`
-    // (persisted, so a driver restart never re-triggers a second time for
-    // the same episode) — the fence stays armed and `stalled` stays raised
-    // either way; this only attempts a self-heal, it never changes whether
-    // the wait keeps being reported.
-    if stalled && rollout_converged && workflow.convergence_remediation_restart_count == 0 {
-        tracing::warn!(
-            namespace,
-            name,
-            map_version,
-            "reshard driver: convergence stalled on a version mismatch (rollout complete, pod(s) \
-             still on the old shard-map version); triggering one bounded remediation rolling \
-             restart"
-        );
-        if let Err(err) = control.trigger_rolling_restart(namespace, name).await {
-            // Non-fatal, matching the cutover-tick trigger's own handling —
-            // the re-trigger attempt is still bounded to one per episode
-            // below regardless of whether k8s actually accepted it; a
-            // repeatedly-failing rolling-restart trigger is a cluster-level
-            // problem the stalled condition already surfaces.
-            tracing::warn!(error = %err, "reshard driver: convergence remediation rolling-restart trigger failed");
-        }
-        let patch = json!({
-            "spec": {
-                "reshardPolicy": {
-                    "workflow": {
-                        "convergenceRemediationRestartCount": 1,
-                        "convergenceRemediationRestartedAt": now,
-                    }
-                }
-            }
-        });
-        if let Err(err) = control.patch_spec(namespace, name, patch).await {
-            return Some(DriveOutcome::Blocked(format!(
-                "persist convergence remediation re-trigger: {err}"
-            )));
-        }
-    }
-
-    if !moving_buckets.is_empty() {
-        if let Err(err) = set_write_fence(
-            control,
-            http,
-            namespace,
-            name,
-            lumen,
-            &current,
-            &moving_buckets,
-            control.write_fence_ttl_secs(),
-        )
-        .await
-        {
-            return Some(DriveOutcome::Blocked(format!(
-                "re-arm write fence while awaiting topology convergence: {err}"
-            )));
-        }
-    }
-    Some(DriveOutcome::AwaitingTopologyConvergence { map_version })
-}
-
-/// One phase-driver tick for `lumen`: dispatches on `spec.reshardPolicy.
-/// workflow.phase` and performs at most one state transition's worth of
-/// work. Safe to call every [`DRIVER_POLL_INTERVAL`] forever — a `Complete`
-/// CR with nothing to do returns [`DriveOutcome::NoOp`] immediately.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub async fn drive_tick(
-    control: &dyn ClusterControl,
-    http: &reqwest::Client,
-    lumen: &Lumen,
-) -> DriveOutcome {
-    let Some(namespace) = lumen.namespace() else {
-        return DriveOutcome::Blocked("Lumen object missing metadata.namespace".to_string());
-    };
-    let name = lumen.name_any();
-
-    match lumen.spec.reshard_policy.workflow.phase {
-        ReshardPhase::Complete => {
-            // #1458 R4: a workflow back at `Complete` has no legitimate
-            // oversize wedge left to report — clear defensively (idempotent
-            // if already clear from `run_migration_pass_impl`'s own
-            // end-of-pass clear) so a manually-forced phase reset never
-            // leaves a stale condition behind.
-            clear_oversize_block(&namespace, &name);
-            if let Some(outcome) =
-                advance_convergence(control, http, &namespace, &name, lumen).await
-            {
-                outcome
-            } else if should_start_split(lumen) {
-                start_split(control, &namespace, &name, lumen).await
-            } else {
-                DriveOutcome::NoOp(
-                    "no crossed threshold, unsupported topology, or maxShards reached",
-                )
-            }
-        }
-        ReshardPhase::PrepareSplit => {
-            advance_prepare_split(control, &namespace, &name, lumen).await
-        }
-        ReshardPhase::Splitting => advance_splitting(control, http, &namespace, &name, lumen).await,
-        ReshardPhase::CatchingUp => {
-            advance_catching_up(control, http, &namespace, &name, lumen).await
-        }
-    }
-}
-
-/// Background loop: every [`DRIVER_POLL_INTERVAL`], list every `Lumen` CR
-/// cluster-wide and [`drive_tick`] it. Independently leader-gated (its own
-/// [`DRIVER_LEASE_NAME`] Lease) from the shared `libs/service-k8s` apply loop —
-/// either loop's leader may or may not be this replica, and both are safe to
-/// run concurrently since every driver action is an idempotent-or-checkpointed
-/// spec patch / additive data-plane call.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-reshard-driver-rs.md#source
-pub fn spawn_reshard_driver_loop(client: Client) {
-    // Mirrors `libs/service-k8s::controller`'s own `identity`/`lease_namespace`
-    // helpers (private to that crate, so duplicated here) so both
-    // independently-leader-gated loops resolve the same pod identity and
-    // Lease namespace from the same env vars.
-    let identity = std::env::var("POD_NAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| DRIVER_LEASE_NAME.to_string());
-    let namespace =
-        std::env::var("POD_NAMESPACE").unwrap_or_else(|_| "lumen-operator-system".to_string());
-    let election = Election::new(identity);
-    lease::spawn(
-        client.clone(),
-        namespace,
-        DRIVER_LEASE_NAME.to_string(),
-        election.clone(),
-    );
-    let control = KubeClusterControl::new(client.clone());
-    tokio::spawn(async move {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        let api: kube::Api<Lumen> = kube::Api::all(client);
-        loop {
-            if election
-                .is_leader
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                match api.list(&Default::default()).await {
-                    Ok(list) => {
-                        // #1458 R4: this list is already the authoritative
-                        // live-CR set, so pruning stale oversize-cache
-                        // entries here needs no extra k8s API call.
-                        let live_uids: BTreeSet<String> =
-                            list.items.iter().filter_map(|l| l.uid()).collect();
-                        prune_oversize_cache(&live_uids);
-                        // #1467 R7: same already-listed live-CR set bounds
-                        // the convergence-stall cache too.
-                        prune_convergence_stall_cache(&live_uids);
-                        for lumen in list.items {
-                            let outcome = drive_tick(&control, &http, &lumen).await;
-                            if !matches!(outcome, DriveOutcome::NoOp(_)) {
-                                tracing::info!(
-                                    lumen = lumen.name_any(),
-                                    namespace = lumen.namespace(),
-                                    ?outcome,
-                                    "reshard driver tick"
-                                );
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        tracing::warn!(error = %err, "reshard driver: list Lumen failed");
-                    }
-                }
-            }
-            tokio::time::sleep(DRIVER_POLL_INTERVAL).await;
-        }
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::operator::crd::{
-        LumenReshardStatus, LumenSpec, LumenStatus, ReshardPolicy, ReshardWorkflowSpec,
-        ServingSpec, ShardMapSpec,
-    };
-    use std::sync::atomic::{AtomicI64, Ordering};
-    use std::sync::Mutex;
-
-    fn spec(shard_count: u32, replicas_per_shard: u32, max_shard_bytes: Option<u64>) -> LumenSpec {
-        LumenSpec {
-            image: "lumen:latest".into(),
-            image_pull_policy: None,
-            shard_count,
-            shard_map: ShardMapSpec {
-                version: 0,
-                virtual_bucket_count: 8,
-                assignments: Vec::new(),
-            },
-            replicas_per_shard,
-            voter_count: replicas_per_shard,
-            log_format: Default::default(),
-            log_level: None,
-            auth: Default::default(),
-            tokens_secret: None,
-            tokens_secret_provider_class: None,
-            serving: ServingSpec::default(),
-            reshard_policy: ReshardPolicy {
-                max_shard_bytes,
-                ..Default::default()
-            },
-            observability: false,
-        }
-    }
-
-    fn lumen_with(spec: LumenSpec, status: Option<LumenStatus>) -> Lumen {
-        let mut lumen = Lumen::new("search", spec);
-        lumen.metadata.namespace = Some("acme".to_string());
-        lumen.status = status;
-        lumen
-    }
-
-    fn status_with_blocking(condition: &str) -> LumenStatus {
-        LumenStatus {
-            reshard: LumenReshardStatus {
-                blocking_conditions: vec![condition.to_string()],
-                // R5's freshness gate requires this to match the CR's
-                // current `spec.shard_map.version`; every fixture built with
-                // `spec()` hardcodes `shard_map.version: 0`, so `Some(0)`
-                // here models a status write that was actually fresh at the
-                // scenario's map version, not a value that happens to fail
-                // the new check by fixture omission.
-                usage_measured_at_map_version: Some(0),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
-
-    // ---- should_start_split (AC4 + R3) -------------------------------
-
-    #[test]
-    fn should_start_split_false_when_max_shard_bytes_unset() {
-        let lumen = lumen_with(
-            spec(1, 1, None),
-            Some(status_with_blocking("urgentThresholdCrossed")),
-        );
-        assert!(!should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_false_without_a_crossed_threshold() {
-        let lumen = lumen_with(spec(1, 1, Some(1_000_000)), Some(LumenStatus::default()));
-        assert!(!should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_true_on_prepare_threshold_crossed() {
-        let lumen = lumen_with(
-            spec(1, 1, Some(1_000_000)),
-            Some(status_with_blocking("prepareThresholdCrossed")),
-        );
-        assert!(should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_false_for_raft_ha() {
-        let lumen = lumen_with(
-            spec(2, 3, Some(1_000_000)),
-            Some(status_with_blocking("urgentThresholdCrossed")),
-        );
-        assert!(!should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_false_when_already_mid_workflow() {
-        let mut s = spec(1, 1, Some(1_000_000));
-        s.reshard_policy.workflow = ReshardWorkflowSpec {
-            phase: ReshardPhase::Splitting,
-            target_shard_count: Some(2),
-            ..Default::default()
-        };
-        let lumen = lumen_with(s, Some(status_with_blocking("urgentThresholdCrossed")));
-        assert!(!should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_false_when_max_shards_reached() {
-        let mut s = spec(4, 1, Some(1_000_000));
-        s.reshard_policy.max_shards = Some(4);
-        let lumen = lumen_with(s, Some(status_with_blocking("urgentThresholdCrossed")));
-        assert!(!should_start_split(&lumen));
-    }
-
-    // ---- #1396 AC5: should_start_split re-derives freshness itself -----
-
-    #[test]
-    fn should_start_split_false_on_stale_status_map_version() {
-        // A `blockingConditions` entry alone is not enough: if the status
-        // subresource's `usageMeasuredAtMapVersion` predates the CR's
-        // *current* `spec.shardMap.version` (a lagging/stale status write —
-        // e.g. an in-flight scrape landing after a later cutover), the
-        // trigger must refuse to fire even though the string condition is
-        // present, regardless of what produced that stale status.
-        let mut s = spec(2, 1, Some(1_000_000));
-        s.shard_map.version = 1; // CR has already moved to map version 1.
-        let status = LumenStatus {
-            reshard: LumenReshardStatus {
-                blocking_conditions: vec!["urgentThresholdCrossed".to_string()],
-                usage_measured_at_map_version: Some(0), // stale: still map 0.
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let lumen = lumen_with(s, Some(status));
-        assert!(!should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_true_on_fresh_status_map_version() {
-        // Same shape, but the status was measured at the CR's current map
-        // version: a legitimate trigger and must still fire.
-        let mut s = spec(2, 1, Some(1_000_000));
-        s.shard_map.version = 1;
-        let status = LumenStatus {
-            reshard: LumenReshardStatus {
-                blocking_conditions: vec!["urgentThresholdCrossed".to_string()],
-                usage_measured_at_map_version: Some(1), // fresh: matches map 1.
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let lumen = lumen_with(s, Some(status));
-        assert!(should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_false_with_no_status_yet() {
-        let lumen = lumen_with(spec(1, 1, Some(1_000_000)), None);
-        assert!(!should_start_split(&lumen));
-    }
-
-    // ---- #1386 AC1/AC2: post-cutover usage freshness -------------------
-
-    #[test]
-    fn should_start_split_false_on_stale_pre_cutover_usage() {
-        // AC1: at `Complete` with a usage measurement whose generation
-        // (`usageMeasuredAtMapVersion`) predates the CR's current
-        // `shardMap.version` — the exact shape the shard-usage cache is in
-        // for one scrape tick right after a split's cutover — the driver
-        // must not start a split, regardless of how far past the urgent
-        // threshold the (stale) cached percentage is.
-        let mut s = spec(2, 1, Some(1_000_000));
-        s.shard_map.version = 1; // just cut over to the post-split map
-        let mut usage = BTreeMap::new();
-        usage.insert(0u32, 900_000u64); // 90%, well past urgent(85%)
-        let status = s.reshard_status_with_usage(&usage, 0 /* stale: pre-cutover */);
-        assert_eq!(status.blocking_conditions, vec!["usageStalePostCutover"]);
-        let lumen = lumen_with(
-            s,
-            Some(LumenStatus {
-                reshard: status,
-                ..Default::default()
-            }),
-        );
-        assert!(!should_start_split(&lumen));
-    }
-
-    #[test]
-    fn should_start_split_true_on_fresh_post_cutover_usage_above_urgent() {
-        // AC2: once the usage cache carries a measurement tagged with the
-        // CR's *current* `shardMap.version`, a genuinely still-hot shard is
-        // a legitimate cascade trigger and must start the next split.
-        let mut s = spec(2, 1, Some(1_000_000));
-        s.shard_map.version = 1;
-        let mut usage = BTreeMap::new();
-        usage.insert(1u32, 900_000u64); // 90%, past urgent(85%), fresh
-        let status =
-            s.reshard_status_with_usage(&usage, 1 /* fresh: matches shardMap.version */);
-        assert_eq!(status.blocking_conditions, vec!["urgentThresholdCrossed"]);
-        let lumen = lumen_with(
-            s,
-            Some(LumenStatus {
-                reshard: status,
-                ..Default::default()
-            }),
-        );
-        assert!(should_start_split(&lumen));
-    }
-
-    // ---- current/target map helpers -----------------------------------
-
-    #[test]
-    fn current_shard_map_derives_balanced_map_from_shard_count_when_no_explicit_assignments() {
-        let lumen = lumen_with(spec(2, 1, None), None);
-        let map = current_shard_map(&lumen).unwrap();
-        assert_eq!(map.physical_shard_count(), 2);
-        assert_eq!(map.virtual_bucket_count(), 8);
-    }
-
-    #[test]
-    fn compute_target_map_grows_by_exactly_one_shard() {
-        let lumen = lumen_with(spec(2, 1, None), None);
-        let current = current_shard_map(&lumen).unwrap();
-        let target = compute_target_map(&current).unwrap();
-        assert_eq!(target.physical_shard_count(), 3);
-        assert_eq!(target.version(), current.version() + 1);
-    }
-
-    // ---- drive_tick state machine (fake control, no real k8s) ---------
-
-    /// In-memory [`ClusterControl`]: records the last patch applied to a
-    /// shared `Lumen` snapshot and simulates a StatefulSet's ready-replica
-    /// count. No HTTP admin calls are faked here — those go through a real
-    /// [`axum_test`] server in the integration test below; this fake only
-    /// covers the k8s-shaped operations `drive_tick` needs before/around
-    /// them.
-    struct FakeControl {
-        ready_replicas: AtomicI64,
-        last_patch: Mutex<Option<serde_json::Value>>,
-        restart_calls: AtomicI64,
-    }
-
-    impl FakeControl {
-        fn new(ready_replicas: i64) -> Self {
-            Self {
-                ready_replicas: AtomicI64::new(ready_replicas),
-                last_patch: Mutex::new(None),
-                restart_calls: AtomicI64::new(0),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl ClusterControl for FakeControl {
-        async fn patch_spec(&self, _ns: &str, _name: &str, patch: serde_json::Value) -> Result<()> {
-            *self.last_patch.lock().unwrap() = Some(patch);
-            Ok(())
-        }
-
-        async fn statefulset_ready_replicas(&self, _ns: &str, _name: &str) -> Result<i64> {
-            Ok(self.ready_replicas.load(Ordering::SeqCst))
-        }
-
-        async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
-            self.restart_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
-            Ok(None)
-        }
-
-        fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {
-            format!("http://unused-in-this-test.invalid/shard-{shard}")
-        }
-    }
-
-    fn http_client() -> reqwest::Client {
-        reqwest::Client::new()
-    }
-
-    // ---- #1443 AC4: set_write_fence partial-arm cleanup -----------------
-
-    /// Minimal control exposing exactly the shard URLs [`set_write_fence`]
-    /// needs; used only by the AC4 test below, which calls `set_write_fence`
-    /// directly rather than driving a full `drive_tick`.
-    struct TwoShardFenceControl {
-        shard_urls: Vec<String>,
-    }
-
-    #[async_trait]
-    impl ClusterControl for TwoShardFenceControl {
-        async fn patch_spec(
-            &self,
-            _ns: &str,
-            _name: &str,
-            _patch: serde_json::Value,
-        ) -> Result<()> {
-            unreachable!("not used by set_write_fence")
-        }
-        async fn statefulset_ready_replicas(&self, _ns: &str, _name: &str) -> Result<i64> {
-            unreachable!("not used by set_write_fence")
-        }
-        async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
-            unreachable!("not used by set_write_fence")
-        }
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
-            Ok(None)
-        }
-        fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {
-            self.shard_urls[shard as usize].clone()
-        }
-    }
-
-    #[tokio::test]
-    async fn set_write_fence_clears_already_armed_shards_on_partial_failure() {
-        // Shard A: a real endpoint that records every /admin/reshard:fence
-        // call it receives — both the arm attempt and, if R4 works, the
-        // best-effort clear triggered by shard B's failure.
-        let shard_a = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/admin/reshard:fence"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
-            .mount(&shard_a)
-            .await;
-
-        // Shard B: a bound-then-closed port — nothing listens there, so
-        // every call to it fails outright, simulating an unreachable shard
-        // mid-arm.
-        let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let dead_addr = dead_listener.local_addr().unwrap();
-        drop(dead_listener);
-        let shard_b_url = format!("http://{dead_addr}");
-
-        let control = TwoShardFenceControl {
-            shard_urls: vec![shard_a.uri(), shard_b_url],
-        };
-        let current = VirtualBucketShardMap::balanced(0, 8, 2).unwrap();
-        let mut buckets = BTreeSet::new();
-        buckets.insert(0u32);
-        let lumen = lumen_with(spec(2, 1, None), None);
-
-        let result = set_write_fence(
-            &control,
-            &http_client(),
-            "acme",
-            "search",
-            &lumen,
-            &current,
-            &buckets,
-            30,
-        )
-        .await;
-        assert!(result.is_err(), "arm must surface shard B's failure");
-
-        // Shard A must have received exactly 2 requests: the original arm,
-        // then the best-effort clear triggered by shard B's failure — R4's
-        // whole point is that shard A never stays fenced indefinitely just
-        // because shard B was unreachable.
-        let requests = shard_a
-            .received_requests()
-            .await
-            .expect("wiremock request recording enabled");
-        assert_eq!(
-            requests.len(),
-            2,
-            "shard A must be armed once, then cleared once after shard B's arm failed"
-        );
-        let clear_body: serde_json::Value = requests[1].body_json().unwrap();
-        assert_eq!(
-            clear_body["buckets"].as_array().map(Vec::len),
-            Some(0),
-            "the second call to shard A must be a clear (empty buckets), not another arm"
-        );
-    }
-
-    // ---- #1467 R3: evict_old_shards's in-loop fence re-arm --------------
-
-    /// A [`ClusterControl`] over a fixed list of already-bound shard URLs
-    /// with a test-controlled `write_fence_ttl_secs` — everything
-    /// [`evict_old_shards`]/[`maybe_rearm_fence`] needs, nothing more.
-    struct FenceRearmControl {
-        shard_urls: Vec<String>,
-        ttl_secs: u64,
-    }
-
-    #[async_trait]
-    impl ClusterControl for FenceRearmControl {
-        async fn patch_spec(
-            &self,
-            _ns: &str,
-            _name: &str,
-            _patch: serde_json::Value,
-        ) -> Result<()> {
-            unreachable!("not used by evict_old_shards")
-        }
-        async fn statefulset_ready_replicas(&self, _ns: &str, _name: &str) -> Result<i64> {
-            unreachable!("not used by evict_old_shards")
-        }
-        async fn trigger_rolling_restart(&self, _ns: &str, _name: &str) -> Result<()> {
-            unreachable!("not used by evict_old_shards")
-        }
-        async fn admin_token(&self, _ns: &str, _lumen: &Lumen) -> Result<Option<String>> {
-            Ok(None)
-        }
-        fn shard_base_url(&self, _ns: &str, _name: &str, shard: u32) -> String {
-            self.shard_urls[shard as usize].clone()
-        }
-        fn write_fence_ttl_secs(&self) -> u64 {
-            self.ttl_secs
-        }
-    }
-
-    /// #1467 R3: a slow, multi-shard eviction round (many old physical
-    /// shards, each `POST /admin/reshard:evict` round-trip taking real time)
-    /// must not run on a single fence arm taken once before the loop starts
-    /// — [`evict_old_shards`] re-checks/re-arms via [`maybe_rearm_fence`]
-    /// before *every* shard's evict call, not just at the phase boundary
-    /// immediately before this function is invoked. Proven by driving 3 old
-    /// shards through a real (mocked) eviction round with a tiny fence TTL
-    /// and an artificial per-call delay large enough that the un-refreshed
-    /// TTL fraction would already have lapsed by the final shard — the
-    /// number of `/admin/reshard:fence` arm requests observed across all 3
-    /// shards must reflect more than the single caller-side arm.
-    #[tokio::test]
-    async fn evict_old_shards_rearms_fence_mid_loop_across_slow_multi_shard_round() {
-        let mut mock_shards = Vec::new();
-        for _ in 0..3 {
-            let mock = wiremock::MockServer::start().await;
-            wiremock::Mock::given(wiremock::matchers::method("POST"))
-                .and(wiremock::matchers::path("/admin/reshard:fence"))
-                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
-                .mount(&mock)
-                .await;
-            wiremock::Mock::given(wiremock::matchers::method("POST"))
-                .and(wiremock::matchers::path("/admin/reshard:evict"))
-                .respond_with(
-                    wiremock::ResponseTemplate::new(200)
-                        .set_body_json(json!({}))
-                        .set_delay(Duration::from_millis(150)),
-                )
-                .mount(&mock)
-                .await;
-            mock_shards.push(mock);
-        }
-        let shard_urls: Vec<String> = mock_shards.iter().map(|m| m.uri()).collect();
-
-        // ttl_secs=1 -> rearm_after = 250ms (FENCE_REARM_FRACTION=4).
-        // `last_armed_at` starts at "just now" (as if the caller armed it
-        // immediately before this call, matching the real phase-boundary
-        // arm) so the first two iterations' pre-checks (elapsed ~0ms, then
-        // ~150ms) skip re-arming, but by the third iteration's pre-check
-        // (elapsed ~300ms) the 250ms fraction has lapsed and an in-loop
-        // rearm must fire — proving it is *evict_old_shards's own loop*,
-        // not just the caller, keeping the fence fresh across a slow round.
-        let control = FenceRearmControl {
-            shard_urls,
-            ttl_secs: 1,
-        };
-        let current = VirtualBucketShardMap::balanced(0, 8, 3).unwrap();
-        let target = VirtualBucketShardMap::balanced(1, 8, 3).unwrap();
-        let mut moving_buckets = BTreeSet::new();
-        moving_buckets.insert(0u32);
-        let lumen = lumen_with(spec(3, 1, None), None);
-        let mut last_armed_at = Instant::now();
-
-        evict_old_shards(
-            &control,
-            &http_client(),
-            "acme",
-            "search",
-            &lumen,
-            &current,
-            &target,
-            Some(&moving_buckets),
-            &mut last_armed_at,
-        )
-        .await
-        .unwrap();
-
-        let mut total_fence_calls = 0usize;
-        let mut total_evict_calls = 0usize;
-        for mock in &mock_shards {
-            let requests = mock
-                .received_requests()
-                .await
-                .expect("wiremock request recording enabled");
-            total_fence_calls += requests
-                .iter()
-                .filter(|r| r.url.path() == "/admin/reshard:fence")
-                .count();
-            total_evict_calls += requests
-                .iter()
-                .filter(|r| r.url.path() == "/admin/reshard:evict")
-                .count();
-        }
-        assert_eq!(
-            total_evict_calls, 3,
-            "every one of the 3 old shards must be evicted exactly once"
-        );
-        assert!(
-            total_fence_calls > 0 && total_fence_calls % 3 == 0,
-            "evict_old_shards's own loop must have re-armed at least once (a full arm round \
-             is 3 fence calls, one per old shard) — this test never arms the fence itself \
-             before calling evict_old_shards, so any fence calls observed at all are proof \
-             of the in-loop rearm, got {total_fence_calls}"
-        );
-    }
-
-    // ---- #1444 R2: oversized-doc reshard remediation --------------------
-
-    /// A minimal, otherwise-empty [`ReshardBatch`] whose `external_ids` holds
-    /// one collection/id pair with an `external_id` long enough on its own to
-    /// push the batch's serialized size over
-    /// [`crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`] — the exact shape
-    /// `byte_cap_chunk` produces when it floors at a single oversized id.
-    fn oversized_batch(collection: &str, external_id_len: usize) -> ReshardBatch {
-        let mut external_ids = BTreeMap::new();
-        let mut ids = BTreeSet::new();
-        ids.insert("x".repeat(external_id_len));
-        external_ids.insert(collection.to_string(), ids);
-        ReshardBatch {
-            from_map_version: 1,
-            to_map_version: 2,
-            bucket: 0,
-            from_shard: 0,
-            to_shard: 1,
-            external_ids,
-            snapshot: SnapshotV1 {
-                version: 1,
-                collections: BTreeMap::new(),
-            },
-        }
-    }
-
-    #[test]
-    fn detect_oversized_batch_none_when_under_limit() {
-        let batch = oversized_batch("widgets", 64);
-        assert!(
-            detect_oversized_batch(&batch).is_none(),
-            "a small batch must not be classified as oversized"
-        );
-    }
-
-    #[test]
-    fn detect_oversized_batch_some_when_over_limit_names_first_id() {
-        let batch = oversized_batch(
-            "widgets",
-            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1024,
-        );
-        let block = detect_oversized_batch(&batch)
-            .expect("a batch over ADMIN_ROUTE_BODY_LIMIT_BYTES must be classified as oversized");
-        assert_eq!(block.collection, "widgets");
-        assert_eq!(
-            block.external_id.len(),
-            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1024
-        );
-        assert!(block.bytes > crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES);
-    }
-
-    #[tokio::test]
-    async fn apply_reshard_batch_rejects_oversized_batch_without_sending_request() {
-        // #1444 R2 AC2: the pre-flight check in `apply_reshard_batch` must
-        // reject an oversized batch itself — no HTTP round trip at all, let
-        // alone one that could 413. `.expect(0)` on the mount makes wiremock
-        // panic if the driver ever calls out.
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/admin/reshard:apply"))
-            .respond_with(wiremock::ResponseTemplate::new(200))
-            .expect(0)
-            .mount(&server)
-            .await;
-        let batch = oversized_batch(
-            "widgets",
-            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1024,
-        );
-        let result = apply_reshard_batch(&http_client(), &server.uri(), None, &batch).await;
-        let err = result.expect_err("an oversized batch must be rejected pre-flight");
-        assert!(
-            err.downcast_ref::<OversizedDocumentBlock>().is_some(),
-            "the error must downcast to OversizedDocumentBlock, got: {err:?}"
-        );
-    }
-
-    #[test]
-    fn oversize_block_cache_records_skips_then_exhausts_recheck_budget() {
-        // Each test in this crate shares the process-global oversize cache,
-        // so use a namespace/name unique to this test to avoid cross-test
-        // interference under parallel execution.
-        let namespace = "ac2-cache-ns";
-        let name = "ac2-cache-name";
-        let uid = "ac2-cache-uid";
-        assert!(
-            oversize_block_condition(namespace, name, uid).is_none(),
-            "no wedge recorded yet"
-        );
-        assert!(
-            should_skip_for_oversize(namespace, name, uid).is_none(),
-            "nothing to skip before a wedge is ever recorded"
-        );
-
-        let block = OversizedDocumentBlock {
-            collection: "widgets".to_string(),
-            external_id: "abc".to_string(),
-            bytes: crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1,
-        };
-        record_oversize_block(namespace, name, uid, block.clone());
-        assert_eq!(
-            oversize_block_condition(namespace, name, uid),
-            Some(block.clone()),
-            "the recorded wedge must be readable without affecting the skip budget"
-        );
-
-        // The recheck budget is consumed by `should_skip_for_oversize`, not
-        // by the read-only `oversize_block_condition` above.
-        for _ in 0..OVERSIZE_RECHECK_TICKS {
-            assert_eq!(
-                should_skip_for_oversize(namespace, name, uid),
-                Some(block.clone()),
-                "every tick within the recheck budget must skip on the same wedge"
-            );
-        }
-        assert!(
-            should_skip_for_oversize(namespace, name, uid).is_none(),
-            "once the recheck budget is exhausted, the next tick must be let through"
-        );
-
-        clear_oversize_block(namespace, name);
-        assert!(
-            oversize_block_condition(namespace, name, uid).is_none(),
-            "clearing must remove the wedge entirely"
-        );
-    }
-
-    #[tokio::test]
-    async fn advance_catching_up_skips_fence_arm_when_oversize_wedge_recorded() {
-        // #1444 R2 AC2: a tick already known-wedged on an oversized document
-        // must short-circuit to `Blocked` before arming the write fence —
-        // `.expect(0)` on the fence-route mount makes wiremock panic if the
-        // driver ever arms it.
-        let namespace = "ac2-fence-ns";
-        let name = "ac2-fence-name";
-        record_oversize_block(
-            namespace,
-            name,
-            "",
-            OversizedDocumentBlock {
-                collection: "widgets".to_string(),
-                external_id: "abc".to_string(),
-                bytes: crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES + 1,
-            },
-        );
-
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/admin/reshard:fence"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
-            .expect(0)
-            .mount(&server)
-            .await;
-        let control = TwoShardFenceControl {
-            shard_urls: vec![server.uri()],
-        };
-        let lumen = lumen_with(spec(2, 1, None), None);
-
-        let outcome = advance_catching_up(&control, &http_client(), namespace, name, &lumen).await;
-        assert!(
-            matches!(outcome, DriveOutcome::Blocked(_)),
-            "a known-wedged tick must report Blocked, got: {outcome:?}"
-        );
-
-        clear_oversize_block(namespace, name);
-    }
-
-    // ---- #1396 AC3: checkpoint_shard requires persisted == true --------
-
-    #[tokio::test]
-    async fn checkpoint_shard_blocked_when_response_reports_persisted_false() {
-        // A 200 with `persisted: false` is the exact shape `admin_checkpoint`
-        // returns when the shard has no durable checkpoint sink configured
-        // (the vacuous NoopCheckpoint case) — this must never be treated as
-        // a satisfied durability gate.
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/admin/checkpoint"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "persisted": false })),
-            )
-            .mount(&server)
-            .await;
-        let result = checkpoint_shard(&http_client(), &server.uri(), None).await;
-        assert!(
-            result.is_err(),
-            "persisted: false must not satisfy the checkpoint gate"
-        );
-    }
-
-    #[tokio::test]
-    async fn checkpoint_shard_blocked_when_response_omits_persisted_key() {
-        // A malformed/older response with no `persisted` key at all must
-        // fail closed (defaults to not-durable), not be treated as success.
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/admin/checkpoint"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
-            .mount(&server)
-            .await;
-        let result = checkpoint_shard(&http_client(), &server.uri(), None).await;
-        assert!(
-            result.is_err(),
-            "a response missing the persisted key must fail closed"
-        );
-    }
-
-    #[tokio::test]
-    async fn checkpoint_shard_ok_when_response_reports_persisted_true() {
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/admin/checkpoint"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "persisted": true })),
-            )
-            .mount(&server)
-            .await;
-        let result = checkpoint_shard(&http_client(), &server.uri(), None).await;
-        assert!(
-            result.is_ok(),
-            "persisted: true must satisfy the checkpoint gate: {result:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn drive_tick_complete_with_no_trigger_is_noop() {
-        let lumen = lumen_with(spec(1, 1, Some(1_000_000)), Some(LumenStatus::default()));
-        let control = FakeControl::new(0);
-        let outcome = drive_tick(&control, &http_client(), &lumen).await;
-        assert_eq!(
-            outcome,
-            DriveOutcome::NoOp("no crossed threshold, unsupported topology, or maxShards reached")
-        );
-        assert!(control.last_patch.lock().unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn drive_tick_starts_split_on_crossed_threshold() {
-        let lumen = lumen_with(
-            spec(2, 1, Some(1_000_000)),
-            Some(status_with_blocking("prepareThresholdCrossed")),
-        );
-        let control = FakeControl::new(0);
-        let outcome = drive_tick(&control, &http_client(), &lumen).await;
-        assert_eq!(
-            outcome,
-            DriveOutcome::StartedSplit {
-                target_shard_count: 3
-            }
-        );
-        let patch = control.last_patch.lock().unwrap().clone().unwrap();
-        assert_eq!(patch["spec"]["shardCount"], json!(3));
-        assert_eq!(
-            patch["spec"]["reshardPolicy"]["workflow"]["phase"],
-            json!("PrepareSplit")
-        );
-        assert_eq!(
-            patch["spec"]["reshardPolicy"]["workflow"]["targetShardCount"],
-            json!(3)
-        );
-    }
-
-    #[tokio::test]
-    async fn drive_tick_prepare_split_waits_for_new_pod() {
-        let mut s = spec(3, 1, Some(1_000_000));
-        s.reshard_policy.workflow = ReshardWorkflowSpec {
-            phase: ReshardPhase::PrepareSplit,
-            target_shard_count: Some(3),
-            ..Default::default()
-        };
-        let lumen = lumen_with(s, None);
-        // Only 2 of the 3 desired pods are ready yet.
-        let control = FakeControl::new(2);
-        let outcome = drive_tick(&control, &http_client(), &lumen).await;
-        assert_eq!(
-            outcome,
-            DriveOutcome::WaitingForNewShard {
-                target_shard_count: 3
-            }
-        );
-        assert!(control.last_patch.lock().unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn drive_tick_prepare_split_advances_once_new_pod_ready() {
-        let mut s = spec(3, 1, Some(1_000_000));
-        s.reshard_policy.workflow = ReshardWorkflowSpec {
-            phase: ReshardPhase::PrepareSplit,
-            target_shard_count: Some(3),
-            ..Default::default()
-        };
-        let lumen = lumen_with(s, None);
-        let control = FakeControl::new(3);
-        let outcome = drive_tick(&control, &http_client(), &lumen).await;
-        assert_eq!(outcome, DriveOutcome::AdvancedToSplitting);
-        let patch = control.last_patch.lock().unwrap().clone().unwrap();
-        assert_eq!(
-            patch["spec"]["reshardPolicy"]["workflow"]["phase"],
-            json!("Splitting")
-        );
-    }
-
-    #[tokio::test]
-    async fn drive_tick_resumable_after_simulated_restart_mid_prepare_split() {
-        // AC2 (narrowed to the k8s-facing half): a driver restart mid
-        // PrepareSplit re-derives the exact same wait/advance decision from
-        // the persisted CR alone — no in-process state survives between the
-        // two calls below (a fresh FakeControl each time simulates a fresh
-        // process).
-        let mut s = spec(3, 1, Some(1_000_000));
-        s.reshard_policy.workflow = ReshardWorkflowSpec {
-            phase: ReshardPhase::PrepareSplit,
-            target_shard_count: Some(3),
-            ..Default::default()
-        };
-        let lumen = lumen_with(s, None);
-
-        let before_restart = FakeControl::new(2);
-        assert_eq!(
-            drive_tick(&before_restart, &http_client(), &lumen).await,
-            DriveOutcome::WaitingForNewShard {
-                target_shard_count: 3
-            }
-        );
-
-        // "Restart": brand-new control + a freshly-deserialized-shaped Lumen
-        // (same spec/status values, simulating a re-fetch from the API
-        // server), new pod now ready.
-        let lumen_after_restart = lumen_with(lumen.spec.clone(), lumen.status.clone());
-        let after_restart = FakeControl::new(3);
-        assert_eq!(
-            drive_tick(&after_restart, &http_client(), &lumen_after_restart).await,
-            DriveOutcome::AdvancedToSplitting
-        );
-    }
-}
-// CODEGEN-END
-````
+<!-- aw-source-partitions: version=1 count=4 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:4ac439aadd0ea0d19e3747a70910fcd71efc6a6457e7929a2809c35c9d8b267f -->
+
+```rust
+// AW source partition manifest v1: 4 ordered rust chunks, max 48128 decoded / 65536 encoded bytes, digest sha256:4ac439aadd0ea0d19e3747a70910fcd71efc6a6457e7929a2809c35c9d8b267f
+```
+### Source Partition 0001
+<!-- aw-source-partition: index=1 count=4 bytes=46910 payload_bytes=63370 encoding=base64 digest=sha256:bae62dd3056cfa592d8a3c67d7eab74940e290de12fd0fff9a214ba2bea7ba7f boundary=ast terminal_newline=true -->
+
+```text
+Ly8gU1BFQy1NQU5BR0VEOiBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9h
+cHBzLWx1bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1ycy5tZCNydXN0LXNvdXJjZS11
+bml0Ci8vIENPREVHRU4tQkVHSU4KLy8hIEF1dG9ub21vdXMgcmVzaGFyZCBwaGFzZSBkcml2ZXIg
+KCMxMzE5IFIyIGV4ZWN1dG9yOyAjMTM4MSkuCi8vIQovLyEgW2BzdXBlcjo6cmVjb25jaWxlYF0n
+cyBsaXZlIHBlci1zaGFyZCB1c2FnZSBsb29wIG9ubHkgKnJlcG9ydHMqIGEgY3Jvc3NlZAovLyEg
+YHByZXBhcmVBdFBlcmNlbnRgIC8gYHVyZ2VudEF0UGVyY2VudGAgdGhyZXNob2xkIGludG8KLy8h
+IGBzdGF0dXMucmVzaGFyZC5ibG9ja2luZ0NvbmRpdGlvbnNgOyB0aGlzIG1vZHVsZSBpcyB0aGUg
+cGllY2UgdGhhdCBhY3RzIG9uCi8vISBpdCDigJQgYSBzZWNvbmQsIGluZGVwZW5kZW50bHkgbGVh
+ZGVyLWdhdGVkIGJhY2tncm91bmQgbG9vcCB0aGF0IGRyaXZlcwovLyEgYHNwZWMucmVzaGFyZFBv
+bGljeS53b3JrZmxvdy5waGFzZWAgdGhyb3VnaAovLyEgYFByZXBhcmVTcGxpdCAtPiBTcGxpdHRp
+bmcgLT4gQ2F0Y2hpbmdVcCAtPiBDb21wbGV0ZWAsIGdyb3dpbmcgc3RvcmFnZSBieQovLyEgZXhh
+Y3RseSBvbmUgcGh5c2ljYWwgc2hhcmQgcGVyIHNwbGl0IHZpYSBbYGNyYXRlOjpyb3V0aW5nOjoK
+Ly8hIFZpcnR1YWxCdWNrZXRTaGFyZE1hcDo6c3BsaXRfb25lX3NoYXJkYF0gYW5kIG1vdmluZyBk
+YXRhIHdpdGggdGhlIGFscmVhZHkKLy8hLWxhbmRlZCBhZG1pbiB2ZXJicyAoYFBPU1QgL2FkbWlu
+L2JhY2t1cDpzY29wZWRgLCBgUE9TVAovLyEgL2FkbWluL3Jlc2hhcmQ6YXBwbHlgLCBgUE9TVCAv
+YWRtaW4vcmVzaGFyZDpldmljdGAsICMxMzgwKS4KLy8hCi8vISAjIyBDaGVja3BvaW50aW5nIGFu
+ZCByZXN1bWUKLy8hCi8vISBUaGVyZSBpcyBubyBzZXBhcmF0ZSBjaGVja3BvaW50IHJlY29yZC4g
+RXZlcnkgcGhhc2UncyBhY3Rpb25zIGFyZQovLyEgcmVjb21wdXRlZCBkZXRlcm1pbmlzdGljYWxs
+eSBmcm9tIHRocmVlIGFscmVhZHktcGVyc2lzdGVkICoqc3BlYyoqIGZpZWxkcwovLyEg4oCUIGBy
+ZXNoYXJkUG9saWN5LndvcmtmbG93LnBoYXNlYCwgYHJlc2hhcmRQb2xpY3kud29ya2Zsb3cuCi8v
+ISB0YXJnZXRTaGFyZENvdW50YCwgYW5kIGBzaGFyZE1hcGAgKGxlZnQgdW50b3VjaGVkIHVudGls
+IHRoZSBjdXRvdmVyKSDigJQKLy8hIHBsdXMgYHNoYXJkQ291bnRgLiBgc3BlY2AgKG5vdCBgc3Rh
+dHVzYCkgaXMgdGhlIGNoZWNrcG9pbnQgYmVjYXVzZSBpdCBpcwovLyEgdGhlIG9wZXJhdG9yJ3Mg
+b3duIGRlc2lyZWQtc3RhdGUgd3JpdGUgdGFyZ2V0IGFuZCBzdXJ2aXZlcyBhbiBvcGVyYXRvcgov
+LyEgcmVzdGFydCBvciBsZWFkZXIgaGFuZG92ZXIgdW5jaGFuZ2VkOyBgc3RhdHVzYCBzdGF5cyBh
+IHJlYWQtb25seQovLyEgcHJvamVjdGlvbi4gQ29uY3JldGVseToKLy8hCi8vISAtICoqQ29tcGxl
+dGUqKiAoaWRsZSk6IFtgc2hvdWxkX3N0YXJ0X3NwbGl0YF0gZ2F0ZXMgb24gYSBjcm9zc2VkCi8v
+ISAgIHRocmVzaG9sZCAoYHN0YXR1cy5yZXNoYXJkLmJsb2NraW5nQ29uZGl0aW9uc2AgYWxyZWFk
+eSBjYXJyaWVzCi8vISAgIGBwcmVwYXJlVGhyZXNob2xkQ3Jvc3NlZGAgLyBgdXJnZW50VGhyZXNo
+b2xkQ3Jvc3NlZGAsIGNvbXB1dGVkIGJ5Ci8vISAgIFtgc3VwZXI6OmNyZDo6THVtZW5TcGVjOjpy
+ZXNoYXJkX3N0YXR1c193aXRoX3VzYWdlYF0pLCBgbWF4U2hhcmRCeXRlc2AKLy8hICAgc2V0IChS
+MyBzYWZldHkgcmFpbCDigJQgcmVjb21tZW5kYXRpb24tb25seSBvdGhlcndpc2UpLCBzaW5nbGUt
+bWVtYmVyCi8vISAgIChgcmVwbGljYXNQZXJTaGFyZCA8PSAxYDsgc2VlIGJlbG93KSwgYW5kIG5v
+IGBtYXhTaGFyZHNgIGNlaWxpbmcKLy8hICAgcmVhY2hlZC4gT24gYSBtYXRjaDogY29tcHV0ZSB0
+aGUgdGFyZ2V0IG1hcCwgcGF0Y2ggYHNoYXJkQ291bnRgIGFuZAovLyEgICBgd29ya2Zsb3cue3Bo
+YXNlLHRhcmdldFNoYXJkQ291bnR9YCBpbiBvbmUgbWVyZ2UgcGF0Y2gsIHBoYXNlIC0+Ci8vISAg
+IGBQcmVwYXJlU3BsaXRgLgovLyEgLSAqKlByZXBhcmVTcGxpdCoqOiB3YWl0IGZvciB0aGUgU3Rh
+dGVmdWxTZXQncyBgcmVhZHlSZXBsaWNhc2AgdG8gcmVhY2gKLy8hICAgYHRhcmdldFNoYXJkQ291
+bnRgICh0aGUgbmV3IHBvZCBleGlzdHMgb25jZSBgc2hhcmRDb3VudGAgaXMgYnVtcGVkLCB2aWEK
+Ly8hICAgdGhlICpleGlzdGluZyosIGluZGVwZW5kZW50bHktbGVhZGVyLWdhdGVkIGBsaWJzL3Nl
+cnZpY2UtazhzYCBhcHBseSBsb29wIOKAlAovLyEgICB0aGlzIGRyaXZlciBuZXZlciBhcHBsaWVz
+IGNoaWxkIG9iamVjdHMgaXRzZWxmKS4gT25jZSByZWFkeSwgcGhhc2UgLT4KLy8hICAgYFNwbGl0
+dGluZ2AuIFJlc3RhcnQtc2FmZTogcmUtcmVhZHMgdGhlIHNhbWUgbGl2ZSByZWFkaW5lc3MgZmFj
+dCBldmVyeQovLyEgICB0aWNrLgovLyEgLSAqKlNwbGl0dGluZyoqOiBydW4gb25lIG1pZ3JhdGlv
+biBwYXNzIChbYHJ1bl9taWdyYXRpb25fcGFzc2BdIOKAlCB0aGUKLy8hICAgcHJvZHVjdGlvbiBj
+YWxsZXIgb2YgW2BjcmF0ZTo6cmVzaGFyZDo6YnVja2V0X21vdmVzYF0gLwovLyEgICBbYGNyYXRl
+OjpyZXNoYXJkOjpzbmFwc2hvdF9yZXNoYXJkX2JhdGNoZXNgXSkgY29weWluZyBldmVyeSBtb3Zl
+ZAovLyEgICBidWNrZXQgZnJvbSBpdHMgb2xkIHNoYXJkIHRvIHRoZSBuZXcgc2hhcmQgdmlhIHRo
+ZSBhZG1pbiB2ZXJicywgdGhlbgovLyEgICBwaGFzZSAtPiBgQ2F0Y2hpbmdVcGAuIGBQT1NUIC9h
+ZG1pbi9yZXNoYXJkOmFwcGx5YCBpcyBhbiBpZGVtcG90ZW50Ci8vISAgIGFkZGl0aXZlIG1lcmdl
+ICgjMTM4MCksIHNvIHJlLXJ1bm5pbmcgdGhpcyBzYW1lIHBhc3MgYWZ0ZXIgYSByZXN0YXJ0Ci8v
+ISAgIChzdGlsbCBgU3BsaXR0aW5nYCkgaXMgc2FmZSBhbmQgc2ltcGx5IHJlLWFwcGxpZXMgdGhl
+IHNhbWUgYmF0Y2hlcy4KLy8hIC0gKipDYXRjaGluZ1VwKiogKFtgYWR2YW5jZV9jYXRjaGluZ191
+cGBdLCByZXNlcXVlbmNlZCBieSAjMTM5NiBSMS9SMik6Ci8vISAgIGFybSBhIHdyaXRlLXBhdXNl
+IGZlbmNlIG92ZXIgZXZlcnkgc3RpbGwtbW92aW5nIGJ1Y2tldCBvbiBpdHMgY3VycmVudAovLyEg
+ICAoc291cmNlKSBvd25lciAoUjIsIHNlZSBiZWxvdyksIHJ1biB0aGUgKnNhbWUqIG1pZ3JhdGlv
+biBwYXNzIGFnYWluIOKAlAovLyEgICBhbiBpZGVtcG90ZW50IHJlLXN5bmMgdGhhdCwgdW5kZXIg
+dGhlIGZlbmNlLCBpcyBndWFyYW50ZWVkIGEgY29udmVyZ2VkCi8vISAgIHNuYXBzaG90IG9mIGV2
+ZXJ5IG1vdmluZyBidWNrZXQg4oCUIGNoZWNrcG9pbnQgKipvbmx5IHRoZSBuZXcvdGFyZ2V0Ci8v
+ISAgIHNoYXJkKiogZHVyYWJseSwgZXZpY3QgZXZlcnkgbW92ZWQgYnVja2V0IGZyb20gZXZlcnkg
+b2xkIHNoYXJkCi8vISAgIChbYGNyYXRlOjpyZXNoYXJkYF0ncyBgZXZpY3RgIGlzIGFsc28gaWRl
+bXBvdGVudCksIGNoZWNrcG9pbnQgZXZlcnkKLy8hICAgKipzb3VyY2UqKiBzaGFyZCBkdXJhYmx5
+LCB0aGVuIGZsaXAgYHNwZWMuc2hhcmRNYXBgIHRvIHRoZSB0YXJnZXQgbWFwCi8vISAgIGluIHRo
+ZSBzYW1lIHBhdGNoIHRoYXQgY2xlYXJzIGB3b3JrZmxvdy50YXJnZXRTaGFyZENvdW50YCBhbmQg
+cmVzZXRzCi8vISAgIHBoYXNlIC0+IGBDb21wbGV0ZWAsIGZvbGxvd2VkIGJ5IFtgdHJpZ2dlcl9y
+b2xsaW5nX3Jlc3RhcnRgXSwgdGhlbgovLyEgICBjbGVhciB0aGUgZmVuY2UgKHVuY29uZGl0aW9u
+YWxseSwgb24gZXZlcnkgZXhpdCBwYXRoKS4gQ2FsbGluZyBldmljdAovLyEgICBhZ2FpbnN0IHRo
+ZSAqKm5ldyoqLCBhbHJlYWR5LWNvbW1pdHRlZCBtYXAgKG5vdCB0aGUgc3RhbGUgb2xkIG9uZSkK
+Ly8hICAgbWVhbnMgdGhlIGRyaXZlciBuZXZlciBuZWVkcyB0byByZXRhaW4gdGhlIG9sZCBtYXAg
+YWNyb3NzIGEgcmVzdGFydCDigJQKLy8hICAgdGhlIHNvdXJjZSBvZiB0aGUgY2xhc3NpYyAibG9z
+dCB0aGUgb2xkIG1hcCBhZnRlciBjdXRvdmVyIiByZXN1bWFiaWxpdHkKLy8hICAgdHJhcC4gQ2hl
+Y2twb2ludGluZyB0aGUgdGFyZ2V0ICpiZWZvcmUqIGV2aWN0aW5nIHNvdXJjZXMg4oCUIHJhdGhl
+ciB0aGFuCi8vISAgIGNoZWNrcG9pbnRpbmcgZXZlcnl0aGluZyBvbmx5IGFmdGVyIGJvdGggbWln
+cmF0aW9uIGFuZCBldmljdGlvbiwgYXMKLy8hICAgdGhpcyBkcml2ZXIgZGlkIGJlZm9yZSAjMTM5
+NiDigJQgaXMgUjE6IGFuIGV2aWN0aW9uIGJlY29taW5nIGR1cmFibGUgKG9yCi8vISAgIGV2ZW4g
+YmVpbmcgYXR0ZW1wdGVkKSBiZWZvcmUgdGhlIHRhcmdldCdzIGNvcHkgb2YgdGhlIHNhbWUgZGF0
+YSBpcwovLyEgICBkdXJhYmx5IGNoZWNrcG9pbnRlZCBjYW4gbG9zZSBkYXRhIHRoYXQgZXhpc3Rz
+IG9uIG5vIGR1cmFibGUgc2hhcmQgYXQKLy8hICAgYWxsIGlmIHRoZSBwcm9jZXNzIGNyYXNoZXMg
+aW4gYmV0d2Vlbjsgc2VlIFtgYWR2YW5jZV9jYXRjaGluZ191cGBdJ3MKLy8hICAgb3duIGRvYyBm
+b3IgdGhlIGZ1bGwgY3Jhc2gtYXQtZXZlcnktc3RlcCBhbmFseXNpcy4KLy8hCi8vISBBIGRyaXZl
+ci1zaWRlIGVycm9yIGF0IGFueSBzdGVwIChbYERyaXZlT3V0Y29tZTo6QmxvY2tlZGBdKSBsZWF2
+ZXMgdGhlIENSCi8vISBzcGVjIHVudG91Y2hlZDsgdGhlIG5leHQgdGljayByZXRyaWVzIHRoZSBz
+YW1lIHBoYXNlIGZyb20gdGhlIHNhbWUKLy8hIHBlcnNpc3RlZCBmaWVsZHMgKFIzKS4KLy8hCi8v
+ISAjIyBXcml0ZS1wYXVzZSBmZW5jZSBkdXJpbmcgdGhlIGZpbmFsIENhdGNoaW5nVXAgcGFzcyAo
+IzEzOTYgUjIpCi8vIQovLyEgRXZlbiB3aXRoIHRoZSBgU3BsaXR0aW5nYCArIGBDYXRjaGluZ1Vw
+YCBkb3VibGUgbWlncmF0aW9uIHBhc3MsIGEgd3JpdGUKLy8hIHRoYXQgbGFuZHMgb24gYSBtb3Zl
+ZCBidWNrZXQncyBvbGQgKHNvdXJjZSkgc2hhcmQgYWZ0ZXIgdGhlICpsYXN0KgovLyEgbWlncmF0
+aW9uLWNvcHkgcmVhZCBidXQgYmVmb3JlIHRoYXQgYnVja2V0J3MgZXZpY3Rpb24gaXMgbmV2ZXIg
+cmUtY29waWVkCi8vISBhbnl3aGVyZSDigJQgZXZpY3Rpb24gdGhlbiBzaWxlbnRseSBkcm9wcyBp
+dC4gW2BhZHZhbmNlX2NhdGNoaW5nX3VwYF0gY2xvc2VzCi8vISB0aGlzIGdhcCB3aXRoIGEgYm91
+bmRlZCwgc3RhdHVzLXZpc2libGUgd3JpdGUgcGF1c2UgKHRoZSBtZWNoYW5pc20gIzEzODEncwov
+LyEgUjUgcmV2aWV3IHNhbmN0aW9uZWQ6ICJhIGJvdW5kZWQgZmluYWwgcGF1c2Ugb2Ygd3JpdGVz
+IHRvIHN0aWxsLW1vdmluZwovLyEgYnVja2V0cyBpcyBhY2NlcHRhYmxlIGlmIG5lZWRlZCBmb3Ig
+Y29udmVyZ2VuY2UsIGJ1dCBtdXN0IGJlIGJvdW5kZWQgYW5kCi8vISByZXBvcnRlZCBpbiBzdGF0
+dXMiKSByYXRoZXIgdGhhbiBhIHJlcGVhdC11bnRpbC1jb252ZXJnZWQgbG9vcDogYXJtaW5nIHRo
+ZQovLyEgZmVuY2UgKmJlZm9yZSogdGhlIHRpY2sncyBtaWdyYXRpb24gcGFzcyBtZWFucyB0aGF0
+IHNpbmdsZSBwYXNzIGlzIGFscmVhZHkKLy8hIGEgY29tcGxldGUgc25hcHNob3Qgb2YgZXZlcnkg
+ZmVuY2VkIGJ1Y2tldCwgYmVjYXVzZSBubyB3cml0ZSBjYW4gbGFuZCBvbgovLyEgdGhlbSB3aGls
+ZSBpdCBydW5zLiBbYGNyYXRlOjphcGk6OldyaXRlRmVuY2VgXSAoYFBPU1QKLy8hIC9hZG1pbi9y
+ZXNoYXJkOmZlbmNlYCkgaXMgdGhlIHNlcnZpbmctc2lkZSBzZWFtOyBhIGZlbmNlZCB3cml0ZSBn
+ZXRzIGA1MDMKLy8hIGJ1Y2tldF93cml0ZV9wYXVzZWRgIHJhdGhlciB0aGFuIGJlaW5nIHNpbGVu
+dGx5IGRyb3BwZWQgb3IgcmFjaW5nIHRoZSBtYXAKLy8hIGZsaXAuIFRoZSBmZW5jZSBpcyBhcm1l
+ZCBvbiBldmVyeSAqKnNvdXJjZSoqIHNoYXJkICh0aGUgbGl2ZSBvd25lcnMgdW50aWwKLy8hIHRo
+aXMgdGljaydzIG93biBjdXRvdmVyIHBhdGNoKSwgYW5kIGNsZWFyZWQg4oCUIHVuY29uZGl0aW9u
+YWxseSwgb24gZXZlcnkKLy8hIGV4aXQgcGF0aCBvZiBbYGFkdmFuY2VfY2F0Y2hpbmdfdXBgXSwg
+c3VjY2VzcyBvciBgQmxvY2tlZGAg4oCUIG9uY2UgdGhlCi8vISBzZXF1ZW5jZSBmaW5pc2hlcy4g
+QSBkcml2ZXIgcHJvY2VzcyB0aGF0IGNyYXNoZXMgYmVmb3JlIHRoYXQgZXhwbGljaXQKLy8hIGNs
+ZWFyIGNhbm5vdCB3ZWRnZSB3cml0ZXMgZm9yZXZlcjogW2BXcml0ZUZlbmNlOjpibG9ja3NgXSBl
+bmZvcmNlcwovLyEgW2BXUklURV9GRU5DRV9UVExfU0VDU2BdIGFzIGEgZGVhZGxpbmUgb24gdGhl
+ICpzZXJ2aW5nKiBwb2QgaXRzZWxmLAovLyEgaW5kZXBlbmRlbnQgb2YgdGhlIGRyaXZlcidzIGxp
+dmVuZXNzLgovLyEKLy8hICMjIE1pZ3JhdGlvbiBkdXJhYmlsaXR5ICgjMTM4OSkKLy8hCi8vISBg
+RW5naW5lOjphcHBseV9yZXNoYXJkX2JhdGNoYC9gZXZpY3Rfbm90X293bmVkYCAoYHN0b3JhZ2Uu
+cnNgLCAjMTM4MCkKLy8hIG11dGF0ZSBlbmdpbmUgc3RhdGUgZGlyZWN0bHkgcmF0aGVyIHRoYW4g
+dGhyb3VnaCBgV3JpdGVDb29yZGluYXRvcmAvdGhlCi8vISBBT0YsIHNvIOKAlCB1bmxpa2Ugb3Jk
+aW5hcnkgd3JpdGVzIOKAlCB0aGVpciBkdXJhYmlsaXR5IGlzIG5vdCBpbXBsaWVkIGJ5IHRoZQov
+LyEgZW5naW5lJ3Mgbm9ybWFsIHdyaXRlIHBhdGg7IHdpdGggIzEzODcncyBlbWJlZGRlZCBwZXJz
+aXN0ZW5jZSBpdCB3YXMKLy8hIHByZXZpb3VzbHkgY2FwdHVyZWQgb25seSBieSB0aGUgbmV4dCBw
+ZXJpb2RpYyBgTFVNRU5fU05BUFNIT1RfU0VDU2AKLy8hIGNoZWNrcG9pbnQgKGRlZmF1bHQgMzAw
+cyksIHdlbGwgYWZ0ZXIgdGhpcyBkcml2ZXIncyBvd24gY3V0b3ZlciByZXN0YXJ0Ci8vISAofjYw
+LTkwcyBsYXRlcikg4oCUIG9ic2VydmVkIGxpdmUgYXMgODA2IG1pZ3JhdGVkIGJhdGNoZXMgbG9z
+dCBvbiB0aGUKLy8hIHRhcmdldCBhbmQgYW4gZXZpY3Rpb24gc2lsZW50bHkgdW5kb25lIG9uIHRo
+ZSBzb3VyY2UgKCMxMzg3J3MgcmVwb3J0KS4KLy8hCi8vISBUd28gZGVzaWducyB3ZXJlIGNvbnNp
+ZGVyZWQ6IChhKSByb3V0ZSBgOmFwcGx5YC9gOmV2aWN0YCB0aHJvdWdoIHRoZSBBT0YvCi8vISBg
+V3JpdGVDb29yZGluYXRvcmAgcGF0aCBhcyBuZXcgYFJhZnRMb2dFbnRyeWAgdmFyaWFudHMsIG9y
+IChiKSBhbiBleHBsaWNpdAovLyEgc3luY2hyb25vdXMgY2hlY2twb2ludCBzdGVwIHRoZSBkcml2
+ZXIgaW52b2tlcyBhbmQgYXdhaXRzIHBlciB0b3VjaGVkCi8vISBzaGFyZCBiZWZvcmUgY3V0b3Zl
+ci4gKiooYikgd2FzIGNob3NlbioqOiBhIHdob2xlIGBSZXNoYXJkQmF0Y2hgJ3MKLy8hIGBTbmFw
+c2hvdFYxYCBkZWx0YSBjYW4gYmUgbGFyZ2UgKGJvdW5kZWQgYnkgYE1BWF9FWFRFUk5BTF9JRFNf
+UEVSX0JBVENIYCwKLy8hIGJ1dCBzdGlsbCBwb3RlbnRpYWxseSBtYW55IGNvbGxlY3Rpb25zL2Zp
+ZWxkcyksIHdoaWNoIHNpdHMgYXdrd2FyZGx5IGFzIGEKLy8hIHNpbmdsZSBgV2FsUmVjb3JkYC9B
+T0YgZnJhbWUgZGVzaWduZWQgYXJvdW5kIG9uZSBib3VuZGVkIG11dGF0aW9uCi8vISAoYEluZGV4
+YC9gUmVwbGFjZURvY3NgL2V0Yyk7IGl0IHdvdWxkIGFsc28gbmVlZCBuZXcgYXBwbHktbG9vcCBi
+cmFuY2hlcwovLyEgYW5kIGlkZW1wb3RlbmN5IHNlbWFudGljcyBkaXN0aW5jdCBmcm9tIGV2ZXJ5
+IGV4aXN0aW5nIGBSYWZ0TG9nRW50cnlgCi8vISB2YXJpYW50LCB3aG9zZSBhcHBseSBtZXRob2Rz
+IG11dGF0ZSBleGFjdGx5IG9uZSBjb2xsZWN0aW9uIGRldGVybWluaXN0aWNhbGx5Ci8vISByYXRo
+ZXIgdGhhbiBtZXJnZSBhIHdob2xlIGRlbHRhLiAoYikgcmV1c2VzIGBzZWdtZW50X3JkYi5yc2An
+cwovLyEgYFNlZ21lbnRSZGJTdG9yZTo6c2F2ZWAgdmVyYmF0aW0g4oCUIHRoZSBleGFjdCBjYWxs
+IHRoZSBwZXJpb2RpYyBzbmFwc2hvdHRlcgovLyEgYWxyZWFkeSBtYWtlcywganVzdCBpbnZva2Vk
+IHN5bmNocm9ub3VzbHkgb24gZGVtYW5kIHZpYSBhIG5ldwovLyEgYFBPU1QgL2FkbWluL2NoZWNr
+cG9pbnRgIGFkbWluIHZlcmIgKFtgY3JhdGU6OmFwaTo6Q2hlY2twb2ludFNpbmtgXSkg4oCUIG5v
+Ci8vISBuZXcgV0FMIHJlY29yZCBzaGFwZSwgbm8gbmV3IGFwcGx5LWxvb3AgYnJhbmNoLCBubyBu
+ZXcgaWRlbXBvdGVuY3kKLy8hIHJlYXNvbmluZzogYHNhdmVgIGFscmVhZHkgcmUtc2VhbHMgdGhl
+ICplbnRpcmUqIGN1cnJlbnQgZW5naW5lIHN0YXRlCi8vISAoaW5jbHVkaW5nIHdoYXRldmVyIGA6
+YXBwbHlgL2A6ZXZpY3RgIGFscmVhZHkgbXV0YXRlZCkgYXRvbWljYWxseQovLyEgKHN0YWdlLXRo
+ZW4tcmVuYW1lKSwgc28gb25lIGNoZWNrcG9pbnQgY2FsbCBjYXB0dXJlcyBldmVyeSBtaWdyYXRp
+b24KLy8hIG11dGF0aW9uIG1hZGUgc28gZmFyLCBub3QganVzdCB0aGUgbW9zdCByZWNlbnQgb25l
+LgovLyEKLy8hIFtgY2hlY2twb2ludF9zaGFyZHNgXSBjYWxscyBgUE9TVCAvYWRtaW4vY2hlY2tw
+b2ludGAgb24gYW4gZXhwbGljaXQgc2hhcmQKLy8hIHNldDsgW2BhZHZhbmNlX2NhdGNoaW5nX3Vw
+X2ZlbmNlZGBdIGNhbGxzIGl0IHR3aWNlIHBlciB0aWNrIOKAlCBvbmNlIGZvcgovLyEganVzdCB0
+aGUgbmV3L3RhcmdldCBzaGFyZCBpbW1lZGlhdGVseSBhZnRlciBtaWdyYXRpb24gYW5kIGJlZm9y
+ZSBhbnkKLy8hIHNvdXJjZSBldmljdGlvbiBpcyBhdHRlbXB0ZWQgKCMxMzk2IFIxKSwgYW5kIGFn
+YWluIGZvciBldmVyeSBzb3VyY2Ugc2hhcmQKLy8hIChgMC4uY3VycmVudC5waHlzaWNhbF9zaGFy
+ZF9jb3VudCgpYCwgYGV2aWN0X29sZF9zaGFyZHNgJ3MgdGFyZ2V0IHNldCkKLy8hIGFmdGVyIGV2
+aWN0aW9uIGFuZCBiZWZvcmUgdGhlIGBzaGFyZE1hcGAgY3V0b3ZlciBwYXRjaCBhbmQKLy8hIFtg
+dHJpZ2dlcl9yb2xsaW5nX3Jlc3RhcnRgXS4gQSBjaGVja3BvaW50IGZhaWx1cmUgb24gZWl0aGVy
+IGNhbGwgcmVwb3J0cwovLyEgW2BEcml2ZU91dGNvbWU6OkJsb2NrZWRgXSBhbmQgbGVhdmVzIGBz
+cGVjYCBhdCBgQ2F0Y2hpbmdVcGAgdW50b3VjaGVkCi8vISAoUjMpOiB0aGUgbmV4dCB0aWNrIHJl
+LXJ1bnMgdGhlIHdob2xlIGlkZW1wb3RlbnQKLy8hIG1pZ3JhdGUvY2hlY2twb2ludC9ldmljdC9j
+aGVja3BvaW50IHNlcXVlbmNlLCBjb25zaXN0ZW50IHdpdGggIzEzODEncwovLyEgc3BlYy1pcy10
+aGUtY2hlY2twb2ludCBzZW1hbnRpY3Mg4oCUIGN1dG92ZXIgbmV2ZXIgZmlyZXMgb24gYSBzaGFy
+ZCB3aG9zZQovLyEgbWlncmF0aW9uIG11dGF0aW9ucyBhcmUgbm90IHlldCBkdXJhYmxlLCBhbmQg
+ZXZpY3Rpb24gaXMgbmV2ZXIgZXZlbgovLyEgYXR0ZW1wdGVkIGJlZm9yZSB0aGUgdGFyZ2V0J3Mg
+Y29weSBvZiB0aGUgc2FtZSBkYXRhIGlzIGR1cmFibGUuCi8vISBgY2hlY2twb2ludF9zaGFyZGAg
+KCMxMzk2IFIzKSBhbHNvIG5vdyByZXF1aXJlcyB0aGUgcmVzcG9uc2UgYm9keSB0bwovLyEgcmVw
+b3J0IGBwZXJzaXN0ZWQgPT0gdHJ1ZWA7IGEgYDIwMCB7InBlcnNpc3RlZCI6IGZhbHNlfWAg4oCU
+IHRoZSB2YWN1b3VzCi8vISAibm8gZHVyYWJsZSBzdG9yZSBjb25maWd1cmVkIiByZXNwb25zZSBg
+YWRtaW5fY2hlY2twb2ludGAgcmV0dXJucyBmb3IKLy8hIFtgY3JhdGU6OmFwaTo6Tm9vcENoZWNr
+cG9pbnRgXSBkZXBsb3ltZW50cyDigJQgaXMgdHJlYXRlZCBhcyBhIGZhaWxlZAovLyEgY2hlY2tw
+b2ludCwgbm90IGEgc2F0aXNmaWVkIGR1cmFiaWxpdHkgZ2F0ZS4KLy8hCi8vISAjIyBTY29wZSBy
+YWlsOiBzaW5nbGUtbWVtYmVyIG9ubHkKLy8hCi8vISBbYHNob3VsZF9zdGFydF9zcGxpdGBdIHJl
+ZnVzZXMgdG8gc3RhcnQgYSBzcGxpdCB3aGVuIGByZXBsaWNhc1BlclNoYXJkID4KLy8hIDFgLiBH
+cm93aW5nIGBzaGFyZENvdW50YCByZWFzc2lnbnMgYHNoYXJkX2luZGV4ID0gb3JkaW5hbCAlIHNo
+YXJkQ291bnRgCi8vISBmb3IgKmV2ZXJ5KiBleGlzdGluZyBwb2Qgb3JkaW5hbCBvbmNlIHJhZnQg
+aGFzIG1vcmUgdGhhbiBvbmUgcmVwbGljYSBwZXIKLy8hIHNoYXJkIChhIGZ1bGwgcmFmdC1ncm91
+cCByZXNodWZmbGUsIG5vdCBhbiBhZGRlZCBzaGFyZCksIHdoaWNoIGlzIHVuc2FmZQovLyEgd2l0
+aG91dCBhZGRpdGlvbmFsIHJhZnQtbWVtYmVyc2hpcCBtaWdyYXRpb24gdGhpcyBXSSBkb2VzIG5v
+dCBpbXBsZW1lbnQuCi8vISBBdCBgcmVwbGljYXNQZXJTaGFyZCA8PSAxYCwgYG9yZGluYWwgJSAo
+c2hhcmRDb3VudCsxKSA9PSBvcmRpbmFsYCBmb3IKLy8hIGV2ZXJ5IGV4aXN0aW5nIG9yZGluYWwg
+KGBvcmRpbmFsIDwgc2hhcmRDb3VudGApLCBzbyBncm93aW5nIGJ5IGV4YWN0bHkKLy8hIG9uZSBp
+cyBwb2Qtb3JkaW5hbC1zdGFibGU6IGV2ZXJ5IGV4aXN0aW5nIHBvZCBrZWVwcyBpdHMgc2hhcmQv
+UFZDCi8vISBpZGVudGl0eSBhbmQgZXhhY3RseSBvbmUgbmV3IHBvZCAob3JkaW5hbCA9PSBvbGQg
+YHNoYXJkQ291bnRgKSBiZWNvbWVzCi8vISB0aGUgbmV3IHNoYXJkIOKAlCBzZWUgW2BzdXBlcjo6
+Y3JkOjpMdW1lblNwZWM6OnN0b3JhZ2VfcG9kX2NvdW50YF0uCi8vIQovLyEgIyMgTGl2ZSBxdWVy
+eSByb3V0aW5nIGNvbnN1bWVzIGBzcGVjLnNoYXJkTWFwYCAoIzEzODQpCi8vIQovLyEgW2BzdXBl
+cjo6cmVuZGVyOjpyZW5kZXJgXSB3cml0ZXMgYHNoYXJkTWFwLnt2ZXJzaW9uLGFzc2lnbm1lbnRz
+fWAgaW50byB0aGUKLy8hIHNlcnZpbmcgQ29uZmlnTWFwLCBgc2VydmluZ19lbnZgIG1hcHMgYFNI
+QVJEX01BUF9WRVJTSU9OYC8KLy8hIGBWSVJUVUFMX0JVQ0tFVF9DT1VOVGAvYFNIQVJEX01BUF9B
+U1NJR05NRU5UU2Agb250byBjb250YWluZXIgZW52LCBhbmQKLy8hIGBzcmMvYmluL2x1bWVuLnJz
+YCdzIGBzZXJ2ZSgpYCBidWlsZHMgaXRzIGBFbmdpbmVTaGFyZFNlYXJjaGAgdmlhCi8vISBgRW5n
+aW5lU2hhcmRTZWFyY2g6Om5ld193aXRoX3NoYXJkX21hcGAgZmVkIGJ5Ci8vISBgY3JhdGU6OmNv
+bmZpZzo6c2hhcmRfbWFwX2Zyb21fZW52YCwgc28gYSBwb2Qgc3RhcnRlZCBhZnRlciB0aGlzIGRy
+aXZlcidzCi8vISBjdXRvdmVyIHJvdXRlcyBxdWVyaWVzIGJ5IHRoZSBtaW5pbWFsLW1vdmUgdGFy
+Z2V0IG1hcCBjb21wdXRlZCBieQovLyEgW2BjcmF0ZTo6cm91dGluZzo6VmlydHVhbEJ1Y2tldFNo
+YXJkTWFwOjpzcGxpdF9vbmVfc2hhcmRgXSByYXRoZXIgdGhhbiB0aGUKLy8hIGJhbGFuY2VkIGRl
+ZmF1bHQuIFtgdHJpZ2dlcl9yb2xsaW5nX3Jlc3RhcnRgXSBpcyBkcml2ZW4gaW4gdGhlIHNhbWUK
+Ly8hIGN1dG92ZXIgdGljayB0aGF0IHBhdGNoZXMgYHNwZWMuc2hhcmRNYXBgIHNvIGV2ZXJ5IHNl
+cnZpbmcgcG9kIHBpY2tzIHVwCi8vISB0aGUgbmV3IG1hcCB3aXRob3V0IG1hbnVhbCBpbnRlcnZl
+bnRpb246IGl0IHBhdGNoZXMgdGhlIHNlcnZpbmcKLy8hIFN0YXRlZnVsU2V0J3MgcG9kLXRlbXBs
+YXRlIGFubm90YXRpb25zLCB3aGljaCBLdWJlcm5ldGVzJyBuYXRpdmUKLy8hIGBSb2xsaW5nVXBk
+YXRlYCBzdHJhdGVneSAoYHNlcnZpbmdfc3RhdGVmdWxzZXRgJ3MgYHVwZGF0ZVN0cmF0ZWd5YCkg
+dHVybnMKLy8hIGludG8gYSByb2xsaW5nIHJlY3JlYXRpb24gb2YgZXZlcnkgcG9kIGFnYWluc3Qg
+dGhlIGFscmVhZHktdXBkYXRlZAovLyEgQ29uZmlnTWFwIOKAlCBubyBzZXBhcmF0ZSB3YXRjaC9w
+b2xsIGxvb3AgaXMgbmVlZGVkLgoKdXNlIHN0ZDo6Y29sbGVjdGlvbnM6OntCVHJlZU1hcCwgQlRy
+ZWVTZXR9Owp1c2Ugc3RkOjp0aW1lOjp7RHVyYXRpb24sIEluc3RhbnQsIFN5c3RlbVRpbWUsIFVO
+SVhfRVBPQ0h9OwoKdXNlIGFueWhvdzo6e2FueWhvdywgYmFpbCwgQ29udGV4dCwgUmVzdWx0fTsK
+dXNlIGFzeW5jX3RyYWl0Ojphc3luY190cmFpdDsKdXNlIGt1YmU6OmFwaTo6e0FwaSwgQXBpUmVz
+b3VyY2UsIER5bmFtaWNPYmplY3QsIFBhdGNoLCBQYXRjaFBhcmFtc307CnVzZSBrdWJlOjp7Q2xp
+ZW50LCBSZXNvdXJjZUV4dH07CnVzZSBzZXJkZV9qc29uOjpqc29uOwoKdXNlIGNyYXRlOjphdXRo
+Ojp7Um9sZSwgVG9rZW5DbGFpbXN9Owp1c2UgY3JhdGU6Om9wZXJhdG9yOjpjcmQ6OntBdXRoTW9k
+ZSwgTHVtZW4sIFJlc2hhcmRQaGFzZX07CnVzZSBjcmF0ZTo6b3BlcmF0b3I6OmxlYXNlOjp7c2Vs
+ZiwgRWxlY3Rpb259Owp1c2UgY3JhdGU6OnJlc2hhcmQ6OnsKICAgIGJ1Y2tldF9tb3Zlcywgc25h
+cHNob3RfcmVzaGFyZF9iYXRjaGVzLCBzbmFwc2hvdF9yZXNoYXJkX3BydW5lX2NodW5rcywgUmVz
+aGFyZEJhdGNoLAogICAgUmVzaGFyZFBydW5lQ2h1bmssCn07CnVzZSBjcmF0ZTo6cm91dGluZzo6
+VmlydHVhbEJ1Y2tldFNoYXJkTWFwOwp1c2UgY3JhdGU6OnN0b3JhZ2U6OlNuYXBzaG90VjE7Cgov
+Ly8gVGhlIGNsaWVudC1mYWNpbmcgcG9ydCBsdW1lbidzIHNlcnZpbmcgU2VydmljZS9TdGF0ZWZ1
+bFNldCBleHBvc2UuIEtlcHQKLy8vIGR1cGxpY2F0ZWQgZnJvbSBgcmVuZGVyOjpDTElFTlRfUE9S
+VGAvYHJlY29uY2lsZTo6Q0xJRU5UX1BPUlRgIHRoZSBzYW1lCi8vLyB3YXkgdGhvc2UgdHdvIGFs
+cmVhZHkgZHVwbGljYXRlIGl0IGZyb20gZWFjaCBvdGhlciDigJQgdGhlIHNtYWxsZXN0IHByaXZh
+dGUKLy8vIGNvbnN0YW50IGJlYXRzIGEgbmV3IGBwdWJgIGNyb3NzLW1vZHVsZSBzeW1ib2wtdGFi
+bGUgcm93Lgpjb25zdCBDTElFTlRfUE9SVDogdTE2ID0gNzM3MzsKCi8vLyBQb2xsIGludGVydmFs
+IGZvciB0aGUgcmVzaGFyZCBkcml2ZXIgbG9vcC4KY29uc3QgRFJJVkVSX1BPTExfSU5URVJWQUw6
+IER1cmF0aW9uID0gRHVyYXRpb246OmZyb21fc2VjcygyMCk7CgovLy8gTGVhZGVyLWVsZWN0aW9u
+IExlYXNlIG5hbWUgZm9yIFtgc3Bhd25fcmVzaGFyZF9kcml2ZXJfbG9vcGBdIOKAlCBkaXN0aW5j
+dAovLy8gZnJvbSBgbGlicy9zZXJ2aWNlLWs4c2AncyBvd24gYFM6Ok1BTkFHRVJgLW5hbWVkIGFw
+cGx5LWxvb3AgTGVhc2Ugc28gdGhlIHR3bwovLy8gaW5kZXBlbmRlbnRseS1sZWFkZXItZ2F0ZWQg
+bG9vcHMgKHdoaWNoIG1heSBwaWNrIGRpZmZlcmVudCBsZWFkZXJzKSBuZXZlcgovLy8gY29udGVu
+ZCBvbiBvbmUgTGVhc2Ugb2JqZWN0Lgpjb25zdCBEUklWRVJfTEVBU0VfTkFNRTogJnN0ciA9ICJs
+dW1lbi1yZXNoYXJkLWRyaXZlciI7CgovLy8gVXBwZXIgYm91bmQgb24gZXh0ZXJuYWxfaWRzIGNh
+cnJpZWQgcGVyIGBQT1NUIC9hZG1pbi9yZXNoYXJkOmFwcGx5YCBjYWxsLAovLy8gbWF0Y2hpbmcg
+dGhlIGJhdGNoaW5nIGNvbnRyYWN0IFtgY3JhdGU6OnJlc2hhcmQ6OnNuYXBzaG90X3Jlc2hhcmRf
+YmF0Y2hlc2BdCi8vLyBhbHJlYWR5IGRvY3VtZW50cyAoY2hlY2twb2ludCBhZnRlciBldmVyeSBi
+YXRjaCwgbm90IGFmdGVyIG9uZSBmdWxsLXNoYXJkCi8vLyBjb3B5KS4KY29uc3QgTUFYX0VYVEVS
+TkFMX0lEU19QRVJfQkFUQ0g6IHVzaXplID0gMjAwMDsKCi8vLyBUVEwgZm9yIHRoZSB3cml0ZS1w
+YXVzZSBmZW5jZSBbYGFkdmFuY2VfY2F0Y2hpbmdfdXBgXSBhcm1zIG92ZXIgc3RpbGwtbW92aW5n
+Ci8vLyBidWNrZXRzIGR1cmluZyBpdHMgZmluYWwgbWlncmF0aW9uIHBhc3MgKCMxMzk2IFIyKSDi
+gJQgZ2VuZXJvdXMgcmVsYXRpdmUgdG8KLy8vIG9uZSB0aWNrJ3MgSFRUUCByb3VuZCB0cmlwcyAo
+YSBzY29wZWQtYmFja3VwIGZldGNoICsgYXBwbHkgYmF0Y2hlcyBhY3Jvc3MKLy8vIGhvd2V2ZXIg
+bWFueSBzb3VyY2Ugc2hhcmRzIGEgc3BsaXQgdG91Y2hlcywgdGhlbiBldmljdCArIGNoZWNrcG9p
+bnQpIHdoaWxlCi8vLyBzdGlsbCBib3VuZGVkOyB0aGUgZmVuY2UgaXMgYSBjcmFzaC1zYWZldHkg
+YmFja3N0b3AgdGhlICpzZXJ2aW5nKiBwb2QKLy8vIGVuZm9yY2VzIGluZGVwZW5kZW50IG9mIHRo
+ZSBkcml2ZXIncyBvd24gbGl2ZW5lc3MsIHNlZQovLy8gW2BjcmF0ZTo6YXBpOjpXcml0ZUZlbmNl
+YF0uIFJlLWFybWVkIGZyZXNoIGV2ZXJ5IHRpY2sgdGhhdCBuZWVkcyBvbmUsIHNvIGEKLy8vIGhl
+YWx0aHksIHNsb3ctYnV0LXByb2dyZXNzaW5nIGRyaXZlciBuZXZlciByYWNlcyBpdHMgb3duIFRU
+TC4KY29uc3QgV1JJVEVfRkVOQ0VfVFRMX1NFQ1M6IHU2NCA9IDEyMDsKCi8vLyBUaGUgcHJvZHVj
+dGlvbiBkZWZhdWx0IFtgQ2x1c3RlckNvbnRyb2w6OndyaXRlX2ZlbmNlX3R0bF9zZWNzYF0gdmFs
+dWUKLy8vICgjMTQ0MyBSMS9BQzEpLCBleHBvc2VkIHNvIGludGVncmF0aW9uIHRlc3RzIGNhbiBm
+YWxsIGJhY2sgdG8gdGhlIHJlYWwKLy8vIGRlZmF1bHQgZnJvbSBhIGBmZW5jZV90dGxfc2Vjczog
+T3B0aW9uPHU2ND5gLXN0eWxlIG92ZXJyaWRlIGZpZWxkIHdpdGhvdXQKLy8vIG5lZWRpbmcgW2BX
+UklURV9GRU5DRV9UVExfU0VDU2BdIGl0c2VsZiB0byBiZSBgcHViYC4KLy8vIEBzcGVjIGFwcHMv
+bHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLW9wZXJhdG9y
+LXJlc2hhcmQtZHJpdmVyLXJzLm1kI3NvdXJjZQpwdWIgZm4gZGVmYXVsdF93cml0ZV9mZW5jZV90
+dGxfc2VjcygpIC0+IHU2NCB7CiAgICBXUklURV9GRU5DRV9UVExfU0VDUwp9CgovLy8gSG93IG1h
+bnkgY29uc2VjdXRpdmUgW2BhZHZhbmNlX2NhdGNoaW5nX3VwYF0gdGlja3Mgc2hvcnQtY2lyY3Vp
+dCBvbiBhCi8vLyByZWNvcmRlZCBbYE92ZXJzaXplZERvY3VtZW50QmxvY2tgXSAoIzE0NDQgUjIp
+IGJlZm9yZSBhdHRlbXB0aW5nIHRoZSBmdWxsCi8vLyBmZW5jZWQgbWlncmF0aW9uIHBhc3MgYWdh
+aW4uIEJvdW5kcyBob3cgbG9uZyBhIGRvY3VtZW50IGFuIG9wZXJhdG9yIGhhcwovLy8gc2luY2Ug
+Zml4ZWQgKGRlbGV0ZWQgb3Igc2hydW5rKSBzdGF5cyB3ZWRnZWQgYWZ0ZXIgdGhlIGZpeCB3aXRo
+b3V0Ci8vLyByZS1hcm1pbmcgdGhlIHdyaXRlLXBhdXNlIGZlbmNlIOKAlCBhbmQgcmVvcGVuaW5n
+IHRoZSByZWN1cnJpbmcgNTAzIHdpbmRvdwovLy8gdGhlIGZpeCBjbG9zZXMg4oCUIG9uIGV2ZXJ5
+IHNpbmdsZSB0aWNrIHdoaWxlIHRoZSBjb25kaXRpb24gaXMgZ2VudWluZWx5Ci8vLyB1bmNoYW5n
+ZWQuIGBEUklWRVJfUE9MTF9JTlRFUlZBTCAqIE9WRVJTSVpFX1JFQ0hFQ0tfVElDS1NgICg1IG1p
+bnV0ZXMgYXQKLy8vIHRoZSBjdXJyZW50IDIwcyBwb2xsIGludGVydmFsKSBpcyB0aGUgc2FtZSBv
+cmRlciBvZiBtYWduaXR1ZGUgYXMKLy8vIFtgV1JJVEVfRkVOQ0VfVFRMX1NFQ1NgXS9gU0hBUkRf
+VVNBR0VfUE9MTF9JTlRFUlZBTGAtc3R5bGUgYm91bmRzCi8vLyBlbHNld2hlcmUgaW4gdGhpcyBk
+cml2ZXIuCmNvbnN0IE9WRVJTSVpFX1JFQ0hFQ0tfVElDS1M6IHUzMiA9IDE1OwoKLy8vIERpc3Rp
+bmd1aXNoZXMgYW4gYXBwbHkgZmFpbHVyZSBjYXVzZWQgYnkgZXhhY3RseSBvbmUgZG9jdW1lbnQn
+cyBiYXRjaAovLy8gc2VyaWFsaXppbmcgcGFzdCBbYGNyYXRlOjpyZXNoYXJkOjpBRE1JTl9ST1VU
+RV9CT0RZX0xJTUlUX0JZVEVTYF0g4oCUIHRoZQovLy8gYHNuYXBzaG90X3Jlc2hhcmRfYmF0Y2hl
+c2AvYGJ5dGVfY2FwX2NodW5rYCBmbG9vciBjYXNlCi8vLyAoYGNyYXRlOjpyZXNoYXJkYCdzIG1v
+ZHVsZSBkb2MncyAib25lIGRvY3VtZW50IGNhbm5vdCBiZSBzcGxpdCBmdXJ0aGVyIikKLy8vIOKA
+lCBmcm9tIGFueSBvdGhlciByZWFzb24gYFBPU1QgL2FkbWluL3Jlc2hhcmQ6YXBwbHlgIGNhbiBm
+YWlsICgjMTQ0NCBSMikuCi8vLyBEZXRlcm1pbmlzdGljIGV2ZXJ5IHJldHJ5IChub3RoaW5nIGFi
+b3V0IHRoZSBkYXRhIG9yIHRoZSBieXRlIGNhcCBjaGFuZ2VzCi8vLyB0aWNrIHRvIHRpY2spLCB1
+bmxpa2UgYSB0cmFuc2llbnQgbmV0d29yay81eHggZXJyb3IsIHNvIHRoaXMgaXMgc3VyZmFjZWQK
+Ly8vIGFzIGEgZGlzdGluY3QgYHN0YXR1cy5yZXNoYXJkYCBibG9ja2luZyBjb25kaXRpb24gKHNl
+ZQovLy8gW2BvdmVyc2l6ZV9ibG9ja19jb25kaXRpb25gXSkgaW5zdGVhZCBvZiB0aGUgZ2VuZXJp
+YwovLy8gW2BEcml2ZU91dGNvbWU6OkJsb2NrZWRgXSBtZXNzYWdlIGV2ZXJ5IG90aGVyIGZhaWx1
+cmUgcHJvZHVjZXMsIGFuZCB1c2VkCi8vLyB0byBza2lwIHJlLWFybWluZyB0aGUgd3JpdGUtcGF1
+c2UgZmVuY2Ugb24gYSB0aWNrIGFscmVhZHkga25vd24gdG8gZmFpbAovLy8gaWRlbnRpY2FsbHkg
+KHNlZSBbYGFkdmFuY2VfY2F0Y2hpbmdfdXBgXSkuCiNbZGVyaXZlKERlYnVnLCBDbG9uZSwgUGFy
+dGlhbEVxLCBFcSldCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3Nv
+dXJjZS9hcHBzLWx1bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1ycy5tZCNzb3VyY2UK
+cHViIHN0cnVjdCBPdmVyc2l6ZWREb2N1bWVudEJsb2NrIHsKICAgIHB1YiBjb2xsZWN0aW9uOiBT
+dHJpbmcsCiAgICBwdWIgZXh0ZXJuYWxfaWQ6IFN0cmluZywKICAgIHB1YiBieXRlczogdXNpemUs
+Cn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBz
+LWx1bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1ycy5tZCNzb3VyY2UKaW1wbCBzdGQ6
+OmZtdDo6RGlzcGxheSBmb3IgT3ZlcnNpemVkRG9jdW1lbnRCbG9jayB7CiAgICBmbiBmbXQoJnNl
+bGYsIGY6ICZtdXQgc3RkOjpmbXQ6OkZvcm1hdHRlcjwnXz4pIC0+IHN0ZDo6Zm10OjpSZXN1bHQg
+ewogICAgICAgIHdyaXRlISgKICAgICAgICAgICAgZiwKICAgICAgICAgICAgInJlc2hhcmQgYmxv
+Y2tlZDogY29sbGVjdGlvbiBge31gIGRvY3VtZW50IGB7fWAgc2VyaWFsaXplcyB0byB7fSBieXRl
+cywgb3ZlciB0aGUgXAogICAgICAgICAgICAge30gYnl0ZSAvYWRtaW4vcmVzaGFyZDphcHBseSBi
+b2R5IGxpbWl0OyB0aGlzIHNpbmdsZSBkb2N1bWVudCBjYW5ub3QgYmUgc3BsaXQgaW50byBcCiAg
+ICAgICAgICAgICBhIHNtYWxsZXIgYmF0Y2gg4oCUIHNocmluayBvciByZW1vdmUgaXRzIGxhcmdl
+IGZpZWxkIHZhbHVlcyAobG9uZyB0ZXh0LCB2ZWN0b3JzLCBcCiAgICAgICAgICAgICBoYXNoZXMp
+LCBvciBleGNsdWRlIGl0IGZyb20gdGhlIGNvbGxlY3Rpb24sIGJlZm9yZSB0aGlzIHNwbGl0IGNh
+biBjb250aW51ZSIsCiAgICAgICAgICAgIHNlbGYuY29sbGVjdGlvbiwKICAgICAgICAgICAgc2Vs
+Zi5leHRlcm5hbF9pZCwKICAgICAgICAgICAgc2VsZi5ieXRlcywKICAgICAgICAgICAgY3JhdGU6
+OnJlc2hhcmQ6OkFETUlOX1JPVVRFX0JPRFlfTElNSVRfQllURVMKICAgICAgICApCiAgICB9Cn0K
+Ci8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBzLWx1
+bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1ycy5tZCNzb3VyY2UKaW1wbCBzdGQ6OmVy
+cm9yOjpFcnJvciBmb3IgT3ZlcnNpemVkRG9jdW1lbnRCbG9jayB7fQoKLy8vIGAiPG5hbWVzcGFj
+ZT4vPG5hbWU+IiAtPiAob3duaW5nIENSJ3MgbWV0YWRhdGEudWlkLCBibG9jaywgdGlja3Mgc2tp
+cHBlZAovLy8gb24gaXQgc28gZmFyKWAsIHdyaXR0ZW4gYnkgW2BydW5fbWlncmF0aW9uX3Bhc3Nf
+aW1wbGBdIGFuZCBjb25zdW1lZCBieQovLy8gW2BhZHZhbmNlX2NhdGNoaW5nX3VwYF0gKG11dGF0
+aW5nLCB0byBkZWNpZGUvY291bnQgYSBza2lwKSBhbmQKLy8vIFtgb3ZlcnNpemVfYmxvY2tfY29u
+ZGl0aW9uYF0gKHJlYWQtb25seSwgZm9yIGByZWNvbmNpbGUucnNgJ3MKLy8vIGBzdGF0dXNfcGF0
+Y2hgKSDigJQgIzE0NDQgUjIuIE1pcnJvcnMgYHJlY29uY2lsZS5yc2AncyBvd24KLy8vIGBTaGFy
+ZFVzYWdlQ2FjaGVgIHBhdHRlcm46IGEgc3luY2hyb25vdXMgc3RhdHVzIHByb2plY3Rpb24gcmVh
+ZHMgYSBjYWNoZQovLy8gYSBiYWNrZ3JvdW5kIGxvb3Agd3JpdGVzLCByYXRoZXIgdGhhbiBkb2lu
+ZyBJL08gaXRzZWxmLgovLy8KLy8vIEtleWVkIGJ5IGBuYW1lc3BhY2UvbmFtZWAgKG5vdCBgdWlk
+YCwgd2hpY2ggaXMgbm90IHN0YWJsZSBpbnB1dCBmb3IgYQovLy8gbG9va3VwIGJlZm9yZSBhbiBv
+YmplY3QgZXhpc3RzKSBidXQgZXZlcnkgZW50cnkgY2FycmllcyB0aGUgYHVpZGAgb2YgdGhlCi8v
+LyBDUiBpdCB3YXMgcmVjb3JkZWQgZm9yICgjMTQ1OCBSNCk6IGEgbmFtZXNwYWNlL25hbWUgcGFp
+ciBpcyBub3QgYSBzdGFibGUKLy8vIGlkZW50aXR5IGFjcm9zcyBhIGRlbGV0ZS1hbmQtcmVjcmVh
+dGUg4oCUIHRoZSBuZXcgQ1IgZ2V0cyBhIGZyZXNoIGB1aWRgCi8vLyBmcm9tIHRoZSBBUEkgc2Vy
+dmVyIOKAlCBzbyBldmVyeSByZWFkIGNvbXBhcmVzIHRoZSBzdG9yZWQgYHVpZGAgYWdhaW5zdAov
+Ly8gdGhlIGNhbGxlcidzIGN1cnJlbnQgb25lIGFuZCB0cmVhdHMgYSBtaXNtYXRjaCBhcyBubyBl
+bnRyeSwgZ2l2aW5nIGEKLy8vIHJlY3JlYXRlZCBDUiBhIGNsZWFuIGBzdGF0dXMucmVzaGFyZGAg
+aW1tZWRpYXRlbHkgcmF0aGVyIHRoYW4gaW5oZXJpdGluZwovLy8gYSBzdGFsZSB3ZWRnZSBsZWZ0
+IGJ5IHRoZSBkZWxldGVkIENSJ3MgbGFzdCB0aWNrLiBbYHBydW5lX292ZXJzaXplX2NhY2hlYF0K
+Ly8vIGJvdW5kcyB0aGUgbWFwIGJ5IGRyb3BwaW5nIGVudHJpZXMgd2hvc2UgYHVpZGAgaXMgbm8g
+bG9uZ2VyIGxpdmUuCnR5cGUgT3ZlcnNpemVCbG9ja0NhY2hlID0gc3RkOjpzeW5jOjpNdXRleDxC
+VHJlZU1hcDxTdHJpbmcsIChTdHJpbmcsIE92ZXJzaXplZERvY3VtZW50QmxvY2ssIHUzMik+PjsK
+CmZuIG92ZXJzaXplX2Jsb2NrX2NhY2hlKCkgLT4gJidzdGF0aWMgT3ZlcnNpemVCbG9ja0NhY2hl
+IHsKICAgIHN0YXRpYyBDQUNIRTogc3RkOjpzeW5jOjpPbmNlTG9jazxPdmVyc2l6ZUJsb2NrQ2Fj
+aGU+ID0gc3RkOjpzeW5jOjpPbmNlTG9jazo6bmV3KCk7CiAgICBDQUNIRS5nZXRfb3JfaW5pdCh8
+fCBzdGQ6OnN5bmM6Ok11dGV4OjpuZXcoQlRyZWVNYXA6Om5ldygpKSkKfQoKZm4gb3ZlcnNpemVf
+Y2FjaGVfa2V5KG5hbWVzcGFjZTogJnN0ciwgbmFtZTogJnN0cikgLT4gU3RyaW5nIHsKICAgIGZv
+cm1hdCEoIntuYW1lc3BhY2V9L3tuYW1lfSIpCn0KCi8vLyBSZWNvcmQgKG9yIHJlZnJlc2gpIGEg
+ZGlzY292ZXJlZCBvdmVyc2l6ZSB3ZWRnZSBmb3IgYG5hbWVzcGFjZS9uYW1lYCdzCi8vLyBgdWlk
+YCwgcmVzZXR0aW5nIGl0cyBza2lwIGNvdW50ZXIg4oCUIGEgZnJlc2ggZGlzY292ZXJ5LCB3aGV0
+aGVyIHRoaXMgaXMKLy8vIHRoZSBmaXJzdCB0aWNrIHRvIGhpdCBpdCBvciBhIHBlcmlvZGljIHJl
+Y2hlY2sgKCMxNDQ0IFIyLCBzZWUKLy8vIFtgT1ZFUlNJWkVfUkVDSEVDS19USUNLU2BdKSB0aGF0
+IGhpdCB0aGUgc2FtZSB3ZWRnZSBhZ2Fpbi4gYHB1YihjcmF0ZSlgCi8vLyByYXRoZXIgdGhhbiBw
+cml2YXRlIHNvIGByZWNvbmNpbGUucnNgJ3MgYHN0YXR1c19wYXRjaGAgdGVzdHMgY2FuIGRyaXZl
+IHRoZQovLy8gZXhhY3QgY2FjaGUgW2BvdmVyc2l6ZV9ibG9ja19jb25kaXRpb25gXSByZWFkcywg
+d2l0aG91dCB3aWRlbmluZyB0aGlzIHBhc3QKLy8vIGNyYXRlLWludGVybmFsIHZpc2liaWxpdHku
+CnB1YihjcmF0ZSkgZm4gcmVjb3JkX292ZXJzaXplX2Jsb2NrKAogICAgbmFtZXNwYWNlOiAmc3Ry
+LAogICAgbmFtZTogJnN0ciwKICAgIHVpZDogJnN0ciwKICAgIGJsb2NrOiBPdmVyc2l6ZWREb2N1
+bWVudEJsb2NrLAopIHsKICAgIG92ZXJzaXplX2Jsb2NrX2NhY2hlKCkKICAgICAgICAubG9jaygp
+CiAgICAgICAgLnVud3JhcF9vcl9lbHNlKHxwb2lzb25lZHwgcG9pc29uZWQuaW50b19pbm5lcigp
+KQogICAgICAgIC5pbnNlcnQoCiAgICAgICAgICAgIG92ZXJzaXplX2NhY2hlX2tleShuYW1lc3Bh
+Y2UsIG5hbWUpLAogICAgICAgICAgICAodWlkLnRvX3N0cmluZygpLCBibG9jaywgMCksCiAgICAg
+ICAgKTsKfQoKLy8vIENsZWFyIGFueSByZWNvcmRlZCBvdmVyc2l6ZSB3ZWRnZSBmb3IgYG5hbWVz
+cGFjZS9uYW1lYCwgcmVnYXJkbGVzcyBvZgovLy8gd2hpY2ggYHVpZGAgcmVjb3JkZWQgaXQg4oCU
+IGNhbGxlZCB3aGVuZXZlciBhIG1pZ3JhdGlvbiBwYXNzIGZvciBpdAovLy8gY29tcGxldGVzIHdp
+dGhvdXQgaGl0dGluZyBvbmUgKHdoYXRldmVyIHdhcyB3ZWRnZWQgaXMgcmVzb2x2ZWQpIGFuZCB3
+aGVuCi8vLyB0aGUgd29ya2Zsb3cgcmV0dXJucyB0byBwaGFzZSBgQ29tcGxldGVgICgjMTQ1OCBS
+NCkuIGBwdWIoY3JhdGUpYCBmb3IgdGhlCi8vLyBzYW1lIHRlc3Qtc2VhbSByZWFzb24gYXMgW2By
+ZWNvcmRfb3ZlcnNpemVfYmxvY2tgXS4KcHViKGNyYXRlKSBmbiBjbGVhcl9vdmVyc2l6ZV9ibG9j
+ayhuYW1lc3BhY2U6ICZzdHIsIG5hbWU6ICZzdHIpIHsKICAgIG92ZXJzaXplX2Jsb2NrX2NhY2hl
+KCkKICAgICAgICAubG9jaygpCiAgICAgICAgLnVud3JhcF9vcl9lbHNlKHxwb2lzb25lZHwgcG9p
+c29uZWQuaW50b19pbm5lcigpKQogICAgICAgIC5yZW1vdmUoJm92ZXJzaXplX2NhY2hlX2tleShu
+YW1lc3BhY2UsIG5hbWUpKTsKfQoKLy8vIERyb3AgZXZlcnkgY2FjaGVkIGVudHJ5IHdob3NlIGB1
+aWRgIGlzIG5vdCBpbiBgbGl2ZV91aWRzYCAoIzE0NTggUjQpIOKAlAovLy8gY2FsbGVkIG9uY2Ug
+cGVyIFtgc3Bhd25fcmVzaGFyZF9kcml2ZXJfbG9vcGBdIHBvbGwsIHdoaWNoIGFscmVhZHkgbGlz
+dHMKLy8vIGV2ZXJ5IGxpdmUgYEx1bWVuYCBDUiBjbHVzdGVyLXdpZGUsIHNvIHRoaXMgbmVlZHMg
+bm8gZXh0cmEgazhzIEFQSSBjYWxsLgovLy8gQm91bmRzIHRoZSBjYWNoZSdzIGdyb3d0aCBhY3Jv
+c3MgYW4gdW5ib3VuZGVkIG51bWJlciBvZiBwYXN0Ci8vLyBkZWxldGUtYW5kLXJlY3JlYXRlIGN5
+Y2xlcyBvbiB0aGUgc2FtZSBgbmFtZXNwYWNlL25hbWVgLgovLy8gQHNwZWMgYXBwcy9sdW1lbi90
+ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtb3BlcmF0b3ItcmVzaGFy
+ZC1kcml2ZXItcnMubWQjc291cmNlCnB1YihjcmF0ZSkgZm4gcHJ1bmVfb3ZlcnNpemVfY2FjaGUo
+bGl2ZV91aWRzOiAmQlRyZWVTZXQ8U3RyaW5nPikgewogICAgb3ZlcnNpemVfYmxvY2tfY2FjaGUo
+KQogICAgICAgIC5sb2NrKCkKICAgICAgICAudW53cmFwX29yX2Vsc2UofHBvaXNvbmVkfCBwb2lz
+b25lZC5pbnRvX2lubmVyKCkpCiAgICAgICAgLnJldGFpbih8XywgKHVpZCwgXywgXyl8IGxpdmVf
+dWlkcy5jb250YWlucyh1aWQpKTsKfQoKLy8vIElmIGBuYW1lc3BhY2UvbmFtZWAncyBjdXJyZW50
+IGB1aWRgIGhhcyBhIHJlY29yZGVkIG92ZXJzaXplIHdlZGdlIEFORCBoYXMKLy8vIG5vdCB5ZXQg
+dXNlZCB1cCBpdHMgW2BPVkVSU0laRV9SRUNIRUNLX1RJQ0tTYF0gc2tpcCBidWRnZXQsIGJ1bXAg
+aXRzIHNraXAKLy8vIGNvdW50ZXIgYW5kIHJldHVybiBpdCDigJQgdGhlIGNhbGxlciAoW2BhZHZh
+bmNlX2NhdGNoaW5nX3VwYF0pIHNob3VsZAovLy8gc2hvcnQtY2lyY3VpdCB0byBbYERyaXZlT3V0
+Y29tZTo6QmxvY2tlZGBdIHdpdGhvdXQgYXJtaW5nIHRoZQovLy8gd3JpdGUtcGF1c2UgZmVuY2Uu
+IFJldHVybnMgYE5vbmVgIChubyBza2lwKSBvbmNlIHRoZSBidWRnZXQgaXMgZXhoYXVzdGVkCi8v
+LyBvciB0aGUgY2FjaGVkIGVudHJ5IGJlbG9uZ3MgdG8gYSBkaWZmZXJlbnQgYHVpZGAgKCMxNDU4
+IFI0IOKAlCBhIHN0YWxlCi8vLyBlbnRyeSBmcm9tIGEgZGVsZXRlZC1hbmQtcmVjcmVhdGVkIENS
+KSwgbGV0dGluZyB0aGUgbmV4dCByZWFsIGF0dGVtcHQKLy8vIGVpdGhlciBjbGVhciB0aGUgd2Vk
+Z2UgKGlmIGZpeGVkKSBvciByZS1yZWNvcmQgaXQgd2l0aCBhIGZyZXNoIGJ1ZGdldC4KZm4gc2hv
+dWxkX3NraXBfZm9yX292ZXJzaXplKAogICAgbmFtZXNwYWNlOiAmc3RyLAogICAgbmFtZTogJnN0
+ciwKICAgIHVpZDogJnN0ciwKKSAtPiBPcHRpb248T3ZlcnNpemVkRG9jdW1lbnRCbG9jaz4gewog
+ICAgbGV0IG11dCBjYWNoZSA9IG92ZXJzaXplX2Jsb2NrX2NhY2hlKCkKICAgICAgICAubG9jaygp
+CiAgICAgICAgLnVud3JhcF9vcl9lbHNlKHxwb2lzb25lZHwgcG9pc29uZWQuaW50b19pbm5lcigp
+KTsKICAgIGxldCAoY2FjaGVkX3VpZCwgYmxvY2ssIHRpY2tzKSA9IGNhY2hlLmdldF9tdXQoJm92
+ZXJzaXplX2NhY2hlX2tleShuYW1lc3BhY2UsIG5hbWUpKT87CiAgICBpZiBjYWNoZWRfdWlkICE9
+IHVpZCB8fCAqdGlja3MgPj0gT1ZFUlNJWkVfUkVDSEVDS19USUNLUyB7CiAgICAgICAgcmV0dXJu
+IE5vbmU7CiAgICB9CiAgICAqdGlja3MgKz0gMTsKICAgIFNvbWUoYmxvY2suY2xvbmUoKSkKfQoK
+Ly8vIFRoZSBvdmVyc2l6ZWQtZG9jdW1lbnQgYmxvY2sgY3VycmVudGx5IHJlY29yZGVkIGZvciBg
+bmFtZXNwYWNlL25hbWVgJ3MKLy8vIGN1cnJlbnQgYHVpZGAsIGlmIGFueSAoIzE0NDQgUjI7IGB1
+aWRgLXNjb3BlZCBieSAjMTQ1OCBSNCkg4oCUIHJlYWQtb25seSwKLy8vIGRvZXMgbm90IGFmZmVj
+dCBbYHNob3VsZF9za2lwX2Zvcl9vdmVyc2l6ZWBdJ3Mgc2tpcCBidWRnZXQuIGByZWNvbmNpbGUu
+Ci8vLyByc2AncyBgc3RhdHVzX3BhdGNoYCBjYWxscyB0aGlzIHRvIGxheWVyIGEgZGlzdGluY3Qg
+YHN0YXR1cy5yZXNoYXJkYAovLy8gYmxvY2tpbmcgY29uZGl0aW9uICsgcmVtZWRpYXRpb24gbWVz
+c2FnZSBvbnRvIHRoZSBwb2xpY3kvdXNhZ2UtZGVyaXZlZAovLy8gc3RhdHVzLiBBIGNhY2hlZCBl
+bnRyeSBiZWxvbmdpbmcgdG8gYSBkaWZmZXJlbnQgYHVpZGAgKGEgZGVsZXRlZC1hbmQtCi8vLyBy
+ZWNyZWF0ZWQgQ1IgdW5kZXIgdGhlIHNhbWUgYG5hbWVzcGFjZS9uYW1lYCkgaXMgdHJlYXRlZCBh
+cyBubyBlbnRyeSwgc28KLy8vIHRoZSByZWNyZWF0ZWQgQ1IncyBzdGF0dXMgaXMgY2xlYW4gaW1t
+ZWRpYXRlbHkgcmF0aGVyIHRoYW4gd2FpdGluZyBmb3IKLy8vIFtgcHJ1bmVfb3ZlcnNpemVfY2Fj
+aGVgXSdzIG5leHQgcG9sbC4KLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50
+aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLW9wZXJhdG9yLXJlc2hhcmQtZHJpdmVyLXJzLm1kI3Nv
+dXJjZQpwdWIgZm4gb3ZlcnNpemVfYmxvY2tfY29uZGl0aW9uKAogICAgbmFtZXNwYWNlOiAmc3Ry
+LAogICAgbmFtZTogJnN0ciwKICAgIHVpZDogJnN0ciwKKSAtPiBPcHRpb248T3ZlcnNpemVkRG9j
+dW1lbnRCbG9jaz4gewogICAgb3ZlcnNpemVfYmxvY2tfY2FjaGUoKQogICAgICAgIC5sb2NrKCkK
+ICAgICAgICAudW53cmFwX29yX2Vsc2UofHBvaXNvbmVkfCBwb2lzb25lZC5pbnRvX2lubmVyKCkp
+CiAgICAgICAgLmdldCgmb3ZlcnNpemVfY2FjaGVfa2V5KG5hbWVzcGFjZSwgbmFtZSkpCiAgICAg
+ICAgLmZpbHRlcih8KGNhY2hlZF91aWQsIF8sIF8pfCBjYWNoZWRfdWlkID09IHVpZCkKICAgICAg
+ICAubWFwKHwoXywgYmxvY2ssIF8pfCBibG9jay5jbG9uZSgpKQp9CgovLy8gIzE0NjcgUjc6IGJv
+dW5kZWQgZXNjYWxhdGlvbiBidWRnZXQgZm9yIFtgYWR2YW5jZV9jb252ZXJnZW5jZWBdIOKAlCBh
+ZnRlcgovLy8gdGhpcyBtYW55IGNvbnNlY3V0aXZlIGBBd2FpdGluZ1RvcG9sb2d5Q29udmVyZ2Vu
+Y2VgIHRpY2tzIGZvciB0aGUgc2FtZQovLy8gYCh1aWQsIG1hcF92ZXJzaW9uKWAgcGFpciB3aXRo
+b3V0IG9ic2VydmluZyBjb252ZXJnZW5jZSwgdGhlIGRyaXZlcgovLy8gcmFpc2VzIGEgZGlzdGlu
+Y3QgYHRvcG9sb2d5Q29udmVyZ2VuY2VTdGFsbGVkYCBzdGF0dXMgY29uZGl0aW9uLiBUaGUKLy8v
+IGZlbmNlIGl0c2VsZiBpcyBORVZFUiBkcm9wcGVkIHdoZW4gdGhpcyBidWRnZXQgaXMgZXhjZWVk
+ZWQg4oCUIHJlLWFybWluZwovLy8gY29udGludWVzIGV2ZXJ5IHRpY2sgZXhhY3RseSBhcyBiZWZv
+cmUg4oCUIHRoaXMgb25seSBtYWtlcyBhbgovLy8gYWJub3JtYWxseS1sb25nIGNvbnZlcmdlbmNl
+IHdhaXQgb2JzZXJ2YWJsZSB0byBvcGVyYXRvcnMuCi8vLyBgRFJJVkVSX1BPTExfSU5URVJWQUwg
+KiBDT05WRVJHRU5DRV9TVEFMTF9USUNLU2AgPSAxMCBtaW51dGVzIGF0IHRoZQovLy8gY3VycmVu
+dCAyMHMgcG9sbCBpbnRlcnZhbCwgdGhlIHNhbWUgb3JkZXIgb2YgbWFnbml0dWRlIGFzCi8vLyBg
+T1ZFUlNJWkVfUkVDSEVDS19USUNLU2AncyB+NSBtaW51dGVzLgovLy8KLy8vICMxNDg1IFIyOiBb
+YGNvbnZlcmdlbmNlX3N0YWxsX2NhY2hlYF0vW2ByZWNvcmRfY29udmVyZ2VuY2VfYXdhaXRgXSBi
+ZWxvdwovLy8gKHRoaXMgdGljay1jb3VudCBidWRnZXQpIHN0YXkgaW4gcGxhY2UgYXMgYSBmYXN0
+LCBkcml2ZXItbWVtb3J5LW9ubHkKLy8vIHNpZ25hbCwgYnV0IHRoZXkgYXJlIG5vIGxvbmdlciB0
+aGUgYXV0aG9yaXRhdGl2ZSBzb3VyY2UgZm9yIHdoZXRoZXIgdGhlCi8vLyBzdGFsbCBidWRnZXQg
+aGFzIGJlZW4gZXhjZWVkZWQg4oCUIFtgQ09OVkVSR0VOQ0VfU1RBTExfU0VDU2BdLCBjaGVja2Vk
+Ci8vLyBhZ2FpbnN0IHRoZSBkdXJhYmxlIGB3b3JrZmxvdy5jb252ZXJnZW5jZVdhaXRTdGFydGVk
+QXRgIHRpbWVzdGFtcCwgaXMuCmNvbnN0IENPTlZFUkdFTkNFX1NUQUxMX1RJQ0tTOiB1MzIgPSAz
+MDsKCi8vLyAjMTQ4NSBSMjogd2FsbC1jbG9jayBlcXVpdmFsZW50IG9mIFtgQ09OVkVSR0VOQ0Vf
+U1RBTExfVElDS1NgXSBhdCB0aGUKLy8vIGN1cnJlbnQgW2BEUklWRVJfUE9MTF9JTlRFUlZBTGBd
+IOKAlCB0aGUgZHVyYWJsZSBzdGFsbCBidWRnZXQKLy8vIFtgY29udmVyZ2VuY2Vfc3RhbGxfY29u
+ZGl0aW9uYF0gYXBwbGllcyB0byBgd29ya2Zsb3cuCi8vLyBjb252ZXJnZW5jZVdhaXRTdGFydGVk
+QXRgLiBDb21wdXRpbmcgdGhlIGJ1ZGdldCB0aGlzIHdheSAoZWxhcHNlZCB0aW1lCi8vLyBzaW5j
+ZSBhIHBlcnNpc3RlZCBDUiB0aW1lc3RhbXApIHJhdGhlciB0aGFuIGZyb20gYW4gaW4tcHJvY2Vz
+cyB0aWNrCi8vLyBjb3VudCBpcyB3aGF0IG1ha2VzIGJvdGggdGhlIGJ1ZGdldCBhbmQgdGhlIGB0
+b3BvbG9neUNvbnZlcmdlbmNlU3RhbGxlZGAKLy8vIGNvbmRpdGlvbiBpdCBnYXRlcyBzdXJ2aXZl
+IGFuIG9wZXJhdG9yIHJlc3RhcnQgbWlkLXdhaXQuIGBwdWIoY3JhdGUpYCBzbwovLy8gYHJlY29u
+Y2lsZS5yc2AncyBvd24gdGVzdHMgY2FuIHBvc2l0aW9uIGEgd2FpdC1zdGFydCB0aW1lc3RhbXAg
+cHJlY2lzZWx5Ci8vLyBwYXN0IHRoZSBidWRnZXQgd2l0aG91dCBzbGVlcGluZyBpbiBhIHVuaXQg
+dGVzdC4KcHViKGNyYXRlKSBjb25zdCBDT05WRVJHRU5DRV9TVEFMTF9TRUNTOiB1NjQgPQogICAg
+Q09OVkVSR0VOQ0VfU1RBTExfVElDS1MgYXMgdTY0ICogRFJJVkVSX1BPTExfSU5URVJWQUwuYXNf
+c2VjcygpOwoKLy8vIFRoZSBwcm9kdWN0aW9uIFtgQ09OVkVSR0VOQ0VfU1RBTExfU0VDU2BdIHZh
+bHVlICgjMTQ4NSBSMiksIGV4cG9zZWQgdGhlCi8vLyBzYW1lIHdheSBbYGRlZmF1bHRfd3JpdGVf
+ZmVuY2VfdHRsX3NlY3NgXSBleHBvc2VzIFtgV1JJVEVfRkVOQ0VfVFRMX1NFQ1NgXQovLy8g4oCU
+IHNvIGludGVncmF0aW9uIHRlc3RzIGNhbiBiYWNrLWRhdGUgYHdvcmtmbG93LmNvbnZlcmdlbmNl
+V2FpdFN0YXJ0ZWRBdGAKLy8vIHBhc3QgdGhlIHJlYWwgYnVkZ2V0IChzaW11bGF0aW5nIGFuIGV4
+dGVuZGVkIHdhaXQgd2l0aG91dCBzbGVlcGluZykKLy8vIHdpdGhvdXQgbmVlZGluZyB0aGUgY29u
+c3RhbnQgaXRzZWxmIHRvIGJlIGBwdWJgLgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2ln
+bi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtb3BlcmF0b3ItcmVzaGFyZC1kcml2ZXIt
+cnMubWQjc291cmNlCnB1YiBmbiBjb252ZXJnZW5jZV9zdGFsbF9idWRnZXRfc2VjcygpIC0+IHU2
+NCB7CiAgICBDT05WRVJHRU5DRV9TVEFMTF9TRUNTCn0KCi8vLyBDdXJyZW50IHdhbGwtY2xvY2sg
+dGltZSBhcyBlcG9jaCBzZWNvbmRzLCBzYXR1cmF0aW5nIHRvIGAwYCBvbiBhIGNsb2NrCi8vLyBl
+cnJvciAobWlycm9ycyBbYEt1YmVDbHVzdGVyQ29udHJvbDo6dHJpZ2dlcl9yb2xsaW5nX3Jlc3Rh
+cnRgXSdzIG93bgovLy8gaW5saW5lIGBTeXN0ZW1UaW1lOjpub3coKWAgY2FsbCkg4oCUIHRoZSBz
+b3VyY2Ugb2YgZXZlcnkgYCMxNDg1YCBkdXJhYmxlCi8vLyB0aW1lc3RhbXAgdGhpcyBtb2R1bGUg
+c3RhbXBzIGludG8gYHdvcmtmbG93LmNvbnZlcmdlbmNlV2FpdFN0YXJ0ZWRBdGAgLwovLy8gYHdv
+cmtmbG93LmNvbnZlcmdlbmNlUmVtZWRpYXRpb25SZXN0YXJ0ZWRBdGAuCmZuIG5vd19lcG9jaF9z
+ZWNzKCkgLT4gdTY0IHsKICAgIFN5c3RlbVRpbWU6Om5vdygpCiAgICAgICAgLmR1cmF0aW9uX3Np
+bmNlKFVOSVhfRVBPQ0gpCiAgICAgICAgLnVud3JhcF9vcl9kZWZhdWx0KCkKICAgICAgICAuYXNf
+c2VjcygpCn0KCi8vLyBgIjxuYW1lc3BhY2U+LzxuYW1lPiIgLT4gKHVpZCwgbWFwX3ZlcnNpb24g
+YmVpbmcgYXdhaXRlZCwgY29uc2VjdXRpdmUKLy8vIGF3YWl0aW5nIHRpY2tzKWAg4oCUIHRyYWNr
+cyBob3cgbG9uZyBbYGFkdmFuY2VfY29udmVyZ2VuY2VgXSBoYXMgYmVlbgovLy8gd2FpdGluZyBm
+b3IgW2BDbHVzdGVyQ29udHJvbDo6c2VydmluZ190b3BvbG9neV9jb252ZXJnZWRgXSB0byBjb25m
+aXJtCi8vLyBvbmUgcGFydGljdWxhciBgbWFwX3ZlcnNpb25gLCBmb3IgdGhlIFI3IHN0YWxsIGVz
+Y2FsYXRpb24uIE1pcnJvcnMKLy8vIFtgT3ZlcnNpemVCbG9ja0NhY2hlYF0ncyBzaGFwZSBhbmQg
+YHVpZGAtc2NvcGluZyByYXRpb25hbGUgKGEKLy8vIG5hbWVzcGFjZS9uYW1lIHBhaXIgaXMgbm90
+IHN0YWJsZSBpZGVudGl0eSBhY3Jvc3MgZGVsZXRlLWFuZC1yZWNyZWF0ZSkuCnR5cGUgQ29udmVy
+Z2VuY2VTdGFsbENhY2hlID0gc3RkOjpzeW5jOjpNdXRleDxCVHJlZU1hcDxTdHJpbmcsIChTdHJp
+bmcsIHU2NCwgdTMyKT4+OwoKZm4gY29udmVyZ2VuY2Vfc3RhbGxfY2FjaGUoKSAtPiAmJ3N0YXRp
+YyBDb252ZXJnZW5jZVN0YWxsQ2FjaGUgewogICAgc3RhdGljIENBQ0hFOiBzdGQ6OnN5bmM6Ok9u
+Y2VMb2NrPENvbnZlcmdlbmNlU3RhbGxDYWNoZT4gPSBzdGQ6OnN5bmM6Ok9uY2VMb2NrOjpuZXco
+KTsKICAgIENBQ0hFLmdldF9vcl9pbml0KHx8IHN0ZDo6c3luYzo6TXV0ZXg6Om5ldyhCVHJlZU1h
+cDo6bmV3KCkpKQp9CgpmbiBjb252ZXJnZW5jZV9zdGFsbF9rZXkobmFtZXNwYWNlOiAmc3RyLCBu
+YW1lOiAmc3RyKSAtPiBTdHJpbmcgewogICAgZm9ybWF0ISgie25hbWVzcGFjZX0ve25hbWV9IikK
+fQoKLy8vIEJ1bXAgKG9yIHN0YXJ0KSBgbmFtZXNwYWNlL25hbWVgJ3MgY29uc2VjdXRpdmUtYXdh
+aXRpbmctdGlja3MgY291bnRlcgovLy8gZm9yIGBtYXBfdmVyc2lvbmAgYW5kIHJldHVybiBgdHJ1
+ZWAgb25jZSBbYENPTlZFUkdFTkNFX1NUQUxMX1RJQ0tTYF0gaGFzCi8vLyBiZWVuIGV4Y2VlZGVk
+ICh0aGlzIHRpY2sgc2hvdWxkIHJlcG9ydCB0aGUgc3RhbGxlZCBjb25kaXRpb24pLiBBCi8vLyBg
+dWlkYC9gbWFwX3ZlcnNpb25gIGNoYW5nZSAoYSBkZWxldGUtYW5kLXJlY3JlYXRlLCBvciBhIGZy
+ZXNoIHNwbGl0Ci8vLyBzdGFydGluZyBhIG5ldyBjb252ZXJnZW5jZSB3YWl0IGJlZm9yZSB0aGUg
+cHJpb3Igb25lIGZpbmlzaGVkKSByZXNldHMKLy8vIHRoZSBjb3VudGVyIHJhdGhlciB0aGFuIGNh
+cnJ5aW5nIG92ZXIgYW4gdW5yZWxhdGVkIHdhaXQncyBidWRnZXQuCi8vLyBgcHViKGNyYXRlKWAg
+Zm9yIHRoZSBzYW1lIHRlc3Qtc2VhbSByZWFzb24gYXMKLy8vIFtgcmVjb3JkX292ZXJzaXplX2Js
+b2NrYF0uCnB1YihjcmF0ZSkgZm4gcmVjb3JkX2NvbnZlcmdlbmNlX2F3YWl0KAogICAgbmFtZXNw
+YWNlOiAmc3RyLAogICAgbmFtZTogJnN0ciwKICAgIHVpZDogJnN0ciwKICAgIG1hcF92ZXJzaW9u
+OiB1NjQsCikgLT4gYm9vbCB7CiAgICBsZXQgbXV0IGNhY2hlID0gY29udmVyZ2VuY2Vfc3RhbGxf
+Y2FjaGUoKQogICAgICAgIC5sb2NrKCkKICAgICAgICAudW53cmFwX29yX2Vsc2UofHBvaXNvbmVk
+fCBwb2lzb25lZC5pbnRvX2lubmVyKCkpOwogICAgbGV0IGVudHJ5ID0gY2FjaGUKICAgICAgICAu
+ZW50cnkoY29udmVyZ2VuY2Vfc3RhbGxfa2V5KG5hbWVzcGFjZSwgbmFtZSkpCiAgICAgICAgLm9y
+X2luc2VydF93aXRoKHx8ICh1aWQudG9fc3RyaW5nKCksIG1hcF92ZXJzaW9uLCAwKSk7CiAgICBp
+ZiBlbnRyeS4wICE9IHVpZCB8fCBlbnRyeS4xICE9IG1hcF92ZXJzaW9uIHsKICAgICAgICAqZW50
+cnkgPSAodWlkLnRvX3N0cmluZygpLCBtYXBfdmVyc2lvbiwgMCk7CiAgICB9CiAgICBlbnRyeS4y
+ID0gZW50cnkuMi5zYXR1cmF0aW5nX2FkZCgxKTsKICAgIGVudHJ5LjIgPiBDT05WRVJHRU5DRV9T
+VEFMTF9USUNLUwp9CgovLy8gQ2xlYXIgYG5hbWVzcGFjZS9uYW1lYCdzIGNvbnZlcmdlbmNlLXN0
+YWxsIHRyYWNrZXIg4oCUIGNhbGxlZCBvbmNlCi8vLyBjb252ZXJnZW5jZSBpcyBvYnNlcnZlZCAo
+b3IgdGhlIHdvcmtmbG93IGlzIG5vIGxvbmdlciBhd2FpdGluZyBpdCksIHNvIGEKLy8vIHJlc29s
+dmVkIHdhaXQgbmV2ZXIgbGVhdmVzIHRoZSBuZXh0LCB1bnJlbGF0ZWQgd2FpdCBzdGFydGluZyBm
+cm9tIGEKLy8vIHN0YWxlIGJ1ZGdldC4gYHB1YihjcmF0ZSlgIGZvciB0aGUgc2FtZSB0ZXN0LXNl
+YW0gcmVhc29uIGFzCi8vLyBbYGNsZWFyX292ZXJzaXplX2Jsb2NrYF0uCnB1YihjcmF0ZSkgZm4g
+Y2xlYXJfY29udmVyZ2VuY2Vfc3RhbGwobmFtZXNwYWNlOiAmc3RyLCBuYW1lOiAmc3RyKSB7CiAg
+ICBjb252ZXJnZW5jZV9zdGFsbF9jYWNoZSgpCiAgICAgICAgLmxvY2soKQogICAgICAgIC51bndy
+YXBfb3JfZWxzZSh8cG9pc29uZWR8IHBvaXNvbmVkLmludG9faW5uZXIoKSkKICAgICAgICAucmVt
+b3ZlKCZjb252ZXJnZW5jZV9zdGFsbF9rZXkobmFtZXNwYWNlLCBuYW1lKSk7Cn0KCi8vLyBEcm9w
+IGV2ZXJ5IGNhY2hlZCBjb252ZXJnZW5jZS1zdGFsbCBlbnRyeSB3aG9zZSBgdWlkYCBpcyBub3Qg
+aW4KLy8vIGBsaXZlX3VpZHNgIOKAlCB0aGUgW2BwcnVuZV9vdmVyc2l6ZV9jYWNoZWBdIGNvdW50
+ZXJwYXJ0IGZvciB0aGlzIGNhY2hlLAovLy8gY2FsbGVkIGZyb20gdGhlIHNhbWUgcG9sbCBsb29w
+IHdpdGggdGhlIHNhbWUgYWxyZWFkeS1saXN0ZWQgbGl2ZS1DUiBzZXQuCnB1YihjcmF0ZSkgZm4g
+cHJ1bmVfY29udmVyZ2VuY2Vfc3RhbGxfY2FjaGUobGl2ZV91aWRzOiAmQlRyZWVTZXQ8U3RyaW5n
+PikgewogICAgY29udmVyZ2VuY2Vfc3RhbGxfY2FjaGUoKQogICAgICAgIC5sb2NrKCkKICAgICAg
+ICAudW53cmFwX29yX2Vsc2UofHBvaXNvbmVkfCBwb2lzb25lZC5pbnRvX2lubmVyKCkpCiAgICAg
+ICAgLnJldGFpbih8XywgKHVpZCwgXywgXyl8IGxpdmVfdWlkcy5jb250YWlucyh1aWQpKTsKfQoK
+Ly8vIFdoZXRoZXIgYW4gYGF3YWl0aW5nVG9wb2xvZ3lDb252ZXJnZW5jZWAgd2FpdCB0aGF0IGJl
+Z2FuIGF0Ci8vLyBgd2FpdF9zdGFydGVkX2F0YCAoYHdvcmtmbG93LmNvbnZlcmdlbmNlV2FpdFN0
+YXJ0ZWRBdGAsICMxNDg1IFIyKSBoYXMgcnVuCi8vLyBsb25nZXIgdGhhbiBbYENPTlZFUkdFTkNF
+X1NUQUxMX1NFQ1NgXSwgZm9yIGByZWNvbmNpbGUucnNgJ3MKLy8vIGBzdGF0dXNfcGF0Y2hgIHRv
+IGxheWVyIGEgYHRvcG9sb2d5Q29udmVyZ2VuY2VTdGFsbGVkYCBibG9ja2luZyBjb25kaXRpb24K
+Ly8vIG9udG8gdGhlIHBvbGljeS91c2FnZS1kZXJpdmVkIHN0YXR1cy4gQ29tcHV0ZWQgcHVyZWx5
+IGZyb20gdGhpcyBvbmUKLy8vIHBlcnNpc3RlZCBDUiB0aW1lc3RhbXAg4oCUIG5vdCBkcml2ZXIg
+bWVtb3J5IOKAlCBzbyB0aGUgYW5zd2VyIGlzIHRoZSBzYW1lCi8vLyB3aGV0aGVyIG9yIG5vdCB0
+aGUgZHJpdmVyIHByb2Nlc3MgaGFzIHJlc3RhcnRlZCBzaW5jZSB0aGUgd2FpdCBiZWdhbjsKLy8v
+IFtgYWR2YW5jZV9jb252ZXJnZW5jZWBdJ3Mgb3duIGJvdW5kZWQtcmVtZWRpYXRpb24gZ2F0ZSB1
+c2VzIHRoZSBleGFjdAovLy8gc2FtZSBjb21wdXRhdGlvbi4gYE5vbmVgIChjb252ZXJnZW5jZSBu
+b3QgcGVuZGluZywgb3Igbm8gd2FpdCByZWNvcmRlZAovLy8geWV0KSBpcyBuZXZlciBzdGFsbGVk
+LgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1s
+dW1lbi1zcmMtb3BlcmF0b3ItcmVzaGFyZC1kcml2ZXItcnMubWQjc291cmNlCnB1YiBmbiBjb252
+ZXJnZW5jZV9zdGFsbF9jb25kaXRpb24od2FpdF9zdGFydGVkX2F0OiBPcHRpb248dTY0PikgLT4g
+Ym9vbCB7CiAgICB3YWl0X3N0YXJ0ZWRfYXQKICAgICAgICAuaXNfc29tZV9hbmQofHN0YXJ0ZWR8
+IG5vd19lcG9jaF9zZWNzKCkuc2F0dXJhdGluZ19zdWIoc3RhcnRlZCkgPiBDT05WRVJHRU5DRV9T
+VEFMTF9TRUNTKQp9CgovLy8gRXZlcnl0aGluZyBbYGRyaXZlX3RpY2tgXSBuZWVkcyBmcm9tIGEg
+bGl2ZSBjbHVzdGVyLCBhYnN0cmFjdGVkIHNvIHRoZQovLy8gc3RhdGUgbWFjaGluZSBpcyB0ZXN0
+YWJsZSB3aXRob3V0IGEgcmVhbCBrOHMgQVBJIHNlcnZlci4gW2BLdWJlQ2x1c3RlckNvbnRyb2xg
+XQovLy8gaXMgdGhlIHByb2R1Y3Rpb24gaW1wbGVtZW50YXRpb247IHRlc3RzIHN1cHBseSBhbiBp
+bi1tZW1vcnkgZmFrZS4KI1thc3luY190cmFpdF0KLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1k
+ZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLW9wZXJhdG9yLXJlc2hhcmQtZHJp
+dmVyLXJzLm1kI3NvdXJjZQpwdWIgdHJhaXQgQ2x1c3RlckNvbnRyb2w6IFNlbmQgKyBTeW5jIHsK
+ICAgIC8vLyBKU09OLW1lcmdlLXBhdGNoIHRoaXMgYEx1bWVuYCdzIGAuc3BlY2AgKHNlZSBgUGF0
+Y2g6Ok1lcmdlYCBzZW1hbnRpY3M6CiAgICAvLy8gbmVzdGVkIG9iamVjdHMgbWVyZ2UgcmVjdXJz
+aXZlbHksIGEgYG51bGxgIGxlYWYgZGVsZXRlcyB0aGF0IGtleSwKICAgIC8vLyBzaWJsaW5nIGZp
+ZWxkcyBub3QgbWVudGlvbmVkIGFyZSB1bnRvdWNoZWQpLgogICAgYXN5bmMgZm4gcGF0Y2hfc3Bl
+Yygmc2VsZiwgbmFtZXNwYWNlOiAmc3RyLCBuYW1lOiAmc3RyLCBwYXRjaDogc2VyZGVfanNvbjo6
+VmFsdWUpCiAgICAgICAgLT4gUmVzdWx0PCgpPjsKCiAgICAvLy8gVGhlIHNlcnZpbmcgU3RhdGVm
+dWxTZXQncyBgLnN0YXR1cy5yZWFkeVJlcGxpY2FzYCAoMCBpZiBhYnNlbnQvbm90CiAgICAvLy8g
+Zm91bmQgeWV0KS4KICAgIGFzeW5jIGZuIHN0YXRlZnVsc2V0X3JlYWR5X3JlcGxpY2FzKCZzZWxm
+LCBuYW1lc3BhY2U6ICZzdHIsIG5hbWU6ICZzdHIpIC0+IFJlc3VsdDxpNjQ+OwoKICAgIC8vLyBC
+dW1wIGEgYGt1YmVjdGwgcm9sbG91dCByZXN0YXJ0YC1zdHlsZSBwb2QtdGVtcGxhdGUgYW5ub3Rh
+dGlvbiBzbyBhCiAgICAvLy8gc2hhcmQtbWFwLW9ubHkgQ29uZmlnTWFwIGNoYW5nZSBnZXRzIHBp
+Y2tlZCB1cCBieSBhIGZyZXNoIGdlbmVyYXRpb24KICAgIC8vLyBvZiBwb2RzIChzZWUgdGhlIG1v
+ZHVsZS1sZXZlbCAia25vd24gZ2FwIiBub3RlOiBhIG5vLW9wIHRvZGF5IHVudGlsCiAgICAvLy8g
+c2VydmluZyBhY3R1YWxseSByZWFkcyB0aGF0IENvbmZpZ01hcCBkYXRhLCBidXQgc3RpbGwgdGhl
+IGNvcnJlY3QKICAgIC8vLyBvcGVyYXRvciBhY3Rpb24gdG8gdGFrZSBhdCBjdXRvdmVyKS4KICAg
+IGFzeW5jIGZuIHRyaWdnZXJfcm9sbGluZ19yZXN0YXJ0KCZzZWxmLCBuYW1lc3BhY2U6ICZzdHIs
+IG5hbWU6ICZzdHIpIC0+IFJlc3VsdDwoKT47CgogICAgLy8vIFRyaWdnZXIgdGhlIGJvdW5kZWQg
+cG9zdC1jdXRvdmVyIGNvbnZlcmdlbmNlIHJlbWVkaWF0aW9uIHJlc3RhcnQuIFRoZQogICAgLy8v
+IHByb2R1Y3Rpb24gc2lkZSBlZmZlY3QgaXMgdGhlIHNhbWUgU3RhdGVmdWxTZXQgcmVzdGFydCBh
+cyBjdXRvdmVyLCBidXQKICAgIC8vLyBpdCBpcyBhIGRpc3RpbmN0IHN0YXRlLW1hY2hpbmUgYWN0
+aW9uOiBrZWVwaW5nIHRoZSBzZWFtIHNlcGFyYXRlIGxldHMKICAgIC8vLyB0ZXN0cyBwcm92ZSBh
+IG5vcm1hbCBjdXRvdmVyIHJlc3RhcnQgbmV2ZXIgY29uc3VtZXMgb3IgbWFzcXVlcmFkZXMgYXMK
+ICAgIC8vLyAjMTQ4NSdzIG9uZS1zaG90IHJlbWVkaWF0aW9uIGF0dGVtcHQuCiAgICBhc3luYyBm
+biB0cmlnZ2VyX2NvbnZlcmdlbmNlX3JlbWVkaWF0aW9uX3Jlc3RhcnQoCiAgICAgICAgJnNlbGYs
+CiAgICAgICAgbmFtZXNwYWNlOiAmc3RyLAogICAgICAgIG5hbWU6ICZzdHIsCiAgICApIC0+IFJl
+c3VsdDwoKT4gewogICAgICAgIHNlbGYudHJpZ2dlcl9yb2xsaW5nX3Jlc3RhcnQobmFtZXNwYWNl
+LCBuYW1lKS5hd2FpdAogICAgfQoKICAgIC8vLyBBIGJlYXJlciB0b2tlbiBjYXJyeWluZyB3aWxk
+Y2FyZCBgUm9sZTo6QWRtaW5gLCBpZiBgbHVtZW4uc3BlYy5hdXRoYAogICAgLy8vIHJlcXVpcmVz
+IG9uZS4gYE9rKE5vbmUpYCB3aGVuIGF1dGggaXMgb2ZmLgogICAgYXN5bmMgZm4gYWRtaW5fdG9r
+ZW4oJnNlbGYsIG5hbWVzcGFjZTogJnN0ciwgbHVtZW46ICZMdW1lbikgLT4gUmVzdWx0PE9wdGlv
+bjxTdHJpbmc+PjsKCiAgICAvLy8gVGhlIGNsaWVudC1mYWNpbmcgYWRtaW4gQVBJIGJhc2UgVVJM
+IGZvciBvbmUgc2hhcmQncyBzZXJ2aW5nIHBvZC4KICAgIC8vLyBbYEt1YmVDbHVzdGVyQ29udHJv
+bGBdIHJlc29sdmVzIHRoZSByZWFsIHBlci1zaGFyZCBoZWFkbGVzcy1TZXJ2aWNlCiAgICAvLy8g
+RE5TIG5hbWUgKG1hdGNoaW5nIFtgc3VwZXI6OnJlY29uY2lsZTo6cG9kX21ldHJpY3NfdXJsc2Bd
+J3MKICAgIC8vLyBjb252ZW50aW9uKTsgYW4gaW50ZWdyYXRpb24tdGVzdCBmYWtlIHJlc29sdmVz
+IHRvIHdoYXRldmVyIHJlYWwgbG9jYWwKICAgIC8vLyBhZGRyZXNzIHRoYXQgc2hhcmQncyBgVGVz
+dFNlcnZlcmAgaXMgYWN0dWFsbHkgYm91bmQgdG8g4oCUIHRoZSBzZWFtCiAgICAvLy8gdGhhdCBs
+ZXRzIFtgcnVuX21pZ3JhdGlvbl9wYXNzYF0gLyBbYGV2aWN0X29sZF9zaGFyZHNgXSBydW4gYWdh
+aW5zdAogICAgLy8vIHJlYWwgSFRUUCBzZXJ2ZXJzICsgcmVhbCBgRW5naW5lYHMgd2l0aG91dCBh
+IGxpdmUgY2x1c3Rlci4KICAgIGZuIHNoYXJkX2Jhc2VfdXJsKCZzZWxmLCBuYW1lc3BhY2U6ICZz
+dHIsIG5hbWU6ICZzdHIsIHNoYXJkOiB1MzIpIC0+IFN0cmluZzsKCiAgICAvLy8gVFRMIChzZWNv
+bmRzKSBbYGFkdmFuY2VfY2F0Y2hpbmdfdXBgXS9bYGFkdmFuY2VfY2F0Y2hpbmdfdXBfZmVuY2Vk
+YF0KICAgIC8vLyBhcm0vcmUtYXJtIHRoZSB3cml0ZS1wYXVzZSBmZW5jZSB3aXRoICgjMTQ0MyBS
+MSkuIERlZmF1bHRzIHRvCiAgICAvLy8gW2BXUklURV9GRU5DRV9UVExfU0VDU2BdIOKAlCBwcm9k
+dWN0aW9uIGJlaGF2aW9yIGlzIHVuY2hhbmdlZDsgdGhpcwogICAgLy8vIGV4aXN0cyBwdXJlbHkg
+YXMgYSB0ZXN0IHNlYW0gc28gYSBzaG9ydC1UVEwvc2xvdy1jaGVja3BvaW50IHNjZW5hcmlvCiAg
+ICAvLy8gY2FuIGJlIGV4ZXJjaXNlZCBkZXRlcm1pbmlzdGljYWxseSB3aXRob3V0IHdhaXRpbmcg
+MTIwIHJlYWwgc2Vjb25kcy4KICAgIGZuIHdyaXRlX2ZlbmNlX3R0bF9zZWNzKCZzZWxmKSAtPiB1
+NjQgewogICAgICAgIFdSSVRFX0ZFTkNFX1RUTF9TRUNTCiAgICB9CgogICAgLy8vIFdoZXRoZXIg
+ZXZlcnkgc2VydmluZyBwb2QgaXMgY29uZmlybWVkIGBSZWFkeWAgb24gdGhlIHNlcnZpbmcKICAg
+IC8vLyBTdGF0ZWZ1bFNldCdzIGN1cnJlbnQgcm9sbG91dCAoIzE0NTggUjEpIOKAlCB0aGUgc2Ft
+ZSBrOHMgInJvbGxvdXQKICAgIC8vLyBzdGF0dXMiIHBhdHRlcm4gYGt1YmVjdGwgcm9sbG91dCBz
+dGF0dXNgIGNoZWNrczoKICAgIC8vLyBgLnN0YXR1cy51cGRhdGVSZXZpc2lvbiA9PSAuc3RhdHVz
+LmN1cnJlbnRSZXZpc2lvbmAgKG5vIHJvbGxvdXQKICAgIC8vLyBpbi1mbGlnaHQpIGFuZCBgLnN0
+YXR1cy5yZWFkeVJlcGxpY2FzID09IGRlc2lyZWRfcmVwbGljYXNgLiBSZXVzZXMKICAgIC8vLyBb
+YGFkdmFuY2VfcHJlcGFyZV9zcGxpdGBdJ3MgZXhpc3RpbmcgcmVhZGluZXNzLXBvbGxpbmcgc2Vh
+bSByYXRoZXIKICAgIC8vLyB0aGFuIGFkZGluZyBhIG5ldyBvbmUuIERlZmF1bHRzIHRvIGBPayh0
+cnVlKWAg4oCUIHByb2R1Y3Rpb24gYmVoYXZpb3IKICAgIC8vLyBvbmx5IGNoYW5nZXMgb25jZSBb
+YEt1YmVDbHVzdGVyQ29udHJvbGBdJ3Mgb3ZlcnJpZGUgYWN0dWFsbHkgb2JzZXJ2ZXMKICAgIC8v
+LyBhbiBpbi1wcm9ncmVzcyByb2xsb3V0OyBldmVyeSB0ZXN0IGRvdWJsZSB0aGF0IGRvZXMgbm90
+IG92ZXJyaWRlIHRoaXMKICAgIC8vLyBrZWVwcyBpdHMgcHJpb3IgImluc3RhbnRseSBjb252ZXJn
+ZWQiIGJlaGF2aW9yLgogICAgYXN5bmMgZm4gc2VydmluZ190b3BvbG9neV9jb252ZXJnZWQoCiAg
+ICAgICAgJnNlbGYsCiAgICAgICAgX25hbWVzcGFjZTogJnN0ciwKICAgICAgICBfbmFtZTogJnN0
+ciwKICAgICAgICBfZGVzaXJlZF9yZXBsaWNhczogaTY0LAogICAgKSAtPiBSZXN1bHQ8Ym9vbD4g
+ewogICAgICAgIE9rKHRydWUpCiAgICB9CgogICAgLy8vICMxNDY3IFI1OiB3aGV0aGVyIGV2ZXJ5
+IHNlcnZpbmcgcG9kIChgMC4uc2hhcmRfY291bnRgLCBvbmUgcG9kIHBlcgogICAgLy8vIHNoYXJk
+IOKAlCB0aGUgcmVzaGFyZCBkcml2ZXIncyBhZG1pbiBwbGFuZSBhbHJlYWR5IGFzc3VtZXMKICAg
+IC8vLyBgcmVwbGljYXNfcGVyX3NoYXJkIDw9IDFgIGluIHRoZSByb3V0ZWQgdG9wb2xvZ3kgaXQg
+b3BlcmF0ZXMgb3ZlciwKICAgIC8vLyBzYW1lIGFzIFtgU2VsZjo6c2hhcmRfYmFzZV91cmxgXSkg
+cmVwb3J0cyBgbHVtZW5fc2hhcmRfbWFwX3ZlcnNpb24KICAgIC8vLyA9PSBtYXBfdmVyc2lvbmAg
+b24gaXRzIGAvbWV0cmljc2AgZW5kcG9pbnQuIFtgU2VsZjo6CiAgICAvLy8gc2VydmluZ190b3Bv
+bG9neV9jb252ZXJnZWRgXSBhbG9uZSBvbmx5IHByb3ZlcyB0aGUgU3RhdGVmdWxTZXQKICAgIC8v
+LyByb2xsb3V0ICpmaW5pc2hlZCogKGV2ZXJ5IHBvZCBgUmVhZHlgIG9uIHRoZSBsYXRlc3QgcG9k
+IHRlbXBsYXRlKSDigJQKICAgIC8vLyBub3QgdGhhdCBlYWNoIHBvZCdzIHByb2Nlc3MgYWN0dWFs
+bHkgaG9sZHMgYG1hcF92ZXJzaW9uYCwgc2luY2UgdGhlCiAgICAvLy8gc2hhcmQgbWFwIGl0c2Vs
+ZiBpcyByZWFkIGZyb20gYSBDb25maWdNYXAgdGhlIHBvZCBsb2FkcyBhdCBzdGFydHVwLAogICAg
+Ly8vIGFuZCBhIENvbmZpZ01hcCB3cml0ZSByYWNpbmcgYSByb2xsb3V0J3MgcG9kLXJlY3JlYXRl
+IG9yZGVyIGlzIG5vdAogICAgLy8vIHNvbWV0aGluZyBTdGF0ZWZ1bFNldCBzdGF0dXMgb2JzZXJ2
+ZXMgYXQgYWxsLiBEZWZhdWx0cyB0byBgT2sodHJ1ZSlgCiAgICAvLy8gZm9yIHRoZSBzYW1lIHRl
+c3Qtc2VhbSByZWFzb24gYXMgYHNlcnZpbmdfdG9wb2xvZ3lfY29udmVyZ2VkYCDigJQKICAgIC8v
+LyBldmVyeSB0ZXN0IGRvdWJsZSB0aGF0IGRvZXMgbm90IG92ZXJyaWRlIHRoaXMga2VlcHMgaXRz
+IHByaW9yCiAgICAvLy8gImluc3RhbnRseSBjb252ZXJnZWQiIGJlaGF2aW9yLgogICAgYXN5bmMg
+Zm4gc2VydmluZ19wb2RzX3JlcG9ydF9tYXBfdmVyc2lvbigKICAgICAgICAmc2VsZiwKICAgICAg
+ICBfaHR0cDogJnJlcXdlc3Q6OkNsaWVudCwKICAgICAgICBfbmFtZXNwYWNlOiAmc3RyLAogICAg
+ICAgIF9uYW1lOiAmc3RyLAogICAgICAgIF9zaGFyZF9jb3VudDogdTMyLAogICAgICAgIF9tYXBf
+dmVyc2lvbjogdTY0LAogICAgKSAtPiBSZXN1bHQ8Ym9vbD4gewogICAgICAgIE9rKHRydWUpCiAg
+ICB9Cn0KCi8vLyBQcm9kdWN0aW9uIFtgQ2x1c3RlckNvbnRyb2xgXTogcmVhbCBga3ViZTo6Q2xp
+ZW50YCBjYWxscy4KLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50aWMvc291
+cmNlL2FwcHMtbHVtZW4tc3JjLW9wZXJhdG9yLXJlc2hhcmQtZHJpdmVyLXJzLm1kI3NvdXJjZQpw
+dWIgc3RydWN0IEt1YmVDbHVzdGVyQ29udHJvbCB7CiAgICBjbGllbnQ6IENsaWVudCwKfQoKLy8v
+IEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4t
+c3JjLW9wZXJhdG9yLXJlc2hhcmQtZHJpdmVyLXJzLm1kI3NvdXJjZQppbXBsIEt1YmVDbHVzdGVy
+Q29udHJvbCB7CiAgICBwdWIgZm4gbmV3KGNsaWVudDogQ2xpZW50KSAtPiBTZWxmIHsKICAgICAg
+ICBTZWxmIHsgY2xpZW50IH0KICAgIH0KfQoKZm4gc3RhdGVmdWxzZXRfYXBpX3Jlc291cmNlKCkg
+LT4gQXBpUmVzb3VyY2UgewogICAgQXBpUmVzb3VyY2UgewogICAgICAgIGdyb3VwOiAiYXBwcyIu
+dG9fc3RyaW5nKCksCiAgICAgICAgdmVyc2lvbjogInYxIi50b19zdHJpbmcoKSwKICAgICAgICBh
+cGlfdmVyc2lvbjogImFwcHMvdjEiLnRvX3N0cmluZygpLAogICAgICAgIGtpbmQ6ICJTdGF0ZWZ1
+bFNldCIudG9fc3RyaW5nKCksCiAgICAgICAgcGx1cmFsOiAic3RhdGVmdWxzZXRzIi50b19zdHJp
+bmcoKSwKICAgIH0KfQoKI1thc3luY190cmFpdF0KLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1k
+ZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLW9wZXJhdG9yLXJlc2hhcmQtZHJp
+dmVyLXJzLm1kI3NvdXJjZQppbXBsIENsdXN0ZXJDb250cm9sIGZvciBLdWJlQ2x1c3RlckNvbnRy
+b2wgewogICAgYXN5bmMgZm4gcGF0Y2hfc3BlYygKICAgICAgICAmc2VsZiwKICAgICAgICBuYW1l
+c3BhY2U6ICZzdHIsCiAgICAgICAgbmFtZTogJnN0ciwKICAgICAgICBwYXRjaDogc2VyZGVfanNv
+bjo6VmFsdWUsCiAgICApIC0+IFJlc3VsdDwoKT4gewogICAgICAgIGxldCBhcGk6IEFwaTxMdW1l
+bj4gPSBBcGk6Om5hbWVzcGFjZWQoc2VsZi5jbGllbnQuY2xvbmUoKSwgbmFtZXNwYWNlKTsKICAg
+ICAgICBhcGkucGF0Y2gobmFtZSwgJlBhdGNoUGFyYW1zOjpkZWZhdWx0KCksICZQYXRjaDo6TWVy
+Z2UoJnBhdGNoKSkKICAgICAgICAgICAgLmF3YWl0CiAgICAgICAgICAgIC5jb250ZXh0KCJwYXRj
+aCBMdW1lbiBzcGVjIik/OwogICAgICAgIE9rKCgpKQogICAgfQoKICAgIGFzeW5jIGZuIHN0YXRl
+ZnVsc2V0X3JlYWR5X3JlcGxpY2FzKCZzZWxmLCBuYW1lc3BhY2U6ICZzdHIsIG5hbWU6ICZzdHIp
+IC0+IFJlc3VsdDxpNjQ+IHsKICAgICAgICBsZXQgYXIgPSBzdGF0ZWZ1bHNldF9hcGlfcmVzb3Vy
+Y2UoKTsKICAgICAgICBsZXQgYXBpOiBBcGk8RHluYW1pY09iamVjdD4gPSBBcGk6Om5hbWVzcGFj
+ZWRfd2l0aChzZWxmLmNsaWVudC5jbG9uZSgpLCBuYW1lc3BhY2UsICZhcik7CiAgICAgICAgbGV0
+IHJlYWR5ID0gYXBpCiAgICAgICAgICAgIC5nZXRfb3B0KG5hbWUpCiAgICAgICAgICAgIC5hd2Fp
+dAogICAgICAgICAgICAuY29udGV4dCgicmVhZCBzZXJ2aW5nIFN0YXRlZnVsU2V0Iik/CiAgICAg
+ICAgICAgIC5hbmRfdGhlbih8b3wgby5kYXRhWyJzdGF0dXMiXVsicmVhZHlSZXBsaWNhcyJdLmFz
+X2k2NCgpKQogICAgICAgICAgICAudW53cmFwX29yKDApOwogICAgICAgIE9rKHJlYWR5KQogICAg
+fQoKICAgIGFzeW5jIGZuIHRyaWdnZXJfcm9sbGluZ19yZXN0YXJ0KCZzZWxmLCBuYW1lc3BhY2U6
+ICZzdHIsIG5hbWU6ICZzdHIpIC0+IFJlc3VsdDwoKT4gewogICAgICAgIGxldCBhciA9IHN0YXRl
+ZnVsc2V0X2FwaV9yZXNvdXJjZSgpOwogICAgICAgIGxldCBhcGk6IEFwaTxEeW5hbWljT2JqZWN0
+PiA9IEFwaTo6bmFtZXNwYWNlZF93aXRoKHNlbGYuY2xpZW50LmNsb25lKCksIG5hbWVzcGFjZSwg
+JmFyKTsKICAgICAgICBsZXQgbm93ID0gU3lzdGVtVGltZTo6bm93KCkKICAgICAgICAgICAgLmR1
+cmF0aW9uX3NpbmNlKFVOSVhfRVBPQ0gpCiAgICAgICAgICAgIC51bndyYXBfb3JfZGVmYXVsdCgp
+CiAgICAgICAgICAgIC5hc19zZWNzKCk7CiAgICAgICAgbGV0IHBhdGNoID0ganNvbiEoewogICAg
+ICAgICAgICAic3BlYyI6IHsKICAgICAgICAgICAgICAgICJ0ZW1wbGF0ZSI6IHsKICAgICAgICAg
+ICAgICAgICAgICAibWV0YWRhdGEiOiB7CiAgICAgICAgICAgICAgICAgICAgICAgICJhbm5vdGF0
+aW9ucyI6IHsKICAgICAgICAgICAgICAgICAgICAgICAgICAgICJsdW1lbi5kZXYvcmVzaGFyZC1y
+ZXN0YXJ0ZWQtYXQiOiBub3cudG9fc3RyaW5nKCksCiAgICAgICAgICAgICAgICAgICAgICAgIH0K
+ICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAg
+ICAgICB9KTsKICAgICAgICBhcGkucGF0Y2gobmFtZSwgJlBhdGNoUGFyYW1zOjpkZWZhdWx0KCks
+ICZQYXRjaDo6TWVyZ2UoJnBhdGNoKSkKICAgICAgICAgICAgLmF3YWl0CiAgICAgICAgICAgIC5j
+b250ZXh0KCJ0cmlnZ2VyIHNlcnZpbmcgU3RhdGVmdWxTZXQgcm9sbGluZyByZXN0YXJ0Iik/Owog
+ICAgICAgIE9rKCgpKQogICAgfQoKICAgIGFzeW5jIGZuIGFkbWluX3Rva2VuKCZzZWxmLCBuYW1l
+c3BhY2U6ICZzdHIsIGx1bWVuOiAmTHVtZW4pIC0+IFJlc3VsdDxPcHRpb248U3RyaW5nPj4gewog
+ICAgICAgIGlmICFtYXRjaGVzIShsdW1lbi5zcGVjLmF1dGgsIEF1dGhNb2RlOjpSZXF1aXJlZCkg
+ewogICAgICAgICAgICByZXR1cm4gT2soTm9uZSk7CiAgICAgICAgfQogICAgICAgIGxldCBTb21l
+KHNlY3JldF9uYW1lKSA9IGx1bWVuLnNwZWMudG9rZW5zX3NlY3JldC5hc19kZXJlZigpIGVsc2Ug
+ewogICAgICAgICAgICAvLyBDU0ktb25seSAoYHRva2Vuc1NlY3JldFByb3ZpZGVyQ2xhc3NgKSBk
+ZXBsb3ltZW50cyBoYXZlIG5vCiAgICAgICAgICAgIC8vIFNlY3JldCBvYmplY3QgZm9yIHRoZSBk
+cml2ZXIgdG8gcmVhZCBoZXJlIOKAlCBhIGRvY3VtZW50ZWQsCiAgICAgICAgICAgIC8vIG5vdC15
+ZXQtY2xvc2VkIGdhcCAoIzEzODEpOiBldmVyeSBhZG1pbiBjYWxsIHRoaXMgdGljayBmYWlscwog
+ICAgICAgICAgICAvLyBjbG9zZWQgKDQwMSksIHdoaWNoIGBydW5fbWlncmF0aW9uX3Bhc3NgL2Bl
+dmljdF9vbGRfc2hhcmRzYAogICAgICAgICAgICAvLyBzdXJmYWNlIGFzIGBEcml2ZU91dGNvbWU6
+OkJsb2NrZWRgLCBsZWF2aW5nIHRoZSB3b3JrZmxvdwogICAgICAgICAgICAvLyByZXN1bWFibGUg
+cmF0aGVyIHRoYW4gc2lsZW50bHkgc3R1Y2suCiAgICAgICAgICAgIGJhaWwhKAogICAgICAgICAg
+ICAgICAgInRva2Vuc1NlY3JldFByb3ZpZGVyQ2xhc3Mtb25seSBhdXRoIGlzIG5vdCBzdXBwb3J0
+ZWQgYnkgdGhlIHJlc2hhcmQgZHJpdmVyIHlldDsgXAogICAgICAgICAgICAgICAgIHNldCBzcGVj
+LnRva2Vuc1NlY3JldCBzbyB0aGUgZHJpdmVyIGNhbiByZXNvbHZlIGFuIGFkbWluLXJvbGUgYmVh
+cmVyIHRva2VuIgogICAgICAgICAgICApOwogICAgICAgIH07CiAgICAgICAgbGV0IGFwaToga3Vi
+ZTo6QXBpPGs4c19vcGVuYXBpOjphcGk6OmNvcmU6OnYxOjpTZWNyZXQ+ID0KICAgICAgICAgICAg
+a3ViZTo6QXBpOjpuYW1lc3BhY2VkKHNlbGYuY2xpZW50LmNsb25lKCksIG5hbWVzcGFjZSk7CiAg
+ICAgICAgbGV0IHNlY3JldCA9IGFwaS5nZXQoc2VjcmV0X25hbWUpLmF3YWl0LmNvbnRleHQoInJl
+YWQgdG9rZW5zIHNlY3JldCIpPzsKICAgICAgICBsZXQgYnl0ZXMgPSBzZWNyZXQKICAgICAgICAg
+ICAgLmRhdGEKICAgICAgICAgICAgLmFzX3JlZigpCiAgICAgICAgICAgIC5hbmRfdGhlbih8ZHwg
+ZC5nZXQoInRva2VuLXJlZ2lzdHJ5Lmpzb24iKSkKICAgICAgICAgICAgLm9rX29yX2Vsc2UofHwg
+ewogICAgICAgICAgICAgICAgYW55aG93ISgidG9rZW5zIHNlY3JldCBge3NlY3JldF9uYW1lfWAg
+bWlzc2luZyB0b2tlbi1yZWdpc3RyeS5qc29uIGtleSIpCiAgICAgICAgICAgIH0pPzsKICAgICAg
+ICBsZXQgcmVnaXN0cnk6IEJUcmVlTWFwPFN0cmluZywgVG9rZW5DbGFpbXM+ID0KICAgICAgICAg
+ICAgc2VyZGVfanNvbjo6ZnJvbV9zbGljZSgmYnl0ZXMuMCkuY29udGV4dCgicGFyc2UgdG9rZW4t
+cmVnaXN0cnkuanNvbiIpPzsKICAgICAgICBsZXQgdG9rZW4gPSByZWdpc3RyeQogICAgICAgICAg
+ICAuaW50b19pdGVyKCkKICAgICAgICAgICAgLmZpbmQofChfLCBjbGFpbXMpfCBjbGFpbXMucm9s
+ZXMuZ2V0KCIqIikgPT0gU29tZSgmUm9sZTo6QWRtaW4pKQogICAgICAgICAgICAubWFwKHwodG9r
+ZW4sIF8pfCB0b2tlbik7CiAgICAgICAgT2sodG9rZW4pCiAgICB9CgogICAgZm4gc2hhcmRfYmFz
+ZV91cmwoJnNlbGYsIG5hbWVzcGFjZTogJnN0ciwgbmFtZTogJnN0ciwgc2hhcmQ6IHUzMikgLT4g
+U3RyaW5nIHsKICAgICAgICBmb3JtYXQhKCJodHRwOi8ve25hbWV9LXtzaGFyZH0ue25hbWV9LWhl
+YWRsZXNzLntuYW1lc3BhY2V9LnN2Yy5jbHVzdGVyLmxvY2FsOntDTElFTlRfUE9SVH0iKQogICAg
+fQoKICAgIGFzeW5jIGZuIHNlcnZpbmdfdG9wb2xvZ3lfY29udmVyZ2VkKAogICAgICAgICZzZWxm
+LAogICAgICAgIG5hbWVzcGFjZTogJnN0ciwKICAgICAgICBuYW1lOiAmc3RyLAogICAgICAgIGRl
+c2lyZWRfcmVwbGljYXM6IGk2NCwKICAgICkgLT4gUmVzdWx0PGJvb2w+IHsKICAgICAgICBsZXQg
+YXIgPSBzdGF0ZWZ1bHNldF9hcGlfcmVzb3VyY2UoKTsKICAgICAgICBsZXQgYXBpOiBBcGk8RHlu
+YW1pY09iamVjdD4gPSBBcGk6Om5hbWVzcGFjZWRfd2l0aChzZWxmLmNsaWVudC5jbG9uZSgpLCBu
+YW1lc3BhY2UsICZhcik7CiAgICAgICAgbGV0IFNvbWUoc3RzKSA9IGFwaQogICAgICAgICAgICAu
+Z2V0X29wdChuYW1lKQogICAgICAgICAgICAuYXdhaXQKICAgICAgICAgICAgLmNvbnRleHQoInJl
+YWQgc2VydmluZyBTdGF0ZWZ1bFNldCBmb3IgdG9wb2xvZ3kgY29udmVyZ2VuY2UiKT8KICAgICAg
+ICBlbHNlIHsKICAgICAgICAgICAgLy8gTm8gU3RhdGVmdWxTZXQgeWV0IGlzIG5vdCAiY29udmVy
+Z2VkIiDigJQgdGhlIGNhbGxlciBrZWVwcwogICAgICAgICAgICAvLyB0cmVhdGluZyB0aGlzIGFz
+IHBlbmRpbmcgcmF0aGVyIHRoYW4gYXNzdW1pbmcgc3VjY2Vzcy4KICAgICAgICAgICAgcmV0dXJu
+IE9rKGZhbHNlKTsKICAgICAgICB9OwogICAgICAgIGxldCBzdGF0dXMgPSAmc3RzLmRhdGFbInN0
+YXR1cyJdOwogICAgICAgIGxldCByZWFkeV9yZXBsaWNhcyA9IHN0YXR1c1sicmVhZHlSZXBsaWNh
+cyJdLmFzX2k2NCgpLnVud3JhcF9vcigwKTsKICAgICAgICBsZXQgdXBkYXRlZF9yZXBsaWNhcyA9
+IHN0YXR1c1sidXBkYXRlZFJlcGxpY2FzIl0uYXNfaTY0KCkudW53cmFwX29yKDApOwogICAgICAg
+IC8vIEEgcm9sbG91dCBzdGlsbCBpbiBmbGlnaHQgaGFzIGRpc3RpbmN0IGN1cnJlbnQvdXBkYXRl
+IHJldmlzaW9uczsKICAgICAgICAvLyBvbmNlIGl0IGNvbXBsZXRlcywgazhzIGNvbnZlcmdlcyB0
+aGVtIG9udG8gdGhlIHNhbWUgdmFsdWUuIEFic2VudAogICAgICAgIC8vIGZpZWxkcyAoYW55IFN0
+YXRlZnVsU2V0IG9sZCBlbm91Z2ggbm90IHRvIHJlcG9ydCB0aGVtKSBmYWlsIHRoaXMKICAgICAg
+ICAvLyBjaGVjayBvcGVuIG9uIHRoZSBzYWZlIHNpZGUg4oCUIG5ldmVyIGFzc3VtZWQgaWRlbnRp
+Y2FsLgogICAgICAgIGxldCBjdXJyZW50X3JldmlzaW9uID0gc3RhdHVzWyJjdXJyZW50UmV2aXNp
+b24iXS5hc19zdHIoKTsKICAgICAgICBsZXQgdXBkYXRlX3JldmlzaW9uID0gc3RhdHVzWyJ1cGRh
+dGVSZXZpc2lvbiJdLmFzX3N0cigpOwogICAgICAgIGxldCByZXZpc2lvbnNfY29udmVyZ2VkID0K
+ICAgICAgICAgICAgbWF0Y2hlcyEoKGN1cnJlbnRfcmV2aXNpb24sIHVwZGF0ZV9yZXZpc2lvbiks
+IChTb21lKGMpLCBTb21lKHUpKSBpZiBjID09IHUpOwogICAgICAgIE9rKHJldmlzaW9uc19jb252
+ZXJnZWQKICAgICAgICAgICAgJiYgcmVhZHlfcmVwbGljYXMgPj0gZGVzaXJlZF9yZXBsaWNhcwog
+ICAgICAgICAgICAmJiB1cGRhdGVkX3JlcGxpY2FzID49IGRlc2lyZWRfcmVwbGljYXMpCiAgICB9
+CgogICAgYXN5bmMgZm4gc2VydmluZ19wb2RzX3JlcG9ydF9tYXBfdmVyc2lvbigKICAgICAgICAm
+c2VsZiwKICAgICAgICBodHRwOiAmcmVxd2VzdDo6Q2xpZW50LAogICAgICAgIG5hbWVzcGFjZTog
+JnN0ciwKICAgICAgICBuYW1lOiAmc3RyLAogICAgICAgIHNoYXJkX2NvdW50OiB1MzIsCiAgICAg
+ICAgbWFwX3ZlcnNpb246IHU2NCwKICAgICkgLT4gUmVzdWx0PGJvb2w+IHsKICAgICAgICBmb3Ig
+c2hhcmQgaW4gMC4uc2hhcmRfY291bnQgewogICAgICAgICAgICBsZXQgdXJsID0gZm9ybWF0ISgi
+e30vbWV0cmljcyIsIHNlbGYuc2hhcmRfYmFzZV91cmwobmFtZXNwYWNlLCBuYW1lLCBzaGFyZCkp
+OwogICAgICAgICAgICAvLyBBbiB1bnJlYWNoYWJsZSBwb2QgKG1pZC1yb2xsb3V0LCBtaWQtcmVz
+dGFydCkgb3IgYSBkZWNvZGUKICAgICAgICAgICAgLy8gZmFpbHVyZSBpcyAibm90IGNvbnZlcmdl
+ZCB5ZXQiLCBub3QgYW4gZXJyb3Ig4oCUIHRoZSBjYWxsZXIKICAgICAgICAgICAgLy8ganVzdCBr
+ZWVwcyB0aGUgZmVuY2UgYXJtZWQgYW5kIHJldHJpZXMgbmV4dCB0aWNrLCBleGFjdGx5CiAgICAg
+ICAgICAgIC8vIGxpa2UgYW4gdW5yZWFkeSBTdGF0ZWZ1bFNldCByZXBsaWNhLgogICAgICAgICAg
+ICBsZXQgT2socmVzcCkgPSBodHRwLmdldCgmdXJsKS5zZW5kKCkuYXdhaXQgZWxzZSB7CiAgICAg
+ICAgICAgICAgICByZXR1cm4gT2soZmFsc2UpOwogICAgICAgICAgICB9OwogICAgICAgICAgICBp
+ZiAhcmVzcC5zdGF0dXMoKS5pc19zdWNjZXNzKCkgewogICAgICAgICAgICAgICAgcmV0dXJuIE9r
+KGZhbHNlKTsKICAgICAgICAgICAgfQogICAgICAgICAgICBsZXQgT2soYm9keSkgPSByZXNwLnRl
+eHQoKS5hd2FpdCBlbHNlIHsKICAgICAgICAgICAgICAgIHJldHVybiBPayhmYWxzZSk7CiAgICAg
+ICAgICAgIH07CiAgICAgICAgICAgIGlmIHN1cGVyOjpyZWNvbmNpbGU6OnBhcnNlX21ldHJpYygm
+Ym9keSwgImx1bWVuX3NoYXJkX21hcF92ZXJzaW9uIikgIT0gU29tZShtYXBfdmVyc2lvbikKICAg
+ICAgICAgICAgewogICAgICAgICAgICAgICAgcmV0dXJuIE9rKGZhbHNlKTsKICAgICAgICAgICAg
+fQogICAgICAgIH0KICAgICAgICBPayh0cnVlKQogICAgfQp9CgovLy8gV2hhdCBvbmUgW2Bkcml2
+ZV90aWNrYF0gY2FsbCBkaWQsIGZvciBsb2dnaW5nL3Rlc3RzLiBOZXZlciBwYW5pY3M7IGEKLy8v
+IGZhaWxlZCBzdGVwIHJlcG9ydHMgW2BEcml2ZU91dGNvbWU6OkJsb2NrZWRgXSBhbmQgbGVhdmVz
+IHRoZSBDUiBzcGVjCi8vLyBleGFjdGx5IGFzIGl0IHdhcywgc28gdGhlIG5leHQgdGljayByZXRy
+aWVzIGZyb20gdGhlIHNhbWUgcGVyc2lzdGVkIHBoYXNlLgojW2Rlcml2ZShEZWJ1ZywgQ2xvbmUs
+IFBhcnRpYWxFcSldCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3Nv
+dXJjZS9hcHBzLWx1bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1ycy5tZCNzb3VyY2UK
+cHViIGVudW0gRHJpdmVPdXRjb21lIHsKICAgIC8vLyBOb3RoaW5nIHRvIGRvIHRoaXMgdGljayAo
+YENvbXBsZXRlYCB3aXRoIG5vIGNyb3NzZWQgdGhyZXNob2xkLCBhbgogICAgLy8vIHVuc3VwcG9y
+dGVkIHRvcG9sb2d5LCBvciBhIGBtYXhTaGFyZHNgIGNlaWxpbmcgcmVhY2hlZCkuCiAgICBOb09w
+KCYnc3RhdGljIHN0ciksCiAgICAvLy8gYENvbXBsZXRlIC0+IFByZXBhcmVTcGxpdGA6IGBzaGFy
+ZENvdW50YC9gdGFyZ2V0U2hhcmRDb3VudGAgcGF0Y2hlZC4KICAgIFN0YXJ0ZWRTcGxpdCB7IHRh
+cmdldF9zaGFyZF9jb3VudDogdTMyIH0sCiAgICAvLy8gU3RpbGwgYFByZXBhcmVTcGxpdGA6IHRo
+ZSBuZXcgcG9kIGlzIG5vdCBgUmVhZHlgIHlldC4KICAgIFdhaXRpbmdGb3JOZXdTaGFyZCB7IHRh
+cmdldF9zaGFyZF9jb3VudDogdTMyIH0sCiAgICAvLy8gYFByZXBhcmVTcGxpdCAtPiBTcGxpdHRp
+bmdgOiB0aGUgbmV3IHBvZCBpcyBgUmVhZHlgLgogICAgQWR2YW5jZWRUb1NwbGl0dGluZywKICAg
+IC8vLyBTdGlsbCBgU3BsaXR0aW5nYDogb25lIG1pZ3JhdGlvbiBwYXNzIHJhbiAoYmF0Y2ggY291
+bnQgaW5jbHVkZWQ7IGAwYAogICAgLy8vIG9ubHkgaWYgdGhlcmUgaXMgbm90aGluZyB0byBtb3Zl
+LCB3aGljaCBzaG91bGQgbm90IGhhcHBlbiBmb3IgYQogICAgLy8vIGZyZXNobHkgc3RhcnRlZCBz
+cGxpdCkuCiAgICBNaWdyYXRlZEJhdGNoZXMgeyBiYXRjaGVzOiB1c2l6ZSB9LAogICAgLy8vIGBT
+cGxpdHRpbmcgLT4gQ2F0Y2hpbmdVcGAuCiAgICBBZHZhbmNlZFRvQ2F0Y2hpbmdVcCwKICAgIC8v
+LyBgQ2F0Y2hpbmdVcCAtPiBDb21wbGV0ZWA6IHJlLXN5bmMgcGFzcyByYW4sIG9sZCBzaGFyZHMg
+ZXZpY3RlZCwgYW5kCiAgICAvLy8gYHNoYXJkTWFwYCBmbGlwcGVkIHRvIHRoZSBuZXcgdmVyc2lv
+bi4KICAgIENvbXBsZXRlZFNwbGl0IHsgbmV3X21hcF92ZXJzaW9uOiB1NjQgfSwKICAgIC8vLyAj
+MTQ1OCBSMTogYENvbXBsZXRlYCwgYnV0IG5vdCBldmVyeSBzZXJ2aW5nIHBvZCBpcyBjb25maXJt
+ZWQgYFJlYWR5YAogICAgLy8vIG9uIGBtYXBfdmVyc2lvbmAgeWV0IOKAlCB0aGUgd3JpdGUtcGF1
+c2UgZmVuY2Ugb3ZlciB0aGUgYnVja2V0cyB0aGF0CiAgICAvLy8gbW92ZWQgaW50byBgbWFwX3Zl
+cnNpb25gIHdhcyByZS1hcm1lZCB0aGlzIHRpY2ssIGFuZAogICAgLy8vIGBhd2FpdGluZ1RvcG9s
+b2d5Q29udmVyZ2VuY2VgIHNob3VsZCBzdXJmYWNlIGluIGBzdGF0dXMucmVzaGFyZGAuCiAgICBB
+d2FpdGluZ1RvcG9sb2d5Q29udmVyZ2VuY2UgeyBtYXBfdmVyc2lvbjogdTY0IH0sCiAgICAvLy8g
+IzE0NTggUjE6IGBDb21wbGV0ZWAsIGFuZCBldmVyeSBzZXJ2aW5nIHBvZCBqdXN0IGdvdCBjb25m
+aXJtZWQKICAgIC8vLyBgUmVhZHlgIG9uIGBtYXBfdmVyc2lvbmAg4oCUIGB3b3JrZmxvdy5jb252
+ZXJnZWRTaGFyZE1hcFZlcnNpb25gIHdhcwogICAgLy8vIHBhdGNoZWQgdG8gYG1hcF92ZXJzaW9u
+YCBhbmQgdGhlIHdyaXRlLXBhdXNlIGZlbmNlIHdhcyBjbGVhcmVkLgogICAgVG9wb2xvZ3lDb252
+ZXJnZWQgeyBtYXBfdmVyc2lvbjogdTY0IH0sCiAgICAvLy8gQSBzdGVwIGZhaWxlZDsgcGhhc2Ug
+dW5jaGFuZ2VkLCBzYWZlIHRvIHJldHJ5IG5leHQgdGljay4KICAgIEJsb2NrZWQoU3RyaW5nKSwK
+fQoKLy8vIFB1cmUgdHJpZ2dlciBnYXRlIChSMyBzYWZldHkgcmFpbDsgQUM0KTogd2hldGhlciBg
+bHVtZW5gIHNob3VsZCBzdGFydCBhCi8vLyAqKm5ldyoqIHNwbGl0IHRoaXMgdGljay4gYGZhbHNl
+YCB3aGVuZXZlciBgbWF4U2hhcmRCeXRlc2AgaXMgdW5zZXQg4oCUCi8vLyByZWNvbW1lbmRhdGlv
+bi1vbmx5IG1vZGUgbmV2ZXIgYXV0by1zcGxpdHMsIHJlZ2FyZGxlc3Mgb2YgYW55IG90aGVyCi8v
+LyBmaWVsZCwgaW5jbHVkaW5nIGEgc3RhbGUvbWFudWFsbHktZm9yY2VkIGBzdGF0dXMucmVzaGFy
+ZGAuCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBz
+LWx1bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1ycy5tZCNzb3VyY2UKcHViIGZuIHNo
+b3VsZF9zdGFydF9zcGxpdChsdW1lbjogJkx1bWVuKSAtPiBib29sIHsKICAgIGlmIGx1bWVuLnNw
+ZWMucmVzaGFyZF9wb2xpY3kubWF4X3NoYXJkX2J5dGVzLmlzX25vbmUoKSB7CiAgICAgICAgcmV0
+dXJuIGZhbHNlOwogICAgfQogICAgaWYgbHVtZW4uc3BlYy5yZXBsaWNhc19wZXJfc2hhcmQgPiAx
+IHsKICAgICAgICAvLyBSYWZ0LUhBOiBncm93aW5nIHNoYXJkQ291bnQgcmVzaHVmZmxlcyBvcmRp
+bmFsLT5zaGFyZCBmb3IgZXZlcnkKICAgICAgICAvLyBleGlzdGluZyBwb2QsIG5vdCBqdXN0IGFu
+IGFkZGVkIG9uZS4gU2VlIHRoZSBtb2R1bGUgZG9jJ3MgIlNjb3BlCiAgICAgICAgLy8gcmFpbCIg
+bm90ZS4KICAgICAgICByZXR1cm4gZmFsc2U7CiAgICB9CiAgICBpZiAhbWF0Y2hlcyEoCiAgICAg
+ICAgbHVtZW4uc3BlYy5yZXNoYXJkX3BvbGljeS53b3JrZmxvdy5waGFzZSwKICAgICAgICBSZXNo
+YXJkUGhhc2U6OkNvbXBsZXRlCiAgICApIHsKICAgICAgICAvLyBBbHJlYWR5IG1pZC13b3JrZmxv
+dzogUHJlcGFyZVNwbGl0L1NwbGl0dGluZy9DYXRjaGluZ1VwIHJlc3VtZSB2aWEKICAgICAgICAv
+LyBkcml2ZV90aWNrJ3Mgb3RoZXIgYnJhbmNoZXMsIG5ldmVyIHJlc3RhcnQgZnJvbSBzaG91bGRf
+c3RhcnRfc3BsaXQuCiAgICAgICAgcmV0dXJuIGZhbHNlOwogICAgfQogICAgaWYgbGV0IFNvbWUo
+bWF4KSA9IGx1bWVuLnNwZWMucmVzaGFyZF9wb2xpY3kubWF4X3NoYXJkcyB7CiAgICAgICAgaWYg
+bHVtZW4uc3BlYy5zaGFyZF9jb3VudCA+PSBtYXggewogICAgICAgICAgICByZXR1cm4gZmFsc2U7
+CiAgICAgICAgfQogICAgfQogICAgbGV0IFNvbWUoc3RhdHVzKSA9IGx1bWVuLnN0YXR1cy5hc19y
+ZWYoKSBlbHNlIHsKICAgICAgICByZXR1cm4gZmFsc2U7CiAgICB9OwogICAgLy8gIzEzOTYgUjU6
+IHJlLWRlcml2ZSBmcmVzaG5lc3MgaGVyZSByYXRoZXIgdGhhbiB0cnVzdGluZyB0aGUgc3RhdHVz
+CiAgICAvLyBzdWJyZXNvdXJjZSdzIG93biBgYmxvY2tpbmdDb25kaXRpb25zYCBhbG9uZS4gYHJl
+c2hhcmRfc3RhdHVzX3dpdGhfdXNhZ2VgCiAgICAvLyAoY3JkLnJzKSBhbHJlYWR5IHJlZnVzZXMg
+dG8gcmVwb3J0IGEgKnRocmVzaG9sZCogY29uZGl0aW9uIGFnYWluc3QgYQogICAgLy8gc3RhbGUg
+dXNhZ2UgbWVhc3VyZW1lbnQgKGl0IHJlcG9ydHMgYHVzYWdlU3RhbGVQb3N0Q3V0b3ZlcmAgaW5z
+dGVhZCDigJQKICAgIC8vIHNlZSB0aGUgIzEzODYgdGVzdHMgYmVsb3cpLCBidXQgdGhhdCBvbmx5
+IHByb3RlY3RzIHRoZSB3cml0ZSBwYXRoOiBhCiAgICAvLyBzdGF0dXMgd3JpdGUgZnJvbSBhbiBp
+bi1mbGlnaHQgc2NyYXBlIGNhbiBzdGlsbCBiZSB0aGUgb25lIGN1cnJlbnRseQogICAgLy8gc3Rv
+cmVkIHdoZW4gYSAqbGF0ZXIqIGBzcGVjLnNoYXJkTWFwYCBjdXRvdmVyIGxhbmRzIChhIHNlY29u
+ZCwKICAgIC8vIGluZGVwZW5kZW50IHNwbGl0IHJhY2luZyB0aGlzIG9uZSwgb3IgYW4gb3BlcmF0
+b3IgcmVzdGFydCByZW9yZGVyaW5nCiAgICAvLyB3cml0ZXMpLCBsZWF2aW5nIGEgYHByZXBhcmVU
+aHJlc2hvbGRDcm9zc2VkYC9gdXJnZW50VGhyZXNob2xkQ3Jvc3NlZGAKICAgIC8vIGNvbmRpdGlv
+biBvbiBkaXNrIHRoYXQgd2FzIGNvbXB1dGVkIGFnYWluc3QgYSBtYXAgdmVyc2lvbiB0aGUgQ1Ig
+aGFzCiAgICAvLyBhbHJlYWR5IG1vdmVkIHBhc3QuIFJlcXVpcmluZyB0aGUgc3RhdHVzJ3MgYHVz
+YWdlTWVhc3VyZWRBdE1hcFZlcnNpb25gCiAgICAvLyB0byBlcXVhbCB0aGUgQ1IncyAqY3VycmVu
+dCogYHNwZWMuc2hhcmRNYXAudmVyc2lvbmAgYXQgdGhlIG1vbWVudCB0aGlzCiAgICAvLyB0cmln
+Z2VyIGRlY2lzaW9uIGlzIG1hZGUgY2xvc2VzIHRoYXQgcmFjZSB3aXRob3V0IG5lZWRpbmcgdGhl
+IHN0YXR1cwogICAgLy8gd3JpdGVyIGFuZCB0aGlzIHJlYWRlciB0byBiZSBwZXJmZWN0bHkgb3Jk
+ZXJlZC4KICAgIGlmIHN0YXR1cy5yZXNoYXJkLnVzYWdlX21lYXN1cmVkX2F0X21hcF92ZXJzaW9u
+ICE9IFNvbWUobHVtZW4uc3BlYy5zaGFyZF9tYXAudmVyc2lvbikgewogICAgICAgIHJldHVybiBm
+YWxzZTsKICAgIH0KICAgIHN0YXR1cwogICAgICAgIC5yZXNoYXJkCiAgICAgICAgLmJsb2NraW5n
+X2NvbmRpdGlvbnMKICAgICAgICAuaXRlcigpCiAgICAgICAgLmFueSh8Y3wgYyA9PSAicHJlcGFy
+ZVRocmVzaG9sZENyb3NzZWQiIHx8IGMgPT0gInVyZ2VudFRocmVzaG9sZENyb3NzZWQiKQp9Cgo=
+```
+
+### Source Partition 0002
+<!-- aw-source-partition: index=2 count=4 bytes=45809 payload_bytes=61883 encoding=base64 digest=sha256:ab7d8b5e1a39c0a3abb75db89aa9abd84fcc7963530b189185dd6236145120fd boundary=ast terminal_newline=true -->
+
+```text
+Ly8vIFRoZSB2aXJ0dWFsLWJ1Y2tldCBtYXAgYGx1bWVuLnNwZWMuc2hhcmRNYXBgIGN1cnJlbnRs
+eSBkZXNjcmliZXMg4oCUIHRoZQovLy8gbWFwIHN0aWxsIGxpdmUgZm9yIHJvdXRpbmcvZGF0YSBw
+bGFjZW1lbnQgcmlnaHQgbm93LCBhcyBvcHBvc2VkIHRvCi8vLyBgc3BlYy5zaGFyZENvdW50YCdz
+IFN0YXRlZnVsU2V0LXNpemluZyBpbnRlbnQuCi8vLwovLy8gV2hpbGUgYSBzcGxpdCBpcyBpbiBm
+bGlnaHQgKGB3b3JrZmxvdy50YXJnZXRTaGFyZENvdW50YCBpcyBzZXQpLAovLy8gYHN0YXJ0X3Nw
+bGl0YCBoYXMgYWxyZWFkeSBidW1wZWQgYHNwZWMuc2hhcmRDb3VudGAgdG8gdGhlIHRhcmdldCBz
+byB0aGUKLy8vIG5ldyBTdGF0ZWZ1bFNldCByZXBsaWNhIGNhbiBjb21lIHVwLCBidXQgdGhlIGFj
+dHVhbCBsaXZlIHRvcG9sb2d5IOKAlAovLy8gd2hhdCBgYnVja2V0X21vdmVzYC9gc25hcHNob3Rf
+cmVzaGFyZF9iYXRjaGVzYCBtdXN0IGRpZmYgYWdhaW5zdCwgYW5kCi8vLyB3aGF0IGV2aWN0aW9u
+IG11c3QgaXRlcmF0ZSDigJQgaXMgc3RpbGwgdGhlIHByZS1zcGxpdCBzaGFyZCBjb3VudCB1bnRp
+bAovLy8gdGhlIGBDb21wbGV0ZWAtcGhhc2UgY3V0b3ZlciBjb21taXRzIGBzaGFyZE1hcGAuIFRo
+aXMgZHJpdmVyIG9ubHkgZXZlcgovLy8gZ3Jvd3MgYSBtYXAgYnkgZXhhY3RseSBvbmUgc2hhcmQg
+cGVyIHNwbGl0IChSMSksIHNvIHRoZSBwcmUtc3BsaXQgY291bnQKLy8vIGlzIGFsd2F5cyBgdGFy
+Z2V0U2hhcmRDb3VudCAtIDFgLgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1h
+bnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtb3BlcmF0b3ItcmVzaGFyZC1kcml2ZXItcnMubWQj
+c291cmNlCnB1YiBmbiBjdXJyZW50X3NoYXJkX21hcChsdW1lbjogJkx1bWVuKSAtPiBSZXN1bHQ8
+VmlydHVhbEJ1Y2tldFNoYXJkTWFwPiB7CiAgICBsZXQgc20gPSAmbHVtZW4uc3BlYy5zaGFyZF9t
+YXA7CiAgICBsZXQgcGh5c2ljYWwgPSBtYXRjaCBsdW1lbi5zcGVjLnJlc2hhcmRfcG9saWN5Lndv
+cmtmbG93LnRhcmdldF9zaGFyZF9jb3VudCB7CiAgICAgICAgU29tZSh0YXJnZXQpID0+IHRhcmdl
+dC5zYXR1cmF0aW5nX3N1YigxKS5tYXgoMSksCiAgICAgICAgTm9uZSA9PiBsdW1lbi5zcGVjLnNo
+YXJkX2NvdW50Lm1heCgxKSwKICAgIH07CiAgICBpZiBzbS5hc3NpZ25tZW50cy5pc19lbXB0eSgp
+IHsKICAgICAgICBWaXJ0dWFsQnVja2V0U2hhcmRNYXA6OmJhbGFuY2VkKHNtLnZlcnNpb24sIHNt
+LnZpcnR1YWxfYnVja2V0X2NvdW50LCBwaHlzaWNhbCkKICAgIH0gZWxzZSB7CiAgICAgICAgVmly
+dHVhbEJ1Y2tldFNoYXJkTWFwOjpuZXcoc20udmVyc2lvbiwgc20uYXNzaWdubWVudHMuY2xvbmUo
+KSwgcGh5c2ljYWwpCiAgICB9Cn0KCi8vLyBUaGUgdGFyZ2V0IG1hcCBmb3IgZ3Jvd2luZyBgY3Vy
+cmVudGAgYnkgZXhhY3RseSBvbmUgc2hhcmQgKFIxKS4KLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVj
+aC1kZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLW9wZXJhdG9yLXJlc2hhcmQt
+ZHJpdmVyLXJzLm1kI3NvdXJjZQpwdWIgZm4gY29tcHV0ZV90YXJnZXRfbWFwKGN1cnJlbnQ6ICZW
+aXJ0dWFsQnVja2V0U2hhcmRNYXApIC0+IFJlc3VsdDxWaXJ0dWFsQnVja2V0U2hhcmRNYXA+IHsK
+ICAgIGN1cnJlbnQuc3BsaXRfb25lX3NoYXJkKGN1cnJlbnQudmVyc2lvbigpICsgMSkKfQoKYXN5
+bmMgZm4gZmV0Y2hfc2NvcGVkX2JhY2t1cCgKICAgIGh0dHA6ICZyZXF3ZXN0OjpDbGllbnQsCiAg
+ICBiYXNlX3VybDogJnN0ciwKICAgIHRva2VuOiBPcHRpb248JnN0cj4sCiAgICB2aXJ0dWFsX2J1
+Y2tldF9jb3VudDogdTMyLAogICAgYnVja2V0czogJkJUcmVlU2V0PHUzMj4sCikgLT4gUmVzdWx0
+PFNuYXBzaG90VjE+IHsKICAgIGxldCBtdXQgcmVxID0gaHR0cAogICAgICAgIC5wb3N0KGZvcm1h
+dCEoIntiYXNlX3VybH0vYWRtaW4vYmFja3VwOnNjb3BlZCIpKQogICAgICAgIC5qc29uKCZqc29u
+ISh7CiAgICAgICAgICAgICJ2aXJ0dWFsX2J1Y2tldF9jb3VudCI6IHZpcnR1YWxfYnVja2V0X2Nv
+dW50LAogICAgICAgICAgICAiYnVja2V0cyI6IGJ1Y2tldHMsCiAgICAgICAgfSkpOwogICAgaWYg
+bGV0IFNvbWUodG9rZW4pID0gdG9rZW4gewogICAgICAgIHJlcSA9IHJlcS5iZWFyZXJfYXV0aCh0
+b2tlbik7CiAgICB9CiAgICBsZXQgcmVzcCA9IHJlcQogICAgICAgIC5zZW5kKCkKICAgICAgICAu
+YXdhaXQKICAgICAgICAud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoIlBPU1Qge2Jhc2VfdXJsfS9h
+ZG1pbi9iYWNrdXA6c2NvcGVkIikpPzsKICAgIGlmICFyZXNwLnN0YXR1cygpLmlzX3N1Y2Nlc3Mo
+KSB7CiAgICAgICAgYmFpbCEoIntiYXNlX3VybH0vYWRtaW4vYmFja3VwOnNjb3BlZCByZXR1cm5l
+ZCB7fSIsIHJlc3Auc3RhdHVzKCkpOwogICAgfQogICAgcmVzcC5qc29uOjo8U25hcHNob3RWMT4o
+KQogICAgICAgIC5hd2FpdAogICAgICAgIC5jb250ZXh0KCJkZWNvZGUgYmFja3VwOnNjb3BlZCBy
+ZXNwb25zZSIpCn0KCi8vLyBgR0VUIC9jb2xsZWN0aW9uc2AgKCMxNDU3IFIyKTogdGhlIGZ1bGwg
+bGlzdCBvZiBjb2xsZWN0aW9ucyB0aGF0IGV4aXN0IG9uCi8vLyB0aGlzIHNoYXJkIHJpZ2h0IG5v
+dywgaW5kZXBlbmRlbnQgb2YgYW55IGJ1Y2tldCBzY29wZS4gVGhlIHJlc2hhcmQKLy8vIGRyaXZl
+cidzIGFkbWluIHRva2VuIGNhcnJpZXMgd2lsZGNhcmQgYFJvbGU6OkFkbWluYCBvbiBgIioiYCwg
+d2hpY2gKLy8vIGFscmVhZHkgc2F0aXNmaWVzIHRoaXMgZGF0YS1wbGFuZSByb3V0ZSdzIHBlci1j
+b2xsZWN0aW9uIGBSb2xlOjpSZWFkYAovLy8gZmlsdGVyIGZvciBldmVyeSBjb2xsZWN0aW9uIGlk
+LCBzbyBubyBuZXcgYWRtaW4tb25seSBlbmRwb2ludCBpcyBuZWVkZWQKLy8vIGhlcmUuIFRoaXMg
+aXMgZGVsaWJlcmF0ZWx5ICoqbm90KiogZGVyaXZlZCBmcm9tIGEgYnVja2V0LXNjb3BlZAovLy8g
+c25hcHNob3QncyBvd24gYGNvbGxlY3Rpb25zYCBrZXlzOiBbYGNyYXRlOjpyZXNoYXJkOjpzbmFw
+c2hvdF9idWNrZXRfc3Vic2V0YF0KLy8vIChiYWNraW5nIGBQT1NUIC9hZG1pbi9iYWNrdXA6c2Nv
+cGVkYCkgb21pdHMgYSBjb2xsZWN0aW9uIGVudGlyZWx5IGZyb20KLy8vIGl0cyBvdXRwdXQgd2hl
+biBpdCBoYXMgemVybyBtYXRjaGluZyBkb2NzIGluIHRoZSByZXF1ZXN0ZWQgYnVja2V0cyDigJQg
+YQovLy8gY29sbGVjdGlvbiBhIGJhdGNoIG9mIGRlbGV0ZXMgZW1wdGllZCBvdXQgb2YgYSBtb3Zl
+ZCBidWNrZXQgd291bGQgdGhlbiBiZQovLy8gc2lsZW50bHkgc2tpcHBlZCBieSBbYHNuYXBzaG90
+X3Jlc2hhcmRfcHJ1bmVfY2h1bmtzYF0sIGxlYXZpbmcgaXRzIHN0YWxlCi8vLyBjb3BpZXMgb24g
+dGhlIHRhcmdldCB1bnBydW5lZCAodGhlIGV4YWN0IGVkZ2UgIzE0NDMgZGlzY2xvc2VkIGFuZCAj
+MTQ1NwovLy8gUjIgY2xvc2VzKS4KYXN5bmMgZm4gZmV0Y2hfYWxsX2NvbGxlY3Rpb25faWRzKAog
+ICAgaHR0cDogJnJlcXdlc3Q6OkNsaWVudCwKICAgIGJhc2VfdXJsOiAmc3RyLAogICAgdG9rZW46
+IE9wdGlvbjwmc3RyPiwKKSAtPiBSZXN1bHQ8QlRyZWVTZXQ8U3RyaW5nPj4gewogICAgbGV0IG11
+dCByZXEgPSBodHRwLmdldChmb3JtYXQhKCJ7YmFzZV91cmx9L2NvbGxlY3Rpb25zIikpOwogICAg
+aWYgbGV0IFNvbWUodG9rZW4pID0gdG9rZW4gewogICAgICAgIHJlcSA9IHJlcS5iZWFyZXJfYXV0
+aCh0b2tlbik7CiAgICB9CiAgICBsZXQgcmVzcCA9IHJlcQogICAgICAgIC5zZW5kKCkKICAgICAg
+ICAuYXdhaXQKICAgICAgICAud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoIkdFVCB7YmFzZV91cmx9
+L2NvbGxlY3Rpb25zIikpPzsKICAgIGlmICFyZXNwLnN0YXR1cygpLmlzX3N1Y2Nlc3MoKSB7CiAg
+ICAgICAgYmFpbCEoIntiYXNlX3VybH0vY29sbGVjdGlvbnMgcmV0dXJuZWQge30iLCByZXNwLnN0
+YXR1cygpKTsKICAgIH0KICAgIGxldCBpZHM6IFZlYzxTdHJpbmc+ID0gcmVzcAogICAgICAgIC5q
+c29uKCkKICAgICAgICAuYXdhaXQKICAgICAgICAud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoImRl
+Y29kZSB7YmFzZV91cmx9L2NvbGxlY3Rpb25zIHJlc3BvbnNlIikpPzsKICAgIE9rKGlkcy5pbnRv
+X2l0ZXIoKS5jb2xsZWN0KCkpCn0KCi8vLyBJZiBgYmF0Y2hgJ3MgYWN0dWFsIHdpcmUgcGF5bG9h
+ZCBpcyBvdmVyCi8vLyBbYGNyYXRlOjpyZXNoYXJkOjpBRE1JTl9ST1VURV9CT0RZX0xJTUlUX0JZ
+VEVTYF0sIG5hbWUgdGhlIGNvbGxlY3Rpb24gYW5kCi8vLyBleHRlcm5hbF9pZCB0byBibGFtZSAo
+IzE0NDQgUjIpLiBgc25hcHNob3RfcmVzaGFyZF9iYXRjaGVzYCcKLy8vIGBieXRlX2NhcF9jaHVu
+a2Agb25seSBldmVyIGVtaXRzIGFuIG92ZXItdGhlLWxpbWl0IGJhdGNoIHdoZW4gaXQgZmxvb3Jl
+ZAovLy8gYXQgYSBzaW5nbGUgZXh0ZXJuYWxfaWQgKGEgYnVja2V0IGdyb3VwJ3MgYnl0ZSBjYXAg
+YWxyZWFkeSBrZWVwcyBldmVyeQovLy8gbXVsdGktaWQgYmF0Y2ggdW5kZXIgaGFsZiB0aGUgcm91
+dGUgbGltaXQpLCBzbyB0aGUgZmlyc3QgaWQgZm91bmQgaW4KLy8vIGBleHRlcm5hbF9pZHNgIGlz
+IHRoYXQgb25lIGRvY3VtZW50LgpmbiBkZXRlY3Rfb3ZlcnNpemVkX2JhdGNoKGJhdGNoOiAmUmVz
+aGFyZEJhdGNoKSAtPiBPcHRpb248T3ZlcnNpemVkRG9jdW1lbnRCbG9jaz4gewogICAgbGV0IGJ5
+dGVzID0gc2VyZGVfanNvbjo6dG9fdmVjKGJhdGNoKQogICAgICAgIC5tYXAofGJ5dGVzfCBieXRl
+cy5sZW4oKSkKICAgICAgICAudW53cmFwX29yKHVzaXplOjpNQVgpOwogICAgaWYgYnl0ZXMgPD0g
+Y3JhdGU6OnJlc2hhcmQ6OkFETUlOX1JPVVRFX0JPRFlfTElNSVRfQllURVMgewogICAgICAgIHJl
+dHVybiBOb25lOwogICAgfQogICAgbGV0IChjb2xsZWN0aW9uLCBleHRlcm5hbF9pZCkgPSBiYXRj
+aC5leHRlcm5hbF9pZHMuaXRlcigpLmZpbmRfbWFwKHwoY29sbGVjdGlvbiwgaWRzKXwgewogICAg
+ICAgIGlkcy5pdGVyKCkKICAgICAgICAgICAgLm5leHQoKQogICAgICAgICAgICAubWFwKHxleHRl
+cm5hbF9pZHwgKGNvbGxlY3Rpb24uY2xvbmUoKSwgZXh0ZXJuYWxfaWQuY2xvbmUoKSkpCiAgICB9
+KT87CiAgICBTb21lKE92ZXJzaXplZERvY3VtZW50QmxvY2sgewogICAgICAgIGNvbGxlY3Rpb24s
+CiAgICAgICAgZXh0ZXJuYWxfaWQsCiAgICAgICAgYnl0ZXMsCiAgICB9KQp9Cgphc3luYyBmbiBh
+cHBseV9yZXNoYXJkX2JhdGNoKAogICAgaHR0cDogJnJlcXdlc3Q6OkNsaWVudCwKICAgIGJhc2Vf
+dXJsOiAmc3RyLAogICAgdG9rZW46IE9wdGlvbjwmc3RyPiwKICAgIGJhdGNoOiAmUmVzaGFyZEJh
+dGNoLAopIC0+IFJlc3VsdDwoKT4gewogICAgLy8gUHJlLWZsaWdodCAoIzE0NDQgUjIpOiBhIGJh
+dGNoIHRoaXMgY3JhdGUgY2FuIGFscmVhZHkgdGVsbCBpcyBvdmVyIHRoZQogICAgLy8gcm91dGUn
+cyBib2R5IGxpbWl0IGlzIHNraXBwZWQgcmF0aGVyIHRoYW4gc2VudCDigJQgbm8gd2FzdGVkIHJv
+dW5kIHRyaXAsCiAgICAvLyBhbmQgdGhlIGNsYXNzaWZpY2F0aW9uIG5ldmVyIGRlcGVuZHMgb24g
+aG93IGEgZ2l2ZW4gSFRUUCBzdGFjayByZW5kZXJzCiAgICAvLyBpdHMgb3duIDQxMy4KICAgIGlm
+IGxldCBTb21lKG92ZXJzaXplZCkgPSBkZXRlY3Rfb3ZlcnNpemVkX2JhdGNoKGJhdGNoKSB7CiAg
+ICAgICAgcmV0dXJuIEVycihvdmVyc2l6ZWQuaW50bygpKTsKICAgIH0KICAgIGxldCBtdXQgcmVx
+ID0gaHR0cAogICAgICAgIC5wb3N0KGZvcm1hdCEoIntiYXNlX3VybH0vYWRtaW4vcmVzaGFyZDph
+cHBseSIpKQogICAgICAgIC5qc29uKGJhdGNoKTsKICAgIGlmIGxldCBTb21lKHRva2VuKSA9IHRv
+a2VuIHsKICAgICAgICByZXEgPSByZXEuYmVhcmVyX2F1dGgodG9rZW4pOwogICAgfQogICAgbGV0
+IHJlc3AgPSByZXEKICAgICAgICAuc2VuZCgpCiAgICAgICAgLmF3YWl0CiAgICAgICAgLndpdGhf
+Y29udGV4dCh8fCBmb3JtYXQhKCJQT1NUIHtiYXNlX3VybH0vYWRtaW4vcmVzaGFyZDphcHBseSIp
+KT87CiAgICBpZiAhcmVzcC5zdGF0dXMoKS5pc19zdWNjZXNzKCkgewogICAgICAgIC8vIERlZmVu
+c2UgaW4gZGVwdGg6IGV2ZW4gaWYgdGhlIHByZS1mbGlnaHQgZXN0aW1hdGUgYWJvdmUgbWlzc2Vk
+IGl0CiAgICAgICAgLy8gKGUuZy4gZnJhbWluZy9jb21wcmVzc2lvbiBza2V3KSwgY2xhc3NpZnkg
+YSBsaXZlIDQxMyBvbiB0aGlzIGV4YWN0CiAgICAgICAgLy8gYmF0Y2ggc2hhcGUgdGhlIHNhbWUg
+d2F5IHJhdGhlciB0aGFuIGEgZ2VuZXJpYyBCbG9ja2VkIG1lc3NhZ2UuCiAgICAgICAgaWYgcmVz
+cC5zdGF0dXMoKSA9PSByZXF3ZXN0OjpTdGF0dXNDb2RlOjpQQVlMT0FEX1RPT19MQVJHRSB7CiAg
+ICAgICAgICAgIGlmIGxldCBTb21lKG92ZXJzaXplZCkgPSBkZXRlY3Rfb3ZlcnNpemVkX2JhdGNo
+KGJhdGNoKSB7CiAgICAgICAgICAgICAgICByZXR1cm4gRXJyKG92ZXJzaXplZC5pbnRvKCkpOwog
+ICAgICAgICAgICB9CiAgICAgICAgfQogICAgICAgIGJhaWwhKCJ7YmFzZV91cmx9L2FkbWluL3Jl
+c2hhcmQ6YXBwbHkgcmV0dXJuZWQge30iLCByZXNwLnN0YXR1cygpKTsKICAgIH0KICAgIE9rKCgp
+KQp9CgovLy8gYFBPU1QgL2FkbWluL3Jlc2hhcmQ6cHJ1bmVgICgjMTQ1NyBSMSk6IHNlbmQgb25l
+IFtgUmVzaGFyZFBydW5lQ2h1bmtgXSBvZgovLy8gdGhlIGZpbmFsIG1pZ3JhdGlvbiBwYXNzJ3Mg
+YXV0aG9yaXRhdGl2ZSBrZWVwIHNldC4gVW5saWtlCi8vLyBbYGFwcGx5X3Jlc2hhcmRfYmF0Y2hg
+XSwgYSBjaHVuayBjYXJyaWVzIG9ubHkgZXh0ZXJuYWxfaWQgc3RyaW5ncyAobm8KLy8vIGRvY3Vt
+ZW50IGNvbnRlbnQpLCBzbyBpdCBuZXZlciBuZWVkcyB0aGUgc2FtZSBwcmUtZmxpZ2h0L2xpdmUt
+NDEzCi8vLyBvdmVyc2l6ZSBjbGFzc2lmaWNhdGlvbiDigJQgYHNuYXBzaG90X3Jlc2hhcmRfcHJ1
+bmVfY2h1bmtzYCdzIHJlY3Vyc2l2ZQovLy8gYnl0ZS1jYXAgaGFsdmluZyBhbHJlYWR5IGtlZXBz
+IGV2ZXJ5IGNodW5rIHVuZGVyIGBtYXhfY2h1bmtfYnl0ZXNgIHNob3J0Ci8vLyBvZiBhIHNpbmds
+ZSBpZCBsb25nIGVub3VnaCBhbG9uZSB0byBleGNlZWQgaXQsIGFuIHVucmVhbGlzdGljIGVkZ2Ug
+dGhpcwovLy8gZnVuY3Rpb24gZG9lcyBub3Qgc3BlY2lhbC1jYXNlLiBBIGZhaWx1cmUgaGVyZQov
+Ly8gcHJvcGFnYXRlcyBhcyBhIGdlbmVyaWMgZXJyb3IsIHN1cmZhY2VkIGJ5IGV2ZXJ5IGNhbGxl
+ciBhcwovLy8gW2BEcml2ZU91dGNvbWU6OkJsb2NrZWRgXSB0aGUgc2FtZSBhcyBhbnkgb3RoZXIg
+c3RlcDsgdGhlIG5leHQgdGljaydzCi8vLyByZXRyeSByZWNvbXB1dGVzIGFuZCByZS1zZW5kcyB0
+aGUgc2FtZSBkZXRlcm1pbmlzdGljIGNodW5rIHNldCAodGhlIGZpbmFsCi8vLyBwYXNzIHJ1bnMg
+dW5kZXIgdGhlIHdyaXRlIGZlbmNlLCBzbyBidWNrZXQgcG9wdWxhdGlvbiBjYW5ub3QgY2hhbmdl
+Ci8vLyBiZXR3ZWVuIHRpY2tzKSwgY29udmVyZ2luZyB2aWEgW2BjcmF0ZTo6c3RvcmFnZTo6RW5n
+aW5lOjoKLy8vIGFwcGx5X3Jlc2hhcmRfcHJ1bmVfY2h1bmtgXSdzIGlkZW1wb3RlbnQgYWNjdW11
+bGF0b3IuCmFzeW5jIGZuIGFwcGx5X3Jlc2hhcmRfcHJ1bmVfY2h1bmsoCiAgICBodHRwOiAmcmVx
+d2VzdDo6Q2xpZW50LAogICAgYmFzZV91cmw6ICZzdHIsCiAgICB0b2tlbjogT3B0aW9uPCZzdHI+
+LAogICAgY2h1bms6ICZSZXNoYXJkUHJ1bmVDaHVuaywKKSAtPiBSZXN1bHQ8KCk+IHsKICAgIGxl
+dCBtdXQgcmVxID0gaHR0cAogICAgICAgIC5wb3N0KGZvcm1hdCEoIntiYXNlX3VybH0vYWRtaW4v
+cmVzaGFyZDpwcnVuZSIpKQogICAgICAgIC5qc29uKGNodW5rKTsKICAgIGlmIGxldCBTb21lKHRv
+a2VuKSA9IHRva2VuIHsKICAgICAgICByZXEgPSByZXEuYmVhcmVyX2F1dGgodG9rZW4pOwogICAg
+fQogICAgbGV0IHJlc3AgPSByZXEKICAgICAgICAuc2VuZCgpCiAgICAgICAgLmF3YWl0CiAgICAg
+ICAgLndpdGhfY29udGV4dCh8fCBmb3JtYXQhKCJQT1NUIHtiYXNlX3VybH0vYWRtaW4vcmVzaGFy
+ZDpwcnVuZSIpKT87CiAgICBpZiAhcmVzcC5zdGF0dXMoKS5pc19zdWNjZXNzKCkgewogICAgICAg
+IGJhaWwhKCJ7YmFzZV91cmx9L2FkbWluL3Jlc2hhcmQ6cHJ1bmUgcmV0dXJuZWQge30iLCByZXNw
+LnN0YXR1cygpKTsKICAgIH0KICAgIE9rKCgpKQp9CgovLy8gYFBPU1QgL2FkbWluL3Jlc2hhcmQ6
+ZmVuY2VgICgjMTM5NiBSMikgYWdhaW5zdCBvbmUgc2hhcmQ6IGBidWNrZXRzYAovLy8gbm9uLWVt
+cHR5IGFybXMgYSBib3VuZGVkIHdyaXRlIHBhdXNlIG92ZXIgdGhvc2UgdmlydHVhbCBidWNrZXRz
+OwovLy8gYGJ1Y2tldHNgIGVtcHR5IGNsZWFycyBhbnkgY3VycmVudGx5LWFybWVkIHBhdXNlLiBT
+ZWUKLy8vIFtgY3JhdGU6OmFwaTo6V3JpdGVGZW5jZWBdLgphc3luYyBmbiByZXNoYXJkX2ZlbmNl
+X2NhbGwoCiAgICBodHRwOiAmcmVxd2VzdDo6Q2xpZW50LAogICAgYmFzZV91cmw6ICZzdHIsCiAg
+ICB0b2tlbjogT3B0aW9uPCZzdHI+LAogICAgdmlydHVhbF9idWNrZXRfY291bnQ6IHUzMiwKICAg
+IGJ1Y2tldHM6ICZCVHJlZVNldDx1MzI+LAogICAgdHRsX3NlY3M6IHU2NCwKKSAtPiBSZXN1bHQ8
+KCk+IHsKICAgIGxldCBtdXQgcmVxID0gaHR0cAogICAgICAgIC5wb3N0KGZvcm1hdCEoIntiYXNl
+X3VybH0vYWRtaW4vcmVzaGFyZDpmZW5jZSIpKQogICAgICAgIC5qc29uKCZqc29uISh7CiAgICAg
+ICAgICAgICJ2aXJ0dWFsX2J1Y2tldF9jb3VudCI6IHZpcnR1YWxfYnVja2V0X2NvdW50LAogICAg
+ICAgICAgICAiYnVja2V0cyI6IGJ1Y2tldHMsCiAgICAgICAgICAgICJ0dGxfc2VjcyI6IHR0bF9z
+ZWNzLAogICAgICAgIH0pKTsKICAgIGlmIGxldCBTb21lKHRva2VuKSA9IHRva2VuIHsKICAgICAg
+ICByZXEgPSByZXEuYmVhcmVyX2F1dGgodG9rZW4pOwogICAgfQogICAgbGV0IHJlc3AgPSByZXEK
+ICAgICAgICAuc2VuZCgpCiAgICAgICAgLmF3YWl0CiAgICAgICAgLndpdGhfY29udGV4dCh8fCBm
+b3JtYXQhKCJQT1NUIHtiYXNlX3VybH0vYWRtaW4vcmVzaGFyZDpmZW5jZSIpKT87CiAgICBpZiAh
+cmVzcC5zdGF0dXMoKS5pc19zdWNjZXNzKCkgewogICAgICAgIGJhaWwhKCJ7YmFzZV91cmx9L2Fk
+bWluL3Jlc2hhcmQ6ZmVuY2UgcmV0dXJuZWQge30iLCByZXNwLnN0YXR1cygpKTsKICAgIH0KICAg
+IE9rKCgpKQp9CgovLy8gQXJtIChub24tZW1wdHkgYGJ1Y2tldHNgKSBvciBjbGVhciAoZW1wdHkg
+YGJ1Y2tldHNgKSB0aGUgd3JpdGUtcGF1c2UKLy8vIGZlbmNlIG9uIGV2ZXJ5IHNoYXJkIGBjdXJy
+ZW50YCBvd25zIOKAlCB0aGUgbGl2ZSBtYXAncyBjdXJyZW50IG93bmVycywKLy8vIHdoZXJlIHdy
+aXRlcyB0byBhIHN0aWxsLW1vdmluZyBidWNrZXQgbGFuZCB1bnRpbCB0aGlzIHRpY2sncyBvd24g
+Y3V0b3ZlcgovLy8gcGF0Y2ggZmxpcHMgYHNwZWMuc2hhcmRNYXBgLgovLy8KLy8vICMxNDQzIFI0
+OiBhcm1pbmcgbG9vcHMgb3ZlciBzaGFyZHMgc2VxdWVudGlhbGx5IGFuZCBjYW4gZmFpbCBwYXJ0
+d2F5Ci8vLyB0aHJvdWdoIChvbmUgc2hhcmQgdW5yZWFjaGFibGUpLiBBIGZhaWx1cmUgdXNlZCB0
+byByZXR1cm4gaW1tZWRpYXRlbHkgdmlhCi8vLyBgP2AsIGxlYXZpbmcgZXZlcnkgc2hhcmQgYXJt
+ZWQgKmJlZm9yZSogdGhlIGZhaWxpbmcgb25lIGZlbmNlZCB3aXRoIG5vCi8vLyBjYWxsZXIgZXZl
+ciByZWFjaGluZyB0aGUgY2xlYXIgYnJhY2tldCDigJQgYW4gaW5kZWZpbml0ZSBpbnRlcm1pdHRl
+bnQgd3JpdGUKLy8vIG91dGFnZSBvbiB0aG9zZSBzaGFyZHMgKHJlLWFybWVkIGV2ZXJ5IHRpY2sp
+IGV2ZW4gdGhvdWdoIHRoZSBtaWdyYXRpb24KLy8vIG1hZGUgemVybyBwcm9ncmVzcy4gTm93IHRy
+YWNrcyB3aGljaCBzaGFyZHMgYWN0dWFsbHkgYXJtZWQgYW5kLCBvbgovLy8gZmFpbHVyZSwgYmVz
+dC1lZmZvcnQgY2xlYXJzIGV4YWN0bHkgdGhvc2UgYmVmb3JlIHN1cmZhY2luZyB0aGUgb3JpZ2lu
+YWwKLy8vIGVycm9yLCBzbyBhIHBhcnRpYWwgYXJtIG5ldmVyIG91dGxpdmVzIHRoaXMgY2FsbC4K
+YXN5bmMgZm4gc2V0X3dyaXRlX2ZlbmNlKAogICAgY29udHJvbDogJmR5biBDbHVzdGVyQ29udHJv
+bCwKICAgIGh0dHA6ICZyZXF3ZXN0OjpDbGllbnQsCiAgICBuYW1lc3BhY2U6ICZzdHIsCiAgICBu
+YW1lOiAmc3RyLAogICAgbHVtZW46ICZMdW1lbiwKICAgIGN1cnJlbnQ6ICZWaXJ0dWFsQnVja2V0
+U2hhcmRNYXAsCiAgICBidWNrZXRzOiAmQlRyZWVTZXQ8dTMyPiwKICAgIHR0bF9zZWNzOiB1NjQs
+CikgLT4gUmVzdWx0PCgpPiB7CiAgICBsZXQgdG9rZW4gPSBjb250cm9sLmFkbWluX3Rva2VuKG5h
+bWVzcGFjZSwgbHVtZW4pLmF3YWl0PzsKICAgIGxldCBtdXQgYXJtZWRfdXJsczogVmVjPFN0cmlu
+Zz4gPSBWZWM6Om5ldygpOwogICAgZm9yIHNoYXJkIGluIDAuLmN1cnJlbnQucGh5c2ljYWxfc2hh
+cmRfY291bnQoKSB7CiAgICAgICAgbGV0IHVybCA9IGNvbnRyb2wuc2hhcmRfYmFzZV91cmwobmFt
+ZXNwYWNlLCBuYW1lLCBzaGFyZCk7CiAgICAgICAgaWYgbGV0IEVycihlcnIpID0gcmVzaGFyZF9m
+ZW5jZV9jYWxsKAogICAgICAgICAgICBodHRwLAogICAgICAgICAgICAmdXJsLAogICAgICAgICAg
+ICB0b2tlbi5hc19kZXJlZigpLAogICAgICAgICAgICBjdXJyZW50LnZpcnR1YWxfYnVja2V0X2Nv
+dW50KCksCiAgICAgICAgICAgIGJ1Y2tldHMsCiAgICAgICAgICAgIHR0bF9zZWNzLAogICAgICAg
+ICkKICAgICAgICAuYXdhaXQKICAgICAgICB7CiAgICAgICAgICAgIGlmICFidWNrZXRzLmlzX2Vt
+cHR5KCkgewogICAgICAgICAgICAgICAgZm9yIGFybWVkX3VybCBpbiAmYXJtZWRfdXJscyB7CiAg
+ICAgICAgICAgICAgICAgICAgaWYgbGV0IEVycihjbGVhcl9lcnIpID0gcmVzaGFyZF9mZW5jZV9j
+YWxsKAogICAgICAgICAgICAgICAgICAgICAgICBodHRwLAogICAgICAgICAgICAgICAgICAgICAg
+ICBhcm1lZF91cmwsCiAgICAgICAgICAgICAgICAgICAgICAgIHRva2VuLmFzX2RlcmVmKCksCiAg
+ICAgICAgICAgICAgICAgICAgICAgIGN1cnJlbnQudmlydHVhbF9idWNrZXRfY291bnQoKSwKICAg
+ICAgICAgICAgICAgICAgICAgICAgJkJUcmVlU2V0OjpuZXcoKSwKICAgICAgICAgICAgICAgICAg
+ICAgICAgMCwKICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgLmF3YWl0
+CiAgICAgICAgICAgICAgICAgICAgewogICAgICAgICAgICAgICAgICAgICAgICB0cmFjaW5nOjp3
+YXJuISgKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHNoYXJkX3VybCA9ICVhcm1lZF91cmws
+CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBlcnJvciA9ICVjbGVhcl9lcnIsCiAgICAgICAg
+ICAgICAgICAgICAgICAgICAgICAicmVzaGFyZCBkcml2ZXI6IGJlc3QtZWZmb3J0IGZlbmNlIGNs
+ZWFyIGFmdGVyIGEgcGFydGlhbCBhcm0gXAogICAgICAgICAgICAgICAgICAgICAgICAgICAgIGZh
+aWx1cmUgYWxzbyBmYWlsZWQ7IHRoaXMgc2hhcmQgc3RheXMgZmVuY2VkIHVudGlsIGl0cyBvd24g
+VFRMIFwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICBleHBpcmVzIgogICAgICAgICAgICAg
+ICAgICAgICAgICApOwogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIH0KICAg
+ICAgICAgICAgfQogICAgICAgICAgICByZXR1cm4gRXJyKGVycik7CiAgICAgICAgfQogICAgICAg
+IGlmICFidWNrZXRzLmlzX2VtcHR5KCkgewogICAgICAgICAgICBhcm1lZF91cmxzLnB1c2godXJs
+KTsKICAgICAgICB9CiAgICB9CiAgICBPaygoKSkKfQoKYXN5bmMgZm4gZXZpY3Rfc2hhcmQoCiAg
+ICBodHRwOiAmcmVxd2VzdDo6Q2xpZW50LAogICAgYmFzZV91cmw6ICZzdHIsCiAgICB0b2tlbjog
+T3B0aW9uPCZzdHI+LAogICAgc2hhcmQ6IHUzMiwKICAgIG1hcF92ZXJzaW9uOiB1NjQsCiAgICBh
+c3NpZ25tZW50czogJlt1MzJdLAogICAgcGh5c2ljYWxfc2hhcmRfY291bnQ6IHUzMiwKKSAtPiBS
+ZXN1bHQ8KCk+IHsKICAgIGxldCBtdXQgcmVxID0gaHR0cAogICAgICAgIC5wb3N0KGZvcm1hdCEo
+IntiYXNlX3VybH0vYWRtaW4vcmVzaGFyZDpldmljdCIpKQogICAgICAgIC5qc29uKCZqc29uISh7
+CiAgICAgICAgICAgICJzaGFyZCI6IHNoYXJkLAogICAgICAgICAgICAibWFwX3ZlcnNpb24iOiBt
+YXBfdmVyc2lvbiwKICAgICAgICAgICAgImFzc2lnbm1lbnRzIjogYXNzaWdubWVudHMsCiAgICAg
+ICAgICAgICJwaHlzaWNhbF9zaGFyZF9jb3VudCI6IHBoeXNpY2FsX3NoYXJkX2NvdW50LAogICAg
+ICAgIH0pKTsKICAgIGlmIGxldCBTb21lKHRva2VuKSA9IHRva2VuIHsKICAgICAgICByZXEgPSBy
+ZXEuYmVhcmVyX2F1dGgodG9rZW4pOwogICAgfQogICAgbGV0IHJlc3AgPSByZXEKICAgICAgICAu
+c2VuZCgpCiAgICAgICAgLmF3YWl0CiAgICAgICAgLndpdGhfY29udGV4dCh8fCBmb3JtYXQhKCJQ
+T1NUIHtiYXNlX3VybH0vYWRtaW4vcmVzaGFyZDpldmljdCIpKT87CiAgICBpZiAhcmVzcC5zdGF0
+dXMoKS5pc19zdWNjZXNzKCkgewogICAgICAgIGJhaWwhKCJ7YmFzZV91cmx9L2FkbWluL3Jlc2hh
+cmQ6ZXZpY3QgcmV0dXJuZWQge30iLCByZXNwLnN0YXR1cygpKTsKICAgIH0KICAgIE9rKCgpKQp9
+CgovLy8gYFBPU1QgL2FkbWluL2NoZWNrcG9pbnRgICgjMTM4OSBSMS9SMjsgZHVyYWJpbGl0eSBn
+YXRlIGhhcmRlbmVkIGJ5ICMxMzk2Ci8vLyBSMykgYWdhaW5zdCBvbmUgc2hhcmQ6IGZvcmNlIGl0
+cyBtaWdyYXRpb24gbXV0YXRpb25zIChgOmFwcGx5YC9gOmV2aWN0YCwKLy8vIHdoaWNoIGJ5cGFz
+cyBgV3JpdGVDb29yZGluYXRvcmAvdGhlIEFPRikgaW50byB0aGUgc2FtZSBkdXJhYmlsaXR5IGRv
+bWFpbgovLy8gb3JkaW5hcnkgd3JpdGVzIHJlYWNoLCBhbmQgd2FpdCBmb3IgdGhlIHJlc3BvbnNl
+IGJlZm9yZSB0aGlzIHNoYXJkIGlzCi8vLyBjb25zaWRlcmVkIHNhZmUgdG8gcmVzdGFydC4KLy8v
+Ci8vLyBBIDIwMCByZXNwb25zZSBhbG9uZSBpcyBub3QgcHJvb2Ygb2YgZHVyYWJpbGl0eTogW2Bj
+cmF0ZTo6YXBpYF0ncwovLy8gYGFkbWluX2NoZWNrcG9pbnRgIGhhbmRsZXIgcmV0dXJucyBgMjAw
+IHsicGVyc2lzdGVkIjogZmFsc2V9YCDigJQgbm90IGFuCi8vLyBlcnJvciBzdGF0dXMg4oCUIHdo
+ZW4gdGhlIHNoYXJkIGhhcyBubyBkdXJhYmxlIHN0b3JlIGNvbmZpZ3VyZWQgKHRoZQovLy8gdmFj
+dW91cywgUkFNLW9ubHkgW2BjcmF0ZTo6YXBpOjpOb29wQ2hlY2twb2ludGBdIHNpbms7IHNlZSB0
+aGF0IHR5cGUncwovLy8gZG9jcyksIHdoaWNoIGlzIGV4YWN0bHkgdGhlICJjaGVja3BvaW50IGxv
+b2tlZCBsaWtlIGl0IHdvcmtlZCBidXQgbm90aGluZwovLy8gd2FzIGFjdHVhbGx5IG1hZGUgZHVy
+YWJsZSIgZ2FwICMxMzk2J3MgcmV2aWV3IGNvbmZpcm1lZCAoYSBiYXJlCi8vLyBgaXNfc3VjY2Vz
+cygpYCBjaGVjayB0cmVhdGVkIHRoYXQgcmVzcG9uc2UgYXMgYSBzYXRpc2ZpZWQgZ2F0ZSkuIFRo
+aXMKLy8vIGZ1bmN0aW9uIG5vdyBwYXJzZXMgdGhlIGJvZHkgYW5kIHJlcXVpcmVzIGBwZXJzaXN0
+ZWQgPT0gdHJ1ZWA7IGFueXRoaW5nCi8vLyBlbHNlIOKAlCBgZmFsc2VgLCBvciBhIGJvZHkgdGhp
+cyBzaGFyZCdzIHJlc3BvbnNlIGRvZXNuJ3QgZXZlbiBjYXJyeSB0aGUKLy8vIGtleSBmb3Ig4oCU
+IGlzIHRyZWF0ZWQgYXMgYSBmYWlsZWQgY2hlY2twb2ludCwgc3VyZmFjaW5nIGFzCi8vLyBbYERy
+aXZlT3V0Y29tZTo6QmxvY2tlZGBdIG5hbWluZyB0aGUgc2hhcmQgcmF0aGVyIHRoYW4gYSBjdXRv
+dmVyIHRoYXQKLy8vIHByb2NlZWRzIG92ZXIgdW5kdXJhYmxlIGRhdGEuCmFzeW5jIGZuIGNoZWNr
+cG9pbnRfc2hhcmQoCiAgICBodHRwOiAmcmVxd2VzdDo6Q2xpZW50LAogICAgYmFzZV91cmw6ICZz
+dHIsCiAgICB0b2tlbjogT3B0aW9uPCZzdHI+LAopIC0+IFJlc3VsdDwoKT4gewogICAgbGV0IG11
+dCByZXEgPSBodHRwLnBvc3QoZm9ybWF0ISgie2Jhc2VfdXJsfS9hZG1pbi9jaGVja3BvaW50Iikp
+OwogICAgaWYgbGV0IFNvbWUodG9rZW4pID0gdG9rZW4gewogICAgICAgIHJlcSA9IHJlcS5iZWFy
+ZXJfYXV0aCh0b2tlbik7CiAgICB9CiAgICBsZXQgcmVzcCA9IHJlcQogICAgICAgIC5zZW5kKCkK
+ICAgICAgICAuYXdhaXQKICAgICAgICAud2l0aF9jb250ZXh0KHx8IGZvcm1hdCEoIlBPU1Qge2Jh
+c2VfdXJsfS9hZG1pbi9jaGVja3BvaW50IikpPzsKICAgIGlmICFyZXNwLnN0YXR1cygpLmlzX3N1
+Y2Nlc3MoKSB7CiAgICAgICAgYmFpbCEoIntiYXNlX3VybH0vYWRtaW4vY2hlY2twb2ludCByZXR1
+cm5lZCB7fSIsIHJlc3Auc3RhdHVzKCkpOwogICAgfQogICAgbGV0IGJvZHk6IHNlcmRlX2pzb246
+OlZhbHVlID0gcmVzcAogICAgICAgIC5qc29uKCkKICAgICAgICAuYXdhaXQKICAgICAgICAud2l0
+aF9jb250ZXh0KHx8IGZvcm1hdCEoImRlY29kZSB7YmFzZV91cmx9L2FkbWluL2NoZWNrcG9pbnQg
+cmVzcG9uc2UiKSk/OwogICAgbGV0IHBlcnNpc3RlZCA9IGJvZHkKICAgICAgICAuZ2V0KCJwZXJz
+aXN0ZWQiKQogICAgICAgIC5hbmRfdGhlbih8dnwgdi5hc19ib29sKCkpCiAgICAgICAgLnVud3Jh
+cF9vcihmYWxzZSk7CiAgICBpZiAhcGVyc2lzdGVkIHsKICAgICAgICBiYWlsISgKICAgICAgICAg
+ICAgIntiYXNlX3VybH0vYWRtaW4vY2hlY2twb2ludCBkaWQgbm90IHJlcG9ydCBwZXJzaXN0ZWQ9
+dHJ1ZSAoc2hhcmQgaGFzIG5vIGR1cmFibGUgXAogICAgICAgICAgICAgY2hlY2twb2ludCBzaW5r
+IGNvbmZpZ3VyZWQsIG9yIHRoZSBjaGVja3BvaW50IGZhaWxlZCkg4oCUIGN1dG92ZXIgY2Fubm90
+IHByb2NlZWQgXAogICAgICAgICAgICAgb3ZlciB1bmR1cmFibGUgbWlncmF0aW9uIG11dGF0aW9u
+cyBvbiB0aGlzIHNoYXJkIgogICAgICAgICk7CiAgICB9CiAgICBPaygoKSkKfQoKLy8vICMxMzg5
+IFIzLCBnZW5lcmFsaXplZCBieSAjMTM5NiBSMSBpbnRvIGFuIGV4cGxpY2l0IHNoYXJkIHNldDog
+Y2hlY2twb2ludAovLy8gZXhhY3RseSBgc2hhcmRzYC4gW2BhZHZhbmNlX2NhdGNoaW5nX3VwYF0g
+bm93IGNhbGxzIHRoaXMgdHdpY2UgcGVyIHRpY2sg4oCUCi8vLyBvbmNlIGZvciBqdXN0IHRoZSB0
+YXJnZXQvbmV3IHNoYXJkIGltbWVkaWF0ZWx5IGFmdGVyIG1pZ3JhdGlvbiBhbmQKLy8vICpiZWZv
+cmUqIGFueSBzb3VyY2UgZXZpY3Rpb24gaXMgYXR0ZW1wdGVkLCBhbmQgYWdhaW4gZm9yIGV2ZXJ5
+IHNvdXJjZQovLy8gc2hhcmQgYWZ0ZXIgZXZpY3Rpb24g4oCUIHJhdGhlciB0aGFuIG9uY2UgZm9y
+IGAwLi50YXJnZXQucGh5c2ljYWxfc2hhcmRfCi8vLyBjb3VudCgpYCBhZnRlciBib3RoIG1pZ3Jh
+dGlvbiBhbmQgZXZpY3Rpb24gaGFkIGFscmVhZHkgcnVuICh0aGUgb3JkZXJpbmcKLy8vICMxMzk2
+J3MgcmV2aWV3IGZvdW5kOiBhbiBldmljdGlvbiBiZWNvbWluZyBkdXJhYmxlLCBvciBldmVuIGJl
+aW5nCi8vLyBhdHRlbXB0ZWQsIGJlZm9yZSB0aGUgdGFyZ2V0J3MgY29weSBvZiB0aGUgc2FtZSBk
+YXRhIHdhcyBkdXJhYmx5Ci8vLyBjaGVja3BvaW50ZWQsIGNvdWxkIGxvc2UgZGF0YSBvbiBhIGNy
+YXNoIGJldHdlZW4gdGhlIHR3bykuIEEgZmFpbHVyZSBoZXJlCi8vLyBsZWF2ZXMgdGhlIHdvcmtm
+bG93IGluIGBDYXRjaGluZ1VwYCDigJQgcmVzdW1hYmxlLCBuZXZlciBtaWQtY3V0b3ZlciB3aXRo
+Ci8vLyB1bmR1cmFibGUgZGF0YSDigJQgYW5kIHRoZSBuZXh0IHRpY2sgcmV0cmllcyB0aGUgc2Ft
+ZSBpZGVtcG90ZW50Ci8vLyBtaWdyYXRpb24vY2hlY2twb2ludC9ldmljdGlvbi9jaGVja3BvaW50
+IHNlcXVlbmNlLgovLy8KLy8vIGBtb3ZpbmdfYnVja2V0c2AvYGxhc3RfYXJtZWRfYXRgICgjMTQ1
+OCBSMykgdGhyZWFkIHRoZSBzYW1lCi8vLyBbYG1heWJlX3JlYXJtX2ZlbmNlYF0gdGltZS1iYXNl
+ZCByZS1hcm0gaW50byB0aGlzIGxvb3A6IGEgcmVhbCBjdXRvdmVyCi8vLyBjYW4gY2hlY2twb2lu
+dCBtYW55IHNvdXJjZSBzaGFyZHMgc2VxdWVudGlhbGx5LCBhbmQgdGhlIGNhbGxlcidzCi8vLyB1
+bmNvbmRpdGlvbmFsIHBoYXNlLWJvdW5kYXJ5IHJlLWFybSAoaW1tZWRpYXRlbHkgYmVmb3JlIHRo
+aXMgY2FsbCkgb25seQovLy8gY292ZXJzIHRoZSBtb21lbnQgdGhpcyBsb29wIHN0YXJ0cywgbm90
+IGhvd2V2ZXIgbG9uZyB0aGUgbG9vcCBpdHNlbGYKLy8vIHRha2VzLgovLy8gQHNwZWMgYXBwcy9s
+dW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtb3BlcmF0b3It
+cmVzaGFyZC1kcml2ZXItcnMubWQjc291cmNlCmFzeW5jIGZuIGNoZWNrcG9pbnRfc2hhcmRzKAog
+ICAgY29udHJvbDogJmR5biBDbHVzdGVyQ29udHJvbCwKICAgIGh0dHA6ICZyZXF3ZXN0OjpDbGll
+bnQsCiAgICBuYW1lc3BhY2U6ICZzdHIsCiAgICBuYW1lOiAmc3RyLAogICAgbHVtZW46ICZMdW1l
+biwKICAgIHNoYXJkczogaW1wbCBJdGVyYXRvcjxJdGVtID0gdTMyPiwKICAgIGN1cnJlbnQ6ICZW
+aXJ0dWFsQnVja2V0U2hhcmRNYXAsCiAgICBtb3ZpbmdfYnVja2V0czogT3B0aW9uPCZCVHJlZVNl
+dDx1MzI+PiwKICAgIGxhc3RfYXJtZWRfYXQ6ICZtdXQgSW5zdGFudCwKKSAtPiBSZXN1bHQ8KCk+
+IHsKICAgIGxldCB0b2tlbiA9IGNvbnRyb2wuYWRtaW5fdG9rZW4obmFtZXNwYWNlLCBsdW1lbiku
+YXdhaXQ/OwogICAgZm9yIHNoYXJkIGluIHNoYXJkcyB7CiAgICAgICAgbWF5YmVfcmVhcm1fZmVu
+Y2UoCiAgICAgICAgICAgIGNvbnRyb2wsCiAgICAgICAgICAgIGh0dHAsCiAgICAgICAgICAgIG5h
+bWVzcGFjZSwKICAgICAgICAgICAgbmFtZSwKICAgICAgICAgICAgbHVtZW4sCiAgICAgICAgICAg
+IGN1cnJlbnQsCiAgICAgICAgICAgIG1vdmluZ19idWNrZXRzLAogICAgICAgICAgICBsYXN0X2Fy
+bWVkX2F0LAogICAgICAgICkKICAgICAgICAuYXdhaXQ/OwogICAgICAgIGxldCB1cmwgPSBjb250
+cm9sLnNoYXJkX2Jhc2VfdXJsKG5hbWVzcGFjZSwgbmFtZSwgc2hhcmQpOwogICAgICAgIGNoZWNr
+cG9pbnRfc2hhcmQoaHR0cCwgJnVybCwgdG9rZW4uYXNfZGVyZWYoKSkuYXdhaXQ/OwogICAgfQog
+ICAgT2soKCkpCn0KCmZuIG1hcF9hc3NpZ25tZW50cyhtYXA6ICZWaXJ0dWFsQnVja2V0U2hhcmRN
+YXApIC0+IFZlYzx1MzI+IHsKICAgICgwLi5tYXAudmlydHVhbF9idWNrZXRfY291bnQoKSkKICAg
+ICAgICAubWFwKHxidWNrZXR8IG1hcC5hc3NpZ25tZW50X2Zvcl9idWNrZXQoYnVja2V0KS51bndy
+YXBfb3IoMCkpCiAgICAgICAgLmNvbGxlY3QoKQp9CgovLy8gRXZlcnkgdmlydHVhbCBidWNrZXQg
+Y3VycmVudGx5IGFzc2lnbmVkIHRvIGBtYXBgJ3MgaGlnaGVzdC1pbmRleAovLy8gKG5ld2VzdCkg
+cGh5c2ljYWwgc2hhcmQgKCMxNDU4IFIxKS4gW2BWaXJ0dWFsQnVja2V0U2hhcmRNYXA6OgovLy8g
+c3BsaXRfb25lX3NoYXJkYF0gb25seSBldmVyIG1vdmVzIGEgYnVja2V0IGRpcmVjdGx5IGludG8g
+dGhlIG5ldyBzaGFyZAovLy8gaXQgYXBwZW5kcyDigJQgbmV2ZXIgYmV0d2VlbiB0d28gcHJlLWV4
+aXN0aW5nIHNoYXJkcyDigJQgc28gaW1tZWRpYXRlbHkKLy8vIGFmdGVyIGEgY3V0b3ZlciB0byBg
+bWFwYCwgdGhpcyBpcyBleGFjdGx5IHRoZSBzZXQgb2YgYnVja2V0cyB0aGF0IGp1c3QKLy8vIG1v
+dmVkLCByZWNvdmVyYWJsZSBwdXJlbHkgZnJvbSB0aGUgYWxyZWFkeS1wZXJzaXN0ZWQgYHNwZWMu
+c2hhcmRNYXBgCi8vLyB3aXRoIG5vIHNlcGFyYXRlIGJvb2trZWVwaW5nLiBbYGFkdmFuY2VfY29u
+dmVyZ2VuY2VgXSByZS1mZW5jZXMgdGhpcyBzYW1lCi8vLyBzZXQgZXZlcnkgdGljayB1bnRpbCBl
+dmVyeSBzZXJ2aW5nIHBvZCBpcyBjb25maXJtZWQgUmVhZHkgb24gYG1hcGAuCmZuIGJ1Y2tldHNf
+b25fbmV3ZXN0X3NoYXJkKG1hcDogJlZpcnR1YWxCdWNrZXRTaGFyZE1hcCkgLT4gQlRyZWVTZXQ8
+dTMyPiB7CiAgICBsZXQgbmV3ZXN0ID0gbWFwLnBoeXNpY2FsX3NoYXJkX2NvdW50KCkuc2F0dXJh
+dGluZ19zdWIoMSk7CiAgICAoMC4ubWFwLnZpcnR1YWxfYnVja2V0X2NvdW50KCkpCiAgICAgICAg
+LmZpbHRlcih8JmJ1Y2tldHwgbWFwLmFzc2lnbm1lbnRfZm9yX2J1Y2tldChidWNrZXQpID09IFNv
+bWUobmV3ZXN0KSkKICAgICAgICAuY29sbGVjdCgpCn0KCi8vLyAjMTQ1OCBSMzogcmUtYXJtIHRo
+ZSB3cml0ZSBmZW5jZSBvbmNlIG1vcmUgdGhhbgovLy8gYHdyaXRlX2ZlbmNlX3R0bF9zZWNzKCkg
+LyBGRU5DRV9SRUFSTV9GUkFDVElPTmAgaGFzIGVsYXBzZWQgc2luY2UgdGhlCi8vLyBsYXN0IGFy
+bS4gUmVwbGFjZXMgdGhlIGVhcmxpZXIgZml4ZWQtY291bnQgcmUtYXJtICgjMTQ0MyBSMSwgZXZl
+cnkKLy8vIGBGRU5DRV9SRUFSTV9CQVRDSF9JTlRFUlZBTCA9IDIwYCBhcHBsaWVkIGJhdGNoZXMv
+Y2h1bmtzKTogYSBjb3VudC1iYXNlZAovLy8gY2xvY2sgY2FuIHN0aWxsIGJlIG91dHJ1biBieSBh
+IHNlcXVlbmNlIHdob3NlIGJhdGNoZXMgYXJlIGluZGl2aWR1YWxseQovLy8gc2xvdyAoYSBsYXJn
+ZSBzY29wZWQtYmFja3VwIGZldGNoLCBhIHNsb3cgbmV0d29yaywgb3IgYSBoYW5kZnVsIG9mIGh1
+Z2UKLy8vIGJ5dGUtY2FwcGVkIGJhdGNoZXMpIGV2ZW4gdGhvdWdoIGZldyAqYmF0Y2hlcyogaGF2
+ZSBiZWVuIGFwcGxpZWQg4oCUIGEKLy8vIHRpbWUtYmFzZWQgY2xvY2ssIGNoZWNrZWQgYmV0d2Vl
+biBldmVyeSBiYXRjaC9jaHVuayBhcHBseSBhbmQgYXJvdW5kCi8vLyBlYWNoIGZldGNoL3BydW5l
+IHN0ZXAsIGNhbm5vdC4KY29uc3QgRkVOQ0VfUkVBUk1fRlJBQ1RJT046IHUzMiA9IDQ7CgovLy8g
+UmUtYXJtIHRoZSB3cml0ZS1wYXVzZSBmZW5jZSBpZiBtb3JlIHRoYW4gYHdyaXRlX2ZlbmNlX3R0
+bF9zZWNzKCkgLwovLy8gW2BGRU5DRV9SRUFSTV9GUkFDVElPTmBdYCBoYXMgZWxhcHNlZCBzaW5j
+ZSBgKmxhc3RfYXJtZWRfYXRgICgjMTQ1OCBSMykuCi8vLyBOby1vcCDigJQgYW5kIGxlYXZlcyBg
+Kmxhc3RfYXJtZWRfYXRgIHVudG91Y2hlZCDigJQgd2hlbiBgbW92aW5nX2J1Y2tldHNgIGlzCi8v
+LyBgTm9uZWAvZW1wdHkgKHRoaXMgcGFzcy9zdGVwIGlzIG5vdCBydW5uaW5nIHVuZGVyIGEgZmVu
+Y2UpIG9yIHRoZQovLy8gZnJhY3Rpb24gaGFzIG5vdCB5ZXQgZWxhcHNlZC4gQSByZS1hcm0gZmFp
+bHVyZSBwcm9wYWdhdGVzIGFzIGBFcnJgLAovLy8gd2hpY2ggZXZlcnkgY2FsbGVyIGFscmVhZHkg
+c3VyZmFjZXMgYXMgW2BEcml2ZU91dGNvbWU6OkJsb2NrZWRgXSBiZWZvcmUKLy8vIGV2aWN0aW9u
+IGV2ZXIgcnVucyAoUjMncyAiYSBmYWlsZWQgcmUtYXJtIHN0aWxsIGFib3J0cyB0byBgQmxvY2tl
+ZGAKLy8vIGJlZm9yZSBldmljdGlvbiIpLgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2ln
+bi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtb3BlcmF0b3ItcmVzaGFyZC1kcml2ZXIt
+cnMubWQjc291cmNlCmFzeW5jIGZuIG1heWJlX3JlYXJtX2ZlbmNlKAogICAgY29udHJvbDogJmR5
+biBDbHVzdGVyQ29udHJvbCwKICAgIGh0dHA6ICZyZXF3ZXN0OjpDbGllbnQsCiAgICBuYW1lc3Bh
+Y2U6ICZzdHIsCiAgICBuYW1lOiAmc3RyLAogICAgbHVtZW46ICZMdW1lbiwKICAgIGN1cnJlbnQ6
+ICZWaXJ0dWFsQnVja2V0U2hhcmRNYXAsCiAgICBtb3ZpbmdfYnVja2V0czogT3B0aW9uPCZCVHJl
+ZVNldDx1MzI+PiwKICAgIGxhc3RfYXJtZWRfYXQ6ICZtdXQgSW5zdGFudCwKKSAtPiBSZXN1bHQ8
+KCk+IHsKICAgIGxldCBTb21lKGJ1Y2tldHMpID0gbW92aW5nX2J1Y2tldHMuZmlsdGVyKHxifCAh
+Yi5pc19lbXB0eSgpKSBlbHNlIHsKICAgICAgICByZXR1cm4gT2soKCkpOwogICAgfTsKICAgIGxl
+dCB0dGxfc2VjcyA9IGNvbnRyb2wud3JpdGVfZmVuY2VfdHRsX3NlY3MoKTsKICAgIGxldCByZWFy
+bV9hZnRlciA9IER1cmF0aW9uOjpmcm9tX3NlY3ModHRsX3NlY3MpIC8gRkVOQ0VfUkVBUk1fRlJB
+Q1RJT047CiAgICBpZiBsYXN0X2FybWVkX2F0LmVsYXBzZWQoKSA8IHJlYXJtX2FmdGVyIHsKICAg
+ICAgICByZXR1cm4gT2soKCkpOwogICAgfQogICAgc2V0X3dyaXRlX2ZlbmNlKAogICAgICAgIGNv
+bnRyb2wsIGh0dHAsIG5hbWVzcGFjZSwgbmFtZSwgbHVtZW4sIGN1cnJlbnQsIGJ1Y2tldHMsIHR0
+bF9zZWNzLAogICAgKQogICAgLmF3YWl0CiAgICAuY29udGV4dCgicmUtYXJtIHdyaXRlIGZlbmNl
+IG1pZCBtaWdyYXRpb24gcGFzcyIpPzsKICAgICpsYXN0X2FybWVkX2F0ID0gSW5zdGFudDo6bm93
+KCk7CiAgICBPaygoKSkKfQoKLy8vIE9uZSBtaWdyYXRpb24gcGFzczogZXZlcnkgYnVja2V0IFtg
+YnVja2V0X21vdmVzYF0gc2F5cyBtb3ZlZCBiZXR3ZWVuCi8vLyBgY3VycmVudF9zaGFyZF9tYXBg
+IGFuZCBbYGNvbXB1dGVfdGFyZ2V0X21hcGBdLCBncm91cGVkIGJ5IGl0cyBvbGQKLy8vIChgZnJv
+bV9zaGFyZGApIG93bmVyLCBmZXRjaGVkIHZpYSBgUE9TVCAvYWRtaW4vYmFja3VwOnNjb3BlZGAg
+YW5kIGFwcGxpZWQKLy8vIHRvIGl0cyBuZXcgb3duZXIgdmlhIGBQT1NUIC9hZG1pbi9yZXNoYXJk
+OmFwcGx5YAovLy8gKFtgc25hcHNob3RfcmVzaGFyZF9iYXRjaGVzYF0gYnVpbGRzIHRoZSBib3Vu
+ZGVkIGJhdGNoZXMpLiBSZWFsLAovLy8gbm9uLXRlc3QgY2FsbGVyIG9mIGJvdGgg4oCUIEFDMy4g
+SWRlbXBvdGVudDogcmUtcnVubmluZyBhZ2FpbnN0IHVuY2hhbmdlZAovLy8gZGF0YSByZS1hcHBs
+aWVzIHRoZSBzYW1lIGJhdGNoZXMsIHdoaWNoIGBQT1NUIC9hZG1pbi9yZXNoYXJkOmFwcGx5YAov
+Ly8gYWxyZWFkeSB0cmVhdHMgYXMgYSBuby1vcCAoIzEzODApLgovLy8gQHNwZWMgYXBwcy9sdW1l
+bi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtb3BlcmF0b3ItcmVz
+aGFyZC1kcml2ZXItcnMubWQjc291cmNlCnB1YiBhc3luYyBmbiBydW5fbWlncmF0aW9uX3Bhc3Mo
+CiAgICBjb250cm9sOiAmZHluIENsdXN0ZXJDb250cm9sLAogICAgaHR0cDogJnJlcXdlc3Q6OkNs
+aWVudCwKICAgIG5hbWVzcGFjZTogJnN0ciwKICAgIG5hbWU6ICZzdHIsCiAgICBsdW1lbjogJkx1
+bWVuLAopIC0+IFJlc3VsdDx1c2l6ZT4gewogICAgcnVuX21pZ3JhdGlvbl9wYXNzX2ltcGwoY29u
+dHJvbCwgaHR0cCwgbmFtZXNwYWNlLCBuYW1lLCBsdW1lbiwgZmFsc2UsIE5vbmUpLmF3YWl0Cn0K
+Ci8vLyBTaGFyZWQgbWlncmF0aW9uLXBhc3MgaW1wbGVtZW50YXRpb24uIGBmaW5hbF9wYXNzYCBp
+cyBgdHJ1ZWAgb25seSBmb3IgdGhlCi8vLyBmaW5hbCwgZmVuY2VkIGBDYXRjaGluZ1VwYCBwYXNz
+OiBldmVyeSBgc25hcHNob3RfcmVzaGFyZF9iYXRjaGVzYCBhcHBseQovLy8gYmVsb3cgc3RheXMg
+cHVyZWx5IGFkZGl0aXZlIHJlZ2FyZGxlc3MgKCMxNDU3IFIxKSwgYnV0IGEgYGZpbmFsX3Bhc3Ng
+Ci8vLyBhZGRpdGlvbmFsbHkgc2VuZHMgdGhlIGF1dGhvcml0YXRpdmUtcmVwbGFjZSBzY29wZSBm
+b3IgZXZlcnkgbW92ZWQgYnVja2V0Ci8vLyB2aWEgYFBPU1QgL2FkbWluL3Jlc2hhcmQ6cHJ1bmVg
+IOKAlCBzZWUgW2BzbmFwc2hvdF9yZXNoYXJkX3BydW5lX2NodW5rc2BdLgovLy8gYG1vdmluZ19i
+dWNrZXRzYCAoIzE0NDMgUjEpLCB3aGVuIGBTb21lYCwgbWFya3MgdGhpcyBwYXNzIGFzIHJ1bm5p
+bmcKLy8vIHVuZGVyIGEgd3JpdGUgZmVuY2UgYW5kIHJlLWFybXMgaXQgd2l0aCBhIGZyZXNoCi8v
+LyBbYENsdXN0ZXJDb250cm9sOjp3cml0ZV9mZW5jZV90dGxfc2Vjc2BdIGRlYWRsaW5lIHZpYSBb
+YG1heWJlX3JlYXJtX2ZlbmNlYF0KLy8vICgjMTQ1OCBSMzogdGltZS1iYXNlZCwgY2hlY2tlZCBh
+cm91bmQgZXZlcnkgZmV0Y2gvYXBwbHkvcHJ1bmUgc3RlcCwgbm90Ci8vLyBhIGZpeGVkIGFwcGxp
+ZWQtYmF0Y2ggY291bnQpIOKAlCBhIHJlLWFybSBmYWlsdXJlIGFib3J0cyB0aGUgd2hvbGUgcGFz
+cwovLy8gaW1tZWRpYXRlbHkgKHByb3BhZ2F0ZWQgYXMgYEVycmAsIHdoaWNoIGV2ZXJ5IGNhbGxl
+ciBhbHJlYWR5IHN1cmZhY2VzIGFzCi8vLyBgRHJpdmVPdXRjb21lOjpCbG9ja2VkYCBiZWZvcmUg
+ZXZpY3Rpb24gZXZlciBydW5zKS4KYXN5bmMgZm4gcnVuX21pZ3JhdGlvbl9wYXNzX2ltcGwoCiAg
+ICBjb250cm9sOiAmZHluIENsdXN0ZXJDb250cm9sLAogICAgaHR0cDogJnJlcXdlc3Q6OkNsaWVu
+dCwKICAgIG5hbWVzcGFjZTogJnN0ciwKICAgIG5hbWU6ICZzdHIsCiAgICBsdW1lbjogJkx1bWVu
+LAogICAgZmluYWxfcGFzczogYm9vbCwKICAgIG1vdmluZ19idWNrZXRzOiBPcHRpb248JkJUcmVl
+U2V0PHUzMj4+LAopIC0+IFJlc3VsdDx1c2l6ZT4gewogICAgbGV0IGN1cnJlbnQgPSBjdXJyZW50
+X3NoYXJkX21hcChsdW1lbik/OwogICAgbGV0IHRhcmdldCA9IGNvbXB1dGVfdGFyZ2V0X21hcCgm
+Y3VycmVudCk/OwogICAgbGV0IG1vdmVzID0gYnVja2V0X21vdmVzKCZjdXJyZW50LCAmdGFyZ2V0
+KT87CiAgICBpZiBtb3Zlcy5pc19lbXB0eSgpIHsKICAgICAgICByZXR1cm4gT2soMCk7CiAgICB9
+CgogICAgbGV0IG11dCBidWNrZXRzX2J5X2Zyb21fc2hhcmQ6IEJUcmVlTWFwPHUzMiwgQlRyZWVT
+ZXQ8dTMyPj4gPSBCVHJlZU1hcDo6bmV3KCk7CiAgICBsZXQgbXV0IHRvX3NoYXJkX2J5X2J1Y2tl
+dDogQlRyZWVNYXA8dTMyLCB1MzI+ID0gQlRyZWVNYXA6Om5ldygpOwogICAgZm9yIG12IGluICZt
+b3ZlcyB7CiAgICAgICAgYnVja2V0c19ieV9mcm9tX3NoYXJkCiAgICAgICAgICAgIC5lbnRyeSht
+di5mcm9tX3NoYXJkKQogICAgICAgICAgICAub3JfZGVmYXVsdCgpCiAgICAgICAgICAgIC5pbnNl
+cnQobXYuYnVja2V0KTsKICAgICAgICB0b19zaGFyZF9ieV9idWNrZXQuaW5zZXJ0KG12LmJ1Y2tl
+dCwgbXYudG9fc2hhcmQpOwogICAgfQoKICAgIGxldCB0b2tlbiA9IGNvbnRyb2wuYWRtaW5fdG9r
+ZW4obmFtZXNwYWNlLCBsdW1lbikuYXdhaXQ/OwogICAgbGV0IG11dCB0b3RhbF9iYXRjaGVzID0g
+MHVzaXplOwogICAgLy8gIzE0NTggUjM6IHRoZSBmZW5jZSB3YXMgYXJtZWQgYnkgdGhlIGNhbGxl
+ciBpbW1lZGlhdGVseSBiZWZvcmUgdGhpcwogICAgLy8gY2FsbCwgc28gYEluc3RhbnQ6Om5vdygp
+YCBoZXJlIGlzIHRoYXQgYXJtJ3MgdGltZXN0YW1wIOKAlCB0aGUgY2xvY2sKICAgIC8vIFtgbWF5
+YmVfcmVhcm1fZmVuY2VgXSBtZWFzdXJlcyBlbGFwc2VkIHRpbWUgYWdhaW5zdCBhdCBldmVyeQog
+ICAgLy8gZmV0Y2gvYXBwbHkvcHJ1bmUgc3RlcCBiZWxvdywgaW5kZXBlbmRlbnQgb2Ygd2hpY2gg
+b2YgdGhlIHR3byBsb29wcwogICAgLy8gaXMgY3VycmVudGx5IHJ1bm5pbmcgb3IgaG93IG1hbnkg
+Y2FsbHMgZWFjaCBoYXMgbWFkZS4KICAgIGxldCBtdXQgbGFzdF9hcm1lZF9hdCA9IEluc3RhbnQ6
+Om5vdygpOwogICAgZm9yIChmcm9tX3NoYXJkLCBidWNrZXRzKSBpbiBidWNrZXRzX2J5X2Zyb21f
+c2hhcmQgewogICAgICAgIG1heWJlX3JlYXJtX2ZlbmNlKAogICAgICAgICAgICBjb250cm9sLAog
+ICAgICAgICAgICBodHRwLAogICAgICAgICAgICBuYW1lc3BhY2UsCiAgICAgICAgICAgIG5hbWUs
+CiAgICAgICAgICAgIGx1bWVuLAogICAgICAgICAgICAmY3VycmVudCwKICAgICAgICAgICAgbW92
+aW5nX2J1Y2tldHMsCiAgICAgICAgICAgICZtdXQgbGFzdF9hcm1lZF9hdCwKICAgICAgICApCiAg
+ICAgICAgLmF3YWl0PzsKICAgICAgICBsZXQgc291cmNlX3VybCA9IGNvbnRyb2wuc2hhcmRfYmFz
+ZV91cmwobmFtZXNwYWNlLCBuYW1lLCBmcm9tX3NoYXJkKTsKICAgICAgICBsZXQgc25hcHNob3Qg
+PSBmZXRjaF9zY29wZWRfYmFja3VwKAogICAgICAgICAgICBodHRwLAogICAgICAgICAgICAmc291
+cmNlX3VybCwKICAgICAgICAgICAgdG9rZW4uYXNfZGVyZWYoKSwKICAgICAgICAgICAgY3VycmVu
+dC52aXJ0dWFsX2J1Y2tldF9jb3VudCgpLAogICAgICAgICAgICAmYnVja2V0cywKICAgICAgICAp
+CiAgICAgICAgLmF3YWl0PzsKICAgICAgICBsZXQgYmF0Y2hlcyA9CiAgICAgICAgICAgIHNuYXBz
+aG90X3Jlc2hhcmRfYmF0Y2hlcygmc25hcHNob3QsICZjdXJyZW50LCAmdGFyZ2V0LCBNQVhfRVhU
+RVJOQUxfSURTX1BFUl9CQVRDSCk/OwogICAgICAgIGZvciBiYXRjaCBpbiAmYmF0Y2hlcyB7CiAg
+ICAgICAgICAgIGxldCBkZXN0X3VybCA9IGNvbnRyb2wuc2hhcmRfYmFzZV91cmwobmFtZXNwYWNl
+LCBuYW1lLCBiYXRjaC50b19zaGFyZCk7CiAgICAgICAgICAgIGlmIGxldCBFcnIoZXJyKSA9IGFw
+cGx5X3Jlc2hhcmRfYmF0Y2goaHR0cCwgJmRlc3RfdXJsLCB0b2tlbi5hc19kZXJlZigpLCBiYXRj
+aCkuYXdhaXQgewogICAgICAgICAgICAgICAgLy8gIzE0NDQgUjI6IHJlY29yZCB0aGUgd2VkZ2Ug
+ZGlzdGluY3RseSBiZWZvcmUgcHJvcGFnYXRpbmcsIHNvCiAgICAgICAgICAgICAgICAvLyBjYWxs
+ZXJzIHRoYXQgdHVybiB0aGlzIGBFcnJgIGludG8gYERyaXZlT3V0Y29tZTo6QmxvY2tlZGAKICAg
+ICAgICAgICAgICAgIC8vIHN0aWxsIGxlYXZlIGEgc3RydWN0dXJlZCB0cmFjZSBiZWhpbmQgZm9y
+IGBzdGF0dXMucmVzaGFyZGAKICAgICAgICAgICAgICAgIC8vIGFuZCBmb3IgYGFkdmFuY2VfY2F0
+Y2hpbmdfdXBgJ3MgZmVuY2Utc2tpcCBjaGVjaywgZXZlbgogICAgICAgICAgICAgICAgLy8gdGhv
+dWdoIHRoZSBgRXJyYCBpdHNlbGYgc3RheXMgYSBnZW5lcmljIG1lc3NhZ2UuCiAgICAgICAgICAg
+ICAgICBpZiBsZXQgU29tZShvdmVyc2l6ZWQpID0gZXJyLmRvd25jYXN0X3JlZjo6PE92ZXJzaXpl
+ZERvY3VtZW50QmxvY2s+KCkgewogICAgICAgICAgICAgICAgICAgIHJlY29yZF9vdmVyc2l6ZV9i
+bG9jaygKICAgICAgICAgICAgICAgICAgICAgICAgbmFtZXNwYWNlLAogICAgICAgICAgICAgICAg
+ICAgICAgICBuYW1lLAogICAgICAgICAgICAgICAgICAgICAgICAmbHVtZW4udWlkKCkudW53cmFw
+X29yX2RlZmF1bHQoKSwKICAgICAgICAgICAgICAgICAgICAgICAgb3ZlcnNpemVkLmNsb25lKCks
+CiAgICAgICAgICAgICAgICAgICAgKTsKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAg
+IHJldHVybiBFcnIoZXJyKTsKICAgICAgICAgICAgfQogICAgICAgICAgICB0b3RhbF9iYXRjaGVz
+ICs9IDE7CiAgICAgICAgICAgIG1heWJlX3JlYXJtX2ZlbmNlKAogICAgICAgICAgICAgICAgY29u
+dHJvbCwKICAgICAgICAgICAgICAgIGh0dHAsCiAgICAgICAgICAgICAgICBuYW1lc3BhY2UsCiAg
+ICAgICAgICAgICAgICBuYW1lLAogICAgICAgICAgICAgICAgbHVtZW4sCiAgICAgICAgICAgICAg
+ICAmY3VycmVudCwKICAgICAgICAgICAgICAgIG1vdmluZ19idWNrZXRzLAogICAgICAgICAgICAg
+ICAgJm11dCBsYXN0X2FybWVkX2F0LAogICAgICAgICAgICApCiAgICAgICAgICAgIC5hd2FpdD87
+CiAgICAgICAgfQoKICAgICAgICAvLyAjMTQ1NyBSMS9SMjogdGhlIGZpbmFsIHBhc3MncyBhdXRo
+b3JpdGF0aXZlLXJlcGxhY2Ugc2NvcGUsIHNlbnQgYXMKICAgICAgICAvLyBpdHMgb3duIGluZGVw
+ZW5kZW50bHkgYnl0ZS1jYXBwZWQgYFBPU1QgL2FkbWluL3Jlc2hhcmQ6cHJ1bmVgCiAgICAgICAg
+Ly8gY2h1bmtzIHJhdGhlciB0aGFuIHN0YW1wZWQgb250byBldmVyeSBgUmVzaGFyZEJhdGNoYCBh
+Ym92ZSDigJQgc2VlCiAgICAgICAgLy8gYHJlc2hhcmQucnNgJ3MgYFJlc2hhcmRCYXRjaGAvYFJl
+c2hhcmRQcnVuZUNodW5rYCBkb2NzIGZvciB3aHkuIFRoZQogICAgICAgIC8vIGZ1bGwgY29sbGVj
+dGlvbiBsaXN0IGlzIGZldGNoZWQgZnJvbSB0aGUgc291cmNlIHNoYXJkIGRpcmVjdGx5CiAgICAg
+ICAgLy8gKCMxNDU3IFIyKSByYXRoZXIgdGhhbiBkZXJpdmVkIGZyb20gYHNuYXBzaG90YCdzIG93
+biBrZXlzLCBzbyBhCiAgICAgICAgLy8gY29sbGVjdGlvbiBhIGJhdGNoIG9mIGRlbGV0ZXMgZW1w
+dGllZCBvdXQgb2YgdGhlc2UgYnVja2V0cyBzdGlsbAogICAgICAgIC8vIGdldHMgYW4gKGVtcHR5
+KSBrZWVwIHNjb3BlIGluc3RlYWQgb2YgYmVpbmcgc2lsZW50bHkgc2tpcHBlZC4KICAgICAgICBp
+ZiBmaW5hbF9wYXNzIHsKICAgICAgICAgICAgbGV0IGNvbGxlY3Rpb25faWRzID0gZmV0Y2hfYWxs
+X2NvbGxlY3Rpb25faWRzKGh0dHAsICZzb3VyY2VfdXJsLCB0b2tlbi5hc19kZXJlZigpKQogICAg
+ICAgICAgICAgICAgLmF3YWl0CiAgICAgICAgICAgICAgICAuY29udGV4dCgiZmV0Y2ggc291cmNl
+IHNoYXJkJ3MgZnVsbCBjb2xsZWN0aW9uIGxpc3QgZm9yIHRoZSBmaW5hbCByZXNoYXJkIHBhc3Mi
+KT87CiAgICAgICAgICAgIG1heWJlX3JlYXJtX2ZlbmNlKAogICAgICAgICAgICAgICAgY29udHJv
+bCwKICAgICAgICAgICAgICAgIGh0dHAsCiAgICAgICAgICAgICAgICBuYW1lc3BhY2UsCiAgICAg
+ICAgICAgICAgICBuYW1lLAogICAgICAgICAgICAgICAgbHVtZW4sCiAgICAgICAgICAgICAgICAm
+Y3VycmVudCwKICAgICAgICAgICAgICAgIG1vdmluZ19idWNrZXRzLAogICAgICAgICAgICAgICAg
+Jm11dCBsYXN0X2FybWVkX2F0LAogICAgICAgICAgICApCiAgICAgICAgICAgIC5hd2FpdD87CiAg
+ICAgICAgICAgIGxldCBwcnVuZV9jaHVua3MgPSBzbmFwc2hvdF9yZXNoYXJkX3BydW5lX2NodW5r
+cygKICAgICAgICAgICAgICAgICZzbmFwc2hvdCwKICAgICAgICAgICAgICAgICZ0YXJnZXQsCiAg
+ICAgICAgICAgICAgICAmYnVja2V0cywKICAgICAgICAgICAgICAgICZjb2xsZWN0aW9uX2lkcywK
+ICAgICAgICAgICAgICAgIGNyYXRlOjpyZXNoYXJkOjpNQVhfQkFUQ0hfQllURVMsCiAgICAgICAg
+ICAgICk/OwogICAgICAgICAgICBmb3IgY2h1bmsgaW4gJnBydW5lX2NodW5rcyB7CiAgICAgICAg
+ICAgICAgICBsZXQgU29tZSgmdG9fc2hhcmQpID0gdG9fc2hhcmRfYnlfYnVja2V0LmdldCgmY2h1
+bmsuYnVja2V0KSBlbHNlIHsKICAgICAgICAgICAgICAgICAgICBiYWlsISgKICAgICAgICAgICAg
+ICAgICAgICAgICAgInBydW5lIGNodW5rIGZvciBidWNrZXQge30gaGFzIG5vIGtub3duIGRlc3Rp
+bmF0aW9uIHNoYXJkIiwKICAgICAgICAgICAgICAgICAgICAgICAgY2h1bmsuYnVja2V0CiAgICAg
+ICAgICAgICAgICAgICAgKTsKICAgICAgICAgICAgICAgIH07CiAgICAgICAgICAgICAgICBsZXQg
+ZGVzdF91cmwgPSBjb250cm9sLnNoYXJkX2Jhc2VfdXJsKG5hbWVzcGFjZSwgbmFtZSwgdG9fc2hh
+cmQpOwogICAgICAgICAgICAgICAgYXBwbHlfcmVzaGFyZF9wcnVuZV9jaHVuayhodHRwLCAmZGVz
+dF91cmwsIHRva2VuLmFzX2RlcmVmKCksIGNodW5rKS5hd2FpdD87CiAgICAgICAgICAgICAgICBt
+YXliZV9yZWFybV9mZW5jZSgKICAgICAgICAgICAgICAgICAgICBjb250cm9sLAogICAgICAgICAg
+ICAgICAgICAgIGh0dHAsCiAgICAgICAgICAgICAgICAgICAgbmFtZXNwYWNlLAogICAgICAgICAg
+ICAgICAgICAgIG5hbWUsCiAgICAgICAgICAgICAgICAgICAgbHVtZW4sCiAgICAgICAgICAgICAg
+ICAgICAgJmN1cnJlbnQsCiAgICAgICAgICAgICAgICAgICAgbW92aW5nX2J1Y2tldHMsCiAgICAg
+ICAgICAgICAgICAgICAgJm11dCBsYXN0X2FybWVkX2F0LAogICAgICAgICAgICAgICAgKQogICAg
+ICAgICAgICAgICAgLmF3YWl0PzsKICAgICAgICAgICAgfQogICAgICAgIH0KICAgIH0KICAgIC8v
+IEEgZnVsbCBwYXNzIGNvbXBsZXRlZCB3aXRob3V0IGhpdHRpbmcgdGhlIG92ZXJzaXplIHdlZGdl
+ICh3aGV0aGVyIG9yCiAgICAvLyBub3Qgb25lIHdhcyBldmVyIHJlY29yZGVkKSDigJQgY2xlYXIg
+YW55IHN0YWxlIGJsb2NrIHNvIGEgZml4ZWQgZG9jdW1lbnQKICAgIC8vIGRvZXNuJ3QgbGVhdmUg
+YHN0YXR1cy5yZXNoYXJkYCByZXBvcnRpbmcgYSBjb25kaXRpb24gdGhhdCBubyBsb25nZXIKICAg
+IC8vIGFwcGxpZXMuCiAgICBjbGVhcl9vdmVyc2l6ZV9ibG9jayhuYW1lc3BhY2UsIG5hbWUpOwog
+ICAgT2sodG90YWxfYmF0Y2hlcykKfQoKLy8vIFBvc3QtY3V0b3ZlciBldmljdGlvbiAoaWRlbXBv
+dGVudCwgIzEzODApIG9uIGV2ZXJ5ICoqb2xkKiogc2hhcmQsIHVzaW5nCi8vLyBvbmx5IHRoZSBh
+bHJlYWR5LWNvbW1pdHRlZCB0YXJnZXQgbWFwIOKAlCB0aGUgZHJpdmVyIG5ldmVyIG5lZWRzIHRv
+IHJldGFpbgovLy8gdGhlIG9sZCBtYXAgYWNyb3NzIGEgcmVzdGFydC4KLy8vCi8vLyBgbW92aW5n
+X2J1Y2tldHNgL2BsYXN0X2FybWVkX2F0YCAoIzE0NjcgUjMpIHRocmVhZCB0aGUgc2FtZQovLy8g
+W2BtYXliZV9yZWFybV9mZW5jZWBdIHRpbWUtYmFzZWQgcmUtYXJtIFtgY2hlY2twb2ludF9zaGFy
+ZHNgXSBhbHJlYWR5Ci8vLyBoYXMgaW50byB0aGlzIGxvb3A6IGV2aWN0aW9uIHJvdW5kLXRyaXBz
+IG9uZSBIVFRQIGNhbGwgcGVyICoqb2xkKioKLy8vIHBoeXNpY2FsIHNoYXJkLCBhbmQgYSBzbG93
+IHJvdW5kIChtYW55IG9sZCBzaGFyZHMsIGEgc2xvdyBuZXR3b3JrKSBjb3VsZAovLy8gb3RoZXJ3
+aXNlIG91dGxpdmUgdGhlIGZlbmNlIFRUTCBtaWQtZXZpY3Rpb24gd2l0aCBubyByZS1hcm0gdG8g
+Y2F0Y2ggaXQKLy8vIOKAlCB0aGUgY2FsbGVyJ3MgdW5jb25kaXRpb25hbCBwaGFzZS1ib3VuZGFy
+eSByZS1hcm0gaW1tZWRpYXRlbHkgYmVmb3JlCi8vLyB0aGlzIGNhbGwgb25seSBjb3ZlcnMgdGhl
+IG1vbWVudCB0aGUgbG9vcCBzdGFydHMuCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWdu
+L3NlbWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1y
+cy5tZCNzb3VyY2UKYXN5bmMgZm4gZXZpY3Rfb2xkX3NoYXJkcygKICAgIGNvbnRyb2w6ICZkeW4g
+Q2x1c3RlckNvbnRyb2wsCiAgICBodHRwOiAmcmVxd2VzdDo6Q2xpZW50LAogICAgbmFtZXNwYWNl
+OiAmc3RyLAogICAgbmFtZTogJnN0ciwKICAgIGx1bWVuOiAmTHVtZW4sCiAgICBjdXJyZW50OiAm
+VmlydHVhbEJ1Y2tldFNoYXJkTWFwLAogICAgdGFyZ2V0OiAmVmlydHVhbEJ1Y2tldFNoYXJkTWFw
+LAogICAgbW92aW5nX2J1Y2tldHM6IE9wdGlvbjwmQlRyZWVTZXQ8dTMyPj4sCiAgICBsYXN0X2Fy
+bWVkX2F0OiAmbXV0IEluc3RhbnQsCikgLT4gUmVzdWx0PCgpPiB7CiAgICBsZXQgdG9rZW4gPSBj
+b250cm9sLmFkbWluX3Rva2VuKG5hbWVzcGFjZSwgbHVtZW4pLmF3YWl0PzsKICAgIGxldCBhc3Np
+Z25tZW50cyA9IG1hcF9hc3NpZ25tZW50cyh0YXJnZXQpOwogICAgZm9yIHNoYXJkIGluIDAuLmN1
+cnJlbnQucGh5c2ljYWxfc2hhcmRfY291bnQoKSB7CiAgICAgICAgbWF5YmVfcmVhcm1fZmVuY2Uo
+CiAgICAgICAgICAgIGNvbnRyb2wsCiAgICAgICAgICAgIGh0dHAsCiAgICAgICAgICAgIG5hbWVz
+cGFjZSwKICAgICAgICAgICAgbmFtZSwKICAgICAgICAgICAgbHVtZW4sCiAgICAgICAgICAgIGN1
+cnJlbnQsCiAgICAgICAgICAgIG1vdmluZ19idWNrZXRzLAogICAgICAgICAgICBsYXN0X2FybWVk
+X2F0LAogICAgICAgICkKICAgICAgICAuYXdhaXQ/OwogICAgICAgIGxldCB1cmwgPSBjb250cm9s
+LnNoYXJkX2Jhc2VfdXJsKG5hbWVzcGFjZSwgbmFtZSwgc2hhcmQpOwogICAgICAgIGV2aWN0X3No
+YXJkKAogICAgICAgICAgICBodHRwLAogICAgICAgICAgICAmdXJsLAogICAgICAgICAgICB0b2tl
+bi5hc19kZXJlZigpLAogICAgICAgICAgICBzaGFyZCwKICAgICAgICAgICAgdGFyZ2V0LnZlcnNp
+b24oKSwKICAgICAgICAgICAgJmFzc2lnbm1lbnRzLAogICAgICAgICAgICB0YXJnZXQucGh5c2lj
+YWxfc2hhcmRfY291bnQoKSwKICAgICAgICApCiAgICAgICAgLmF3YWl0PzsKICAgIH0KICAgIE9r
+KCgpKQp9Cgphc3luYyBmbiBzdGFydF9zcGxpdCgKICAgIGNvbnRyb2w6ICZkeW4gQ2x1c3RlckNv
+bnRyb2wsCiAgICBuYW1lc3BhY2U6ICZzdHIsCiAgICBuYW1lOiAmc3RyLAogICAgbHVtZW46ICZM
+dW1lbiwKKSAtPiBEcml2ZU91dGNvbWUgewogICAgbGV0IGN1cnJlbnQgPSBtYXRjaCBjdXJyZW50
+X3NoYXJkX21hcChsdW1lbikgewogICAgICAgIE9rKG0pID0+IG0sCiAgICAgICAgRXJyKGVycikg
+PT4gcmV0dXJuIERyaXZlT3V0Y29tZTo6QmxvY2tlZChlcnIudG9fc3RyaW5nKCkpLAogICAgfTsK
+ICAgIGxldCB0YXJnZXQgPSBtYXRjaCBjb21wdXRlX3RhcmdldF9tYXAoJmN1cnJlbnQpIHsKICAg
+ICAgICBPayhtKSA9PiBtLAogICAgICAgIEVycihlcnIpID0+IHJldHVybiBEcml2ZU91dGNvbWU6
+OkJsb2NrZWQoZXJyLnRvX3N0cmluZygpKSwKICAgIH07CiAgICBsZXQgdGFyZ2V0X3NoYXJkX2Nv
+dW50ID0gdGFyZ2V0LnBoeXNpY2FsX3NoYXJkX2NvdW50KCk7CiAgICBsZXQgcGF0Y2ggPSBqc29u
+ISh7CiAgICAgICAgInNwZWMiOiB7CiAgICAgICAgICAgICJzaGFyZENvdW50IjogdGFyZ2V0X3No
+YXJkX2NvdW50LAogICAgICAgICAgICAicmVzaGFyZFBvbGljeSI6IHsKICAgICAgICAgICAgICAg
+ICJ3b3JrZmxvdyI6IHsKICAgICAgICAgICAgICAgICAgICAicGhhc2UiOiAiUHJlcGFyZVNwbGl0
+IiwKICAgICAgICAgICAgICAgICAgICAidGFyZ2V0U2hhcmRDb3VudCI6IHRhcmdldF9zaGFyZF9j
+b3VudCwKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQogICAgICAgIH0KICAgIH0pOwog
+ICAgbWF0Y2ggY29udHJvbC5wYXRjaF9zcGVjKG5hbWVzcGFjZSwgbmFtZSwgcGF0Y2gpLmF3YWl0
+IHsKICAgICAgICBPaygoKSkgPT4gRHJpdmVPdXRjb21lOjpTdGFydGVkU3BsaXQgeyB0YXJnZXRf
+c2hhcmRfY291bnQgfSwKICAgICAgICBFcnIoZXJyKSA9PiBEcml2ZU91dGNvbWU6OkJsb2NrZWQo
+ZXJyLnRvX3N0cmluZygpKSwKICAgIH0KfQoKYXN5bmMgZm4gYWR2YW5jZV9wcmVwYXJlX3NwbGl0
+KAogICAgY29udHJvbDogJmR5biBDbHVzdGVyQ29udHJvbCwKICAgIG5hbWVzcGFjZTogJnN0ciwK
+ICAgIG5hbWU6ICZzdHIsCiAgICBsdW1lbjogJkx1bWVuLAopIC0+IERyaXZlT3V0Y29tZSB7CiAg
+ICBsZXQgU29tZSh0YXJnZXRfc2hhcmRfY291bnQpID0gbHVtZW4uc3BlYy5yZXNoYXJkX3BvbGlj
+eS53b3JrZmxvdy50YXJnZXRfc2hhcmRfY291bnQgZWxzZSB7CiAgICAgICAgcmV0dXJuIERyaXZl
+T3V0Y29tZTo6QmxvY2tlZCgiUHJlcGFyZVNwbGl0IHdpdGggbm8gdGFyZ2V0U2hhcmRDb3VudCBz
+ZXQiLnRvX3N0cmluZygpKTsKICAgIH07CiAgICBsZXQgcmVhZHkgPSBtYXRjaCBjb250cm9sLnN0
+YXRlZnVsc2V0X3JlYWR5X3JlcGxpY2FzKG5hbWVzcGFjZSwgbmFtZSkuYXdhaXQgewogICAgICAg
+IE9rKHIpID0+IHIsCiAgICAgICAgRXJyKGVycikgPT4gcmV0dXJuIERyaXZlT3V0Y29tZTo6Qmxv
+Y2tlZChlcnIudG9fc3RyaW5nKCkpLAogICAgfTsKICAgIGlmIHJlYWR5IDwgaTY0Ojpmcm9tKHRh
+cmdldF9zaGFyZF9jb3VudCkgewogICAgICAgIHJldHVybiBEcml2ZU91dGNvbWU6OldhaXRpbmdG
+b3JOZXdTaGFyZCB7IHRhcmdldF9zaGFyZF9jb3VudCB9OwogICAgfQogICAgbGV0IHBhdGNoID0g
+anNvbiEoewogICAgICAgICJzcGVjIjogeyAicmVzaGFyZFBvbGljeSI6IHsgIndvcmtmbG93Ijog
+eyAicGhhc2UiOiAiU3BsaXR0aW5nIiB9IH0gfQogICAgfSk7CiAgICBtYXRjaCBjb250cm9sLnBh
+dGNoX3NwZWMobmFtZXNwYWNlLCBuYW1lLCBwYXRjaCkuYXdhaXQgewogICAgICAgIE9rKCgpKSA9
+PiBEcml2ZU91dGNvbWU6OkFkdmFuY2VkVG9TcGxpdHRpbmcsCiAgICAgICAgRXJyKGVycikgPT4g
+RHJpdmVPdXRjb21lOjpCbG9ja2VkKGVyci50b19zdHJpbmcoKSksCiAgICB9Cn0KCmFzeW5jIGZu
+IGFkdmFuY2Vfc3BsaXR0aW5nKAogICAgY29udHJvbDogJmR5biBDbHVzdGVyQ29udHJvbCwKICAg
+IGh0dHA6ICZyZXF3ZXN0OjpDbGllbnQsCiAgICBuYW1lc3BhY2U6ICZzdHIsCiAgICBuYW1lOiAm
+c3RyLAogICAgbHVtZW46ICZMdW1lbiwKKSAtPiBEcml2ZU91dGNvbWUgewogICAgbGV0IGJhdGNo
+ZXMgPSBtYXRjaCBydW5fbWlncmF0aW9uX3Bhc3MoY29udHJvbCwgaHR0cCwgbmFtZXNwYWNlLCBu
+YW1lLCBsdW1lbikuYXdhaXQgewogICAgICAgIE9rKG4pID0+IG4sCiAgICAgICAgRXJyKGVycikg
+PT4gcmV0dXJuIERyaXZlT3V0Y29tZTo6QmxvY2tlZChlcnIudG9fc3RyaW5nKCkpLAogICAgfTsK
+ICAgIGxldCBwYXRjaCA9IGpzb24hKHsKICAgICAgICAic3BlYyI6IHsgInJlc2hhcmRQb2xpY3ki
+OiB7ICJ3b3JrZmxvdyI6IHsgInBoYXNlIjogIkNhdGNoaW5nVXAiIH0gfSB9CiAgICB9KTsKICAg
+IG1hdGNoIGNvbnRyb2wucGF0Y2hfc3BlYyhuYW1lc3BhY2UsIG5hbWUsIHBhdGNoKS5hd2FpdCB7
+CiAgICAgICAgT2soKCkpID0+IHsKICAgICAgICAgICAgaWYgYmF0Y2hlcyA9PSAwIHsKICAgICAg
+ICAgICAgICAgIC8vIE5vdGhpbmcgbW92ZWQgb24gdGhpcyBwYXNzIChhbHJlYWR5IGNhdWdodCB1
+cCBmcm9tIGEgcHJpb3IKICAgICAgICAgICAgICAgIC8vIGF0dGVtcHQpOyBzdGlsbCBzYWZlIHRv
+IGFkdmFuY2UuCiAgICAgICAgICAgICAgICBEcml2ZU91dGNvbWU6OkFkdmFuY2VkVG9DYXRjaGlu
+Z1VwCiAgICAgICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgICAgICBEcml2ZU91dGNvbWU6Ok1p
+Z3JhdGVkQmF0Y2hlcyB7IGJhdGNoZXMgfQogICAgICAgICAgICB9CiAgICAgICAgfQogICAgICAg
+IEVycihlcnIpID0+IERyaXZlT3V0Y29tZTo6QmxvY2tlZChlcnIudG9fc3RyaW5nKCkpLAogICAg
+fQp9CgovLy8gIzEzOTYgUjEvUjI6IGR1cmFibHkgb3JkZXJlZCBjdXRvdmVyLiBPbGQgb3JkZXIg
+d2FzIG1pZ3JhdGUgLT4gZXZpY3QgLT4KLy8vIGNoZWNrcG9pbnQtZXZlcnl0aGluZyAtPiBjdXRv
+dmVyLCB3aGljaCBjb3VsZCBtYWtlIGEgc291cmNlIHNoYXJkJ3MKLy8vIGV2aWN0aW9uIGR1cmFi
+bGUgKG9yIGV2ZW4gYXR0ZW1wdCBpdCkgYmVmb3JlIHRoZSB0YXJnZXQgc2hhcmQncyBjb3B5IG9m
+Ci8vLyB0aGUgc2FtZSBkYXRhIHdhcyBkdXJhYmx5IGNoZWNrcG9pbnRlZCDigJQgYSBjcmFzaCBi
+ZXR3ZWVuIGV2aWN0aW9uIGFuZAovLy8gdGhhdCB0b28tbGF0ZSBjaGVja3BvaW50IGNvdWxkIGxv
+c2UgZGF0YSB0aGF0LCBhdCB0aGF0IGluc3RhbnQsIGV4aXN0ZWQKLy8vIG9uIG5vIGR1cmFibGUg
+c2hhcmQgYXQgYWxsICgjMTM4NydzIGV4YWN0IGZhaWx1cmUgc2hhcGUsIHJlaW50cm9kdWNlZCBi
+eQovLy8gZXZpY3RpbmcgYWhlYWQgb2YgYSBwZXItc2hhcmQtb3JkZXJlZCBjaGVja3BvaW50KS4g
+TmV3IG9yZGVyOiBtaWdyYXRlIC0+Ci8vLyBjaGVja3BvaW50IHRhcmdldCBvbmx5IC0+IGV2aWN0
+IHNvdXJjZXMgLT4gY2hlY2twb2ludCBzb3VyY2VzIC0+IGN1dG92ZXIuCi8vLyBDcmFzaC1zYWZl
+dHkgYXQgZXZlcnkgYm91bmRhcnkgKG1vdmVkIGRhdGEgaXMgZHVyYWJsZSBvbiBhdCBsZWFzdCBv
+bmUKLy8vIHNoYXJkIGF0IGV2ZXJ5IHBvaW50IG9uY2UgbWlncmF0aW9uIGNvbXBsZXRlcyk6Ci8v
+LyAtIENyYXNoIGFmdGVyIG1pZ3JhdGUsIGJlZm9yZSB0aGUgdGFyZ2V0IGNoZWNrcG9pbnQ6IHNv
+dXJjZXMgc3RpbGwgaG9sZAovLy8gICB0aGVpciBkYXRhIChub3QgeWV0IGV2aWN0ZWQpOyByZXRy
+eSByZS1taWdyYXRlcyAoaWRlbXBvdGVudCwgIzEzODApCi8vLyAgIGFuZCB0aGUgdGFyZ2V0IGNo
+ZWNrcG9pbnQgZXZlbnR1YWxseSBzdWNjZWVkcy4KLy8vIC0gQ3Jhc2ggYWZ0ZXIgdGhlIHRhcmdl
+dCBjaGVja3BvaW50LCBiZWZvcmUgZXZpY3Rpb246IHRoZSB0YXJnZXQgYWxyZWFkeQovLy8gICBk
+dXJhYmx5IGhvbGRzIHRoZSBtb3ZlZCBkYXRhOyByZXRyeSByZXBsYXlzIG1pZ3JhdGUgKG5vLW9w
+KSBhbmQgdGhlCi8vLyAgIHRhcmdldCBjaGVja3BvaW50IChuby1vcCByZS1jb25maXJtKSwgdGhl
+biBwcm9jZWVkcyB0byBldmljdC4KLy8vIC0gQ3Jhc2ggYWZ0ZXIgZXZpY3Rpb24gKFJBTS1vbmx5
+IHVudGlsIGl0cyBvd24gY2hlY2twb2ludCksIGJlZm9yZSB0aGUKLy8vICAgc291cmNlIGNoZWNr
+cG9pbnQ6IGV2ZW4gaWYgdGhlIHBvZCByZXN0YXJ0IHRoZSBkcml2ZXIgaXMgYWJvdXQgdG8KLy8v
+ICAgdHJpZ2dlciBsb3NlcyB0aGUgaW4tUkFNIGV2aWN0aW9uLCBhIHJldHJ5IGlzIHN0aWxsIHNh
+ZmUg4oCUIHRoZSB0YXJnZXQKLy8vICAgYWxyZWFkeSBkdXJhYmx5IGhhcyB0aGUgbW92ZWQgZGF0
+YSBmcm9tIHRoZSBlYXJsaWVyIHRhcmdldCBjaGVja3BvaW50LAovLy8gICBzbyBhIHJldHJpZWQg
+bWlncmF0ZSBpcyBhIG5vLW9wLCBhIHJldHJpZWQgZXZpY3QgaXMgaWRlbXBvdGVudCwgYW5kIHRo
+ZQovLy8gICBzb3VyY2UgY2hlY2twb2ludCByZXRyaWVzIHVudGlsIGl0IHN1Y2NlZWRzLiBFdmlj
+dGlvbiBpcyBuZXZlciBkdXJhYmxlCi8vLyAgIG5vciBhdHRlbXB0ZWQgYmVmb3JlIHRoZSB0YXJn
+ZXQncyBjb3B5IGlzIGR1cmFibGUsIHNvIHRoaXMgY3Jhc2ggY2FuCi8vLyAgIG5ldmVyIGxvc2Ug
+ZGF0YS4KLy8vIC0gQ3Jhc2ggYWZ0ZXIgdGhlIHNvdXJjZSBjaGVja3BvaW50LCBiZWZvcmUgdGhl
+IGN1dG92ZXIgcGF0Y2g6IGJvdGgKLy8vICAgc2lkZXMgYXJlIGR1cmFibGU7IHJldHJ5IHJlcGxh
+eXMgZXZlcnkgc3RlcCBhcyBhIG5vLW9wIHVudGlsIHRoZQovLy8gICBjdXRvdmVyIHBhdGNoIGZp
+bmFsbHkgbGFuZHMuCi8vLwovLy8gUjI6IHRoZSB3aG9sZSBzZXF1ZW5jZSBiZWxvdyBydW5zIHVu
+ZGVyIGEgd3JpdGUtcGF1c2UgZmVuY2UgKGBQT1NUCi8vLyAvYWRtaW4vcmVzaGFyZDpmZW5jZWAp
+IGFybWVkIG92ZXIgZXZlcnkgc3RpbGwtbW92aW5nIGJ1Y2tldCBvbiBpdHMKLy8vIGN1cnJlbnQg
+KHNvdXJjZSkgb3duZXJzLCBzbyB0aGlzIHRpY2sncyBtaWdyYXRpb24gcGFzcyBpcyBndWFyYW50
+ZWVkIGEKLy8vIGNvbnZlcmdlZCBzbmFwc2hvdCBvZiB0aG9zZSBidWNrZXRzIOKAlCBjbG9zaW5n
+IHRoZSBnYXAgd2hlcmUgYSB3cml0ZQovLy8gbGFuZHMgb24gYSBzb3VyY2Ugc2hhcmQgYWZ0ZXIg
+dGhlIGxhc3QgbWlncmF0aW9uLWNvcHkgcmVhZCBidXQgYmVmb3JlCi8vLyB0aGF0IGJ1Y2tldCdz
+IGV2aWN0aW9uIGFuZCBpcyBzaWxlbnRseSBkcm9wcGVkLiBTZWUKLy8vIFtgY3JhdGU6OmFwaTo6
+V3JpdGVGZW5jZWBdIGZvciB3aHkgYSBjcmFzaGVkIGRyaXZlciBjYW4gbmV2ZXIgbGVhdmUgaXQK
+Ly8vIGFybWVkIHBlcm1hbmVudGx5LgovLy8KLy8vIFRoZSBmZW5jZSBpcyBjbGVhcmVkIGltbWVk
+aWF0ZWx5IG9uIGV2ZXJ5IGV4aXQgcGF0aCAqZXhjZXB0KgovLy8gW2BEcml2ZU91dGNvbWU6OkNv
+bXBsZXRlZFNwbGl0YF0gKCMxNDQyIFIyKTogYSBjb21wbGV0ZWQgc3BsaXQganVzdAovLy8gY2Fs
+bGVkIFtgQ2x1c3RlckNvbnRyb2w6OnRyaWdnZXJfcm9sbGluZ19yZXN0YXJ0YF0sIGFuZCBwb2Rz
+IG9ubHkgcmVhZAovLy8gYFNIQVJEX01BUF8qYC9gU0hBUkRfQ09VTlRgIGVudiBhdCBib290LCBz
+byBvbGQtbWFwIHBvZHMga2VlcCBzZXJ2aW5nCi8vLyAoYW5kLCB3aXRob3V0IHRoaXMsIGtlZXAg
+YWNjZXB0aW5nIGxvY2FsIHdyaXRlcyBmb3IpIHRoZSBqdXN0LWV2aWN0ZWQKLy8vIHNvdXJjZSBi
+dWNrZXRzIHVudGlsIHRoZSByb2xsaW5nIHJlc3RhcnQgYWN0dWFsbHkgcmVhY2hlcyB0aGVtIOKA
+lAovLy8gY2xlYXJpbmcgdGhlIGZlbmNlIHJpZ2h0IGFmdGVyIHRyaWdnZXJpbmcgdGhlIHJlc3Rh
+cnQgd291bGQgb3BlbiBleGFjdGx5Ci8vLyB0aGF0IG1peGVkLW1hcCB3aW5kb3cgYmFjayB1cC4g
+TGVhdmluZyBpdCBhcm1lZCBoZXJlIGxldHMKLy8vIFtgV1JJVEVfRkVOQ0VfVFRMX1NFQ1NgXSBi
+b3VuZCB0aGUgd2luZG93IGluc3RlYWQgKHRoZSBkZXNpZ24ncyBzaW1wbGVyLAovLy8gbm9uLWJs
+b2NraW5nIGFsdGVybmF0aXZlIHRvIHN5bmNocm9ub3VzbHkgcG9sbGluZyBldmVyeSBzZXJ2aW5n
+IHBvZAovLy8gUmVhZHkgb24gdGhlIG5ldyB0b3BvbG9neSBmcm9tIGluc2lkZSBvbmUgQ1IncyB0
+aWNrLCB3aGljaCB3b3VsZCBzdGFsbAovLy8gYGRyaXZlX3RpY2tgJ3Mgb3RoZXIgQ1JzKTsgdGhl
+IG5leHQgc3BsaXQgZm9yIHRoaXMgQ1IgY2FuIG9ubHkgc3RhcnQgb25jZQovLy8gYGRyaXZlX3Rp
+Y2tgIHNlZXMgdGhlIHBoYXNlIGJhY2sgYXQgYENvbXBsZXRlYCwgd2VsbCBhZnRlciB0aGUgVFRM
+LCBzbwovLy8gdGhlcmUgaXMgbm8gcmlzayBvZiBhIHN1YnNlcXVlbnQgdGljayB0cnlpbmcgdG8g
+YXJtIGEgZmVuY2UgdGhhdCBpcwovLy8gYWxyZWFkeSBhcm1lZCBmcm9tIGEgcHJpb3Igc3BsaXQu
+CmFzeW5jIGZuIGFkdmFuY2VfY2F0Y2hpbmdfdXAoCiAgICBjb250cm9sOiAmZHluIENsdXN0ZXJD
+b250cm9sLAogICAgaHR0cDogJnJlcXdlc3Q6OkNsaWVudCwKICAgIG5hbWVzcGFjZTogJnN0ciwK
+ICAgIG5hbWU6ICZzdHIsCiAgICBsdW1lbjogJkx1bWVuLAopIC0+IERyaXZlT3V0Y29tZSB7CiAg
+ICBsZXQgY3VycmVudCA9IG1hdGNoIGN1cnJlbnRfc2hhcmRfbWFwKGx1bWVuKSB7CiAgICAgICAg
+T2sobSkgPT4gbSwKICAgICAgICBFcnIoZXJyKSA9PiByZXR1cm4gRHJpdmVPdXRjb21lOjpCbG9j
+a2VkKGVyci50b19zdHJpbmcoKSksCiAgICB9OwogICAgbGV0IHRhcmdldCA9IG1hdGNoIGNvbXB1
+dGVfdGFyZ2V0X21hcCgmY3VycmVudCkgewogICAgICAgIE9rKG0pID0+IG0sCiAgICAgICAgRXJy
+KGVycikgPT4gcmV0dXJuIERyaXZlT3V0Y29tZTo6QmxvY2tlZChlcnIudG9fc3RyaW5nKCkpLAog
+ICAgfTsKICAgIGxldCBtb3ZlcyA9IG1hdGNoIGJ1Y2tldF9tb3ZlcygmY3VycmVudCwgJnRhcmdl
+dCkgewogICAgICAgIE9rKG0pID0+IG0sCiAgICAgICAgRXJyKGVycikgPT4gcmV0dXJuIERyaXZl
+T3V0Y29tZTo6QmxvY2tlZChlcnIudG9fc3RyaW5nKCkpLAogICAgfTsKICAgIGxldCBtb3Zpbmdf
+YnVja2V0czogQlRyZWVTZXQ8dTMyPiA9IG1vdmVzLml0ZXIoKS5tYXAofG18IG0uYnVja2V0KS5j
+b2xsZWN0KCk7CgogICAgLy8gIzE0NDQgUjI6IGEgdGljayBhbHJlYWR5IGtub3duLXdlZGdlZCBv
+biBhbiBvdmVyc2l6ZWQgc2luZ2xlLWRvY3VtZW50CiAgICAvLyBiYXRjaCBpcyBhIHBlcm1hbmVu
+dCBuby1wcm9ncmVzcyBjb25kaXRpb24gdW50aWwgdGhlIGRvY3VtZW50IHNocmlua3MKICAgIC8v
+IChzZWUgW2BPdmVyc2l6ZWREb2N1bWVudEJsb2NrYF0pIOKAlCBhcm1pbmcgdGhlIHdyaXRlIGZl
+bmNlIGFueXdheSB3b3VsZAogICAgLy8gcGF1c2Ugd3JpdGVzIHRvIHRoZXNlIGJ1Y2tldHMgZm9y
+IGEgcGFzcyB0aGF0IGNhbm5vdCBwb3NzaWJseSBmaW5pc2gsCiAgICAvLyByZWN1cnJpbmcgZXZl
+cnkgdGljaydzIGBXUklURV9GRU5DRV9UVExfU0VDU2Agd2luZG93IGZvciBubyBiZW5lZml0Lgog
+ICAgLy8gYHNob3VsZF9za2lwX2Zvcl9vdmVyc2l6ZWAgc3RpbGwgcGVyaW9kaWNhbGx5IGxldHMg
+YSByZWFsIGF0dGVtcHQKICAgIC8vIHRocm91Z2ggKGBPVkVSU0laRV9SRUNIRUNLX1RJQ0tTYCkg
+c28gYSBmaXhlZCBkb2N1bWVudCBzZWxmLWhlYWxzLgogICAgaWYgbGV0IFNvbWUoYmxvY2spID0g
+c2hvdWxkX3NraXBfZm9yX292ZXJzaXplKG5hbWVzcGFjZSwgbmFtZSwgJmx1bWVuLnVpZCgpLnVu
+d3JhcF9vcl9kZWZhdWx0KCkpCiAgICB7CiAgICAgICAgcmV0dXJuIERyaXZlT3V0Y29tZTo6Qmxv
+Y2tlZChibG9jay50b19zdHJpbmcoKSk7CiAgICB9CgogICAgaWYgIW1vdmluZ19idWNrZXRzLmlz
+X2VtcHR5KCkgewogICAgICAgIGlmIGxldCBFcnIoZXJyKSA9IHNldF93cml0ZV9mZW5jZSgKICAg
+ICAgICAgICAgY29udHJvbCwKICAgICAgICAgICAgaHR0cCwKICAgICAgICAgICAgbmFtZXNwYWNl
+LAogICAgICAgICAgICBuYW1lLAogICAgICAgICAgICBsdW1lbiwKICAgICAgICAgICAgJmN1cnJl
+bnQsCiAgICAgICAgICAgICZtb3ZpbmdfYnVja2V0cywKICAgICAgICAgICAgY29udHJvbC53cml0
+ZV9mZW5jZV90dGxfc2VjcygpLAogICAgICAgICkKICAgICAgICAuYXdhaXQKICAgICAgICB7CiAg
+ICAgICAgICAgIHJldHVybiBEcml2ZU91dGNvbWU6OkJsb2NrZWQoZXJyLnRvX3N0cmluZygpKTsK
+ICAgICAgICB9CiAgICB9CgogICAgbGV0IG91dGNvbWUgPSBhZHZhbmNlX2NhdGNoaW5nX3VwX2Zl
+bmNlZCgKICAgICAgICBjb250cm9sLAogICAgICAgIGh0dHAsCiAgICAgICAgbmFtZXNwYWNlLAog
+ICAgICAgIG5hbWUsCiAgICAgICAgbHVtZW4sCiAgICAgICAgJmN1cnJlbnQsCiAgICAgICAgJnRh
+cmdldCwKICAgICAgICAmbW92aW5nX2J1Y2tldHMsCiAgICApCiAgICAuYXdhaXQ7CgogICAgbGV0
+IGNvbXBsZXRlZF9zcGxpdCA9IG1hdGNoZXMhKG91dGNvbWUsIERyaXZlT3V0Y29tZTo6Q29tcGxl
+dGVkU3BsaXQgeyAuLiB9KTsKICAgIGlmICFtb3ZpbmdfYnVja2V0cy5pc19lbXB0eSgpICYmICFj
+b21wbGV0ZWRfc3BsaXQgewogICAgICAgIC8vIENsZWFyIG9uIGV2ZXJ5IGV4aXQgcGF0aCBleGNl
+cHQgYSBjb21wbGV0ZWQgc3BsaXQgKCMxNDQyIFIyLCBzZWUKICAgICAgICAvLyB0aGlzIGZuJ3Mg
+ZG9jIGNvbW1lbnQpOiB0aGUgZmVuY2UgbXVzdCBub3Qgb3V0bGl2ZSB0aGlzIHRpY2sKICAgICAg
+ICAvLyAqdW5sZXNzKiB0aGUgY3V0b3ZlciBpdCBndWFyZGVkIGp1c3QgdHJpZ2dlcmVkIGEgcm9s
+bGluZyByZXN0YXJ0LAogICAgICAgIC8vIGluIHdoaWNoIGNhc2UgbGVhdmluZyBpdCBhcm1lZCBh
+bmQgVFRMLWJvdW5kZWQgY2xvc2VzIHRoZQogICAgICAgIC8vIG1peGVkLW1hcCB3aW5kb3cgaW5z
+dGVhZCBvZiByZW9wZW5pbmcgaXQuIElmIHRoaXMgY2xlYXIgaXRzZWxmCiAgICAgICAgLy8gZmFp
+bHMgKG9yIHRoZSBwcm9jZXNzIGRpZXMgYmVmb3JlIHJlYWNoaW5nIGl0KSwgV1JJVEVfRkVOQ0Vf
+VFRMX1NFQ1MKICAgICAgICAvLyBzdGlsbCBib3VuZHMgaG93IGxvbmcgd3JpdGVzIHRvIHRoZXNl
+IGJ1Y2tldHMgc3RheSBwYXVzZWQg4oCUIHRoZQogICAgICAgIC8vIHNlcnZpbmcgcG9kIGVuZm9y
+Y2VzIHRoYXQgZGVhZGxpbmUgb24gaXRzIG93biwgaW5kZXBlbmRlbnQgb2YgdGhlCiAgICAgICAg
+Ly8gZHJpdmVyIGV2ZXIgY29taW5nIGJhY2suCiAgICAgICAgaWYgbGV0IEVycihlcnIpID0gc2V0
+X3dyaXRlX2ZlbmNlKAogICAgICAgICAgICBjb250cm9sLAogICAgICAgICAgICBodHRwLAogICAg
+ICAgICAgICBuYW1lc3BhY2UsCiAgICAgICAgICAgIG5hbWUsCiAgICAgICAgICAgIGx1bWVuLAog
+ICAgICAgICAgICAmY3VycmVudCwKICAgICAgICAgICAgJkJUcmVlU2V0OjpuZXcoKSwKICAgICAg
+ICAgICAgMCwKICAgICAgICApCiAgICAgICAgLmF3YWl0CiAgICAgICAgewogICAgICAgICAgICB0
+cmFjaW5nOjp3YXJuISgKICAgICAgICAgICAgICAgIGVycm9yID0gJWVyciwKICAgICAgICAgICAg
+ICAgICJyZXNoYXJkIGRyaXZlcjogZmFpbGVkIHRvIGNsZWFyIHdyaXRlIGZlbmNlIGFmdGVyIENh
+dGNoaW5nVXAgdGljazsgXAogICAgICAgICAgICAgICAgIGJvdW5kZWQgYnkgV1JJVEVfRkVOQ0Vf
+VFRMX1NFQ1MiCiAgICAgICAgICAgICk7CiAgICAgICAgfQogICAgfSBlbHNlIGlmICFtb3Zpbmdf
+YnVja2V0cy5pc19lbXB0eSgpICYmIGNvbXBsZXRlZF9zcGxpdCB7CiAgICAgICAgdHJhY2luZzo6
+aW5mbyEoCiAgICAgICAgICAgICJyZXNoYXJkIGRyaXZlcjogc3BsaXQgY29tcGxldGVkIGFuZCBy
+b2xsaW5nIHJlc3RhcnQgdHJpZ2dlcmVkOyBsZWF2aW5nIHdyaXRlIGZlbmNlIFwKICAgICAgICAg
+ICAgIGFybWVkIGZvciBXUklURV9GRU5DRV9UVExfU0VDUz17V1JJVEVfRkVOQ0VfVFRMX1NFQ1N9
+cyB0byBjbG9zZSB0aGUgb2xkLW1hcCBwb2RzJyBcCiAgICAgICAgICAgICBtaXhlZC1tYXAgd2lu
+ZG93IGluc3RlYWQgb2YgY2xlYXJpbmcgaXQgaW1tZWRpYXRlbHkgKCMxNDQyIFIyKSIKICAgICAg
+ICApOwogICAgfQoKICAgIG91dGNvbWUKfQoKLy8vIFRoZSBtaWdyYXRlL2NoZWNrcG9pbnQvZXZp
+Y3QvY2hlY2twb2ludC9jdXRvdmVyIHNlcXVlbmNlIHByb3BlciwgcnVuCi8vLyB1bmRlciBbYGFk
+dmFuY2VfY2F0Y2hpbmdfdXBgXSdzIHdyaXRlIGZlbmNlLiBTcGxpdCBvdXQgc28gdGhlIGZlbmNl
+J3MKLy8vIGFybS9jbGVhciBicmFja2V0IGlzIHVuY29uZGl0aW9uYWwgKGFsd2F5cyBydW5zLCBy
+ZWdhcmRsZXNzIG9mIHdoaWNoCi8vLyBzdGVwIGJlbG93IGZhaWxzKSB3aXRob3V0IGR1cGxpY2F0
+aW5nIHRoZSBzZXF1ZW5jZSBpdHNlbGYuCi8vLwovLy8gIzE0NDMgUjE6IHRoaXMgc2VxdWVuY2Un
+cyBtaWdyYXRpb24gcGFzcyBpcyBgZmluYWxfcGFzc2AgKFIyLCByZXdvcmtlZAovLy8gIzE0NTcg
+UjEgaW50byBhIHNlcGFyYXRlIGBQT1NUIC9hZG1pbi9yZXNoYXJkOnBydW5lYCBzdGVwKSBhbmQg
+cnVucwovLy8gdW5kZXIgdGltZS1iYXNlZCBpbi1sb29wIHJlLWFybWluZyAoIzE0NTggUjMpOyB0
+aGUgZmVuY2UgaXMgYWRkaXRpb25hbGx5Ci8vLyByZS1hcm1lZCB3aXRoIGEgZnJlc2ggVFRMIGF0
+IGV2ZXJ5IHBoYXNlIGJvdW5kYXJ5IGJlbG93IChhZnRlciB0aGUKLy8vIG1pZ3JhdGlvbiBwYXNz
+IGFuZCBiZWZvcmUgdGhlIHRhcmdldCBjaGVja3BvaW50LCBhZ2FpbiBiZWZvcmUgZXZpY3Rpb24s
+Ci8vLyBhbmQgYWdhaW4gYmVmb3JlIHRoZSBzb3VyY2VzJyBjaGVja3BvaW50IHJvdW5kKSBzbyBh
+IHJlYWwgcGFzcyDigJQKLy8vIGh1bmRyZWRzIG9mIHNlcXVlbnRpYWwgYmF0Y2gvY2hlY2twb2lu
+dCBIVFRQIHJvdW5kIHRyaXBzIOKAlCBjYW4gbmV2ZXIKLy8vIHNpbGVudGx5IG91dGxpdmUgW2BD
+bHVzdGVyQ29udHJvbDo6d3JpdGVfZmVuY2VfdHRsX3NlY3NgXSBtaWQtc2VxdWVuY2UuCi8vLyBb
+YGNoZWNrcG9pbnRfc2hhcmRzYF0gaXRzZWxmIGFsc28gcmUtYXJtcyBvbiB0aGUgc2FtZSBUVEwv
+NCBjbG9jayBiZXR3ZWVuCi8vLyBpbmRpdmlkdWFsIHNoYXJkIGNoZWNrcG9pbnRzICgjMTQ1OCBS
+MyksIHNvIGEgc2xvdyBtdWx0aS1zaGFyZAovLy8gY2hlY2twb2ludCByb3VuZCBpcyBjb3ZlcmVk
+IHRvbywgbm90IGp1c3QgdGhlIGJvdW5kYXJ5IGJlZm9yZSBpdC4gQW55Ci8vLyByZS1hcm0gZmFp
+bHVyZSBhYm9ydHMgdG8gW2BEcml2ZU91dGNvbWU6OkJsb2NrZWRgXSBpbW1lZGlhdGVseSwgYWx3
+YXlzCi8vLyBzdHJpY3RseSBiZWZvcmUgW2BldmljdF9vbGRfc2hhcmRzYF0gcnVucy4KYXN5bmMg
+Zm4gYWR2YW5jZV9jYXRjaGluZ191cF9mZW5jZWQoCiAgICBjb250cm9sOiAmZHluIENsdXN0ZXJD
+b250cm9sLAogICAgaHR0cDogJnJlcXdlc3Q6OkNsaWVudCwKICAgIG5hbWVzcGFjZTogJnN0ciwK
+ICAgIG5hbWU6ICZzdHIsCiAgICBsdW1lbjogJkx1bWVuLAogICAgY3VycmVudDogJlZpcnR1YWxC
+dWNrZXRTaGFyZE1hcCwKICAgIHRhcmdldDogJlZpcnR1YWxCdWNrZXRTaGFyZE1hcCwKICAgIG1v
+dmluZ19idWNrZXRzOiAmQlRyZWVTZXQ8dTMyPiwKKSAtPiBEcml2ZU91dGNvbWUgewogICAgaWYg
+bGV0IEVycihlcnIpID0gcnVuX21pZ3JhdGlvbl9wYXNzX2ltcGwoCiAgICAgICAgY29udHJvbCwK
+ICAgICAgICBodHRwLAogICAgICAgIG5hbWVzcGFjZSwKICAgICAgICBuYW1lLAogICAgICAgIGx1
+bWVuLAogICAgICAgIHRydWUsCiAgICAgICAgU29tZShtb3ZpbmdfYnVja2V0cyksCiAgICApCiAg
+ICAuYXdhaXQKICAgIHsKICAgICAgICByZXR1cm4gRHJpdmVPdXRjb21lOjpCbG9ja2VkKGVyci50
+b19zdHJpbmcoKSk7CiAgICB9CgogICAgLy8gIzE0NTggUjM6IHJlLWFybWVkICh1bmNvbmRpdGlv
+bmFsbHkpIGF0IGV2ZXJ5IHBoYXNlIGJvdW5kYXJ5IGJlbG93OwogICAgLy8gcmVzZXQgYWxvbmdz
+aWRlIGVhY2ggb25lIHNvIGBjaGVja3BvaW50X3NoYXJkc2AnIG93biBpbi1sb29wCiAgICAvLyB0
+aW1lLWJhc2VkIHJlLWFybSBtZWFzdXJlcyBlbGFwc2VkIHRpbWUgZnJvbSB0aGUgYm91bmRhcnkg
+dGhhdAogICAgLy8gYWN0dWFsbHkganVzdCBhcm1lZCB0aGUgZmVuY2UsIG5vdCBmcm9tIHRoaXMg
+c2VxdWVuY2UncyBzdGFydC4KICAgIGxldCBtdXQgbGFzdF9hcm1lZF9hdCA9IEluc3RhbnQ6Om5v
+dygpOwogICAgbGV0IGZlbmNlX2J1Y2tldHMgPSAoIW1vdmluZ19idWNrZXRzLmlzX2VtcHR5KCkp
+LnRoZW5fc29tZShtb3ZpbmdfYnVja2V0cyk7CgogICAgaWYgIW1vdmluZ19idWNrZXRzLmlzX2Vt
+cHR5KCkgewogICAgICAgIGlmIGxldCBFcnIoZXJyKSA9IHNldF93cml0ZV9mZW5jZSgKICAgICAg
+ICAgICAgY29udHJvbCwKICAgICAgICAgICAgaHR0cCwKICAgICAgICAgICAgbmFtZXNwYWNlLAog
+ICAgICAgICAgICBuYW1lLAogICAgICAgICAgICBsdW1lbiwKICAgICAgICAgICAgY3VycmVudCwK
+ICAgICAgICAgICAgbW92aW5nX2J1Y2tldHMsCiAgICAgICAgICAgIGNvbnRyb2wud3JpdGVfZmVu
+Y2VfdHRsX3NlY3MoKSwKICAgICAgICApCiAgICAgICAgLmF3YWl0CiAgICAgICAgewogICAgICAg
+ICAgICByZXR1cm4gRHJpdmVPdXRjb21lOjpCbG9ja2VkKGZvcm1hdCEoCiAgICAgICAgICAgICAg
+ICAicmUtYXJtIHdyaXRlIGZlbmNlIGJlZm9yZSB0YXJnZXQgY2hlY2twb2ludDoge2Vycn0iCiAg
+ICAgICAgICAgICkpOwogICAgICAgIH0KICAgICAgICBsYXN0X2FybWVkX2F0ID0gSW5zdGFudDo6
+bm93KCk7CiAgICB9CgogICAgLy8gUjE6IHRoZSB0YXJnZXQvbmV3IHNoYXJkJ3MgY29weSBvZiB0
+aGUganVzdC1taWdyYXRlZCBkYXRhIG11c3QgYmUKICAgIC8vIGR1cmFibGUgQkVGT1JFIGFueSBz
+b3VyY2UgZXZpY3Rpb24gaXMgZXZlbiBhdHRlbXB0ZWQuCiAgICBsZXQgbmV3X3NoYXJkID0gdGFy
+Z2V0LnBoeXNpY2FsX3NoYXJkX2NvdW50KCkuc2F0dXJhdGluZ19zdWIoMSk7CiAgICBpZiBsZXQg
+RXJyKGVycikgPSBjaGVja3BvaW50X3NoYXJkcygKICAgICAgICBjb250cm9sLAogICAgICAgIGh0
+dHAsCiAgICAgICAgbmFtZXNwYWNlLAogICAgICAgIG5hbWUsCiAgICAgICAgbHVtZW4sCiAgICAg
+ICAgc3RkOjppdGVyOjpvbmNlKG5ld19zaGFyZCksCiAgICAgICAgY3VycmVudCwKICAgICAgICBm
+ZW5jZV9idWNrZXRzLAogICAgICAgICZtdXQgbGFzdF9hcm1lZF9hdCwKICAgICkKICAgIC5hd2Fp
+dAogICAgewogICAgICAgIHJldHVybiBEcml2ZU91dGNvbWU6OkJsb2NrZWQoZXJyLnRvX3N0cmlu
+ZygpKTsKICAgIH0KCiAgICBpZiAhbW92aW5nX2J1Y2tldHMuaXNfZW1wdHkoKSB7CiAgICAgICAg
+aWYgbGV0IEVycihlcnIpID0gc2V0X3dyaXRlX2ZlbmNlKAogICAgICAgICAgICBjb250cm9sLAog
+ICAgICAgICAgICBodHRwLAogICAgICAgICAgICBuYW1lc3BhY2UsCiAgICAgICAgICAgIG5hbWUs
+CiAgICAgICAgICAgIGx1bWVuLAogICAgICAgICAgICBjdXJyZW50LAogICAgICAgICAgICBtb3Zp
+bmdfYnVja2V0cywKICAgICAgICAgICAgY29udHJvbC53cml0ZV9mZW5jZV90dGxfc2VjcygpLAog
+ICAgICAgICkKICAgICAgICAuYXdhaXQKICAgICAgICB7CiAgICAgICAgICAgIHJldHVybiBEcml2
+ZU91dGNvbWU6OkJsb2NrZWQoZm9ybWF0ISgicmUtYXJtIHdyaXRlIGZlbmNlIGJlZm9yZSBldmlj
+dGlvbjoge2Vycn0iKSk7CiAgICAgICAgfQogICAgICAgIGxhc3RfYXJtZWRfYXQgPSBJbnN0YW50
+Ojpub3coKTsKICAgIH0KCiAgICBpZiBsZXQgRXJyKGVycikgPSBldmljdF9vbGRfc2hhcmRzKAog
+ICAgICAgIGNvbnRyb2wsCiAgICAgICAgaHR0cCwKICAgICAgICBuYW1lc3BhY2UsCiAgICAgICAg
+bmFtZSwKICAgICAgICBsdW1lbiwKICAgICAgICBjdXJyZW50LAogICAgICAgIHRhcmdldCwKICAg
+ICAgICBmZW5jZV9idWNrZXRzLAogICAgICAgICZtdXQgbGFzdF9hcm1lZF9hdCwKICAgICkKICAg
+IC5hd2FpdAogICAgewogICAgICAgIHJldHVybiBEcml2ZU91dGNvbWU6OkJsb2NrZWQoZXJyLnRv
+X3N0cmluZygpKTsKICAgIH0KCiAgICBpZiAhbW92aW5nX2J1Y2tldHMuaXNfZW1wdHkoKSB7CiAg
+ICAgICAgaWYgbGV0IEVycihlcnIpID0gc2V0X3dyaXRlX2ZlbmNlKAogICAgICAgICAgICBjb250
+cm9sLAogICAgICAgICAgICBodHRwLAogICAgICAgICAgICBuYW1lc3BhY2UsCiAgICAgICAgICAg
+IG5hbWUsCiAgICAgICAgICAgIGx1bWVuLAogICAgICAgICAgICBjdXJyZW50LAogICAgICAgICAg
+ICBtb3ZpbmdfYnVja2V0cywKICAgICAgICAgICAgY29udHJvbC53cml0ZV9mZW5jZV90dGxfc2Vj
+cygpLAogICAgICAgICkKICAgICAgICAuYXdhaXQKICAgICAgICB7CiAgICAgICAgICAgIHJldHVy
+biBEcml2ZU91dGNvbWU6OkJsb2NrZWQoZm9ybWF0ISgKICAgICAgICAgICAgICAgICJyZS1hcm0g
+d3JpdGUgZmVuY2UgYmVmb3JlIHNvdXJjZXMnIGNoZWNrcG9pbnQgcm91bmQ6IHtlcnJ9IgogICAg
+ICAgICAgICApKTsKICAgICAgICB9CiAgICAgICAgbGFzdF9hcm1lZF9hdCA9IEluc3RhbnQ6Om5v
+dygpOwogICAgfQoKICAgIC8vIFIxOiBzb3VyY2VzJyBldmljdGlvbiBtdXN0IGl0c2VsZiBiZSBk
+dXJhYmxlIGJlZm9yZSBjdXRvdmVyLCBzYW1lCiAgICAvLyByYXRpb25hbGUgIzEzODkgYWxyZWFk
+eSBlc3RhYmxpc2hlZCDigJQgYSBjcmFzaC10aGVuLXJlc3RhcnQgbXVzdCBuZXZlcgogICAgLy8g
+cmVzdXJyZWN0IGRhdGEgdGhpcyBzaGFyZCBubyBsb25nZXIgb3ducy4KICAgIGlmIGxldCBFcnIo
+ZXJyKSA9IGNoZWNrcG9pbnRfc2hhcmRzKAogICAgICAgIGNvbnRyb2wsCiAgICAgICAgaHR0cCwK
+ICAgICAgICBuYW1lc3BhY2UsCiAgICAgICAgbmFtZSwKICAgICAgICBsdW1lbiwKICAgICAgICAw
+Li5jdXJyZW50LnBoeXNpY2FsX3NoYXJkX2NvdW50KCksCiAgICAgICAgY3VycmVudCwKICAgICAg
+ICBmZW5jZV9idWNrZXRzLAogICAgICAgICZtdXQgbGFzdF9hcm1lZF9hdCwKICAgICkKICAgIC5h
+d2FpdAogICAgewogICAgICAgIHJldHVybiBEcml2ZU91dGNvbWU6OkJsb2NrZWQoZXJyLnRvX3N0
+cmluZygpKTsKICAgIH0KCiAgICBsZXQgcGF0Y2ggPSBqc29uISh7CiAgICAgICAgInNwZWMiOiB7
+CiAgICAgICAgICAgICJzaGFyZE1hcCI6IHsKICAgICAgICAgICAgICAgICJ2ZXJzaW9uIjogdGFy
+Z2V0LnZlcnNpb24oKSwKICAgICAgICAgICAgICAgICJ2aXJ0dWFsQnVja2V0Q291bnQiOiB0YXJn
+ZXQudmlydHVhbF9idWNrZXRfY291bnQoKSwKICAgICAgICAgICAgICAgICJhc3NpZ25tZW50cyI6
+IG1hcF9hc3NpZ25tZW50cyh0YXJnZXQpLAogICAgICAgICAgICB9LAogICAgICAgICAgICAicmVz
+aGFyZFBvbGljeSI6IHsKICAgICAgICAgICAgICAgICJ3b3JrZmxvdyI6IHsKICAgICAgICAgICAg
+ICAgICAgICAicGhhc2UiOiAiQ29tcGxldGUiLAogICAgICAgICAgICAgICAgICAgICJ0YXJnZXRT
+aGFyZENvdW50IjogbnVsbCwKICAgICAgICAgICAgICAgICAgICAvLyAjMTQ2NyBSNzogc3RhbXBl
+ZCBpbiB0aGUgU0FNRSBwYXRjaCBhcyBgc2hhcmRNYXAuCiAgICAgICAgICAgICAgICAgICAgLy8g
+dmVyc2lvbmAg4oCUIHByb29mIHRoaXMgY3V0b3ZlciwgYW5kIG5vdCBhIGhhbmQtYXV0aG9yZWQK
+ICAgICAgICAgICAgICAgICAgICAvLyBvciByZXN0b3JlZCBgc2hhcmRNYXBgLCBpcyB3aGF0IHBy
+b2R1Y2VkIHRoaXMgbWFwCiAgICAgICAgICAgICAgICAgICAgLy8gdmVyc2lvbiwgZ2F0aW5nIGBh
+ZHZhbmNlX2NvbnZlcmdlbmNlYCdzIGVuZ2FnZW1lbnQuCiAgICAgICAgICAgICAgICAgICAgImxh
+c3RDdXRvdmVyU2hhcmRNYXBWZXJzaW9uIjogdGFyZ2V0LnZlcnNpb24oKSwKICAgICAgICAgICAg
+ICAgIH0KICAgICAgICAgICAgfQogICAgICAgIH0KICAgIH0pOwogICAgaWYgbGV0IEVycihlcnIp
+ID0gY29udHJvbC5wYXRjaF9zcGVjKG5hbWVzcGFjZSwgbmFtZSwgcGF0Y2gpLmF3YWl0IHsKICAg
+ICAgICByZXR1cm4gRHJpdmVPdXRjb21lOjpCbG9ja2VkKGVyci50b19zdHJpbmcoKSk7CiAgICB9
+CiAgICBpZiBsZXQgRXJyKGVycikgPSBjb250cm9sLnRyaWdnZXJfcm9sbGluZ19yZXN0YXJ0KG5h
+bWVzcGFjZSwgbmFtZSkuYXdhaXQgewogICAgICAgIC8vIE5vbi1mYXRhbDogdGhlIG1hcCBoYXMg
+YWxyZWFkeSBmbGlwcGVkOyBhIGZhaWxlZCByZXN0YXJ0IHRyaWdnZXIKICAgICAgICAvLyBvbmx5
+IGRlbGF5cyBwaWNraW5nIHVwIHRoZSBuZXcgQ29uZmlnTWFwIG9uY2UgY29uc3VtcHRpb24gZXhp
+c3RzCiAgICAgICAgLy8gKHNlZSB0aGUgbW9kdWxlIGRvYydzICJrbm93biBnYXAiKSwgaXQgZG9l
+cyBub3QgY29ycnVwdCBkYXRhLgogICAgICAgIHRyYWNpbmc6Ondhcm4hKGVycm9yID0gJWVyciwg
+InJlc2hhcmQgZHJpdmVyOiBjdXRvdmVyIHJvbGxpbmctcmVzdGFydCB0cmlnZ2VyIGZhaWxlZCIp
+OwogICAgfQogICAgRHJpdmVPdXRjb21lOjpDb21wbGV0ZWRTcGxpdCB7CiAgICAgICAgbmV3X21h
+cF92ZXJzaW9uOiB0YXJnZXQudmVyc2lvbigpLAogICAgfQp9Cgo=
+```
+
+### Source Partition 0003
+<!-- aw-source-partition: index=3 count=4 bytes=18127 payload_bytes=24490 encoding=base64 digest=sha256:58b25149a270a58194ccdcc8631a69e961282d07c4d003dd794adea6fac11b5c boundary=ast terminal_newline=true -->
+
+```text
+Ly8vICMxNDU4IFIxOiBgQ29tcGxldGVgLXBoYXNlIGNvbnZlcmdlbmNlIHN0ZXAsIGNoZWNrZWQg
+YWhlYWQgb2YKLy8vIFtgc2hvdWxkX3N0YXJ0X3NwbGl0YF0gc28gYSBDUiBpcyBuZXZlciBhbGxv
+d2VkIHRvIHN0YXJ0IGEgKm5ldyogc3BsaXQKLy8vIHdoaWxlIGEgcHJpb3Igb25lJ3Mgc2Vydmlu
+ZyBwb2RzIGhhdmUgbm90IGFsbCBjb25maXJtZWQgYFJlYWR5YCBvbiB0aGUKLy8vIG1hcCB0aGF0
+IHByaW9yIHNwbGl0IGN1dG92ZXIgdG8uIEtlZXBzIHRoZSB3cml0ZS1wYXVzZSBmZW5jZSBhcm1l
+ZCBvdmVyCi8vLyBbYGJ1Y2tldHNfb25fbmV3ZXN0X3NoYXJkYF0g4oCUIHRoZSBidWNrZXRzIHRo
+YXQgbW92ZWQgaW50byB0aGUgY3VycmVudAovLy8gYHNwZWMuc2hhcmRNYXBgIOKAlCByZS1hcm1p
+bmcgaXQgZXZlcnkgdGljayB0aGlzIHJldHVybnMgYFNvbWUoCi8vLyBBd2FpdGluZ1RvcG9sb2d5
+Q29udmVyZ2VuY2UpYCwgdW50aWwgW2BDbHVzdGVyQ29udHJvbDo6Ci8vLyBzZXJ2aW5nX3RvcG9s
+b2d5X2NvbnZlcmdlZGBdIGNvbmZpcm1zIGV2ZXJ5IHNlcnZpbmcgcG9kIGlzIGBSZWFkeWAgb24K
+Ly8vIHRoZSBuZXcgdG9wb2xvZ3ksIGF0IHdoaWNoIHBvaW50IHRoZSBmZW5jZSBpcyBjbGVhcmVk
+IGFuZAovLy8gYHdvcmtmbG93LmNvbnZlcmdlZFNoYXJkTWFwVmVyc2lvbmAgaXMgcGF0Y2hlZCB0
+byB0aGUgY29udmVyZ2VkIHZlcnNpb24uCi8vLwovLy8gIkNvbnZlcmdpbmciIGlzIGRlcml2ZWQg
+cHVyZWx5IGZyb20gcGVyc2lzdGVkIHN0YXRlIChgc3BlYy5zaGFyZE1hcC4KLy8vIHZlcnNpb25g
+IGNvbXBhcmVkIGFnYWluc3QgYHdvcmtmbG93LmNvbnZlcmdlZFNoYXJkTWFwVmVyc2lvbmApLCBu
+b3QKLy8vIGRyaXZlciBtZW1vcnksIHNvIHRoaXMgcmVzdW1lcyBjb3JyZWN0bHkgYWNyb3NzIGEg
+ZHJpdmVyIHJlc3RhcnQ6Ci8vLyBbYGJ1Y2tldHNfb25fbmV3ZXN0X3NoYXJkYF0gcmVjb21wdXRl
+cyB0aGUgZXhhY3Qgc2FtZSBidWNrZXQgc2V0IGZyb20KLy8vIGBzcGVjLnNoYXJkTWFwYCBhbG9u
+ZSAoc2VlIHRoYXQgZnVuY3Rpb24ncyBkb2MgZm9yIHRoZSBpbnZhcmlhbnQgdGhpcwovLy8gcmVs
+aWVzIG9uKSwgYW5kIFtgQ2x1c3RlckNvbnRyb2w6OnNlcnZpbmdfdG9wb2xvZ3lfY29udmVyZ2Vk
+YF0gcmV1c2VzCi8vLyB0aGUgc2FtZSBTdGF0ZWZ1bFNldCByZWFkaW5lc3MgcGx1bWJpbmcgW2Bh
+ZHZhbmNlX3ByZXBhcmVfc3BsaXRgXQovLy8gYWxyZWFkeSBwb2xscyByYXRoZXIgdGhhbiBhZGRp
+bmcgYSBuZXcgc2VhbS4KLy8vCi8vLyBUaGlzIHJlcGxhY2VzICMxNDQyIFIyJ3MgImxlYXZlIHRo
+ZSBmZW5jZSBhcm1lZCBvbmNlIGZvciBhIGZpeGVkCi8vLyBbYFdSSVRFX0ZFTkNFX1RUTF9TRUNT
+YF0iIGJlaGF2aW9yOiBhIHNsb3cgcm9sbGluZyByZXN0YXJ0IGFjcm9zcyBtYW55Ci8vLyBwb2Rz
+IGNvdWxkIG91dGxpdmUgdGhhdCBzaW5nbGUgZml4ZWQgVFRMLCBzaWxlbnRseSByZW9wZW5pbmcg
+dGhlCi8vLyBtaXhlZC1tYXAgd3JpdGUtbG9zcyB3aW5kb3cgdGhlIGZlbmNlIGV4aXN0cyB0byBj
+bG9zZS4KLy8vCi8vLyBSZXR1cm5zIGBOb25lYCB3aGVuIGNvbnZlcmdlbmNlIGlzIG5vdCBwZW5k
+aW5nIOKAlCBlaXRoZXIgYHNoYXJkX21hcC4KLy8vIHZlcnNpb24gPT0gMGAgKGEgQ1IgdGhhdCBo
+YXMgbmV2ZXIgcmVzaGFyZGVkOyBubyBjdXRvdmVyIGhhcyBldmVyIHJ1bgovLy8gdG8gY29udmVy
+Z2UgZnJvbSksIHRoZSBjdXJyZW50IHZlcnNpb24gaXMgYWxyZWFkeSByZWNvcmRlZCBjb252ZXJn
+ZWQsIG9yCi8vLyAoIzE0NjcgUjcpIGB3b3JrZmxvdy5sYXN0Q3V0b3ZlclNoYXJkTWFwVmVyc2lv
+bmAgZG9lcyBub3QgZXF1YWwgdGhlCi8vLyBjdXJyZW50IGBzaGFyZF9tYXAudmVyc2lvbmAg4oCU
+IGxldHRpbmcgdGhlIGNhbGxlciBmYWxsIHRocm91Z2ggdG8KLy8vIFtgc2hvdWxkX3N0YXJ0X3Nw
+bGl0YF0uCi8vLwovLy8gIzE0NjcgUjc6IHRoZSBgbGFzdEN1dG92ZXJTaGFyZE1hcFZlcnNpb25g
+IGNoZWNrIGlzIHdoYXQga2VlcHMgdGhpcwovLy8gZnVuY3Rpb24gZnJvbSBldmVyIGVuZ2FnaW5n
+IHRoZSB3cml0ZS1wYXVzZSBmZW5jZSBmb3IgYSBDUiB3aG9zZQovLy8gYHNwZWMuc2hhcmRNYXBg
+IHdhcyBoYW5kLWF1dGhvcmVkIChvciByZXN0b3JlZCBmcm9tIGEgYmFja3VwL21pZ3JhdGlvbikK
+Ly8vIHJhdGhlciB0aGFuIHJlYWNoZWQgdmlhIGEgY3V0b3ZlciB0aGlzIGRyaXZlciBhY3R1YWxs
+eSByYW4g4oCUCi8vLyBgYWR2YW5jZV9jYXRjaGluZ191cF9mZW5jZWRgJ3MgY3V0b3ZlciBwYXRj
+aCBpcyB0aGUgT05MWSB3cml0ZXIgb2YKLy8vIGBsYXN0Q3V0b3ZlclNoYXJkTWFwVmVyc2lvbmAs
+IGFuZCBpdCBhbHdheXMgc2V0cyBpdCB0byB0aGUgZXhhY3QKLy8vIGB0YXJnZXQudmVyc2lvbigp
+YCBpdCBwYXRjaGVzIGludG8gYHNoYXJkTWFwLnZlcnNpb25gIGluIHRoZSBzYW1lIGNhbGwsCi8v
+LyBzbyB0aGUgdHdvIGZpZWxkcyBhcmUgZXF1YWwgaW1tZWRpYXRlbHkgYWZ0ZXIgZXZlcnkgcmVh
+bCBjdXRvdmVyLiBBCi8vLyBtYW51YWxseS1zZXQgYHNoYXJkTWFwLnZlcnNpb25gIHRoZXJlZm9y
+ZSBsZWF2ZXMKLy8vIGBsYXN0Q3V0b3ZlclNoYXJkTWFwVmVyc2lvbmAgdW5lcXVhbCAodXN1YWxs
+eSBgTm9uZWApIGZvcmV2ZXIsIGFuZCB0aGlzCi8vLyBmdW5jdGlvbiBuZXZlciBlbmdhZ2VzIGZv
+ciBpdCDigJQgY2xvc2luZyB0aGUgZ2FwIHdoZXJlIGNvbnZlcmdlbmNlIHdvdWxkCi8vLyBvdGhl
+cndpc2UgZmVuY2UgaW5kZWZpbml0ZWx5IG92ZXIgYSB0b3BvbG9neSB0aGUgZHJpdmVyIG5ldmVy
+IGFjdHVhbGx5Ci8vLyBjaGFuZ2VkLgphc3luYyBmbiBhZHZhbmNlX2NvbnZlcmdlbmNlKAogICAg
+Y29udHJvbDogJmR5biBDbHVzdGVyQ29udHJvbCwKICAgIGh0dHA6ICZyZXF3ZXN0OjpDbGllbnQs
+CiAgICBuYW1lc3BhY2U6ICZzdHIsCiAgICBuYW1lOiAmc3RyLAogICAgbHVtZW46ICZMdW1lbiwK
+KSAtPiBPcHRpb248RHJpdmVPdXRjb21lPiB7CiAgICBsZXQgbWFwX3ZlcnNpb24gPSBsdW1lbi5z
+cGVjLnNoYXJkX21hcC52ZXJzaW9uOwogICAgbGV0IHdvcmtmbG93ID0gJmx1bWVuLnNwZWMucmVz
+aGFyZF9wb2xpY3kud29ya2Zsb3c7CiAgICBpZiBtYXBfdmVyc2lvbiA9PSAwCiAgICAgICAgfHwg
+d29ya2Zsb3cuY29udmVyZ2VkX3NoYXJkX21hcF92ZXJzaW9uID09IFNvbWUobWFwX3ZlcnNpb24p
+CiAgICAgICAgfHwgd29ya2Zsb3cubGFzdF9jdXRvdmVyX3NoYXJkX21hcF92ZXJzaW9uICE9IFNv
+bWUobWFwX3ZlcnNpb24pCiAgICB7CiAgICAgICAgY2xlYXJfY29udmVyZ2VuY2Vfc3RhbGwobmFt
+ZXNwYWNlLCBuYW1lKTsKICAgICAgICByZXR1cm4gTm9uZTsKICAgIH0KCiAgICBsZXQgY3VycmVu
+dCA9IG1hdGNoIGN1cnJlbnRfc2hhcmRfbWFwKGx1bWVuKSB7CiAgICAgICAgT2sobSkgPT4gbSwK
+ICAgICAgICBFcnIoZXJyKSA9PiByZXR1cm4gU29tZShEcml2ZU91dGNvbWU6OkJsb2NrZWQoZXJy
+LnRvX3N0cmluZygpKSksCiAgICB9OwogICAgbGV0IG1vdmluZ19idWNrZXRzID0gYnVja2V0c19v
+bl9uZXdlc3Rfc2hhcmQoJmN1cnJlbnQpOwogICAgbGV0IGRlc2lyZWRfcmVwbGljYXMgPSBsdW1l
+bi5zcGVjLnN0b3JhZ2VfcG9kX2NvdW50KCkgYXMgaTY0OwoKICAgIGxldCByb2xsb3V0X2NvbnZl
+cmdlZCA9IG1hdGNoIGNvbnRyb2wKICAgICAgICAuc2VydmluZ190b3BvbG9neV9jb252ZXJnZWQo
+bmFtZXNwYWNlLCBuYW1lLCBkZXNpcmVkX3JlcGxpY2FzKQogICAgICAgIC5hd2FpdAogICAgewog
+ICAgICAgIE9rKGNvbnZlcmdlZCkgPT4gY29udmVyZ2VkLAogICAgICAgIEVycihlcnIpID0+IHJl
+dHVybiBTb21lKERyaXZlT3V0Y29tZTo6QmxvY2tlZChlcnIudG9fc3RyaW5nKCkpKSwKICAgIH07
+CgogICAgLy8gIzE0NjcgUjU6IFN0YXRlZnVsU2V0IHJvbGxvdXQgY29tcGxldGlvbiBhbG9uZSBk
+b2Vzbid0IHByb3ZlIGV2ZXJ5CiAgICAvLyBzZXJ2aW5nIHBvZCBhY3R1YWxseSBob2xkcyB0aGUg
+bmV3IHNoYXJkIG1hcCDigJQgaXQgb25seSBwcm92ZXMgdGhlCiAgICAvLyBwb2QgdGVtcGxhdGUv
+Z2VuZXJhdGlvbiBjb252ZXJnZWQuIFJlcXVpcmUgZXZlcnkgcG9kIHRvIGFsc28gcmVwb3J0CiAg
+ICAvLyB0aGUgbmV3IG1hcCB2ZXJzaW9uIG9uIGl0cyBvd24gYC9tZXRyaWNzYCBiZWZvcmUgdHJl
+YXRpbmcgdG9wb2xvZ3kKICAgIC8vIGFzIGNvbnZlcmdlZC4gR2F0ZWQgYmVoaW5kIGByb2xsb3V0
+X2NvbnZlcmdlZGAgc28gd2UgZG9uJ3Qgc2NyYXBlCiAgICAvLyBldmVyeSBzaGFyZCBvbiBldmVy
+eSB0aWNrIHdoaWxlIGEgcm9sbG91dCBpcyBzdGlsbCBpbiBmbGlnaHQuCiAgICBsZXQgY29udmVy
+Z2VkID0gaWYgcm9sbG91dF9jb252ZXJnZWQgewogICAgICAgIG1hdGNoIGNvbnRyb2wKICAgICAg
+ICAgICAgLnNlcnZpbmdfcG9kc19yZXBvcnRfbWFwX3ZlcnNpb24oCiAgICAgICAgICAgICAgICBo
+dHRwLAogICAgICAgICAgICAgICAgbmFtZXNwYWNlLAogICAgICAgICAgICAgICAgbmFtZSwKICAg
+ICAgICAgICAgICAgIGN1cnJlbnQucGh5c2ljYWxfc2hhcmRfY291bnQoKSwKICAgICAgICAgICAg
+ICAgIG1hcF92ZXJzaW9uLAogICAgICAgICAgICApCiAgICAgICAgICAgIC5hd2FpdAogICAgICAg
+IHsKICAgICAgICAgICAgT2socmVwb3J0ZWQpID0+IHJlcG9ydGVkLAogICAgICAgICAgICBFcnIo
+ZXJyKSA9PiByZXR1cm4gU29tZShEcml2ZU91dGNvbWU6OkJsb2NrZWQoZXJyLnRvX3N0cmluZygp
+KSksCiAgICAgICAgfQogICAgfSBlbHNlIHsKICAgICAgICBmYWxzZQogICAgfTsKCiAgICBpZiBj
+b252ZXJnZWQgewogICAgICAgIC8vICMxNDY3IFI3OiBjb252ZXJnZW5jZSByZXNvbHZlZCDigJQg
+Y2xlYXIgdGhlIHN0YWxsIHRyYWNrZXIgc28gYQogICAgICAgIC8vIGZ1dHVyZSwgdW5yZWxhdGVk
+IHdhaXQgKGEgbGF0ZXIgc3BsaXQncyBvd24gY29udmVyZ2VuY2UpIHN0YXJ0cwogICAgICAgIC8v
+IGZyb20gYSBmcmVzaCBidWRnZXQgaW5zdGVhZCBvZiBpbmhlcml0aW5nIHRoaXMgb25lJ3MgdGlj
+ayBjb3VudC4KICAgICAgICAvLwogICAgICAgIC8vICMxNDY3IFI1OiBvbmNlIGV2ZXJ5IHNlcnZp
+bmcgcG9kIGhhcyBiZWVuIG9ic2VydmVkIHJlcG9ydGluZwogICAgICAgIC8vIGBtYXBfdmVyc2lv
+bmAgb24gYC9tZXRyaWNzYCwgdGhlIGZlbmNlIGlzIGNsZWFyZWQgYmVsb3cuIEEKICAgICAgICAv
+LyAqc3Vic2VxdWVudCogcm9sbG91dCB0aGF0IG9ubHkgY2hhbmdlcyB0aGUgcG9kIHRlbXBsYXRl
+IChpbWFnZSwKICAgICAgICAvLyByZXNvdXJjZXMsIGVudiDigJQgbm90IHRoZSBzaGFyZCBtYXAp
+IGlzIHNhZmUgYnkgY29uc3RydWN0aW9uOgogICAgICAgIC8vIGV2ZXJ5IHBvZCBhbHJlYWR5IGhv
+bGRzIGBtYXBfdmVyc2lvbmAgYmVmb3JlIHRoYXQgcm9sbG91dAogICAgICAgIC8vIHN0YXJ0cywg
+c28gbm8gcmUtYXJtIG9yIHJlLXZlcmlmaWNhdGlvbiBpcyBuZWVkZWQgZm9yIGl0LiBPbmx5IGEK
+ICAgICAgICAvLyAqbmV3KiBjdXRvdmVyICh3aGljaCBidW1wcyBgc2hhcmRNYXAudmVyc2lvbmAg
+YWdhaW4gYW5kIHJlLXN0YW1wcwogICAgICAgIC8vIGBsYXN0Q3V0b3ZlclNoYXJkTWFwVmVyc2lv
+bmApIHJlLWVuZ2FnZXMgdGhpcyBjb252ZXJnZW5jZSBnYXRlLgogICAgICAgIGNsZWFyX2NvbnZl
+cmdlbmNlX3N0YWxsKG5hbWVzcGFjZSwgbmFtZSk7CiAgICAgICAgaWYgIW1vdmluZ19idWNrZXRz
+LmlzX2VtcHR5KCkgewogICAgICAgICAgICBpZiBsZXQgRXJyKGVycikgPSBzZXRfd3JpdGVfZmVu
+Y2UoCiAgICAgICAgICAgICAgICBjb250cm9sLAogICAgICAgICAgICAgICAgaHR0cCwKICAgICAg
+ICAgICAgICAgIG5hbWVzcGFjZSwKICAgICAgICAgICAgICAgIG5hbWUsCiAgICAgICAgICAgICAg
+ICBsdW1lbiwKICAgICAgICAgICAgICAgICZjdXJyZW50LAogICAgICAgICAgICAgICAgJkJUcmVl
+U2V0OjpuZXcoKSwKICAgICAgICAgICAgICAgIDAsCiAgICAgICAgICAgICkKICAgICAgICAgICAg
+LmF3YWl0CiAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgIHRyYWNpbmc6Ondhcm4hKAogICAg
+ICAgICAgICAgICAgICAgIGVycm9yID0gJWVyciwKICAgICAgICAgICAgICAgICAgICAicmVzaGFy
+ZCBkcml2ZXI6IGZhaWxlZCB0byBjbGVhciB3cml0ZSBmZW5jZSBhZnRlciB0b3BvbG9neSBjb252
+ZXJnZW5jZTsgXAogICAgICAgICAgICAgICAgICAgICBib3VuZGVkIGJ5IFdSSVRFX0ZFTkNFX1RU
+TF9TRUNTIgogICAgICAgICAgICAgICAgKTsKICAgICAgICAgICAgfQogICAgICAgIH0KICAgICAg
+ICBsZXQgcGF0Y2ggPSBqc29uISh7CiAgICAgICAgICAgICJzcGVjIjogewogICAgICAgICAgICAg
+ICAgInJlc2hhcmRQb2xpY3kiOiB7CiAgICAgICAgICAgICAgICAgICAgIndvcmtmbG93Ijogewog
+ICAgICAgICAgICAgICAgICAgICAgICAiY29udmVyZ2VkU2hhcmRNYXBWZXJzaW9uIjogbWFwX3Zl
+cnNpb24sCiAgICAgICAgICAgICAgICAgICAgICAgIC8vICMxNDg1IFIxL1IyOiBlcGlzb2RlIHJl
+c29sdmVkIOKAlCBjbGVhciB0aGUgZHVyYWJsZQogICAgICAgICAgICAgICAgICAgICAgICAvLyB3
+YWl0LXN0YXJ0L3JlbWVkaWF0aW9uIGJvb2trZWVwaW5nIGluIHRoZSBTQU1FCiAgICAgICAgICAg
+ICAgICAgICAgICAgIC8vIHBhdGNoIHNvIGEgZnV0dXJlLCB1bnJlbGF0ZWQgd2FpdCAoYSBsYXRl
+cgogICAgICAgICAgICAgICAgICAgICAgICAvLyBzcGxpdCdzIG93biBjb252ZXJnZW5jZSkgc3Rh
+cnRzIGZyb20gYSBmcmVzaAogICAgICAgICAgICAgICAgICAgICAgICAvLyBidWRnZXQgYW5kIGEg
+ZnJlc2ggb25lLXNob3QgcmVtZWRpYXRpb24gc2xvdCwKICAgICAgICAgICAgICAgICAgICAgICAg
+Ly8gaW5zdGVhZCBvZiBpbmhlcml0aW5nIHRoaXMgZXBpc29kZSdzIHN0YXRlLgogICAgICAgICAg
+ICAgICAgICAgICAgICAiY29udmVyZ2VuY2VXYWl0U3RhcnRlZEF0IjogbnVsbCwKICAgICAgICAg
+ICAgICAgICAgICAgICAgImNvbnZlcmdlbmNlUmVtZWRpYXRpb25SZXN0YXJ0Q291bnQiOiAwLAog
+ICAgICAgICAgICAgICAgICAgICAgICAiY29udmVyZ2VuY2VSZW1lZGlhdGlvblJlc3RhcnRlZEF0
+IjogbnVsbCwKICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICB9CiAgICAgICAg
+ICAgIH0KICAgICAgICB9KTsKICAgICAgICBpZiBsZXQgRXJyKGVycikgPSBjb250cm9sLnBhdGNo
+X3NwZWMobmFtZXNwYWNlLCBuYW1lLCBwYXRjaCkuYXdhaXQgewogICAgICAgICAgICByZXR1cm4g
+U29tZShEcml2ZU91dGNvbWU6OkJsb2NrZWQoZXJyLnRvX3N0cmluZygpKSk7CiAgICAgICAgfQog
+ICAgICAgIHJldHVybiBTb21lKERyaXZlT3V0Y29tZTo6VG9wb2xvZ3lDb252ZXJnZWQgeyBtYXBf
+dmVyc2lvbiB9KTsKICAgIH0KCiAgICAvLyAjMTQ2NyBSNzogYm91bmRlZCBlc2NhbGF0aW9uIOKA
+lCBidW1wIHRoaXMgbWFwX3ZlcnNpb24ncwogICAgLy8gY29uc2VjdXRpdmUtYXdhaXRpbmctdGlj
+a3MgY291bnRlci4gVGhpcyBpbi1wcm9jZXNzIGNhY2hlIHN0YXlzIGFzIGEKICAgIC8vIGZhc3Qt
+cGF0aC9sb2dnaW5nLW9ubHkgc2lnbmFsICgjMTQ4NSBSMik7IGl0IGlzIG5vIGxvbmdlciB3aGF0
+IGRlY2lkZXMKICAgIC8vIHdoZXRoZXIgdGhlIGJ1ZGdldCBpcyBleGNlZWRlZCAoc2VlIGJlbG93
+KS4KICAgIHJlY29yZF9jb252ZXJnZW5jZV9hd2FpdCgKICAgICAgICBuYW1lc3BhY2UsCiAgICAg
+ICAgbmFtZSwKICAgICAgICAmbHVtZW4udWlkKCkudW53cmFwX29yX2RlZmF1bHQoKSwKICAgICAg
+ICBtYXBfdmVyc2lvbiwKICAgICk7CgogICAgLy8gIzE0ODUgUjI6IHRoZSBkdXJhYmxlIHdhaXQt
+c3RhcnQgY2hlY2twb2ludC4gU3RhbXBlZCBvbmNlLCBvbiB0aGUKICAgIC8vIGZpcnN0IHRpY2sg
+dGhpcyBtYXBfdmVyc2lvbiBpcyBvYnNlcnZlZCB1bmNvbnZlcmdlZCDigJQgZXZlcnkgbGF0ZXIK
+ICAgIC8vIHRpY2sgKGluY2x1ZGluZyBhZnRlciBhbiBvcGVyYXRvciByZXN0YXJ0LCB3aGVuIHRo
+ZSBpbi1wcm9jZXNzIGNhY2hlCiAgICAvLyBhYm92ZSBpcyBlbXB0eSBhZ2FpbikgcmVhZHMgdGhl
+IFNBTUUgcGVyc2lzdGVkIHZhbHVlIGJhY2sgb2ZmIGBsdW1lbmAsCiAgICAvLyBzbyB0aGUgZWxh
+cHNlZC10aW1lIGJ1ZGdldCBiZWxvdyBpcyBjb21wdXRlZCBpZGVudGljYWxseSByZWdhcmRsZXNz
+IG9mCiAgICAvLyBkcml2ZXIgcHJvY2VzcyBsaWZldGltZS4KICAgIGxldCBub3cgPSBub3dfZXBv
+Y2hfc2VjcygpOwogICAgbGV0IHdhaXRfc3RhcnRlZF9hdCA9IHdvcmtmbG93LmNvbnZlcmdlbmNl
+X3dhaXRfc3RhcnRlZF9hdDsKICAgIGlmIHdhaXRfc3RhcnRlZF9hdC5pc19ub25lKCkgewogICAg
+ICAgIGxldCBwYXRjaCA9IGpzb24hKHsKICAgICAgICAgICAgInNwZWMiOiB7CiAgICAgICAgICAg
+ICAgICAicmVzaGFyZFBvbGljeSI6IHsKICAgICAgICAgICAgICAgICAgICAid29ya2Zsb3ciOiB7
+CiAgICAgICAgICAgICAgICAgICAgICAgICJjb252ZXJnZW5jZVdhaXRTdGFydGVkQXQiOiBub3cs
+CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICB9CiAg
+ICAgICAgfSk7CiAgICAgICAgaWYgbGV0IEVycihlcnIpID0gY29udHJvbC5wYXRjaF9zcGVjKG5h
+bWVzcGFjZSwgbmFtZSwgcGF0Y2gpLmF3YWl0IHsKICAgICAgICAgICAgcmV0dXJuIFNvbWUoRHJp
+dmVPdXRjb21lOjpCbG9ja2VkKGZvcm1hdCEoCiAgICAgICAgICAgICAgICAicGVyc2lzdCBjb252
+ZXJnZW5jZS13YWl0IHN0YXJ0OiB7ZXJyfSIKICAgICAgICAgICAgKSkpOwogICAgICAgIH0KICAg
+IH0KICAgIC8vIGB3YWl0X3N0YXJ0ZWRfYXQub3IoU29tZShub3cpKWA6IG9uIHRoaXMgdmVyeSBm
+aXJzdCB0aWNrIHRoZSBwYXRjaAogICAgLy8gYWJvdmUganVzdCBwZXJzaXN0ZWQgYG5vd2AsIGJ1
+dCBgbHVtZW5gIGl0c2VsZiAodGhpcyB0aWNrJ3Mgc25hcHNob3QpCiAgICAvLyBzdGlsbCBwcmVk
+YXRlcyBpdCDigJQgdHJlYXQgdGhpcyB0aWNrIGFzIGZyZXNobHkgc3RhcnRlZCAoZWxhcHNlZCAw
+KSwKICAgIC8vIGV4YWN0bHkgbGlrZSB0aGUgcHJlLSMxNDg1IHRpY2stY291bnQgYnVkZ2V0IGRp
+ZC4KICAgIGxldCBzdGFsbGVkID0gY29udmVyZ2VuY2Vfc3RhbGxfY29uZGl0aW9uKHdhaXRfc3Rh
+cnRlZF9hdC5vcihTb21lKG5vdykpKTsKICAgIGlmIHN0YWxsZWQgewogICAgICAgIHRyYWNpbmc6
+Ondhcm4hKAogICAgICAgICAgICBuYW1lc3BhY2UsCiAgICAgICAgICAgIG5hbWUsCiAgICAgICAg
+ICAgIG1hcF92ZXJzaW9uLAogICAgICAgICAgICAicmVzaGFyZCBkcml2ZXI6IHRvcG9sb2d5IGNv
+bnZlcmdlbmNlIGhhcyBub3QgYmVlbiBjb25maXJtZWQgYWZ0ZXIgXAogICAgICAgICAgICAgQ09O
+VkVSR0VOQ0VfU1RBTExfU0VDUzsgZmVuY2Ugc3RheXMgYXJtZWQsIHJhaXNpbmcgdG9wb2xvZ3lD
+b252ZXJnZW5jZVN0YWxsZWQiCiAgICAgICAgKTsKICAgIH0KCiAgICAvLyAjMTQ4NSBSMTogYm91
+bmRlZCByZW1lZGlhdGlvbiByZXN0YXJ0LiBUaGUgQ29uZmlnTWFwLXJhY2Ugc2lnbmF0dXJlIGlz
+CiAgICAvLyBleGFjdGx5IHdoYXQgdGhpcyBicmFuY2ggYWxyZWFkeSBlc3RhYmxpc2hlcyBhYm92
+ZTogdGhlIFN0YXRlZnVsU2V0CiAgICAvLyByb2xsb3V0IGl0c2VsZiBpcyBkb25lIChgcm9sbG91
+dF9jb252ZXJnZWRgKSBidXQgYXQgbGVhc3Qgb25lIHBvZCBpcwogICAgLy8gc3RpbGwgcmVwb3J0
+aW5nIHRoZSBvbGQgc2hhcmQtbWFwIHZlcnNpb24gKGAhY29udmVyZ2VkYCwgdGhpcwogICAgLy8g
+ZnVuY3Rpb24ncyBvdXRlciBgaWYgY29udmVyZ2VkYCBhbHJlYWR5IHJldHVybmVkKS4gQm91bmRl
+ZCB0byBleGFjdGx5CiAgICAvLyBvbmUgcmUtdHJpZ2dlciBwZXIgZXBpc29kZSB2aWEgYGNvbnZl
+cmdlbmNlUmVtZWRpYXRpb25SZXN0YXJ0Q291bnRgCiAgICAvLyAocGVyc2lzdGVkLCBzbyBhIGRy
+aXZlciByZXN0YXJ0IG5ldmVyIHJlLXRyaWdnZXJzIGEgc2Vjb25kIHRpbWUgZm9yCiAgICAvLyB0
+aGUgc2FtZSBlcGlzb2RlKSDigJQgdGhlIGZlbmNlIHN0YXlzIGFybWVkIGFuZCBgc3RhbGxlZGAg
+c3RheXMgcmFpc2VkCiAgICAvLyBlaXRoZXIgd2F5OyB0aGlzIG9ubHkgYXR0ZW1wdHMgYSBzZWxm
+LWhlYWwsIGl0IG5ldmVyIGNoYW5nZXMgd2hldGhlcgogICAgLy8gdGhlIHdhaXQga2VlcHMgYmVp
+bmcgcmVwb3J0ZWQuCiAgICBpZiBzdGFsbGVkICYmIHJvbGxvdXRfY29udmVyZ2VkICYmIHdvcmtm
+bG93LmNvbnZlcmdlbmNlX3JlbWVkaWF0aW9uX3Jlc3RhcnRfY291bnQgPT0gMCB7CiAgICAgICAg
+dHJhY2luZzo6d2FybiEoCiAgICAgICAgICAgIG5hbWVzcGFjZSwKICAgICAgICAgICAgbmFtZSwK
+ICAgICAgICAgICAgbWFwX3ZlcnNpb24sCiAgICAgICAgICAgICJyZXNoYXJkIGRyaXZlcjogY29u
+dmVyZ2VuY2Ugc3RhbGxlZCBvbiBhIHZlcnNpb24gbWlzbWF0Y2ggKHJvbGxvdXQgY29tcGxldGUs
+IHBvZChzKSBcCiAgICAgICAgICAgICBzdGlsbCBvbiB0aGUgb2xkIHNoYXJkLW1hcCB2ZXJzaW9u
+KTsgZHVyYWJseSBjbGFpbWluZyBvbmUgYm91bmRlZCByZW1lZGlhdGlvbiBcCiAgICAgICAgICAg
+ICByb2xsaW5nIHJlc3RhcnQiCiAgICAgICAgKTsKICAgICAgICAvLyBQZXJzaXN0IHRoZSBvbmUt
+c2hvdCBjbGFpbSBCRUZPUkUgdGhlIGV4dGVybmFsIFN0YXRlZnVsU2V0IHBhdGNoLgogICAgICAg
+IC8vIFRoZXNlIHR3byBzeXN0ZW1zIGhhdmUgbm8gc2hhcmVkIHRyYW5zYWN0aW9uOiB0cmlnZ2Vy
+aW5nIGZpcnN0IGFuZAogICAgICAgIC8vIHRoZW4gZmFpbGluZyB0aGlzIENSIHBhdGNoIHdvdWxk
+IGxlYXZlIHRoZSBuZXh0IHRpY2sgc2VlaW5nIGEgemVybwogICAgICAgIC8vIGNvdW50IGFuZCBp
+c3N1aW5nIGEgZHVwbGljYXRlIHJlc3RhcnQuIEEgZmFpbGVkIHByZS10cmlnZ2VyIHBhdGNoCiAg
+ICAgICAgLy8gaW5zdGVhZCBsZWF2ZXMgbm8gc2lkZSBlZmZlY3QgYW5kIGlzIHNhZmVseSByZXRy
+aWVkIG9uIHRoZSBuZXh0CiAgICAgICAgLy8gdGljazsgYWZ0ZXIgdGhlIGNsYWltIGNvbW1pdHMs
+IGV2ZW4gYSBmYWlsaW5nIHJlc3RhcnQgQVBJIGNhbGwgaXMKICAgICAgICAvLyBkZWxpYmVyYXRl
+bHkgYSBzaW5nbGUgYm91bmRlZCBhdHRlbXB0IGZvciB0aGlzIGVwaXNvZGUuCiAgICAgICAgbGV0
+IHBhdGNoID0ganNvbiEoewogICAgICAgICAgICAic3BlYyI6IHsKICAgICAgICAgICAgICAgICJy
+ZXNoYXJkUG9saWN5IjogewogICAgICAgICAgICAgICAgICAgICJ3b3JrZmxvdyI6IHsKICAgICAg
+ICAgICAgICAgICAgICAgICAgImNvbnZlcmdlbmNlUmVtZWRpYXRpb25SZXN0YXJ0Q291bnQiOiAx
+LAogICAgICAgICAgICAgICAgICAgICAgICAiY29udmVyZ2VuY2VSZW1lZGlhdGlvblJlc3RhcnRl
+ZEF0Ijogbm93LAogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIH0KICAgICAg
+ICAgICAgfQogICAgICAgIH0pOwogICAgICAgIGlmIGxldCBFcnIoZXJyKSA9IGNvbnRyb2wucGF0
+Y2hfc3BlYyhuYW1lc3BhY2UsIG5hbWUsIHBhdGNoKS5hd2FpdCB7CiAgICAgICAgICAgIHJldHVy
+biBTb21lKERyaXZlT3V0Y29tZTo6QmxvY2tlZChmb3JtYXQhKAogICAgICAgICAgICAgICAgInBl
+cnNpc3QgY29udmVyZ2VuY2UgcmVtZWRpYXRpb24gcmVzdGFydCBjbGFpbToge2Vycn0iCiAgICAg
+ICAgICAgICkpKTsKICAgICAgICB9CiAgICAgICAgaWYgbGV0IEVycihlcnIpID0gY29udHJvbAog
+ICAgICAgICAgICAudHJpZ2dlcl9jb252ZXJnZW5jZV9yZW1lZGlhdGlvbl9yZXN0YXJ0KG5hbWVz
+cGFjZSwgbmFtZSkKICAgICAgICAgICAgLmF3YWl0CiAgICAgICAgewogICAgICAgICAgICAvLyBO
+b24tZmF0YWwsIG1hdGNoaW5nIHRoZSBjdXRvdmVyLXRpY2sgdHJpZ2dlcidzIG93biBoYW5kbGlu
+ZyDigJQKICAgICAgICAgICAgLy8gdGhlIGR1cmFibGUgY2xhaW0gYWJvdmUgbWFrZXMgdGhpcyBh
+IHNpbmdsZSBib3VuZGVkIGF0dGVtcHQKICAgICAgICAgICAgLy8gZXZlbiBpZiBLdWJlcm5ldGVz
+IHJlamVjdHMgaXQuIFRoZSBmZW5jZSBhbmQgc3RhbGxlZCBjb25kaXRpb24KICAgICAgICAgICAg
+Ly8gcmVtYWluIGluIHBsYWNlIGZvciBhbiBvcGVyYXRvciB0byByZW1lZGlhdGUgYSByZXBlYXRl
+ZCBmYWlsdXJlLgogICAgICAgICAgICB0cmFjaW5nOjp3YXJuIShlcnJvciA9ICVlcnIsICJyZXNo
+YXJkIGRyaXZlcjogY29udmVyZ2VuY2UgcmVtZWRpYXRpb24gcm9sbGluZy1yZXN0YXJ0IHRyaWdn
+ZXIgZmFpbGVkIik7CiAgICAgICAgfQogICAgfQoKICAgIGlmICFtb3ZpbmdfYnVja2V0cy5pc19l
+bXB0eSgpIHsKICAgICAgICBpZiBsZXQgRXJyKGVycikgPSBzZXRfd3JpdGVfZmVuY2UoCiAgICAg
+ICAgICAgIGNvbnRyb2wsCiAgICAgICAgICAgIGh0dHAsCiAgICAgICAgICAgIG5hbWVzcGFjZSwK
+ICAgICAgICAgICAgbmFtZSwKICAgICAgICAgICAgbHVtZW4sCiAgICAgICAgICAgICZjdXJyZW50
+LAogICAgICAgICAgICAmbW92aW5nX2J1Y2tldHMsCiAgICAgICAgICAgIGNvbnRyb2wud3JpdGVf
+ZmVuY2VfdHRsX3NlY3MoKSwKICAgICAgICApCiAgICAgICAgLmF3YWl0CiAgICAgICAgewogICAg
+ICAgICAgICByZXR1cm4gU29tZShEcml2ZU91dGNvbWU6OkJsb2NrZWQoZm9ybWF0ISgKICAgICAg
+ICAgICAgICAgICJyZS1hcm0gd3JpdGUgZmVuY2Ugd2hpbGUgYXdhaXRpbmcgdG9wb2xvZ3kgY29u
+dmVyZ2VuY2U6IHtlcnJ9IgogICAgICAgICAgICApKSk7CiAgICAgICAgfQogICAgfQogICAgU29t
+ZShEcml2ZU91dGNvbWU6OkF3YWl0aW5nVG9wb2xvZ3lDb252ZXJnZW5jZSB7IG1hcF92ZXJzaW9u
+IH0pCn0KCi8vLyBPbmUgcGhhc2UtZHJpdmVyIHRpY2sgZm9yIGBsdW1lbmA6IGRpc3BhdGNoZXMg
+b24gYHNwZWMucmVzaGFyZFBvbGljeS4KLy8vIHdvcmtmbG93LnBoYXNlYCBhbmQgcGVyZm9ybXMg
+YXQgbW9zdCBvbmUgc3RhdGUgdHJhbnNpdGlvbidzIHdvcnRoIG9mCi8vLyB3b3JrLiBTYWZlIHRv
+IGNhbGwgZXZlcnkgW2BEUklWRVJfUE9MTF9JTlRFUlZBTGBdIGZvcmV2ZXIg4oCUIGEgYENvbXBs
+ZXRlYAovLy8gQ1Igd2l0aCBub3RoaW5nIHRvIGRvIHJldHVybnMgW2BEcml2ZU91dGNvbWU6Ok5v
+T3BgXSBpbW1lZGlhdGVseS4KLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50
+aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLW9wZXJhdG9yLXJlc2hhcmQtZHJpdmVyLXJzLm1kI3Nv
+dXJjZQpwdWIgYXN5bmMgZm4gZHJpdmVfdGljaygKICAgIGNvbnRyb2w6ICZkeW4gQ2x1c3RlckNv
+bnRyb2wsCiAgICBodHRwOiAmcmVxd2VzdDo6Q2xpZW50LAogICAgbHVtZW46ICZMdW1lbiwKKSAt
+PiBEcml2ZU91dGNvbWUgewogICAgbGV0IFNvbWUobmFtZXNwYWNlKSA9IGx1bWVuLm5hbWVzcGFj
+ZSgpIGVsc2UgewogICAgICAgIHJldHVybiBEcml2ZU91dGNvbWU6OkJsb2NrZWQoIkx1bWVuIG9i
+amVjdCBtaXNzaW5nIG1ldGFkYXRhLm5hbWVzcGFjZSIudG9fc3RyaW5nKCkpOwogICAgfTsKICAg
+IGxldCBuYW1lID0gbHVtZW4ubmFtZV9hbnkoKTsKCiAgICBtYXRjaCBsdW1lbi5zcGVjLnJlc2hh
+cmRfcG9saWN5LndvcmtmbG93LnBoYXNlIHsKICAgICAgICBSZXNoYXJkUGhhc2U6OkNvbXBsZXRl
+ID0+IHsKICAgICAgICAgICAgLy8gIzE0NTggUjQ6IGEgd29ya2Zsb3cgYmFjayBhdCBgQ29tcGxl
+dGVgIGhhcyBubyBsZWdpdGltYXRlCiAgICAgICAgICAgIC8vIG92ZXJzaXplIHdlZGdlIGxlZnQg
+dG8gcmVwb3J0IOKAlCBjbGVhciBkZWZlbnNpdmVseSAoaWRlbXBvdGVudAogICAgICAgICAgICAv
+LyBpZiBhbHJlYWR5IGNsZWFyIGZyb20gYHJ1bl9taWdyYXRpb25fcGFzc19pbXBsYCdzIG93bgog
+ICAgICAgICAgICAvLyBlbmQtb2YtcGFzcyBjbGVhcikgc28gYSBtYW51YWxseS1mb3JjZWQgcGhh
+c2UgcmVzZXQgbmV2ZXIKICAgICAgICAgICAgLy8gbGVhdmVzIGEgc3RhbGUgY29uZGl0aW9uIGJl
+aGluZC4KICAgICAgICAgICAgY2xlYXJfb3ZlcnNpemVfYmxvY2soJm5hbWVzcGFjZSwgJm5hbWUp
+OwogICAgICAgICAgICBpZiBsZXQgU29tZShvdXRjb21lKSA9CiAgICAgICAgICAgICAgICBhZHZh
+bmNlX2NvbnZlcmdlbmNlKGNvbnRyb2wsIGh0dHAsICZuYW1lc3BhY2UsICZuYW1lLCBsdW1lbiku
+YXdhaXQKICAgICAgICAgICAgewogICAgICAgICAgICAgICAgb3V0Y29tZQogICAgICAgICAgICB9
+IGVsc2UgaWYgc2hvdWxkX3N0YXJ0X3NwbGl0KGx1bWVuKSB7CiAgICAgICAgICAgICAgICBzdGFy
+dF9zcGxpdChjb250cm9sLCAmbmFtZXNwYWNlLCAmbmFtZSwgbHVtZW4pLmF3YWl0CiAgICAgICAg
+ICAgIH0gZWxzZSB7CiAgICAgICAgICAgICAgICBEcml2ZU91dGNvbWU6Ok5vT3AoCiAgICAgICAg
+ICAgICAgICAgICAgIm5vIGNyb3NzZWQgdGhyZXNob2xkLCB1bnN1cHBvcnRlZCB0b3BvbG9neSwg
+b3IgbWF4U2hhcmRzIHJlYWNoZWQiLAogICAgICAgICAgICAgICAgKQogICAgICAgICAgICB9CiAg
+ICAgICAgfQogICAgICAgIFJlc2hhcmRQaGFzZTo6UHJlcGFyZVNwbGl0ID0+IHsKICAgICAgICAg
+ICAgYWR2YW5jZV9wcmVwYXJlX3NwbGl0KGNvbnRyb2wsICZuYW1lc3BhY2UsICZuYW1lLCBsdW1l
+bikuYXdhaXQKICAgICAgICB9CiAgICAgICAgUmVzaGFyZFBoYXNlOjpTcGxpdHRpbmcgPT4gYWR2
+YW5jZV9zcGxpdHRpbmcoY29udHJvbCwgaHR0cCwgJm5hbWVzcGFjZSwgJm5hbWUsIGx1bWVuKS5h
+d2FpdCwKICAgICAgICBSZXNoYXJkUGhhc2U6OkNhdGNoaW5nVXAgPT4gewogICAgICAgICAgICBh
+ZHZhbmNlX2NhdGNoaW5nX3VwKGNvbnRyb2wsIGh0dHAsICZuYW1lc3BhY2UsICZuYW1lLCBsdW1l
+bikuYXdhaXQKICAgICAgICB9CiAgICB9Cn0KCi8vLyBCYWNrZ3JvdW5kIGxvb3A6IGV2ZXJ5IFtg
+RFJJVkVSX1BPTExfSU5URVJWQUxgXSwgbGlzdCBldmVyeSBgTHVtZW5gIENSCi8vLyBjbHVzdGVy
+LXdpZGUgYW5kIFtgZHJpdmVfdGlja2BdIGl0LiBJbmRlcGVuZGVudGx5IGxlYWRlci1nYXRlZCAo
+aXRzIG93bgovLy8gW2BEUklWRVJfTEVBU0VfTkFNRWBdIExlYXNlKSBmcm9tIHRoZSBzaGFyZWQg
+YGxpYnMvc2VydmljZS1rOHNgIGFwcGx5IGxvb3Ag4oCUCi8vLyBlaXRoZXIgbG9vcCdzIGxlYWRl
+ciBtYXkgb3IgbWF5IG5vdCBiZSB0aGlzIHJlcGxpY2EsIGFuZCBib3RoIGFyZSBzYWZlIHRvCi8v
+LyBydW4gY29uY3VycmVudGx5IHNpbmNlIGV2ZXJ5IGRyaXZlciBhY3Rpb24gaXMgYW4gaWRlbXBv
+dGVudC1vci1jaGVja3BvaW50ZWQKLy8vIHNwZWMgcGF0Y2ggLyBhZGRpdGl2ZSBkYXRhLXBsYW5l
+IGNhbGwuCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9h
+cHBzLWx1bWVuLXNyYy1vcGVyYXRvci1yZXNoYXJkLWRyaXZlci1ycy5tZCNzb3VyY2UKcHViIGZu
+IHNwYXduX3Jlc2hhcmRfZHJpdmVyX2xvb3AoY2xpZW50OiBDbGllbnQpIHsKICAgIC8vIE1pcnJv
+cnMgYGxpYnMvc2VydmljZS1rOHM6OmNvbnRyb2xsZXJgJ3Mgb3duIGBpZGVudGl0eWAvYGxlYXNl
+X25hbWVzcGFjZWAKICAgIC8vIGhlbHBlcnMgKHByaXZhdGUgdG8gdGhhdCBjcmF0ZSwgc28gZHVw
+bGljYXRlZCBoZXJlKSBzbyBib3RoCiAgICAvLyBpbmRlcGVuZGVudGx5LWxlYWRlci1nYXRlZCBs
+b29wcyByZXNvbHZlIHRoZSBzYW1lIHBvZCBpZGVudGl0eSBhbmQKICAgIC8vIExlYXNlIG5hbWVz
+cGFjZSBmcm9tIHRoZSBzYW1lIGVudiB2YXJzLgogICAgbGV0IGlkZW50aXR5ID0gc3RkOjplbnY6
+OnZhcigiUE9EX05BTUUiKQogICAgICAgIC5vcl9lbHNlKHxffCBzdGQ6OmVudjo6dmFyKCJIT1NU
+TkFNRSIpKQogICAgICAgIC51bndyYXBfb3JfZWxzZSh8X3wgRFJJVkVSX0xFQVNFX05BTUUudG9f
+c3RyaW5nKCkpOwogICAgbGV0IG5hbWVzcGFjZSA9CiAgICAgICAgc3RkOjplbnY6OnZhcigiUE9E
+X05BTUVTUEFDRSIpLnVud3JhcF9vcl9lbHNlKHxffCAibHVtZW4tb3BlcmF0b3Itc3lzdGVtIi50
+b19zdHJpbmcoKSk7CiAgICBsZXQgZWxlY3Rpb24gPSBFbGVjdGlvbjo6bmV3KGlkZW50aXR5KTsK
+ICAgIGxlYXNlOjpzcGF3bigKICAgICAgICBjbGllbnQuY2xvbmUoKSwKICAgICAgICBuYW1lc3Bh
+Y2UsCiAgICAgICAgRFJJVkVSX0xFQVNFX05BTUUudG9fc3RyaW5nKCksCiAgICAgICAgZWxlY3Rp
+b24uY2xvbmUoKSwKICAgICk7CiAgICBsZXQgY29udHJvbCA9IEt1YmVDbHVzdGVyQ29udHJvbDo6
+bmV3KGNsaWVudC5jbG9uZSgpKTsKICAgIHRva2lvOjpzcGF3bihhc3luYyBtb3ZlIHsKICAgICAg
+ICBsZXQgaHR0cCA9IHJlcXdlc3Q6OkNsaWVudDo6YnVpbGRlcigpCiAgICAgICAgICAgIC50aW1l
+b3V0KER1cmF0aW9uOjpmcm9tX3NlY3MoMzApKQogICAgICAgICAgICAuYnVpbGQoKQogICAgICAg
+ICAgICAudW53cmFwX29yX2Vsc2UofF98IHJlcXdlc3Q6OkNsaWVudDo6bmV3KCkpOwogICAgICAg
+IGxldCBhcGk6IGt1YmU6OkFwaTxMdW1lbj4gPSBrdWJlOjpBcGk6OmFsbChjbGllbnQpOwogICAg
+ICAgIGxvb3AgewogICAgICAgICAgICBpZiBlbGVjdGlvbgogICAgICAgICAgICAgICAgLmlzX2xl
+YWRlcgogICAgICAgICAgICAgICAgLmxvYWQoc3RkOjpzeW5jOjphdG9taWM6Ok9yZGVyaW5nOjpS
+ZWxheGVkKQogICAgICAgICAgICB7CiAgICAgICAgICAgICAgICBtYXRjaCBhcGkubGlzdCgmRGVm
+YXVsdDo6ZGVmYXVsdCgpKS5hd2FpdCB7CiAgICAgICAgICAgICAgICAgICAgT2sobGlzdCkgPT4g
+ewogICAgICAgICAgICAgICAgICAgICAgICAvLyAjMTQ1OCBSNDogdGhpcyBsaXN0IGlzIGFscmVh
+ZHkgdGhlIGF1dGhvcml0YXRpdmUKICAgICAgICAgICAgICAgICAgICAgICAgLy8gbGl2ZS1DUiBz
+ZXQsIHNvIHBydW5pbmcgc3RhbGUgb3ZlcnNpemUtY2FjaGUKICAgICAgICAgICAgICAgICAgICAg
+ICAgLy8gZW50cmllcyBoZXJlIG5lZWRzIG5vIGV4dHJhIGs4cyBBUEkgY2FsbC4KICAgICAgICAg
+ICAgICAgICAgICAgICAgbGV0IGxpdmVfdWlkczogQlRyZWVTZXQ8U3RyaW5nPiA9CiAgICAgICAg
+ICAgICAgICAgICAgICAgICAgICBsaXN0Lml0ZW1zLml0ZXIoKS5maWx0ZXJfbWFwKHxsfCBsLnVp
+ZCgpKS5jb2xsZWN0KCk7CiAgICAgICAgICAgICAgICAgICAgICAgIHBydW5lX292ZXJzaXplX2Nh
+Y2hlKCZsaXZlX3VpZHMpOwogICAgICAgICAgICAgICAgICAgICAgICAvLyAjMTQ2NyBSNzogc2Ft
+ZSBhbHJlYWR5LWxpc3RlZCBsaXZlLUNSIHNldCBib3VuZHMKICAgICAgICAgICAgICAgICAgICAg
+ICAgLy8gdGhlIGNvbnZlcmdlbmNlLXN0YWxsIGNhY2hlIHRvby4KICAgICAgICAgICAgICAgICAg
+ICAgICAgcHJ1bmVfY29udmVyZ2VuY2Vfc3RhbGxfY2FjaGUoJmxpdmVfdWlkcyk7CiAgICAgICAg
+ICAgICAgICAgICAgICAgIGZvciBsdW1lbiBpbiBsaXN0Lml0ZW1zIHsKICAgICAgICAgICAgICAg
+ICAgICAgICAgICAgIGxldCBvdXRjb21lID0gZHJpdmVfdGljaygmY29udHJvbCwgJmh0dHAsICZs
+dW1lbikuYXdhaXQ7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAhbWF0Y2hlcyEob3V0
+Y29tZSwgRHJpdmVPdXRjb21lOjpOb09wKF8pKSB7CiAgICAgICAgICAgICAgICAgICAgICAgICAg
+ICAgICAgdHJhY2luZzo6aW5mbyEoCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
+IGx1bWVuID0gbHVtZW4ubmFtZV9hbnkoKSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
+ICAgICAgbmFtZXNwYWNlID0gbHVtZW4ubmFtZXNwYWNlKCksCiAgICAgICAgICAgICAgICAgICAg
+ICAgICAgICAgICAgICAgID9vdXRjb21lLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
+ICAgICAicmVzaGFyZCBkcml2ZXIgdGljayIKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
+ICApOwogICAgICAgICAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgICAg
+ICB9CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgIEVycihlcnIpID0+
+IHsKICAgICAgICAgICAgICAgICAgICAgICAgdHJhY2luZzo6d2FybiEoZXJyb3IgPSAlZXJyLCAi
+cmVzaGFyZCBkcml2ZXI6IGxpc3QgTHVtZW4gZmFpbGVkIik7CiAgICAgICAgICAgICAgICAgICAg
+fQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICB9CiAgICAgICAgICAgIHRva2lvOjp0aW1l
+OjpzbGVlcChEUklWRVJfUE9MTF9JTlRFUlZBTCkuYXdhaXQ7CiAgICAgICAgfQogICAgfSk7Cn0K
+Cg==
+```
+
+### Source Partition 0004
+<!-- aw-source-partition: index=4 count=4 bytes=34034 payload_bytes=45977 encoding=base64 digest=sha256:20683001ab37f38f43f0fbf364ff0fa25a7681badbb40732bd6bc844be3bb21b boundary=ast terminal_newline=true -->
+
+```text
+I1tjZmcodGVzdCldCm1vZCB0ZXN0cyB7CiAgICB1c2Ugc3VwZXI6Oio7CiAgICB1c2UgY3JhdGU6
+Om9wZXJhdG9yOjpjcmQ6OnsKICAgICAgICBMdW1lblJlc2hhcmRTdGF0dXMsIEx1bWVuU3BlYywg
+THVtZW5TdGF0dXMsIFJlc2hhcmRQb2xpY3ksIFJlc2hhcmRXb3JrZmxvd1NwZWMsCiAgICAgICAg
+U2VydmluZ1NwZWMsIFNoYXJkTWFwU3BlYywKICAgIH07CiAgICB1c2Ugc3RkOjpzeW5jOjphdG9t
+aWM6OntBdG9taWNJNjQsIE9yZGVyaW5nfTsKICAgIHVzZSBzdGQ6OnN5bmM6Ok11dGV4OwoKICAg
+IGZuIHNwZWMoc2hhcmRfY291bnQ6IHUzMiwgcmVwbGljYXNfcGVyX3NoYXJkOiB1MzIsIG1heF9z
+aGFyZF9ieXRlczogT3B0aW9uPHU2ND4pIC0+IEx1bWVuU3BlYyB7CiAgICAgICAgTHVtZW5TcGVj
+IHsKICAgICAgICAgICAgaW1hZ2U6ICJsdW1lbjpsYXRlc3QiLmludG8oKSwKICAgICAgICAgICAg
+aW1hZ2VfcHVsbF9wb2xpY3k6IE5vbmUsCiAgICAgICAgICAgIHNoYXJkX2NvdW50LAogICAgICAg
+ICAgICBzaGFyZF9tYXA6IFNoYXJkTWFwU3BlYyB7CiAgICAgICAgICAgICAgICB2ZXJzaW9uOiAw
+LAogICAgICAgICAgICAgICAgdmlydHVhbF9idWNrZXRfY291bnQ6IDgsCiAgICAgICAgICAgICAg
+ICBhc3NpZ25tZW50czogVmVjOjpuZXcoKSwKICAgICAgICAgICAgfSwKICAgICAgICAgICAgcmVw
+bGljYXNfcGVyX3NoYXJkLAogICAgICAgICAgICB2b3Rlcl9jb3VudDogcmVwbGljYXNfcGVyX3No
+YXJkLAogICAgICAgICAgICBsb2dfZm9ybWF0OiBEZWZhdWx0OjpkZWZhdWx0KCksCiAgICAgICAg
+ICAgIGxvZ19sZXZlbDogTm9uZSwKICAgICAgICAgICAgYXV0aDogRGVmYXVsdDo6ZGVmYXVsdCgp
+LAogICAgICAgICAgICB0b2tlbnNfc2VjcmV0OiBOb25lLAogICAgICAgICAgICB0b2tlbnNfc2Vj
+cmV0X3Byb3ZpZGVyX2NsYXNzOiBOb25lLAogICAgICAgICAgICBzZXJ2aW5nOiBTZXJ2aW5nU3Bl
+Yzo6ZGVmYXVsdCgpLAogICAgICAgICAgICByZXNoYXJkX3BvbGljeTogUmVzaGFyZFBvbGljeSB7
+CiAgICAgICAgICAgICAgICBtYXhfc2hhcmRfYnl0ZXMsCiAgICAgICAgICAgICAgICAuLkRlZmF1
+bHQ6OmRlZmF1bHQoKQogICAgICAgICAgICB9LAogICAgICAgICAgICBvYnNlcnZhYmlsaXR5OiBm
+YWxzZSwKICAgICAgICB9CiAgICB9CgogICAgZm4gbHVtZW5fd2l0aChzcGVjOiBMdW1lblNwZWMs
+IHN0YXR1czogT3B0aW9uPEx1bWVuU3RhdHVzPikgLT4gTHVtZW4gewogICAgICAgIGxldCBtdXQg
+bHVtZW4gPSBMdW1lbjo6bmV3KCJzZWFyY2giLCBzcGVjKTsKICAgICAgICBsdW1lbi5tZXRhZGF0
+YS5uYW1lc3BhY2UgPSBTb21lKCJhY21lIi50b19zdHJpbmcoKSk7CiAgICAgICAgbHVtZW4uc3Rh
+dHVzID0gc3RhdHVzOwogICAgICAgIGx1bWVuCiAgICB9CgogICAgZm4gc3RhdHVzX3dpdGhfYmxv
+Y2tpbmcoY29uZGl0aW9uOiAmc3RyKSAtPiBMdW1lblN0YXR1cyB7CiAgICAgICAgTHVtZW5TdGF0
+dXMgewogICAgICAgICAgICByZXNoYXJkOiBMdW1lblJlc2hhcmRTdGF0dXMgewogICAgICAgICAg
+ICAgICAgYmxvY2tpbmdfY29uZGl0aW9uczogdmVjIVtjb25kaXRpb24udG9fc3RyaW5nKCldLAog
+ICAgICAgICAgICAgICAgLy8gUjUncyBmcmVzaG5lc3MgZ2F0ZSByZXF1aXJlcyB0aGlzIHRvIG1h
+dGNoIHRoZSBDUidzCiAgICAgICAgICAgICAgICAvLyBjdXJyZW50IGBzcGVjLnNoYXJkX21hcC52
+ZXJzaW9uYDsgZXZlcnkgZml4dHVyZSBidWlsdCB3aXRoCiAgICAgICAgICAgICAgICAvLyBgc3Bl
+YygpYCBoYXJkY29kZXMgYHNoYXJkX21hcC52ZXJzaW9uOiAwYCwgc28gYFNvbWUoMClgCiAgICAg
+ICAgICAgICAgICAvLyBoZXJlIG1vZGVscyBhIHN0YXR1cyB3cml0ZSB0aGF0IHdhcyBhY3R1YWxs
+eSBmcmVzaCBhdCB0aGUKICAgICAgICAgICAgICAgIC8vIHNjZW5hcmlvJ3MgbWFwIHZlcnNpb24s
+IG5vdCBhIHZhbHVlIHRoYXQgaGFwcGVucyB0byBmYWlsCiAgICAgICAgICAgICAgICAvLyB0aGUg
+bmV3IGNoZWNrIGJ5IGZpeHR1cmUgb21pc3Npb24uCiAgICAgICAgICAgICAgICB1c2FnZV9tZWFz
+dXJlZF9hdF9tYXBfdmVyc2lvbjogU29tZSgwKSwKICAgICAgICAgICAgICAgIC4uRGVmYXVsdDo6
+ZGVmYXVsdCgpCiAgICAgICAgICAgIH0sCiAgICAgICAgICAgIC4uRGVmYXVsdDo6ZGVmYXVsdCgp
+CiAgICAgICAgfQogICAgfQoKICAgIC8vIC0tLS0gc2hvdWxkX3N0YXJ0X3NwbGl0IChBQzQgKyBS
+MykgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKICAgICNbdGVzdF0KICAgIGZuIHNo
+b3VsZF9zdGFydF9zcGxpdF9mYWxzZV93aGVuX21heF9zaGFyZF9ieXRlc191bnNldCgpIHsKICAg
+ICAgICBsZXQgbHVtZW4gPSBsdW1lbl93aXRoKAogICAgICAgICAgICBzcGVjKDEsIDEsIE5vbmUp
+LAogICAgICAgICAgICBTb21lKHN0YXR1c193aXRoX2Jsb2NraW5nKCJ1cmdlbnRUaHJlc2hvbGRD
+cm9zc2VkIikpLAogICAgICAgICk7CiAgICAgICAgYXNzZXJ0ISghc2hvdWxkX3N0YXJ0X3NwbGl0
+KCZsdW1lbikpOwogICAgfQoKICAgICNbdGVzdF0KICAgIGZuIHNob3VsZF9zdGFydF9zcGxpdF9m
+YWxzZV93aXRob3V0X2FfY3Jvc3NlZF90aHJlc2hvbGQoKSB7CiAgICAgICAgbGV0IGx1bWVuID0g
+bHVtZW5fd2l0aChzcGVjKDEsIDEsIFNvbWUoMV8wMDBfMDAwKSksIFNvbWUoTHVtZW5TdGF0dXM6
+OmRlZmF1bHQoKSkpOwogICAgICAgIGFzc2VydCEoIXNob3VsZF9zdGFydF9zcGxpdCgmbHVtZW4p
+KTsKICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiBzaG91bGRfc3RhcnRfc3BsaXRfdHJ1ZV9vbl9w
+cmVwYXJlX3RocmVzaG9sZF9jcm9zc2VkKCkgewogICAgICAgIGxldCBsdW1lbiA9IGx1bWVuX3dp
+dGgoCiAgICAgICAgICAgIHNwZWMoMSwgMSwgU29tZSgxXzAwMF8wMDApKSwKICAgICAgICAgICAg
+U29tZShzdGF0dXNfd2l0aF9ibG9ja2luZygicHJlcGFyZVRocmVzaG9sZENyb3NzZWQiKSksCiAg
+ICAgICAgKTsKICAgICAgICBhc3NlcnQhKHNob3VsZF9zdGFydF9zcGxpdCgmbHVtZW4pKTsKICAg
+IH0KCiAgICAjW3Rlc3RdCiAgICBmbiBzaG91bGRfc3RhcnRfc3BsaXRfZmFsc2VfZm9yX3JhZnRf
+aGEoKSB7CiAgICAgICAgbGV0IGx1bWVuID0gbHVtZW5fd2l0aCgKICAgICAgICAgICAgc3BlYygy
+LCAzLCBTb21lKDFfMDAwXzAwMCkpLAogICAgICAgICAgICBTb21lKHN0YXR1c193aXRoX2Jsb2Nr
+aW5nKCJ1cmdlbnRUaHJlc2hvbGRDcm9zc2VkIikpLAogICAgICAgICk7CiAgICAgICAgYXNzZXJ0
+ISghc2hvdWxkX3N0YXJ0X3NwbGl0KCZsdW1lbikpOwogICAgfQoKICAgICNbdGVzdF0KICAgIGZu
+IHNob3VsZF9zdGFydF9zcGxpdF9mYWxzZV93aGVuX2FscmVhZHlfbWlkX3dvcmtmbG93KCkgewog
+ICAgICAgIGxldCBtdXQgcyA9IHNwZWMoMSwgMSwgU29tZSgxXzAwMF8wMDApKTsKICAgICAgICBz
+LnJlc2hhcmRfcG9saWN5LndvcmtmbG93ID0gUmVzaGFyZFdvcmtmbG93U3BlYyB7CiAgICAgICAg
+ICAgIHBoYXNlOiBSZXNoYXJkUGhhc2U6OlNwbGl0dGluZywKICAgICAgICAgICAgdGFyZ2V0X3No
+YXJkX2NvdW50OiBTb21lKDIpLAogICAgICAgICAgICAuLkRlZmF1bHQ6OmRlZmF1bHQoKQogICAg
+ICAgIH07CiAgICAgICAgbGV0IGx1bWVuID0gbHVtZW5fd2l0aChzLCBTb21lKHN0YXR1c193aXRo
+X2Jsb2NraW5nKCJ1cmdlbnRUaHJlc2hvbGRDcm9zc2VkIikpKTsKICAgICAgICBhc3NlcnQhKCFz
+aG91bGRfc3RhcnRfc3BsaXQoJmx1bWVuKSk7CiAgICB9CgogICAgI1t0ZXN0XQogICAgZm4gc2hv
+dWxkX3N0YXJ0X3NwbGl0X2ZhbHNlX3doZW5fbWF4X3NoYXJkc19yZWFjaGVkKCkgewogICAgICAg
+IGxldCBtdXQgcyA9IHNwZWMoNCwgMSwgU29tZSgxXzAwMF8wMDApKTsKICAgICAgICBzLnJlc2hh
+cmRfcG9saWN5Lm1heF9zaGFyZHMgPSBTb21lKDQpOwogICAgICAgIGxldCBsdW1lbiA9IGx1bWVu
+X3dpdGgocywgU29tZShzdGF0dXNfd2l0aF9ibG9ja2luZygidXJnZW50VGhyZXNob2xkQ3Jvc3Nl
+ZCIpKSk7CiAgICAgICAgYXNzZXJ0ISghc2hvdWxkX3N0YXJ0X3NwbGl0KCZsdW1lbikpOwogICAg
+fQoKICAgIC8vIC0tLS0gIzEzOTYgQUM1OiBzaG91bGRfc3RhcnRfc3BsaXQgcmUtZGVyaXZlcyBm
+cmVzaG5lc3MgaXRzZWxmIC0tLS0tCgogICAgI1t0ZXN0XQogICAgZm4gc2hvdWxkX3N0YXJ0X3Nw
+bGl0X2ZhbHNlX29uX3N0YWxlX3N0YXR1c19tYXBfdmVyc2lvbigpIHsKICAgICAgICAvLyBBIGBi
+bG9ja2luZ0NvbmRpdGlvbnNgIGVudHJ5IGFsb25lIGlzIG5vdCBlbm91Z2g6IGlmIHRoZSBzdGF0
+dXMKICAgICAgICAvLyBzdWJyZXNvdXJjZSdzIGB1c2FnZU1lYXN1cmVkQXRNYXBWZXJzaW9uYCBw
+cmVkYXRlcyB0aGUgQ1IncwogICAgICAgIC8vICpjdXJyZW50KiBgc3BlYy5zaGFyZE1hcC52ZXJz
+aW9uYCAoYSBsYWdnaW5nL3N0YWxlIHN0YXR1cyB3cml0ZSDigJQKICAgICAgICAvLyBlLmcuIGFu
+IGluLWZsaWdodCBzY3JhcGUgbGFuZGluZyBhZnRlciBhIGxhdGVyIGN1dG92ZXIpLCB0aGUKICAg
+ICAgICAvLyB0cmlnZ2VyIG11c3QgcmVmdXNlIHRvIGZpcmUgZXZlbiB0aG91Z2ggdGhlIHN0cmlu
+ZyBjb25kaXRpb24gaXMKICAgICAgICAvLyBwcmVzZW50LCByZWdhcmRsZXNzIG9mIHdoYXQgcHJv
+ZHVjZWQgdGhhdCBzdGFsZSBzdGF0dXMuCiAgICAgICAgbGV0IG11dCBzID0gc3BlYygyLCAxLCBT
+b21lKDFfMDAwXzAwMCkpOwogICAgICAgIHMuc2hhcmRfbWFwLnZlcnNpb24gPSAxOyAvLyBDUiBo
+YXMgYWxyZWFkeSBtb3ZlZCB0byBtYXAgdmVyc2lvbiAxLgogICAgICAgIGxldCBzdGF0dXMgPSBM
+dW1lblN0YXR1cyB7CiAgICAgICAgICAgIHJlc2hhcmQ6IEx1bWVuUmVzaGFyZFN0YXR1cyB7CiAg
+ICAgICAgICAgICAgICBibG9ja2luZ19jb25kaXRpb25zOiB2ZWMhWyJ1cmdlbnRUaHJlc2hvbGRD
+cm9zc2VkIi50b19zdHJpbmcoKV0sCiAgICAgICAgICAgICAgICB1c2FnZV9tZWFzdXJlZF9hdF9t
+YXBfdmVyc2lvbjogU29tZSgwKSwgLy8gc3RhbGU6IHN0aWxsIG1hcCAwLgogICAgICAgICAgICAg
+ICAgLi5EZWZhdWx0OjpkZWZhdWx0KCkKICAgICAgICAgICAgfSwKICAgICAgICAgICAgLi5EZWZh
+dWx0OjpkZWZhdWx0KCkKICAgICAgICB9OwogICAgICAgIGxldCBsdW1lbiA9IGx1bWVuX3dpdGgo
+cywgU29tZShzdGF0dXMpKTsKICAgICAgICBhc3NlcnQhKCFzaG91bGRfc3RhcnRfc3BsaXQoJmx1
+bWVuKSk7CiAgICB9CgogICAgI1t0ZXN0XQogICAgZm4gc2hvdWxkX3N0YXJ0X3NwbGl0X3RydWVf
+b25fZnJlc2hfc3RhdHVzX21hcF92ZXJzaW9uKCkgewogICAgICAgIC8vIFNhbWUgc2hhcGUsIGJ1
+dCB0aGUgc3RhdHVzIHdhcyBtZWFzdXJlZCBhdCB0aGUgQ1IncyBjdXJyZW50IG1hcAogICAgICAg
+IC8vIHZlcnNpb246IGEgbGVnaXRpbWF0ZSB0cmlnZ2VyIGFuZCBtdXN0IHN0aWxsIGZpcmUuCiAg
+ICAgICAgbGV0IG11dCBzID0gc3BlYygyLCAxLCBTb21lKDFfMDAwXzAwMCkpOwogICAgICAgIHMu
+c2hhcmRfbWFwLnZlcnNpb24gPSAxOwogICAgICAgIGxldCBzdGF0dXMgPSBMdW1lblN0YXR1cyB7
+CiAgICAgICAgICAgIHJlc2hhcmQ6IEx1bWVuUmVzaGFyZFN0YXR1cyB7CiAgICAgICAgICAgICAg
+ICBibG9ja2luZ19jb25kaXRpb25zOiB2ZWMhWyJ1cmdlbnRUaHJlc2hvbGRDcm9zc2VkIi50b19z
+dHJpbmcoKV0sCiAgICAgICAgICAgICAgICB1c2FnZV9tZWFzdXJlZF9hdF9tYXBfdmVyc2lvbjog
+U29tZSgxKSwgLy8gZnJlc2g6IG1hdGNoZXMgbWFwIDEuCiAgICAgICAgICAgICAgICAuLkRlZmF1
+bHQ6OmRlZmF1bHQoKQogICAgICAgICAgICB9LAogICAgICAgICAgICAuLkRlZmF1bHQ6OmRlZmF1
+bHQoKQogICAgICAgIH07CiAgICAgICAgbGV0IGx1bWVuID0gbHVtZW5fd2l0aChzLCBTb21lKHN0
+YXR1cykpOwogICAgICAgIGFzc2VydCEoc2hvdWxkX3N0YXJ0X3NwbGl0KCZsdW1lbikpOwogICAg
+fQoKICAgICNbdGVzdF0KICAgIGZuIHNob3VsZF9zdGFydF9zcGxpdF9mYWxzZV93aXRoX25vX3N0
+YXR1c195ZXQoKSB7CiAgICAgICAgbGV0IGx1bWVuID0gbHVtZW5fd2l0aChzcGVjKDEsIDEsIFNv
+bWUoMV8wMDBfMDAwKSksIE5vbmUpOwogICAgICAgIGFzc2VydCEoIXNob3VsZF9zdGFydF9zcGxp
+dCgmbHVtZW4pKTsKICAgIH0KCiAgICAvLyAtLS0tICMxMzg2IEFDMS9BQzI6IHBvc3QtY3V0b3Zl
+ciB1c2FnZSBmcmVzaG5lc3MgLS0tLS0tLS0tLS0tLS0tLS0tLQoKICAgICNbdGVzdF0KICAgIGZu
+IHNob3VsZF9zdGFydF9zcGxpdF9mYWxzZV9vbl9zdGFsZV9wcmVfY3V0b3Zlcl91c2FnZSgpIHsK
+ICAgICAgICAvLyBBQzE6IGF0IGBDb21wbGV0ZWAgd2l0aCBhIHVzYWdlIG1lYXN1cmVtZW50IHdo
+b3NlIGdlbmVyYXRpb24KICAgICAgICAvLyAoYHVzYWdlTWVhc3VyZWRBdE1hcFZlcnNpb25gKSBw
+cmVkYXRlcyB0aGUgQ1IncyBjdXJyZW50CiAgICAgICAgLy8gYHNoYXJkTWFwLnZlcnNpb25gIOKA
+lCB0aGUgZXhhY3Qgc2hhcGUgdGhlIHNoYXJkLXVzYWdlIGNhY2hlIGlzIGluCiAgICAgICAgLy8g
+Zm9yIG9uZSBzY3JhcGUgdGljayByaWdodCBhZnRlciBhIHNwbGl0J3MgY3V0b3ZlciDigJQgdGhl
+IGRyaXZlcgogICAgICAgIC8vIG11c3Qgbm90IHN0YXJ0IGEgc3BsaXQsIHJlZ2FyZGxlc3Mgb2Yg
+aG93IGZhciBwYXN0IHRoZSB1cmdlbnQKICAgICAgICAvLyB0aHJlc2hvbGQgdGhlIChzdGFsZSkg
+Y2FjaGVkIHBlcmNlbnRhZ2UgaXMuCiAgICAgICAgbGV0IG11dCBzID0gc3BlYygyLCAxLCBTb21l
+KDFfMDAwXzAwMCkpOwogICAgICAgIHMuc2hhcmRfbWFwLnZlcnNpb24gPSAxOyAvLyBqdXN0IGN1
+dCBvdmVyIHRvIHRoZSBwb3N0LXNwbGl0IG1hcAogICAgICAgIGxldCBtdXQgdXNhZ2UgPSBCVHJl
+ZU1hcDo6bmV3KCk7CiAgICAgICAgdXNhZ2UuaW5zZXJ0KDB1MzIsIDkwMF8wMDB1NjQpOyAvLyA5
+MCUsIHdlbGwgcGFzdCB1cmdlbnQoODUlKQogICAgICAgIGxldCBzdGF0dXMgPSBzLnJlc2hhcmRf
+c3RhdHVzX3dpdGhfdXNhZ2UoJnVzYWdlLCAwIC8qIHN0YWxlOiBwcmUtY3V0b3ZlciAqLyk7CiAg
+ICAgICAgYXNzZXJ0X2VxIShzdGF0dXMuYmxvY2tpbmdfY29uZGl0aW9ucywgdmVjIVsidXNhZ2VT
+dGFsZVBvc3RDdXRvdmVyIl0pOwogICAgICAgIGxldCBsdW1lbiA9IGx1bWVuX3dpdGgoCiAgICAg
+ICAgICAgIHMsCiAgICAgICAgICAgIFNvbWUoTHVtZW5TdGF0dXMgewogICAgICAgICAgICAgICAg
+cmVzaGFyZDogc3RhdHVzLAogICAgICAgICAgICAgICAgLi5EZWZhdWx0OjpkZWZhdWx0KCkKICAg
+ICAgICAgICAgfSksCiAgICAgICAgKTsKICAgICAgICBhc3NlcnQhKCFzaG91bGRfc3RhcnRfc3Bs
+aXQoJmx1bWVuKSk7CiAgICB9CgogICAgI1t0ZXN0XQogICAgZm4gc2hvdWxkX3N0YXJ0X3NwbGl0
+X3RydWVfb25fZnJlc2hfcG9zdF9jdXRvdmVyX3VzYWdlX2Fib3ZlX3VyZ2VudCgpIHsKICAgICAg
+ICAvLyBBQzI6IG9uY2UgdGhlIHVzYWdlIGNhY2hlIGNhcnJpZXMgYSBtZWFzdXJlbWVudCB0YWdn
+ZWQgd2l0aCB0aGUKICAgICAgICAvLyBDUidzICpjdXJyZW50KiBgc2hhcmRNYXAudmVyc2lvbmAs
+IGEgZ2VudWluZWx5IHN0aWxsLWhvdCBzaGFyZCBpcwogICAgICAgIC8vIGEgbGVnaXRpbWF0ZSBj
+YXNjYWRlIHRyaWdnZXIgYW5kIG11c3Qgc3RhcnQgdGhlIG5leHQgc3BsaXQuCiAgICAgICAgbGV0
+IG11dCBzID0gc3BlYygyLCAxLCBTb21lKDFfMDAwXzAwMCkpOwogICAgICAgIHMuc2hhcmRfbWFw
+LnZlcnNpb24gPSAxOwogICAgICAgIGxldCBtdXQgdXNhZ2UgPSBCVHJlZU1hcDo6bmV3KCk7CiAg
+ICAgICAgdXNhZ2UuaW5zZXJ0KDF1MzIsIDkwMF8wMDB1NjQpOyAvLyA5MCUsIHBhc3QgdXJnZW50
+KDg1JSksIGZyZXNoCiAgICAgICAgbGV0IHN0YXR1cyA9CiAgICAgICAgICAgIHMucmVzaGFyZF9z
+dGF0dXNfd2l0aF91c2FnZSgmdXNhZ2UsIDEgLyogZnJlc2g6IG1hdGNoZXMgc2hhcmRNYXAudmVy
+c2lvbiAqLyk7CiAgICAgICAgYXNzZXJ0X2VxIShzdGF0dXMuYmxvY2tpbmdfY29uZGl0aW9ucywg
+dmVjIVsidXJnZW50VGhyZXNob2xkQ3Jvc3NlZCJdKTsKICAgICAgICBsZXQgbHVtZW4gPSBsdW1l
+bl93aXRoKAogICAgICAgICAgICBzLAogICAgICAgICAgICBTb21lKEx1bWVuU3RhdHVzIHsKICAg
+ICAgICAgICAgICAgIHJlc2hhcmQ6IHN0YXR1cywKICAgICAgICAgICAgICAgIC4uRGVmYXVsdDo6
+ZGVmYXVsdCgpCiAgICAgICAgICAgIH0pLAogICAgICAgICk7CiAgICAgICAgYXNzZXJ0IShzaG91
+bGRfc3RhcnRfc3BsaXQoJmx1bWVuKSk7CiAgICB9CgogICAgLy8gLS0tLSBjdXJyZW50L3Rhcmdl
+dCBtYXAgaGVscGVycyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKICAgICNb
+dGVzdF0KICAgIGZuIGN1cnJlbnRfc2hhcmRfbWFwX2Rlcml2ZXNfYmFsYW5jZWRfbWFwX2Zyb21f
+c2hhcmRfY291bnRfd2hlbl9ub19leHBsaWNpdF9hc3NpZ25tZW50cygpIHsKICAgICAgICBsZXQg
+bHVtZW4gPSBsdW1lbl93aXRoKHNwZWMoMiwgMSwgTm9uZSksIE5vbmUpOwogICAgICAgIGxldCBt
+YXAgPSBjdXJyZW50X3NoYXJkX21hcCgmbHVtZW4pLnVud3JhcCgpOwogICAgICAgIGFzc2VydF9l
+cSEobWFwLnBoeXNpY2FsX3NoYXJkX2NvdW50KCksIDIpOwogICAgICAgIGFzc2VydF9lcSEobWFw
+LnZpcnR1YWxfYnVja2V0X2NvdW50KCksIDgpOwogICAgfQoKICAgICNbdGVzdF0KICAgIGZuIGNv
+bXB1dGVfdGFyZ2V0X21hcF9ncm93c19ieV9leGFjdGx5X29uZV9zaGFyZCgpIHsKICAgICAgICBs
+ZXQgbHVtZW4gPSBsdW1lbl93aXRoKHNwZWMoMiwgMSwgTm9uZSksIE5vbmUpOwogICAgICAgIGxl
+dCBjdXJyZW50ID0gY3VycmVudF9zaGFyZF9tYXAoJmx1bWVuKS51bndyYXAoKTsKICAgICAgICBs
+ZXQgdGFyZ2V0ID0gY29tcHV0ZV90YXJnZXRfbWFwKCZjdXJyZW50KS51bndyYXAoKTsKICAgICAg
+ICBhc3NlcnRfZXEhKHRhcmdldC5waHlzaWNhbF9zaGFyZF9jb3VudCgpLCAzKTsKICAgICAgICBh
+c3NlcnRfZXEhKHRhcmdldC52ZXJzaW9uKCksIGN1cnJlbnQudmVyc2lvbigpICsgMSk7CiAgICB9
+CgogICAgLy8gLS0tLSBkcml2ZV90aWNrIHN0YXRlIG1hY2hpbmUgKGZha2UgY29udHJvbCwgbm8g
+cmVhbCBrOHMpIC0tLS0tLS0tLQoKICAgIC8vLyBJbi1tZW1vcnkgW2BDbHVzdGVyQ29udHJvbGBd
+OiByZWNvcmRzIHRoZSBsYXN0IHBhdGNoIGFwcGxpZWQgdG8gYQogICAgLy8vIHNoYXJlZCBgTHVt
+ZW5gIHNuYXBzaG90IGFuZCBzaW11bGF0ZXMgYSBTdGF0ZWZ1bFNldCdzIHJlYWR5LXJlcGxpY2EK
+ICAgIC8vLyBjb3VudC4gTm8gSFRUUCBhZG1pbiBjYWxscyBhcmUgZmFrZWQgaGVyZSDigJQgdGhv
+c2UgZ28gdGhyb3VnaCBhIHJlYWwKICAgIC8vLyBbYGF4dW1fdGVzdGBdIHNlcnZlciBpbiB0aGUg
+aW50ZWdyYXRpb24gdGVzdCBiZWxvdzsgdGhpcyBmYWtlIG9ubHkKICAgIC8vLyBjb3ZlcnMgdGhl
+IGs4cy1zaGFwZWQgb3BlcmF0aW9ucyBgZHJpdmVfdGlja2AgbmVlZHMgYmVmb3JlL2Fyb3VuZAog
+ICAgLy8vIHRoZW0uCiAgICBzdHJ1Y3QgRmFrZUNvbnRyb2wgewogICAgICAgIHJlYWR5X3JlcGxp
+Y2FzOiBBdG9taWNJNjQsCiAgICAgICAgbGFzdF9wYXRjaDogTXV0ZXg8T3B0aW9uPHNlcmRlX2pz
+b246OlZhbHVlPj4sCiAgICAgICAgcmVzdGFydF9jYWxsczogQXRvbWljSTY0LAogICAgfQoKICAg
+IGltcGwgRmFrZUNvbnRyb2wgewogICAgICAgIGZuIG5ldyhyZWFkeV9yZXBsaWNhczogaTY0KSAt
+PiBTZWxmIHsKICAgICAgICAgICAgU2VsZiB7CiAgICAgICAgICAgICAgICByZWFkeV9yZXBsaWNh
+czogQXRvbWljSTY0OjpuZXcocmVhZHlfcmVwbGljYXMpLAogICAgICAgICAgICAgICAgbGFzdF9w
+YXRjaDogTXV0ZXg6Om5ldyhOb25lKSwKICAgICAgICAgICAgICAgIHJlc3RhcnRfY2FsbHM6IEF0
+b21pY0k2NDo6bmV3KDApLAogICAgICAgICAgICB9CiAgICAgICAgfQogICAgfQoKICAgICNbYXN5
+bmNfdHJhaXRdCiAgICBpbXBsIENsdXN0ZXJDb250cm9sIGZvciBGYWtlQ29udHJvbCB7CiAgICAg
+ICAgYXN5bmMgZm4gcGF0Y2hfc3BlYygmc2VsZiwgX25zOiAmc3RyLCBfbmFtZTogJnN0ciwgcGF0
+Y2g6IHNlcmRlX2pzb246OlZhbHVlKSAtPiBSZXN1bHQ8KCk+IHsKICAgICAgICAgICAgKnNlbGYu
+bGFzdF9wYXRjaC5sb2NrKCkudW53cmFwKCkgPSBTb21lKHBhdGNoKTsKICAgICAgICAgICAgT2so
+KCkpCiAgICAgICAgfQoKICAgICAgICBhc3luYyBmbiBzdGF0ZWZ1bHNldF9yZWFkeV9yZXBsaWNh
+cygmc2VsZiwgX25zOiAmc3RyLCBfbmFtZTogJnN0cikgLT4gUmVzdWx0PGk2ND4gewogICAgICAg
+ICAgICBPayhzZWxmLnJlYWR5X3JlcGxpY2FzLmxvYWQoT3JkZXJpbmc6OlNlcUNzdCkpCiAgICAg
+ICAgfQoKICAgICAgICBhc3luYyBmbiB0cmlnZ2VyX3JvbGxpbmdfcmVzdGFydCgmc2VsZiwgX25z
+OiAmc3RyLCBfbmFtZTogJnN0cikgLT4gUmVzdWx0PCgpPiB7CiAgICAgICAgICAgIHNlbGYucmVz
+dGFydF9jYWxscy5mZXRjaF9hZGQoMSwgT3JkZXJpbmc6OlNlcUNzdCk7CiAgICAgICAgICAgIE9r
+KCgpKQogICAgICAgIH0KCiAgICAgICAgYXN5bmMgZm4gYWRtaW5fdG9rZW4oJnNlbGYsIF9uczog
+JnN0ciwgX2x1bWVuOiAmTHVtZW4pIC0+IFJlc3VsdDxPcHRpb248U3RyaW5nPj4gewogICAgICAg
+ICAgICBPayhOb25lKQogICAgICAgIH0KCiAgICAgICAgZm4gc2hhcmRfYmFzZV91cmwoJnNlbGYs
+IF9uczogJnN0ciwgX25hbWU6ICZzdHIsIHNoYXJkOiB1MzIpIC0+IFN0cmluZyB7CiAgICAgICAg
+ICAgIGZvcm1hdCEoImh0dHA6Ly91bnVzZWQtaW4tdGhpcy10ZXN0LmludmFsaWQvc2hhcmQte3No
+YXJkfSIpCiAgICAgICAgfQogICAgfQoKICAgIGZuIGh0dHBfY2xpZW50KCkgLT4gcmVxd2VzdDo6
+Q2xpZW50IHsKICAgICAgICByZXF3ZXN0OjpDbGllbnQ6Om5ldygpCiAgICB9CgogICAgLy8gLS0t
+LSAjMTQ0MyBBQzQ6IHNldF93cml0ZV9mZW5jZSBwYXJ0aWFsLWFybSBjbGVhbnVwIC0tLS0tLS0t
+LS0tLS0tLS0tCgogICAgLy8vIE1pbmltYWwgY29udHJvbCBleHBvc2luZyBleGFjdGx5IHRoZSBz
+aGFyZCBVUkxzIFtgc2V0X3dyaXRlX2ZlbmNlYF0KICAgIC8vLyBuZWVkczsgdXNlZCBvbmx5IGJ5
+IHRoZSBBQzQgdGVzdCBiZWxvdywgd2hpY2ggY2FsbHMgYHNldF93cml0ZV9mZW5jZWAKICAgIC8v
+LyBkaXJlY3RseSByYXRoZXIgdGhhbiBkcml2aW5nIGEgZnVsbCBgZHJpdmVfdGlja2AuCiAgICBz
+dHJ1Y3QgVHdvU2hhcmRGZW5jZUNvbnRyb2wgewogICAgICAgIHNoYXJkX3VybHM6IFZlYzxTdHJp
+bmc+LAogICAgfQoKICAgICNbYXN5bmNfdHJhaXRdCiAgICBpbXBsIENsdXN0ZXJDb250cm9sIGZv
+ciBUd29TaGFyZEZlbmNlQ29udHJvbCB7CiAgICAgICAgYXN5bmMgZm4gcGF0Y2hfc3BlYygKICAg
+ICAgICAgICAgJnNlbGYsCiAgICAgICAgICAgIF9uczogJnN0ciwKICAgICAgICAgICAgX25hbWU6
+ICZzdHIsCiAgICAgICAgICAgIF9wYXRjaDogc2VyZGVfanNvbjo6VmFsdWUsCiAgICAgICAgKSAt
+PiBSZXN1bHQ8KCk+IHsKICAgICAgICAgICAgdW5yZWFjaGFibGUhKCJub3QgdXNlZCBieSBzZXRf
+d3JpdGVfZmVuY2UiKQogICAgICAgIH0KICAgICAgICBhc3luYyBmbiBzdGF0ZWZ1bHNldF9yZWFk
+eV9yZXBsaWNhcygmc2VsZiwgX25zOiAmc3RyLCBfbmFtZTogJnN0cikgLT4gUmVzdWx0PGk2ND4g
+ewogICAgICAgICAgICB1bnJlYWNoYWJsZSEoIm5vdCB1c2VkIGJ5IHNldF93cml0ZV9mZW5jZSIp
+CiAgICAgICAgfQogICAgICAgIGFzeW5jIGZuIHRyaWdnZXJfcm9sbGluZ19yZXN0YXJ0KCZzZWxm
+LCBfbnM6ICZzdHIsIF9uYW1lOiAmc3RyKSAtPiBSZXN1bHQ8KCk+IHsKICAgICAgICAgICAgdW5y
+ZWFjaGFibGUhKCJub3QgdXNlZCBieSBzZXRfd3JpdGVfZmVuY2UiKQogICAgICAgIH0KICAgICAg
+ICBhc3luYyBmbiBhZG1pbl90b2tlbigmc2VsZiwgX25zOiAmc3RyLCBfbHVtZW46ICZMdW1lbikg
+LT4gUmVzdWx0PE9wdGlvbjxTdHJpbmc+PiB7CiAgICAgICAgICAgIE9rKE5vbmUpCiAgICAgICAg
+fQogICAgICAgIGZuIHNoYXJkX2Jhc2VfdXJsKCZzZWxmLCBfbnM6ICZzdHIsIF9uYW1lOiAmc3Ry
+LCBzaGFyZDogdTMyKSAtPiBTdHJpbmcgewogICAgICAgICAgICBzZWxmLnNoYXJkX3VybHNbc2hh
+cmQgYXMgdXNpemVdLmNsb25lKCkKICAgICAgICB9CiAgICB9CgogICAgI1t0b2tpbzo6dGVzdF0K
+ICAgIGFzeW5jIGZuIHNldF93cml0ZV9mZW5jZV9jbGVhcnNfYWxyZWFkeV9hcm1lZF9zaGFyZHNf
+b25fcGFydGlhbF9mYWlsdXJlKCkgewogICAgICAgIC8vIFNoYXJkIEE6IGEgcmVhbCBlbmRwb2lu
+dCB0aGF0IHJlY29yZHMgZXZlcnkgL2FkbWluL3Jlc2hhcmQ6ZmVuY2UKICAgICAgICAvLyBjYWxs
+IGl0IHJlY2VpdmVzIOKAlCBib3RoIHRoZSBhcm0gYXR0ZW1wdCBhbmQsIGlmIFI0IHdvcmtzLCB0
+aGUKICAgICAgICAvLyBiZXN0LWVmZm9ydCBjbGVhciB0cmlnZ2VyZWQgYnkgc2hhcmQgQidzIGZh
+aWx1cmUuCiAgICAgICAgbGV0IHNoYXJkX2EgPSB3aXJlbW9jazo6TW9ja1NlcnZlcjo6c3RhcnQo
+KS5hd2FpdDsKICAgICAgICB3aXJlbW9jazo6TW9jazo6Z2l2ZW4od2lyZW1vY2s6Om1hdGNoZXJz
+OjptZXRob2QoIlBPU1QiKSkKICAgICAgICAgICAgLmFuZCh3aXJlbW9jazo6bWF0Y2hlcnM6OnBh
+dGgoIi9hZG1pbi9yZXNoYXJkOmZlbmNlIikpCiAgICAgICAgICAgIC5yZXNwb25kX3dpdGgod2ly
+ZW1vY2s6OlJlc3BvbnNlVGVtcGxhdGU6Om5ldygyMDApLnNldF9ib2R5X2pzb24oanNvbiEoe30p
+KSkKICAgICAgICAgICAgLm1vdW50KCZzaGFyZF9hKQogICAgICAgICAgICAuYXdhaXQ7CgogICAg
+ICAgIC8vIFNoYXJkIEI6IGEgYm91bmQtdGhlbi1jbG9zZWQgcG9ydCDigJQgbm90aGluZyBsaXN0
+ZW5zIHRoZXJlLCBzbwogICAgICAgIC8vIGV2ZXJ5IGNhbGwgdG8gaXQgZmFpbHMgb3V0cmlnaHQs
+IHNpbXVsYXRpbmcgYW4gdW5yZWFjaGFibGUgc2hhcmQKICAgICAgICAvLyBtaWQtYXJtLgogICAg
+ICAgIGxldCBkZWFkX2xpc3RlbmVyID0gc3RkOjpuZXQ6OlRjcExpc3RlbmVyOjpiaW5kKCIxMjcu
+MC4wLjE6MCIpLnVud3JhcCgpOwogICAgICAgIGxldCBkZWFkX2FkZHIgPSBkZWFkX2xpc3RlbmVy
+LmxvY2FsX2FkZHIoKS51bndyYXAoKTsKICAgICAgICBkcm9wKGRlYWRfbGlzdGVuZXIpOwogICAg
+ICAgIGxldCBzaGFyZF9iX3VybCA9IGZvcm1hdCEoImh0dHA6Ly97ZGVhZF9hZGRyfSIpOwoKICAg
+ICAgICBsZXQgY29udHJvbCA9IFR3b1NoYXJkRmVuY2VDb250cm9sIHsKICAgICAgICAgICAgc2hh
+cmRfdXJsczogdmVjIVtzaGFyZF9hLnVyaSgpLCBzaGFyZF9iX3VybF0sCiAgICAgICAgfTsKICAg
+ICAgICBsZXQgY3VycmVudCA9IFZpcnR1YWxCdWNrZXRTaGFyZE1hcDo6YmFsYW5jZWQoMCwgOCwg
+MikudW53cmFwKCk7CiAgICAgICAgbGV0IG11dCBidWNrZXRzID0gQlRyZWVTZXQ6Om5ldygpOwog
+ICAgICAgIGJ1Y2tldHMuaW5zZXJ0KDB1MzIpOwogICAgICAgIGxldCBsdW1lbiA9IGx1bWVuX3dp
+dGgoc3BlYygyLCAxLCBOb25lKSwgTm9uZSk7CgogICAgICAgIGxldCByZXN1bHQgPSBzZXRfd3Jp
+dGVfZmVuY2UoCiAgICAgICAgICAgICZjb250cm9sLAogICAgICAgICAgICAmaHR0cF9jbGllbnQo
+KSwKICAgICAgICAgICAgImFjbWUiLAogICAgICAgICAgICAic2VhcmNoIiwKICAgICAgICAgICAg
+Jmx1bWVuLAogICAgICAgICAgICAmY3VycmVudCwKICAgICAgICAgICAgJmJ1Y2tldHMsCiAgICAg
+ICAgICAgIDMwLAogICAgICAgICkKICAgICAgICAuYXdhaXQ7CiAgICAgICAgYXNzZXJ0IShyZXN1
+bHQuaXNfZXJyKCksICJhcm0gbXVzdCBzdXJmYWNlIHNoYXJkIEIncyBmYWlsdXJlIik7CgogICAg
+ICAgIC8vIFNoYXJkIEEgbXVzdCBoYXZlIHJlY2VpdmVkIGV4YWN0bHkgMiByZXF1ZXN0czogdGhl
+IG9yaWdpbmFsIGFybSwKICAgICAgICAvLyB0aGVuIHRoZSBiZXN0LWVmZm9ydCBjbGVhciB0cmln
+Z2VyZWQgYnkgc2hhcmQgQidzIGZhaWx1cmUg4oCUIFI0J3MKICAgICAgICAvLyB3aG9sZSBwb2lu
+dCBpcyB0aGF0IHNoYXJkIEEgbmV2ZXIgc3RheXMgZmVuY2VkIGluZGVmaW5pdGVseSBqdXN0CiAg
+ICAgICAgLy8gYmVjYXVzZSBzaGFyZCBCIHdhcyB1bnJlYWNoYWJsZS4KICAgICAgICBsZXQgcmVx
+dWVzdHMgPSBzaGFyZF9hCiAgICAgICAgICAgIC5yZWNlaXZlZF9yZXF1ZXN0cygpCiAgICAgICAg
+ICAgIC5hd2FpdAogICAgICAgICAgICAuZXhwZWN0KCJ3aXJlbW9jayByZXF1ZXN0IHJlY29yZGlu
+ZyBlbmFibGVkIik7CiAgICAgICAgYXNzZXJ0X2VxISgKICAgICAgICAgICAgcmVxdWVzdHMubGVu
+KCksCiAgICAgICAgICAgIDIsCiAgICAgICAgICAgICJzaGFyZCBBIG11c3QgYmUgYXJtZWQgb25j
+ZSwgdGhlbiBjbGVhcmVkIG9uY2UgYWZ0ZXIgc2hhcmQgQidzIGFybSBmYWlsZWQiCiAgICAgICAg
+KTsKICAgICAgICBsZXQgY2xlYXJfYm9keTogc2VyZGVfanNvbjo6VmFsdWUgPSByZXF1ZXN0c1sx
+XS5ib2R5X2pzb24oKS51bndyYXAoKTsKICAgICAgICBhc3NlcnRfZXEhKAogICAgICAgICAgICBj
+bGVhcl9ib2R5WyJidWNrZXRzIl0uYXNfYXJyYXkoKS5tYXAoVmVjOjpsZW4pLAogICAgICAgICAg
+ICBTb21lKDApLAogICAgICAgICAgICAidGhlIHNlY29uZCBjYWxsIHRvIHNoYXJkIEEgbXVzdCBi
+ZSBhIGNsZWFyIChlbXB0eSBidWNrZXRzKSwgbm90IGFub3RoZXIgYXJtIgogICAgICAgICk7CiAg
+ICB9CgogICAgLy8gLS0tLSAjMTQ2NyBSMzogZXZpY3Rfb2xkX3NoYXJkcydzIGluLWxvb3AgZmVu
+Y2UgcmUtYXJtIC0tLS0tLS0tLS0tLS0tCgogICAgLy8vIEEgW2BDbHVzdGVyQ29udHJvbGBdIG92
+ZXIgYSBmaXhlZCBsaXN0IG9mIGFscmVhZHktYm91bmQgc2hhcmQgVVJMcwogICAgLy8vIHdpdGgg
+YSB0ZXN0LWNvbnRyb2xsZWQgYHdyaXRlX2ZlbmNlX3R0bF9zZWNzYCDigJQgZXZlcnl0aGluZwog
+ICAgLy8vIFtgZXZpY3Rfb2xkX3NoYXJkc2BdL1tgbWF5YmVfcmVhcm1fZmVuY2VgXSBuZWVkcywg
+bm90aGluZyBtb3JlLgogICAgc3RydWN0IEZlbmNlUmVhcm1Db250cm9sIHsKICAgICAgICBzaGFy
+ZF91cmxzOiBWZWM8U3RyaW5nPiwKICAgICAgICB0dGxfc2VjczogdTY0LAogICAgfQoKICAgICNb
+YXN5bmNfdHJhaXRdCiAgICBpbXBsIENsdXN0ZXJDb250cm9sIGZvciBGZW5jZVJlYXJtQ29udHJv
+bCB7CiAgICAgICAgYXN5bmMgZm4gcGF0Y2hfc3BlYygKICAgICAgICAgICAgJnNlbGYsCiAgICAg
+ICAgICAgIF9uczogJnN0ciwKICAgICAgICAgICAgX25hbWU6ICZzdHIsCiAgICAgICAgICAgIF9w
+YXRjaDogc2VyZGVfanNvbjo6VmFsdWUsCiAgICAgICAgKSAtPiBSZXN1bHQ8KCk+IHsKICAgICAg
+ICAgICAgdW5yZWFjaGFibGUhKCJub3QgdXNlZCBieSBldmljdF9vbGRfc2hhcmRzIikKICAgICAg
+ICB9CiAgICAgICAgYXN5bmMgZm4gc3RhdGVmdWxzZXRfcmVhZHlfcmVwbGljYXMoJnNlbGYsIF9u
+czogJnN0ciwgX25hbWU6ICZzdHIpIC0+IFJlc3VsdDxpNjQ+IHsKICAgICAgICAgICAgdW5yZWFj
+aGFibGUhKCJub3QgdXNlZCBieSBldmljdF9vbGRfc2hhcmRzIikKICAgICAgICB9CiAgICAgICAg
+YXN5bmMgZm4gdHJpZ2dlcl9yb2xsaW5nX3Jlc3RhcnQoJnNlbGYsIF9uczogJnN0ciwgX25hbWU6
+ICZzdHIpIC0+IFJlc3VsdDwoKT4gewogICAgICAgICAgICB1bnJlYWNoYWJsZSEoIm5vdCB1c2Vk
+IGJ5IGV2aWN0X29sZF9zaGFyZHMiKQogICAgICAgIH0KICAgICAgICBhc3luYyBmbiBhZG1pbl90
+b2tlbigmc2VsZiwgX25zOiAmc3RyLCBfbHVtZW46ICZMdW1lbikgLT4gUmVzdWx0PE9wdGlvbjxT
+dHJpbmc+PiB7CiAgICAgICAgICAgIE9rKE5vbmUpCiAgICAgICAgfQogICAgICAgIGZuIHNoYXJk
+X2Jhc2VfdXJsKCZzZWxmLCBfbnM6ICZzdHIsIF9uYW1lOiAmc3RyLCBzaGFyZDogdTMyKSAtPiBT
+dHJpbmcgewogICAgICAgICAgICBzZWxmLnNoYXJkX3VybHNbc2hhcmQgYXMgdXNpemVdLmNsb25l
+KCkKICAgICAgICB9CiAgICAgICAgZm4gd3JpdGVfZmVuY2VfdHRsX3NlY3MoJnNlbGYpIC0+IHU2
+NCB7CiAgICAgICAgICAgIHNlbGYudHRsX3NlY3MKICAgICAgICB9CiAgICB9CgogICAgLy8vICMx
+NDY3IFIzOiBhIHNsb3csIG11bHRpLXNoYXJkIGV2aWN0aW9uIHJvdW5kIChtYW55IG9sZCBwaHlz
+aWNhbAogICAgLy8vIHNoYXJkcywgZWFjaCBgUE9TVCAvYWRtaW4vcmVzaGFyZDpldmljdGAgcm91
+bmQtdHJpcCB0YWtpbmcgcmVhbCB0aW1lKQogICAgLy8vIG11c3Qgbm90IHJ1biBvbiBhIHNpbmds
+ZSBmZW5jZSBhcm0gdGFrZW4gb25jZSBiZWZvcmUgdGhlIGxvb3Agc3RhcnRzCiAgICAvLy8g4oCU
+IFtgZXZpY3Rfb2xkX3NoYXJkc2BdIHJlLWNoZWNrcy9yZS1hcm1zIHZpYSBbYG1heWJlX3JlYXJt
+X2ZlbmNlYF0KICAgIC8vLyBiZWZvcmUgKmV2ZXJ5KiBzaGFyZCdzIGV2aWN0IGNhbGwsIG5vdCBq
+dXN0IGF0IHRoZSBwaGFzZSBib3VuZGFyeQogICAgLy8vIGltbWVkaWF0ZWx5IGJlZm9yZSB0aGlz
+IGZ1bmN0aW9uIGlzIGludm9rZWQuIFByb3ZlbiBieSBkcml2aW5nIDMgb2xkCiAgICAvLy8gc2hh
+cmRzIHRocm91Z2ggYSByZWFsIChtb2NrZWQpIGV2aWN0aW9uIHJvdW5kIHdpdGggYSB0aW55IGZl
+bmNlIFRUTAogICAgLy8vIGFuZCBhbiBhcnRpZmljaWFsIHBlci1jYWxsIGRlbGF5IGxhcmdlIGVu
+b3VnaCB0aGF0IHRoZSB1bi1yZWZyZXNoZWQKICAgIC8vLyBUVEwgZnJhY3Rpb24gd291bGQgYWxy
+ZWFkeSBoYXZlIGxhcHNlZCBieSB0aGUgZmluYWwgc2hhcmQg4oCUIHRoZQogICAgLy8vIG51bWJl
+ciBvZiBgL2FkbWluL3Jlc2hhcmQ6ZmVuY2VgIGFybSByZXF1ZXN0cyBvYnNlcnZlZCBhY3Jvc3Mg
+YWxsIDMKICAgIC8vLyBzaGFyZHMgbXVzdCByZWZsZWN0IG1vcmUgdGhhbiB0aGUgc2luZ2xlIGNh
+bGxlci1zaWRlIGFybS4KICAgICNbdG9raW86OnRlc3RdCiAgICBhc3luYyBmbiBldmljdF9vbGRf
+c2hhcmRzX3JlYXJtc19mZW5jZV9taWRfbG9vcF9hY3Jvc3Nfc2xvd19tdWx0aV9zaGFyZF9yb3Vu
+ZCgpIHsKICAgICAgICBsZXQgbXV0IG1vY2tfc2hhcmRzID0gVmVjOjpuZXcoKTsKICAgICAgICBm
+b3IgXyBpbiAwLi4zIHsKICAgICAgICAgICAgbGV0IG1vY2sgPSB3aXJlbW9jazo6TW9ja1NlcnZl
+cjo6c3RhcnQoKS5hd2FpdDsKICAgICAgICAgICAgd2lyZW1vY2s6Ok1vY2s6OmdpdmVuKHdpcmVt
+b2NrOjptYXRjaGVyczo6bWV0aG9kKCJQT1NUIikpCiAgICAgICAgICAgICAgICAuYW5kKHdpcmVt
+b2NrOjptYXRjaGVyczo6cGF0aCgiL2FkbWluL3Jlc2hhcmQ6ZmVuY2UiKSkKICAgICAgICAgICAg
+ICAgIC5yZXNwb25kX3dpdGgod2lyZW1vY2s6OlJlc3BvbnNlVGVtcGxhdGU6Om5ldygyMDApLnNl
+dF9ib2R5X2pzb24oanNvbiEoe30pKSkKICAgICAgICAgICAgICAgIC5tb3VudCgmbW9jaykKICAg
+ICAgICAgICAgICAgIC5hd2FpdDsKICAgICAgICAgICAgd2lyZW1vY2s6Ok1vY2s6OmdpdmVuKHdp
+cmVtb2NrOjptYXRjaGVyczo6bWV0aG9kKCJQT1NUIikpCiAgICAgICAgICAgICAgICAuYW5kKHdp
+cmVtb2NrOjptYXRjaGVyczo6cGF0aCgiL2FkbWluL3Jlc2hhcmQ6ZXZpY3QiKSkKICAgICAgICAg
+ICAgICAgIC5yZXNwb25kX3dpdGgoCiAgICAgICAgICAgICAgICAgICAgd2lyZW1vY2s6OlJlc3Bv
+bnNlVGVtcGxhdGU6Om5ldygyMDApCiAgICAgICAgICAgICAgICAgICAgICAgIC5zZXRfYm9keV9q
+c29uKGpzb24hKHt9KSkKICAgICAgICAgICAgICAgICAgICAgICAgLnNldF9kZWxheShEdXJhdGlv
+bjo6ZnJvbV9taWxsaXMoMTUwKSksCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAu
+bW91bnQoJm1vY2spCiAgICAgICAgICAgICAgICAuYXdhaXQ7CiAgICAgICAgICAgIG1vY2tfc2hh
+cmRzLnB1c2gobW9jayk7CiAgICAgICAgfQogICAgICAgIGxldCBzaGFyZF91cmxzOiBWZWM8U3Ry
+aW5nPiA9IG1vY2tfc2hhcmRzLml0ZXIoKS5tYXAofG18IG0udXJpKCkpLmNvbGxlY3QoKTsKCiAg
+ICAgICAgLy8gdHRsX3NlY3M9MSAtPiByZWFybV9hZnRlciA9IDI1MG1zIChGRU5DRV9SRUFSTV9G
+UkFDVElPTj00KS4KICAgICAgICAvLyBgbGFzdF9hcm1lZF9hdGAgc3RhcnRzIGF0ICJqdXN0IG5v
+dyIgKGFzIGlmIHRoZSBjYWxsZXIgYXJtZWQgaXQKICAgICAgICAvLyBpbW1lZGlhdGVseSBiZWZv
+cmUgdGhpcyBjYWxsLCBtYXRjaGluZyB0aGUgcmVhbCBwaGFzZS1ib3VuZGFyeQogICAgICAgIC8v
+IGFybSkgc28gdGhlIGZpcnN0IHR3byBpdGVyYXRpb25zJyBwcmUtY2hlY2tzIChlbGFwc2VkIH4w
+bXMsIHRoZW4KICAgICAgICAvLyB+MTUwbXMpIHNraXAgcmUtYXJtaW5nLCBidXQgYnkgdGhlIHRo
+aXJkIGl0ZXJhdGlvbidzIHByZS1jaGVjawogICAgICAgIC8vIChlbGFwc2VkIH4zMDBtcykgdGhl
+IDI1MG1zIGZyYWN0aW9uIGhhcyBsYXBzZWQgYW5kIGFuIGluLWxvb3AKICAgICAgICAvLyByZWFy
+bSBtdXN0IGZpcmUg4oCUIHByb3ZpbmcgaXQgaXMgKmV2aWN0X29sZF9zaGFyZHMncyBvd24gbG9v
+cCosCiAgICAgICAgLy8gbm90IGp1c3QgdGhlIGNhbGxlciwga2VlcGluZyB0aGUgZmVuY2UgZnJl
+c2ggYWNyb3NzIGEgc2xvdyByb3VuZC4KICAgICAgICBsZXQgY29udHJvbCA9IEZlbmNlUmVhcm1D
+b250cm9sIHsKICAgICAgICAgICAgc2hhcmRfdXJscywKICAgICAgICAgICAgdHRsX3NlY3M6IDEs
+CiAgICAgICAgfTsKICAgICAgICBsZXQgY3VycmVudCA9IFZpcnR1YWxCdWNrZXRTaGFyZE1hcDo6
+YmFsYW5jZWQoMCwgOCwgMykudW53cmFwKCk7CiAgICAgICAgbGV0IHRhcmdldCA9IFZpcnR1YWxC
+dWNrZXRTaGFyZE1hcDo6YmFsYW5jZWQoMSwgOCwgMykudW53cmFwKCk7CiAgICAgICAgbGV0IG11
+dCBtb3ZpbmdfYnVja2V0cyA9IEJUcmVlU2V0OjpuZXcoKTsKICAgICAgICBtb3ZpbmdfYnVja2V0
+cy5pbnNlcnQoMHUzMik7CiAgICAgICAgbGV0IGx1bWVuID0gbHVtZW5fd2l0aChzcGVjKDMsIDEs
+IE5vbmUpLCBOb25lKTsKICAgICAgICBsZXQgbXV0IGxhc3RfYXJtZWRfYXQgPSBJbnN0YW50Ojpu
+b3coKTsKCiAgICAgICAgZXZpY3Rfb2xkX3NoYXJkcygKICAgICAgICAgICAgJmNvbnRyb2wsCiAg
+ICAgICAgICAgICZodHRwX2NsaWVudCgpLAogICAgICAgICAgICAiYWNtZSIsCiAgICAgICAgICAg
+ICJzZWFyY2giLAogICAgICAgICAgICAmbHVtZW4sCiAgICAgICAgICAgICZjdXJyZW50LAogICAg
+ICAgICAgICAmdGFyZ2V0LAogICAgICAgICAgICBTb21lKCZtb3ZpbmdfYnVja2V0cyksCiAgICAg
+ICAgICAgICZtdXQgbGFzdF9hcm1lZF9hdCwKICAgICAgICApCiAgICAgICAgLmF3YWl0CiAgICAg
+ICAgLnVud3JhcCgpOwoKICAgICAgICBsZXQgbXV0IHRvdGFsX2ZlbmNlX2NhbGxzID0gMHVzaXpl
+OwogICAgICAgIGxldCBtdXQgdG90YWxfZXZpY3RfY2FsbHMgPSAwdXNpemU7CiAgICAgICAgZm9y
+IG1vY2sgaW4gJm1vY2tfc2hhcmRzIHsKICAgICAgICAgICAgbGV0IHJlcXVlc3RzID0gbW9jawog
+ICAgICAgICAgICAgICAgLnJlY2VpdmVkX3JlcXVlc3RzKCkKICAgICAgICAgICAgICAgIC5hd2Fp
+dAogICAgICAgICAgICAgICAgLmV4cGVjdCgid2lyZW1vY2sgcmVxdWVzdCByZWNvcmRpbmcgZW5h
+YmxlZCIpOwogICAgICAgICAgICB0b3RhbF9mZW5jZV9jYWxscyArPSByZXF1ZXN0cwogICAgICAg
+ICAgICAgICAgLml0ZXIoKQogICAgICAgICAgICAgICAgLmZpbHRlcih8cnwgci51cmwucGF0aCgp
+ID09ICIvYWRtaW4vcmVzaGFyZDpmZW5jZSIpCiAgICAgICAgICAgICAgICAuY291bnQoKTsKICAg
+ICAgICAgICAgdG90YWxfZXZpY3RfY2FsbHMgKz0gcmVxdWVzdHMKICAgICAgICAgICAgICAgIC5p
+dGVyKCkKICAgICAgICAgICAgICAgIC5maWx0ZXIofHJ8IHIudXJsLnBhdGgoKSA9PSAiL2FkbWlu
+L3Jlc2hhcmQ6ZXZpY3QiKQogICAgICAgICAgICAgICAgLmNvdW50KCk7CiAgICAgICAgfQogICAg
+ICAgIGFzc2VydF9lcSEoCiAgICAgICAgICAgIHRvdGFsX2V2aWN0X2NhbGxzLCAzLAogICAgICAg
+ICAgICAiZXZlcnkgb25lIG9mIHRoZSAzIG9sZCBzaGFyZHMgbXVzdCBiZSBldmljdGVkIGV4YWN0
+bHkgb25jZSIKICAgICAgICApOwogICAgICAgIGFzc2VydCEoCiAgICAgICAgICAgIHRvdGFsX2Zl
+bmNlX2NhbGxzID4gMCAmJiB0b3RhbF9mZW5jZV9jYWxscyAlIDMgPT0gMCwKICAgICAgICAgICAg
+ImV2aWN0X29sZF9zaGFyZHMncyBvd24gbG9vcCBtdXN0IGhhdmUgcmUtYXJtZWQgYXQgbGVhc3Qg
+b25jZSAoYSBmdWxsIGFybSByb3VuZCBcCiAgICAgICAgICAgICBpcyAzIGZlbmNlIGNhbGxzLCBv
+bmUgcGVyIG9sZCBzaGFyZCkg4oCUIHRoaXMgdGVzdCBuZXZlciBhcm1zIHRoZSBmZW5jZSBpdHNl
+bGYgXAogICAgICAgICAgICAgYmVmb3JlIGNhbGxpbmcgZXZpY3Rfb2xkX3NoYXJkcywgc28gYW55
+IGZlbmNlIGNhbGxzIG9ic2VydmVkIGF0IGFsbCBhcmUgcHJvb2YgXAogICAgICAgICAgICAgb2Yg
+dGhlIGluLWxvb3AgcmVhcm0sIGdvdCB7dG90YWxfZmVuY2VfY2FsbHN9IgogICAgICAgICk7CiAg
+ICB9CgogICAgLy8gLS0tLSAjMTQ0NCBSMjogb3ZlcnNpemVkLWRvYyByZXNoYXJkIHJlbWVkaWF0
+aW9uIC0tLS0tLS0tLS0tLS0tLS0tLS0tCgogICAgLy8vIEEgbWluaW1hbCwgb3RoZXJ3aXNlLWVt
+cHR5IFtgUmVzaGFyZEJhdGNoYF0gd2hvc2UgYGV4dGVybmFsX2lkc2AgaG9sZHMKICAgIC8vLyBv
+bmUgY29sbGVjdGlvbi9pZCBwYWlyIHdpdGggYW4gYGV4dGVybmFsX2lkYCBsb25nIGVub3VnaCBv
+biBpdHMgb3duIHRvCiAgICAvLy8gcHVzaCB0aGUgYmF0Y2gncyBzZXJpYWxpemVkIHNpemUgb3Zl
+cgogICAgLy8vIFtgY3JhdGU6OnJlc2hhcmQ6OkFETUlOX1JPVVRFX0JPRFlfTElNSVRfQllURVNg
+XSDigJQgdGhlIGV4YWN0IHNoYXBlCiAgICAvLy8gYGJ5dGVfY2FwX2NodW5rYCBwcm9kdWNlcyB3
+aGVuIGl0IGZsb29ycyBhdCBhIHNpbmdsZSBvdmVyc2l6ZWQgaWQuCiAgICBmbiBvdmVyc2l6ZWRf
+YmF0Y2goY29sbGVjdGlvbjogJnN0ciwgZXh0ZXJuYWxfaWRfbGVuOiB1c2l6ZSkgLT4gUmVzaGFy
+ZEJhdGNoIHsKICAgICAgICBsZXQgbXV0IGV4dGVybmFsX2lkcyA9IEJUcmVlTWFwOjpuZXcoKTsK
+ICAgICAgICBsZXQgbXV0IGlkcyA9IEJUcmVlU2V0OjpuZXcoKTsKICAgICAgICBpZHMuaW5zZXJ0
+KCJ4Ii5yZXBlYXQoZXh0ZXJuYWxfaWRfbGVuKSk7CiAgICAgICAgZXh0ZXJuYWxfaWRzLmluc2Vy
+dChjb2xsZWN0aW9uLnRvX3N0cmluZygpLCBpZHMpOwogICAgICAgIFJlc2hhcmRCYXRjaCB7CiAg
+ICAgICAgICAgIGZyb21fbWFwX3ZlcnNpb246IDEsCiAgICAgICAgICAgIHRvX21hcF92ZXJzaW9u
+OiAyLAogICAgICAgICAgICBidWNrZXQ6IDAsCiAgICAgICAgICAgIGZyb21fc2hhcmQ6IDAsCiAg
+ICAgICAgICAgIHRvX3NoYXJkOiAxLAogICAgICAgICAgICBleHRlcm5hbF9pZHMsCiAgICAgICAg
+ICAgIHNuYXBzaG90OiBTbmFwc2hvdFYxIHsKICAgICAgICAgICAgICAgIHZlcnNpb246IDEsCiAg
+ICAgICAgICAgICAgICBjb2xsZWN0aW9uczogQlRyZWVNYXA6Om5ldygpLAogICAgICAgICAgICB9
+LAogICAgICAgIH0KICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiBkZXRlY3Rfb3ZlcnNpemVkX2Jh
+dGNoX25vbmVfd2hlbl91bmRlcl9saW1pdCgpIHsKICAgICAgICBsZXQgYmF0Y2ggPSBvdmVyc2l6
+ZWRfYmF0Y2goIndpZGdldHMiLCA2NCk7CiAgICAgICAgYXNzZXJ0ISgKICAgICAgICAgICAgZGV0
+ZWN0X292ZXJzaXplZF9iYXRjaCgmYmF0Y2gpLmlzX25vbmUoKSwKICAgICAgICAgICAgImEgc21h
+bGwgYmF0Y2ggbXVzdCBub3QgYmUgY2xhc3NpZmllZCBhcyBvdmVyc2l6ZWQiCiAgICAgICAgKTsK
+ICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiBkZXRlY3Rfb3ZlcnNpemVkX2JhdGNoX3NvbWVfd2hl
+bl9vdmVyX2xpbWl0X25hbWVzX2ZpcnN0X2lkKCkgewogICAgICAgIGxldCBiYXRjaCA9IG92ZXJz
+aXplZF9iYXRjaCgKICAgICAgICAgICAgIndpZGdldHMiLAogICAgICAgICAgICBjcmF0ZTo6cmVz
+aGFyZDo6QURNSU5fUk9VVEVfQk9EWV9MSU1JVF9CWVRFUyArIDEwMjQsCiAgICAgICAgKTsKICAg
+ICAgICBsZXQgYmxvY2sgPSBkZXRlY3Rfb3ZlcnNpemVkX2JhdGNoKCZiYXRjaCkKICAgICAgICAg
+ICAgLmV4cGVjdCgiYSBiYXRjaCBvdmVyIEFETUlOX1JPVVRFX0JPRFlfTElNSVRfQllURVMgbXVz
+dCBiZSBjbGFzc2lmaWVkIGFzIG92ZXJzaXplZCIpOwogICAgICAgIGFzc2VydF9lcSEoYmxvY2su
+Y29sbGVjdGlvbiwgIndpZGdldHMiKTsKICAgICAgICBhc3NlcnRfZXEhKAogICAgICAgICAgICBi
+bG9jay5leHRlcm5hbF9pZC5sZW4oKSwKICAgICAgICAgICAgY3JhdGU6OnJlc2hhcmQ6OkFETUlO
+X1JPVVRFX0JPRFlfTElNSVRfQllURVMgKyAxMDI0CiAgICAgICAgKTsKICAgICAgICBhc3NlcnQh
+KGJsb2NrLmJ5dGVzID4gY3JhdGU6OnJlc2hhcmQ6OkFETUlOX1JPVVRFX0JPRFlfTElNSVRfQllU
+RVMpOwogICAgfQoKICAgICNbdG9raW86OnRlc3RdCiAgICBhc3luYyBmbiBhcHBseV9yZXNoYXJk
+X2JhdGNoX3JlamVjdHNfb3ZlcnNpemVkX2JhdGNoX3dpdGhvdXRfc2VuZGluZ19yZXF1ZXN0KCkg
+ewogICAgICAgIC8vICMxNDQ0IFIyIEFDMjogdGhlIHByZS1mbGlnaHQgY2hlY2sgaW4gYGFwcGx5
+X3Jlc2hhcmRfYmF0Y2hgIG11c3QKICAgICAgICAvLyByZWplY3QgYW4gb3ZlcnNpemVkIGJhdGNo
+IGl0c2VsZiDigJQgbm8gSFRUUCByb3VuZCB0cmlwIGF0IGFsbCwgbGV0CiAgICAgICAgLy8gYWxv
+bmUgb25lIHRoYXQgY291bGQgNDEzLiBgLmV4cGVjdCgwKWAgb24gdGhlIG1vdW50IG1ha2VzIHdp
+cmVtb2NrCiAgICAgICAgLy8gcGFuaWMgaWYgdGhlIGRyaXZlciBldmVyIGNhbGxzIG91dC4KICAg
+ICAgICBsZXQgc2VydmVyID0gd2lyZW1vY2s6Ok1vY2tTZXJ2ZXI6OnN0YXJ0KCkuYXdhaXQ7CiAg
+ICAgICAgd2lyZW1vY2s6Ok1vY2s6OmdpdmVuKHdpcmVtb2NrOjptYXRjaGVyczo6bWV0aG9kKCJQ
+T1NUIikpCiAgICAgICAgICAgIC5hbmQod2lyZW1vY2s6Om1hdGNoZXJzOjpwYXRoKCIvYWRtaW4v
+cmVzaGFyZDphcHBseSIpKQogICAgICAgICAgICAucmVzcG9uZF93aXRoKHdpcmVtb2NrOjpSZXNw
+b25zZVRlbXBsYXRlOjpuZXcoMjAwKSkKICAgICAgICAgICAgLmV4cGVjdCgwKQogICAgICAgICAg
+ICAubW91bnQoJnNlcnZlcikKICAgICAgICAgICAgLmF3YWl0OwogICAgICAgIGxldCBiYXRjaCA9
+IG92ZXJzaXplZF9iYXRjaCgKICAgICAgICAgICAgIndpZGdldHMiLAogICAgICAgICAgICBjcmF0
+ZTo6cmVzaGFyZDo6QURNSU5fUk9VVEVfQk9EWV9MSU1JVF9CWVRFUyArIDEwMjQsCiAgICAgICAg
+KTsKICAgICAgICBsZXQgcmVzdWx0ID0gYXBwbHlfcmVzaGFyZF9iYXRjaCgmaHR0cF9jbGllbnQo
+KSwgJnNlcnZlci51cmkoKSwgTm9uZSwgJmJhdGNoKS5hd2FpdDsKICAgICAgICBsZXQgZXJyID0g
+cmVzdWx0LmV4cGVjdF9lcnIoImFuIG92ZXJzaXplZCBiYXRjaCBtdXN0IGJlIHJlamVjdGVkIHBy
+ZS1mbGlnaHQiKTsKICAgICAgICBhc3NlcnQhKAogICAgICAgICAgICBlcnIuZG93bmNhc3RfcmVm
+Ojo8T3ZlcnNpemVkRG9jdW1lbnRCbG9jaz4oKS5pc19zb21lKCksCiAgICAgICAgICAgICJ0aGUg
+ZXJyb3IgbXVzdCBkb3duY2FzdCB0byBPdmVyc2l6ZWREb2N1bWVudEJsb2NrLCBnb3Q6IHtlcnI6
+P30iCiAgICAgICAgKTsKICAgIH0KCiAgICAjW3Rlc3RdCiAgICBmbiBvdmVyc2l6ZV9ibG9ja19j
+YWNoZV9yZWNvcmRzX3NraXBzX3RoZW5fZXhoYXVzdHNfcmVjaGVja19idWRnZXQoKSB7CiAgICAg
+ICAgLy8gRWFjaCB0ZXN0IGluIHRoaXMgY3JhdGUgc2hhcmVzIHRoZSBwcm9jZXNzLWdsb2JhbCBv
+dmVyc2l6ZSBjYWNoZSwKICAgICAgICAvLyBzbyB1c2UgYSBuYW1lc3BhY2UvbmFtZSB1bmlxdWUg
+dG8gdGhpcyB0ZXN0IHRvIGF2b2lkIGNyb3NzLXRlc3QKICAgICAgICAvLyBpbnRlcmZlcmVuY2Ug
+dW5kZXIgcGFyYWxsZWwgZXhlY3V0aW9uLgogICAgICAgIGxldCBuYW1lc3BhY2UgPSAiYWMyLWNh
+Y2hlLW5zIjsKICAgICAgICBsZXQgbmFtZSA9ICJhYzItY2FjaGUtbmFtZSI7CiAgICAgICAgbGV0
+IHVpZCA9ICJhYzItY2FjaGUtdWlkIjsKICAgICAgICBhc3NlcnQhKAogICAgICAgICAgICBvdmVy
+c2l6ZV9ibG9ja19jb25kaXRpb24obmFtZXNwYWNlLCBuYW1lLCB1aWQpLmlzX25vbmUoKSwKICAg
+ICAgICAgICAgIm5vIHdlZGdlIHJlY29yZGVkIHlldCIKICAgICAgICApOwogICAgICAgIGFzc2Vy
+dCEoCiAgICAgICAgICAgIHNob3VsZF9za2lwX2Zvcl9vdmVyc2l6ZShuYW1lc3BhY2UsIG5hbWUs
+IHVpZCkuaXNfbm9uZSgpLAogICAgICAgICAgICAibm90aGluZyB0byBza2lwIGJlZm9yZSBhIHdl
+ZGdlIGlzIGV2ZXIgcmVjb3JkZWQiCiAgICAgICAgKTsKCiAgICAgICAgbGV0IGJsb2NrID0gT3Zl
+cnNpemVkRG9jdW1lbnRCbG9jayB7CiAgICAgICAgICAgIGNvbGxlY3Rpb246ICJ3aWRnZXRzIi50
+b19zdHJpbmcoKSwKICAgICAgICAgICAgZXh0ZXJuYWxfaWQ6ICJhYmMiLnRvX3N0cmluZygpLAog
+ICAgICAgICAgICBieXRlczogY3JhdGU6OnJlc2hhcmQ6OkFETUlOX1JPVVRFX0JPRFlfTElNSVRf
+QllURVMgKyAxLAogICAgICAgIH07CiAgICAgICAgcmVjb3JkX292ZXJzaXplX2Jsb2NrKG5hbWVz
+cGFjZSwgbmFtZSwgdWlkLCBibG9jay5jbG9uZSgpKTsKICAgICAgICBhc3NlcnRfZXEhKAogICAg
+ICAgICAgICBvdmVyc2l6ZV9ibG9ja19jb25kaXRpb24obmFtZXNwYWNlLCBuYW1lLCB1aWQpLAog
+ICAgICAgICAgICBTb21lKGJsb2NrLmNsb25lKCkpLAogICAgICAgICAgICAidGhlIHJlY29yZGVk
+IHdlZGdlIG11c3QgYmUgcmVhZGFibGUgd2l0aG91dCBhZmZlY3RpbmcgdGhlIHNraXAgYnVkZ2V0
+IgogICAgICAgICk7CgogICAgICAgIC8vIFRoZSByZWNoZWNrIGJ1ZGdldCBpcyBjb25zdW1lZCBi
+eSBgc2hvdWxkX3NraXBfZm9yX292ZXJzaXplYCwgbm90CiAgICAgICAgLy8gYnkgdGhlIHJlYWQt
+b25seSBgb3ZlcnNpemVfYmxvY2tfY29uZGl0aW9uYCBhYm92ZS4KICAgICAgICBmb3IgXyBpbiAw
+Li5PVkVSU0laRV9SRUNIRUNLX1RJQ0tTIHsKICAgICAgICAgICAgYXNzZXJ0X2VxISgKICAgICAg
+ICAgICAgICAgIHNob3VsZF9za2lwX2Zvcl9vdmVyc2l6ZShuYW1lc3BhY2UsIG5hbWUsIHVpZCks
+CiAgICAgICAgICAgICAgICBTb21lKGJsb2NrLmNsb25lKCkpLAogICAgICAgICAgICAgICAgImV2
+ZXJ5IHRpY2sgd2l0aGluIHRoZSByZWNoZWNrIGJ1ZGdldCBtdXN0IHNraXAgb24gdGhlIHNhbWUg
+d2VkZ2UiCiAgICAgICAgICAgICk7CiAgICAgICAgfQogICAgICAgIGFzc2VydCEoCiAgICAgICAg
+ICAgIHNob3VsZF9za2lwX2Zvcl9vdmVyc2l6ZShuYW1lc3BhY2UsIG5hbWUsIHVpZCkuaXNfbm9u
+ZSgpLAogICAgICAgICAgICAib25jZSB0aGUgcmVjaGVjayBidWRnZXQgaXMgZXhoYXVzdGVkLCB0
+aGUgbmV4dCB0aWNrIG11c3QgYmUgbGV0IHRocm91Z2giCiAgICAgICAgKTsKCiAgICAgICAgY2xl
+YXJfb3ZlcnNpemVfYmxvY2sobmFtZXNwYWNlLCBuYW1lKTsKICAgICAgICBhc3NlcnQhKAogICAg
+ICAgICAgICBvdmVyc2l6ZV9ibG9ja19jb25kaXRpb24obmFtZXNwYWNlLCBuYW1lLCB1aWQpLmlz
+X25vbmUoKSwKICAgICAgICAgICAgImNsZWFyaW5nIG11c3QgcmVtb3ZlIHRoZSB3ZWRnZSBlbnRp
+cmVseSIKICAgICAgICApOwogICAgfQoKICAgICNbdG9raW86OnRlc3RdCiAgICBhc3luYyBmbiBh
+ZHZhbmNlX2NhdGNoaW5nX3VwX3NraXBzX2ZlbmNlX2FybV93aGVuX292ZXJzaXplX3dlZGdlX3Jl
+Y29yZGVkKCkgewogICAgICAgIC8vICMxNDQ0IFIyIEFDMjogYSB0aWNrIGFscmVhZHkga25vd24t
+d2VkZ2VkIG9uIGFuIG92ZXJzaXplZCBkb2N1bWVudAogICAgICAgIC8vIG11c3Qgc2hvcnQtY2ly
+Y3VpdCB0byBgQmxvY2tlZGAgYmVmb3JlIGFybWluZyB0aGUgd3JpdGUgZmVuY2Ug4oCUCiAgICAg
+ICAgLy8gYC5leHBlY3QoMClgIG9uIHRoZSBmZW5jZS1yb3V0ZSBtb3VudCBtYWtlcyB3aXJlbW9j
+ayBwYW5pYyBpZiB0aGUKICAgICAgICAvLyBkcml2ZXIgZXZlciBhcm1zIGl0LgogICAgICAgIGxl
+dCBuYW1lc3BhY2UgPSAiYWMyLWZlbmNlLW5zIjsKICAgICAgICBsZXQgbmFtZSA9ICJhYzItZmVu
+Y2UtbmFtZSI7CiAgICAgICAgcmVjb3JkX292ZXJzaXplX2Jsb2NrKAogICAgICAgICAgICBuYW1l
+c3BhY2UsCiAgICAgICAgICAgIG5hbWUsCiAgICAgICAgICAgICIiLAogICAgICAgICAgICBPdmVy
+c2l6ZWREb2N1bWVudEJsb2NrIHsKICAgICAgICAgICAgICAgIGNvbGxlY3Rpb246ICJ3aWRnZXRz
+Ii50b19zdHJpbmcoKSwKICAgICAgICAgICAgICAgIGV4dGVybmFsX2lkOiAiYWJjIi50b19zdHJp
+bmcoKSwKICAgICAgICAgICAgICAgIGJ5dGVzOiBjcmF0ZTo6cmVzaGFyZDo6QURNSU5fUk9VVEVf
+Qk9EWV9MSU1JVF9CWVRFUyArIDEsCiAgICAgICAgICAgIH0sCiAgICAgICAgKTsKCiAgICAgICAg
+bGV0IHNlcnZlciA9IHdpcmVtb2NrOjpNb2NrU2VydmVyOjpzdGFydCgpLmF3YWl0OwogICAgICAg
+IHdpcmVtb2NrOjpNb2NrOjpnaXZlbih3aXJlbW9jazo6bWF0Y2hlcnM6Om1ldGhvZCgiUE9TVCIp
+KQogICAgICAgICAgICAuYW5kKHdpcmVtb2NrOjptYXRjaGVyczo6cGF0aCgiL2FkbWluL3Jlc2hh
+cmQ6ZmVuY2UiKSkKICAgICAgICAgICAgLnJlc3BvbmRfd2l0aCh3aXJlbW9jazo6UmVzcG9uc2VU
+ZW1wbGF0ZTo6bmV3KDIwMCkuc2V0X2JvZHlfanNvbihqc29uISh7fSkpKQogICAgICAgICAgICAu
+ZXhwZWN0KDApCiAgICAgICAgICAgIC5tb3VudCgmc2VydmVyKQogICAgICAgICAgICAuYXdhaXQ7
+CiAgICAgICAgbGV0IGNvbnRyb2wgPSBUd29TaGFyZEZlbmNlQ29udHJvbCB7CiAgICAgICAgICAg
+IHNoYXJkX3VybHM6IHZlYyFbc2VydmVyLnVyaSgpXSwKICAgICAgICB9OwogICAgICAgIGxldCBs
+dW1lbiA9IGx1bWVuX3dpdGgoc3BlYygyLCAxLCBOb25lKSwgTm9uZSk7CgogICAgICAgIGxldCBv
+dXRjb21lID0gYWR2YW5jZV9jYXRjaGluZ191cCgmY29udHJvbCwgJmh0dHBfY2xpZW50KCksIG5h
+bWVzcGFjZSwgbmFtZSwgJmx1bWVuKS5hd2FpdDsKICAgICAgICBhc3NlcnQhKAogICAgICAgICAg
+ICBtYXRjaGVzIShvdXRjb21lLCBEcml2ZU91dGNvbWU6OkJsb2NrZWQoXykpLAogICAgICAgICAg
+ICAiYSBrbm93bi13ZWRnZWQgdGljayBtdXN0IHJlcG9ydCBCbG9ja2VkLCBnb3Q6IHtvdXRjb21l
+Oj99IgogICAgICAgICk7CgogICAgICAgIGNsZWFyX292ZXJzaXplX2Jsb2NrKG5hbWVzcGFjZSwg
+bmFtZSk7CiAgICB9CgogICAgLy8gLS0tLSAjMTM5NiBBQzM6IGNoZWNrcG9pbnRfc2hhcmQgcmVx
+dWlyZXMgcGVyc2lzdGVkID09IHRydWUgLS0tLS0tLS0KCiAgICAjW3Rva2lvOjp0ZXN0XQogICAg
+YXN5bmMgZm4gY2hlY2twb2ludF9zaGFyZF9ibG9ja2VkX3doZW5fcmVzcG9uc2VfcmVwb3J0c19w
+ZXJzaXN0ZWRfZmFsc2UoKSB7CiAgICAgICAgLy8gQSAyMDAgd2l0aCBgcGVyc2lzdGVkOiBmYWxz
+ZWAgaXMgdGhlIGV4YWN0IHNoYXBlIGBhZG1pbl9jaGVja3BvaW50YAogICAgICAgIC8vIHJldHVy
+bnMgd2hlbiB0aGUgc2hhcmQgaGFzIG5vIGR1cmFibGUgY2hlY2twb2ludCBzaW5rIGNvbmZpZ3Vy
+ZWQKICAgICAgICAvLyAodGhlIHZhY3VvdXMgTm9vcENoZWNrcG9pbnQgY2FzZSkg4oCUIHRoaXMg
+bXVzdCBuZXZlciBiZSB0cmVhdGVkIGFzCiAgICAgICAgLy8gYSBzYXRpc2ZpZWQgZHVyYWJpbGl0
+eSBnYXRlLgogICAgICAgIGxldCBzZXJ2ZXIgPSB3aXJlbW9jazo6TW9ja1NlcnZlcjo6c3RhcnQo
+KS5hd2FpdDsKICAgICAgICB3aXJlbW9jazo6TW9jazo6Z2l2ZW4od2lyZW1vY2s6Om1hdGNoZXJz
+OjptZXRob2QoIlBPU1QiKSkKICAgICAgICAgICAgLmFuZCh3aXJlbW9jazo6bWF0Y2hlcnM6OnBh
+dGgoIi9hZG1pbi9jaGVja3BvaW50IikpCiAgICAgICAgICAgIC5yZXNwb25kX3dpdGgoCiAgICAg
+ICAgICAgICAgICB3aXJlbW9jazo6UmVzcG9uc2VUZW1wbGF0ZTo6bmV3KDIwMCkuc2V0X2JvZHlf
+anNvbihqc29uISh7ICJwZXJzaXN0ZWQiOiBmYWxzZSB9KSksCiAgICAgICAgICAgICkKICAgICAg
+ICAgICAgLm1vdW50KCZzZXJ2ZXIpCiAgICAgICAgICAgIC5hd2FpdDsKICAgICAgICBsZXQgcmVz
+dWx0ID0gY2hlY2twb2ludF9zaGFyZCgmaHR0cF9jbGllbnQoKSwgJnNlcnZlci51cmkoKSwgTm9u
+ZSkuYXdhaXQ7CiAgICAgICAgYXNzZXJ0ISgKICAgICAgICAgICAgcmVzdWx0LmlzX2VycigpLAog
+ICAgICAgICAgICAicGVyc2lzdGVkOiBmYWxzZSBtdXN0IG5vdCBzYXRpc2Z5IHRoZSBjaGVja3Bv
+aW50IGdhdGUiCiAgICAgICAgKTsKICAgIH0KCiAgICAjW3Rva2lvOjp0ZXN0XQogICAgYXN5bmMg
+Zm4gY2hlY2twb2ludF9zaGFyZF9ibG9ja2VkX3doZW5fcmVzcG9uc2Vfb21pdHNfcGVyc2lzdGVk
+X2tleSgpIHsKICAgICAgICAvLyBBIG1hbGZvcm1lZC9vbGRlciByZXNwb25zZSB3aXRoIG5vIGBw
+ZXJzaXN0ZWRgIGtleSBhdCBhbGwgbXVzdAogICAgICAgIC8vIGZhaWwgY2xvc2VkIChkZWZhdWx0
+cyB0byBub3QtZHVyYWJsZSksIG5vdCBiZSB0cmVhdGVkIGFzIHN1Y2Nlc3MuCiAgICAgICAgbGV0
+IHNlcnZlciA9IHdpcmVtb2NrOjpNb2NrU2VydmVyOjpzdGFydCgpLmF3YWl0OwogICAgICAgIHdp
+cmVtb2NrOjpNb2NrOjpnaXZlbih3aXJlbW9jazo6bWF0Y2hlcnM6Om1ldGhvZCgiUE9TVCIpKQog
+ICAgICAgICAgICAuYW5kKHdpcmVtb2NrOjptYXRjaGVyczo6cGF0aCgiL2FkbWluL2NoZWNrcG9p
+bnQiKSkKICAgICAgICAgICAgLnJlc3BvbmRfd2l0aCh3aXJlbW9jazo6UmVzcG9uc2VUZW1wbGF0
+ZTo6bmV3KDIwMCkuc2V0X2JvZHlfanNvbihqc29uISh7fSkpKQogICAgICAgICAgICAubW91bnQo
+JnNlcnZlcikKICAgICAgICAgICAgLmF3YWl0OwogICAgICAgIGxldCByZXN1bHQgPSBjaGVja3Bv
+aW50X3NoYXJkKCZodHRwX2NsaWVudCgpLCAmc2VydmVyLnVyaSgpLCBOb25lKS5hd2FpdDsKICAg
+ICAgICBhc3NlcnQhKAogICAgICAgICAgICByZXN1bHQuaXNfZXJyKCksCiAgICAgICAgICAgICJh
+IHJlc3BvbnNlIG1pc3NpbmcgdGhlIHBlcnNpc3RlZCBrZXkgbXVzdCBmYWlsIGNsb3NlZCIKICAg
+ICAgICApOwogICAgfQoKICAgICNbdG9raW86OnRlc3RdCiAgICBhc3luYyBmbiBjaGVja3BvaW50
+X3NoYXJkX29rX3doZW5fcmVzcG9uc2VfcmVwb3J0c19wZXJzaXN0ZWRfdHJ1ZSgpIHsKICAgICAg
+ICBsZXQgc2VydmVyID0gd2lyZW1vY2s6Ok1vY2tTZXJ2ZXI6OnN0YXJ0KCkuYXdhaXQ7CiAgICAg
+ICAgd2lyZW1vY2s6Ok1vY2s6OmdpdmVuKHdpcmVtb2NrOjptYXRjaGVyczo6bWV0aG9kKCJQT1NU
+IikpCiAgICAgICAgICAgIC5hbmQod2lyZW1vY2s6Om1hdGNoZXJzOjpwYXRoKCIvYWRtaW4vY2hl
+Y2twb2ludCIpKQogICAgICAgICAgICAucmVzcG9uZF93aXRoKAogICAgICAgICAgICAgICAgd2ly
+ZW1vY2s6OlJlc3BvbnNlVGVtcGxhdGU6Om5ldygyMDApLnNldF9ib2R5X2pzb24oanNvbiEoeyAi
+cGVyc2lzdGVkIjogdHJ1ZSB9KSksCiAgICAgICAgICAgICkKICAgICAgICAgICAgLm1vdW50KCZz
+ZXJ2ZXIpCiAgICAgICAgICAgIC5hd2FpdDsKICAgICAgICBsZXQgcmVzdWx0ID0gY2hlY2twb2lu
+dF9zaGFyZCgmaHR0cF9jbGllbnQoKSwgJnNlcnZlci51cmkoKSwgTm9uZSkuYXdhaXQ7CiAgICAg
+ICAgYXNzZXJ0ISgKICAgICAgICAgICAgcmVzdWx0LmlzX29rKCksCiAgICAgICAgICAgICJwZXJz
+aXN0ZWQ6IHRydWUgbXVzdCBzYXRpc2Z5IHRoZSBjaGVja3BvaW50IGdhdGU6IHtyZXN1bHQ6P30i
+CiAgICAgICAgKTsKICAgIH0KCiAgICAjW3Rva2lvOjp0ZXN0XQogICAgYXN5bmMgZm4gZHJpdmVf
+dGlja19jb21wbGV0ZV93aXRoX25vX3RyaWdnZXJfaXNfbm9vcCgpIHsKICAgICAgICBsZXQgbHVt
+ZW4gPSBsdW1lbl93aXRoKHNwZWMoMSwgMSwgU29tZSgxXzAwMF8wMDApKSwgU29tZShMdW1lblN0
+YXR1czo6ZGVmYXVsdCgpKSk7CiAgICAgICAgbGV0IGNvbnRyb2wgPSBGYWtlQ29udHJvbDo6bmV3
+KDApOwogICAgICAgIGxldCBvdXRjb21lID0gZHJpdmVfdGljaygmY29udHJvbCwgJmh0dHBfY2xp
+ZW50KCksICZsdW1lbikuYXdhaXQ7CiAgICAgICAgYXNzZXJ0X2VxISgKICAgICAgICAgICAgb3V0
+Y29tZSwKICAgICAgICAgICAgRHJpdmVPdXRjb21lOjpOb09wKCJubyBjcm9zc2VkIHRocmVzaG9s
+ZCwgdW5zdXBwb3J0ZWQgdG9wb2xvZ3ksIG9yIG1heFNoYXJkcyByZWFjaGVkIikKICAgICAgICAp
+OwogICAgICAgIGFzc2VydCEoY29udHJvbC5sYXN0X3BhdGNoLmxvY2soKS51bndyYXAoKS5pc19u
+b25lKCkpOwogICAgfQoKICAgICNbdG9raW86OnRlc3RdCiAgICBhc3luYyBmbiBkcml2ZV90aWNr
+X3N0YXJ0c19zcGxpdF9vbl9jcm9zc2VkX3RocmVzaG9sZCgpIHsKICAgICAgICBsZXQgbHVtZW4g
+PSBsdW1lbl93aXRoKAogICAgICAgICAgICBzcGVjKDIsIDEsIFNvbWUoMV8wMDBfMDAwKSksCiAg
+ICAgICAgICAgIFNvbWUoc3RhdHVzX3dpdGhfYmxvY2tpbmcoInByZXBhcmVUaHJlc2hvbGRDcm9z
+c2VkIikpLAogICAgICAgICk7CiAgICAgICAgbGV0IGNvbnRyb2wgPSBGYWtlQ29udHJvbDo6bmV3
+KDApOwogICAgICAgIGxldCBvdXRjb21lID0gZHJpdmVfdGljaygmY29udHJvbCwgJmh0dHBfY2xp
+ZW50KCksICZsdW1lbikuYXdhaXQ7CiAgICAgICAgYXNzZXJ0X2VxISgKICAgICAgICAgICAgb3V0
+Y29tZSwKICAgICAgICAgICAgRHJpdmVPdXRjb21lOjpTdGFydGVkU3BsaXQgewogICAgICAgICAg
+ICAgICAgdGFyZ2V0X3NoYXJkX2NvdW50OiAzCiAgICAgICAgICAgIH0KICAgICAgICApOwogICAg
+ICAgIGxldCBwYXRjaCA9IGNvbnRyb2wubGFzdF9wYXRjaC5sb2NrKCkudW53cmFwKCkuY2xvbmUo
+KS51bndyYXAoKTsKICAgICAgICBhc3NlcnRfZXEhKHBhdGNoWyJzcGVjIl1bInNoYXJkQ291bnQi
+XSwganNvbiEoMykpOwogICAgICAgIGFzc2VydF9lcSEoCiAgICAgICAgICAgIHBhdGNoWyJzcGVj
+Il1bInJlc2hhcmRQb2xpY3kiXVsid29ya2Zsb3ciXVsicGhhc2UiXSwKICAgICAgICAgICAganNv
+biEoIlByZXBhcmVTcGxpdCIpCiAgICAgICAgKTsKICAgICAgICBhc3NlcnRfZXEhKAogICAgICAg
+ICAgICBwYXRjaFsic3BlYyJdWyJyZXNoYXJkUG9saWN5Il1bIndvcmtmbG93Il1bInRhcmdldFNo
+YXJkQ291bnQiXSwKICAgICAgICAgICAganNvbiEoMykKICAgICAgICApOwogICAgfQoKICAgICNb
+dG9raW86OnRlc3RdCiAgICBhc3luYyBmbiBkcml2ZV90aWNrX3ByZXBhcmVfc3BsaXRfd2FpdHNf
+Zm9yX25ld19wb2QoKSB7CiAgICAgICAgbGV0IG11dCBzID0gc3BlYygzLCAxLCBTb21lKDFfMDAw
+XzAwMCkpOwogICAgICAgIHMucmVzaGFyZF9wb2xpY3kud29ya2Zsb3cgPSBSZXNoYXJkV29ya2Zs
+b3dTcGVjIHsKICAgICAgICAgICAgcGhhc2U6IFJlc2hhcmRQaGFzZTo6UHJlcGFyZVNwbGl0LAog
+ICAgICAgICAgICB0YXJnZXRfc2hhcmRfY291bnQ6IFNvbWUoMyksCiAgICAgICAgICAgIC4uRGVm
+YXVsdDo6ZGVmYXVsdCgpCiAgICAgICAgfTsKICAgICAgICBsZXQgbHVtZW4gPSBsdW1lbl93aXRo
+KHMsIE5vbmUpOwogICAgICAgIC8vIE9ubHkgMiBvZiB0aGUgMyBkZXNpcmVkIHBvZHMgYXJlIHJl
+YWR5IHlldC4KICAgICAgICBsZXQgY29udHJvbCA9IEZha2VDb250cm9sOjpuZXcoMik7CiAgICAg
+ICAgbGV0IG91dGNvbWUgPSBkcml2ZV90aWNrKCZjb250cm9sLCAmaHR0cF9jbGllbnQoKSwgJmx1
+bWVuKS5hd2FpdDsKICAgICAgICBhc3NlcnRfZXEhKAogICAgICAgICAgICBvdXRjb21lLAogICAg
+ICAgICAgICBEcml2ZU91dGNvbWU6OldhaXRpbmdGb3JOZXdTaGFyZCB7CiAgICAgICAgICAgICAg
+ICB0YXJnZXRfc2hhcmRfY291bnQ6IDMKICAgICAgICAgICAgfQogICAgICAgICk7CiAgICAgICAg
+YXNzZXJ0IShjb250cm9sLmxhc3RfcGF0Y2gubG9jaygpLnVud3JhcCgpLmlzX25vbmUoKSk7CiAg
+ICB9CgogICAgI1t0b2tpbzo6dGVzdF0KICAgIGFzeW5jIGZuIGRyaXZlX3RpY2tfcHJlcGFyZV9z
+cGxpdF9hZHZhbmNlc19vbmNlX25ld19wb2RfcmVhZHkoKSB7CiAgICAgICAgbGV0IG11dCBzID0g
+c3BlYygzLCAxLCBTb21lKDFfMDAwXzAwMCkpOwogICAgICAgIHMucmVzaGFyZF9wb2xpY3kud29y
+a2Zsb3cgPSBSZXNoYXJkV29ya2Zsb3dTcGVjIHsKICAgICAgICAgICAgcGhhc2U6IFJlc2hhcmRQ
+aGFzZTo6UHJlcGFyZVNwbGl0LAogICAgICAgICAgICB0YXJnZXRfc2hhcmRfY291bnQ6IFNvbWUo
+MyksCiAgICAgICAgICAgIC4uRGVmYXVsdDo6ZGVmYXVsdCgpCiAgICAgICAgfTsKICAgICAgICBs
+ZXQgbHVtZW4gPSBsdW1lbl93aXRoKHMsIE5vbmUpOwogICAgICAgIGxldCBjb250cm9sID0gRmFr
+ZUNvbnRyb2w6Om5ldygzKTsKICAgICAgICBsZXQgb3V0Y29tZSA9IGRyaXZlX3RpY2soJmNvbnRy
+b2wsICZodHRwX2NsaWVudCgpLCAmbHVtZW4pLmF3YWl0OwogICAgICAgIGFzc2VydF9lcSEob3V0
+Y29tZSwgRHJpdmVPdXRjb21lOjpBZHZhbmNlZFRvU3BsaXR0aW5nKTsKICAgICAgICBsZXQgcGF0
+Y2ggPSBjb250cm9sLmxhc3RfcGF0Y2gubG9jaygpLnVud3JhcCgpLmNsb25lKCkudW53cmFwKCk7
+CiAgICAgICAgYXNzZXJ0X2VxISgKICAgICAgICAgICAgcGF0Y2hbInNwZWMiXVsicmVzaGFyZFBv
+bGljeSJdWyJ3b3JrZmxvdyJdWyJwaGFzZSJdLAogICAgICAgICAgICBqc29uISgiU3BsaXR0aW5n
+IikKICAgICAgICApOwogICAgfQoKICAgICNbdG9raW86OnRlc3RdCiAgICBhc3luYyBmbiBkcml2
+ZV90aWNrX3Jlc3VtYWJsZV9hZnRlcl9zaW11bGF0ZWRfcmVzdGFydF9taWRfcHJlcGFyZV9zcGxp
+dCgpIHsKICAgICAgICAvLyBBQzIgKG5hcnJvd2VkIHRvIHRoZSBrOHMtZmFjaW5nIGhhbGYpOiBh
+IGRyaXZlciByZXN0YXJ0IG1pZAogICAgICAgIC8vIFByZXBhcmVTcGxpdCByZS1kZXJpdmVzIHRo
+ZSBleGFjdCBzYW1lIHdhaXQvYWR2YW5jZSBkZWNpc2lvbiBmcm9tCiAgICAgICAgLy8gdGhlIHBl
+cnNpc3RlZCBDUiBhbG9uZSDigJQgbm8gaW4tcHJvY2VzcyBzdGF0ZSBzdXJ2aXZlcyBiZXR3ZWVu
+IHRoZQogICAgICAgIC8vIHR3byBjYWxscyBiZWxvdyAoYSBmcmVzaCBGYWtlQ29udHJvbCBlYWNo
+IHRpbWUgc2ltdWxhdGVzIGEgZnJlc2gKICAgICAgICAvLyBwcm9jZXNzKS4KICAgICAgICBsZXQg
+bXV0IHMgPSBzcGVjKDMsIDEsIFNvbWUoMV8wMDBfMDAwKSk7CiAgICAgICAgcy5yZXNoYXJkX3Bv
+bGljeS53b3JrZmxvdyA9IFJlc2hhcmRXb3JrZmxvd1NwZWMgewogICAgICAgICAgICBwaGFzZTog
+UmVzaGFyZFBoYXNlOjpQcmVwYXJlU3BsaXQsCiAgICAgICAgICAgIHRhcmdldF9zaGFyZF9jb3Vu
+dDogU29tZSgzKSwKICAgICAgICAgICAgLi5EZWZhdWx0OjpkZWZhdWx0KCkKICAgICAgICB9Owog
+ICAgICAgIGxldCBsdW1lbiA9IGx1bWVuX3dpdGgocywgTm9uZSk7CgogICAgICAgIGxldCBiZWZv
+cmVfcmVzdGFydCA9IEZha2VDb250cm9sOjpuZXcoMik7CiAgICAgICAgYXNzZXJ0X2VxISgKICAg
+ICAgICAgICAgZHJpdmVfdGljaygmYmVmb3JlX3Jlc3RhcnQsICZodHRwX2NsaWVudCgpLCAmbHVt
+ZW4pLmF3YWl0LAogICAgICAgICAgICBEcml2ZU91dGNvbWU6OldhaXRpbmdGb3JOZXdTaGFyZCB7
+CiAgICAgICAgICAgICAgICB0YXJnZXRfc2hhcmRfY291bnQ6IDMKICAgICAgICAgICAgfQogICAg
+ICAgICk7CgogICAgICAgIC8vICJSZXN0YXJ0IjogYnJhbmQtbmV3IGNvbnRyb2wgKyBhIGZyZXNo
+bHktZGVzZXJpYWxpemVkLXNoYXBlZCBMdW1lbgogICAgICAgIC8vIChzYW1lIHNwZWMvc3RhdHVz
+IHZhbHVlcywgc2ltdWxhdGluZyBhIHJlLWZldGNoIGZyb20gdGhlIEFQSQogICAgICAgIC8vIHNl
+cnZlciksIG5ldyBwb2Qgbm93IHJlYWR5LgogICAgICAgIGxldCBsdW1lbl9hZnRlcl9yZXN0YXJ0
+ID0gbHVtZW5fd2l0aChsdW1lbi5zcGVjLmNsb25lKCksIGx1bWVuLnN0YXR1cy5jbG9uZSgpKTsK
+ICAgICAgICBsZXQgYWZ0ZXJfcmVzdGFydCA9IEZha2VDb250cm9sOjpuZXcoMyk7CiAgICAgICAg
+YXNzZXJ0X2VxISgKICAgICAgICAgICAgZHJpdmVfdGljaygmYWZ0ZXJfcmVzdGFydCwgJmh0dHBf
+Y2xpZW50KCksICZsdW1lbl9hZnRlcl9yZXN0YXJ0KS5hd2FpdCwKICAgICAgICAgICAgRHJpdmVP
+dXRjb21lOjpBZHZhbmNlZFRvU3BsaXR0aW5nCiAgICAgICAgKTsKICAgIH0KfQovLyBDT0RFR0VO
+LUVORAo=
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -3450,236 +2647,11 @@ mod tests {
 ```yaml
 changes:
   - path: apps/lumen/src/operator/reshard_driver.rs
-    action: create
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1381 (#1319 R2 executor): new autonomous reshard phase driver.
-      Checkpointed, resumable state machine over `spec.reshardPolicy.
-      workflow.phase` (`Complete -> PrepareSplit -> Splitting -> CatchingUp
-      -> Complete`), gated by `should_start_split` (R3 safety rails:
-      `maxShardBytes` must be set, single-member only, `maxShards` ceiling
-      respected). `run_migration_pass` is the first real, non-test caller of
-      `crate::reshard::bucket_moves` / `crate::reshard::
-      snapshot_reshard_batches` (AC3), driving the `#1380` admin verbs
-      (`POST /admin/backup:scoped`, `POST /admin/reshard:apply`, `POST
-      /admin/reshard:evict`) against real shards via the injectable
-      `ClusterControl::shard_base_url` seam. Independently leader-gated
-      background loop (`spawn_reshard_driver_loop`) spawned alongside the
-      existing live-usage loop from `reconcile::run`.
-  - path: apps/lumen/src/operator/reshard_driver.rs
     action: modify
     section: rust-source-unit
-    impl_mode: hand-written
+    impl_mode: codegen
     description: |
-      #1386 AC1/AC2: added `should_start_split_false_on_stale_pre_cutover_usage`
-      and `should_start_split_true_on_fresh_post_cutover_usage_above_urgent`
-      unit tests, exercising `should_start_split` against a status built via
-      `LumenSpec::reshard_status_with_usage`'s new freshness-generation
-      parameter. `should_start_split`/`drive_tick` themselves are
-      unchanged — the freshness gate lives entirely in
-      `reshard_status_with_usage`'s `blockingConditions` output, which this
-      function's existing check already consumes.
-  - path: apps/lumen/src/operator/reshard_driver.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1396 R1/R2/R3/R5: pre-land review fixes for cutover correctness.
-      R1 re-sequences `advance_catching_up` (now `advance_catching_up` +
-      new `advance_catching_up_fenced`) to migrate -> checkpoint the
-      target-only -> evict sources -> checkpoint sources -> cutover, so no
-      source eviction can become durable, or even be attempted, before the
-      target's migrated data for the same pass is durably checkpointed
-      (`checkpoint_touched_shards` generalized to `checkpoint_shards` over
-      an explicit shard iterator, called twice per tick). R2 adds a
-      bounded, status-visible write pause on still-moving buckets during
-      the final `CatchingUp` pass via new `WRITE_FENCE_TTL_SECS`,
-      `reshard_fence_call`, and `set_write_fence` (arm before the pass,
-      unconditional clear after, on every exit path) against the new
-      `api.rs` `POST /admin/reshard:fence` seam. R3 rewrites
-      `checkpoint_shard` to parse the response body and require
-      `persisted == true`; a 200 `{"persisted": false}` now bails with a
-      shard-naming error, surfacing as `DriveOutcome::Blocked` rather than
-      a satisfied durability gate. R5 adds a freshness re-check to
-      `should_start_split`: `status.reshard.usage_measured_at_map_version`
-      must equal `spec.shardMap.version`, so a lagging/stale status
-      subresource can never start a split on its own. New/updated unit
-      tests: `checkpoint_shard_blocked_when_response_reports_persisted_false`,
-      `checkpoint_shard_blocked_when_response_omits_persisted_key`,
-      `checkpoint_shard_ok_when_response_reports_persisted_true` (AC3),
-      `should_start_split_false_on_stale_status_map_version`,
-      `should_start_split_true_on_fresh_status_map_version` (AC5), and
-      `status_with_blocking`'s fixture now sets
-      `usage_measured_at_map_version` to stay fresh under the new R5 gate.
-  - path: apps/lumen/src/operator/reshard_driver.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1442 R2: `advance_catching_up` no longer clears the write fence
-      unconditionally on every exit path — when the outcome is
-      `DriveOutcome::CompletedSplit`, the fence is left armed (bounded by
-      `WRITE_FENCE_TTL_SECS`) instead of cleared immediately. A completed
-      split just called `ClusterControl::trigger_rolling_restart`, but pods
-      only read `SHARD_MAP_*`/`SHARD_COUNT` env at boot, so old-map pods
-      keep serving (and would otherwise keep accepting local writes for) the
-      just-evicted source buckets until the rolling restart actually reaches
-      them; clearing the fence right after triggering the restart would
-      reopen exactly that mixed-map window. Every other exit path (success
-      without a completed split, or `Blocked`) still clears the fence
-      immediately as before. Scope is limited to fence-through-restart
-      sequencing only; new test
-      `write_fence_stays_armed_immediately_after_completed_split` in
-      `tests/reshard_driver_e2e.rs` covers the behavior.
-  - path: apps/lumen/src/operator/reshard_driver.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1443 round-2 write-fence hardening (R1/R3/R4; R2's design lives in
-      `projects-lumen-src-reshard-rs.md`/`projects-lumen-src-storage-rs.md`).
-      R1 (TTL too short for a real pass): new private `FENCE_REARM_BATCH_INTERVAL`
-      const plus a refactored `run_migration_pass_impl` re-arms the fence
-      every `FENCE_REARM_BATCH_INTERVAL` applied batches during a long
-      migration; `advance_catching_up_fenced` additionally re-arms
-      immediately before the target checkpoint, before eviction, and before
-      the source checkpoint — every step boundary in the fenced sequence now
-      starts with a fresh TTL rather than relying on the single arm at the
-      top of the pass. A failed re-arm at any of these points aborts the
-      whole sequence to `DriveOutcome::Blocked` *before* the next
-      (potentially destructive, e.g. evict) step runs — never proceeds on a
-      possibly-expired fence. New public seam: `ClusterControl::
-      write_fence_ttl_secs()` (default-impl trait method returning
-      `WRITE_FENCE_TTL_SECS`) and the new `pub fn
-      default_write_fence_ttl_secs()` free function that exposes that same
-      default to integration tests building a `fence_ttl_secs: Option<u64>`
-      override fixture. R3 (arm overflow panic): `set_write_fence`'s
-      deadline computation now uses `Instant::checked_add` instead of `+`,
-      returning a clean error instead of panicking on an out-of-range TTL;
-      pairs with `api.rs`'s new `MAX_FENCE_TTL_SECS` request-validation gate
-      so an invalid `ttl_secs` is rejected as 400 before it ever reaches this
-      arithmetic. R4 (partial-arm leak): `set_write_fence` now tracks
-      `armed_urls` as it arms each source shard in turn and, on the first
-      failure, best-effort clears every shard it already armed before
-      returning the error — a shard that failed to arm never leaves a sibling
-      shard fenced with no driver retry in flight. New unit test
-      `set_write_fence_clears_already_armed_shards_on_partial_failure`
-      (AC4) proves this with a two-shard fake where shard A arms
-      successfully and shard B is unreachable, asserting shard A receives
-      exactly an arm call followed by a clear (empty-buckets) call. New e2e
-      test `write_fence_survives_a_tick_longer_than_a_single_ttl` (AC1) in
-      `tests/reshard_driver_e2e.rs` proves a fenced pass whose two sequential
-      checkpoint calls together exceed a short TTL never lets a write through
-      mid-pass.
-  - path: "apps/lumen/src/operator/reshard_driver.rs"
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1444 R2: an oversized single-document batch (`byte_cap_chunk`'s
-      single-id floor case in `reshard.rs`, over
-      `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES`) no longer wedges the
-      split as a silent, permanently-recurring generic `Blocked` failure
-      with a fence armed every tick. New `detect_oversized_batch` helper
-      pre-flight-checks a batch's real wire size before `apply_reshard_batch`
-      sends it (and as a defense-in-depth fallback on a live 413 response),
-      returning a new `OversizedDocumentBlock` error (public struct,
-      `Display`+`Error`, names the collection/external_id/byte count and
-      carries remediation text). `run_migration_pass_impl` downcasts an
-      `apply_reshard_batch` failure to `OversizedDocumentBlock` and records
-      it (namespace/name-keyed, in-process `OversizeBlockCache`, mirroring
-      `reconcile.rs`'s `ShardUsageCache` pattern) before propagating the
-      error, and clears any recorded block on a pass that completes without
-      hitting one (self-healing once an operator fixes the document).
-      `advance_catching_up` now checks `should_skip_for_oversize` before
-      arming the write-pause fence: a tick with a currently-recorded block
-      short-circuits to `DriveOutcome::Blocked` without arming the fence,
-      closing the recurring 503 write-window regression; a bounded
-      `OVERSIZE_RECHECK_TICKS` budget still lets a real attempt through
-      periodically so a since-fixed document is rediscovered. New public
-      `oversize_block_condition(namespace, name)` read accessor lets
-      `reconcile.rs`'s `status_patch` layer a distinct
-      `"reshardOversizedDocument"` `status.reshard.blockingConditions`
-      entry + remediation `message` onto the policy/usage-derived status.
-  - path: "apps/lumen/src/operator/reshard_driver.rs"
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1444 R2 AC2 test coverage: `record_oversize_block` and
-      `clear_oversize_block` widened from private to `pub(crate)` (still not
-      part of the crate's public API) so `reconcile.rs`'s `status_patch`
-      tests can drive the exact `oversize_block_condition` cache. New unit
-      tests: `detect_oversized_batch_none_when_under_limit` and
-      `detect_oversized_batch_some_when_over_limit_names_first_id` prove the
-      pre-flight size classification and first-offender selection;
-      `apply_reshard_batch_rejects_oversized_batch_without_sending_request`
-      proves the pre-flight check short-circuits before any HTTP call
-      (`wiremock` `.expect(0)`); `oversize_block_cache_records_skips_then_
-      exhausts_recheck_budget` proves the record/read/skip/exhaust/clear
-      cache lifecycle end to end; `advance_catching_up_skips_fence_arm_when_
-      oversize_wedge_recorded` proves a known-wedged tick reports `Blocked`
-      without ever calling the fence route (`wiremock` `.expect(0)` on
-      `/admin/reshard:fence`).
-  - path: "apps/lumen/src/operator/reshard_driver.rs"
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1458 round-3 fence/cutover lifecycle fix batch (R1/R3/R4; R2 lives in
-      `api.rs`). R1: `Complete`-phase `drive_tick` now drives a new
-      `advance_convergence` step (returns `DriveOutcome::
-      AwaitingTopologyConvergence { map_version }` /
-      `TopologyConverged { map_version }`) instead of falling straight
-      through to `should_start_split`/`NoOp` — it re-arms the write-pause
-      fence every tick the new topology is not yet confirmed converged
-      (checked via the new `ClusterControl::serving_topology_converged`
-      trait method, backed in production by the same kube readiness
-      plumbing `KubeClusterControl` already uses), and clears the fence and
-      persists `spec.reshardPolicy.workflow.convergedShardMapVersion` /
-      `status.reshard.convergedShardMapVersion` once it is. Convergence
-      state is derived entirely from this persisted field (not driver
-      memory), so it is resumable across a driver restart; `reconcile.rs`'s
-      `status_patch` surfaces an `awaitingTopologyConvergence` blocking
-      condition whenever `spec.shardMap.version > 0` and
-      `convergedShardMapVersion` has not caught up to it. New private
-      helper `buckets_on_newest_shard` backs the desired-replica count
-      `serving_topology_converged` is probed with. R3: the count-based
-      `FENCE_REARM_BATCH_INTERVAL` const is retired in favor of a
-      time-based `FENCE_REARM_FRACTION = 4` (re-arm once more than
-      `write_fence_ttl_secs() / 4` has elapsed since the last arm), via a
-      new shared `maybe_rearm_fence` helper called from both
-      `run_migration_pass_impl` (between batch applies) and
-      `checkpoint_shards` (around each shard's checkpoint/prune step); the
-      existing phase-boundary re-arms in `advance_catching_up_fenced` are
-      unchanged, and a failed re-arm still aborts to `Blocked` before the
-      next step (including eviction) runs. R4: `OversizeBlockCache` is now
-      keyed by the recording CR's `metadata.uid` (carried as the cached
-      tuple's first element rather than folded into the map key, so the
-      `(namespace, name)` key shape is unchanged) — `record_oversize_block`
-      takes an explicit `uid` argument, `oversize_block_condition` and
-      `should_skip_for_oversize` treat a cached entry whose `uid` does not
-      match the caller's current `uid` as no entry, and a new `pub(crate)
-      prune_oversize_cache(live_uids: &BTreeSet<String>)` drops any entry
-      whose `uid` is no longer live, called from `spawn_reshard_driver_loop`
-      every poll (which already lists every live CR cluster-wide) and
-      whenever `drive_tick`'s `Complete` branch runs, bounding the cache
-      across an unbounded number of delete-and-recreate cycles on the same
-      `namespace/name`. New/updated unit tests: `oversize_block_cache_
-      records_skips_then_exhausts_recheck_budget` and `advance_catching_up_
-      skips_fence_arm_when_oversize_wedge_recorded` updated for the uid
-      argument; all `ReshardWorkflowSpec { .. }` test-site struct literals
-      gained `..Default::default()` for the new `converged_shard_map_
-      version` field. New e2e coverage in `tests/reshard_driver_e2e.rs`:
-      `FakeControl` gained a `serving_topology_converged` override
-      (`with_topology_converged`) and a call counter;
-      `full_split_resumes_after_restart_and_reaches_complete` asserts an
-      explicit `TopologyConverged` tick before the final `NoOp`; new
-      `fence_stays_armed_across_ticks_until_topology_convergence_confirmed`
-      proves the fence stays armed (503 on the fenced bucket) across
-      several `AwaitingTopologyConvergence` ticks, including across a
-      simulated driver restart (fresh `FakeControl` over the same
-      persisted `Lumen`), then clears (200) once convergence is confirmed
-      and `convergedShardMapVersion` is persisted.
+      Canonical lossless source unit for the autonomous, checkpointed Lumen
+      reshard driver. Runtime behavior is regenerated exactly from the
+      authoritative rust-source-unit captured above.
 ```

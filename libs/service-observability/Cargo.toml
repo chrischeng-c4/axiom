@@ -1,0 +1,30 @@
+[package]
+name = "service-observability"
+version = "0.1.0"
+edition = "2021"
+description = "Protocol-neutral service observability integration: structured logging, optional OTLP traces, metric providers, and lifecycle connection metrics."
+
+[lib]
+name = "service_observability"
+path = "src/lib.rs"
+
+[features]
+default = []
+otlp = [
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+]
+
+[dependencies]
+anyhow = { workspace = true }
+http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+metrics-prometheus = { path = "../metrics-prometheus" }
+server-lifecycle = { path = "../server-lifecycle" }
+opentelemetry = { version = "0.21", optional = true }
+opentelemetry-otlp = { version = "0.14", features = ["tonic"], optional = true }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true }
+tracing-opentelemetry = { version = "0.22", optional = true }

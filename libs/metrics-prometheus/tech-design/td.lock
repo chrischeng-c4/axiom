@@ -2,10 +2,10 @@ version = 2
 project = "metrics-prometheus"
 ir_kind = "td"
 td_path = "libs/metrics-prometheus/tech-design"
-generated_at = "2026-07-15T07:38:06.919756+00:00"
-digest = "sha256:8e2389f162261f323f7256dabadc65ac94846fc4dbdf80210151228fca16ac98"
-source_digest = "sha256:8e2389f162261f323f7256dabadc65ac94846fc4dbdf80210151228fca16ac98"
-ir_digest = "sha256:4816c5a6f61cf2479df3a406218dfb89ed3d74e5fbbce06e5fcc372b17a1a6cd"
+generated_at = "2026-07-15T09:49:32.819723+00:00"
+digest = "sha256:7dccfb6e35af965c9ecaea2892a7f0f1042bfe94241f88d689d66d763c4c67bc"
+source_digest = "sha256:7dccfb6e35af965c9ecaea2892a7f0f1042bfe94241f88d689d66d763c4c67bc"
+ir_digest = "sha256:c8f286a03465250ec4b8ffff12eea04d377c2c25b2030b3d4240ea3a48e19ede"
 
 [[files]]
 path = "semantic/metrics-prometheus-libs-metrics-prometheus.md"
@@ -14,6 +14,6 @@ parse_error = "schema:15-56: section 'schema' at lines 15..56: JSON Schema typed
 
 [[files]]
 path = "semantic/source/libs-metrics-prometheus-src-lib-rs.md"
-digest = "sha256:361c16af21b48ae12e34308d935fc2ef85b212f5676c5effad9ffe9f950a7636"
-ir_digest = "sha256:b40ed08d5e4073c4ade7904fc30ffae7cffc5a0d4f2f851f40e6e06f06b465a7"
+digest = "sha256:8bacbbfafbf2ea3b49bb9d2b0476553b7f5a20c08ee7784fb809fb8a4d02a120"
+ir_digest = "sha256:2a50122cb494ab94ba7f0be5a630273bd16e075b8b8e5fff811ce584f0af6909"
 section_count = 3

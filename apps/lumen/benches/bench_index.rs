@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-benches.md#schema
-// CODEGEN-BEGIN
+// HANDWRITE-BEGIN gap="missing-generator:multi-target-benchmark-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition one semantic Schema section across exact benchmark source-unit targets; preserve the verified benchmark body until #1634 lands canonical ownership."
 //! Index-throughput benches.
 //!
 //! Drives the `Engine` directly (not the HTTP layer) since the README
@@ -223,4 +223,4 @@ fn bench_index(c: &mut Criterion) {
 
 criterion_group!(benches, bench_index);
 criterion_main!(benches);
-// CODEGEN-END
+// HANDWRITE-END

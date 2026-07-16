@@ -13,6 +13,36 @@ capability_refs:
     claim: "meta-api-health-ready-metrics-version"
     coverage: full
     rationale: "api.rs owns /healthz, /readyz, /metrics, and /version, which are the operability meta endpoints used by probes and scrapes."
+  - id: "http2-api-list"
+    role: primary
+    gap: "query-method-post-twins-accept-query"
+    claim: "query-method-post-twins-accept-query"
+    coverage: full
+    rationale: "api.rs owns QUERY/POST twins plus OPTIONS and HEAD Accept-Query discovery."
+  - id: "http2-api-list"
+    role: primary
+    gap: "x-read-consistency-live-cluster-state"
+    claim: "x-read-consistency-live-cluster-state"
+    coverage: full
+    rationale: "api.rs validates X-Read-Consistency against the live cluster-state view."
+  - id: "http2-api-list"
+    role: primary
+    gap: "reshard-apply-scoped-backup-evict-admin-verbs"
+    claim: "reshard-apply-scoped-backup-evict-admin-verbs"
+    coverage: full
+    rationale: "api.rs exposes the bounded reshard export, apply, and eviction administration routes."
+  - id: "http2-api-list"
+    role: primary
+    gap: "synchronous-checkpoint-admin-verb"
+    claim: "synchronous-checkpoint-admin-verb"
+    coverage: full
+    rationale: "api.rs owns the synchronous administrative checkpoint endpoint."
+  - id: "dynamic-shard-topology"
+    role: primary
+    gap: "reshard-data-plane-admin-verbs"
+    claim: "reshard-data-plane-admin-verbs"
+    coverage: full
+    rationale: "The data-plane reshard administration verbs terminate in api.rs handlers."
 fill_sections: [overview, source, changes]
 ---
 
@@ -27,19 +57,19 @@ Public API manifest for `apps/lumen/src/api.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `ApiDoc` | apps/lumen/src/api.rs | struct | pub | 614 |  |
-| `ApiErr` | apps/lumen/src/api.rs | struct | pub | 2368 |  |
+| `ApiDoc` | apps/lumen/src/api.rs | struct | pub | 618 |  |
+| `ApiErr` | apps/lumen/src/api.rs | struct | pub | 2467 |  |
 | `AppState` | apps/lumen/src/api.rs | struct | pub | 64 |  |
-| `RoutedBackend` | apps/lumen/src/api.rs | trait | pub | 278 | Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3); `AppState::routed` is `None` for every non-routed deployment. |
-| `ShardForwardMisrouted` | apps/lumen/src/api.rs | struct | pub | 2459 | A forwarded request's one-hop marker claimed this pod, but recomputing ownership disagrees (#1442 R1) — a spoofed or genuinely misrouted forward, rejected rather than honored. |
-| `ShardForwardRemoteError` | apps/lumen/src/api.rs | struct | pub | 2407 | The owning shard was reached and answered, but with a non-2xx status. |
-| `ShardForwardUnavailable` | apps/lumen/src/api.rs | struct | pub | 2389 | One-hop shard-forward failure — the owning shard was unreachable or its response could not be decoded. |
-| `ShardMapVersionMismatch` | apps/lumen/src/api.rs | struct | pub | 2431 | A forwarded request declared a shard-map version that disagrees with this pod's own live map (#1442 R2) — the rolling-restart mixed-map window. |
-| `WriteFence` | apps/lumen/src/api.rs | struct | pub | 173 | #1396 R2: bounded write pause on still-moving virtual buckets during a reshard's final `CatchingUp` pass. Armed/cleared via `POST /admin/reshard:fence`; self-expires on its TTL deadline so a crashed driver can never leave a permanent fence. #1443 R3: `arm` now returns `bool` (false on `Instant + Duration` overflow instead of panicking) and the internal mutex is poison-proof (`unwrap_or_else(poisoned -> into_inner)`), so an overflowed/panicked prior caller can never wedge the fence permanently. |
+| `ShardForwardMisrouted` | apps/lumen/src/api.rs | struct | pub | 2558 |  |
+| `ShardForwardRemoteError` | apps/lumen/src/api.rs | struct | pub | 2506 |  |
+| `ShardForwardUnavailable` | apps/lumen/src/api.rs | struct | pub | 2488 |  |
+| `ShardMapVersionMismatch` | apps/lumen/src/api.rs | struct | pub | 2530 |  |
+| `WriteFence` | apps/lumen/src/api.rs | struct | pub | 173 |  |
 | `new` | apps/lumen/src/api.rs | function | pub | 461 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
 | `open` | apps/lumen/src/api.rs | function | pub | 499 | open(engine: Arc<Engine>) -> Self |
-| `openapi` | apps/lumen/src/api.rs | function | pub | 2296 | openapi() -> utoipa::openapi::OpenApi |
-| `router` | apps/lumen/src/api.rs | function | pub | 653 | router(state: AppState) -> Router |
+| `openapi` | apps/lumen/src/api.rs | function | pub | 2395 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | apps/lumen/src/api.rs | function | pub | 657 | router(state: AppState) -> Router |
+| `router_with_admission` | apps/lumen/src/api.rs | function | pub | 666 | router_with_admission(     state: AppState,     admission: Option<service_http::AdmissionController>, ) -> Router |
 | `with_checkpoint` | apps/lumen/src/api.rs | function | pub | 483 | with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self |
 | `with_cluster` | apps/lumen/src/api.rs | function | pub | 465 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
 | `with_components` | apps/lumen/src/api.rs | function | pub | 437 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<dyn WriteSink>,     ) -> Self |
@@ -47,2615 +77,1897 @@ Public API manifest for `apps/lumen/src/api.rs` generated from AST during Score 
 | `with_search_backend` | apps/lumen/src/api.rs | function | pub | 470 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
 | `with_wal` | apps/lumen/src/api.rs | function | pub | 429 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
 | `with_write_backend` | apps/lumen/src/api.rs | function | pub | 475 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
-
 ## Source
 <!-- type: rust-source-unit lang: rust -->
-
-````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#rust-source-unit
-// CODEGEN-BEGIN
-//! HTTP/2 API surface.
-//!
-//! Reads (`/search`, `/duplicates`, `/stats`) can be served by any
-//! replica. Writes (`PUT /collections/...`, `POST .../index`,
-//! `DELETE .../index/...`) currently target the local in-memory
-//! [`Engine`]; when Raft is wired in they will be forwarded to the
-//! shard leader before being applied.
-//!
-//! The contract for external consumers is `GET /openapi.json`,
-//! generated at runtime from this module.
-
-use std::collections::BTreeSet;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
-use anyhow::Result;
-use async_trait::async_trait;
-use axum::{
-    extract::{Extension, FromRequest, Path, Query, Request, State},
-    http::{Method, StatusCode},
-    middleware::from_fn_with_state,
-    response::{IntoResponse, Json},
-    routing::{delete, get, post, put},
-    Router,
-};
-use futures::future::join_all;
-use serde::Deserialize;
-use service_http::{MetricsProvider, ReadinessHook};
-use utoipa::{
-    openapi::{
-        self,
-        security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
-    },
-    Modify, OpenApi,
-};
-
-use axum::http::HeaderMap;
-
-use crate::auth::{auth_middleware, AuthConfig, AuthContext, LumenVerifier, Role};
-use crate::backup_sink::{BackupSink, LocalFsSink};
-use crate::coordinator::{SubmitStalled, WriteCoordinator, WriteSink};
-use crate::log_entry::RaftLogEntry;
-use crate::raft::{ClusterStateView, RaftRole, ReadConsistency};
-use crate::reshard::ReshardBatch;
-use crate::routing::VirtualBucketShardMap;
-use crate::storage::{ApplyOutcome, DropOutcome, Engine, SnapshotV1, StorageError};
-use crate::types::{
-    Analyzer, ApiError, BatchSearchRequest, BatchSearchResponse, BatchSearchResult, CacheStats,
-    CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup, DuplicatesRequest,
-    DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue, IndexItem, IndexRequest,
-    IndexResponse, KnnQuery, MatchOp, MatchQuery, QueryNode, RangeQuery, ReplaceDocBody,
-    ReplaceDocItem, ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit,
-    SearchRequest, SearchResponse, StatsResponse, StorageStats, TermQuery, TermsQuery,
-    VectorBackend, VectorMetric, VectorQuantize, VectorSpec, MAX_BATCH_REPLACE_SIZE,
-    MAX_BATCH_SEARCH_SIZE,
-};
-use crate::wal::{MemWal, SharedWal};
-
-#[derive(Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub struct AppState {
-    pub engine: Arc<Engine>,
-    pub auth: Arc<AuthConfig>,
-    pub cluster: Option<Arc<crate::raft::ClusterState>>,
-    /// Read/search backend. Defaults to the local engine; sharded serving can
-    /// replace it with a fan-in router while keeping writes/stats local.
-    pub search_backend: Arc<dyn SearchBackend>,
-    /// Writes go through a [`WriteSink`]: the WAL-seam coordinator for
-    /// embedded/nats, or the raft host for `--wal raft`. Reads use
-    /// `engine` directly. See `coordinator` / `wal` / `raft_sm`.
-    pub writer: Arc<dyn WriteSink>,
-    /// Write/mutation backend. Defaults to the local coordinator; sharded
-    /// serving can replace it with a document-router that fans out writes
-    /// across independent shard coordinators.
-    pub write_backend: Arc<dyn WriteBackend>,
-    /// Durability-on-demand seam for `POST /admin/checkpoint` (#1389).
-    /// Defaults to [`NoopCheckpoint`]; the server binary wires a real
-    /// segment-checkpoint implementation when segment persistence is
-    /// configured. See [`CheckpointSink`].
-    pub checkpoint: Arc<dyn CheckpointSink>,
-    /// Bounded write pause on still-moving virtual buckets during a
-    /// reshard's final `CatchingUp` pass (#1396 R2). Defaults to unarmed
-    /// (every write passes through unchanged); the reshard driver arms it
-    /// via `POST /admin/reshard:fence`. See [`WriteFence`].
-    pub write_fence: WriteFence,
-    /// Cross-pod shard router for operator/k8s serving (#1398 R1-R3).
-    /// `None` for every deployment shape except the routed one (`SHARD_COUNT`
-    /// > 1, `replicasPerShard <= 1`, no `--search-shard-segment-dirs`) — see
-    /// [`RoutedBackend`]. The server binary wires a real
-    /// `routing_remote::RoutedRouter` via [`Self::with_routed`]; tests and
-    /// every other deployment shape leave this `None`.
-    pub routed: Option<Arc<dyn RoutedBackend>>,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub trait SearchBackend: Send + Sync {
-    fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse>;
-}
-
-/// Forces a synchronous, awaited durability checkpoint of the live engine
-/// state (#1389). The reshard driver's cutover (`service_k8s::reshard_driver::
-/// advance_catching_up`) calls `POST /admin/checkpoint` — which routes here —
-/// on every shard it just migrated data into or evicted data from, and waits
-/// for the response before flipping `spec.shardMap` and triggering the
-/// cutover rolling restart. `Engine::apply_reshard_batch`/`evict_not_owned`
-/// (`storage.rs`, #1380) mutate engine state directly rather than through
-/// `WriteCoordinator`/the AOF, so — unlike ordinary writes — their durability
-/// is not implied by `applied_seq()`; this seam is what makes it durable
-/// on-demand instead of only on the next periodic `LUMEN_SNAPSHOT_SECS` tick.
-///
-/// [`NoopCheckpoint`] is the default (no `--data-dir`/non-segment-persistence
-/// deployments, including every existing test `AppState`): `checkpoint_now`
-/// trivially returns `Ok(false)` (nothing configured to persist, so nothing
-/// to lose across an in-process test's non-restart). The server binary wires
-/// a real segment-checkpoint-backed implementation whenever
-/// `--persistence=segment` + `--data-dir` are configured — exactly the
-/// combination the operator now renders unconditionally at
-/// `replicasPerShard <= 1` (#1387), which is the same topology the reshard
-/// driver is scoped to (see `reshard_driver`'s "Scope rail" doc).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-#[async_trait]
-pub trait CheckpointSink: Send + Sync {
-    /// Persist current engine state durably and return only once the write
-    /// is committed. `Ok(true)` when a checkpoint was actually written;
-    /// `Ok(false)` when no durable store is configured (a checkpoint request
-    /// against such a deployment is vacuously satisfied — there is nothing
-    /// on disk to fall behind). `Err` on a real write failure, which callers
-    /// (the reshard driver) must treat as "not yet durable" and retry.
-    async fn checkpoint_now(&self) -> Result<bool>;
-}
-
-/// Default [`CheckpointSink`] for deployments/tests with no configured
-/// durable store — see the trait doc.
-struct NoopCheckpoint;
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-#[async_trait]
-impl CheckpointSink for NoopCheckpoint {
-    async fn checkpoint_now(&self) -> Result<bool> {
-        Ok(false)
-    }
-}
-
-/// A bounded, status-visible write pause on a set of still-moving virtual
-/// buckets (#1396 R2), the mechanism #1381's R5 review sanctioned: "a
-/// bounded final pause of writes to still-moving buckets is acceptable if
-/// needed for convergence, but must be bounded and reported in status."
-///
-/// Closes the copy-to-evict gap in the reshard driver's `CatchingUp` pass:
-/// without a pause, a write landing on a source shard's moving bucket after
-/// the last migration-copy read but before that bucket's eviction is never
-/// re-copied to the target and is silently dropped by eviction. The driver
-/// arms a fence over exactly the buckets its final migration pass is about
-/// to copy (`POST /admin/reshard:fence`) immediately before that pass, so
-/// the single pass taken under the fence is already a complete/converged
-/// snapshot of those buckets — no repeat-until-converged loop is needed —
-/// and clears the fence (an empty-`buckets` call to the same verb) on every
-/// exit path of that tick, success or `Blocked`.
-///
-/// Crash safety: a driver process that dies between arming and clearing
-/// cannot leave a bucket permanently unwritable. [`WriteFence::blocks`]
-/// checks `deadline` on every call and treats an expired fence as unarmed —
-/// this check runs on the *serving pod*, independent of whether the driver
-/// process that armed it is still alive, so expiry is enforced even if the
-/// driver never comes back. The reshard driver re-arms a fresh deadline
-/// every tick it needs one, so a healthy, slow-but-progressing driver never
-/// races its own TTL; see `reshard_driver::WRITE_FENCE_TTL`.
-#[derive(Clone, Default)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub struct WriteFence {
-    state: Arc<Mutex<Option<FenceState>>>,
-}
-
-struct FenceState {
-    virtual_bucket_count: u32,
-    buckets: BTreeSet<u32>,
-    deadline: Instant,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl WriteFence {
-    /// Arm the fence over `buckets` (computed against `virtual_bucket_count`)
-    /// until `ttl` from now, replacing any prior armed state. Returns `false`
-    /// (leaving any prior armed state untouched) when `Instant::now() + ttl`
-    /// would overflow (#1443 R3) — the caller must treat that as a failed arm
-    /// rather than silently panicking with the fence lock held, which would
-    /// poison it for every subsequent write/clear on this pod.
-    fn arm(&self, virtual_bucket_count: u32, buckets: BTreeSet<u32>, ttl: Duration) -> bool {
-        let Some(deadline) = Instant::now().checked_add(ttl) else {
-            return false;
-        };
-        let mut guard = self.lock();
-        *guard = Some(FenceState {
-            virtual_bucket_count,
-            buckets,
-            deadline,
-        });
-        true
-    }
-
-    /// Explicitly disarm, independent of `deadline`.
-    fn clear(&self) {
-        *self.lock() = None;
-    }
-
-    /// `Some(bucket)` when `collection_id`/`external_id` route to a
-    /// currently-fenced bucket; `None` (unblocked) once armed but past
-    /// `deadline`, or never armed at all.
-    fn blocks(&self, collection_id: &str, external_id: &str) -> Option<u32> {
-        let guard = self.lock();
-        let fence = guard.as_ref()?;
-        if Instant::now() >= fence.deadline {
-            return None;
-        }
-        let map = VirtualBucketShardMap::balanced(0, fence.virtual_bucket_count, 1).ok()?;
-        let bucket = map.route_document(collection_id, None, external_id).bucket;
-        fence.buckets.contains(&bucket).then_some(bucket)
-    }
-
-    /// Poison-proof lock acquisition (#1443 R3), matching `segment_rdb.rs`'s
-    /// `save_lock` precedent: a panic anywhere else in the process while
-    /// holding this lock must never turn into a permanent write outage on
-    /// this pod by propagating a poisoned-mutex panic into every later
-    /// `arm`/`clear`/`blocks` call.
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<FenceState>> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-#[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub trait WriteBackend: Send + Sync {
-    async fn create_collection(
-        &self,
-        collection_id: String,
-        req: CreateCollectionRequest,
-    ) -> Result<CreateCollectionResponse>;
-
-    async fn drop_collection(&self, collection_id: String, force: bool) -> Result<DropOutcome>;
-
-    async fn index(&self, collection_id: String, req: IndexRequest) -> Result<IndexResponse>;
-
-    async fn replace_docs(
-        &self,
-        collection_id: String,
-        req: ReplaceDocsRequest,
-    ) -> Result<ReplaceDocsResponse>;
-
-    async fn delete(
-        &self,
-        collection_id: String,
-        external_id: String,
-        field: Option<String>,
-    ) -> Result<()>;
-
-    async fn drop_field(&self, collection_id: String, field_name: String) -> Result<u32>;
-}
-
-/// Cross-pod shard routing for operator/k8s serving pods (#1398 R1-R3).
-/// `AppState::routed` is `None` for every non-routed deployment (standalone,
-/// primary/replica, and the `--search-shard-segment-dirs` fan-in path) —
-/// handlers consult it first and fall back to `search_backend`/
-/// `write_backend` unchanged when it is absent, so `shardCount:1` serving
-/// never even constructs an implementation (AC5: no forwarding overhead).
-///
-/// Every method takes the inbound request's `headers` verbatim: the sole
-/// concrete implementation ([`crate::routing_remote::RoutedRouter`], behind
-/// the `operator` feature) checks the `x-lumen-forwarded` one-hop guard
-/// first and, when forwarding, carries the caller's `Authorization` bearer
-/// and `x-read-consistency` through unchanged (R3).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-#[async_trait]
-pub trait RoutedBackend: Send + Sync {
-    async fn search(
-        &self,
-        collection_id: &str,
-        req: SearchRequest,
-        headers: &HeaderMap,
-    ) -> Result<SearchResponse>;
-
-    async fn index(
-        &self,
-        collection_id: String,
-        req: IndexRequest,
-        headers: &HeaderMap,
-    ) -> Result<IndexResponse>;
-
-    async fn replace_docs(
-        &self,
-        collection_id: String,
-        req: ReplaceDocsRequest,
-        headers: &HeaderMap,
-    ) -> Result<ReplaceDocsResponse>;
-
-    async fn delete(
-        &self,
-        collection_id: String,
-        external_id: String,
-        field: Option<String>,
-        headers: &HeaderMap,
-    ) -> Result<()>;
-}
-
-#[derive(Clone)]
-struct LocalEngineSearch {
-    engine: Arc<Engine>,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl SearchBackend for LocalEngineSearch {
-    fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
-        self.engine.search(collection_id, req)
-    }
-}
-
-#[derive(Clone)]
-struct LocalWriteBackend {
-    writer: Arc<dyn WriteSink>,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl LocalWriteBackend {
-    fn unexpected(outcome: ApplyOutcome) -> anyhow::Error {
-        anyhow::anyhow!("unexpected apply outcome: {outcome:?}")
-    }
-}
-
-#[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl WriteBackend for LocalWriteBackend {
-    async fn create_collection(
-        &self,
-        collection_id: String,
-        req: CreateCollectionRequest,
-    ) -> Result<CreateCollectionResponse> {
-        match self
-            .writer
-            .submit(RaftLogEntry::CreateCollection { collection_id, req })
-            .await?
-        {
-            ApplyOutcome::Created(r) => Ok(r),
-            other => Err(Self::unexpected(other)),
-        }
-    }
-
-    async fn drop_collection(&self, collection_id: String, force: bool) -> Result<DropOutcome> {
-        match self
-            .writer
-            .submit(RaftLogEntry::DropCollection {
-                collection_id,
-                force,
-            })
-            .await?
-        {
-            ApplyOutcome::Dropped(o) => Ok(o),
-            other => Err(Self::unexpected(other)),
-        }
-    }
-
-    async fn index(&self, collection_id: String, req: IndexRequest) -> Result<IndexResponse> {
-        match self
-            .writer
-            .submit(RaftLogEntry::Index { collection_id, req })
-            .await?
-        {
-            ApplyOutcome::Indexed(r) => Ok(r),
-            other => Err(Self::unexpected(other)),
-        }
-    }
-
-    async fn replace_docs(
-        &self,
-        collection_id: String,
-        req: ReplaceDocsRequest,
-    ) -> Result<ReplaceDocsResponse> {
-        match self
-            .writer
-            .submit(RaftLogEntry::ReplaceDocs { collection_id, req })
-            .await?
-        {
-            ApplyOutcome::Replaced(r) => Ok(r),
-            other => Err(Self::unexpected(other)),
-        }
-    }
-
-    async fn delete(
-        &self,
-        collection_id: String,
-        external_id: String,
-        field: Option<String>,
-    ) -> Result<()> {
-        match self
-            .writer
-            .submit(RaftLogEntry::Delete {
-                collection_id,
-                external_id,
-                field,
-            })
-            .await?
-        {
-            ApplyOutcome::Deleted => Ok(()),
-            other => Err(Self::unexpected(other)),
-        }
-    }
-
-    async fn drop_field(&self, collection_id: String, field_name: String) -> Result<u32> {
-        match self
-            .writer
-            .submit(RaftLogEntry::DropField {
-                collection_id,
-                field_name,
-            })
-            .await?
-        {
-            ApplyOutcome::FieldChanged(v) => Ok(v),
-            other => Err(Self::unexpected(other)),
-        }
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl AppState {
-    /// Build state with an explicit write log. Spawns the apply loop.
-    pub fn with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self {
-        let writer = WriteCoordinator::start(wal, engine.clone());
-        Self::with_components(engine, auth, writer)
-    }
-
-    /// Build state from an already-constructed coordinator — used by the
-    /// server binary, which wires the WAL + RDB bootstrap itself and
-    /// hands in the resulting coordinator.
-    pub fn with_components(
-        engine: Arc<Engine>,
-        auth: Arc<AuthConfig>,
-        writer: Arc<dyn WriteSink>,
-    ) -> Self {
-        Self {
-            search_backend: Arc::new(LocalEngineSearch {
-                engine: engine.clone(),
-            }),
-            write_backend: Arc::new(LocalWriteBackend {
-                writer: writer.clone(),
-            }),
-            engine,
-            auth,
-            cluster: None,
-            writer,
-            checkpoint: Arc::new(NoopCheckpoint),
-            write_fence: WriteFence::default(),
-            routed: None,
-        }
-    }
-
-    /// Build state with an in-process [`MemWal`] — single-node /
-    /// dev / tests. Writes feel synchronous.
-    pub fn new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self {
-        Self::with_wal(engine, auth, Arc::new(MemWal::new()))
-    }
-
-    pub fn with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self {
-        self.cluster = Some(cluster);
-        self
-    }
-
-    pub fn with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self {
-        self.search_backend = search_backend;
-        self
-    }
-
-    pub fn with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self {
-        self.write_backend = write_backend;
-        self
-    }
-
-    /// Wire a real [`CheckpointSink`] (#1389) — used by the server binary
-    /// when segment persistence is configured, and by tests that need to
-    /// control/observe `POST /admin/checkpoint` behavior.
-    pub fn with_checkpoint(mut self, checkpoint: Arc<dyn CheckpointSink>) -> Self {
-        self.checkpoint = checkpoint;
-        self
-    }
-
-    /// Wire a [`RoutedBackend`] (#1398) — the server binary calls this only
-    /// in the routed serving topology (`SHARD_COUNT` env > 1 at
-    /// `replicasPerShard <= 1`, no `--search-shard-segment-dirs`); every
-    /// other deployment shape leaves `routed` at its `None` default.
-    pub fn with_routed(mut self, routed: Arc<dyn RoutedBackend>) -> Self {
-        self.routed = Some(routed);
-        self
-    }
-
-    /// No-auth state over an in-process log. Used by tests and the
-    /// simplest single-node runs.
-    pub fn open(engine: Arc<Engine>) -> Self {
-        Self::with_wal(
-            engine,
-            Arc::new(AuthConfig::open()),
-            Arc::new(MemWal::new()),
-        )
-    }
-}
-
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "lumen",
-        description = "Standalone search and duplicate-detection index. Generic Collection / Field primitive; the caller owns the source of truth.",
-        license(name = "MIT")
-    ),
-    servers(
-        (url = "http://lumen-svc:7373", description = "in-cluster ClusterIP"),
-        (url = "http://localhost:7373", description = "local dev")
-    ),
-    tags(
-        (name = "Collections", description = "Schema lifecycle"),
-        (name = "Index",       description = "Document writes & deletes"),
-        (name = "Query",       description = "Search & duplicate detection"),
-        (name = "Admin",       description = "Health, stats, OpenAPI")
-    ),
-    paths(
-        healthz,
-        readyz,
-        version,
-        metrics,
-        debug_cluster,
-        list_collections,
-        create_collection,
-        drop_collection,
-        drop_field,
-        index,
-        delete_external_id,
-        replace_docs,
-        replace_doc,
-        search,
-        batch_search,
-        duplicates,
-        stats,
-        backup_scoped,
-        reshard_apply,
-        reshard_prune,
-        reshard_evict,
-        reshard_fence,
-        admin_checkpoint,
-    ),
-    components(schemas(
-        CreateCollectionRequest,
-        CreateCollectionResponse,
-        FieldSpec,
-        FieldType,
-        Analyzer,
-        VectorSpec,
-        VectorMetric,
-        VectorBackend,
-        VectorQuantize,
-        IndexRequest,
-        IndexItem,
-        FieldValue,
-        IndexResponse,
-        ReplaceDocsRequest,
-        ReplaceDocItem,
-        ReplaceDocsResponse,
-        ReplaceDocResult,
-        ReplaceDocBody,
-        SearchRequest,
-        QueryNode,
-        MatchQuery,
-        MatchOp,
-        TermQuery,
-        TermsQuery,
-        RangeQuery,
-        // #1307: $ref'd by RangeQuery's gt/gte/lt/lte bounds (untagged f64 | String) —
-        // same dangling-ref reason as the #200 note below, registered explicitly.
-        crate::types::RangeBound,
-        KnnQuery,
-        crate::types::RrfQuery,
-        crate::types::ExistsQuery,
-        crate::types::DuplicatedQuery,
-        // #200: these are $ref'd by QueryNode / SearchRequest but were not
-        // registered, so the emitted OpenAPI had dangling refs. SortSpec also
-        // pulls in SortOrder + SortMissing.
-        crate::types::IdsQuery,
-        crate::types::HasChildQuery,
-        crate::types::HammingQuery,
-        crate::types::SortSpec,
-        crate::types::SortOrder,
-        crate::types::SortMissing,
-        SearchHit,
-        SearchResponse,
-        BatchSearchRequest,
-        crate::types::BatchSearchItem,
-        BatchSearchResponse,
-        BatchSearchResult,
-        DuplicatesRequest,
-        DuplicateGroup,
-        DuplicatesResponse,
-        StatsResponse,
-        FieldStats,
-        StorageStats,
-        CacheStats,
-        ApiError,
-        crate::raft::ClusterStateView,
-        crate::raft::PeerAddr,
-        crate::raft::RaftRole,
-    )),
-    modifiers(&SecurityAddon),
-    security(("bearerAuth" = []))
-)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub struct ApiDoc;
-
-struct SecurityAddon;
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl Modify for SecurityAddon {
-    fn modify(&self, openapi: &mut openapi::OpenApi) {
-        if let Some(components) = openapi.components.as_mut() {
-            components.add_security_scheme(
-                "bearerAuth",
-                SecurityScheme::Http(
-                    HttpBuilder::new()
-                        .scheme(HttpAuthScheme::Bearer)
-                        .bearer_format("opaque")
-                        .description(Some(
-                            "Send `Authorization: Bearer <LUMEN_TOKEN>` when `LUMEN_AUTH=required`.",
-                        ))
-                        .build(),
-                ),
-            );
-        }
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl ReadinessHook for Engine {
-    fn is_draining(&self) -> bool {
-        Engine::is_draining(self)
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl MetricsProvider for Engine {
-    fn render_metrics(&self) -> String {
-        self.metrics().render()
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub fn router(state: AppState) -> Router {
-    // Apply auth middleware only to data-plane routes. Admin/Probe
-    // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
-    // `/docs`) stay open so K8s probes and Prometheus scrape can hit
-    // them without a token even when auth is required.
-    let auth_state = Arc::new(LumenVerifier::new(state.auth.clone()));
-    let data_plane = Router::new()
-        .route(
-            "/collections",
-            get(list_collections)
-                .options(collections_query_probe)
-                .head(collections_query_probe)
-                // Epic #1296 R1: `QUERY /collections` is a dual-registered
-                // twin of `POST /collections:search` (#1271 batch search).
-                // Axum has no native `Method::QUERY` support yet
-                // (tokio-rs/axum#3799, PR #3801 open), so this is the interim
-                // dispatch — `fallback` runs for any method not explicitly
-                // registered above (`GET`, `OPTIONS`, `HEAD`), and the
-                // handler re-checks by hand. Replace with a native
-                // `MethodFilter::QUERY` combinator once that PR lands.
-                .fallback(collections_query_dispatch),
-        )
-        .route(
-            "/collections/{collection_id}",
-            put(create_collection)
-                .delete(drop_collection)
-                .options(collection_id_query_probe)
-                .head(collection_id_query_probe)
-                // Epic #1296 R1: `QUERY /collections/{collection_id}` is a
-                // dual-registered twin of `POST
-                // /collections/{collection_id}/search`. See the
-                // `/collections` route above for the interim-fallback
-                // rationale.
-                .fallback(collection_id_query_dispatch),
-        )
-        .route("/collections/{collection_id}/index", post(index))
-        .route(
-            "/collections/{collection_id}/index/{external_id}",
-            delete(delete_external_id),
-        )
-        .route(
-            "/collections/{collection_id}/docs:replace",
-            put(replace_docs),
-        )
-        .route(
-            "/collections/{collection_id}/docs/{external_id}",
-            put(replace_doc),
-        )
-        .route("/collections/{collection_id}/search", post(search))
-        .route("/collections:search", post(batch_search))
-        .route("/collections/{collection_id}/duplicates", post(duplicates))
-        .route("/collections/{collection_id}/stats", get(stats))
-        .route(
-            "/collections/{collection_id}/fields/{field_name}",
-            delete(drop_field),
-        )
-        .route(
-            "/collections/{collection_id}/reindex/stream",
-            post(reindex_stream),
-        )
-        .route("/admin/backup", get(backup))
-        .route("/admin/backup/local", post(backup_to_local))
-        .route("/admin/backup:scoped", post(backup_scoped))
-        .route("/admin/restore", post(restore))
-        .route("/admin/reshard:apply", post(reshard_apply))
-        .route("/admin/reshard:prune", post(reshard_prune))
-        .route("/admin/reshard:evict", post(reshard_evict))
-        .route("/admin/reshard:fence", post(reshard_fence))
-        .route("/admin/checkpoint", post(admin_checkpoint))
-        .layer(from_fn_with_state(auth_state, auth_middleware))
-        // Bound request bodies: a bulk index is ~MBs (the item cap is the real
-        // guard); 8MiB is the broker payload budget. Rejects oversized
-        // bodies with 413 before they hit a handler. Shared with
-        // `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` (#1444 R2) so the
-        // reshard driver's oversize-batch detection can never drift from the
-        // limit actually enforced here.
-        .layer(axum::extract::DefaultBodyLimit::max(
-            crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES,
-        ));
-
-    let metrics: Arc<dyn MetricsProvider> = state.engine.clone();
-    let probes = service_http::standard_probe_routes(state.engine.clone(), Some(metrics), openapi);
-    let admin = Router::new()
-        .route("/version", get(version))
-        .route("/debug/cluster", get(debug_cluster));
-
-    probes
-        .merge(admin.with_state(state.clone()))
-        .merge(data_plane.with_state(state))
-        // One tracing span per HTTP request — structured request logs always, and
-        // the source spans the OTLP layer exports as traces when LUMEN_OTLP_ENDPOINT
-        // is set. INFO level so the default `info` EnvFilter keeps it.
-        .layer(service_http::trace_layer())
-}
-
-#[utoipa::path(
-    get,
-    path = "/metrics",
-    tag = "Admin",
-    security(()),
-    responses((status = 200, description = "Prometheus text-format metrics", body = String))
-)]
-/// OpenAPI metadata for the shared `/metrics` implementation in service-http.
-#[allow(dead_code)]
-async fn metrics(
-    State(state): State<AppState>,
-) -> (StatusCode, [(&'static str, &'static str); 1], String) {
-    let body = state.engine.metrics().render();
-    (
-        StatusCode::OK,
-        [("content-type", "text/plain; version=0.0.4")],
-        body,
-    )
-}
-
-#[utoipa::path(
-    get,
-    path = "/debug/cluster",
-    tag = "Admin",
-    security(()),
-    responses((status = 200, description = "Cluster state snapshot", body = ClusterStateView))
-)]
-async fn debug_cluster(State(state): State<AppState>) -> Json<ClusterStateView> {
-    let view = match state.cluster.as_ref() {
-        Some(c) => c.snapshot(),
-        None => ClusterStateView {
-            pod_name: "local".into(),
-            shard_index: 0,
-            replica_index: 0,
-            role: crate::raft::RaftRole::Leader,
-            peers: vec![],
-            applied_index: 0,
-            leader_term: 0,
-            replication_lag_ms: 0,
-        },
-    };
-    Json(view)
-}
-
-fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
-    ReadConsistency::from_header(
-        headers
-            .get("x-read-consistency")
-            .and_then(|h| h.to_str().ok()),
-    )
-}
-
-/// Enforces a resolved `x-read-consistency` against this pod's live
-/// per-shard cluster state (`AppState::cluster`) before a read reaches the
-/// local engine (#1310).
-///
-/// Standalone and legacy external-log builds (`state.cluster` is `None`)
-/// have exactly one authoritative copy per shard, so every consistency
-/// level is trivially satisfied there — this is a no-op, matching today's
-/// behavior unchanged. Primary-replica mode (`state.cluster` is `Some`) is
-/// the only place a request's resolved [`ReadConsistency`] can actually
-/// diverge from what gets served:
-/// - [`ReadConsistency::Any`] is unconstrained.
-/// - [`ReadConsistency::Leader`] only succeeds on the pod that currently
-///   holds `RaftRole::Leader` for this shard; lumen has no read-forwarding
-///   surface, so a non-leader replica rejects the request rather than
-///   silently serving a possibly-stale local copy.
-/// - [`ReadConsistency::Bounded`] succeeds on the leader (never stale) or
-///   on a follower/learner whose `replication_lag_ms` is at or under the
-///   requested bound; a replica over the bound rejects rather than
-///   silently serving a stale read. In `lumen serve --wal raft`, a
-///   follower/learner's `replication_lag_ms` is the conservative "unknown"
-///   sentinel (`u64::MAX`) — `RaftHost` doesn't expose a peer-timing RPC
-///   today, so `Bounded` on a non-leader replica always rejects rather than
-///   report a fabricated lag figure (see `spawn_cluster_state_poller` in
-///   `src/bin/lumen.rs`, #1349).
-fn enforce_read_consistency(state: &AppState, consistency: ReadConsistency) -> Result<(), ApiErr> {
-    let Some(cluster) = state.cluster.as_ref() else {
-        return Ok(());
-    };
-    match consistency {
-        ReadConsistency::Any => Ok(()),
-        ReadConsistency::Leader => {
-            if cluster.role() == RaftRole::Leader {
-                return Ok(());
-            }
-            Err(match cluster.leader_peer() {
-                Some(leader) => ApiErr::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "read_consistency_not_leader",
-                    format!(
-                        "replica `{}` is not the shard {} leader (current leader is `{}`); \
-                         leader-consistency reads must reach it",
-                        cluster.pod_name, cluster.shard_index, leader.pod_name
-                    ),
-                ),
-                None => ApiErr::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "read_consistency_no_leader",
-                    format!(
-                        "shard {} has no reachable leader; leader-consistency reads cannot be satisfied",
-                        cluster.shard_index
-                    ),
-                ),
-            })
-        }
-        ReadConsistency::Bounded(bound_ms) => {
-            if cluster.role() == RaftRole::Leader {
-                return Ok(());
-            }
-            let lag_ms = cluster.replication_lag_ms.load(Ordering::Relaxed);
-            if lag_ms <= bound_ms {
-                Ok(())
-            } else {
-                Err(ApiErr::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "read_consistency_lag_exceeded",
-                    format!(
-                        "replica `{}` lag {lag_ms}ms exceeds bounded({bound_ms}ms) consistency",
-                        cluster.pod_name
-                    ),
-                ))
-            }
-        }
-    }
-}
-
-/// Reject a write whose `(collection_id, external_id)` routes to a
-/// currently-fenced virtual bucket (#1396 R2). Checked in [`index`],
-/// [`replace_docs`], [`replace_doc`], and [`delete_external_id`] — every
-/// write path a reshard's final migration pass must observe a converged
-/// snapshot of.
-///
-/// `delete_external_id` is fenced too (#1458 R2): an earlier revision left
-/// DELETE exempt on the theory that `apply_reshard_batch`'s
-/// authoritative-subset `replace_ids` scoping (see
-/// [`crate::reshard::snapshot_reshard_batches`]'s `replace_mode` and
-/// [`crate::storage::Engine::apply_reshard_batch`]'s `replace` parameter)
-/// already closes the resurrection gap for a delete acked *before* the
-/// final pass's scoped-backup read. That leaves a delete racing strictly
-/// inside the sub-window between that read and the same pass's eviction
-/// uncovered — fencing DELETE like every other write closes it fully, at
-/// the ordinary cost (a retryable 503) of any write to a fenced bucket. See
-/// the module's #1396 R2 write-fence doc on [`WriteFence`].
-fn enforce_write_fence(
-    state: &AppState,
-    collection_id: &str,
-    external_id: &str,
-) -> Result<(), ApiErr> {
-    if let Some(bucket) = state.write_fence.blocks(collection_id, external_id) {
-        return Err(ApiErr::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "bucket_write_paused",
-            format!(
-                "virtual bucket {bucket} is paused for an in-progress reshard cutover; retry shortly"
-            ),
-        ));
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Admin
-// ---------------------------------------------------------------------------
-
-#[utoipa::path(
-    get,
-    path = "/healthz",
-    tag = "Admin",
-    security(()),
-    responses((status = 200, description = "Process is alive", body = String))
-)]
-/// OpenAPI metadata for the shared `/healthz` implementation in service-http.
-#[allow(dead_code)]
-async fn healthz() -> &'static str {
-    "ok"
-}
-
-#[utoipa::path(
-    get,
-    path = "/version",
-    tag = "Admin",
-    security(()),
-    responses((status = 200, description = "Build provenance: version, git sha, build time", body = serde_json::Value))
-)]
-/// Build provenance. `version` is the crate version; `git_sha` and `built_at`
-/// are stamped by `build.rs` and degrade to "unknown" outside a git checkout.
-async fn version() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "git_sha": option_env!("LUMEN_GIT_SHA").unwrap_or("unknown"),
-        "built_at": option_env!("LUMEN_BUILT_AT").unwrap_or("unknown"),
-    }))
-}
-
-#[utoipa::path(
-    get,
-    path = "/readyz",
-    tag = "Admin",
-    security(()),
-    responses(
-        (status = 200, description = "Engine ready"),
-        (status = 503, description = "Not ready")
-    )
-)]
-/// OpenAPI metadata for the shared `/readyz` implementation in service-http.
-#[allow(dead_code)]
-async fn readyz(State(state): State<AppState>) -> (StatusCode, &'static str) {
-    if state.engine.is_draining() {
-        (StatusCode::SERVICE_UNAVAILABLE, "draining")
-    } else {
-        (StatusCode::OK, "ok")
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Collections
-// ---------------------------------------------------------------------------
-
-#[utoipa::path(
-    get,
-    path = "/collections",
-    tag = "Collections",
-    responses((status = 200, description = "List collection IDs", body = [String]))
-)]
-async fn list_collections(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-) -> Result<Json<Vec<String>>, ApiErr> {
-    let all = state.engine.list_collections().map_err(ApiErr::from)?;
-    // Filter to what the caller can actually read.
-    let visible = all
-        .into_iter()
-        .filter(|id| auth.ensure(id, Role::Read).is_ok())
-        .collect();
-    Ok(Json(visible))
-}
-
-#[utoipa::path(
-    put,
-    path = "/collections/{collection_id}",
-    tag = "Collections",
-    params(("collection_id" = String, Path, description = "Collection namespace")),
-    request_body = CreateCollectionRequest,
-    responses(
-        (status = 200, description = "Collection created", body = CreateCollectionResponse),
-        (status = 400, description = "Invalid schema",     body = ApiError)
-    )
-)]
-async fn create_collection(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Path(collection_id): Path<String>,
-    Json(req): Json<CreateCollectionRequest>,
-) -> Result<Json<CreateCollectionResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Admin)?;
-    let resp = state
-        .write_backend
-        .create_collection(collection_id.clone(), req)
-        .await
-        .map_err(ApiErr::from)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "collection_create_or_extend",
-        subject = auth.subject().unwrap_or("anonymous"),
-        collection_id = %collection_id,
-        version = resp.version,
-        fields = resp.fields_count,
-    );
-    Ok(Json(resp))
-}
-
-#[derive(Debug, Deserialize)]
-struct DropQuery {
-    #[serde(default)]
-    force: bool,
-}
-
-#[utoipa::path(
-    delete,
-    path = "/collections/{collection_id}",
-    tag = "Collections",
-    params(
-        ("collection_id" = String, Path, description = "Collection namespace"),
-        ("force" = Option<bool>, Query, description = "Skip the soft-delete grace window")
-    ),
-    responses(
-        (status = 202, description = "Soft-deleted (grace window)"),
-        (status = 204, description = "Physically dropped"),
-        (status = 404, description = "Unknown collection")
-    )
-)]
-async fn drop_collection(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Path(collection_id): Path<String>,
-    Query(q): Query<DropQuery>,
-) -> Result<StatusCode, ApiErr> {
-    auth.ensure(&collection_id, Role::Admin)?;
-    let outcome = state
-        .write_backend
-        .drop_collection(collection_id.clone(), q.force)
-        .await
-        .map_err(ApiErr::from)?;
-    let phase = match outcome {
-        DropOutcome::NotFound => {
-            return Err(ApiErr::not_found(format!(
-                "collection not found: {collection_id}"
-            )))
-        }
-        DropOutcome::Marked => "marked",
-        DropOutcome::AlreadyMarked => "already_marked",
-        DropOutcome::Physical => "physical",
-    };
-    tracing::info!(
-        target: "lumen.audit",
-        event = "collection_drop",
-        phase,
-        subject = auth.subject().unwrap_or("anonymous"),
-        collection_id = %collection_id,
-    );
-    // Soft-delete returns 202 Accepted so callers can tell it's still
-    // in the grace window; physical / already-marked return 204.
-    Ok(match outcome {
-        DropOutcome::Marked => StatusCode::ACCEPTED,
-        _ => StatusCode::NO_CONTENT,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Index
-// ---------------------------------------------------------------------------
-
-#[utoipa::path(
-    post,
-    path = "/collections/{collection_id}/index",
-    tag = "Index",
-    params(("collection_id" = String, Path, description = "Collection namespace")),
-    request_body = IndexRequest,
-    responses(
-        (status = 200, description = "Items indexed",     body = IndexResponse),
-        (status = 404, description = "Unknown collection", body = ApiError),
-        (status = 422, description = "Type mismatch",      body = ApiError)
-    )
-)]
-async fn index(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    headers: HeaderMap,
-    Path(collection_id): Path<String>,
-    Json(req): Json<IndexRequest>,
-) -> Result<Json<IndexResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
-    for item in &req.items {
-        enforce_write_fence(&state, &collection_id, &item.external_id)?;
-    }
-    let resp = if let Some(router) = &state.routed {
-        router
-            .index(collection_id.clone(), req, &headers)
-            .await
-            .map_err(ApiErr::from)?
-    } else {
-        state
-            .write_backend
-            .index(collection_id.clone(), req)
-            .await
-            .map_err(ApiErr::from)?
-    };
-    Ok(Json(resp))
-}
-
-#[derive(Debug, Deserialize)]
-struct DeleteQuery {
-    field: Option<String>,
-}
-
-#[utoipa::path(
-    delete,
-    path = "/collections/{collection_id}/index/{external_id}",
-    tag = "Index",
-    params(
-        ("collection_id" = String, Path, description = "Collection namespace"),
-        ("external_id"   = String, Path, description = "Caller-owned identifier"),
-        ("field"         = Option<String>, Query, description = "Restrict deletion to one field")
-    ),
-    responses((status = 204, description = "Deleted"))
-)]
-async fn delete_external_id(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    headers: HeaderMap,
-    Path((collection_id, external_id)): Path<(String, String)>,
-    Query(q): Query<DeleteQuery>,
-) -> Result<StatusCode, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
-    enforce_write_fence(&state, &collection_id, &external_id)?;
-    if let Some(router) = &state.routed {
-        router
-            .delete(collection_id.clone(), external_id, q.field, &headers)
-            .await
-            .map_err(ApiErr::from)?;
-    } else {
-        state
-            .write_backend
-            .delete(collection_id.clone(), external_id, q.field)
-            .await
-            .map_err(ApiErr::from)?;
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Batch full-replacement upsert: each item's `fields` becomes the doc's
-/// entire indexed state, implicitly deleting any declared schema field the
-/// doc has today but that is absent from `fields`. `docs:replace` is one
-/// literal path segment (AIP-136 custom-method syntax) appended after
-/// `{collection_id}`, so it registers directly in axum next to
-/// `/collections/{collection_id}/docs/{external_id}` without any capture
-/// ambiguity — collection ids are validated to reject `:`.
-///
-/// PUT is deliberate: this is idempotent full replacement (plus optional
-/// doc-level last-write-wins), so replaying the same request converges to
-/// the same state. Own the *complete* row for a doc? Use `docs:replace`.
-/// Own only *some* fields and want to add/update those without touching
-/// the rest? Use `POST .../index` instead.
-///
-/// One bad item (unknown field, type mismatch) never fails the batch — the
-/// batch-level status stays 200 and that item's [`ReplaceDocResult`]
-/// carries the error. Only a malformed body or an over-limit batch returns
-/// 400.
-#[utoipa::path(
-    put,
-    path = "/collections/{collection_id}/docs:replace",
-    tag = "Index",
-    params(("collection_id" = String, Path, description = "Collection namespace")),
-    request_body = ReplaceDocsRequest,
-    responses(
-        (status = 200, description = "Per-item results, same order and length as `docs`", body = ReplaceDocsResponse),
-        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError)
-    )
-)]
-async fn replace_docs(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    headers: HeaderMap,
-    Path(collection_id): Path<String>,
-    Json(req): Json<ReplaceDocsRequest>,
-) -> Result<Json<ReplaceDocsResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
-    if req.docs.len() > MAX_BATCH_REPLACE_SIZE {
-        return Err(ApiErr::new(
-            StatusCode::BAD_REQUEST,
-            "batch_too_large",
-            format!(
-                "batch has {} items, max is {MAX_BATCH_REPLACE_SIZE}",
-                req.docs.len()
-            ),
-        ));
-    }
-    for doc in &req.docs {
-        enforce_write_fence(&state, &collection_id, &doc.external_id)?;
-    }
-    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
-    Ok(Json(resp))
-}
-
-/// Shared write-backend/router branch for [`replace_docs`] and
-/// [`replace_doc`] (its single-doc sugar).
-async fn replace_docs_routed_or_local(
-    state: &AppState,
-    headers: &HeaderMap,
-    collection_id: String,
-    req: ReplaceDocsRequest,
-) -> Result<ReplaceDocsResponse, ApiErr> {
-    if let Some(router) = &state.routed {
-        router
-            .replace_docs(collection_id, req, headers)
-            .await
-            .map_err(ApiErr::from)
-    } else {
-        state
-            .write_backend
-            .replace_docs(collection_id, req)
-            .await
-            .map_err(ApiErr::from)
-    }
-}
-
-/// Single-resource sugar over `docs:replace`: exactly the one-item batch
-/// `{"docs": [{"external_id": ..., "version": ..., "fields": {...}}]}`,
-/// unwrapped back into a bare [`ReplaceDocResult`]. See [`replace_docs`]
-/// for the full-replacement / doc-level LWW semantics — the batch-level
-/// status stays 200 here too; a bad item comes back as
-/// `{"status":"error",...}` in the body rather than as an HTTP error.
-#[utoipa::path(
-    put,
-    path = "/collections/{collection_id}/docs/{external_id}",
-    tag = "Index",
-    params(
-        ("collection_id" = String, Path, description = "Collection namespace"),
-        ("external_id"   = String, Path, description = "Caller-owned identifier")
-    ),
-    request_body = ReplaceDocBody,
-    responses(
-        (status = 200, description = "Replacement result for this doc", body = ReplaceDocResult),
-        (status = 400, description = "Malformed body", body = ApiError)
-    )
-)]
-async fn replace_doc(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    headers: HeaderMap,
-    Path((collection_id, external_id)): Path<(String, String)>,
-    Json(body): Json<ReplaceDocBody>,
-) -> Result<Json<ReplaceDocResult>, ApiErr> {
-    auth.ensure(&collection_id, Role::Write)?;
-    enforce_write_fence(&state, &collection_id, &external_id)?;
-    let req = ReplaceDocsRequest {
-        docs: vec![ReplaceDocItem {
-            external_id,
-            version: body.version,
-            fields: body.fields,
-        }],
-    };
-    let resp = replace_docs_routed_or_local(&state, &headers, collection_id, req).await?;
-    let result = resp.results.into_iter().next().ok_or_else(|| {
-        ApiErr::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "no result for single-doc replace".to_string(),
-        )
-    })?;
-    Ok(Json(result))
-}
-
-// ---------------------------------------------------------------------------
-// Query
-// ---------------------------------------------------------------------------
-
-#[utoipa::path(
-    post,
-    path = "/collections/{collection_id}/search",
-    tag = "Query",
-    params(("collection_id" = String, Path, description = "Collection namespace")),
-    request_body = SearchRequest,
-    responses((status = 200, description = "Search hits", body = SearchResponse))
-)]
-async fn search(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    headers: HeaderMap,
-    Path(collection_id): Path<String>,
-    Json(req): Json<SearchRequest>,
-) -> Result<Json<SearchResponse>, ApiErr> {
-    Ok(Json(
-        search_core(&state, &auth, &headers, &collection_id, req).await?,
-    ))
-}
-
-/// Shared implementation behind `POST /collections/{collection_id}/search`
-/// and its `QUERY /collections/{collection_id}` twin
-/// ([`collection_id_query_dispatch`], epic #1296 R1: every QUERY endpoint
-/// keeps a POST twin — same handler, identical response). Consults
-/// `state.routed` first (#1398 R1) — a routed deployment scatters/forwards
-/// by ownership; every other deployment falls through to `search_backend`
-/// unchanged.
-async fn search_core(
-    state: &AppState,
-    auth: &AuthContext,
-    headers: &HeaderMap,
-    collection_id: &str,
-    req: SearchRequest,
-) -> Result<SearchResponse, ApiErr> {
-    auth.ensure(collection_id, Role::Read)?;
-    let consistency = read_consistency_from(headers);
-    enforce_read_consistency(state, consistency)?;
-    if let Some(router) = &state.routed {
-        return router
-            .search(collection_id, req, headers)
-            .await
-            .map_err(ApiErr::from);
-    }
-    state
-        .search_backend
-        .search(collection_id, req)
-        .map_err(ApiErr::from)
-}
-
-/// msearch-style batch search: N independent `(collection, SearchRequest)`
-/// items in one HTTP request, fanned out concurrently. `collections:search`
-/// is one literal path segment (AIP-136 custom-method syntax), so it
-/// registers directly in axum next to `/collections` and
-/// `/collections/{collection_id}` without any capture ambiguity.
-///
-/// One item failing (e.g. an unknown collection) never fails the batch —
-/// the batch-level status stays 200 and that item's [`BatchSearchResult`]
-/// carries the error. Only a malformed body or an over-limit batch returns
-/// 400. Cursors, sort, and collapse all stay per-item: there is no merged
-/// cursor and no cross-collection score merging.
-#[utoipa::path(
-    post,
-    path = "/collections:search",
-    tag = "Query",
-    request_body = BatchSearchRequest,
-    responses(
-        (status = 200, description = "Per-item results, same order and length as `searches`", body = BatchSearchResponse),
-        (status = 400, description = "Malformed body or batch size over the limit", body = ApiError)
-    )
-)]
-async fn batch_search(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    headers: HeaderMap,
-    Json(req): Json<BatchSearchRequest>,
-) -> Result<Json<BatchSearchResponse>, ApiErr> {
-    Ok(Json(batch_search_core(&state, &auth, &headers, req).await?))
-}
-
-/// Shared implementation behind `POST /collections:search` and its `QUERY
-/// /collections` twin ([`collections_query_dispatch`], epic #1296 R1: every
-/// QUERY endpoint keeps a POST twin — same handler, identical response).
-async fn batch_search_core(
-    state: &AppState,
-    auth: &AuthContext,
-    headers: &HeaderMap,
-    req: BatchSearchRequest,
-) -> Result<BatchSearchResponse, ApiErr> {
-    if req.searches.len() > MAX_BATCH_SEARCH_SIZE {
-        return Err(ApiErr::new(
-            StatusCode::BAD_REQUEST,
-            "batch_too_large",
-            format!(
-                "batch has {} items, max is {MAX_BATCH_SEARCH_SIZE}",
-                req.searches.len()
-            ),
-        ));
-    }
-    let consistency = read_consistency_from(headers);
-    enforce_read_consistency(state, consistency)?;
-    let results = join_all(req.searches.into_iter().map(|item| {
-        let state = state.clone();
-        let auth = auth.clone();
-        let headers = headers.clone();
-        async move {
-            if let Err(e) = auth.ensure(&item.collection, Role::Read) {
-                return batch_search_auth_error(e);
-            }
-            let result = if let Some(router) = &state.routed {
-                router
-                    .search(&item.collection, item.request, &headers)
-                    .await
-            } else {
-                state.search_backend.search(&item.collection, item.request)
-            };
-            match result {
-                Ok(response) => BatchSearchResult::Ok { response },
-                Err(e) => batch_search_storage_error(e),
-            }
-        }
-    }))
-    .await;
-    Ok(BatchSearchResponse { results })
-}
-
-// ---------------------------------------------------------------------------
-// QUERY (RFC 10008) — dual-registered POST twins (epic #1296 R1)
-// ---------------------------------------------------------------------------
-//
-// axum has no native `Method::QUERY`/`MethodFilter::QUERY` yet
-// (tokio-rs/axum#3799, PR #3801 open). The interim dispatch below registers
-// each route's `fallback` — the handler axum calls for any method not
-// explicitly claimed by that route's `get`/`post`/`put`/`delete`/`options`/
-// `head` combinators — and re-checks the method by hand via
-// `Method::from_bytes(b"QUERY")`. Replace `is_query_method` and both
-// `*_query_dispatch` fallbacks with native `MethodFilter::QUERY` combinators
-// once that PR lands; `*_query_probe` (OPTIONS/HEAD) can move to ordinary
-// combinators unchanged.
-
-/// `true` for the RFC 10008 QUERY method. `http::Method` has no `QUERY`
-/// constant yet, so this matches the wire token the same way
-/// `Method::from_bytes(b"QUERY")` would.
-fn is_query_method(method: &Method) -> bool {
-    Method::from_bytes(b"QUERY").is_ok_and(|query| *method == query)
-}
-
-/// 405 for any method that reaches a QUERY-dispatch fallback without
-/// actually being QUERY. Normal traffic never hits this arm — `PUT`/
-/// `DELETE`/`GET`/`OPTIONS`/`HEAD` are all claimed by explicit combinators
-/// ahead of the fallback — it only guards stray/unsupported methods.
-fn query_method_not_allowed(allow: &'static str) -> axum::response::Response {
-    axum::response::Response::builder()
-        .status(StatusCode::METHOD_NOT_ALLOWED)
-        .header(axum::http::header::ALLOW, allow)
-        .body(axum::body::Body::empty())
-        .expect("static not-allowed headers are always valid")
-}
-
-/// `OPTIONS`/`HEAD` probe response shared by both QUERY targets: advertises
-/// `Accept-Query: application/json` (RFC 10008 discovery) and lists the
-/// target's full method set, QUERY included, in `Allow`.
-fn query_probe_response(allow: &'static str) -> axum::response::Response {
-    axum::response::Response::builder()
-        .status(StatusCode::NO_CONTENT)
-        .header(axum::http::header::ALLOW, allow)
-        .header("accept-query", "application/json")
-        .body(axum::body::Body::empty())
-        .expect("static probe headers are always valid")
-}
-
-async fn collection_id_query_probe() -> axum::response::Response {
-    query_probe_response("PUT, DELETE, QUERY, OPTIONS, HEAD")
-}
-
-async fn collections_query_probe() -> axum::response::Response {
-    query_probe_response("GET, QUERY, OPTIONS, HEAD")
-}
-
-/// `QUERY /collections/{collection_id}` — dual-registered twin of `POST
-/// /collections/{collection_id}/search` (same [`search_core`] handler,
-/// identical response for identical bodies). Content-Type is mandatory on
-/// QUERY per RFC 10008; reusing [`Json`]'s own `FromRequest` for the body
-/// gives that for free — missing/mismatched `Content-Type` rejects with 415,
-/// byte-identical to what the POST twin already returns for the same input.
-async fn collection_id_query_dispatch(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Path(collection_id): Path<String>,
-    request: Request,
-) -> axum::response::Response {
-    if !is_query_method(request.method()) {
-        return query_method_not_allowed("PUT, DELETE, QUERY, OPTIONS, HEAD");
-    }
-    let headers = request.headers().clone();
-    match Json::<SearchRequest>::from_request(request, &state).await {
-        Ok(Json(req)) => match search_core(&state, &auth, &headers, &collection_id, req).await {
-            Ok(resp) => Json(resp).into_response(),
-            Err(e) => e.into_response(),
-        },
-        Err(rejection) => rejection.into_response(),
-    }
-}
-
-/// `QUERY /collections` — dual-registered twin of `POST /collections:search`
-/// (same [`batch_search_core`] handler, identical response for identical
-/// bodies). See [`collection_id_query_dispatch`] for the Content-Type/415
-/// and interim-fallback rationale.
-async fn collections_query_dispatch(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    request: Request,
-) -> axum::response::Response {
-    if !is_query_method(request.method()) {
-        return query_method_not_allowed("GET, QUERY, OPTIONS, HEAD");
-    }
-    let headers = request.headers().clone();
-    match Json::<BatchSearchRequest>::from_request(request, &state).await {
-        Ok(Json(req)) => match batch_search_core(&state, &auth, &headers, req).await {
-            Ok(resp) => Json(resp).into_response(),
-            Err(e) => e.into_response(),
-        },
-        Err(rejection) => rejection.into_response(),
-    }
-}
-
-/// Classify one batch item's search failure into a
-/// [`BatchSearchResult::Error`] instead of failing the whole batch. Mirrors
-/// `From<anyhow::Error> for ApiErr`'s `StorageError` classification, but the
-/// `code` values line up with the batch wire contract
-/// (`"collection_not_found"`, ...) rather than `ApiErr`'s internal `kind`
-/// strings.
-fn batch_search_storage_error(e: anyhow::Error) -> BatchSearchResult {
-    let code = match e.downcast_ref::<StorageError>() {
-        Some(StorageError::CollectionNotFound(_)) => "collection_not_found",
-        Some(StorageError::InvalidCollectionName(_)) => "invalid_collection_name",
-        Some(StorageError::UnknownField { .. }) => "unknown_field",
-        Some(StorageError::TypeMismatch { .. }) => "type_mismatch",
-        Some(StorageError::DuplicatesOnText(_)) => "bad_request",
-        Some(StorageError::InvalidNumber(_)) => "invalid_number",
-        Some(StorageError::BulkLimit { .. }) => "bulk_limit",
-        Some(StorageError::QueryTooComplex(_)) => "query_too_complex",
-        Some(StorageError::Gone(_)) => "gone",
-        Some(StorageError::UnsupportedSort(_)) => "unsupported_sort",
-        Some(StorageError::InvalidPruneChunk { .. }) => "invalid_prune_chunk",
-        Some(StorageError::PruneAccumulatorFull { .. }) => "prune_accumulator_full",
-        None => "bad_request",
-    };
-    BatchSearchResult::Error {
-        code: code.to_string(),
-        message: e.to_string(),
-    }
-}
-
-/// Classify one batch item's auth rejection into a
-/// [`BatchSearchResult::Error`].
-fn batch_search_auth_error(e: crate::auth::AuthErr) -> BatchSearchResult {
-    match e {
-        crate::auth::AuthErr::Forbidden {
-            subject,
-            needed,
-            collection_id,
-        } => BatchSearchResult::Error {
-            code: "forbidden".to_string(),
-            message: format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
-        },
-    }
-}
-
-#[utoipa::path(
-    post,
-    path = "/collections/{collection_id}/duplicates",
-    tag = "Query",
-    params(("collection_id" = String, Path, description = "Collection namespace")),
-    request_body = DuplicatesRequest,
-    responses((status = 200, description = "Duplicate groups", body = DuplicatesResponse))
-)]
-/// Local-shard only, deliberately not wired to `state.routed` (#1398 known
-/// gap, #1442 R6): `Engine::duplicates` filters by `min_group_size` *before*
-/// any cross-shard merge could happen, so scatter-then-merge would silently
-/// miss a true cross-shard group (e.g. one copy per shard under
-/// `min_group_size: 2`) — a correctness regression, not a routing gap. A
-/// correct cross-shard implementation needs unfiltered per-shard candidate
-/// groups from `storage.rs`, out of scope here. #1442 R6 closes the "silent
-/// wrong answer" gap this left in routed multi-shard mode: rather than
-/// unchanged pre-#1398 behavior (silently answering from local-shard data
-/// only, missing cross-shard duplicate groups with no indication), a routed
-/// deployment now rejects with a distinct, non-retryable error so a caller
-/// can tell "not supported here" from "no duplicates found".
-async fn duplicates(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    headers: HeaderMap,
-    Path(collection_id): Path<String>,
-    Json(req): Json<DuplicatesRequest>,
-) -> Result<Json<DuplicatesResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Read)?;
-    let _consistency = read_consistency_from(&headers);
-    if state.routed.is_some() {
-        return Err(ApiErr::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "duplicates_not_routed",
-            "duplicate detection is local-shard-only and does not merge across shards; not \
-             supported in routed multi-shard mode (#1442 R6)"
-                .to_string(),
-        ));
-    }
-    Ok(Json(
-        state
-            .engine
-            .duplicates(&collection_id, req)
-            .map_err(ApiErr::from)?,
-    ))
-}
-
-#[utoipa::path(
-    get,
-    path = "/collections/{collection_id}/stats",
-    tag = "Query",
-    params(("collection_id" = String, Path, description = "Collection namespace")),
-    responses((status = 200, description = "Collection stats", body = StatsResponse))
-)]
-async fn stats(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Path(collection_id): Path<String>,
-) -> Result<Json<StatsResponse>, ApiErr> {
-    auth.ensure(&collection_id, Role::Read)?;
-    Ok(Json(
-        state.engine.stats(&collection_id).map_err(ApiErr::from)?,
-    ))
-}
-
-/// Streaming bulk-reindex endpoint.
-///
-/// Body is NDJSON of `IndexItem` records (one per line). Response is
-/// an NDJSON stream of progress events:
-///
-/// ```text
-/// {"event":"progress","indexed_total":1000,"batch_indexed":1000,"elapsed_ms":42}
-/// {"event":"progress","indexed_total":2000,"batch_indexed":1000,"elapsed_ms":85}
-/// ...
-/// {"event":"done","indexed_total":2473,"elapsed_ms":210}
-/// ```
-///
-/// Errors are surfaced as `{"event":"error","line":N,"message":"..."}`
-/// inline; the stream continues so partial progress is observable.
-///
-/// Rejected outright in routed multi-shard mode (#1442 R6): the spawned
-/// batch loop below writes through `state.write_backend` directly, bypassing
-/// both `state.routed`'s per-item shard ownership and `enforce_write_fence`
-/// (the same per-item reshard-cutover pause every other write path
-/// observes). Routing each streamed item by ownership and fencing it
-/// individually, inside a detached `tokio::spawn` task that already streams
-/// its own NDJSON response back, is a materially bigger change than this
-/// bounded hardening pass — an accepted, documented fallback per R6's own
-/// scope rather than a half-routed implementation that could silently
-/// mis-shard or skip the write fence.
-async fn reindex_stream(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Path(collection_id): Path<String>,
-    body: axum::body::Bytes,
-) -> Result<axum::response::Response, ApiErr> {
-    use axum::body::Body;
-    use std::time::Instant;
-    use tokio::sync::mpsc;
-
-    auth.ensure(&collection_id, Role::Write)?;
-    if state.routed.is_some() {
-        return Err(ApiErr::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "reindex_stream_not_routed",
-            "streaming bulk reindex bypasses per-item shard ownership and the write fence; not \
-             supported in routed multi-shard mode, use POST .../index instead (#1442 R6)"
-                .to_string(),
-        ));
-    }
-
-    const BATCH_SIZE: usize = 1_000;
-    let (tx, rx) = mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
-    let writer = state.write_backend.clone();
-    let collection = collection_id.clone();
-
-    tokio::spawn(async move {
-        let started = Instant::now();
-        let mut batch: Vec<IndexItem> = Vec::with_capacity(BATCH_SIZE);
-        let mut indexed_total = 0u64;
-        let send = |tx: &mpsc::Sender<_>, line: serde_json::Value| {
-            let mut s = line.to_string();
-            s.push('\n');
-            let bytes = axum::body::Bytes::from(s.into_bytes());
-            tx.try_send(Ok::<_, std::io::Error>(bytes))
-        };
-
-        for (lineno, raw) in body.split(|&b| b == b'\n').enumerate() {
-            let line = raw.trim_ascii();
-            if line.is_empty() {
-                continue;
-            }
-            let item: IndexItem = match serde_json::from_slice(line) {
-                Ok(i) => i,
-                Err(e) => {
-                    let _ = send(
-                        &tx,
-                        serde_json::json!({
-                            "event": "error",
-                            "line": lineno + 1,
-                            "message": e.to_string(),
-                        }),
-                    );
-                    continue;
-                }
-            };
-            batch.push(item);
-
-            if batch.len() >= BATCH_SIZE {
-                let drained = std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE));
-                let batch_start = Instant::now();
-                match writer
-                    .index(
-                        collection.clone(),
-                        IndexRequest {
-                            items: drained,
-                            request_id: None,
-                        },
-                    )
-                    .await
-                {
-                    Ok(r) => {
-                        indexed_total += r.indexed as u64;
-                        let _ = send(
-                            &tx,
-                            serde_json::json!({
-                                "event": "progress",
-                                "indexed_total": indexed_total,
-                                "batch_indexed": r.indexed,
-                                "elapsed_ms": started.elapsed().as_millis() as u64,
-                                "batch_elapsed_ms": batch_start.elapsed().as_millis() as u64,
-                            }),
-                        );
-                    }
-                    Err(e) => {
-                        let _ = send(
-                            &tx,
-                            serde_json::json!({
-                                "event": "error",
-                                "line": lineno + 1,
-                                "message": e.to_string(),
-                            }),
-                        );
-                    }
-                }
-            }
-        }
-
-        // Final flush of whatever's left in the batch.
-        if !batch.is_empty() {
-            let batch_start = Instant::now();
-            if let Ok(r) = writer
-                .index(
-                    collection.clone(),
-                    IndexRequest {
-                        items: batch,
-                        request_id: None,
-                    },
-                )
-                .await
-            {
-                indexed_total += r.indexed as u64;
-                let _ = send(
-                    &tx,
-                    serde_json::json!({
-                        "event": "progress",
-                        "indexed_total": indexed_total,
-                        "batch_indexed": r.indexed,
-                        "elapsed_ms": started.elapsed().as_millis() as u64,
-                        "batch_elapsed_ms": batch_start.elapsed().as_millis() as u64,
-                    }),
-                );
-            }
-        }
-
-        let _ = send(
-            &tx,
-            serde_json::json!({
-                "event": "done",
-                "indexed_total": indexed_total,
-                "elapsed_ms": started.elapsed().as_millis() as u64,
-            }),
-        );
-
-        tracing::info!(
-            target: "lumen.audit",
-            event = "reindex_stream_done",
-            subject = auth.subject().unwrap_or("anonymous"),
-            collection_id = %collection,
-            indexed_total,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-        );
-    });
-
-    let stream =
-        futures::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|r| (r, rx)) });
-    let resp = axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/x-ndjson")
-        .body(Body::from_stream(stream))
-        .map_err(|e| {
-            ApiErr::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "stream_init",
-                e.to_string(),
-            )
-        })?;
-    Ok(resp)
-}
-
-#[utoipa::path(
-    delete,
-    path = "/collections/{collection_id}/fields/{field_name}",
-    tag = "Collections",
-    params(
-        ("collection_id" = String, Path, description = "Collection namespace"),
-        ("field_name"    = String, Path, description = "Field to drop")
-    ),
-    responses(
-        (status = 200, description = "Field dropped; new schema version", body = serde_json::Value),
-        (status = 404, description = "Unknown collection or field",       body = ApiError)
-    )
-)]
-async fn drop_field(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Path((collection_id, field_name)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure(&collection_id, Role::Admin)?;
-    let version = state
-        .write_backend
-        .drop_field(collection_id.clone(), field_name.clone())
-        .await
-        .map_err(ApiErr::from)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "field_drop",
-        subject = auth.subject().unwrap_or("anonymous"),
-        collection_id = %collection_id,
-        field_name = %field_name,
-        version,
-    );
-    Ok(Json(serde_json::json!({
-        "collection_id": collection_id,
-        "field_name": field_name,
-        "version": version,
-    })))
-}
-
-// ---------------------------------------------------------------------------
-// Backup / restore (cluster-wide admin)
-// ---------------------------------------------------------------------------
-
-/// Dump the entire engine state as a single JSON document.
-async fn backup(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-) -> Result<Json<SnapshotV1>, ApiErr> {
-    // Cluster-wide admin op: needs admin on wildcard.
-    auth.ensure("*", Role::Admin)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "backup_started",
-        subject = auth.subject().unwrap_or("anonymous"),
-    );
-    Ok(Json(state.engine.snapshot().map_err(ApiErr::from)?))
-}
-
-#[derive(Debug, Deserialize)]
-struct LocalBackupRequest {
-    /// Filesystem path the snapshot will be written into.
-    path: String,
-    /// Key prefix; the file will be named `{prefix}-{unix_seconds}.json`.
-    #[serde(default = "default_backup_prefix")]
-    prefix: String,
-}
-
-fn default_backup_prefix() -> String {
-    "lumen-backup".into()
-}
-
-/// Snapshot the engine and persist it via a `LocalFsSink`. Returns the
-/// final key the sink chose. The path is created if missing.
-async fn backup_to_local(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Json(req): Json<LocalBackupRequest>,
-) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    let snap = state.engine.snapshot().map_err(ApiErr::from)?;
-    let payload = serde_json::to_vec(&snap)
-        .map_err(|e| ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "encode", e.to_string()))?;
-    let sink = LocalFsSink::new(&req.path, &req.prefix)
-        .map_err(|e| ApiErr::new(StatusCode::BAD_REQUEST, "bad_sink", e.to_string()))?;
-    let key = sink
-        .put(std::time::SystemTime::now(), &payload)
-        .map_err(|e| ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "sink_put", e.to_string()))?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "backup_local",
-        subject = auth.subject().unwrap_or("anonymous"),
-        sink = %sink.identity(),
-        key = %key,
-        bytes = payload.len(),
-    );
-    Ok(Json(serde_json::json!({
-        "sink": sink.identity(),
-        "key": key,
-        "bytes": payload.len(),
-    })))
-}
-
-/// Restore the engine from a snapshot dump produced by `/admin/backup`.
-/// Replaces all existing state.
-async fn restore(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Json(snap): Json<SnapshotV1>,
-) -> Result<StatusCode, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    state.engine.restore(snap).map_err(ApiErr::from)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "restore_applied",
-        subject = auth.subject().unwrap_or("anonymous"),
-    );
-    Ok(StatusCode::NO_CONTENT)
-}
-
-// ---------------------------------------------------------------------------
-// Reshard admin verbs (#1380): batch-apply, bucket-scoped export, evict.
-// Plus `/admin/checkpoint` (#1389), the on-demand durability step that makes
-// the other three's mutations survive the cutover restart the driver itself
-// triggers, and `/admin/reshard:prune` (#1457 R1), the final migration
-// pass's independently chunked authoritative-replace scope.
-//
-// `reshard.rs`'s tested primitives (`bucket_moves`, `snapshot_reshard_batches`,
-// `snapshot_reshard_prune_chunks`) emit bounded `ReshardBatch`/
-// `ReshardPruneChunk` units for checkpointed migration; the five verbs below
-// are the wire surface that moves them and makes them durable. All five
-// require `Role::Admin` on `*`, same as `/admin/backup`/`/admin/restore`
-// above.
-// ---------------------------------------------------------------------------
-
-/// `POST /admin/reshard:apply`: additively merge one [`ReshardBatch`] into
-/// the live engine (upsert semantics for the batch's documents; never a
-/// full replace, unlike `/admin/restore`). Idempotent — a retried batch
-/// (operator resume after a checkpoint) converges to the same query-visible
-/// state; see [`Engine::apply_reshard_batch`].
-#[utoipa::path(
-    post,
-    path = "/admin/reshard:apply",
-    tag = "Admin",
-    request_body = serde_json::Value,
-    responses(
-        (status = 200, description = "Batch merged additively (safe to retry)", body = serde_json::Value),
-        (status = 400, description = "Malformed batch or snapshot version mismatch", body = ApiError)
-    )
-)]
-async fn reshard_apply(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Json(batch): Json<ReshardBatch>,
-) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    let outcome = state
-        .engine
-        .apply_reshard_batch(batch.snapshot, None)
-        .map_err(ApiErr::from)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "reshard_batch_applied",
-        subject = auth.subject().unwrap_or("anonymous"),
-        bucket = batch.bucket,
-        from_shard = batch.from_shard,
-        to_shard = batch.to_shard,
-        from_map_version = batch.from_map_version,
-        to_map_version = batch.to_map_version,
-        collections_touched = outcome.collections_touched,
-        documents_upserted = outcome.documents_upserted,
-        documents_pruned = outcome.documents_pruned,
-    );
-    Ok(Json(serde_json::json!({
-        "collections_touched": outcome.collections_touched,
-        "documents_upserted": outcome.documents_upserted,
-        "documents_pruned": outcome.documents_pruned,
-    })))
-}
-
-/// `POST /admin/reshard:prune`: accumulate one [`ReshardPruneChunk`] of the
-/// final migration pass's authoritative "keep" set for one `(bucket,
-/// collection_id)` pair, and prune once every chunk has arrived (#1457 R1).
-/// Unlike `/admin/reshard:apply` (purely additive), this verb is what makes
-/// the final pass authoritative for the buckets it copies: a document
-/// deleted on the source during the split is absent from the accumulated
-/// keep set and is pruned here instead of surviving as a stale copy from an
-/// earlier additive pass. Idempotent per chunk (safe to retry after a 413)
-/// and as a whole group (safe to re-send every chunk after a driver
-/// restart); see [`Engine::apply_reshard_prune_chunk`].
-#[utoipa::path(
-    post,
-    path = "/admin/reshard:prune",
-    tag = "Admin",
-    request_body = serde_json::Value,
-    responses(
-        (status = 200, description = "Chunk accumulated; pruned once every chunk of its group has arrived", body = serde_json::Value),
-        (status = 400, description = "Malformed chunk", body = ApiError)
-    )
-)]
-async fn reshard_prune(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Json(chunk): Json<crate::reshard::ReshardPruneChunk>,
-) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    let to_map_version = chunk.to_map_version;
-    let bucket = chunk.bucket;
-    let collection_id = chunk.collection_id.clone();
-    let chunk_index = chunk.chunk_index;
-    let total_chunks = chunk.total_chunks;
-    let outcome = state
-        .engine
-        .apply_reshard_prune_chunk(chunk)
-        .map_err(ApiErr::from)?;
-    if outcome.complete {
-        tracing::info!(
-            target: "lumen.audit",
-            event = "reshard_prune_applied",
-            subject = auth.subject().unwrap_or("anonymous"),
-            bucket,
-            to_map_version,
-            collection_id = collection_id.as_str(),
-            chunk_index,
-            total_chunks,
-            documents_pruned = outcome.documents_pruned,
-        );
-    }
-    Ok(Json(serde_json::json!({
-        "complete": outcome.complete,
-        "documents_pruned": outcome.documents_pruned,
-    })))
-}
-
-#[derive(Debug, Deserialize)]
-struct ScopedBackupRequest {
-    /// Same `virtual_bucket_count` the caller's [`VirtualBucketShardMap`]
-    /// uses — must match what `snapshot_reshard_batches` was/will be called
-    /// with so bucket membership agrees.
-    virtual_bucket_count: u32,
-    /// Only documents whose bucket is in this set are included.
-    buckets: BTreeSet<u32>,
-}
-
-/// `POST /admin/backup:scoped`: like `GET /admin/backup`, but restricted to
-/// documents routed to the requested virtual buckets — a source shard can
-/// export just the buckets that are moving instead of a full-engine dump.
-/// Bucket membership is computed with the same hash `reshard::
-/// snapshot_reshard_batches` uses ([`crate::reshard::snapshot_bucket_subset`]),
-/// so an export and a later-computed batch can never disagree.
-#[utoipa::path(
-    post,
-    path = "/admin/backup:scoped",
-    tag = "Admin",
-    request_body = serde_json::Value,
-    responses(
-        (status = 200, description = "SnapshotV1 restricted to the requested virtual buckets", body = serde_json::Value),
-        (status = 400, description = "Invalid virtual_bucket_count", body = ApiError)
-    )
-)]
-async fn backup_scoped(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Json(req): Json<ScopedBackupRequest>,
-) -> Result<Json<SnapshotV1>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    let full = state.engine.snapshot().map_err(ApiErr::from)?;
-    let scoped =
-        crate::reshard::snapshot_bucket_subset(&full, req.virtual_bucket_count, &req.buckets)
-            .map_err(ApiErr::from)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "backup_scoped",
-        subject = auth.subject().unwrap_or("anonymous"),
-        virtual_bucket_count = req.virtual_bucket_count,
-        buckets = req.buckets.len(),
-    );
-    Ok(Json(scoped))
-}
-
-#[derive(Debug, Deserialize)]
-struct ReshardEvictRequest {
-    /// This shard's physical index in `assignments`.
-    shard: u32,
-    /// The newer map version being cut over to; carried for audit logging.
-    map_version: u64,
-    /// `bucket -> physical shard` assignment for the newer map. Its length
-    /// is the virtual bucket count.
-    assignments: Vec<u32>,
-    physical_shard_count: u32,
-}
-
-/// `POST /admin/reshard:evict`: source-side post-cutover eviction. Given a
-/// newer virtual-bucket map and this shard's index within it, removes
-/// exactly the documents whose bucket no longer routes to this shard —
-/// nothing else. A separate, explicitly-invoked step; never implicit in
-/// `/admin/reshard:apply` or `/admin/backup*`. Idempotent — a document
-/// already evicted by a prior call no longer matches and is skipped.
-#[utoipa::path(
-    post,
-    path = "/admin/reshard:evict",
-    tag = "Admin",
-    request_body = serde_json::Value,
-    responses(
-        (status = 200, description = "Documents no longer owned by this shard removed", body = serde_json::Value),
-        (status = 400, description = "Invalid virtual bucket map", body = ApiError)
-    )
-)]
-async fn reshard_evict(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Json(req): Json<ReshardEvictRequest>,
-) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    let map =
-        VirtualBucketShardMap::new(req.map_version, req.assignments, req.physical_shard_count)
-            .map_err(ApiErr::from)?;
-    let outcome = state
-        .engine
-        .evict_not_owned(&map, req.shard)
-        .map_err(ApiErr::from)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "reshard_evict",
-        subject = auth.subject().unwrap_or("anonymous"),
-        shard = req.shard,
-        map_version = req.map_version,
-        collections_touched = outcome.collections_touched,
-        documents_evicted = outcome.documents_evicted,
-    );
-    Ok(Json(serde_json::json!({
-        "collections_touched": outcome.collections_touched,
-        "documents_evicted": outcome.documents_evicted,
-    })))
-}
-
-/// `POST /admin/checkpoint` (#1389): force a synchronous durability
-/// checkpoint of the live engine state and return only once it is committed.
-/// The reshard driver's cutover calls this on every shard it just migrated
-/// data into or evicted data from, so `/admin/reshard:apply`/`:evict`'s
-/// mutations — which bypass `WriteCoordinator`/the AOF — reach durability
-/// before the driver triggers the cutover rolling restart, instead of
-/// depending on the next periodic `LUMEN_SNAPSHOT_SECS` tick. `persisted:
-/// false` means no durable store is configured on this node (nothing to
-/// lose on restart, e.g. dev mode); a production/operator deployment with
-/// segment persistence configured always reports `true` on success. See
-/// [`CheckpointSink`].
-#[utoipa::path(
-    post,
-    path = "/admin/checkpoint",
-    tag = "Admin",
-    responses(
-        (status = 200, description = "Checkpoint committed (or vacuously satisfied if no durable store is configured)", body = serde_json::Value),
-        (status = 400, description = "Checkpoint write failed", body = ApiError)
-    )
-)]
-async fn admin_checkpoint(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    let persisted = state
-        .checkpoint
-        .checkpoint_now()
-        .await
-        .map_err(ApiErr::from)?;
-    tracing::info!(
-        target: "lumen.audit",
-        event = "admin_checkpoint",
-        subject = auth.subject().unwrap_or("anonymous"),
-        persisted,
-    );
-    Ok(Json(serde_json::json!({ "persisted": persisted })))
-}
-
-fn default_fence_ttl_secs() -> u64 {
-    300
-}
-
-/// Upper bound on `ReshardFenceRequest::ttl_secs` (#1443 R3): well above any
-/// real driver tick, but small enough that `Instant::now().checked_add` never
-/// overflows and a malformed/malicious admin request can never arm an
-/// effectively-permanent write pause.
-const MAX_FENCE_TTL_SECS: u64 = 3600;
-
-#[derive(Debug, Deserialize)]
-struct ReshardFenceRequest {
-    /// Same `virtual_bucket_count` the caller's map uses, matching
-    /// [`ScopedBackupRequest`]'s convention.
-    virtual_bucket_count: u32,
-    /// Buckets to pause writes on. An empty set explicitly clears any
-    /// currently-armed fence, independent of its deadline.
-    buckets: BTreeSet<u32>,
-    /// How long the pause stays armed if never explicitly cleared (a
-    /// crashed-driver backstop; see [`WriteFence`]'s doc). Defaults to 300s —
-    /// generous relative to one driver tick (`DRIVER_POLL_INTERVAL`, 20s in
-    /// `reshard_driver.rs`) plus a full migration-pass HTTP round trip, while
-    /// still bounded well under any operator-visible SLO.
-    #[serde(default = "default_fence_ttl_secs")]
-    ttl_secs: u64,
-}
-
-/// `POST /admin/reshard:fence`: arm or clear a bounded write pause on a set
-/// of virtual buckets (#1396 R2). The reshard driver's cutover
-/// (`service_k8s::reshard_driver::advance_catching_up`) arms this over exactly
-/// the buckets its final `CatchingUp` migration pass is about to copy,
-/// immediately before that pass, and clears it (`buckets: []`) once the
-/// pass/evict/checkpoint/cutover sequence finishes — on success or on
-/// `Blocked`. A write to a fenced bucket is rejected with `503
-/// bucket_write_paused` rather than silently dropped or applied against a
-/// map that is about to change; see [`WriteFence`] for the crash-safety
-/// (TTL) argument.
-#[utoipa::path(
-    post,
-    path = "/admin/reshard:fence",
-    tag = "Admin",
-    request_body = serde_json::Value,
-    responses(
-        (status = 200, description = "Fence armed or cleared", body = serde_json::Value),
-        (status = 400, description = "Invalid virtual_bucket_count", body = ApiError)
-    )
-)]
-async fn reshard_fence(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
-    Json(req): Json<ReshardFenceRequest>,
-) -> Result<Json<serde_json::Value>, ApiErr> {
-    auth.ensure("*", Role::Admin)?;
-    if req.virtual_bucket_count == 0 {
-        return Err(ApiErr::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_virtual_bucket_count",
-            "virtual_bucket_count must be > 0",
-        ));
-    }
-    if req.buckets.is_empty() {
-        state.write_fence.clear();
-        tracing::info!(
-            target: "lumen.audit",
-            event = "reshard_fence_cleared",
-            subject = auth.subject().unwrap_or("anonymous"),
-        );
-    } else {
-        // #1443 R3: reject a nonsensical TTL as 400 rather than letting
-        // `WriteFence::arm`'s `Instant::now() + ttl` overflow — `0` would
-        // arm-then-immediately-expire (never actually pausing anything, a
-        // silent no-op the caller would wrongly believe closed the write
-        // window), and anything above the generous upper bound is either a
-        // malformed request or would arm an effectively-permanent pause.
-        if req.ttl_secs == 0 || req.ttl_secs > MAX_FENCE_TTL_SECS {
-            return Err(ApiErr::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_ttl_secs",
-                format!(
-                    "ttl_secs must be in 1..={MAX_FENCE_TTL_SECS}, got {}",
-                    req.ttl_secs
-                ),
-            ));
-        }
-        if !state.write_fence.arm(
-            req.virtual_bucket_count,
-            req.buckets.clone(),
-            Duration::from_secs(req.ttl_secs),
-        ) {
-            // Unreachable in practice now that ttl_secs is bounded above,
-            // but `arm` still reports overflow explicitly (#1443 R3) rather
-            // than panicking — surface it as the same 400 shape instead of a
-            // silently-unarmed 200.
-            return Err(ApiErr::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_ttl_secs",
-                "ttl_secs would overflow the fence deadline",
-            ));
-        }
-        tracing::info!(
-            target: "lumen.audit",
-            event = "reshard_fence_armed",
-            subject = auth.subject().unwrap_or("anonymous"),
-            virtual_bucket_count = req.virtual_bucket_count,
-            buckets = req.buckets.len(),
-            ttl_secs = req.ttl_secs,
-        );
-    }
-    Ok(Json(serde_json::json!({
-        "armed": !req.buckets.is_empty(),
-        "buckets": req.buckets,
-    })))
-}
-
-// ---------------------------------------------------------------------------
-// OpenAPI
-// ---------------------------------------------------------------------------
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub fn openapi() -> utoipa::openapi::OpenApi {
-    let mut doc = ApiDoc::openapi();
-    doc.info.version = env!("CARGO_PKG_VERSION").to_string();
-    inject_query_twins(&mut doc);
-    doc
-}
-
-/// Describe the #1297 `QUERY` twins (OpenAPI 3.2 / RFC 10008, epic #1296 R1)
-/// in the generated document: `QUERY /collections` (twin of `POST
-/// /collections:search`) and `QUERY /collections/{collection_id}` (twin of
-/// `POST /collections/{collection_id}/search`).
-///
-/// utoipa 4.2.3 predates OpenAPI 3.2 and has no `PathItemType::Query`
-/// variant, so the operation is injected as raw JSON via
-/// `PathItem::extensions` — utoipa `#[serde(flatten)]`s that map into the
-/// serialized path-item object next to `get`/`post`/etc, giving a `"query"`
-/// key byte-identical in shape to a native one. `libs/openapi-codegen`'s IR
-/// (`ir/operations.rs`, #1298) only needs that serialized `"query"` key plus
-/// an `x-post-twin` extension pointing at the POST twin path; it does not
-/// require a typed enum variant to parse the operation. (The `"openapi"`
-/// version field itself stays at utoipa's fixed `3.0.3` here — that enum has
-/// no 3.2 variant — `lumen spec`'s offline output stamps 3.2 on top; see
-/// `spec::openapi_value`.)
-fn inject_query_twins(doc: &mut utoipa::openapi::OpenApi) {
-    let twin = |doc: &utoipa::openapi::OpenApi, twin_path: &str, operation_id: &str| {
-        let mut op = doc
-            .paths
-            .paths
-            .get(twin_path)?
-            .operations
-            .get(&openapi::PathItemType::Post)?
-            .clone();
-        op.operation_id = Some(operation_id.to_string());
-        op.extensions
-            .get_or_insert_with(Default::default)
-            .insert("x-post-twin".to_string(), serde_json::json!(twin_path));
-        Some(serde_json::to_value(&op).expect("Operation serializes to JSON"))
-    };
-
-    if let Some(query_op) = twin(
-        doc,
-        "/collections/{collection_id}/search",
-        "query_collection",
-    ) {
-        if let Some(item) = doc.paths.paths.get_mut("/collections/{collection_id}") {
-            item.extensions
-                .get_or_insert_with(Default::default)
-                .insert("query".to_string(), query_op);
-        }
-    }
-
-    if let Some(query_op) = twin(doc, "/collections:search", "query_collections") {
-        if let Some(item) = doc.paths.paths.get_mut("/collections") {
-            item.extensions
-                .get_or_insert_with(Default::default)
-                .insert("query".to_string(), query_op);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Error mapping
-// ---------------------------------------------------------------------------
-
-/// HTTP-friendly wrapper that classifies storage errors to status codes.
-/// A newtype over the shared `service_http::ApiErr` (status + kind +
-/// message, `IntoResponse` renders `service_http::ErrorEnvelope` JSON) —
-/// this file keeps only the `StorageError` / `AuthErr` → (status, kind)
-/// classification arms. (`crate::types::ApiError` stays a distinct local
-/// struct of the same `{error, message}` shape purely for OpenAPI schema
-/// identity — see its doc comment.)
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-pub struct ApiErr(service_http::ApiErr);
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl ApiErr {
-    fn new(status: StatusCode, kind: &'static str, message: impl Into<String>) -> Self {
-        Self(service_http::ApiErr::new(status, kind, message))
-    }
-
-    fn not_found(msg: impl Into<String>) -> Self {
-        Self::new(StatusCode::NOT_FOUND, "not_found", msg)
-    }
-}
-
-/// One-hop shard-forward failure — the owning shard was unreachable (pod
-/// down/rolling) or its response could not be decoded. Raised via `anyhow`
-/// by `routing_remote::RoutedRouter` so `ApiErr`'s classification stays
-/// centralized here rather than duplicated in the `operator`-gated module;
-/// R2 requires this to surface as a clear, distinctly-kinded retryable
-/// error, never a silent local answer.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-#[derive(Debug)]
-pub struct ShardForwardUnavailable(pub String);
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::fmt::Display for ShardForwardUnavailable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::error::Error for ShardForwardUnavailable {}
-
-/// The owning shard was reached and answered, but with a non-2xx status
-/// (e.g. a forwarded write hit `404`/`422`). Re-emitted locally with the
-/// same status so a forwarded error is as legible as a local one; `message`
-/// carries the remote's own `{error, message}` envelope verbatim.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-#[derive(Debug)]
-pub struct ShardForwardRemoteError {
-    pub status: u16,
-    pub message: String,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::fmt::Display for ShardForwardRemoteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "shard forward error ({}): {}", self.status, self.message)
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::error::Error for ShardForwardRemoteError {}
-
-/// A forwarded request declared a shard-map version that disagrees with
-/// this pod's own live map (#1442 R2). A rolling restart after a completed
-/// reshard split can run pods on two different `SHARD_MAP_*` env snapshots
-/// for a bounded window (pods only read env at boot) — rather than let the
-/// one-hop guard force a local answer that may be wrong on either side of
-/// the split, the receiver rejects with this distinct, retryable error so
-/// the caller (or its own retry policy) waits for the rollout to converge.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-#[derive(Debug)]
-pub struct ShardMapVersionMismatch {
-    pub sender_version: u64,
-    pub local_version: u64,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::fmt::Display for ShardMapVersionMismatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "forwarded request's shard-map version {} disagrees with this pod's live version {}",
-            self.sender_version, self.local_version
-        )
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::error::Error for ShardMapVersionMismatch {}
-
-/// A forwarded request's one-hop marker (`x-lumen-forwarded`) claimed this
-/// pod, but recomputing ownership from this pod's own shard map disagrees
-/// (#1442 R1). The marker alone is caller-controlled — an external client
-/// can set it directly on a request to any pod, forcing local handling on a
-/// bucket that pod doesn't actually own — so it is now validated on
-/// receipt rather than trusted blindly; a spoofed or genuinely misrouted
-/// forward is rejected, never honored.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-#[derive(Debug)]
-pub struct ShardForwardMisrouted {
-    pub bucket: u32,
-    pub owner_shard: u32,
-    pub local_shard: u32,
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::fmt::Display for ShardForwardMisrouted {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "forwarded request targets virtual bucket {} (owned by shard {}), but this pod is \
-             shard {}; refusing to honor an unverified forwarded-hop marker",
-            self.bucket, self.owner_shard, self.local_shard
-        )
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl std::error::Error for ShardForwardMisrouted {}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl From<anyhow::Error> for ApiErr {
-    fn from(e: anyhow::Error) -> Self {
-        // #1486 R2: a write waiter released without a genuine apply outcome
-        // (dedup-guard skip or a bounded submit() timeout) is transient —
-        // surface it as a retryable 503, never the generic 400 fallback
-        // below (which would misreport it as a bad request) and never a
-        // silent hang (the original defect).
-        if e.downcast_ref::<SubmitStalled>().is_some() {
-            return Self::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "write_stalled",
-                e.to_string(),
-            );
-        }
-        if e.downcast_ref::<ShardForwardUnavailable>().is_some() {
-            return Self::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "shard_forward_unavailable",
-                e.to_string(),
-            );
-        }
-        if let Some(re) = e.downcast_ref::<ShardForwardRemoteError>() {
-            let status = StatusCode::from_u16(re.status).unwrap_or(StatusCode::BAD_GATEWAY);
-            return Self::new(status, "shard_forwarded_error", re.message.clone());
-        }
-        if e.downcast_ref::<ShardMapVersionMismatch>().is_some() {
-            return Self::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "shard_map_version_mismatch",
-                e.to_string(),
-            );
-        }
-        if e.downcast_ref::<ShardForwardMisrouted>().is_some() {
-            return Self::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "shard_forward_misrouted",
-                e.to_string(),
-            );
-        }
-        if let Some(se) = e.downcast_ref::<StorageError>() {
-            return match se {
-                StorageError::CollectionNotFound(_) => {
-                    Self::new(StatusCode::NOT_FOUND, "not_found", e.to_string())
-                }
-                StorageError::InvalidCollectionName(_) => Self::new(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_collection_name",
-                    e.to_string(),
-                ),
-                StorageError::UnknownField { .. } => Self::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "unknown_field",
-                    e.to_string(),
-                ),
-                StorageError::TypeMismatch { .. } => Self::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "type_mismatch",
-                    e.to_string(),
-                ),
-                StorageError::DuplicatesOnText(_) => {
-                    Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
-                }
-                StorageError::InvalidNumber(_) => Self::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "invalid_number",
-                    e.to_string(),
-                ),
-                StorageError::BulkLimit { .. } => {
-                    Self::new(StatusCode::PAYLOAD_TOO_LARGE, "bulk_limit", e.to_string())
-                }
-                StorageError::QueryTooComplex(_) => {
-                    Self::new(StatusCode::BAD_REQUEST, "query_too_complex", e.to_string())
-                }
-                StorageError::Gone(_) => Self::new(StatusCode::GONE, "gone", e.to_string()),
-                StorageError::UnsupportedSort(_) => {
-                    Self::new(StatusCode::BAD_REQUEST, "unsupported_sort", e.to_string())
-                }
-                // #1467 R4: caller-declared `total_chunks` failed the sanity
-                // cap — a client/protocol error, not a transient one.
-                StorageError::InvalidPruneChunk { .. } => Self::new(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_prune_chunk",
-                    e.to_string(),
-                ),
-                // #1467 R4: the prune accumulator is at its entry cap — a
-                // 429-class signal (retryable once the driver's other,
-                // presumably-stuck passes GC out or complete) rather than a
-                // permanent 4xx.
-                StorageError::PruneAccumulatorFull { .. } => Self::new(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "prune_accumulator_full",
-                    e.to_string(),
-                ),
-            };
-        }
-        Self::new(StatusCode::BAD_REQUEST, "bad_request", e.to_string())
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl IntoResponse for ApiErr {
-    fn into_response(self) -> axum::response::Response {
-        self.0.into_response()
-    }
-}
-
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
-impl From<crate::auth::AuthErr> for ApiErr {
-    fn from(e: crate::auth::AuthErr) -> Self {
-        match e {
-            crate::auth::AuthErr::Forbidden {
-                subject,
-                needed,
-                collection_id,
-            } => Self::new(
-                StatusCode::FORBIDDEN,
-                "forbidden",
-                format!("subject `{subject}` lacks {needed:?} on `{collection_id}`"),
-            ),
-        }
-    }
-}
-// CODEGEN-END
-````
+<!-- aw-source-partitions: version=1 count=3 max_bytes=48128 max_payload_bytes=65536 encoding=base64 source_lang=rust digest=sha256:21f564bc4403efad7777123eee55ee12fe1643711774482bea2d52bab00d02bd -->
+
+```rust
+// AW source partition manifest v1: 3 ordered rust chunks, max 48128 decoded / 65536 encoded bytes, digest sha256:21f564bc4403efad7777123eee55ee12fe1643711774482bea2d52bab00d02bd
+```
+### Source Partition 0001
+<!-- aw-source-partition: index=1 count=3 bytes=47712 payload_bytes=64453 encoding=base64 digest=sha256:01005ab2feb8fafc7fd56278e4f2150c4be9069ecfa6e6d6d29b8acedfd3e4bd boundary=ast terminal_newline=true -->
+
+```text
+Ly8gU1BFQy1NQU5BR0VEOiBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9h
+cHBzLWx1bWVuLXNyYy1hcGktcnMubWQjcnVzdC1zb3VyY2UtdW5pdAovLyBDT0RFR0VOLUJFR0lO
+Ci8vISBIVFRQLzIgQVBJIHN1cmZhY2UuCi8vIQovLyEgUmVhZHMgKGAvc2VhcmNoYCwgYC9kdXBs
+aWNhdGVzYCwgYC9zdGF0c2ApIGNhbiBiZSBzZXJ2ZWQgYnkgYW55Ci8vISByZXBsaWNhLiBXcml0
+ZXMgKGBQVVQgL2NvbGxlY3Rpb25zLy4uLmAsIGBQT1NUIC4uLi9pbmRleGAsCi8vISBgREVMRVRF
+IC4uLi9pbmRleC8uLi5gKSBjdXJyZW50bHkgdGFyZ2V0IHRoZSBsb2NhbCBpbi1tZW1vcnkKLy8h
+IFtgRW5naW5lYF07IHdoZW4gUmFmdCBpcyB3aXJlZCBpbiB0aGV5IHdpbGwgYmUgZm9yd2FyZGVk
+IHRvIHRoZQovLyEgc2hhcmQgbGVhZGVyIGJlZm9yZSBiZWluZyBhcHBsaWVkLgovLyEKLy8hIFRo
+ZSBjb250cmFjdCBmb3IgZXh0ZXJuYWwgY29uc3VtZXJzIGlzIGBHRVQgL29wZW5hcGkuanNvbmAs
+Ci8vISBnZW5lcmF0ZWQgYXQgcnVudGltZSBmcm9tIHRoaXMgbW9kdWxlLgoKdXNlIHN0ZDo6Y29s
+bGVjdGlvbnM6OkJUcmVlU2V0Owp1c2Ugc3RkOjpzeW5jOjphdG9taWM6Ok9yZGVyaW5nOwp1c2Ug
+c3RkOjpzeW5jOjp7QXJjLCBNdXRleH07CnVzZSBzdGQ6OnRpbWU6OntEdXJhdGlvbiwgSW5zdGFu
+dH07Cgp1c2UgYW55aG93OjpSZXN1bHQ7CnVzZSBhc3luY190cmFpdDo6YXN5bmNfdHJhaXQ7CnVz
+ZSBheHVtOjp7CiAgICBleHRyYWN0Ojp7RXh0ZW5zaW9uLCBGcm9tUmVxdWVzdCwgUGF0aCwgUXVl
+cnksIFJlcXVlc3QsIFN0YXRlfSwKICAgIGh0dHA6OntNZXRob2QsIFN0YXR1c0NvZGV9LAogICAg
+bWlkZGxld2FyZTo6ZnJvbV9mbl93aXRoX3N0YXRlLAogICAgcmVzcG9uc2U6OntJbnRvUmVzcG9u
+c2UsIEpzb259LAogICAgcm91dGluZzo6e2RlbGV0ZSwgZ2V0LCBwb3N0LCBwdXR9LAogICAgUm91
+dGVyLAp9Owp1c2UgZnV0dXJlczo6ZnV0dXJlOjpqb2luX2FsbDsKdXNlIHNlcmRlOjpEZXNlcmlh
+bGl6ZTsKdXNlIHNlcnZpY2VfaHR0cDo6e01ldHJpY3NQcm92aWRlciwgUmVhZGluZXNzSG9va307
+CnVzZSB1dG9pcGE6OnsKICAgIG9wZW5hcGk6OnsKICAgICAgICBzZWxmLAogICAgICAgIHNlY3Vy
+aXR5Ojp7SHR0cEF1dGhTY2hlbWUsIEh0dHBCdWlsZGVyLCBTZWN1cml0eVNjaGVtZX0sCiAgICB9
+LAogICAgTW9kaWZ5LCBPcGVuQXBpLAp9OwoKdXNlIGF4dW06Omh0dHA6OkhlYWRlck1hcDsKCnVz
+ZSBjcmF0ZTo6YXV0aDo6e2F1dGhfbWlkZGxld2FyZSwgQXV0aENvbmZpZywgQXV0aENvbnRleHQs
+IEx1bWVuVmVyaWZpZXIsIFJvbGV9Owp1c2UgY3JhdGU6OmJhY2t1cF9zaW5rOjp7QmFja3VwU2lu
+aywgTG9jYWxGc1Npbmt9Owp1c2UgY3JhdGU6OmNvb3JkaW5hdG9yOjp7U3VibWl0U3RhbGxlZCwg
+V3JpdGVDb29yZGluYXRvciwgV3JpdGVTaW5rfTsKdXNlIGNyYXRlOjpsb2dfZW50cnk6OlJhZnRM
+b2dFbnRyeTsKdXNlIGNyYXRlOjpyYWZ0Ojp7Q2x1c3RlclN0YXRlVmlldywgUmFmdFJvbGUsIFJl
+YWRDb25zaXN0ZW5jeX07CnVzZSBjcmF0ZTo6cmVzaGFyZDo6UmVzaGFyZEJhdGNoOwp1c2UgY3Jh
+dGU6OnJvdXRpbmc6OlZpcnR1YWxCdWNrZXRTaGFyZE1hcDsKdXNlIGNyYXRlOjpzdG9yYWdlOjp7
+QXBwbHlPdXRjb21lLCBEcm9wT3V0Y29tZSwgRW5naW5lLCBTbmFwc2hvdFYxLCBTdG9yYWdlRXJy
+b3J9Owp1c2UgY3JhdGU6OnR5cGVzOjp7CiAgICBBbmFseXplciwgQXBpRXJyb3IsIEJhdGNoU2Vh
+cmNoUmVxdWVzdCwgQmF0Y2hTZWFyY2hSZXNwb25zZSwgQmF0Y2hTZWFyY2hSZXN1bHQsIENhY2hl
+U3RhdHMsCiAgICBDcmVhdGVDb2xsZWN0aW9uUmVxdWVzdCwgQ3JlYXRlQ29sbGVjdGlvblJlc3Bv
+bnNlLCBEdXBsaWNhdGVHcm91cCwgRHVwbGljYXRlc1JlcXVlc3QsCiAgICBEdXBsaWNhdGVzUmVz
+cG9uc2UsIEZpZWxkU3BlYywgRmllbGRTdGF0cywgRmllbGRUeXBlLCBGaWVsZFZhbHVlLCBJbmRl
+eEl0ZW0sIEluZGV4UmVxdWVzdCwKICAgIEluZGV4UmVzcG9uc2UsIEtublF1ZXJ5LCBNYXRjaE9w
+LCBNYXRjaFF1ZXJ5LCBRdWVyeU5vZGUsIFJhbmdlUXVlcnksIFJlcGxhY2VEb2NCb2R5LAogICAg
+UmVwbGFjZURvY0l0ZW0sIFJlcGxhY2VEb2NSZXN1bHQsIFJlcGxhY2VEb2NzUmVxdWVzdCwgUmVw
+bGFjZURvY3NSZXNwb25zZSwgU2VhcmNoQWxsUmVxdWVzdCwKICAgIFNlYXJjaEFsbFJlc3BvbnNl
+LCBTZWFyY2hIaXQsIFNlYXJjaFJlcXVlc3QsIFNlYXJjaFJlc3BvbnNlLCBTdGF0c1Jlc3BvbnNl
+LCBTdG9yYWdlU3RhdHMsCiAgICBUZXJtUXVlcnksIFRlcm1zUXVlcnksIFZlY3RvckJhY2tlbmQs
+IFZlY3Rvck1ldHJpYywgVmVjdG9yUXVhbnRpemUsIFZlY3RvclNwZWMsCiAgICBNQVhfQkFUQ0hf
+UkVQTEFDRV9TSVpFLCBNQVhfQkFUQ0hfU0VBUkNIX1NJWkUsCn07CnVzZSBjcmF0ZTo6d2FsOjp7
+TWVtV2FsLCBTaGFyZWRXYWx9OwoKI1tkZXJpdmUoQ2xvbmUpXQovLy8gQHNwZWMgYXBwcy9sdW1l
+bi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3Nv
+dXJjZQpwdWIgc3RydWN0IEFwcFN0YXRlIHsKICAgIHB1YiBlbmdpbmU6IEFyYzxFbmdpbmU+LAog
+ICAgcHViIGF1dGg6IEFyYzxBdXRoQ29uZmlnPiwKICAgIHB1YiBjbHVzdGVyOiBPcHRpb248QXJj
+PGNyYXRlOjpyYWZ0OjpDbHVzdGVyU3RhdGU+PiwKICAgIC8vLyBSZWFkL3NlYXJjaCBiYWNrZW5k
+LiBEZWZhdWx0cyB0byB0aGUgbG9jYWwgZW5naW5lOyBzaGFyZGVkIHNlcnZpbmcgY2FuCiAgICAv
+Ly8gcmVwbGFjZSBpdCB3aXRoIGEgZmFuLWluIHJvdXRlciB3aGlsZSBrZWVwaW5nIHdyaXRlcy9z
+dGF0cyBsb2NhbC4KICAgIHB1YiBzZWFyY2hfYmFja2VuZDogQXJjPGR5biBTZWFyY2hCYWNrZW5k
+PiwKICAgIC8vLyBXcml0ZXMgZ28gdGhyb3VnaCBhIFtgV3JpdGVTaW5rYF06IHRoZSBXQUwtc2Vh
+bSBjb29yZGluYXRvciBmb3IKICAgIC8vLyBlbWJlZGRlZC9uYXRzLCBvciB0aGUgcmFmdCBob3N0
+IGZvciBgLS13YWwgcmFmdGAuIFJlYWRzIHVzZQogICAgLy8vIGBlbmdpbmVgIGRpcmVjdGx5LiBT
+ZWUgYGNvb3JkaW5hdG9yYCAvIGB3YWxgIC8gYHJhZnRfc21gLgogICAgcHViIHdyaXRlcjogQXJj
+PGR5biBXcml0ZVNpbms+LAogICAgLy8vIFdyaXRlL211dGF0aW9uIGJhY2tlbmQuIERlZmF1bHRz
+IHRvIHRoZSBsb2NhbCBjb29yZGluYXRvcjsgc2hhcmRlZAogICAgLy8vIHNlcnZpbmcgY2FuIHJl
+cGxhY2UgaXQgd2l0aCBhIGRvY3VtZW50LXJvdXRlciB0aGF0IGZhbnMgb3V0IHdyaXRlcwogICAg
+Ly8vIGFjcm9zcyBpbmRlcGVuZGVudCBzaGFyZCBjb29yZGluYXRvcnMuCiAgICBwdWIgd3JpdGVf
+YmFja2VuZDogQXJjPGR5biBXcml0ZUJhY2tlbmQ+LAogICAgLy8vIER1cmFiaWxpdHktb24tZGVt
+YW5kIHNlYW0gZm9yIGBQT1NUIC9hZG1pbi9jaGVja3BvaW50YCAoIzEzODkpLgogICAgLy8vIERl
+ZmF1bHRzIHRvIFtgTm9vcENoZWNrcG9pbnRgXTsgdGhlIHNlcnZlciBiaW5hcnkgd2lyZXMgYSBy
+ZWFsCiAgICAvLy8gc2VnbWVudC1jaGVja3BvaW50IGltcGxlbWVudGF0aW9uIHdoZW4gc2VnbWVu
+dCBwZXJzaXN0ZW5jZSBpcwogICAgLy8vIGNvbmZpZ3VyZWQuIFNlZSBbYENoZWNrcG9pbnRTaW5r
+YF0uCiAgICBwdWIgY2hlY2twb2ludDogQXJjPGR5biBDaGVja3BvaW50U2luaz4sCiAgICAvLy8g
+Qm91bmRlZCB3cml0ZSBwYXVzZSBvbiBzdGlsbC1tb3ZpbmcgdmlydHVhbCBidWNrZXRzIGR1cmlu
+ZyBhCiAgICAvLy8gcmVzaGFyZCdzIGZpbmFsIGBDYXRjaGluZ1VwYCBwYXNzICgjMTM5NiBSMiku
+IERlZmF1bHRzIHRvIHVuYXJtZWQKICAgIC8vLyAoZXZlcnkgd3JpdGUgcGFzc2VzIHRocm91Z2gg
+dW5jaGFuZ2VkKTsgdGhlIHJlc2hhcmQgZHJpdmVyIGFybXMgaXQKICAgIC8vLyB2aWEgYFBPU1Qg
+L2FkbWluL3Jlc2hhcmQ6ZmVuY2VgLiBTZWUgW2BXcml0ZUZlbmNlYF0uCiAgICBwdWIgd3JpdGVf
+ZmVuY2U6IFdyaXRlRmVuY2UsCiAgICAvLy8gQ3Jvc3MtcG9kIHNoYXJkIHJvdXRlciBmb3Igb3Bl
+cmF0b3IvazhzIHNlcnZpbmcgKCMxMzk4IFIxLVIzKS4KICAgIC8vLyBgTm9uZWAgZm9yIGV2ZXJ5
+IGRlcGxveW1lbnQgc2hhcGUgZXhjZXB0IHRoZSByb3V0ZWQgb25lIChgU0hBUkRfQ09VTlRgCiAg
+ICAvLy8gPiAxLCBgcmVwbGljYXNQZXJTaGFyZCA8PSAxYCwgbm8gYC0tc2VhcmNoLXNoYXJkLXNl
+Z21lbnQtZGlyc2ApIOKAlCBzZWUKICAgIC8vLyBbYFJvdXRlZEJhY2tlbmRgXS4gVGhlIHNlcnZl
+ciBiaW5hcnkgd2lyZXMgYSByZWFsCiAgICAvLy8gYHJvdXRpbmdfcmVtb3RlOjpSb3V0ZWRSb3V0
+ZXJgIHZpYSBbYFNlbGY6OndpdGhfcm91dGVkYF07IHRlc3RzIGFuZAogICAgLy8vIGV2ZXJ5IG90
+aGVyIGRlcGxveW1lbnQgc2hhcGUgbGVhdmUgdGhpcyBgTm9uZWAuCiAgICBwdWIgcm91dGVkOiBP
+cHRpb248QXJjPGR5biBSb3V0ZWRCYWNrZW5kPj4sCn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3Rl
+Y2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNl
+CnB1YiB0cmFpdCBTZWFyY2hCYWNrZW5kOiBTZW5kICsgU3luYyB7CiAgICBmbiBzZWFyY2goJnNl
+bGYsIGNvbGxlY3Rpb25faWQ6ICZzdHIsIHJlcTogU2VhcmNoUmVxdWVzdCkgLT4gUmVzdWx0PFNl
+YXJjaFJlc3BvbnNlPjsKfQoKLy8vIEZvcmNlcyBhIHN5bmNocm9ub3VzLCBhd2FpdGVkIGR1cmFi
+aWxpdHkgY2hlY2twb2ludCBvZiB0aGUgbGl2ZSBlbmdpbmUKLy8vIHN0YXRlICgjMTM4OSkuIFRo
+ZSByZXNoYXJkIGRyaXZlcidzIGN1dG92ZXIgKGBzZXJ2aWNlX2s4czo6cmVzaGFyZF9kcml2ZXI6
+OgovLy8gYWR2YW5jZV9jYXRjaGluZ191cGApIGNhbGxzIGBQT1NUIC9hZG1pbi9jaGVja3BvaW50
+YCDigJQgd2hpY2ggcm91dGVzIGhlcmUg4oCUCi8vLyBvbiBldmVyeSBzaGFyZCBpdCBqdXN0IG1p
+Z3JhdGVkIGRhdGEgaW50byBvciBldmljdGVkIGRhdGEgZnJvbSwgYW5kIHdhaXRzCi8vLyBmb3Ig
+dGhlIHJlc3BvbnNlIGJlZm9yZSBmbGlwcGluZyBgc3BlYy5zaGFyZE1hcGAgYW5kIHRyaWdnZXJp
+bmcgdGhlCi8vLyBjdXRvdmVyIHJvbGxpbmcgcmVzdGFydC4gYEVuZ2luZTo6YXBwbHlfcmVzaGFy
+ZF9iYXRjaGAvYGV2aWN0X25vdF9vd25lZGAKLy8vIChgc3RvcmFnZS5yc2AsICMxMzgwKSBtdXRh
+dGUgZW5naW5lIHN0YXRlIGRpcmVjdGx5IHJhdGhlciB0aGFuIHRocm91Z2gKLy8vIGBXcml0ZUNv
+b3JkaW5hdG9yYC90aGUgQU9GLCBzbyDigJQgdW5saWtlIG9yZGluYXJ5IHdyaXRlcyDigJQgdGhl
+aXIgZHVyYWJpbGl0eQovLy8gaXMgbm90IGltcGxpZWQgYnkgYGFwcGxpZWRfc2VxKClgOyB0aGlz
+IHNlYW0gaXMgd2hhdCBtYWtlcyBpdCBkdXJhYmxlCi8vLyBvbi1kZW1hbmQgaW5zdGVhZCBvZiBv
+bmx5IG9uIHRoZSBuZXh0IHBlcmlvZGljIGBMVU1FTl9TTkFQU0hPVF9TRUNTYCB0aWNrLgovLy8K
+Ly8vIFtgTm9vcENoZWNrcG9pbnRgXSBpcyB0aGUgZGVmYXVsdCAobm8gYC0tZGF0YS1kaXJgL25v
+bi1zZWdtZW50LXBlcnNpc3RlbmNlCi8vLyBkZXBsb3ltZW50cywgaW5jbHVkaW5nIGV2ZXJ5IGV4
+aXN0aW5nIHRlc3QgYEFwcFN0YXRlYCk6IGBjaGVja3BvaW50X25vd2AKLy8vIHRyaXZpYWxseSBy
+ZXR1cm5zIGBPayhmYWxzZSlgIChub3RoaW5nIGNvbmZpZ3VyZWQgdG8gcGVyc2lzdCwgc28gbm90
+aGluZwovLy8gdG8gbG9zZSBhY3Jvc3MgYW4gaW4tcHJvY2VzcyB0ZXN0J3Mgbm9uLXJlc3RhcnQp
+LiBUaGUgc2VydmVyIGJpbmFyeSB3aXJlcwovLy8gYSByZWFsIHNlZ21lbnQtY2hlY2twb2ludC1i
+YWNrZWQgaW1wbGVtZW50YXRpb24gd2hlbmV2ZXIKLy8vIGAtLXBlcnNpc3RlbmNlPXNlZ21lbnRg
+ICsgYC0tZGF0YS1kaXJgIGFyZSBjb25maWd1cmVkIOKAlCBleGFjdGx5IHRoZQovLy8gY29tYmlu
+YXRpb24gdGhlIG9wZXJhdG9yIG5vdyByZW5kZXJzIHVuY29uZGl0aW9uYWxseSBhdAovLy8gYHJl
+cGxpY2FzUGVyU2hhcmQgPD0gMWAgKCMxMzg3KSwgd2hpY2ggaXMgdGhlIHNhbWUgdG9wb2xvZ3kg
+dGhlIHJlc2hhcmQKLy8vIGRyaXZlciBpcyBzY29wZWQgdG8gKHNlZSBgcmVzaGFyZF9kcml2ZXJg
+J3MgIlNjb3BlIHJhaWwiIGRvYykuCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3Nl
+bWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCiNbYXN5bmNfdHJh
+aXRdCnB1YiB0cmFpdCBDaGVja3BvaW50U2luazogU2VuZCArIFN5bmMgewogICAgLy8vIFBlcnNp
+c3QgY3VycmVudCBlbmdpbmUgc3RhdGUgZHVyYWJseSBhbmQgcmV0dXJuIG9ubHkgb25jZSB0aGUg
+d3JpdGUKICAgIC8vLyBpcyBjb21taXR0ZWQuIGBPayh0cnVlKWAgd2hlbiBhIGNoZWNrcG9pbnQg
+d2FzIGFjdHVhbGx5IHdyaXR0ZW47CiAgICAvLy8gYE9rKGZhbHNlKWAgd2hlbiBubyBkdXJhYmxl
+IHN0b3JlIGlzIGNvbmZpZ3VyZWQgKGEgY2hlY2twb2ludCByZXF1ZXN0CiAgICAvLy8gYWdhaW5z
+dCBzdWNoIGEgZGVwbG95bWVudCBpcyB2YWN1b3VzbHkgc2F0aXNmaWVkIOKAlCB0aGVyZSBpcyBu
+b3RoaW5nCiAgICAvLy8gb24gZGlzayB0byBmYWxsIGJlaGluZCkuIGBFcnJgIG9uIGEgcmVhbCB3
+cml0ZSBmYWlsdXJlLCB3aGljaCBjYWxsZXJzCiAgICAvLy8gKHRoZSByZXNoYXJkIGRyaXZlcikg
+bXVzdCB0cmVhdCBhcyAibm90IHlldCBkdXJhYmxlIiBhbmQgcmV0cnkuCiAgICBhc3luYyBmbiBj
+aGVja3BvaW50X25vdygmc2VsZikgLT4gUmVzdWx0PGJvb2w+Owp9CgovLy8gRGVmYXVsdCBbYENo
+ZWNrcG9pbnRTaW5rYF0gZm9yIGRlcGxveW1lbnRzL3Rlc3RzIHdpdGggbm8gY29uZmlndXJlZAov
+Ly8gZHVyYWJsZSBzdG9yZSDigJQgc2VlIHRoZSB0cmFpdCBkb2MuCnN0cnVjdCBOb29wQ2hlY2tw
+b2ludDsKCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9h
+cHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCiNbYXN5bmNfdHJhaXRdCmltcGwgQ2hlY2tw
+b2ludFNpbmsgZm9yIE5vb3BDaGVja3BvaW50IHsKICAgIGFzeW5jIGZuIGNoZWNrcG9pbnRfbm93
+KCZzZWxmKSAtPiBSZXN1bHQ8Ym9vbD4gewogICAgICAgIE9rKGZhbHNlKQogICAgfQp9CgovLy8g
+QSBib3VuZGVkLCBzdGF0dXMtdmlzaWJsZSB3cml0ZSBwYXVzZSBvbiBhIHNldCBvZiBzdGlsbC1t
+b3ZpbmcgdmlydHVhbAovLy8gYnVja2V0cyAoIzEzOTYgUjIpLCB0aGUgbWVjaGFuaXNtICMxMzgx
+J3MgUjUgcmV2aWV3IHNhbmN0aW9uZWQ6ICJhCi8vLyBib3VuZGVkIGZpbmFsIHBhdXNlIG9mIHdy
+aXRlcyB0byBzdGlsbC1tb3ZpbmcgYnVja2V0cyBpcyBhY2NlcHRhYmxlIGlmCi8vLyBuZWVkZWQg
+Zm9yIGNvbnZlcmdlbmNlLCBidXQgbXVzdCBiZSBib3VuZGVkIGFuZCByZXBvcnRlZCBpbiBzdGF0
+dXMuIgovLy8KLy8vIENsb3NlcyB0aGUgY29weS10by1ldmljdCBnYXAgaW4gdGhlIHJlc2hhcmQg
+ZHJpdmVyJ3MgYENhdGNoaW5nVXBgIHBhc3M6Ci8vLyB3aXRob3V0IGEgcGF1c2UsIGEgd3JpdGUg
+bGFuZGluZyBvbiBhIHNvdXJjZSBzaGFyZCdzIG1vdmluZyBidWNrZXQgYWZ0ZXIKLy8vIHRoZSBs
+YXN0IG1pZ3JhdGlvbi1jb3B5IHJlYWQgYnV0IGJlZm9yZSB0aGF0IGJ1Y2tldCdzIGV2aWN0aW9u
+IGlzIG5ldmVyCi8vLyByZS1jb3BpZWQgdG8gdGhlIHRhcmdldCBhbmQgaXMgc2lsZW50bHkgZHJv
+cHBlZCBieSBldmljdGlvbi4gVGhlIGRyaXZlcgovLy8gYXJtcyBhIGZlbmNlIG92ZXIgZXhhY3Rs
+eSB0aGUgYnVja2V0cyBpdHMgZmluYWwgbWlncmF0aW9uIHBhc3MgaXMgYWJvdXQKLy8vIHRvIGNv
+cHkgKGBQT1NUIC9hZG1pbi9yZXNoYXJkOmZlbmNlYCkgaW1tZWRpYXRlbHkgYmVmb3JlIHRoYXQg
+cGFzcywgc28KLy8vIHRoZSBzaW5nbGUgcGFzcyB0YWtlbiB1bmRlciB0aGUgZmVuY2UgaXMgYWxy
+ZWFkeSBhIGNvbXBsZXRlL2NvbnZlcmdlZAovLy8gc25hcHNob3Qgb2YgdGhvc2UgYnVja2V0cyDi
+gJQgbm8gcmVwZWF0LXVudGlsLWNvbnZlcmdlZCBsb29wIGlzIG5lZWRlZCDigJQKLy8vIGFuZCBj
+bGVhcnMgdGhlIGZlbmNlIChhbiBlbXB0eS1gYnVja2V0c2AgY2FsbCB0byB0aGUgc2FtZSB2ZXJi
+KSBvbiBldmVyeQovLy8gZXhpdCBwYXRoIG9mIHRoYXQgdGljaywgc3VjY2VzcyBvciBgQmxvY2tl
+ZGAuCi8vLwovLy8gQ3Jhc2ggc2FmZXR5OiBhIGRyaXZlciBwcm9jZXNzIHRoYXQgZGllcyBiZXR3
+ZWVuIGFybWluZyBhbmQgY2xlYXJpbmcKLy8vIGNhbm5vdCBsZWF2ZSBhIGJ1Y2tldCBwZXJtYW5l
+bnRseSB1bndyaXRhYmxlLiBbYFdyaXRlRmVuY2U6OmJsb2Nrc2BdCi8vLyBjaGVja3MgYGRlYWRs
+aW5lYCBvbiBldmVyeSBjYWxsIGFuZCB0cmVhdHMgYW4gZXhwaXJlZCBmZW5jZSBhcyB1bmFybWVk
+IOKAlAovLy8gdGhpcyBjaGVjayBydW5zIG9uIHRoZSAqc2VydmluZyBwb2QqLCBpbmRlcGVuZGVu
+dCBvZiB3aGV0aGVyIHRoZSBkcml2ZXIKLy8vIHByb2Nlc3MgdGhhdCBhcm1lZCBpdCBpcyBzdGls
+bCBhbGl2ZSwgc28gZXhwaXJ5IGlzIGVuZm9yY2VkIGV2ZW4gaWYgdGhlCi8vLyBkcml2ZXIgbmV2
+ZXIgY29tZXMgYmFjay4gVGhlIHJlc2hhcmQgZHJpdmVyIHJlLWFybXMgYSBmcmVzaCBkZWFkbGlu
+ZQovLy8gZXZlcnkgdGljayBpdCBuZWVkcyBvbmUsIHNvIGEgaGVhbHRoeSwgc2xvdy1idXQtcHJv
+Z3Jlc3NpbmcgZHJpdmVyIG5ldmVyCi8vLyByYWNlcyBpdHMgb3duIFRUTDsgc2VlIGByZXNoYXJk
+X2RyaXZlcjo6V1JJVEVfRkVOQ0VfVFRMYC4KI1tkZXJpdmUoQ2xvbmUsIERlZmF1bHQpXQovLy8g
+QHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1z
+cmMtYXBpLXJzLm1kI3NvdXJjZQpwdWIgc3RydWN0IFdyaXRlRmVuY2UgewogICAgc3RhdGU6IEFy
+YzxNdXRleDxPcHRpb248RmVuY2VTdGF0ZT4+PiwKfQoKc3RydWN0IEZlbmNlU3RhdGUgewogICAg
+dmlydHVhbF9idWNrZXRfY291bnQ6IHUzMiwKICAgIGJ1Y2tldHM6IEJUcmVlU2V0PHUzMj4sCiAg
+ICBkZWFkbGluZTogSW5zdGFudCwKfQoKLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24v
+c2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLWFwaS1ycy5tZCNzb3VyY2UKaW1wbCBXcml0
+ZUZlbmNlIHsKICAgIC8vLyBBcm0gdGhlIGZlbmNlIG92ZXIgYGJ1Y2tldHNgIChjb21wdXRlZCBh
+Z2FpbnN0IGB2aXJ0dWFsX2J1Y2tldF9jb3VudGApCiAgICAvLy8gdW50aWwgYHR0bGAgZnJvbSBu
+b3csIHJlcGxhY2luZyBhbnkgcHJpb3IgYXJtZWQgc3RhdGUuIFJldHVybnMgYGZhbHNlYAogICAg
+Ly8vIChsZWF2aW5nIGFueSBwcmlvciBhcm1lZCBzdGF0ZSB1bnRvdWNoZWQpIHdoZW4gYEluc3Rh
+bnQ6Om5vdygpICsgdHRsYAogICAgLy8vIHdvdWxkIG92ZXJmbG93ICgjMTQ0MyBSMykg4oCUIHRo
+ZSBjYWxsZXIgbXVzdCB0cmVhdCB0aGF0IGFzIGEgZmFpbGVkIGFybQogICAgLy8vIHJhdGhlciB0
+aGFuIHNpbGVudGx5IHBhbmlja2luZyB3aXRoIHRoZSBmZW5jZSBsb2NrIGhlbGQsIHdoaWNoIHdv
+dWxkCiAgICAvLy8gcG9pc29uIGl0IGZvciBldmVyeSBzdWJzZXF1ZW50IHdyaXRlL2NsZWFyIG9u
+IHRoaXMgcG9kLgogICAgZm4gYXJtKCZzZWxmLCB2aXJ0dWFsX2J1Y2tldF9jb3VudDogdTMyLCBi
+dWNrZXRzOiBCVHJlZVNldDx1MzI+LCB0dGw6IER1cmF0aW9uKSAtPiBib29sIHsKICAgICAgICBs
+ZXQgU29tZShkZWFkbGluZSkgPSBJbnN0YW50Ojpub3coKS5jaGVja2VkX2FkZCh0dGwpIGVsc2Ug
+ewogICAgICAgICAgICByZXR1cm4gZmFsc2U7CiAgICAgICAgfTsKICAgICAgICBsZXQgbXV0IGd1
+YXJkID0gc2VsZi5sb2NrKCk7CiAgICAgICAgKmd1YXJkID0gU29tZShGZW5jZVN0YXRlIHsKICAg
+ICAgICAgICAgdmlydHVhbF9idWNrZXRfY291bnQsCiAgICAgICAgICAgIGJ1Y2tldHMsCiAgICAg
+ICAgICAgIGRlYWRsaW5lLAogICAgICAgIH0pOwogICAgICAgIHRydWUKICAgIH0KCiAgICAvLy8g
+RXhwbGljaXRseSBkaXNhcm0sIGluZGVwZW5kZW50IG9mIGBkZWFkbGluZWAuCiAgICBmbiBjbGVh
+cigmc2VsZikgewogICAgICAgICpzZWxmLmxvY2soKSA9IE5vbmU7CiAgICB9CgogICAgLy8vIGBT
+b21lKGJ1Y2tldClgIHdoZW4gYGNvbGxlY3Rpb25faWRgL2BleHRlcm5hbF9pZGAgcm91dGUgdG8g
+YQogICAgLy8vIGN1cnJlbnRseS1mZW5jZWQgYnVja2V0OyBgTm9uZWAgKHVuYmxvY2tlZCkgb25j
+ZSBhcm1lZCBidXQgcGFzdAogICAgLy8vIGBkZWFkbGluZWAsIG9yIG5ldmVyIGFybWVkIGF0IGFs
+bC4KICAgIGZuIGJsb2Nrcygmc2VsZiwgY29sbGVjdGlvbl9pZDogJnN0ciwgZXh0ZXJuYWxfaWQ6
+ICZzdHIpIC0+IE9wdGlvbjx1MzI+IHsKICAgICAgICBsZXQgZ3VhcmQgPSBzZWxmLmxvY2soKTsK
+ICAgICAgICBsZXQgZmVuY2UgPSBndWFyZC5hc19yZWYoKT87CiAgICAgICAgaWYgSW5zdGFudDo6
+bm93KCkgPj0gZmVuY2UuZGVhZGxpbmUgewogICAgICAgICAgICByZXR1cm4gTm9uZTsKICAgICAg
+ICB9CiAgICAgICAgbGV0IG1hcCA9IFZpcnR1YWxCdWNrZXRTaGFyZE1hcDo6YmFsYW5jZWQoMCwg
+ZmVuY2UudmlydHVhbF9idWNrZXRfY291bnQsIDEpLm9rKCk/OwogICAgICAgIGxldCBidWNrZXQg
+PSBtYXAucm91dGVfZG9jdW1lbnQoY29sbGVjdGlvbl9pZCwgTm9uZSwgZXh0ZXJuYWxfaWQpLmJ1
+Y2tldDsKICAgICAgICBmZW5jZS5idWNrZXRzLmNvbnRhaW5zKCZidWNrZXQpLnRoZW5fc29tZShi
+dWNrZXQpCiAgICB9CgogICAgLy8vIFBvaXNvbi1wcm9vZiBsb2NrIGFjcXVpc2l0aW9uICgjMTQ0
+MyBSMyksIG1hdGNoaW5nIGBzZWdtZW50X3JkYi5yc2AncwogICAgLy8vIGBzYXZlX2xvY2tgIHBy
+ZWNlZGVudDogYSBwYW5pYyBhbnl3aGVyZSBlbHNlIGluIHRoZSBwcm9jZXNzIHdoaWxlCiAgICAv
+Ly8gaG9sZGluZyB0aGlzIGxvY2sgbXVzdCBuZXZlciB0dXJuIGludG8gYSBwZXJtYW5lbnQgd3Jp
+dGUgb3V0YWdlIG9uCiAgICAvLy8gdGhpcyBwb2QgYnkgcHJvcGFnYXRpbmcgYSBwb2lzb25lZC1t
+dXRleCBwYW5pYyBpbnRvIGV2ZXJ5IGxhdGVyCiAgICAvLy8gYGFybWAvYGNsZWFyYC9gYmxvY2tz
+YCBjYWxsLgogICAgZm4gbG9jaygmc2VsZikgLT4gc3RkOjpzeW5jOjpNdXRleEd1YXJkPCdfLCBP
+cHRpb248RmVuY2VTdGF0ZT4+IHsKICAgICAgICBzZWxmLnN0YXRlCiAgICAgICAgICAgIC5sb2Nr
+KCkKICAgICAgICAgICAgLnVud3JhcF9vcl9lbHNlKHxwb2lzb25lZHwgcG9pc29uZWQuaW50b19p
+bm5lcigpKQogICAgfQp9CgojW2FzeW5jX3RyYWl0XQovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNo
+LWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJjZQpw
+dWIgdHJhaXQgV3JpdGVCYWNrZW5kOiBTZW5kICsgU3luYyB7CiAgICBhc3luYyBmbiBjcmVhdGVf
+Y29sbGVjdGlvbigKICAgICAgICAmc2VsZiwKICAgICAgICBjb2xsZWN0aW9uX2lkOiBTdHJpbmcs
+CiAgICAgICAgcmVxOiBDcmVhdGVDb2xsZWN0aW9uUmVxdWVzdCwKICAgICkgLT4gUmVzdWx0PENy
+ZWF0ZUNvbGxlY3Rpb25SZXNwb25zZT47CgogICAgYXN5bmMgZm4gZHJvcF9jb2xsZWN0aW9uKCZz
+ZWxmLCBjb2xsZWN0aW9uX2lkOiBTdHJpbmcsIGZvcmNlOiBib29sKSAtPiBSZXN1bHQ8RHJvcE91
+dGNvbWU+OwoKICAgIGFzeW5jIGZuIGluZGV4KCZzZWxmLCBjb2xsZWN0aW9uX2lkOiBTdHJpbmcs
+IHJlcTogSW5kZXhSZXF1ZXN0KSAtPiBSZXN1bHQ8SW5kZXhSZXNwb25zZT47CgogICAgYXN5bmMg
+Zm4gcmVwbGFjZV9kb2NzKAogICAgICAgICZzZWxmLAogICAgICAgIGNvbGxlY3Rpb25faWQ6IFN0
+cmluZywKICAgICAgICByZXE6IFJlcGxhY2VEb2NzUmVxdWVzdCwKICAgICkgLT4gUmVzdWx0PFJl
+cGxhY2VEb2NzUmVzcG9uc2U+OwoKICAgIGFzeW5jIGZuIGRlbGV0ZSgKICAgICAgICAmc2VsZiwK
+ICAgICAgICBjb2xsZWN0aW9uX2lkOiBTdHJpbmcsCiAgICAgICAgZXh0ZXJuYWxfaWQ6IFN0cmlu
+ZywKICAgICAgICBmaWVsZDogT3B0aW9uPFN0cmluZz4sCiAgICApIC0+IFJlc3VsdDwoKT47Cgog
+ICAgYXN5bmMgZm4gZHJvcF9maWVsZCgmc2VsZiwgY29sbGVjdGlvbl9pZDogU3RyaW5nLCBmaWVs
+ZF9uYW1lOiBTdHJpbmcpIC0+IFJlc3VsdDx1MzI+Owp9CgovLy8gQ3Jvc3MtcG9kIHNoYXJkIHJv
+dXRpbmcgZm9yIG9wZXJhdG9yL2s4cyBzZXJ2aW5nIHBvZHMgKCMxMzk4IFIxLVIzKS4KLy8vIGBB
+cHBTdGF0ZTo6cm91dGVkYCBpcyBgTm9uZWAgZm9yIGV2ZXJ5IG5vbi1yb3V0ZWQgZGVwbG95bWVu
+dCAoc3RhbmRhbG9uZSwKLy8vIHByaW1hcnkvcmVwbGljYSwgYW5kIHRoZSBgLS1zZWFyY2gtc2hh
+cmQtc2VnbWVudC1kaXJzYCBmYW4taW4gcGF0aCkg4oCUCi8vLyBoYW5kbGVycyBjb25zdWx0IGl0
+IGZpcnN0IGFuZCBmYWxsIGJhY2sgdG8gYHNlYXJjaF9iYWNrZW5kYC8KLy8vIGB3cml0ZV9iYWNr
+ZW5kYCB1bmNoYW5nZWQgd2hlbiBpdCBpcyBhYnNlbnQsIHNvIGBzaGFyZENvdW50OjFgIHNlcnZp
+bmcKLy8vIG5ldmVyIGV2ZW4gY29uc3RydWN0cyBhbiBpbXBsZW1lbnRhdGlvbiAoQUM1OiBubyBm
+b3J3YXJkaW5nIG92ZXJoZWFkKS4KLy8vCi8vLyBFdmVyeSBtZXRob2QgdGFrZXMgdGhlIGluYm91
+bmQgcmVxdWVzdCdzIGBoZWFkZXJzYCB2ZXJiYXRpbTogdGhlIHNvbGUKLy8vIGNvbmNyZXRlIGlt
+cGxlbWVudGF0aW9uIChbYGNyYXRlOjpyb3V0aW5nX3JlbW90ZTo6Um91dGVkUm91dGVyYF0sIGJl
+aGluZAovLy8gdGhlIGBvcGVyYXRvcmAgZmVhdHVyZSkgY2hlY2tzIHRoZSBgeC1sdW1lbi1mb3J3
+YXJkZWRgIG9uZS1ob3AgZ3VhcmQKLy8vIGZpcnN0IGFuZCwgd2hlbiBmb3J3YXJkaW5nLCBjYXJy
+aWVzIHRoZSBjYWxsZXIncyBgQXV0aG9yaXphdGlvbmAgYmVhcmVyCi8vLyBhbmQgYHgtcmVhZC1j
+b25zaXN0ZW5jeWAgdGhyb3VnaCB1bmNoYW5nZWQgKFIzKS4KLy8vIEBzcGVjIGFwcHMvbHVtZW4v
+dGVjaC1kZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLWFwaS1ycy5tZCNzb3Vy
+Y2UKI1thc3luY190cmFpdF0KcHViIHRyYWl0IFJvdXRlZEJhY2tlbmQ6IFNlbmQgKyBTeW5jIHsK
+ICAgIGFzeW5jIGZuIHNlYXJjaCgKICAgICAgICAmc2VsZiwKICAgICAgICBjb2xsZWN0aW9uX2lk
+OiAmc3RyLAogICAgICAgIHJlcTogU2VhcmNoUmVxdWVzdCwKICAgICAgICBoZWFkZXJzOiAmSGVh
+ZGVyTWFwLAogICAgKSAtPiBSZXN1bHQ8U2VhcmNoUmVzcG9uc2U+OwoKICAgIGFzeW5jIGZuIGlu
+ZGV4KAogICAgICAgICZzZWxmLAogICAgICAgIGNvbGxlY3Rpb25faWQ6IFN0cmluZywKICAgICAg
+ICByZXE6IEluZGV4UmVxdWVzdCwKICAgICAgICBoZWFkZXJzOiAmSGVhZGVyTWFwLAogICAgKSAt
+PiBSZXN1bHQ8SW5kZXhSZXNwb25zZT47CgogICAgYXN5bmMgZm4gcmVwbGFjZV9kb2NzKAogICAg
+ICAgICZzZWxmLAogICAgICAgIGNvbGxlY3Rpb25faWQ6IFN0cmluZywKICAgICAgICByZXE6IFJl
+cGxhY2VEb2NzUmVxdWVzdCwKICAgICAgICBoZWFkZXJzOiAmSGVhZGVyTWFwLAogICAgKSAtPiBS
+ZXN1bHQ8UmVwbGFjZURvY3NSZXNwb25zZT47CgogICAgYXN5bmMgZm4gZGVsZXRlKAogICAgICAg
+ICZzZWxmLAogICAgICAgIGNvbGxlY3Rpb25faWQ6IFN0cmluZywKICAgICAgICBleHRlcm5hbF9p
+ZDogU3RyaW5nLAogICAgICAgIGZpZWxkOiBPcHRpb248U3RyaW5nPiwKICAgICAgICBoZWFkZXJz
+OiAmSGVhZGVyTWFwLAogICAgKSAtPiBSZXN1bHQ8KCk+Owp9CgojW2Rlcml2ZShDbG9uZSldCnN0
+cnVjdCBMb2NhbEVuZ2luZVNlYXJjaCB7CiAgICBlbmdpbmU6IEFyYzxFbmdpbmU+LAp9CgovLy8g
+QHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1z
+cmMtYXBpLXJzLm1kI3NvdXJjZQppbXBsIFNlYXJjaEJhY2tlbmQgZm9yIExvY2FsRW5naW5lU2Vh
+cmNoIHsKICAgIGZuIHNlYXJjaCgmc2VsZiwgY29sbGVjdGlvbl9pZDogJnN0ciwgcmVxOiBTZWFy
+Y2hSZXF1ZXN0KSAtPiBSZXN1bHQ8U2VhcmNoUmVzcG9uc2U+IHsKICAgICAgICBzZWxmLmVuZ2lu
+ZS5zZWFyY2goY29sbGVjdGlvbl9pZCwgcmVxKQogICAgfQp9CgojW2Rlcml2ZShDbG9uZSldCnN0
+cnVjdCBMb2NhbFdyaXRlQmFja2VuZCB7CiAgICB3cml0ZXI6IEFyYzxkeW4gV3JpdGVTaW5rPiwK
+fQoKLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMt
+bHVtZW4tc3JjLWFwaS1ycy5tZCNzb3VyY2UKaW1wbCBMb2NhbFdyaXRlQmFja2VuZCB7CiAgICBm
+biB1bmV4cGVjdGVkKG91dGNvbWU6IEFwcGx5T3V0Y29tZSkgLT4gYW55aG93OjpFcnJvciB7CiAg
+ICAgICAgYW55aG93Ojphbnlob3chKCJ1bmV4cGVjdGVkIGFwcGx5IG91dGNvbWU6IHtvdXRjb21l
+Oj99IikKICAgIH0KfQoKI1thc3luY190cmFpdF0KLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1k
+ZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLWFwaS1ycy5tZCNzb3VyY2UKaW1w
+bCBXcml0ZUJhY2tlbmQgZm9yIExvY2FsV3JpdGVCYWNrZW5kIHsKICAgIGFzeW5jIGZuIGNyZWF0
+ZV9jb2xsZWN0aW9uKAogICAgICAgICZzZWxmLAogICAgICAgIGNvbGxlY3Rpb25faWQ6IFN0cmlu
+ZywKICAgICAgICByZXE6IENyZWF0ZUNvbGxlY3Rpb25SZXF1ZXN0LAogICAgKSAtPiBSZXN1bHQ8
+Q3JlYXRlQ29sbGVjdGlvblJlc3BvbnNlPiB7CiAgICAgICAgbWF0Y2ggc2VsZgogICAgICAgICAg
+ICAud3JpdGVyCiAgICAgICAgICAgIC5zdWJtaXQoUmFmdExvZ0VudHJ5OjpDcmVhdGVDb2xsZWN0
+aW9uIHsgY29sbGVjdGlvbl9pZCwgcmVxIH0pCiAgICAgICAgICAgIC5hd2FpdD8KICAgICAgICB7
+CiAgICAgICAgICAgIEFwcGx5T3V0Y29tZTo6Q3JlYXRlZChyKSA9PiBPayhyKSwKICAgICAgICAg
+ICAgb3RoZXIgPT4gRXJyKFNlbGY6OnVuZXhwZWN0ZWQob3RoZXIpKSwKICAgICAgICB9CiAgICB9
+CgogICAgYXN5bmMgZm4gZHJvcF9jb2xsZWN0aW9uKCZzZWxmLCBjb2xsZWN0aW9uX2lkOiBTdHJp
+bmcsIGZvcmNlOiBib29sKSAtPiBSZXN1bHQ8RHJvcE91dGNvbWU+IHsKICAgICAgICBtYXRjaCBz
+ZWxmCiAgICAgICAgICAgIC53cml0ZXIKICAgICAgICAgICAgLnN1Ym1pdChSYWZ0TG9nRW50cnk6
+OkRyb3BDb2xsZWN0aW9uIHsKICAgICAgICAgICAgICAgIGNvbGxlY3Rpb25faWQsCiAgICAgICAg
+ICAgICAgICBmb3JjZSwKICAgICAgICAgICAgfSkKICAgICAgICAgICAgLmF3YWl0PwogICAgICAg
+IHsKICAgICAgICAgICAgQXBwbHlPdXRjb21lOjpEcm9wcGVkKG8pID0+IE9rKG8pLAogICAgICAg
+ICAgICBvdGhlciA9PiBFcnIoU2VsZjo6dW5leHBlY3RlZChvdGhlcikpLAogICAgICAgIH0KICAg
+IH0KCiAgICBhc3luYyBmbiBpbmRleCgmc2VsZiwgY29sbGVjdGlvbl9pZDogU3RyaW5nLCByZXE6
+IEluZGV4UmVxdWVzdCkgLT4gUmVzdWx0PEluZGV4UmVzcG9uc2U+IHsKICAgICAgICBtYXRjaCBz
+ZWxmCiAgICAgICAgICAgIC53cml0ZXIKICAgICAgICAgICAgLnN1Ym1pdChSYWZ0TG9nRW50cnk6
+OkluZGV4IHsgY29sbGVjdGlvbl9pZCwgcmVxIH0pCiAgICAgICAgICAgIC5hd2FpdD8KICAgICAg
+ICB7CiAgICAgICAgICAgIEFwcGx5T3V0Y29tZTo6SW5kZXhlZChyKSA9PiBPayhyKSwKICAgICAg
+ICAgICAgb3RoZXIgPT4gRXJyKFNlbGY6OnVuZXhwZWN0ZWQob3RoZXIpKSwKICAgICAgICB9CiAg
+ICB9CgogICAgYXN5bmMgZm4gcmVwbGFjZV9kb2NzKAogICAgICAgICZzZWxmLAogICAgICAgIGNv
+bGxlY3Rpb25faWQ6IFN0cmluZywKICAgICAgICByZXE6IFJlcGxhY2VEb2NzUmVxdWVzdCwKICAg
+ICkgLT4gUmVzdWx0PFJlcGxhY2VEb2NzUmVzcG9uc2U+IHsKICAgICAgICBtYXRjaCBzZWxmCiAg
+ICAgICAgICAgIC53cml0ZXIKICAgICAgICAgICAgLnN1Ym1pdChSYWZ0TG9nRW50cnk6OlJlcGxh
+Y2VEb2NzIHsgY29sbGVjdGlvbl9pZCwgcmVxIH0pCiAgICAgICAgICAgIC5hd2FpdD8KICAgICAg
+ICB7CiAgICAgICAgICAgIEFwcGx5T3V0Y29tZTo6UmVwbGFjZWQocikgPT4gT2sociksCiAgICAg
+ICAgICAgIG90aGVyID0+IEVycihTZWxmOjp1bmV4cGVjdGVkKG90aGVyKSksCiAgICAgICAgfQog
+ICAgfQoKICAgIGFzeW5jIGZuIGRlbGV0ZSgKICAgICAgICAmc2VsZiwKICAgICAgICBjb2xsZWN0
+aW9uX2lkOiBTdHJpbmcsCiAgICAgICAgZXh0ZXJuYWxfaWQ6IFN0cmluZywKICAgICAgICBmaWVs
+ZDogT3B0aW9uPFN0cmluZz4sCiAgICApIC0+IFJlc3VsdDwoKT4gewogICAgICAgIG1hdGNoIHNl
+bGYKICAgICAgICAgICAgLndyaXRlcgogICAgICAgICAgICAuc3VibWl0KFJhZnRMb2dFbnRyeTo6
+RGVsZXRlIHsKICAgICAgICAgICAgICAgIGNvbGxlY3Rpb25faWQsCiAgICAgICAgICAgICAgICBl
+eHRlcm5hbF9pZCwKICAgICAgICAgICAgICAgIGZpZWxkLAogICAgICAgICAgICB9KQogICAgICAg
+ICAgICAuYXdhaXQ/CiAgICAgICAgewogICAgICAgICAgICBBcHBseU91dGNvbWU6OkRlbGV0ZWQg
+PT4gT2soKCkpLAogICAgICAgICAgICBvdGhlciA9PiBFcnIoU2VsZjo6dW5leHBlY3RlZChvdGhl
+cikpLAogICAgICAgIH0KICAgIH0KCiAgICBhc3luYyBmbiBkcm9wX2ZpZWxkKCZzZWxmLCBjb2xs
+ZWN0aW9uX2lkOiBTdHJpbmcsIGZpZWxkX25hbWU6IFN0cmluZykgLT4gUmVzdWx0PHUzMj4gewog
+ICAgICAgIG1hdGNoIHNlbGYKICAgICAgICAgICAgLndyaXRlcgogICAgICAgICAgICAuc3VibWl0
+KFJhZnRMb2dFbnRyeTo6RHJvcEZpZWxkIHsKICAgICAgICAgICAgICAgIGNvbGxlY3Rpb25faWQs
+CiAgICAgICAgICAgICAgICBmaWVsZF9uYW1lLAogICAgICAgICAgICB9KQogICAgICAgICAgICAu
+YXdhaXQ/CiAgICAgICAgewogICAgICAgICAgICBBcHBseU91dGNvbWU6OkZpZWxkQ2hhbmdlZCh2
+KSA9PiBPayh2KSwKICAgICAgICAgICAgb3RoZXIgPT4gRXJyKFNlbGY6OnVuZXhwZWN0ZWQob3Ro
+ZXIpKSwKICAgICAgICB9CiAgICB9Cn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWdu
+L3NlbWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCmltcGwgQXBw
+U3RhdGUgewogICAgLy8vIEJ1aWxkIHN0YXRlIHdpdGggYW4gZXhwbGljaXQgd3JpdGUgbG9nLiBT
+cGF3bnMgdGhlIGFwcGx5IGxvb3AuCiAgICBwdWIgZm4gd2l0aF93YWwoZW5naW5lOiBBcmM8RW5n
+aW5lPiwgYXV0aDogQXJjPEF1dGhDb25maWc+LCB3YWw6IFNoYXJlZFdhbCkgLT4gU2VsZiB7CiAg
+ICAgICAgbGV0IHdyaXRlciA9IFdyaXRlQ29vcmRpbmF0b3I6OnN0YXJ0KHdhbCwgZW5naW5lLmNs
+b25lKCkpOwogICAgICAgIFNlbGY6OndpdGhfY29tcG9uZW50cyhlbmdpbmUsIGF1dGgsIHdyaXRl
+cikKICAgIH0KCiAgICAvLy8gQnVpbGQgc3RhdGUgZnJvbSBhbiBhbHJlYWR5LWNvbnN0cnVjdGVk
+IGNvb3JkaW5hdG9yIOKAlCB1c2VkIGJ5IHRoZQogICAgLy8vIHNlcnZlciBiaW5hcnksIHdoaWNo
+IHdpcmVzIHRoZSBXQUwgKyBSREIgYm9vdHN0cmFwIGl0c2VsZiBhbmQKICAgIC8vLyBoYW5kcyBp
+biB0aGUgcmVzdWx0aW5nIGNvb3JkaW5hdG9yLgogICAgcHViIGZuIHdpdGhfY29tcG9uZW50cygK
+ICAgICAgICBlbmdpbmU6IEFyYzxFbmdpbmU+LAogICAgICAgIGF1dGg6IEFyYzxBdXRoQ29uZmln
+PiwKICAgICAgICB3cml0ZXI6IEFyYzxkeW4gV3JpdGVTaW5rPiwKICAgICkgLT4gU2VsZiB7CiAg
+ICAgICAgU2VsZiB7CiAgICAgICAgICAgIHNlYXJjaF9iYWNrZW5kOiBBcmM6Om5ldyhMb2NhbEVu
+Z2luZVNlYXJjaCB7CiAgICAgICAgICAgICAgICBlbmdpbmU6IGVuZ2luZS5jbG9uZSgpLAogICAg
+ICAgICAgICB9KSwKICAgICAgICAgICAgd3JpdGVfYmFja2VuZDogQXJjOjpuZXcoTG9jYWxXcml0
+ZUJhY2tlbmQgewogICAgICAgICAgICAgICAgd3JpdGVyOiB3cml0ZXIuY2xvbmUoKSwKICAgICAg
+ICAgICAgfSksCiAgICAgICAgICAgIGVuZ2luZSwKICAgICAgICAgICAgYXV0aCwKICAgICAgICAg
+ICAgY2x1c3RlcjogTm9uZSwKICAgICAgICAgICAgd3JpdGVyLAogICAgICAgICAgICBjaGVja3Bv
+aW50OiBBcmM6Om5ldyhOb29wQ2hlY2twb2ludCksCiAgICAgICAgICAgIHdyaXRlX2ZlbmNlOiBX
+cml0ZUZlbmNlOjpkZWZhdWx0KCksCiAgICAgICAgICAgIHJvdXRlZDogTm9uZSwKICAgICAgICB9
+CiAgICB9CgogICAgLy8vIEJ1aWxkIHN0YXRlIHdpdGggYW4gaW4tcHJvY2VzcyBbYE1lbVdhbGBd
+IOKAlCBzaW5nbGUtbm9kZSAvCiAgICAvLy8gZGV2IC8gdGVzdHMuIFdyaXRlcyBmZWVsIHN5bmNo
+cm9ub3VzLgogICAgcHViIGZuIG5ldyhlbmdpbmU6IEFyYzxFbmdpbmU+LCBhdXRoOiBBcmM8QXV0
+aENvbmZpZz4pIC0+IFNlbGYgewogICAgICAgIFNlbGY6OndpdGhfd2FsKGVuZ2luZSwgYXV0aCwg
+QXJjOjpuZXcoTWVtV2FsOjpuZXcoKSkpCiAgICB9CgogICAgcHViIGZuIHdpdGhfY2x1c3Rlciht
+dXQgc2VsZiwgY2x1c3RlcjogQXJjPGNyYXRlOjpyYWZ0OjpDbHVzdGVyU3RhdGU+KSAtPiBTZWxm
+IHsKICAgICAgICBzZWxmLmNsdXN0ZXIgPSBTb21lKGNsdXN0ZXIpOwogICAgICAgIHNlbGYKICAg
+IH0KCiAgICBwdWIgZm4gd2l0aF9zZWFyY2hfYmFja2VuZChtdXQgc2VsZiwgc2VhcmNoX2JhY2tl
+bmQ6IEFyYzxkeW4gU2VhcmNoQmFja2VuZD4pIC0+IFNlbGYgewogICAgICAgIHNlbGYuc2VhcmNo
+X2JhY2tlbmQgPSBzZWFyY2hfYmFja2VuZDsKICAgICAgICBzZWxmCiAgICB9CgogICAgcHViIGZu
+IHdpdGhfd3JpdGVfYmFja2VuZChtdXQgc2VsZiwgd3JpdGVfYmFja2VuZDogQXJjPGR5biBXcml0
+ZUJhY2tlbmQ+KSAtPiBTZWxmIHsKICAgICAgICBzZWxmLndyaXRlX2JhY2tlbmQgPSB3cml0ZV9i
+YWNrZW5kOwogICAgICAgIHNlbGYKICAgIH0KCiAgICAvLy8gV2lyZSBhIHJlYWwgW2BDaGVja3Bv
+aW50U2lua2BdICgjMTM4OSkg4oCUIHVzZWQgYnkgdGhlIHNlcnZlciBiaW5hcnkKICAgIC8vLyB3
+aGVuIHNlZ21lbnQgcGVyc2lzdGVuY2UgaXMgY29uZmlndXJlZCwgYW5kIGJ5IHRlc3RzIHRoYXQg
+bmVlZCB0bwogICAgLy8vIGNvbnRyb2wvb2JzZXJ2ZSBgUE9TVCAvYWRtaW4vY2hlY2twb2ludGAg
+YmVoYXZpb3IuCiAgICBwdWIgZm4gd2l0aF9jaGVja3BvaW50KG11dCBzZWxmLCBjaGVja3BvaW50
+OiBBcmM8ZHluIENoZWNrcG9pbnRTaW5rPikgLT4gU2VsZiB7CiAgICAgICAgc2VsZi5jaGVja3Bv
+aW50ID0gY2hlY2twb2ludDsKICAgICAgICBzZWxmCiAgICB9CgogICAgLy8vIFdpcmUgYSBbYFJv
+dXRlZEJhY2tlbmRgXSAoIzEzOTgpIOKAlCB0aGUgc2VydmVyIGJpbmFyeSBjYWxscyB0aGlzIG9u
+bHkKICAgIC8vLyBpbiB0aGUgcm91dGVkIHNlcnZpbmcgdG9wb2xvZ3kgKGBTSEFSRF9DT1VOVGAg
+ZW52ID4gMSBhdAogICAgLy8vIGByZXBsaWNhc1BlclNoYXJkIDw9IDFgLCBubyBgLS1zZWFyY2gt
+c2hhcmQtc2VnbWVudC1kaXJzYCk7IGV2ZXJ5CiAgICAvLy8gb3RoZXIgZGVwbG95bWVudCBzaGFw
+ZSBsZWF2ZXMgYHJvdXRlZGAgYXQgaXRzIGBOb25lYCBkZWZhdWx0LgogICAgcHViIGZuIHdpdGhf
+cm91dGVkKG11dCBzZWxmLCByb3V0ZWQ6IEFyYzxkeW4gUm91dGVkQmFja2VuZD4pIC0+IFNlbGYg
+ewogICAgICAgIHNlbGYucm91dGVkID0gU29tZShyb3V0ZWQpOwogICAgICAgIHNlbGYKICAgIH0K
+CiAgICAvLy8gTm8tYXV0aCBzdGF0ZSBvdmVyIGFuIGluLXByb2Nlc3MgbG9nLiBVc2VkIGJ5IHRl
+c3RzIGFuZCB0aGUKICAgIC8vLyBzaW1wbGVzdCBzaW5nbGUtbm9kZSBydW5zLgogICAgcHViIGZu
+IG9wZW4oZW5naW5lOiBBcmM8RW5naW5lPikgLT4gU2VsZiB7CiAgICAgICAgU2VsZjo6d2l0aF93
+YWwoCiAgICAgICAgICAgIGVuZ2luZSwKICAgICAgICAgICAgQXJjOjpuZXcoQXV0aENvbmZpZzo6
+b3BlbigpKSwKICAgICAgICAgICAgQXJjOjpuZXcoTWVtV2FsOjpuZXcoKSksCiAgICAgICAgKQog
+ICAgfQp9CgojW2Rlcml2ZShPcGVuQXBpKV0KI1tvcGVuYXBpKAogICAgaW5mbygKICAgICAgICB0
+aXRsZSA9ICJsdW1lbiIsCiAgICAgICAgZGVzY3JpcHRpb24gPSAiU3RhbmRhbG9uZSBzZWFyY2gg
+YW5kIGR1cGxpY2F0ZS1kZXRlY3Rpb24gaW5kZXguIEdlbmVyaWMgQ29sbGVjdGlvbiAvIEZpZWxk
+IHByaW1pdGl2ZTsgdGhlIGNhbGxlciBvd25zIHRoZSBzb3VyY2Ugb2YgdHJ1dGguIiwKICAgICAg
+ICBsaWNlbnNlKG5hbWUgPSAiTUlUIikKICAgICksCiAgICBzZXJ2ZXJzKAogICAgICAgICh1cmwg
+PSAiaHR0cDovL2x1bWVuLXN2Yzo3MzczIiwgZGVzY3JpcHRpb24gPSAiaW4tY2x1c3RlciBDbHVz
+dGVySVAiKSwKICAgICAgICAodXJsID0gImh0dHA6Ly9sb2NhbGhvc3Q6NzM3MyIsIGRlc2NyaXB0
+aW9uID0gImxvY2FsIGRldiIpCiAgICApLAogICAgdGFncygKICAgICAgICAobmFtZSA9ICJDb2xs
+ZWN0aW9ucyIsIGRlc2NyaXB0aW9uID0gIlNjaGVtYSBsaWZlY3ljbGUiKSwKICAgICAgICAobmFt
+ZSA9ICJJbmRleCIsICAgICAgIGRlc2NyaXB0aW9uID0gIkRvY3VtZW50IHdyaXRlcyAmIGRlbGV0
+ZXMiKSwKICAgICAgICAobmFtZSA9ICJRdWVyeSIsICAgICAgIGRlc2NyaXB0aW9uID0gIlNlYXJj
+aCAmIGR1cGxpY2F0ZSBkZXRlY3Rpb24iKSwKICAgICAgICAobmFtZSA9ICJBZG1pbiIsICAgICAg
+IGRlc2NyaXB0aW9uID0gIkhlYWx0aCwgc3RhdHMsIE9wZW5BUEkiKQogICAgKSwKICAgIHBhdGhz
+KAogICAgICAgIGhlYWx0aHosCiAgICAgICAgcmVhZHl6LAogICAgICAgIHZlcnNpb24sCiAgICAg
+ICAgbWV0cmljcywKICAgICAgICBkZWJ1Z19jbHVzdGVyLAogICAgICAgIGxpc3RfY29sbGVjdGlv
+bnMsCiAgICAgICAgY3JlYXRlX2NvbGxlY3Rpb24sCiAgICAgICAgZHJvcF9jb2xsZWN0aW9uLAog
+ICAgICAgIGRyb3BfZmllbGQsCiAgICAgICAgaW5kZXgsCiAgICAgICAgZGVsZXRlX2V4dGVybmFs
+X2lkLAogICAgICAgIHJlcGxhY2VfZG9jcywKICAgICAgICByZXBsYWNlX2RvYywKICAgICAgICBz
+ZWFyY2gsCiAgICAgICAgc2VhcmNoX2FsbCwKICAgICAgICBiYXRjaF9zZWFyY2gsCiAgICAgICAg
+ZHVwbGljYXRlcywKICAgICAgICBzdGF0cywKICAgICAgICBiYWNrdXBfc2NvcGVkLAogICAgICAg
+IHJlc2hhcmRfYXBwbHksCiAgICAgICAgcmVzaGFyZF9wcnVuZSwKICAgICAgICByZXNoYXJkX2V2
+aWN0LAogICAgICAgIHJlc2hhcmRfZmVuY2UsCiAgICAgICAgYWRtaW5fY2hlY2twb2ludCwKICAg
+ICksCiAgICBjb21wb25lbnRzKHNjaGVtYXMoCiAgICAgICAgQ3JlYXRlQ29sbGVjdGlvblJlcXVl
+c3QsCiAgICAgICAgQ3JlYXRlQ29sbGVjdGlvblJlc3BvbnNlLAogICAgICAgIEZpZWxkU3BlYywK
+ICAgICAgICBGaWVsZFR5cGUsCiAgICAgICAgQW5hbHl6ZXIsCiAgICAgICAgVmVjdG9yU3BlYywK
+ICAgICAgICBWZWN0b3JNZXRyaWMsCiAgICAgICAgVmVjdG9yQmFja2VuZCwKICAgICAgICBWZWN0
+b3JRdWFudGl6ZSwKICAgICAgICBJbmRleFJlcXVlc3QsCiAgICAgICAgSW5kZXhJdGVtLAogICAg
+ICAgIEZpZWxkVmFsdWUsCiAgICAgICAgSW5kZXhSZXNwb25zZSwKICAgICAgICBSZXBsYWNlRG9j
+c1JlcXVlc3QsCiAgICAgICAgUmVwbGFjZURvY0l0ZW0sCiAgICAgICAgUmVwbGFjZURvY3NSZXNw
+b25zZSwKICAgICAgICBSZXBsYWNlRG9jUmVzdWx0LAogICAgICAgIFJlcGxhY2VEb2NCb2R5LAog
+ICAgICAgIFNlYXJjaFJlcXVlc3QsCiAgICAgICAgUXVlcnlOb2RlLAogICAgICAgIE1hdGNoUXVl
+cnksCiAgICAgICAgTWF0Y2hPcCwKICAgICAgICBUZXJtUXVlcnksCiAgICAgICAgVGVybXNRdWVy
+eSwKICAgICAgICBjcmF0ZTo6dHlwZXM6OlByZWZpeFF1ZXJ5LAogICAgICAgIFJhbmdlUXVlcnks
+CiAgICAgICAgLy8gIzEzMDc6ICRyZWYnZCBieSBSYW5nZVF1ZXJ5J3MgZ3QvZ3RlL2x0L2x0ZSBi
+b3VuZHMgKHVudGFnZ2VkIGY2NCB8IFN0cmluZykg4oCUCiAgICAgICAgLy8gc2FtZSBkYW5nbGlu
+Zy1yZWYgcmVhc29uIGFzIHRoZSAjMjAwIG5vdGUgYmVsb3csIHJlZ2lzdGVyZWQgZXhwbGljaXRs
+eS4KICAgICAgICBjcmF0ZTo6dHlwZXM6OlJhbmdlQm91bmQsCiAgICAgICAgS25uUXVlcnksCiAg
+ICAgICAgY3JhdGU6OnR5cGVzOjpScmZRdWVyeSwKICAgICAgICBjcmF0ZTo6dHlwZXM6OkV4aXN0
+c1F1ZXJ5LAogICAgICAgIGNyYXRlOjp0eXBlczo6RHVwbGljYXRlZFF1ZXJ5LAogICAgICAgIC8v
+ICMyMDA6IHRoZXNlIGFyZSAkcmVmJ2QgYnkgUXVlcnlOb2RlIC8gU2VhcmNoUmVxdWVzdCBidXQg
+d2VyZSBub3QKICAgICAgICAvLyByZWdpc3RlcmVkLCBzbyB0aGUgZW1pdHRlZCBPcGVuQVBJIGhh
+ZCBkYW5nbGluZyByZWZzLiBTb3J0U3BlYyBhbHNvCiAgICAgICAgLy8gcHVsbHMgaW4gU29ydE9y
+ZGVyICsgU29ydE1pc3NpbmcuCiAgICAgICAgY3JhdGU6OnR5cGVzOjpJZHNRdWVyeSwKICAgICAg
+ICBjcmF0ZTo6dHlwZXM6Okhhc0NoaWxkUXVlcnksCiAgICAgICAgY3JhdGU6OnR5cGVzOjpIYW1t
+aW5nUXVlcnksCiAgICAgICAgY3JhdGU6OnR5cGVzOjpTb3J0U3BlYywKICAgICAgICBjcmF0ZTo6
+dHlwZXM6OlNvcnRPcmRlciwKICAgICAgICBjcmF0ZTo6dHlwZXM6OlNvcnRNaXNzaW5nLAogICAg
+ICAgIFNlYXJjaEhpdCwKICAgICAgICBTZWFyY2hSZXNwb25zZSwKICAgICAgICBTZWFyY2hBbGxS
+ZXF1ZXN0LAogICAgICAgIFNlYXJjaEFsbFJlc3BvbnNlLAogICAgICAgIEJhdGNoU2VhcmNoUmVx
+dWVzdCwKICAgICAgICBjcmF0ZTo6dHlwZXM6OkJhdGNoU2VhcmNoSXRlbSwKICAgICAgICBCYXRj
+aFNlYXJjaFJlc3BvbnNlLAogICAgICAgIEJhdGNoU2VhcmNoUmVzdWx0LAogICAgICAgIER1cGxp
+Y2F0ZXNSZXF1ZXN0LAogICAgICAgIER1cGxpY2F0ZUdyb3VwLAogICAgICAgIER1cGxpY2F0ZXNS
+ZXNwb25zZSwKICAgICAgICBTdGF0c1Jlc3BvbnNlLAogICAgICAgIEZpZWxkU3RhdHMsCiAgICAg
+ICAgU3RvcmFnZVN0YXRzLAogICAgICAgIENhY2hlU3RhdHMsCiAgICAgICAgQXBpRXJyb3IsCiAg
+ICAgICAgY3JhdGU6OnJhZnQ6OkNsdXN0ZXJTdGF0ZVZpZXcsCiAgICAgICAgY3JhdGU6OnJhZnQ6
+OlBlZXJBZGRyLAogICAgICAgIGNyYXRlOjpyYWZ0OjpSYWZ0Um9sZSwKICAgICkpLAogICAgbW9k
+aWZpZXJzKCZTZWN1cml0eUFkZG9uKSwKICAgIHNlY3VyaXR5KCgiYmVhcmVyQXV0aCIgPSBbXSkp
+CildCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBz
+LWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCnB1YiBzdHJ1Y3QgQXBpRG9jOwoKc3RydWN0IFNl
+Y3VyaXR5QWRkb247CgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9z
+b3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJjZQppbXBsIE1vZGlmeSBmb3IgU2Vj
+dXJpdHlBZGRvbiB7CiAgICBmbiBtb2RpZnkoJnNlbGYsIG9wZW5hcGk6ICZtdXQgb3BlbmFwaTo6
+T3BlbkFwaSkgewogICAgICAgIGlmIGxldCBTb21lKGNvbXBvbmVudHMpID0gb3BlbmFwaS5jb21w
+b25lbnRzLmFzX211dCgpIHsKICAgICAgICAgICAgY29tcG9uZW50cy5hZGRfc2VjdXJpdHlfc2No
+ZW1lKAogICAgICAgICAgICAgICAgImJlYXJlckF1dGgiLAogICAgICAgICAgICAgICAgU2VjdXJp
+dHlTY2hlbWU6Okh0dHAoCiAgICAgICAgICAgICAgICAgICAgSHR0cEJ1aWxkZXI6Om5ldygpCiAg
+ICAgICAgICAgICAgICAgICAgICAgIC5zY2hlbWUoSHR0cEF1dGhTY2hlbWU6OkJlYXJlcikKICAg
+ICAgICAgICAgICAgICAgICAgICAgLmJlYXJlcl9mb3JtYXQoIm9wYXF1ZSIpCiAgICAgICAgICAg
+ICAgICAgICAgICAgIC5kZXNjcmlwdGlvbihTb21lKAogICAgICAgICAgICAgICAgICAgICAgICAg
+ICAgIlNlbmQgYEF1dGhvcml6YXRpb246IEJlYXJlciA8TFVNRU5fVE9LRU4+YCB3aGVuIGBMVU1F
+Tl9BVVRIPXJlcXVpcmVkYC4iLAogICAgICAgICAgICAgICAgICAgICAgICApKQogICAgICAgICAg
+ICAgICAgICAgICAgICAuYnVpbGQoKSwKICAgICAgICAgICAgICAgICksCiAgICAgICAgICAgICk7
+CiAgICAgICAgfQogICAgfQp9CgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1h
+bnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJjZQppbXBsIFJlYWRpbmVz
+c0hvb2sgZm9yIEVuZ2luZSB7CiAgICBmbiBpc19kcmFpbmluZygmc2VsZikgLT4gYm9vbCB7CiAg
+ICAgICAgRW5naW5lOjppc19kcmFpbmluZyhzZWxmKQogICAgfQp9CgovLy8gQHNwZWMgYXBwcy9s
+dW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1k
+I3NvdXJjZQppbXBsIE1ldHJpY3NQcm92aWRlciBmb3IgRW5naW5lIHsKICAgIGZuIHJlbmRlcl9t
+ZXRyaWNzKCZzZWxmKSAtPiBTdHJpbmcgewogICAgICAgIHNlbGYubWV0cmljcygpLnJlbmRlcigp
+CiAgICB9Cn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJj
+ZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCnB1YiBmbiByb3V0ZXIoc3RhdGU6IEFw
+cFN0YXRlKSAtPiBSb3V0ZXIgewogICAgcm91dGVyX3dpdGhfYWRtaXNzaW9uKHN0YXRlLCBOb25l
+KQp9CgovLy8gQnVpbGQgdGhlIEx1bWVuIHJvdXRlciB3aXRoIG9wdGlvbmFsIHNoYXJlZCByZXF1
+ZXN0IGFkbWlzc2lvbi4gTHVtZW4gb3ducwovLy8gdGhlIHJvdXRlLWNsYXNzIG1hcHBpbmcgYW5k
+IHBvbGljeSB2YWx1ZXM7IGBzZXJ2aWNlLWh0dHBgIG93bnMgZW5mb3JjZW1lbnQuCi8vLyBUaGUg
+ZXN0YWJsaXNoZWQgW2Byb3V0ZXJgXSBlbnRyeSBwb2ludCBwYXNzZXMgYE5vbmVgLCBzbyBhZG1p
+c3Npb24gcmVtYWlucwovLy8gZGlzYWJsZWQgdW5sZXNzIGEgc2VydmluZyBhZGFwdGVyIGV4cGxp
+Y2l0bHkgc3VwcGxpZXMgcG9saWNpZXMuCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWdu
+L3NlbWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCnB1YiBmbiBy
+b3V0ZXJfd2l0aF9hZG1pc3Npb24oCiAgICBzdGF0ZTogQXBwU3RhdGUsCiAgICBhZG1pc3Npb246
+IE9wdGlvbjxzZXJ2aWNlX2h0dHA6OkFkbWlzc2lvbkNvbnRyb2xsZXI+LAopIC0+IFJvdXRlciB7
+CiAgICAvLyBBcHBseSBhdXRoIG1pZGRsZXdhcmUgb25seSB0byBkYXRhLXBsYW5lIHJvdXRlcy4g
+QWRtaW4vUHJvYmUKICAgIC8vIGVuZHBvaW50cyAoYC9oZWFsdGh6YCwgYC9yZWFkeXpgLCBgL21l
+dHJpY3NgLCBgL29wZW5hcGkuanNvbmAsCiAgICAvLyBgL2RvY3NgKSBzdGF5IG9wZW4gc28gSzhz
+IHByb2JlcyBhbmQgUHJvbWV0aGV1cyBzY3JhcGUgY2FuIGhpdAogICAgLy8gdGhlbSB3aXRob3V0
+IGEgdG9rZW4gZXZlbiB3aGVuIGF1dGggaXMgcmVxdWlyZWQuCiAgICBsZXQgYXV0aF9zdGF0ZSA9
+IEFyYzo6bmV3KEx1bWVuVmVyaWZpZXI6Om5ldyhzdGF0ZS5hdXRoLmNsb25lKCkpKTsKICAgIGxl
+dCBkYXRhX3BsYW5lID0gUm91dGVyOjpuZXcoKQogICAgICAgIC5yb3V0ZSgKICAgICAgICAgICAg
+Ii9jb2xsZWN0aW9ucyIsCiAgICAgICAgICAgIGdldChsaXN0X2NvbGxlY3Rpb25zKQogICAgICAg
+ICAgICAgICAgLm9wdGlvbnMoY29sbGVjdGlvbnNfcXVlcnlfcHJvYmUpCiAgICAgICAgICAgICAg
+ICAuaGVhZChjb2xsZWN0aW9uc19xdWVyeV9wcm9iZSkKICAgICAgICAgICAgICAgIC8vIEVwaWMg
+IzEyOTYgUjE6IGBRVUVSWSAvY29sbGVjdGlvbnNgIGlzIGEgZHVhbC1yZWdpc3RlcmVkCiAgICAg
+ICAgICAgICAgICAvLyB0d2luIG9mIGBQT1NUIC9jb2xsZWN0aW9uczpzZWFyY2hgICgjMTI3MSBi
+YXRjaCBzZWFyY2gpLgogICAgICAgICAgICAgICAgLy8gQXh1bSBoYXMgbm8gbmF0aXZlIGBNZXRo
+b2Q6OlFVRVJZYCBzdXBwb3J0IHlldAogICAgICAgICAgICAgICAgLy8gKHRva2lvLXJzL2F4dW0j
+Mzc5OSwgUFIgIzM4MDEgb3BlbiksIHNvIHRoaXMgaXMgdGhlIGludGVyaW0KICAgICAgICAgICAg
+ICAgIC8vIGRpc3BhdGNoIOKAlCBgZmFsbGJhY2tgIHJ1bnMgZm9yIGFueSBtZXRob2Qgbm90IGV4
+cGxpY2l0bHkKICAgICAgICAgICAgICAgIC8vIHJlZ2lzdGVyZWQgYWJvdmUgKGBHRVRgLCBgT1BU
+SU9OU2AsIGBIRUFEYCksIGFuZCB0aGUKICAgICAgICAgICAgICAgIC8vIGhhbmRsZXIgcmUtY2hl
+Y2tzIGJ5IGhhbmQuIFJlcGxhY2Ugd2l0aCBhIG5hdGl2ZQogICAgICAgICAgICAgICAgLy8gYE1l
+dGhvZEZpbHRlcjo6UVVFUllgIGNvbWJpbmF0b3Igb25jZSB0aGF0IFBSIGxhbmRzLgogICAgICAg
+ICAgICAgICAgLmZhbGxiYWNrKGNvbGxlY3Rpb25zX3F1ZXJ5X2Rpc3BhdGNoKSwKICAgICAgICAp
+CiAgICAgICAgLnJvdXRlKAogICAgICAgICAgICAiL2NvbGxlY3Rpb25zL3tjb2xsZWN0aW9uX2lk
+fSIsCiAgICAgICAgICAgIHB1dChjcmVhdGVfY29sbGVjdGlvbikKICAgICAgICAgICAgICAgIC5k
+ZWxldGUoZHJvcF9jb2xsZWN0aW9uKQogICAgICAgICAgICAgICAgLm9wdGlvbnMoY29sbGVjdGlv
+bl9pZF9xdWVyeV9wcm9iZSkKICAgICAgICAgICAgICAgIC5oZWFkKGNvbGxlY3Rpb25faWRfcXVl
+cnlfcHJvYmUpCiAgICAgICAgICAgICAgICAvLyBFcGljICMxMjk2IFIxOiBgUVVFUlkgL2NvbGxl
+Y3Rpb25zL3tjb2xsZWN0aW9uX2lkfWAgaXMgYQogICAgICAgICAgICAgICAgLy8gZHVhbC1yZWdp
+c3RlcmVkIHR3aW4gb2YgYFBPU1QKICAgICAgICAgICAgICAgIC8vIC9jb2xsZWN0aW9ucy97Y29s
+bGVjdGlvbl9pZH0vc2VhcmNoYC4gU2VlIHRoZQogICAgICAgICAgICAgICAgLy8gYC9jb2xsZWN0
+aW9uc2Agcm91dGUgYWJvdmUgZm9yIHRoZSBpbnRlcmltLWZhbGxiYWNrCiAgICAgICAgICAgICAg
+ICAvLyByYXRpb25hbGUuCiAgICAgICAgICAgICAgICAuZmFsbGJhY2soY29sbGVjdGlvbl9pZF9x
+dWVyeV9kaXNwYXRjaCksCiAgICAgICAgKQogICAgICAgIC5yb3V0ZSgiL2NvbGxlY3Rpb25zL3tj
+b2xsZWN0aW9uX2lkfS9pbmRleCIsIHBvc3QoaW5kZXgpKQogICAgICAgIC5yb3V0ZSgKICAgICAg
+ICAgICAgIi9jb2xsZWN0aW9ucy97Y29sbGVjdGlvbl9pZH0vaW5kZXgve2V4dGVybmFsX2lkfSIs
+CiAgICAgICAgICAgIGRlbGV0ZShkZWxldGVfZXh0ZXJuYWxfaWQpLAogICAgICAgICkKICAgICAg
+ICAucm91dGUoCiAgICAgICAgICAgICIvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L2RvY3M6
+cmVwbGFjZSIsCiAgICAgICAgICAgIHB1dChyZXBsYWNlX2RvY3MpLAogICAgICAgICkKICAgICAg
+ICAucm91dGUoCiAgICAgICAgICAgICIvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L2RvY3Mv
+e2V4dGVybmFsX2lkfSIsCiAgICAgICAgICAgIHB1dChyZXBsYWNlX2RvYyksCiAgICAgICAgKQog
+ICAgICAgIC5yb3V0ZSgiL2NvbGxlY3Rpb25zL3tjb2xsZWN0aW9uX2lkfS9zZWFyY2giLCBwb3N0
+KHNlYXJjaCkpCiAgICAgICAgLnJvdXRlKCIvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L3Nl
+YXJjaDphbGwiLCBwb3N0KHNlYXJjaF9hbGwpKQogICAgICAgIC5yb3V0ZSgiL2NvbGxlY3Rpb25z
+OnNlYXJjaCIsIHBvc3QoYmF0Y2hfc2VhcmNoKSkKICAgICAgICAucm91dGUoIi9jb2xsZWN0aW9u
+cy97Y29sbGVjdGlvbl9pZH0vZHVwbGljYXRlcyIsIHBvc3QoZHVwbGljYXRlcykpCiAgICAgICAg
+LnJvdXRlKCIvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L3N0YXRzIiwgZ2V0KHN0YXRzKSkK
+ICAgICAgICAucm91dGUoCiAgICAgICAgICAgICIvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9
+L2ZpZWxkcy97ZmllbGRfbmFtZX0iLAogICAgICAgICAgICBkZWxldGUoZHJvcF9maWVsZCksCiAg
+ICAgICAgKQogICAgICAgIC5yb3V0ZSgKICAgICAgICAgICAgIi9jb2xsZWN0aW9ucy97Y29sbGVj
+dGlvbl9pZH0vcmVpbmRleC9zdHJlYW0iLAogICAgICAgICAgICBwb3N0KHJlaW5kZXhfc3RyZWFt
+KSwKICAgICAgICApCiAgICAgICAgLnJvdXRlKCIvYWRtaW4vYmFja3VwIiwgZ2V0KGJhY2t1cCkp
+CiAgICAgICAgLnJvdXRlKCIvYWRtaW4vYmFja3VwL2xvY2FsIiwgcG9zdChiYWNrdXBfdG9fbG9j
+YWwpKQogICAgICAgIC5yb3V0ZSgiL2FkbWluL2JhY2t1cDpzY29wZWQiLCBwb3N0KGJhY2t1cF9z
+Y29wZWQpKQogICAgICAgIC5yb3V0ZSgiL2FkbWluL3Jlc3RvcmUiLCBwb3N0KHJlc3RvcmUpKQog
+ICAgICAgIC5yb3V0ZSgiL2FkbWluL3Jlc2hhcmQ6YXBwbHkiLCBwb3N0KHJlc2hhcmRfYXBwbHkp
+KQogICAgICAgIC5yb3V0ZSgiL2FkbWluL3Jlc2hhcmQ6cHJ1bmUiLCBwb3N0KHJlc2hhcmRfcHJ1
+bmUpKQogICAgICAgIC5yb3V0ZSgiL2FkbWluL3Jlc2hhcmQ6ZXZpY3QiLCBwb3N0KHJlc2hhcmRf
+ZXZpY3QpKQogICAgICAgIC5yb3V0ZSgiL2FkbWluL3Jlc2hhcmQ6ZmVuY2UiLCBwb3N0KHJlc2hh
+cmRfZmVuY2UpKQogICAgICAgIC5yb3V0ZSgiL2FkbWluL2NoZWNrcG9pbnQiLCBwb3N0KGFkbWlu
+X2NoZWNrcG9pbnQpKQogICAgICAgIC5sYXllcihmcm9tX2ZuX3dpdGhfc3RhdGUoYXV0aF9zdGF0
+ZSwgYXV0aF9taWRkbGV3YXJlKSkKICAgICAgICAvLyBCb3VuZCByZXF1ZXN0IGJvZGllczogYSBi
+dWxrIGluZGV4IGlzIH5NQnMgKHRoZSBpdGVtIGNhcCBpcyB0aGUgcmVhbAogICAgICAgIC8vIGd1
+YXJkKTsgOE1pQiBpcyB0aGUgYnJva2VyIHBheWxvYWQgYnVkZ2V0LiBSZWplY3RzIG92ZXJzaXpl
+ZAogICAgICAgIC8vIGJvZGllcyB3aXRoIDQxMyBiZWZvcmUgdGhleSBoaXQgYSBoYW5kbGVyLiBT
+aGFyZWQgd2l0aAogICAgICAgIC8vIGBjcmF0ZTo6cmVzaGFyZDo6QURNSU5fUk9VVEVfQk9EWV9M
+SU1JVF9CWVRFU2AgKCMxNDQ0IFIyKSBzbyB0aGUKICAgICAgICAvLyByZXNoYXJkIGRyaXZlcidz
+IG92ZXJzaXplLWJhdGNoIGRldGVjdGlvbiBjYW4gbmV2ZXIgZHJpZnQgZnJvbSB0aGUKICAgICAg
+ICAvLyBsaW1pdCBhY3R1YWxseSBlbmZvcmNlZCBoZXJlLgogICAgICAgIC5sYXllcihheHVtOjpl
+eHRyYWN0OjpEZWZhdWx0Qm9keUxpbWl0OjptYXgoCiAgICAgICAgICAgIGNyYXRlOjpyZXNoYXJk
+OjpBRE1JTl9ST1VURV9CT0RZX0xJTUlUX0JZVEVTLAogICAgICAgICkpOwogICAgbGV0IGRhdGFf
+cGxhbmUgPSBtYXRjaCBhZG1pc3Npb24gewogICAgICAgIFNvbWUoY29udHJvbGxlcikgPT4gZGF0
+YV9wbGFuZS5yb3V0ZV9sYXllcihmcm9tX2ZuX3dpdGhfc3RhdGUoCiAgICAgICAgICAgIHNlcnZp
+Y2VfaHR0cDo6QWRtaXNzaW9uTWlkZGxld2FyZTo6bmV3KGNvbnRyb2xsZXIsIHxyZXF1ZXN0fCB7
+CiAgICAgICAgICAgICAgICBsZXQgcGF0aCA9IHJlcXVlc3QudXJpKCkucGF0aCgpOwogICAgICAg
+ICAgICAgICAgbGV0IGNsYXNzID0gaWYgcGF0aC5zdGFydHNfd2l0aCgiL2FkbWluLyIpIHsKICAg
+ICAgICAgICAgICAgICAgICAibHVtZW4uYWRtaW4iCiAgICAgICAgICAgICAgICB9IGVsc2UgaWYg
+bWF0Y2hlcyEoKnJlcXVlc3QubWV0aG9kKCksIE1ldGhvZDo6R0VUIHwgTWV0aG9kOjpIRUFEKQog
+ICAgICAgICAgICAgICAgICAgIHx8IHBhdGguY29udGFpbnMoIi9zZWFyY2giKQogICAgICAgICAg
+ICAgICAgICAgIHx8IHBhdGguZW5kc193aXRoKCIvZHVwbGljYXRlcyIpCiAgICAgICAgICAgICAg
+ICAgICAgfHwgcGF0aC5lbmRzX3dpdGgoIi9zdGF0cyIpCiAgICAgICAgICAgICAgICB7CiAgICAg
+ICAgICAgICAgICAgICAgImx1bWVuLnJlYWQiCiAgICAgICAgICAgICAgICB9IGVsc2UgewogICAg
+ICAgICAgICAgICAgICAgICJsdW1lbi53cml0ZSIKICAgICAgICAgICAgICAgIH07CiAgICAgICAg
+ICAgICAgICBsZXQga2V5ID0gcmVxdWVzdAogICAgICAgICAgICAgICAgICAgIC5oZWFkZXJzKCkK
+ICAgICAgICAgICAgICAgICAgICAuZ2V0KGF4dW06Omh0dHA6OmhlYWRlcjo6QVVUSE9SSVpBVElP
+TikKICAgICAgICAgICAgICAgICAgICAubWFwKHx2YWx1ZXwgdmFsdWUuYXNfYnl0ZXMoKSkKICAg
+ICAgICAgICAgICAgICAgICAudW53cmFwX29yKGIiYW5vbnltb3VzIik7CiAgICAgICAgICAgICAg
+ICBTb21lKHNlcnZpY2VfaHR0cDo6QWRtaXNzaW9uSW5wdXQ6Om5ldyhjbGFzcywga2V5KSkKICAg
+ICAgICAgICAgfSksCiAgICAgICAgICAgIHNlcnZpY2VfaHR0cDo6YWRtaXNzaW9uX21pZGRsZXdh
+cmUsCiAgICAgICAgKSksCiAgICAgICAgTm9uZSA9PiBkYXRhX3BsYW5lLAogICAgfTsKCiAgICBs
+ZXQgbWV0cmljczogQXJjPGR5biBNZXRyaWNzUHJvdmlkZXI+ID0gc3RhdGUuZW5naW5lLmNsb25l
+KCk7CiAgICBsZXQgcHJvYmVzID0gc2VydmljZV9odHRwOjpzdGFuZGFyZF9wcm9iZV9yb3V0ZXNf
+Y2Fub25pY2FsX2pzb24oCiAgICAgICAgc3RhdGUuZW5naW5lLmNsb25lKCksCiAgICAgICAgU29t
+ZShtZXRyaWNzKSwKICAgICAgICBjcmF0ZTo6c3BlYzo6b3BlbmFwaV9qc29uLAogICAgKTsKICAg
+IGxldCBhZG1pbiA9IFJvdXRlcjo6bmV3KCkKICAgICAgICAucm91dGUoIi92ZXJzaW9uIiwgZ2V0
+KHZlcnNpb24pKQogICAgICAgIC5yb3V0ZSgiL2RlYnVnL2NsdXN0ZXIiLCBnZXQoZGVidWdfY2x1
+c3RlcikpOwoKICAgIHByb2JlcwogICAgICAgIC5tZXJnZShhZG1pbi53aXRoX3N0YXRlKHN0YXRl
+LmNsb25lKCkpKQogICAgICAgIC5tZXJnZShkYXRhX3BsYW5lLndpdGhfc3RhdGUoc3RhdGUpKQog
+ICAgICAgIC8vIE9uZSB0cmFjaW5nIHNwYW4gcGVyIEhUVFAgcmVxdWVzdCDigJQgc3RydWN0dXJl
+ZCByZXF1ZXN0IGxvZ3MgYWx3YXlzLCBhbmQKICAgICAgICAvLyB0aGUgc291cmNlIHNwYW5zIHRo
+ZSBPVExQIGxheWVyIGV4cG9ydHMgYXMgdHJhY2VzIHdoZW4gTFVNRU5fT1RMUF9FTkRQT0lOVAog
+ICAgICAgIC8vIGlzIHNldC4gSU5GTyBsZXZlbCBzbyB0aGUgZGVmYXVsdCBgaW5mb2AgRW52Rmls
+dGVyIGtlZXBzIGl0LgogICAgICAgIC5sYXllcihzZXJ2aWNlX2h0dHA6OnRyYWNlX2xheWVyKCkp
+Cn0KCiNbdXRvaXBhOjpwYXRoKAogICAgZ2V0LAogICAgcGF0aCA9ICIvbWV0cmljcyIsCiAgICB0
+YWcgPSAiQWRtaW4iLAogICAgc2VjdXJpdHkoKCkpLAogICAgcmVzcG9uc2VzKChzdGF0dXMgPSAy
+MDAsIGRlc2NyaXB0aW9uID0gIlByb21ldGhldXMgdGV4dC1mb3JtYXQgbWV0cmljcyIsIGJvZHkg
+PSBTdHJpbmcpKQopXQovLy8gT3BlbkFQSSBtZXRhZGF0YSBmb3IgdGhlIHNoYXJlZCBgL21ldHJp
+Y3NgIGltcGxlbWVudGF0aW9uIGluIHNlcnZpY2UtaHR0cC4KI1thbGxvdyhkZWFkX2NvZGUpXQph
+c3luYyBmbiBtZXRyaWNzKAogICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCikgLT4g
+KFN0YXR1c0NvZGUsIFsoJidzdGF0aWMgc3RyLCAmJ3N0YXRpYyBzdHIpOyAxXSwgU3RyaW5nKSB7
+CiAgICBsZXQgYm9keSA9IHN0YXRlLmVuZ2luZS5tZXRyaWNzKCkucmVuZGVyKCk7CiAgICAoCiAg
+ICAgICAgU3RhdHVzQ29kZTo6T0ssCiAgICAgICAgWygiY29udGVudC10eXBlIiwgInRleHQvcGxh
+aW47IHZlcnNpb249MC4wLjQiKV0sCiAgICAgICAgYm9keSwKICAgICkKfQoKI1t1dG9pcGE6OnBh
+dGgoCiAgICBnZXQsCiAgICBwYXRoID0gIi9kZWJ1Zy9jbHVzdGVyIiwKICAgIHRhZyA9ICJBZG1p
+biIsCiAgICBzZWN1cml0eSgoKSksCiAgICByZXNwb25zZXMoKHN0YXR1cyA9IDIwMCwgZGVzY3Jp
+cHRpb24gPSAiQ2x1c3RlciBzdGF0ZSBzbmFwc2hvdCIsIGJvZHkgPSBDbHVzdGVyU3RhdGVWaWV3
+KSkKKV0KYXN5bmMgZm4gZGVidWdfY2x1c3RlcihTdGF0ZShzdGF0ZSk6IFN0YXRlPEFwcFN0YXRl
+PikgLT4gSnNvbjxDbHVzdGVyU3RhdGVWaWV3PiB7CiAgICBsZXQgdmlldyA9IG1hdGNoIHN0YXRl
+LmNsdXN0ZXIuYXNfcmVmKCkgewogICAgICAgIFNvbWUoYykgPT4gYy5zbmFwc2hvdCgpLAogICAg
+ICAgIE5vbmUgPT4gQ2x1c3RlclN0YXRlVmlldyB7CiAgICAgICAgICAgIHBvZF9uYW1lOiAibG9j
+YWwiLmludG8oKSwKICAgICAgICAgICAgc2hhcmRfaW5kZXg6IDAsCiAgICAgICAgICAgIHJlcGxp
+Y2FfaW5kZXg6IDAsCiAgICAgICAgICAgIHJvbGU6IGNyYXRlOjpyYWZ0OjpSYWZ0Um9sZTo6TGVh
+ZGVyLAogICAgICAgICAgICBwZWVyczogdmVjIVtdLAogICAgICAgICAgICBhcHBsaWVkX2luZGV4
+OiAwLAogICAgICAgICAgICBsZWFkZXJfdGVybTogMCwKICAgICAgICAgICAgcmVwbGljYXRpb25f
+bGFnX21zOiAwLAogICAgICAgIH0sCiAgICB9OwogICAgSnNvbih2aWV3KQp9CgpmbiByZWFkX2Nv
+bnNpc3RlbmN5X2Zyb20oaGVhZGVyczogJkhlYWRlck1hcCkgLT4gUmVhZENvbnNpc3RlbmN5IHsK
+ICAgIFJlYWRDb25zaXN0ZW5jeTo6ZnJvbV9oZWFkZXIoCiAgICAgICAgaGVhZGVycwogICAgICAg
+ICAgICAuZ2V0KCJ4LXJlYWQtY29uc2lzdGVuY3kiKQogICAgICAgICAgICAuYW5kX3RoZW4ofGh8
+IGgudG9fc3RyKCkub2soKSksCiAgICApCn0KCi8vLyBFbmZvcmNlcyBhIHJlc29sdmVkIGB4LXJl
+YWQtY29uc2lzdGVuY3lgIGFnYWluc3QgdGhpcyBwb2QncyBsaXZlCi8vLyBwZXItc2hhcmQgY2x1
+c3RlciBzdGF0ZSAoYEFwcFN0YXRlOjpjbHVzdGVyYCkgYmVmb3JlIGEgcmVhZCByZWFjaGVzIHRo
+ZQovLy8gbG9jYWwgZW5naW5lICgjMTMxMCkuCi8vLwovLy8gU3RhbmRhbG9uZSBhbmQgbGVnYWN5
+IGV4dGVybmFsLWxvZyBidWlsZHMgKGBzdGF0ZS5jbHVzdGVyYCBpcyBgTm9uZWApCi8vLyBoYXZl
+IGV4YWN0bHkgb25lIGF1dGhvcml0YXRpdmUgY29weSBwZXIgc2hhcmQsIHNvIGV2ZXJ5IGNvbnNp
+c3RlbmN5Ci8vLyBsZXZlbCBpcyB0cml2aWFsbHkgc2F0aXNmaWVkIHRoZXJlIOKAlCB0aGlzIGlz
+IGEgbm8tb3AsIG1hdGNoaW5nIHRvZGF5J3MKLy8vIGJlaGF2aW9yIHVuY2hhbmdlZC4gUHJpbWFy
+eS1yZXBsaWNhIG1vZGUgKGBzdGF0ZS5jbHVzdGVyYCBpcyBgU29tZWApIGlzCi8vLyB0aGUgb25s
+eSBwbGFjZSBhIHJlcXVlc3QncyByZXNvbHZlZCBbYFJlYWRDb25zaXN0ZW5jeWBdIGNhbiBhY3R1
+YWxseQovLy8gZGl2ZXJnZSBmcm9tIHdoYXQgZ2V0cyBzZXJ2ZWQ6Ci8vLyAtIFtgUmVhZENvbnNp
+c3RlbmN5OjpBbnlgXSBpcyB1bmNvbnN0cmFpbmVkLgovLy8gLSBbYFJlYWRDb25zaXN0ZW5jeTo6
+TGVhZGVyYF0gb25seSBzdWNjZWVkcyBvbiB0aGUgcG9kIHRoYXQgY3VycmVudGx5Ci8vLyAgIGhv
+bGRzIGBSYWZ0Um9sZTo6TGVhZGVyYCBmb3IgdGhpcyBzaGFyZDsgbHVtZW4gaGFzIG5vIHJlYWQt
+Zm9yd2FyZGluZwovLy8gICBzdXJmYWNlLCBzbyBhIG5vbi1sZWFkZXIgcmVwbGljYSByZWplY3Rz
+IHRoZSByZXF1ZXN0IHJhdGhlciB0aGFuCi8vLyAgIHNpbGVudGx5IHNlcnZpbmcgYSBwb3NzaWJs
+eS1zdGFsZSBsb2NhbCBjb3B5LgovLy8gLSBbYFJlYWRDb25zaXN0ZW5jeTo6Qm91bmRlZGBdIHN1
+Y2NlZWRzIG9uIHRoZSBsZWFkZXIgKG5ldmVyIHN0YWxlKSBvcgovLy8gICBvbiBhIGZvbGxvd2Vy
+L2xlYXJuZXIgd2hvc2UgYHJlcGxpY2F0aW9uX2xhZ19tc2AgaXMgYXQgb3IgdW5kZXIgdGhlCi8v
+LyAgIHJlcXVlc3RlZCBib3VuZDsgYSByZXBsaWNhIG92ZXIgdGhlIGJvdW5kIHJlamVjdHMgcmF0
+aGVyIHRoYW4KLy8vICAgc2lsZW50bHkgc2VydmluZyBhIHN0YWxlIHJlYWQuIEluIGBsdW1lbiBz
+ZXJ2ZSAtLXdhbCByYWZ0YCwgYQovLy8gICBmb2xsb3dlci9sZWFybmVyJ3MgYHJlcGxpY2F0aW9u
+X2xhZ19tc2AgaXMgdGhlIGNvbnNlcnZhdGl2ZSAidW5rbm93biIKLy8vICAgc2VudGluZWwgKGB1
+NjQ6Ok1BWGApIOKAlCBgUmFmdEhvc3RgIGRvZXNuJ3QgZXhwb3NlIGEgcGVlci10aW1pbmcgUlBD
+Ci8vLyAgIHRvZGF5LCBzbyBgQm91bmRlZGAgb24gYSBub24tbGVhZGVyIHJlcGxpY2EgYWx3YXlz
+IHJlamVjdHMgcmF0aGVyIHRoYW4KLy8vICAgcmVwb3J0IGEgZmFicmljYXRlZCBsYWcgZmlndXJl
+IChzZWUgYHNwYXduX2NsdXN0ZXJfc3RhdGVfcG9sbGVyYCBpbgovLy8gICBgc3JjL2Jpbi9sdW1l
+bi5yc2AsICMxMzQ5KS4KZm4gZW5mb3JjZV9yZWFkX2NvbnNpc3RlbmN5KHN0YXRlOiAmQXBwU3Rh
+dGUsIGNvbnNpc3RlbmN5OiBSZWFkQ29uc2lzdGVuY3kpIC0+IFJlc3VsdDwoKSwgQXBpRXJyPiB7
+CiAgICBsZXQgU29tZShjbHVzdGVyKSA9IHN0YXRlLmNsdXN0ZXIuYXNfcmVmKCkgZWxzZSB7CiAg
+ICAgICAgcmV0dXJuIE9rKCgpKTsKICAgIH07CiAgICBtYXRjaCBjb25zaXN0ZW5jeSB7CiAgICAg
+ICAgUmVhZENvbnNpc3RlbmN5OjpBbnkgPT4gT2soKCkpLAogICAgICAgIFJlYWRDb25zaXN0ZW5j
+eTo6TGVhZGVyID0+IHsKICAgICAgICAgICAgaWYgY2x1c3Rlci5yb2xlKCkgPT0gUmFmdFJvbGU6
+OkxlYWRlciB7CiAgICAgICAgICAgICAgICByZXR1cm4gT2soKCkpOwogICAgICAgICAgICB9CiAg
+ICAgICAgICAgIEVycihtYXRjaCBjbHVzdGVyLmxlYWRlcl9wZWVyKCkgewogICAgICAgICAgICAg
+ICAgU29tZShsZWFkZXIpID0+IEFwaUVycjo6bmV3KAogICAgICAgICAgICAgICAgICAgIFN0YXR1
+c0NvZGU6OlNFUlZJQ0VfVU5BVkFJTEFCTEUsCiAgICAgICAgICAgICAgICAgICAgInJlYWRfY29u
+c2lzdGVuY3lfbm90X2xlYWRlciIsCiAgICAgICAgICAgICAgICAgICAgZm9ybWF0ISgKICAgICAg
+ICAgICAgICAgICAgICAgICAgInJlcGxpY2EgYHt9YCBpcyBub3QgdGhlIHNoYXJkIHt9IGxlYWRl
+ciAoY3VycmVudCBsZWFkZXIgaXMgYHt9YCk7IFwKICAgICAgICAgICAgICAgICAgICAgICAgIGxl
+YWRlci1jb25zaXN0ZW5jeSByZWFkcyBtdXN0IHJlYWNoIGl0IiwKICAgICAgICAgICAgICAgICAg
+ICAgICAgY2x1c3Rlci5wb2RfbmFtZSwgY2x1c3Rlci5zaGFyZF9pbmRleCwgbGVhZGVyLnBvZF9u
+YW1lCiAgICAgICAgICAgICAgICAgICAgKSwKICAgICAgICAgICAgICAgICksCiAgICAgICAgICAg
+ICAgICBOb25lID0+IEFwaUVycjo6bmV3KAogICAgICAgICAgICAgICAgICAgIFN0YXR1c0NvZGU6
+OlNFUlZJQ0VfVU5BVkFJTEFCTEUsCiAgICAgICAgICAgICAgICAgICAgInJlYWRfY29uc2lzdGVu
+Y3lfbm9fbGVhZGVyIiwKICAgICAgICAgICAgICAgICAgICBmb3JtYXQhKAogICAgICAgICAgICAg
+ICAgICAgICAgICAic2hhcmQge30gaGFzIG5vIHJlYWNoYWJsZSBsZWFkZXI7IGxlYWRlci1jb25z
+aXN0ZW5jeSByZWFkcyBjYW5ub3QgYmUgc2F0aXNmaWVkIiwKICAgICAgICAgICAgICAgICAgICAg
+ICAgY2x1c3Rlci5zaGFyZF9pbmRleAogICAgICAgICAgICAgICAgICAgICksCiAgICAgICAgICAg
+ICAgICApLAogICAgICAgICAgICB9KQogICAgICAgIH0KICAgICAgICBSZWFkQ29uc2lzdGVuY3k6
+OkJvdW5kZWQoYm91bmRfbXMpID0+IHsKICAgICAgICAgICAgaWYgY2x1c3Rlci5yb2xlKCkgPT0g
+UmFmdFJvbGU6OkxlYWRlciB7CiAgICAgICAgICAgICAgICByZXR1cm4gT2soKCkpOwogICAgICAg
+ICAgICB9CiAgICAgICAgICAgIGxldCBsYWdfbXMgPSBjbHVzdGVyLnJlcGxpY2F0aW9uX2xhZ19t
+cy5sb2FkKE9yZGVyaW5nOjpSZWxheGVkKTsKICAgICAgICAgICAgaWYgbGFnX21zIDw9IGJvdW5k
+X21zIHsKICAgICAgICAgICAgICAgIE9rKCgpKQogICAgICAgICAgICB9IGVsc2UgewogICAgICAg
+ICAgICAgICAgRXJyKEFwaUVycjo6bmV3KAogICAgICAgICAgICAgICAgICAgIFN0YXR1c0NvZGU6
+OlNFUlZJQ0VfVU5BVkFJTEFCTEUsCiAgICAgICAgICAgICAgICAgICAgInJlYWRfY29uc2lzdGVu
+Y3lfbGFnX2V4Y2VlZGVkIiwKICAgICAgICAgICAgICAgICAgICBmb3JtYXQhKAogICAgICAgICAg
+ICAgICAgICAgICAgICAicmVwbGljYSBge31gIGxhZyB7bGFnX21zfW1zIGV4Y2VlZHMgYm91bmRl
+ZCh7Ym91bmRfbXN9bXMpIGNvbnNpc3RlbmN5IiwKICAgICAgICAgICAgICAgICAgICAgICAgY2x1
+c3Rlci5wb2RfbmFtZQogICAgICAgICAgICAgICAgICAgICksCiAgICAgICAgICAgICAgICApKQog
+ICAgICAgICAgICB9CiAgICAgICAgfQogICAgfQp9CgovLy8gUmVqZWN0IGEgd3JpdGUgd2hvc2Ug
+YChjb2xsZWN0aW9uX2lkLCBleHRlcm5hbF9pZClgIHJvdXRlcyB0byBhCi8vLyBjdXJyZW50bHkt
+ZmVuY2VkIHZpcnR1YWwgYnVja2V0ICgjMTM5NiBSMikuIENoZWNrZWQgaW4gW2BpbmRleGBdLAov
+Ly8gW2ByZXBsYWNlX2RvY3NgXSwgW2ByZXBsYWNlX2RvY2BdLCBhbmQgW2BkZWxldGVfZXh0ZXJu
+YWxfaWRgXSDigJQgZXZlcnkKLy8vIHdyaXRlIHBhdGggYSByZXNoYXJkJ3MgZmluYWwgbWlncmF0
+aW9uIHBhc3MgbXVzdCBvYnNlcnZlIGEgY29udmVyZ2VkCi8vLyBzbmFwc2hvdCBvZi4KLy8vCi8v
+LyBgZGVsZXRlX2V4dGVybmFsX2lkYCBpcyBmZW5jZWQgdG9vICgjMTQ1OCBSMik6IGFuIGVhcmxp
+ZXIgcmV2aXNpb24gbGVmdAovLy8gREVMRVRFIGV4ZW1wdCBvbiB0aGUgdGhlb3J5IHRoYXQgYGFw
+cGx5X3Jlc2hhcmRfYmF0Y2hgJ3MKLy8vIGF1dGhvcml0YXRpdmUtc3Vic2V0IGByZXBsYWNlX2lk
+c2Agc2NvcGluZyAoc2VlCi8vLyBbYGNyYXRlOjpyZXNoYXJkOjpzbmFwc2hvdF9yZXNoYXJkX2Jh
+dGNoZXNgXSdzIGByZXBsYWNlX21vZGVgIGFuZAovLy8gW2BjcmF0ZTo6c3RvcmFnZTo6RW5naW5l
+OjphcHBseV9yZXNoYXJkX2JhdGNoYF0ncyBgcmVwbGFjZWAgcGFyYW1ldGVyKQovLy8gYWxyZWFk
+eSBjbG9zZXMgdGhlIHJlc3VycmVjdGlvbiBnYXAgZm9yIGEgZGVsZXRlIGFja2VkICpiZWZvcmUq
+IHRoZQovLy8gZmluYWwgcGFzcydzIHNjb3BlZC1iYWNrdXAgcmVhZC4gVGhhdCBsZWF2ZXMgYSBk
+ZWxldGUgcmFjaW5nIHN0cmljdGx5Ci8vLyBpbnNpZGUgdGhlIHN1Yi13aW5kb3cgYmV0d2VlbiB0
+aGF0IHJlYWQgYW5kIHRoZSBzYW1lIHBhc3MncyBldmljdGlvbgovLy8gdW5jb3ZlcmVkIOKAlCBm
+ZW5jaW5nIERFTEVURSBsaWtlIGV2ZXJ5IG90aGVyIHdyaXRlIGNsb3NlcyBpdCBmdWxseSwgYXQK
+Ly8vIHRoZSBvcmRpbmFyeSBjb3N0IChhIHJldHJ5YWJsZSA1MDMpIG9mIGFueSB3cml0ZSB0byBh
+IGZlbmNlZCBidWNrZXQuIFNlZQovLy8gdGhlIG1vZHVsZSdzICMxMzk2IFIyIHdyaXRlLWZlbmNl
+IGRvYyBvbiBbYFdyaXRlRmVuY2VgXS4KZm4gZW5mb3JjZV93cml0ZV9mZW5jZSgKICAgIHN0YXRl
+OiAmQXBwU3RhdGUsCiAgICBjb2xsZWN0aW9uX2lkOiAmc3RyLAogICAgZXh0ZXJuYWxfaWQ6ICZz
+dHIsCikgLT4gUmVzdWx0PCgpLCBBcGlFcnI+IHsKICAgIGlmIGxldCBTb21lKGJ1Y2tldCkgPSBz
+dGF0ZS53cml0ZV9mZW5jZS5ibG9ja3MoY29sbGVjdGlvbl9pZCwgZXh0ZXJuYWxfaWQpIHsKICAg
+ICAgICByZXR1cm4gRXJyKEFwaUVycjo6bmV3KAogICAgICAgICAgICBTdGF0dXNDb2RlOjpTRVJW
+SUNFX1VOQVZBSUxBQkxFLAogICAgICAgICAgICAiYnVja2V0X3dyaXRlX3BhdXNlZCIsCiAgICAg
+ICAgICAgIGZvcm1hdCEoCiAgICAgICAgICAgICAgICAidmlydHVhbCBidWNrZXQge2J1Y2tldH0g
+aXMgcGF1c2VkIGZvciBhbiBpbi1wcm9ncmVzcyByZXNoYXJkIGN1dG92ZXI7IHJldHJ5IHNob3J0
+bHkiCiAgICAgICAgICAgICksCiAgICAgICAgKSk7CiAgICB9CiAgICBPaygoKSkKfQoKLy8gLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tCi8vIEFkbWluCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKI1t1dG9pcGE6
+OnBhdGgoCiAgICBnZXQsCiAgICBwYXRoID0gIi9oZWFsdGh6IiwKICAgIHRhZyA9ICJBZG1pbiIs
+CiAgICBzZWN1cml0eSgoKSksCiAgICByZXNwb25zZXMoKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRp
+b24gPSAiUHJvY2VzcyBpcyBhbGl2ZSIsIGJvZHkgPSBTdHJpbmcpKQopXQovLy8gT3BlbkFQSSBt
+ZXRhZGF0YSBmb3IgdGhlIHNoYXJlZCBgL2hlYWx0aHpgIGltcGxlbWVudGF0aW9uIGluIHNlcnZp
+Y2UtaHR0cC4KI1thbGxvdyhkZWFkX2NvZGUpXQphc3luYyBmbiBoZWFsdGh6KCkgLT4gJidzdGF0
+aWMgc3RyIHsKICAgICJvayIKfQoKI1t1dG9pcGE6OnBhdGgoCiAgICBnZXQsCiAgICBwYXRoID0g
+Ii92ZXJzaW9uIiwKICAgIHRhZyA9ICJBZG1pbiIsCiAgICBzZWN1cml0eSgoKSksCiAgICByZXNw
+b25zZXMoKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiQnVpbGQgcHJvdmVuYW5jZTogdmVy
+c2lvbiwgZ2l0IHNoYSwgYnVpbGQgdGltZSIsIGJvZHkgPSBzZXJkZV9qc29uOjpWYWx1ZSkpCild
+Ci8vLyBCdWlsZCBwcm92ZW5hbmNlLiBgdmVyc2lvbmAgaXMgdGhlIGNyYXRlIHZlcnNpb247IGBn
+aXRfc2hhYCBhbmQgYGJ1aWx0X2F0YAovLy8gYXJlIHN0YW1wZWQgYnkgYGJ1aWxkLnJzYCBhbmQg
+ZGVncmFkZSB0byAidW5rbm93biIgb3V0c2lkZSBhIGdpdCBjaGVja291dC4KYXN5bmMgZm4gdmVy
+c2lvbigpIC0+IEpzb248c2VyZGVfanNvbjo6VmFsdWU+IHsKICAgIEpzb24oc2VyZGVfanNvbjo6
+anNvbiEoewogICAgICAgICJ2ZXJzaW9uIjogZW52ISgiQ0FSR09fUEtHX1ZFUlNJT04iKSwKICAg
+ICAgICAiZ2l0X3NoYSI6IG9wdGlvbl9lbnYhKCJMVU1FTl9HSVRfU0hBIikudW53cmFwX29yKCJ1
+bmtub3duIiksCiAgICAgICAgImJ1aWx0X2F0Ijogb3B0aW9uX2VudiEoIkxVTUVOX0JVSUxUX0FU
+IikudW53cmFwX29yKCJ1bmtub3duIiksCiAgICB9KSkKfQoKI1t1dG9pcGE6OnBhdGgoCiAgICBn
+ZXQsCiAgICBwYXRoID0gIi9yZWFkeXoiLAogICAgdGFnID0gIkFkbWluIiwKICAgIHNlY3VyaXR5
+KCgpKSwKICAgIHJlc3BvbnNlcygKICAgICAgICAoc3RhdHVzID0gMjAwLCBkZXNjcmlwdGlvbiA9
+ICJFbmdpbmUgcmVhZHkiKSwKICAgICAgICAoc3RhdHVzID0gNTAzLCBkZXNjcmlwdGlvbiA9ICJO
+b3QgcmVhZHkiKQogICAgKQopXQovLy8gT3BlbkFQSSBtZXRhZGF0YSBmb3IgdGhlIHNoYXJlZCBg
+L3JlYWR5emAgaW1wbGVtZW50YXRpb24gaW4gc2VydmljZS1odHRwLgojW2FsbG93KGRlYWRfY29k
+ZSldCmFzeW5jIGZuIHJlYWR5eihTdGF0ZShzdGF0ZSk6IFN0YXRlPEFwcFN0YXRlPikgLT4gKFN0
+YXR1c0NvZGUsICYnc3RhdGljIHN0cikgewogICAgaWYgc3RhdGUuZW5naW5lLmlzX2RyYWluaW5n
+KCkgewogICAgICAgIChTdGF0dXNDb2RlOjpTRVJWSUNFX1VOQVZBSUxBQkxFLCAiZHJhaW5pbmci
+KQogICAgfSBlbHNlIHsKICAgICAgICAoU3RhdHVzQ29kZTo6T0ssICJvayIpCiAgICB9Cn0KCi8v
+IC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLQovLyBDb2xsZWN0aW9ucwovLyAtLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0K
+CiNbdXRvaXBhOjpwYXRoKAogICAgZ2V0LAogICAgcGF0aCA9ICIvY29sbGVjdGlvbnMiLAogICAg
+dGFnID0gIkNvbGxlY3Rpb25zIiwKICAgIHJlc3BvbnNlcygoc3RhdHVzID0gMjAwLCBkZXNjcmlw
+dGlvbiA9ICJMaXN0IGNvbGxlY3Rpb24gSURzIiwgYm9keSA9IFtTdHJpbmddKSkKKV0KYXN5bmMg
+Zm4gbGlzdF9jb2xsZWN0aW9ucygKICAgIFN0YXRlKHN0YXRlKTogU3RhdGU8QXBwU3RhdGU+LAog
+ICAgRXh0ZW5zaW9uKGF1dGgpOiBFeHRlbnNpb248QXV0aENvbnRleHQ+LAopIC0+IFJlc3VsdDxK
+c29uPFZlYzxTdHJpbmc+PiwgQXBpRXJyPiB7CiAgICBsZXQgYWxsID0gc3RhdGUuZW5naW5lLmxp
+c3RfY29sbGVjdGlvbnMoKS5tYXBfZXJyKEFwaUVycjo6ZnJvbSk/OwogICAgLy8gRmlsdGVyIHRv
+IHdoYXQgdGhlIGNhbGxlciBjYW4gYWN0dWFsbHkgcmVhZC4KICAgIGxldCB2aXNpYmxlID0gYWxs
+CiAgICAgICAgLmludG9faXRlcigpCiAgICAgICAgLmZpbHRlcih8aWR8IGF1dGguZW5zdXJlKGlk
+LCBSb2xlOjpSZWFkKS5pc19vaygpKQogICAgICAgIC5jb2xsZWN0KCk7CiAgICBPayhKc29uKHZp
+c2libGUpKQp9CgojW3V0b2lwYTo6cGF0aCgKICAgIHB1dCwKICAgIHBhdGggPSAiL2NvbGxlY3Rp
+b25zL3tjb2xsZWN0aW9uX2lkfSIsCiAgICB0YWcgPSAiQ29sbGVjdGlvbnMiLAogICAgcGFyYW1z
+KCgiY29sbGVjdGlvbl9pZCIgPSBTdHJpbmcsIFBhdGgsIGRlc2NyaXB0aW9uID0gIkNvbGxlY3Rp
+b24gbmFtZXNwYWNlIikpLAogICAgcmVxdWVzdF9ib2R5ID0gQ3JlYXRlQ29sbGVjdGlvblJlcXVl
+c3QsCiAgICByZXNwb25zZXMoCiAgICAgICAgKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAi
+Q29sbGVjdGlvbiBjcmVhdGVkIiwgYm9keSA9IENyZWF0ZUNvbGxlY3Rpb25SZXNwb25zZSksCiAg
+ICAgICAgKHN0YXR1cyA9IDQwMCwgZGVzY3JpcHRpb24gPSAiSW52YWxpZCBzY2hlbWEiLCAgICAg
+Ym9keSA9IEFwaUVycm9yKQogICAgKQopXQphc3luYyBmbiBjcmVhdGVfY29sbGVjdGlvbigKICAg
+IFN0YXRlKHN0YXRlKTogU3RhdGU8QXBwU3RhdGU+LAogICAgRXh0ZW5zaW9uKGF1dGgpOiBFeHRl
+bnNpb248QXV0aENvbnRleHQ+LAogICAgUGF0aChjb2xsZWN0aW9uX2lkKTogUGF0aDxTdHJpbmc+
+LAogICAgSnNvbihyZXEpOiBKc29uPENyZWF0ZUNvbGxlY3Rpb25SZXF1ZXN0PiwKKSAtPiBSZXN1
+bHQ8SnNvbjxDcmVhdGVDb2xsZWN0aW9uUmVzcG9uc2U+LCBBcGlFcnI+IHsKICAgIGF1dGguZW5z
+dXJlKCZjb2xsZWN0aW9uX2lkLCBSb2xlOjpBZG1pbik/OwogICAgbGV0IHJlc3AgPSBzdGF0ZQog
+ICAgICAgIC53cml0ZV9iYWNrZW5kCiAgICAgICAgLmNyZWF0ZV9jb2xsZWN0aW9uKGNvbGxlY3Rp
+b25faWQuY2xvbmUoKSwgcmVxKQogICAgICAgIC5hd2FpdAogICAgICAgIC5tYXBfZXJyKEFwaUVy
+cjo6ZnJvbSk/OwogICAgdHJhY2luZzo6aW5mbyEoCiAgICAgICAgdGFyZ2V0OiAibHVtZW4uYXVk
+aXQiLAogICAgICAgIGV2ZW50ID0gImNvbGxlY3Rpb25fY3JlYXRlX29yX2V4dGVuZCIsCiAgICAg
+ICAgc3ViamVjdCA9IGF1dGguc3ViamVjdCgpLnVud3JhcF9vcigiYW5vbnltb3VzIiksCiAgICAg
+ICAgY29sbGVjdGlvbl9pZCA9ICVjb2xsZWN0aW9uX2lkLAogICAgICAgIHZlcnNpb24gPSByZXNw
+LnZlcnNpb24sCiAgICAgICAgZmllbGRzID0gcmVzcC5maWVsZHNfY291bnQsCiAgICApOwogICAg
+T2soSnNvbihyZXNwKSkKfQoKI1tkZXJpdmUoRGVidWcsIERlc2VyaWFsaXplKV0Kc3RydWN0IERy
+b3BRdWVyeSB7CiAgICAjW3NlcmRlKGRlZmF1bHQpXQogICAgZm9yY2U6IGJvb2wsCn0KCiNbdXRv
+aXBhOjpwYXRoKAogICAgZGVsZXRlLAogICAgcGF0aCA9ICIvY29sbGVjdGlvbnMve2NvbGxlY3Rp
+b25faWR9IiwKICAgIHRhZyA9ICJDb2xsZWN0aW9ucyIsCiAgICBwYXJhbXMoCiAgICAgICAgKCJj
+b2xsZWN0aW9uX2lkIiA9IFN0cmluZywgUGF0aCwgZGVzY3JpcHRpb24gPSAiQ29sbGVjdGlvbiBu
+YW1lc3BhY2UiKSwKICAgICAgICAoImZvcmNlIiA9IE9wdGlvbjxib29sPiwgUXVlcnksIGRlc2Ny
+aXB0aW9uID0gIlNraXAgdGhlIHNvZnQtZGVsZXRlIGdyYWNlIHdpbmRvdyIpCiAgICApLAogICAg
+cmVzcG9uc2VzKAogICAgICAgIChzdGF0dXMgPSAyMDIsIGRlc2NyaXB0aW9uID0gIlNvZnQtZGVs
+ZXRlZCAoZ3JhY2Ugd2luZG93KSIpLAogICAgICAgIChzdGF0dXMgPSAyMDQsIGRlc2NyaXB0aW9u
+ID0gIlBoeXNpY2FsbHkgZHJvcHBlZCIpLAogICAgICAgIChzdGF0dXMgPSA0MDQsIGRlc2NyaXB0
+aW9uID0gIlVua25vd24gY29sbGVjdGlvbiIpCiAgICApCildCmFzeW5jIGZuIGRyb3BfY29sbGVj
+dGlvbigKICAgIFN0YXRlKHN0YXRlKTogU3RhdGU8QXBwU3RhdGU+LAogICAgRXh0ZW5zaW9uKGF1
+dGgpOiBFeHRlbnNpb248QXV0aENvbnRleHQ+LAogICAgUGF0aChjb2xsZWN0aW9uX2lkKTogUGF0
+aDxTdHJpbmc+LAogICAgUXVlcnkocSk6IFF1ZXJ5PERyb3BRdWVyeT4sCikgLT4gUmVzdWx0PFN0
+YXR1c0NvZGUsIEFwaUVycj4gewogICAgYXV0aC5lbnN1cmUoJmNvbGxlY3Rpb25faWQsIFJvbGU6
+OkFkbWluKT87CiAgICBsZXQgb3V0Y29tZSA9IHN0YXRlCiAgICAgICAgLndyaXRlX2JhY2tlbmQK
+ICAgICAgICAuZHJvcF9jb2xsZWN0aW9uKGNvbGxlY3Rpb25faWQuY2xvbmUoKSwgcS5mb3JjZSkK
+ICAgICAgICAuYXdhaXQKICAgICAgICAubWFwX2VycihBcGlFcnI6OmZyb20pPzsKICAgIGxldCBw
+aGFzZSA9IG1hdGNoIG91dGNvbWUgewogICAgICAgIERyb3BPdXRjb21lOjpOb3RGb3VuZCA9PiB7
+CiAgICAgICAgICAgIHJldHVybiBFcnIoQXBpRXJyOjpub3RfZm91bmQoZm9ybWF0ISgKICAgICAg
+ICAgICAgICAgICJjb2xsZWN0aW9uIG5vdCBmb3VuZDoge2NvbGxlY3Rpb25faWR9IgogICAgICAg
+ICAgICApKSkKICAgICAgICB9CiAgICAgICAgRHJvcE91dGNvbWU6Ok1hcmtlZCA9PiAibWFya2Vk
+IiwKICAgICAgICBEcm9wT3V0Y29tZTo6QWxyZWFkeU1hcmtlZCA9PiAiYWxyZWFkeV9tYXJrZWQi
+LAogICAgICAgIERyb3BPdXRjb21lOjpQaHlzaWNhbCA9PiAicGh5c2ljYWwiLAogICAgfTsKICAg
+IHRyYWNpbmc6OmluZm8hKAogICAgICAgIHRhcmdldDogImx1bWVuLmF1ZGl0IiwKICAgICAgICBl
+dmVudCA9ICJjb2xsZWN0aW9uX2Ryb3AiLAogICAgICAgIHBoYXNlLAogICAgICAgIHN1YmplY3Qg
+PSBhdXRoLnN1YmplY3QoKS51bndyYXBfb3IoImFub255bW91cyIpLAogICAgICAgIGNvbGxlY3Rp
+b25faWQgPSAlY29sbGVjdGlvbl9pZCwKICAgICk7CiAgICAvLyBTb2Z0LWRlbGV0ZSByZXR1cm5z
+IDIwMiBBY2NlcHRlZCBzbyBjYWxsZXJzIGNhbiB0ZWxsIGl0J3Mgc3RpbGwKICAgIC8vIGluIHRo
+ZSBncmFjZSB3aW5kb3c7IHBoeXNpY2FsIC8gYWxyZWFkeS1tYXJrZWQgcmV0dXJuIDIwNC4KICAg
+IE9rKG1hdGNoIG91dGNvbWUgewogICAgICAgIERyb3BPdXRjb21lOjpNYXJrZWQgPT4gU3RhdHVz
+Q29kZTo6QUNDRVBURUQsCiAgICAgICAgXyA9PiBTdGF0dXNDb2RlOjpOT19DT05URU5ULAogICAg
+fSkKfQoKLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCi8vIEluZGV4Ci8vIC0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LQoKI1t1dG9pcGE6OnBhdGgoCiAgICBwb3N0LAogICAgcGF0aCA9ICIvY29sbGVjdGlvbnMve2Nv
+bGxlY3Rpb25faWR9L2luZGV4IiwKICAgIHRhZyA9ICJJbmRleCIsCiAgICBwYXJhbXMoKCJjb2xs
+ZWN0aW9uX2lkIiA9IFN0cmluZywgUGF0aCwgZGVzY3JpcHRpb24gPSAiQ29sbGVjdGlvbiBuYW1l
+c3BhY2UiKSksCiAgICByZXF1ZXN0X2JvZHkgPSBJbmRleFJlcXVlc3QsCiAgICByZXNwb25zZXMo
+CiAgICAgICAgKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiSXRlbXMgaW5kZXhlZCIsICAg
+ICBib2R5ID0gSW5kZXhSZXNwb25zZSksCiAgICAgICAgKHN0YXR1cyA9IDQwNCwgZGVzY3JpcHRp
+b24gPSAiVW5rbm93biBjb2xsZWN0aW9uIiwgYm9keSA9IEFwaUVycm9yKSwKICAgICAgICAoc3Rh
+dHVzID0gNDIyLCBkZXNjcmlwdGlvbiA9ICJUeXBlIG1pc21hdGNoIiwgICAgICBib2R5ID0gQXBp
+RXJyb3IpCiAgICApCildCmFzeW5jIGZuIGluZGV4KAogICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxB
+cHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxBdXRoQ29udGV4dD4sCiAg
+ICBoZWFkZXJzOiBIZWFkZXJNYXAsCiAgICBQYXRoKGNvbGxlY3Rpb25faWQpOiBQYXRoPFN0cmlu
+Zz4sCiAgICBKc29uKHJlcSk6IEpzb248SW5kZXhSZXF1ZXN0PiwKKSAtPiBSZXN1bHQ8SnNvbjxJ
+bmRleFJlc3BvbnNlPiwgQXBpRXJyPiB7CiAgICBhdXRoLmVuc3VyZSgmY29sbGVjdGlvbl9pZCwg
+Um9sZTo6V3JpdGUpPzsKICAgIGZvciBpdGVtIGluICZyZXEuaXRlbXMgewogICAgICAgIGVuZm9y
+Y2Vfd3JpdGVfZmVuY2UoJnN0YXRlLCAmY29sbGVjdGlvbl9pZCwgJml0ZW0uZXh0ZXJuYWxfaWQp
+PzsKICAgIH0KICAgIGxldCByZXNwID0gaWYgbGV0IFNvbWUocm91dGVyKSA9ICZzdGF0ZS5yb3V0
+ZWQgewogICAgICAgIHJvdXRlcgogICAgICAgICAgICAuaW5kZXgoY29sbGVjdGlvbl9pZC5jbG9u
+ZSgpLCByZXEsICZoZWFkZXJzKQogICAgICAgICAgICAuYXdhaXQKICAgICAgICAgICAgLm1hcF9l
+cnIoQXBpRXJyOjpmcm9tKT8KICAgIH0gZWxzZSB7CiAgICAgICAgc3RhdGUKICAgICAgICAgICAg
+LndyaXRlX2JhY2tlbmQKICAgICAgICAgICAgLmluZGV4KGNvbGxlY3Rpb25faWQuY2xvbmUoKSwg
+cmVxKQogICAgICAgICAgICAuYXdhaXQKICAgICAgICAgICAgLm1hcF9lcnIoQXBpRXJyOjpmcm9t
+KT8KICAgIH07CiAgICBPayhKc29uKHJlc3ApKQp9CgojW2Rlcml2ZShEZWJ1ZywgRGVzZXJpYWxp
+emUpXQpzdHJ1Y3QgRGVsZXRlUXVlcnkgewogICAgZmllbGQ6IE9wdGlvbjxTdHJpbmc+LAp9Cgoj
+W3V0b2lwYTo6cGF0aCgKICAgIGRlbGV0ZSwKICAgIHBhdGggPSAiL2NvbGxlY3Rpb25zL3tjb2xs
+ZWN0aW9uX2lkfS9pbmRleC97ZXh0ZXJuYWxfaWR9IiwKICAgIHRhZyA9ICJJbmRleCIsCiAgICBw
+YXJhbXMoCiAgICAgICAgKCJjb2xsZWN0aW9uX2lkIiA9IFN0cmluZywgUGF0aCwgZGVzY3JpcHRp
+b24gPSAiQ29sbGVjdGlvbiBuYW1lc3BhY2UiKSwKICAgICAgICAoImV4dGVybmFsX2lkIiAgID0g
+U3RyaW5nLCBQYXRoLCBkZXNjcmlwdGlvbiA9ICJDYWxsZXItb3duZWQgaWRlbnRpZmllciIpLAog
+ICAgICAgICgiZmllbGQiICAgICAgICAgPSBPcHRpb248U3RyaW5nPiwgUXVlcnksIGRlc2NyaXB0
+aW9uID0gIlJlc3RyaWN0IGRlbGV0aW9uIHRvIG9uZSBmaWVsZCIpCiAgICApLAogICAgcmVzcG9u
+c2VzKChzdGF0dXMgPSAyMDQsIGRlc2NyaXB0aW9uID0gIkRlbGV0ZWQiKSkKKV0KYXN5bmMgZm4g
+ZGVsZXRlX2V4dGVybmFsX2lkKAogICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAg
+ICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxBdXRoQ29udGV4dD4sCiAgICBoZWFkZXJzOiBI
+ZWFkZXJNYXAsCiAgICBQYXRoKChjb2xsZWN0aW9uX2lkLCBleHRlcm5hbF9pZCkpOiBQYXRoPChT
+dHJpbmcsIFN0cmluZyk+LAogICAgUXVlcnkocSk6IFF1ZXJ5PERlbGV0ZVF1ZXJ5PiwKKSAtPiBS
+ZXN1bHQ8U3RhdHVzQ29kZSwgQXBpRXJyPiB7CiAgICBhdXRoLmVuc3VyZSgmY29sbGVjdGlvbl9p
+ZCwgUm9sZTo6V3JpdGUpPzsKICAgIGVuZm9yY2Vfd3JpdGVfZmVuY2UoJnN0YXRlLCAmY29sbGVj
+dGlvbl9pZCwgJmV4dGVybmFsX2lkKT87CiAgICBpZiBsZXQgU29tZShyb3V0ZXIpID0gJnN0YXRl
+LnJvdXRlZCB7CiAgICAgICAgcm91dGVyCiAgICAgICAgICAgIC5kZWxldGUoY29sbGVjdGlvbl9p
+ZC5jbG9uZSgpLCBleHRlcm5hbF9pZCwgcS5maWVsZCwgJmhlYWRlcnMpCiAgICAgICAgICAgIC5h
+d2FpdAogICAgICAgICAgICAubWFwX2VycihBcGlFcnI6OmZyb20pPzsKICAgIH0gZWxzZSB7CiAg
+ICAgICAgc3RhdGUKICAgICAgICAgICAgLndyaXRlX2JhY2tlbmQKICAgICAgICAgICAgLmRlbGV0
+ZShjb2xsZWN0aW9uX2lkLmNsb25lKCksIGV4dGVybmFsX2lkLCBxLmZpZWxkKQogICAgICAgICAg
+ICAuYXdhaXQKICAgICAgICAgICAgLm1hcF9lcnIoQXBpRXJyOjpmcm9tKT87CiAgICB9CiAgICBP
+ayhTdGF0dXNDb2RlOjpOT19DT05URU5UKQp9CgovLy8gQmF0Y2ggZnVsbC1yZXBsYWNlbWVudCB1
+cHNlcnQ6IGVhY2ggaXRlbSdzIGBmaWVsZHNgIGJlY29tZXMgdGhlIGRvYydzCi8vLyBlbnRpcmUg
+aW5kZXhlZCBzdGF0ZSwgaW1wbGljaXRseSBkZWxldGluZyBhbnkgZGVjbGFyZWQgc2NoZW1hIGZp
+ZWxkIHRoZQovLy8gZG9jIGhhcyB0b2RheSBidXQgdGhhdCBpcyBhYnNlbnQgZnJvbSBgZmllbGRz
+YC4gYGRvY3M6cmVwbGFjZWAgaXMgb25lCi8vLyBsaXRlcmFsIHBhdGggc2VnbWVudCAoQUlQLTEz
+NiBjdXN0b20tbWV0aG9kIHN5bnRheCkgYXBwZW5kZWQgYWZ0ZXIKLy8vIGB7Y29sbGVjdGlvbl9p
+ZH1gLCBzbyBpdCByZWdpc3RlcnMgZGlyZWN0bHkgaW4gYXh1bSBuZXh0IHRvCi8vLyBgL2NvbGxl
+Y3Rpb25zL3tjb2xsZWN0aW9uX2lkfS9kb2NzL3tleHRlcm5hbF9pZH1gIHdpdGhvdXQgYW55IGNh
+cHR1cmUKLy8vIGFtYmlndWl0eSDigJQgY29sbGVjdGlvbiBpZHMgYXJlIHZhbGlkYXRlZCB0byBy
+ZWplY3QgYDpgLgovLy8KLy8vIFBVVCBpcyBkZWxpYmVyYXRlOiB0aGlzIGlzIGlkZW1wb3RlbnQg
+ZnVsbCByZXBsYWNlbWVudCAocGx1cyBvcHRpb25hbAovLy8gZG9jLWxldmVsIGxhc3Qtd3JpdGUt
+d2lucyksIHNvIHJlcGxheWluZyB0aGUgc2FtZSByZXF1ZXN0IGNvbnZlcmdlcyB0bwovLy8gdGhl
+IHNhbWUgc3RhdGUuIE93biB0aGUgKmNvbXBsZXRlKiByb3cgZm9yIGEgZG9jPyBVc2UgYGRvY3M6
+cmVwbGFjZWAuCi8vLyBPd24gb25seSAqc29tZSogZmllbGRzIGFuZCB3YW50IHRvIGFkZC91cGRh
+dGUgdGhvc2Ugd2l0aG91dCB0b3VjaGluZwovLy8gdGhlIHJlc3Q/IFVzZSBgUE9TVCAuLi4vaW5k
+ZXhgIGluc3RlYWQuCi8vLwovLy8gT25lIGJhZCBpdGVtICh1bmtub3duIGZpZWxkLCB0eXBlIG1p
+c21hdGNoKSBuZXZlciBmYWlscyB0aGUgYmF0Y2gg4oCUIHRoZQovLy8gYmF0Y2gtbGV2ZWwgc3Rh
+dHVzIHN0YXlzIDIwMCBhbmQgdGhhdCBpdGVtJ3MgW2BSZXBsYWNlRG9jUmVzdWx0YF0KLy8vIGNh
+cnJpZXMgdGhlIGVycm9yLiBPbmx5IGEgbWFsZm9ybWVkIGJvZHkgb3IgYW4gb3Zlci1saW1pdCBi
+YXRjaCByZXR1cm5zCi8vLyA0MDAuCiNbdXRvaXBhOjpwYXRoKAogICAgcHV0LAogICAgcGF0aCA9
+ICIvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L2RvY3M6cmVwbGFjZSIsCiAgICB0YWcgPSAi
+SW5kZXgiLAogICAgcGFyYW1zKCgiY29sbGVjdGlvbl9pZCIgPSBTdHJpbmcsIFBhdGgsIGRlc2Ny
+aXB0aW9uID0gIkNvbGxlY3Rpb24gbmFtZXNwYWNlIikpLAogICAgcmVxdWVzdF9ib2R5ID0gUmVw
+bGFjZURvY3NSZXF1ZXN0LAogICAgcmVzcG9uc2VzKAogICAgICAgIChzdGF0dXMgPSAyMDAsIGRl
+c2NyaXB0aW9uID0gIlBlci1pdGVtIHJlc3VsdHMsIHNhbWUgb3JkZXIgYW5kIGxlbmd0aCBhcyBg
+ZG9jc2AiLCBib2R5ID0gUmVwbGFjZURvY3NSZXNwb25zZSksCiAgICAgICAgKHN0YXR1cyA9IDQw
+MCwgZGVzY3JpcHRpb24gPSAiTWFsZm9ybWVkIGJvZHkgb3IgYmF0Y2ggc2l6ZSBvdmVyIHRoZSBs
+aW1pdCIsIGJvZHkgPSBBcGlFcnJvcikKICAgICkKKV0KYXN5bmMgZm4gcmVwbGFjZV9kb2NzKAog
+ICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4
+dGVuc2lvbjxBdXRoQ29udGV4dD4sCiAgICBoZWFkZXJzOiBIZWFkZXJNYXAsCiAgICBQYXRoKGNv
+bGxlY3Rpb25faWQpOiBQYXRoPFN0cmluZz4sCiAgICBKc29uKHJlcSk6IEpzb248UmVwbGFjZURv
+Y3NSZXF1ZXN0PiwKKSAtPiBSZXN1bHQ8SnNvbjxSZXBsYWNlRG9jc1Jlc3BvbnNlPiwgQXBpRXJy
+PiB7CiAgICBhdXRoLmVuc3VyZSgmY29sbGVjdGlvbl9pZCwgUm9sZTo6V3JpdGUpPzsKICAgIGlm
+IHJlcS5kb2NzLmxlbigpID4gTUFYX0JBVENIX1JFUExBQ0VfU0laRSB7CiAgICAgICAgcmV0dXJu
+IEVycihBcGlFcnI6Om5ldygKICAgICAgICAgICAgU3RhdHVzQ29kZTo6QkFEX1JFUVVFU1QsCiAg
+ICAgICAgICAgICJiYXRjaF90b29fbGFyZ2UiLAogICAgICAgICAgICBmb3JtYXQhKAogICAgICAg
+ICAgICAgICAgImJhdGNoIGhhcyB7fSBpdGVtcywgbWF4IGlzIHtNQVhfQkFUQ0hfUkVQTEFDRV9T
+SVpFfSIsCiAgICAgICAgICAgICAgICByZXEuZG9jcy5sZW4oKQogICAgICAgICAgICApLAogICAg
+ICAgICkpOwogICAgfQogICAgZm9yIGRvYyBpbiAmcmVxLmRvY3MgewogICAgICAgIGVuZm9yY2Vf
+d3JpdGVfZmVuY2UoJnN0YXRlLCAmY29sbGVjdGlvbl9pZCwgJmRvYy5leHRlcm5hbF9pZCk/Owog
+ICAgfQogICAgbGV0IHJlc3AgPSByZXBsYWNlX2RvY3Nfcm91dGVkX29yX2xvY2FsKCZzdGF0ZSwg
+JmhlYWRlcnMsIGNvbGxlY3Rpb25faWQsIHJlcSkuYXdhaXQ/OwogICAgT2soSnNvbihyZXNwKSkK
+fQoK
+```
+
+### Source Partition 0002
+<!-- aw-source-partition: index=2 count=3 bytes=47737 payload_bytes=64489 encoding=base64 digest=sha256:a77e1e1b150d6c1967047f409ec3ace58a6a3f8c60507356d06ab4e102dda4ac boundary=ast terminal_newline=true -->
+
+```text
+Ly8vIFNoYXJlZCB3cml0ZS1iYWNrZW5kL3JvdXRlciBicmFuY2ggZm9yIFtgcmVwbGFjZV9kb2Nz
+YF0gYW5kCi8vLyBbYHJlcGxhY2VfZG9jYF0gKGl0cyBzaW5nbGUtZG9jIHN1Z2FyKS4KYXN5bmMg
+Zm4gcmVwbGFjZV9kb2NzX3JvdXRlZF9vcl9sb2NhbCgKICAgIHN0YXRlOiAmQXBwU3RhdGUsCiAg
+ICBoZWFkZXJzOiAmSGVhZGVyTWFwLAogICAgY29sbGVjdGlvbl9pZDogU3RyaW5nLAogICAgcmVx
+OiBSZXBsYWNlRG9jc1JlcXVlc3QsCikgLT4gUmVzdWx0PFJlcGxhY2VEb2NzUmVzcG9uc2UsIEFw
+aUVycj4gewogICAgaWYgbGV0IFNvbWUocm91dGVyKSA9ICZzdGF0ZS5yb3V0ZWQgewogICAgICAg
+IHJvdXRlcgogICAgICAgICAgICAucmVwbGFjZV9kb2NzKGNvbGxlY3Rpb25faWQsIHJlcSwgaGVh
+ZGVycykKICAgICAgICAgICAgLmF3YWl0CiAgICAgICAgICAgIC5tYXBfZXJyKEFwaUVycjo6ZnJv
+bSkKICAgIH0gZWxzZSB7CiAgICAgICAgc3RhdGUKICAgICAgICAgICAgLndyaXRlX2JhY2tlbmQK
+ICAgICAgICAgICAgLnJlcGxhY2VfZG9jcyhjb2xsZWN0aW9uX2lkLCByZXEpCiAgICAgICAgICAg
+IC5hd2FpdAogICAgICAgICAgICAubWFwX2VycihBcGlFcnI6OmZyb20pCiAgICB9Cn0KCi8vLyBT
+aW5nbGUtcmVzb3VyY2Ugc3VnYXIgb3ZlciBgZG9jczpyZXBsYWNlYDogZXhhY3RseSB0aGUgb25l
+LWl0ZW0gYmF0Y2gKLy8vIGB7ImRvY3MiOiBbeyJleHRlcm5hbF9pZCI6IC4uLiwgInZlcnNpb24i
+OiAuLi4sICJmaWVsZHMiOiB7Li4ufX1dfWAsCi8vLyB1bndyYXBwZWQgYmFjayBpbnRvIGEgYmFy
+ZSBbYFJlcGxhY2VEb2NSZXN1bHRgXS4gU2VlIFtgcmVwbGFjZV9kb2NzYF0KLy8vIGZvciB0aGUg
+ZnVsbC1yZXBsYWNlbWVudCAvIGRvYy1sZXZlbCBMV1cgc2VtYW50aWNzIOKAlCB0aGUgYmF0Y2gt
+bGV2ZWwKLy8vIHN0YXR1cyBzdGF5cyAyMDAgaGVyZSB0b287IGEgYmFkIGl0ZW0gY29tZXMgYmFj
+ayBhcwovLy8gYHsic3RhdHVzIjoiZXJyb3IiLC4uLn1gIGluIHRoZSBib2R5IHJhdGhlciB0aGFu
+IGFzIGFuIEhUVFAgZXJyb3IuCiNbdXRvaXBhOjpwYXRoKAogICAgcHV0LAogICAgcGF0aCA9ICIv
+Y29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L2RvY3Mve2V4dGVybmFsX2lkfSIsCiAgICB0YWcg
+PSAiSW5kZXgiLAogICAgcGFyYW1zKAogICAgICAgICgiY29sbGVjdGlvbl9pZCIgPSBTdHJpbmcs
+IFBhdGgsIGRlc2NyaXB0aW9uID0gIkNvbGxlY3Rpb24gbmFtZXNwYWNlIiksCiAgICAgICAgKCJl
+eHRlcm5hbF9pZCIgICA9IFN0cmluZywgUGF0aCwgZGVzY3JpcHRpb24gPSAiQ2FsbGVyLW93bmVk
+IGlkZW50aWZpZXIiKQogICAgKSwKICAgIHJlcXVlc3RfYm9keSA9IFJlcGxhY2VEb2NCb2R5LAog
+ICAgcmVzcG9uc2VzKAogICAgICAgIChzdGF0dXMgPSAyMDAsIGRlc2NyaXB0aW9uID0gIlJlcGxh
+Y2VtZW50IHJlc3VsdCBmb3IgdGhpcyBkb2MiLCBib2R5ID0gUmVwbGFjZURvY1Jlc3VsdCksCiAg
+ICAgICAgKHN0YXR1cyA9IDQwMCwgZGVzY3JpcHRpb24gPSAiTWFsZm9ybWVkIGJvZHkiLCBib2R5
+ID0gQXBpRXJyb3IpCiAgICApCildCmFzeW5jIGZuIHJlcGxhY2VfZG9jKAogICAgU3RhdGUoc3Rh
+dGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxBdXRo
+Q29udGV4dD4sCiAgICBoZWFkZXJzOiBIZWFkZXJNYXAsCiAgICBQYXRoKChjb2xsZWN0aW9uX2lk
+LCBleHRlcm5hbF9pZCkpOiBQYXRoPChTdHJpbmcsIFN0cmluZyk+LAogICAgSnNvbihib2R5KTog
+SnNvbjxSZXBsYWNlRG9jQm9keT4sCikgLT4gUmVzdWx0PEpzb248UmVwbGFjZURvY1Jlc3VsdD4s
+IEFwaUVycj4gewogICAgYXV0aC5lbnN1cmUoJmNvbGxlY3Rpb25faWQsIFJvbGU6OldyaXRlKT87
+CiAgICBlbmZvcmNlX3dyaXRlX2ZlbmNlKCZzdGF0ZSwgJmNvbGxlY3Rpb25faWQsICZleHRlcm5h
+bF9pZCk/OwogICAgbGV0IHJlcSA9IFJlcGxhY2VEb2NzUmVxdWVzdCB7CiAgICAgICAgZG9jczog
+dmVjIVtSZXBsYWNlRG9jSXRlbSB7CiAgICAgICAgICAgIGV4dGVybmFsX2lkLAogICAgICAgICAg
+ICB2ZXJzaW9uOiBib2R5LnZlcnNpb24sCiAgICAgICAgICAgIGZpZWxkczogYm9keS5maWVsZHMs
+CiAgICAgICAgfV0sCiAgICB9OwogICAgbGV0IHJlc3AgPSByZXBsYWNlX2RvY3Nfcm91dGVkX29y
+X2xvY2FsKCZzdGF0ZSwgJmhlYWRlcnMsIGNvbGxlY3Rpb25faWQsIHJlcSkuYXdhaXQ/OwogICAg
+bGV0IHJlc3VsdCA9IHJlc3AucmVzdWx0cy5pbnRvX2l0ZXIoKS5uZXh0KCkub2tfb3JfZWxzZSh8
+fCB7CiAgICAgICAgQXBpRXJyOjpuZXcoCiAgICAgICAgICAgIFN0YXR1c0NvZGU6OklOVEVSTkFM
+X1NFUlZFUl9FUlJPUiwKICAgICAgICAgICAgImludGVybmFsIiwKICAgICAgICAgICAgIm5vIHJl
+c3VsdCBmb3Igc2luZ2xlLWRvYyByZXBsYWNlIi50b19zdHJpbmcoKSwKICAgICAgICApCiAgICB9
+KT87CiAgICBPayhKc29uKHJlc3VsdCkpCn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBRdWVy
+eQovLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KCiNbdXRvaXBhOjpwYXRoKAogICAgcG9zdCwKICAgIHBh
+dGggPSAiL2NvbGxlY3Rpb25zL3tjb2xsZWN0aW9uX2lkfS9zZWFyY2giLAogICAgdGFnID0gIlF1
+ZXJ5IiwKICAgIHBhcmFtcygoImNvbGxlY3Rpb25faWQiID0gU3RyaW5nLCBQYXRoLCBkZXNjcmlw
+dGlvbiA9ICJDb2xsZWN0aW9uIG5hbWVzcGFjZSIpKSwKICAgIHJlcXVlc3RfYm9keSA9IFNlYXJj
+aFJlcXVlc3QsCiAgICByZXNwb25zZXMoKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiU2Vh
+cmNoIGhpdHMiLCBib2R5ID0gU2VhcmNoUmVzcG9uc2UpKQopXQphc3luYyBmbiBzZWFyY2goCiAg
+ICBTdGF0ZShzdGF0ZSk6IFN0YXRlPEFwcFN0YXRlPiwKICAgIEV4dGVuc2lvbihhdXRoKTogRXh0
+ZW5zaW9uPEF1dGhDb250ZXh0PiwKICAgIGhlYWRlcnM6IEhlYWRlck1hcCwKICAgIFBhdGgoY29s
+bGVjdGlvbl9pZCk6IFBhdGg8U3RyaW5nPiwKICAgIEpzb24ocmVxKTogSnNvbjxTZWFyY2hSZXF1
+ZXN0PiwKKSAtPiBSZXN1bHQ8SnNvbjxTZWFyY2hSZXNwb25zZT4sIEFwaUVycj4gewogICAgT2so
+SnNvbigKICAgICAgICBzZWFyY2hfY29yZSgmc3RhdGUsICZhdXRoLCAmaGVhZGVycywgJmNvbGxl
+Y3Rpb25faWQsIHJlcSkuYXdhaXQ/LAogICAgKSkKfQoKLy8vIEV4cG9ydCBldmVyeSBtYXRjaGlu
+ZyBleHRlcm5hbCBpZCBpbiBvbmUgZXhwbGljaXQgZnVsbC1tYXRlcmlhbGl6YXRpb24KLy8vIHJl
+cXVlc3QuIFRoZSBsb2NhbCBlbmdpbmUgZXZhbHVhdGVzIHRoZSByZXF1ZXN0IHdoaWxlIGhvbGRp
+bmcgb25lIHJlYWQtbG9jawovLy8gc25hcHNob3Q7IHJvdXRlZCBkZXBsb3ltZW50cyBjb2xsZWN0
+IG9uZSBpbmRlcGVuZGVudGx5IGNvbnNpc3RlbnQgc25hcHNob3QKLy8vIHBlciBzaGFyZCBhbmQg
+aW50ZW50aW9uYWxseSBkbyBub3QgY2xhaW0gYSBjcm9zcy1zaGFyZCB0cmFuc2FjdGlvbi4KI1t1
+dG9pcGE6OnBhdGgoCiAgICBwb3N0LAogICAgcGF0aCA9ICIvY29sbGVjdGlvbnMve2NvbGxlY3Rp
+b25faWR9L3NlYXJjaDphbGwiLAogICAgdGFnID0gIlF1ZXJ5IiwKICAgIHBhcmFtcygoImNvbGxl
+Y3Rpb25faWQiID0gU3RyaW5nLCBQYXRoLCBkZXNjcmlwdGlvbiA9ICJDb2xsZWN0aW9uIG5hbWVz
+cGFjZSIpKSwKICAgIHJlcXVlc3RfYm9keSA9IFNlYXJjaEFsbFJlcXVlc3QsCiAgICByZXNwb25z
+ZXMoCiAgICAgICAgKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiQWxsIG1hdGNoaW5nIGV4
+dGVybmFsIGlkczsgbWF0ZXJpYWxpemVzIHRoZSBjb21wbGV0ZSByZXN1bHQgc2V0IiwgYm9keSA9
+IFNlYXJjaEFsbFJlc3BvbnNlKSwKICAgICAgICAoc3RhdHVzID0gNDAwLCBkZXNjcmlwdGlvbiA9
+ICJJbnZhbGlkIHF1ZXJ5IG9yIHVuc3VwcG9ydGVkIHNvcnQiLCBib2R5ID0gQXBpRXJyb3IpCiAg
+ICApCildCmFzeW5jIGZuIHNlYXJjaF9hbGwoCiAgICBTdGF0ZShzdGF0ZSk6IFN0YXRlPEFwcFN0
+YXRlPiwKICAgIEV4dGVuc2lvbihhdXRoKTogRXh0ZW5zaW9uPEF1dGhDb250ZXh0PiwKICAgIGhl
+YWRlcnM6IEhlYWRlck1hcCwKICAgIFBhdGgoY29sbGVjdGlvbl9pZCk6IFBhdGg8U3RyaW5nPiwK
+ICAgIEpzb24ocmVxKTogSnNvbjxTZWFyY2hBbGxSZXF1ZXN0PiwKKSAtPiBSZXN1bHQ8SnNvbjxT
+ZWFyY2hBbGxSZXNwb25zZT4sIEFwaUVycj4gewogICAgbGV0IHJlc3BvbnNlID0gc2VhcmNoX2Nv
+cmUoCiAgICAgICAgJnN0YXRlLAogICAgICAgICZhdXRoLAogICAgICAgICZoZWFkZXJzLAogICAg
+ICAgICZjb2xsZWN0aW9uX2lkLAogICAgICAgIFNlYXJjaFJlcXVlc3QgewogICAgICAgICAgICBx
+dWVyeTogcmVxLnF1ZXJ5LAogICAgICAgICAgICBsaW1pdDogdTMyOjpNQVgsCiAgICAgICAgICAg
+IG9mZnNldDogMCwKICAgICAgICAgICAgY3Vyc29yOiBOb25lLAogICAgICAgICAgICByb3V0aW5n
+X2tleTogcmVxLnJvdXRpbmdfa2V5LAogICAgICAgICAgICBzb3J0OiByZXEuc29ydCwKICAgICAg
+ICAgICAgdHJhY2tfdG90YWw6IHRydWUsCiAgICAgICAgICAgIGNvbGxhcHNlOiBOb25lLAogICAg
+ICAgIH0sCiAgICApCiAgICAuYXdhaXQ/OwogICAgT2soSnNvbihTZWFyY2hBbGxSZXNwb25zZSB7
+CiAgICAgICAgZXh0ZXJuYWxfaWRzOiByZXNwb25zZQogICAgICAgICAgICAuaGl0cwogICAgICAg
+ICAgICAuaW50b19pdGVyKCkKICAgICAgICAgICAgLm1hcCh8aGl0fCBoaXQuZXh0ZXJuYWxfaWQp
+CiAgICAgICAgICAgIC5jb2xsZWN0KCksCiAgICAgICAgdG90YWw6IHJlc3BvbnNlLnRvdGFsLAog
+ICAgICAgIHRvb2tfbXM6IHJlc3BvbnNlLnRvb2tfbXMsCiAgICAgICAgdG9va191czogcmVzcG9u
+c2UudG9va191cywKICAgIH0pKQp9CgovLy8gU2hhcmVkIGltcGxlbWVudGF0aW9uIGJlaGluZCBg
+UE9TVCAvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L3NlYXJjaGAKLy8vIGFuZCBpdHMgYFFV
+RVJZIC9jb2xsZWN0aW9ucy97Y29sbGVjdGlvbl9pZH1gIHR3aW4KLy8vIChbYGNvbGxlY3Rpb25f
+aWRfcXVlcnlfZGlzcGF0Y2hgXSwgZXBpYyAjMTI5NiBSMTogZXZlcnkgUVVFUlkgZW5kcG9pbnQK
+Ly8vIGtlZXBzIGEgUE9TVCB0d2luIOKAlCBzYW1lIGhhbmRsZXIsIGlkZW50aWNhbCByZXNwb25z
+ZSkuIENvbnN1bHRzCi8vLyBgc3RhdGUucm91dGVkYCBmaXJzdCAoIzEzOTggUjEpIOKAlCBhIHJv
+dXRlZCBkZXBsb3ltZW50IHNjYXR0ZXJzL2ZvcndhcmRzCi8vLyBieSBvd25lcnNoaXA7IGV2ZXJ5
+IG90aGVyIGRlcGxveW1lbnQgZmFsbHMgdGhyb3VnaCB0byBgc2VhcmNoX2JhY2tlbmRgCi8vLyB1
+bmNoYW5nZWQuCmFzeW5jIGZuIHNlYXJjaF9jb3JlKAogICAgc3RhdGU6ICZBcHBTdGF0ZSwKICAg
+IGF1dGg6ICZBdXRoQ29udGV4dCwKICAgIGhlYWRlcnM6ICZIZWFkZXJNYXAsCiAgICBjb2xsZWN0
+aW9uX2lkOiAmc3RyLAogICAgcmVxOiBTZWFyY2hSZXF1ZXN0LAopIC0+IFJlc3VsdDxTZWFyY2hS
+ZXNwb25zZSwgQXBpRXJyPiB7CiAgICBhdXRoLmVuc3VyZShjb2xsZWN0aW9uX2lkLCBSb2xlOjpS
+ZWFkKT87CiAgICBsZXQgY29uc2lzdGVuY3kgPSByZWFkX2NvbnNpc3RlbmN5X2Zyb20oaGVhZGVy
+cyk7CiAgICBlbmZvcmNlX3JlYWRfY29uc2lzdGVuY3koc3RhdGUsIGNvbnNpc3RlbmN5KT87CiAg
+ICBpZiBsZXQgU29tZShyb3V0ZXIpID0gJnN0YXRlLnJvdXRlZCB7CiAgICAgICAgcmV0dXJuIHJv
+dXRlcgogICAgICAgICAgICAuc2VhcmNoKGNvbGxlY3Rpb25faWQsIHJlcSwgaGVhZGVycykKICAg
+ICAgICAgICAgLmF3YWl0CiAgICAgICAgICAgIC5tYXBfZXJyKEFwaUVycjo6ZnJvbSk7CiAgICB9
+CiAgICBzdGF0ZQogICAgICAgIC5zZWFyY2hfYmFja2VuZAogICAgICAgIC5zZWFyY2goY29sbGVj
+dGlvbl9pZCwgcmVxKQogICAgICAgIC5tYXBfZXJyKEFwaUVycjo6ZnJvbSkKfQoKLy8vIG1zZWFy
+Y2gtc3R5bGUgYmF0Y2ggc2VhcmNoOiBOIGluZGVwZW5kZW50IGAoY29sbGVjdGlvbiwgU2VhcmNo
+UmVxdWVzdClgCi8vLyBpdGVtcyBpbiBvbmUgSFRUUCByZXF1ZXN0LCBmYW5uZWQgb3V0IGNvbmN1
+cnJlbnRseS4gYGNvbGxlY3Rpb25zOnNlYXJjaGAKLy8vIGlzIG9uZSBsaXRlcmFsIHBhdGggc2Vn
+bWVudCAoQUlQLTEzNiBjdXN0b20tbWV0aG9kIHN5bnRheCksIHNvIGl0Ci8vLyByZWdpc3RlcnMg
+ZGlyZWN0bHkgaW4gYXh1bSBuZXh0IHRvIGAvY29sbGVjdGlvbnNgIGFuZAovLy8gYC9jb2xsZWN0
+aW9ucy97Y29sbGVjdGlvbl9pZH1gIHdpdGhvdXQgYW55IGNhcHR1cmUgYW1iaWd1aXR5LgovLy8K
+Ly8vIE9uZSBpdGVtIGZhaWxpbmcgKGUuZy4gYW4gdW5rbm93biBjb2xsZWN0aW9uKSBuZXZlciBm
+YWlscyB0aGUgYmF0Y2gg4oCUCi8vLyB0aGUgYmF0Y2gtbGV2ZWwgc3RhdHVzIHN0YXlzIDIwMCBh
+bmQgdGhhdCBpdGVtJ3MgW2BCYXRjaFNlYXJjaFJlc3VsdGBdCi8vLyBjYXJyaWVzIHRoZSBlcnJv
+ci4gT25seSBhIG1hbGZvcm1lZCBib2R5IG9yIGFuIG92ZXItbGltaXQgYmF0Y2ggcmV0dXJucwov
+Ly8gNDAwLiBDdXJzb3JzLCBzb3J0LCBhbmQgY29sbGFwc2UgYWxsIHN0YXkgcGVyLWl0ZW06IHRo
+ZXJlIGlzIG5vIG1lcmdlZAovLy8gY3Vyc29yIGFuZCBubyBjcm9zcy1jb2xsZWN0aW9uIHNjb3Jl
+IG1lcmdpbmcuCiNbdXRvaXBhOjpwYXRoKAogICAgcG9zdCwKICAgIHBhdGggPSAiL2NvbGxlY3Rp
+b25zOnNlYXJjaCIsCiAgICB0YWcgPSAiUXVlcnkiLAogICAgcmVxdWVzdF9ib2R5ID0gQmF0Y2hT
+ZWFyY2hSZXF1ZXN0LAogICAgcmVzcG9uc2VzKAogICAgICAgIChzdGF0dXMgPSAyMDAsIGRlc2Ny
+aXB0aW9uID0gIlBlci1pdGVtIHJlc3VsdHMsIHNhbWUgb3JkZXIgYW5kIGxlbmd0aCBhcyBgc2Vh
+cmNoZXNgIiwgYm9keSA9IEJhdGNoU2VhcmNoUmVzcG9uc2UpLAogICAgICAgIChzdGF0dXMgPSA0
+MDAsIGRlc2NyaXB0aW9uID0gIk1hbGZvcm1lZCBib2R5IG9yIGJhdGNoIHNpemUgb3ZlciB0aGUg
+bGltaXQiLCBib2R5ID0gQXBpRXJyb3IpCiAgICApCildCmFzeW5jIGZuIGJhdGNoX3NlYXJjaCgK
+ICAgIFN0YXRlKHN0YXRlKTogU3RhdGU8QXBwU3RhdGU+LAogICAgRXh0ZW5zaW9uKGF1dGgpOiBF
+eHRlbnNpb248QXV0aENvbnRleHQ+LAogICAgaGVhZGVyczogSGVhZGVyTWFwLAogICAgSnNvbihy
+ZXEpOiBKc29uPEJhdGNoU2VhcmNoUmVxdWVzdD4sCikgLT4gUmVzdWx0PEpzb248QmF0Y2hTZWFy
+Y2hSZXNwb25zZT4sIEFwaUVycj4gewogICAgT2soSnNvbihiYXRjaF9zZWFyY2hfY29yZSgmc3Rh
+dGUsICZhdXRoLCAmaGVhZGVycywgcmVxKS5hd2FpdD8pKQp9CgovLy8gU2hhcmVkIGltcGxlbWVu
+dGF0aW9uIGJlaGluZCBgUE9TVCAvY29sbGVjdGlvbnM6c2VhcmNoYCBhbmQgaXRzIGBRVUVSWQov
+Ly8gL2NvbGxlY3Rpb25zYCB0d2luIChbYGNvbGxlY3Rpb25zX3F1ZXJ5X2Rpc3BhdGNoYF0sIGVw
+aWMgIzEyOTYgUjE6IGV2ZXJ5Ci8vLyBRVUVSWSBlbmRwb2ludCBrZWVwcyBhIFBPU1QgdHdpbiDi
+gJQgc2FtZSBoYW5kbGVyLCBpZGVudGljYWwgcmVzcG9uc2UpLgphc3luYyBmbiBiYXRjaF9zZWFy
+Y2hfY29yZSgKICAgIHN0YXRlOiAmQXBwU3RhdGUsCiAgICBhdXRoOiAmQXV0aENvbnRleHQsCiAg
+ICBoZWFkZXJzOiAmSGVhZGVyTWFwLAogICAgcmVxOiBCYXRjaFNlYXJjaFJlcXVlc3QsCikgLT4g
+UmVzdWx0PEJhdGNoU2VhcmNoUmVzcG9uc2UsIEFwaUVycj4gewogICAgaWYgcmVxLnNlYXJjaGVz
+LmxlbigpID4gTUFYX0JBVENIX1NFQVJDSF9TSVpFIHsKICAgICAgICByZXR1cm4gRXJyKEFwaUVy
+cjo6bmV3KAogICAgICAgICAgICBTdGF0dXNDb2RlOjpCQURfUkVRVUVTVCwKICAgICAgICAgICAg
+ImJhdGNoX3Rvb19sYXJnZSIsCiAgICAgICAgICAgIGZvcm1hdCEoCiAgICAgICAgICAgICAgICAi
+YmF0Y2ggaGFzIHt9IGl0ZW1zLCBtYXggaXMge01BWF9CQVRDSF9TRUFSQ0hfU0laRX0iLAogICAg
+ICAgICAgICAgICAgcmVxLnNlYXJjaGVzLmxlbigpCiAgICAgICAgICAgICksCiAgICAgICAgKSk7
+CiAgICB9CiAgICBsZXQgY29uc2lzdGVuY3kgPSByZWFkX2NvbnNpc3RlbmN5X2Zyb20oaGVhZGVy
+cyk7CiAgICBlbmZvcmNlX3JlYWRfY29uc2lzdGVuY3koc3RhdGUsIGNvbnNpc3RlbmN5KT87CiAg
+ICBsZXQgcmVzdWx0cyA9IGpvaW5fYWxsKHJlcS5zZWFyY2hlcy5pbnRvX2l0ZXIoKS5tYXAofGl0
+ZW18IHsKICAgICAgICBsZXQgc3RhdGUgPSBzdGF0ZS5jbG9uZSgpOwogICAgICAgIGxldCBhdXRo
+ID0gYXV0aC5jbG9uZSgpOwogICAgICAgIGxldCBoZWFkZXJzID0gaGVhZGVycy5jbG9uZSgpOwog
+ICAgICAgIGFzeW5jIG1vdmUgewogICAgICAgICAgICBpZiBsZXQgRXJyKGUpID0gYXV0aC5lbnN1
+cmUoJml0ZW0uY29sbGVjdGlvbiwgUm9sZTo6UmVhZCkgewogICAgICAgICAgICAgICAgcmV0dXJu
+IGJhdGNoX3NlYXJjaF9hdXRoX2Vycm9yKGUpOwogICAgICAgICAgICB9CiAgICAgICAgICAgIGxl
+dCByZXN1bHQgPSBpZiBsZXQgU29tZShyb3V0ZXIpID0gJnN0YXRlLnJvdXRlZCB7CiAgICAgICAg
+ICAgICAgICByb3V0ZXIKICAgICAgICAgICAgICAgICAgICAuc2VhcmNoKCZpdGVtLmNvbGxlY3Rp
+b24sIGl0ZW0ucmVxdWVzdCwgJmhlYWRlcnMpCiAgICAgICAgICAgICAgICAgICAgLmF3YWl0CiAg
+ICAgICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgICAgICBzdGF0ZS5zZWFyY2hfYmFja2VuZC5z
+ZWFyY2goJml0ZW0uY29sbGVjdGlvbiwgaXRlbS5yZXF1ZXN0KQogICAgICAgICAgICB9OwogICAg
+ICAgICAgICBtYXRjaCByZXN1bHQgewogICAgICAgICAgICAgICAgT2socmVzcG9uc2UpID0+IEJh
+dGNoU2VhcmNoUmVzdWx0OjpPayB7IHJlc3BvbnNlIH0sCiAgICAgICAgICAgICAgICBFcnIoZSkg
+PT4gYmF0Y2hfc2VhcmNoX3N0b3JhZ2VfZXJyb3IoZSksCiAgICAgICAgICAgIH0KICAgICAgICB9
+CiAgICB9KSkKICAgIC5hd2FpdDsKICAgIE9rKEJhdGNoU2VhcmNoUmVzcG9uc2UgeyByZXN1bHRz
+IH0pCn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBRVUVSWSAoUkZDIDEwMDA4KSDigJQgZHVh
+bC1yZWdpc3RlcmVkIFBPU1QgdHdpbnMgKGVwaWMgIzEyOTYgUjEpCi8vIC0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLQovLwovLyBheHVtIGhhcyBubyBuYXRpdmUgYE1ldGhvZDo6UVVFUllgL2BNZXRob2RGaWx0
+ZXI6OlFVRVJZYCB5ZXQKLy8gKHRva2lvLXJzL2F4dW0jMzc5OSwgUFIgIzM4MDEgb3BlbikuIFRo
+ZSBpbnRlcmltIGRpc3BhdGNoIGJlbG93IHJlZ2lzdGVycwovLyBlYWNoIHJvdXRlJ3MgYGZhbGxi
+YWNrYCDigJQgdGhlIGhhbmRsZXIgYXh1bSBjYWxscyBmb3IgYW55IG1ldGhvZCBub3QKLy8gZXhw
+bGljaXRseSBjbGFpbWVkIGJ5IHRoYXQgcm91dGUncyBgZ2V0YC9gcG9zdGAvYHB1dGAvYGRlbGV0
+ZWAvYG9wdGlvbnNgLwovLyBgaGVhZGAgY29tYmluYXRvcnMg4oCUIGFuZCByZS1jaGVja3MgdGhl
+IG1ldGhvZCBieSBoYW5kIHZpYQovLyBgTWV0aG9kOjpmcm9tX2J5dGVzKGIiUVVFUlkiKWAuIFJl
+cGxhY2UgYGlzX3F1ZXJ5X21ldGhvZGAgYW5kIGJvdGgKLy8gYCpfcXVlcnlfZGlzcGF0Y2hgIGZh
+bGxiYWNrcyB3aXRoIG5hdGl2ZSBgTWV0aG9kRmlsdGVyOjpRVUVSWWAgY29tYmluYXRvcnMKLy8g
+b25jZSB0aGF0IFBSIGxhbmRzOyBgKl9xdWVyeV9wcm9iZWAgKE9QVElPTlMvSEVBRCkgY2FuIG1v
+dmUgdG8gb3JkaW5hcnkKLy8gY29tYmluYXRvcnMgdW5jaGFuZ2VkLgoKLy8vIGB0cnVlYCBmb3Ig
+dGhlIFJGQyAxMDAwOCBRVUVSWSBtZXRob2QuIGBodHRwOjpNZXRob2RgIGhhcyBubyBgUVVFUllg
+Ci8vLyBjb25zdGFudCB5ZXQsIHNvIHRoaXMgbWF0Y2hlcyB0aGUgd2lyZSB0b2tlbiB0aGUgc2Ft
+ZSB3YXkKLy8vIGBNZXRob2Q6OmZyb21fYnl0ZXMoYiJRVUVSWSIpYCB3b3VsZC4KZm4gaXNfcXVl
+cnlfbWV0aG9kKG1ldGhvZDogJk1ldGhvZCkgLT4gYm9vbCB7CiAgICBNZXRob2Q6OmZyb21fYnl0
+ZXMoYiJRVUVSWSIpLmlzX29rX2FuZCh8cXVlcnl8ICptZXRob2QgPT0gcXVlcnkpCn0KCi8vLyA0
+MDUgZm9yIGFueSBtZXRob2QgdGhhdCByZWFjaGVzIGEgUVVFUlktZGlzcGF0Y2ggZmFsbGJhY2sg
+d2l0aG91dAovLy8gYWN0dWFsbHkgYmVpbmcgUVVFUlkuIE5vcm1hbCB0cmFmZmljIG5ldmVyIGhp
+dHMgdGhpcyBhcm0g4oCUIGBQVVRgLwovLy8gYERFTEVURWAvYEdFVGAvYE9QVElPTlNgL2BIRUFE
+YCBhcmUgYWxsIGNsYWltZWQgYnkgZXhwbGljaXQgY29tYmluYXRvcnMKLy8vIGFoZWFkIG9mIHRo
+ZSBmYWxsYmFjayDigJQgaXQgb25seSBndWFyZHMgc3RyYXkvdW5zdXBwb3J0ZWQgbWV0aG9kcy4K
+Zm4gcXVlcnlfbWV0aG9kX25vdF9hbGxvd2VkKGFsbG93OiAmJ3N0YXRpYyBzdHIpIC0+IGF4dW06
+OnJlc3BvbnNlOjpSZXNwb25zZSB7CiAgICBheHVtOjpyZXNwb25zZTo6UmVzcG9uc2U6OmJ1aWxk
+ZXIoKQogICAgICAgIC5zdGF0dXMoU3RhdHVzQ29kZTo6TUVUSE9EX05PVF9BTExPV0VEKQogICAg
+ICAgIC5oZWFkZXIoYXh1bTo6aHR0cDo6aGVhZGVyOjpBTExPVywgYWxsb3cpCiAgICAgICAgLmJv
+ZHkoYXh1bTo6Ym9keTo6Qm9keTo6ZW1wdHkoKSkKICAgICAgICAuZXhwZWN0KCJzdGF0aWMgbm90
+LWFsbG93ZWQgaGVhZGVycyBhcmUgYWx3YXlzIHZhbGlkIikKfQoKLy8vIGBPUFRJT05TYC9gSEVB
+RGAgcHJvYmUgcmVzcG9uc2Ugc2hhcmVkIGJ5IGJvdGggUVVFUlkgdGFyZ2V0czogYWR2ZXJ0aXNl
+cwovLy8gYEFjY2VwdC1RdWVyeTogYXBwbGljYXRpb24vanNvbmAgKFJGQyAxMDAwOCBkaXNjb3Zl
+cnkpIGFuZCBsaXN0cyB0aGUKLy8vIHRhcmdldCdzIGZ1bGwgbWV0aG9kIHNldCwgUVVFUlkgaW5j
+bHVkZWQsIGluIGBBbGxvd2AuCmZuIHF1ZXJ5X3Byb2JlX3Jlc3BvbnNlKGFsbG93OiAmJ3N0YXRp
+YyBzdHIpIC0+IGF4dW06OnJlc3BvbnNlOjpSZXNwb25zZSB7CiAgICBheHVtOjpyZXNwb25zZTo6
+UmVzcG9uc2U6OmJ1aWxkZXIoKQogICAgICAgIC5zdGF0dXMoU3RhdHVzQ29kZTo6Tk9fQ09OVEVO
+VCkKICAgICAgICAuaGVhZGVyKGF4dW06Omh0dHA6OmhlYWRlcjo6QUxMT1csIGFsbG93KQogICAg
+ICAgIC5oZWFkZXIoImFjY2VwdC1xdWVyeSIsICJhcHBsaWNhdGlvbi9qc29uIikKICAgICAgICAu
+Ym9keShheHVtOjpib2R5OjpCb2R5OjplbXB0eSgpKQogICAgICAgIC5leHBlY3QoInN0YXRpYyBw
+cm9iZSBoZWFkZXJzIGFyZSBhbHdheXMgdmFsaWQiKQp9Cgphc3luYyBmbiBjb2xsZWN0aW9uX2lk
+X3F1ZXJ5X3Byb2JlKCkgLT4gYXh1bTo6cmVzcG9uc2U6OlJlc3BvbnNlIHsKICAgIHF1ZXJ5X3By
+b2JlX3Jlc3BvbnNlKCJQVVQsIERFTEVURSwgUVVFUlksIE9QVElPTlMsIEhFQUQiKQp9Cgphc3lu
+YyBmbiBjb2xsZWN0aW9uc19xdWVyeV9wcm9iZSgpIC0+IGF4dW06OnJlc3BvbnNlOjpSZXNwb25z
+ZSB7CiAgICBxdWVyeV9wcm9iZV9yZXNwb25zZSgiR0VULCBRVUVSWSwgT1BUSU9OUywgSEVBRCIp
+Cn0KCi8vLyBgUVVFUlkgL2NvbGxlY3Rpb25zL3tjb2xsZWN0aW9uX2lkfWAg4oCUIGR1YWwtcmVn
+aXN0ZXJlZCB0d2luIG9mIGBQT1NUCi8vLyAvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L3Nl
+YXJjaGAgKHNhbWUgW2BzZWFyY2hfY29yZWBdIGhhbmRsZXIsCi8vLyBpZGVudGljYWwgcmVzcG9u
+c2UgZm9yIGlkZW50aWNhbCBib2RpZXMpLiBDb250ZW50LVR5cGUgaXMgbWFuZGF0b3J5IG9uCi8v
+LyBRVUVSWSBwZXIgUkZDIDEwMDA4OyByZXVzaW5nIFtgSnNvbmBdJ3Mgb3duIGBGcm9tUmVxdWVz
+dGAgZm9yIHRoZSBib2R5Ci8vLyBnaXZlcyB0aGF0IGZvciBmcmVlIOKAlCBtaXNzaW5nL21pc21h
+dGNoZWQgYENvbnRlbnQtVHlwZWAgcmVqZWN0cyB3aXRoIDQxNSwKLy8vIGJ5dGUtaWRlbnRpY2Fs
+IHRvIHdoYXQgdGhlIFBPU1QgdHdpbiBhbHJlYWR5IHJldHVybnMgZm9yIHRoZSBzYW1lIGlucHV0
+Lgphc3luYyBmbiBjb2xsZWN0aW9uX2lkX3F1ZXJ5X2Rpc3BhdGNoKAogICAgU3RhdGUoc3RhdGUp
+OiBTdGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxBdXRoQ29u
+dGV4dD4sCiAgICBQYXRoKGNvbGxlY3Rpb25faWQpOiBQYXRoPFN0cmluZz4sCiAgICByZXF1ZXN0
+OiBSZXF1ZXN0LAopIC0+IGF4dW06OnJlc3BvbnNlOjpSZXNwb25zZSB7CiAgICBpZiAhaXNfcXVl
+cnlfbWV0aG9kKHJlcXVlc3QubWV0aG9kKCkpIHsKICAgICAgICByZXR1cm4gcXVlcnlfbWV0aG9k
+X25vdF9hbGxvd2VkKCJQVVQsIERFTEVURSwgUVVFUlksIE9QVElPTlMsIEhFQUQiKTsKICAgIH0K
+ICAgIGxldCBoZWFkZXJzID0gcmVxdWVzdC5oZWFkZXJzKCkuY2xvbmUoKTsKICAgIG1hdGNoIEpz
+b246OjxTZWFyY2hSZXF1ZXN0Pjo6ZnJvbV9yZXF1ZXN0KHJlcXVlc3QsICZzdGF0ZSkuYXdhaXQg
+ewogICAgICAgIE9rKEpzb24ocmVxKSkgPT4gbWF0Y2ggc2VhcmNoX2NvcmUoJnN0YXRlLCAmYXV0
+aCwgJmhlYWRlcnMsICZjb2xsZWN0aW9uX2lkLCByZXEpLmF3YWl0IHsKICAgICAgICAgICAgT2so
+cmVzcCkgPT4gSnNvbihyZXNwKS5pbnRvX3Jlc3BvbnNlKCksCiAgICAgICAgICAgIEVycihlKSA9
+PiBlLmludG9fcmVzcG9uc2UoKSwKICAgICAgICB9LAogICAgICAgIEVycihyZWplY3Rpb24pID0+
+IHJlamVjdGlvbi5pbnRvX3Jlc3BvbnNlKCksCiAgICB9Cn0KCi8vLyBgUVVFUlkgL2NvbGxlY3Rp
+b25zYCDigJQgZHVhbC1yZWdpc3RlcmVkIHR3aW4gb2YgYFBPU1QgL2NvbGxlY3Rpb25zOnNlYXJj
+aGAKLy8vIChzYW1lIFtgYmF0Y2hfc2VhcmNoX2NvcmVgXSBoYW5kbGVyLCBpZGVudGljYWwgcmVz
+cG9uc2UgZm9yIGlkZW50aWNhbAovLy8gYm9kaWVzKS4gU2VlIFtgY29sbGVjdGlvbl9pZF9xdWVy
+eV9kaXNwYXRjaGBdIGZvciB0aGUgQ29udGVudC1UeXBlLzQxNQovLy8gYW5kIGludGVyaW0tZmFs
+bGJhY2sgcmF0aW9uYWxlLgphc3luYyBmbiBjb2xsZWN0aW9uc19xdWVyeV9kaXNwYXRjaCgKICAg
+IFN0YXRlKHN0YXRlKTogU3RhdGU8QXBwU3RhdGU+LAogICAgRXh0ZW5zaW9uKGF1dGgpOiBFeHRl
+bnNpb248QXV0aENvbnRleHQ+LAogICAgcmVxdWVzdDogUmVxdWVzdCwKKSAtPiBheHVtOjpyZXNw
+b25zZTo6UmVzcG9uc2UgewogICAgaWYgIWlzX3F1ZXJ5X21ldGhvZChyZXF1ZXN0Lm1ldGhvZCgp
+KSB7CiAgICAgICAgcmV0dXJuIHF1ZXJ5X21ldGhvZF9ub3RfYWxsb3dlZCgiR0VULCBRVUVSWSwg
+T1BUSU9OUywgSEVBRCIpOwogICAgfQogICAgbGV0IGhlYWRlcnMgPSByZXF1ZXN0LmhlYWRlcnMo
+KS5jbG9uZSgpOwogICAgbWF0Y2ggSnNvbjo6PEJhdGNoU2VhcmNoUmVxdWVzdD46OmZyb21fcmVx
+dWVzdChyZXF1ZXN0LCAmc3RhdGUpLmF3YWl0IHsKICAgICAgICBPayhKc29uKHJlcSkpID0+IG1h
+dGNoIGJhdGNoX3NlYXJjaF9jb3JlKCZzdGF0ZSwgJmF1dGgsICZoZWFkZXJzLCByZXEpLmF3YWl0
+IHsKICAgICAgICAgICAgT2socmVzcCkgPT4gSnNvbihyZXNwKS5pbnRvX3Jlc3BvbnNlKCksCiAg
+ICAgICAgICAgIEVycihlKSA9PiBlLmludG9fcmVzcG9uc2UoKSwKICAgICAgICB9LAogICAgICAg
+IEVycihyZWplY3Rpb24pID0+IHJlamVjdGlvbi5pbnRvX3Jlc3BvbnNlKCksCiAgICB9Cn0KCi8v
+LyBDbGFzc2lmeSBvbmUgYmF0Y2ggaXRlbSdzIHNlYXJjaCBmYWlsdXJlIGludG8gYQovLy8gW2BC
+YXRjaFNlYXJjaFJlc3VsdDo6RXJyb3JgXSBpbnN0ZWFkIG9mIGZhaWxpbmcgdGhlIHdob2xlIGJh
+dGNoLiBNaXJyb3JzCi8vLyBgRnJvbTxhbnlob3c6OkVycm9yPiBmb3IgQXBpRXJyYCdzIGBTdG9y
+YWdlRXJyb3JgIGNsYXNzaWZpY2F0aW9uLCBidXQgdGhlCi8vLyBgY29kZWAgdmFsdWVzIGxpbmUg
+dXAgd2l0aCB0aGUgYmF0Y2ggd2lyZSBjb250cmFjdAovLy8gKGAiY29sbGVjdGlvbl9ub3RfZm91
+bmQiYCwgLi4uKSByYXRoZXIgdGhhbiBgQXBpRXJyYCdzIGludGVybmFsIGBraW5kYAovLy8gc3Ry
+aW5ncy4KZm4gYmF0Y2hfc2VhcmNoX3N0b3JhZ2VfZXJyb3IoZTogYW55aG93OjpFcnJvcikgLT4g
+QmF0Y2hTZWFyY2hSZXN1bHQgewogICAgbGV0IGNvZGUgPSBtYXRjaCBlLmRvd25jYXN0X3JlZjo6
+PFN0b3JhZ2VFcnJvcj4oKSB7CiAgICAgICAgU29tZShTdG9yYWdlRXJyb3I6OkNvbGxlY3Rpb25O
+b3RGb3VuZChfKSkgPT4gImNvbGxlY3Rpb25fbm90X2ZvdW5kIiwKICAgICAgICBTb21lKFN0b3Jh
+Z2VFcnJvcjo6SW52YWxpZENvbGxlY3Rpb25OYW1lKF8pKSA9PiAiaW52YWxpZF9jb2xsZWN0aW9u
+X25hbWUiLAogICAgICAgIFNvbWUoU3RvcmFnZUVycm9yOjpVbmtub3duRmllbGQgeyAuLiB9KSA9
+PiAidW5rbm93bl9maWVsZCIsCiAgICAgICAgU29tZShTdG9yYWdlRXJyb3I6OlR5cGVNaXNtYXRj
+aCB7IC4uIH0pID0+ICJ0eXBlX21pc21hdGNoIiwKICAgICAgICBTb21lKFN0b3JhZ2VFcnJvcjo6
+RHVwbGljYXRlc09uVGV4dChfKSkgPT4gImJhZF9yZXF1ZXN0IiwKICAgICAgICBTb21lKFN0b3Jh
+Z2VFcnJvcjo6SW52YWxpZE51bWJlcihfKSkgPT4gImludmFsaWRfbnVtYmVyIiwKICAgICAgICBT
+b21lKFN0b3JhZ2VFcnJvcjo6QnVsa0xpbWl0IHsgLi4gfSkgPT4gImJ1bGtfbGltaXQiLAogICAg
+ICAgIFNvbWUoU3RvcmFnZUVycm9yOjpRdWVyeVRvb0NvbXBsZXgoXykpID0+ICJxdWVyeV90b29f
+Y29tcGxleCIsCiAgICAgICAgU29tZShTdG9yYWdlRXJyb3I6OkludmFsaWRQYWdpbmF0aW9uKF8p
+KSA9PiAiaW52YWxpZF9wYWdpbmF0aW9uIiwKICAgICAgICBTb21lKFN0b3JhZ2VFcnJvcjo6R29u
+ZShfKSkgPT4gImdvbmUiLAogICAgICAgIFNvbWUoU3RvcmFnZUVycm9yOjpVbnN1cHBvcnRlZFNv
+cnQoXykpID0+ICJ1bnN1cHBvcnRlZF9zb3J0IiwKICAgICAgICBTb21lKFN0b3JhZ2VFcnJvcjo6
+SW52YWxpZFBydW5lQ2h1bmsgeyAuLiB9KSA9PiAiaW52YWxpZF9wcnVuZV9jaHVuayIsCiAgICAg
+ICAgU29tZShTdG9yYWdlRXJyb3I6OlBydW5lQWNjdW11bGF0b3JGdWxsIHsgLi4gfSkgPT4gInBy
+dW5lX2FjY3VtdWxhdG9yX2Z1bGwiLAogICAgICAgIE5vbmUgPT4gImJhZF9yZXF1ZXN0IiwKICAg
+IH07CiAgICBCYXRjaFNlYXJjaFJlc3VsdDo6RXJyb3IgewogICAgICAgIGNvZGU6IGNvZGUudG9f
+c3RyaW5nKCksCiAgICAgICAgbWVzc2FnZTogZS50b19zdHJpbmcoKSwKICAgIH0KfQoKLy8vIENs
+YXNzaWZ5IG9uZSBiYXRjaCBpdGVtJ3MgYXV0aCByZWplY3Rpb24gaW50byBhCi8vLyBbYEJhdGNo
+U2VhcmNoUmVzdWx0OjpFcnJvcmBdLgpmbiBiYXRjaF9zZWFyY2hfYXV0aF9lcnJvcihlOiBjcmF0
+ZTo6YXV0aDo6QXV0aEVycikgLT4gQmF0Y2hTZWFyY2hSZXN1bHQgewogICAgbWF0Y2ggZSB7CiAg
+ICAgICAgY3JhdGU6OmF1dGg6OkF1dGhFcnI6OkZvcmJpZGRlbiB7CiAgICAgICAgICAgIHN1Ympl
+Y3QsCiAgICAgICAgICAgIG5lZWRlZCwKICAgICAgICAgICAgY29sbGVjdGlvbl9pZCwKICAgICAg
+ICB9ID0+IEJhdGNoU2VhcmNoUmVzdWx0OjpFcnJvciB7CiAgICAgICAgICAgIGNvZGU6ICJmb3Ji
+aWRkZW4iLnRvX3N0cmluZygpLAogICAgICAgICAgICBtZXNzYWdlOiBmb3JtYXQhKCJzdWJqZWN0
+IGB7c3ViamVjdH1gIGxhY2tzIHtuZWVkZWQ6P30gb24gYHtjb2xsZWN0aW9uX2lkfWAiKSwKICAg
+ICAgICB9LAogICAgfQp9CgojW3V0b2lwYTo6cGF0aCgKICAgIHBvc3QsCiAgICBwYXRoID0gIi9j
+b2xsZWN0aW9ucy97Y29sbGVjdGlvbl9pZH0vZHVwbGljYXRlcyIsCiAgICB0YWcgPSAiUXVlcnki
+LAogICAgcGFyYW1zKCgiY29sbGVjdGlvbl9pZCIgPSBTdHJpbmcsIFBhdGgsIGRlc2NyaXB0aW9u
+ID0gIkNvbGxlY3Rpb24gbmFtZXNwYWNlIikpLAogICAgcmVxdWVzdF9ib2R5ID0gRHVwbGljYXRl
+c1JlcXVlc3QsCiAgICByZXNwb25zZXMoKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiRHVw
+bGljYXRlIGdyb3VwcyIsIGJvZHkgPSBEdXBsaWNhdGVzUmVzcG9uc2UpKQopXQovLy8gTG9jYWwt
+c2hhcmQgb25seSwgZGVsaWJlcmF0ZWx5IG5vdCB3aXJlZCB0byBgc3RhdGUucm91dGVkYCAoIzEz
+OTgga25vd24KLy8vIGdhcCwgIzE0NDIgUjYpOiBgRW5naW5lOjpkdXBsaWNhdGVzYCBmaWx0ZXJz
+IGJ5IGBtaW5fZ3JvdXBfc2l6ZWAgKmJlZm9yZSoKLy8vIGFueSBjcm9zcy1zaGFyZCBtZXJnZSBj
+b3VsZCBoYXBwZW4sIHNvIHNjYXR0ZXItdGhlbi1tZXJnZSB3b3VsZCBzaWxlbnRseQovLy8gbWlz
+cyBhIHRydWUgY3Jvc3Mtc2hhcmQgZ3JvdXAgKGUuZy4gb25lIGNvcHkgcGVyIHNoYXJkIHVuZGVy
+Ci8vLyBgbWluX2dyb3VwX3NpemU6IDJgKSDigJQgYSBjb3JyZWN0bmVzcyByZWdyZXNzaW9uLCBu
+b3QgYSByb3V0aW5nIGdhcC4gQQovLy8gY29ycmVjdCBjcm9zcy1zaGFyZCBpbXBsZW1lbnRhdGlv
+biBuZWVkcyB1bmZpbHRlcmVkIHBlci1zaGFyZCBjYW5kaWRhdGUKLy8vIGdyb3VwcyBmcm9tIGBz
+dG9yYWdlLnJzYCwgb3V0IG9mIHNjb3BlIGhlcmUuICMxNDQyIFI2IGNsb3NlcyB0aGUgInNpbGVu
+dAovLy8gd3JvbmcgYW5zd2VyIiBnYXAgdGhpcyBsZWZ0IGluIHJvdXRlZCBtdWx0aS1zaGFyZCBt
+b2RlOiByYXRoZXIgdGhhbgovLy8gdW5jaGFuZ2VkIHByZS0jMTM5OCBiZWhhdmlvciAoc2lsZW50
+bHkgYW5zd2VyaW5nIGZyb20gbG9jYWwtc2hhcmQgZGF0YQovLy8gb25seSwgbWlzc2luZyBjcm9z
+cy1zaGFyZCBkdXBsaWNhdGUgZ3JvdXBzIHdpdGggbm8gaW5kaWNhdGlvbiksIGEgcm91dGVkCi8v
+LyBkZXBsb3ltZW50IG5vdyByZWplY3RzIHdpdGggYSBkaXN0aW5jdCwgbm9uLXJldHJ5YWJsZSBl
+cnJvciBzbyBhIGNhbGxlcgovLy8gY2FuIHRlbGwgIm5vdCBzdXBwb3J0ZWQgaGVyZSIgZnJvbSAi
+bm8gZHVwbGljYXRlcyBmb3VuZCIuCmFzeW5jIGZuIGR1cGxpY2F0ZXMoCiAgICBTdGF0ZShzdGF0
+ZSk6IFN0YXRlPEFwcFN0YXRlPiwKICAgIEV4dGVuc2lvbihhdXRoKTogRXh0ZW5zaW9uPEF1dGhD
+b250ZXh0PiwKICAgIGhlYWRlcnM6IEhlYWRlck1hcCwKICAgIFBhdGgoY29sbGVjdGlvbl9pZCk6
+IFBhdGg8U3RyaW5nPiwKICAgIEpzb24ocmVxKTogSnNvbjxEdXBsaWNhdGVzUmVxdWVzdD4sCikg
+LT4gUmVzdWx0PEpzb248RHVwbGljYXRlc1Jlc3BvbnNlPiwgQXBpRXJyPiB7CiAgICBhdXRoLmVu
+c3VyZSgmY29sbGVjdGlvbl9pZCwgUm9sZTo6UmVhZCk/OwogICAgbGV0IF9jb25zaXN0ZW5jeSA9
+IHJlYWRfY29uc2lzdGVuY3lfZnJvbSgmaGVhZGVycyk7CiAgICBpZiBzdGF0ZS5yb3V0ZWQuaXNf
+c29tZSgpIHsKICAgICAgICByZXR1cm4gRXJyKEFwaUVycjo6bmV3KAogICAgICAgICAgICBTdGF0
+dXNDb2RlOjpOT1RfSU1QTEVNRU5URUQsCiAgICAgICAgICAgICJkdXBsaWNhdGVzX25vdF9yb3V0
+ZWQiLAogICAgICAgICAgICAiZHVwbGljYXRlIGRldGVjdGlvbiBpcyBsb2NhbC1zaGFyZC1vbmx5
+IGFuZCBkb2VzIG5vdCBtZXJnZSBhY3Jvc3Mgc2hhcmRzOyBub3QgXAogICAgICAgICAgICAgc3Vw
+cG9ydGVkIGluIHJvdXRlZCBtdWx0aS1zaGFyZCBtb2RlICgjMTQ0MiBSNikiCiAgICAgICAgICAg
+ICAgICAudG9fc3RyaW5nKCksCiAgICAgICAgKSk7CiAgICB9CiAgICBPayhKc29uKAogICAgICAg
+IHN0YXRlCiAgICAgICAgICAgIC5lbmdpbmUKICAgICAgICAgICAgLmR1cGxpY2F0ZXMoJmNvbGxl
+Y3Rpb25faWQsIHJlcSkKICAgICAgICAgICAgLm1hcF9lcnIoQXBpRXJyOjpmcm9tKT8sCiAgICAp
+KQp9CgojW3V0b2lwYTo6cGF0aCgKICAgIGdldCwKICAgIHBhdGggPSAiL2NvbGxlY3Rpb25zL3tj
+b2xsZWN0aW9uX2lkfS9zdGF0cyIsCiAgICB0YWcgPSAiUXVlcnkiLAogICAgcGFyYW1zKCgiY29s
+bGVjdGlvbl9pZCIgPSBTdHJpbmcsIFBhdGgsIGRlc2NyaXB0aW9uID0gIkNvbGxlY3Rpb24gbmFt
+ZXNwYWNlIikpLAogICAgcmVzcG9uc2VzKChzdGF0dXMgPSAyMDAsIGRlc2NyaXB0aW9uID0gIkNv
+bGxlY3Rpb24gc3RhdHMiLCBib2R5ID0gU3RhdHNSZXNwb25zZSkpCildCmFzeW5jIGZuIHN0YXRz
+KAogICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6
+IEV4dGVuc2lvbjxBdXRoQ29udGV4dD4sCiAgICBQYXRoKGNvbGxlY3Rpb25faWQpOiBQYXRoPFN0
+cmluZz4sCikgLT4gUmVzdWx0PEpzb248U3RhdHNSZXNwb25zZT4sIEFwaUVycj4gewogICAgYXV0
+aC5lbnN1cmUoJmNvbGxlY3Rpb25faWQsIFJvbGU6OlJlYWQpPzsKICAgIE9rKEpzb24oCiAgICAg
+ICAgc3RhdGUuZW5naW5lLnN0YXRzKCZjb2xsZWN0aW9uX2lkKS5tYXBfZXJyKEFwaUVycjo6ZnJv
+bSk/LAogICAgKSkKfQoKLy8vIFN0cmVhbWluZyBidWxrLXJlaW5kZXggZW5kcG9pbnQuCi8vLwov
+Ly8gQm9keSBpcyBOREpTT04gb2YgYEluZGV4SXRlbWAgcmVjb3JkcyAob25lIHBlciBsaW5lKS4g
+UmVzcG9uc2UgaXMKLy8vIGFuIE5ESlNPTiBzdHJlYW0gb2YgcHJvZ3Jlc3MgZXZlbnRzOgovLy8K
+Ly8vIGBgYHRleHQKLy8vIHsiZXZlbnQiOiJwcm9ncmVzcyIsImluZGV4ZWRfdG90YWwiOjEwMDAs
+ImJhdGNoX2luZGV4ZWQiOjEwMDAsImVsYXBzZWRfbXMiOjQyfQovLy8geyJldmVudCI6InByb2dy
+ZXNzIiwiaW5kZXhlZF90b3RhbCI6MjAwMCwiYmF0Y2hfaW5kZXhlZCI6MTAwMCwiZWxhcHNlZF9t
+cyI6ODV9Ci8vLyAuLi4KLy8vIHsiZXZlbnQiOiJkb25lIiwiaW5kZXhlZF90b3RhbCI6MjQ3Mywi
+ZWxhcHNlZF9tcyI6MjEwfQovLy8gYGBgCi8vLwovLy8gRXJyb3JzIGFyZSBzdXJmYWNlZCBhcyBg
+eyJldmVudCI6ImVycm9yIiwibGluZSI6TiwibWVzc2FnZSI6Ii4uLiJ9YAovLy8gaW5saW5lOyB0
+aGUgc3RyZWFtIGNvbnRpbnVlcyBzbyBwYXJ0aWFsIHByb2dyZXNzIGlzIG9ic2VydmFibGUuCi8v
+LwovLy8gUmVqZWN0ZWQgb3V0cmlnaHQgaW4gcm91dGVkIG11bHRpLXNoYXJkIG1vZGUgKCMxNDQy
+IFI2KTogdGhlIHNwYXduZWQKLy8vIGJhdGNoIGxvb3AgYmVsb3cgd3JpdGVzIHRocm91Z2ggYHN0
+YXRlLndyaXRlX2JhY2tlbmRgIGRpcmVjdGx5LCBieXBhc3NpbmcKLy8vIGJvdGggYHN0YXRlLnJv
+dXRlZGAncyBwZXItaXRlbSBzaGFyZCBvd25lcnNoaXAgYW5kIGBlbmZvcmNlX3dyaXRlX2ZlbmNl
+YAovLy8gKHRoZSBzYW1lIHBlci1pdGVtIHJlc2hhcmQtY3V0b3ZlciBwYXVzZSBldmVyeSBvdGhl
+ciB3cml0ZSBwYXRoCi8vLyBvYnNlcnZlcykuIFJvdXRpbmcgZWFjaCBzdHJlYW1lZCBpdGVtIGJ5
+IG93bmVyc2hpcCBhbmQgZmVuY2luZyBpdAovLy8gaW5kaXZpZHVhbGx5LCBpbnNpZGUgYSBkZXRh
+Y2hlZCBgdG9raW86OnNwYXduYCB0YXNrIHRoYXQgYWxyZWFkeSBzdHJlYW1zCi8vLyBpdHMgb3du
+IE5ESlNPTiByZXNwb25zZSBiYWNrLCBpcyBhIG1hdGVyaWFsbHkgYmlnZ2VyIGNoYW5nZSB0aGFu
+IHRoaXMKLy8vIGJvdW5kZWQgaGFyZGVuaW5nIHBhc3Mg4oCUIGFuIGFjY2VwdGVkLCBkb2N1bWVu
+dGVkIGZhbGxiYWNrIHBlciBSNidzIG93bgovLy8gc2NvcGUgcmF0aGVyIHRoYW4gYSBoYWxmLXJv
+dXRlZCBpbXBsZW1lbnRhdGlvbiB0aGF0IGNvdWxkIHNpbGVudGx5Ci8vLyBtaXMtc2hhcmQgb3Ig
+c2tpcCB0aGUgd3JpdGUgZmVuY2UuCmFzeW5jIGZuIHJlaW5kZXhfc3RyZWFtKAogICAgU3RhdGUo
+c3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxB
+dXRoQ29udGV4dD4sCiAgICBQYXRoKGNvbGxlY3Rpb25faWQpOiBQYXRoPFN0cmluZz4sCiAgICBi
+b2R5OiBheHVtOjpib2R5OjpCeXRlcywKKSAtPiBSZXN1bHQ8YXh1bTo6cmVzcG9uc2U6OlJlc3Bv
+bnNlLCBBcGlFcnI+IHsKICAgIHVzZSBheHVtOjpib2R5OjpCb2R5OwogICAgdXNlIHN0ZDo6dGlt
+ZTo6SW5zdGFudDsKICAgIHVzZSB0b2tpbzo6c3luYzo6bXBzYzsKCiAgICBhdXRoLmVuc3VyZSgm
+Y29sbGVjdGlvbl9pZCwgUm9sZTo6V3JpdGUpPzsKICAgIGlmIHN0YXRlLnJvdXRlZC5pc19zb21l
+KCkgewogICAgICAgIHJldHVybiBFcnIoQXBpRXJyOjpuZXcoCiAgICAgICAgICAgIFN0YXR1c0Nv
+ZGU6Ok5PVF9JTVBMRU1FTlRFRCwKICAgICAgICAgICAgInJlaW5kZXhfc3RyZWFtX25vdF9yb3V0
+ZWQiLAogICAgICAgICAgICAic3RyZWFtaW5nIGJ1bGsgcmVpbmRleCBieXBhc3NlcyBwZXItaXRl
+bSBzaGFyZCBvd25lcnNoaXAgYW5kIHRoZSB3cml0ZSBmZW5jZTsgbm90IFwKICAgICAgICAgICAg
+IHN1cHBvcnRlZCBpbiByb3V0ZWQgbXVsdGktc2hhcmQgbW9kZSwgdXNlIFBPU1QgLi4uL2luZGV4
+IGluc3RlYWQgKCMxNDQyIFI2KSIKICAgICAgICAgICAgICAgIC50b19zdHJpbmcoKSwKICAgICAg
+ICApKTsKICAgIH0KCiAgICBjb25zdCBCQVRDSF9TSVpFOiB1c2l6ZSA9IDFfMDAwOwogICAgbGV0
+ICh0eCwgcngpID0gbXBzYzo6Y2hhbm5lbDo6PFJlc3VsdDxheHVtOjpib2R5OjpCeXRlcywgc3Rk
+Ojppbzo6RXJyb3I+PigxNik7CiAgICBsZXQgd3JpdGVyID0gc3RhdGUud3JpdGVfYmFja2VuZC5j
+bG9uZSgpOwogICAgbGV0IGNvbGxlY3Rpb24gPSBjb2xsZWN0aW9uX2lkLmNsb25lKCk7CgogICAg
+dG9raW86OnNwYXduKGFzeW5jIG1vdmUgewogICAgICAgIGxldCBzdGFydGVkID0gSW5zdGFudDo6
+bm93KCk7CiAgICAgICAgbGV0IG11dCBiYXRjaDogVmVjPEluZGV4SXRlbT4gPSBWZWM6OndpdGhf
+Y2FwYWNpdHkoQkFUQ0hfU0laRSk7CiAgICAgICAgbGV0IG11dCBpbmRleGVkX3RvdGFsID0gMHU2
+NDsKICAgICAgICBsZXQgc2VuZCA9IHx0eDogJm1wc2M6OlNlbmRlcjxfPiwgbGluZTogc2VyZGVf
+anNvbjo6VmFsdWV8IHsKICAgICAgICAgICAgbGV0IG11dCBzID0gbGluZS50b19zdHJpbmcoKTsK
+ICAgICAgICAgICAgcy5wdXNoKCdcbicpOwogICAgICAgICAgICBsZXQgYnl0ZXMgPSBheHVtOjpi
+b2R5OjpCeXRlczo6ZnJvbShzLmludG9fYnl0ZXMoKSk7CiAgICAgICAgICAgIHR4LnRyeV9zZW5k
+KE9rOjo8Xywgc3RkOjppbzo6RXJyb3I+KGJ5dGVzKSkKICAgICAgICB9OwoKICAgICAgICBmb3Ig
+KGxpbmVubywgcmF3KSBpbiBib2R5LnNwbGl0KHwmYnwgYiA9PSBiJ1xuJykuZW51bWVyYXRlKCkg
+ewogICAgICAgICAgICBsZXQgbGluZSA9IHJhdy50cmltX2FzY2lpKCk7CiAgICAgICAgICAgIGlm
+IGxpbmUuaXNfZW1wdHkoKSB7CiAgICAgICAgICAgICAgICBjb250aW51ZTsKICAgICAgICAgICAg
+fQogICAgICAgICAgICBsZXQgaXRlbTogSW5kZXhJdGVtID0gbWF0Y2ggc2VyZGVfanNvbjo6ZnJv
+bV9zbGljZShsaW5lKSB7CiAgICAgICAgICAgICAgICBPayhpKSA9PiBpLAogICAgICAgICAgICAg
+ICAgRXJyKGUpID0+IHsKICAgICAgICAgICAgICAgICAgICBsZXQgXyA9IHNlbmQoCiAgICAgICAg
+ICAgICAgICAgICAgICAgICZ0eCwKICAgICAgICAgICAgICAgICAgICAgICAgc2VyZGVfanNvbjo6
+anNvbiEoewogICAgICAgICAgICAgICAgICAgICAgICAgICAgImV2ZW50IjogImVycm9yIiwKICAg
+ICAgICAgICAgICAgICAgICAgICAgICAgICJsaW5lIjogbGluZW5vICsgMSwKICAgICAgICAgICAg
+ICAgICAgICAgICAgICAgICJtZXNzYWdlIjogZS50b19zdHJpbmcoKSwKICAgICAgICAgICAgICAg
+ICAgICAgICAgfSksCiAgICAgICAgICAgICAgICAgICAgKTsKICAgICAgICAgICAgICAgICAgICBj
+b250aW51ZTsKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgfTsKICAgICAgICAgICAgYmF0
+Y2gucHVzaChpdGVtKTsKCiAgICAgICAgICAgIGlmIGJhdGNoLmxlbigpID49IEJBVENIX1NJWkUg
+ewogICAgICAgICAgICAgICAgbGV0IGRyYWluZWQgPSBzdGQ6Om1lbTo6cmVwbGFjZSgmbXV0IGJh
+dGNoLCBWZWM6OndpdGhfY2FwYWNpdHkoQkFUQ0hfU0laRSkpOwogICAgICAgICAgICAgICAgbGV0
+IGJhdGNoX3N0YXJ0ID0gSW5zdGFudDo6bm93KCk7CiAgICAgICAgICAgICAgICBtYXRjaCB3cml0
+ZXIKICAgICAgICAgICAgICAgICAgICAuaW5kZXgoCiAgICAgICAgICAgICAgICAgICAgICAgIGNv
+bGxlY3Rpb24uY2xvbmUoKSwKICAgICAgICAgICAgICAgICAgICAgICAgSW5kZXhSZXF1ZXN0IHsK
+ICAgICAgICAgICAgICAgICAgICAgICAgICAgIGl0ZW1zOiBkcmFpbmVkLAogICAgICAgICAgICAg
+ICAgICAgICAgICAgICAgcmVxdWVzdF9pZDogTm9uZSwKICAgICAgICAgICAgICAgICAgICAgICAg
+fSwKICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgLmF3YWl0CiAgICAg
+ICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgT2socikgPT4gewogICAgICAgICAgICAg
+ICAgICAgICAgICBpbmRleGVkX3RvdGFsICs9IHIuaW5kZXhlZCBhcyB1NjQ7CiAgICAgICAgICAg
+ICAgICAgICAgICAgIGxldCBfID0gc2VuZCgKICAgICAgICAgICAgICAgICAgICAgICAgICAgICZ0
+eCwKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHNlcmRlX2pzb246Ompzb24hKHsKICAgICAg
+ICAgICAgICAgICAgICAgICAgICAgICAgICAiZXZlbnQiOiAicHJvZ3Jlc3MiLAogICAgICAgICAg
+ICAgICAgICAgICAgICAgICAgICAgICJpbmRleGVkX3RvdGFsIjogaW5kZXhlZF90b3RhbCwKICAg
+ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAiYmF0Y2hfaW5kZXhlZCI6IHIuaW5kZXhlZCwK
+ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAiZWxhcHNlZF9tcyI6IHN0YXJ0ZWQuZWxh
+cHNlZCgpLmFzX21pbGxpcygpIGFzIHU2NCwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
+ICAiYmF0Y2hfZWxhcHNlZF9tcyI6IGJhdGNoX3N0YXJ0LmVsYXBzZWQoKS5hc19taWxsaXMoKSBh
+cyB1NjQsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICB9KSwKICAgICAgICAgICAgICAgICAg
+ICAgICAgKTsKICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAgICAgRXJyKGUp
+ID0+IHsKICAgICAgICAgICAgICAgICAgICAgICAgbGV0IF8gPSBzZW5kKAogICAgICAgICAgICAg
+ICAgICAgICAgICAgICAgJnR4LAogICAgICAgICAgICAgICAgICAgICAgICAgICAgc2VyZGVfanNv
+bjo6anNvbiEoewogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICJldmVudCI6ICJlcnJv
+ciIsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgImxpbmUiOiBsaW5lbm8gKyAxLAog
+ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICJtZXNzYWdlIjogZS50b19zdHJpbmcoKSwK
+ICAgICAgICAgICAgICAgICAgICAgICAgICAgIH0pLAogICAgICAgICAgICAgICAgICAgICAgICAp
+OwogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQog
+ICAgICAgIH0KCiAgICAgICAgLy8gRmluYWwgZmx1c2ggb2Ygd2hhdGV2ZXIncyBsZWZ0IGluIHRo
+ZSBiYXRjaC4KICAgICAgICBpZiAhYmF0Y2guaXNfZW1wdHkoKSB7CiAgICAgICAgICAgIGxldCBi
+YXRjaF9zdGFydCA9IEluc3RhbnQ6Om5vdygpOwogICAgICAgICAgICBpZiBsZXQgT2socikgPSB3
+cml0ZXIKICAgICAgICAgICAgICAgIC5pbmRleCgKICAgICAgICAgICAgICAgICAgICBjb2xsZWN0
+aW9uLmNsb25lKCksCiAgICAgICAgICAgICAgICAgICAgSW5kZXhSZXF1ZXN0IHsKICAgICAgICAg
+ICAgICAgICAgICAgICAgaXRlbXM6IGJhdGNoLAogICAgICAgICAgICAgICAgICAgICAgICByZXF1
+ZXN0X2lkOiBOb25lLAogICAgICAgICAgICAgICAgICAgIH0sCiAgICAgICAgICAgICAgICApCiAg
+ICAgICAgICAgICAgICAuYXdhaXQKICAgICAgICAgICAgewogICAgICAgICAgICAgICAgaW5kZXhl
+ZF90b3RhbCArPSByLmluZGV4ZWQgYXMgdTY0OwogICAgICAgICAgICAgICAgbGV0IF8gPSBzZW5k
+KAogICAgICAgICAgICAgICAgICAgICZ0eCwKICAgICAgICAgICAgICAgICAgICBzZXJkZV9qc29u
+Ojpqc29uISh7CiAgICAgICAgICAgICAgICAgICAgICAgICJldmVudCI6ICJwcm9ncmVzcyIsCiAg
+ICAgICAgICAgICAgICAgICAgICAgICJpbmRleGVkX3RvdGFsIjogaW5kZXhlZF90b3RhbCwKICAg
+ICAgICAgICAgICAgICAgICAgICAgImJhdGNoX2luZGV4ZWQiOiByLmluZGV4ZWQsCiAgICAgICAg
+ICAgICAgICAgICAgICAgICJlbGFwc2VkX21zIjogc3RhcnRlZC5lbGFwc2VkKCkuYXNfbWlsbGlz
+KCkgYXMgdTY0LAogICAgICAgICAgICAgICAgICAgICAgICAiYmF0Y2hfZWxhcHNlZF9tcyI6IGJh
+dGNoX3N0YXJ0LmVsYXBzZWQoKS5hc19taWxsaXMoKSBhcyB1NjQsCiAgICAgICAgICAgICAgICAg
+ICAgfSksCiAgICAgICAgICAgICAgICApOwogICAgICAgICAgICB9CiAgICAgICAgfQoKICAgICAg
+ICBsZXQgXyA9IHNlbmQoCiAgICAgICAgICAgICZ0eCwKICAgICAgICAgICAgc2VyZGVfanNvbjo6
+anNvbiEoewogICAgICAgICAgICAgICAgImV2ZW50IjogImRvbmUiLAogICAgICAgICAgICAgICAg
+ImluZGV4ZWRfdG90YWwiOiBpbmRleGVkX3RvdGFsLAogICAgICAgICAgICAgICAgImVsYXBzZWRf
+bXMiOiBzdGFydGVkLmVsYXBzZWQoKS5hc19taWxsaXMoKSBhcyB1NjQsCiAgICAgICAgICAgIH0p
+LAogICAgICAgICk7CgogICAgICAgIHRyYWNpbmc6OmluZm8hKAogICAgICAgICAgICB0YXJnZXQ6
+ICJsdW1lbi5hdWRpdCIsCiAgICAgICAgICAgIGV2ZW50ID0gInJlaW5kZXhfc3RyZWFtX2RvbmUi
+LAogICAgICAgICAgICBzdWJqZWN0ID0gYXV0aC5zdWJqZWN0KCkudW53cmFwX29yKCJhbm9ueW1v
+dXMiKSwKICAgICAgICAgICAgY29sbGVjdGlvbl9pZCA9ICVjb2xsZWN0aW9uLAogICAgICAgICAg
+ICBpbmRleGVkX3RvdGFsLAogICAgICAgICAgICBlbGFwc2VkX21zID0gc3RhcnRlZC5lbGFwc2Vk
+KCkuYXNfbWlsbGlzKCkgYXMgdTY0LAogICAgICAgICk7CiAgICB9KTsKCiAgICBsZXQgc3RyZWFt
+ID0KICAgICAgICBmdXR1cmVzOjpzdHJlYW06OnVuZm9sZChyeCwgfG11dCByeHwgYXN5bmMgbW92
+ZSB7IHJ4LnJlY3YoKS5hd2FpdC5tYXAofHJ8IChyLCByeCkpIH0pOwogICAgbGV0IHJlc3AgPSBh
+eHVtOjpyZXNwb25zZTo6UmVzcG9uc2U6OmJ1aWxkZXIoKQogICAgICAgIC5zdGF0dXMoU3RhdHVz
+Q29kZTo6T0spCiAgICAgICAgLmhlYWRlcigiY29udGVudC10eXBlIiwgImFwcGxpY2F0aW9uL3gt
+bmRqc29uIikKICAgICAgICAuYm9keShCb2R5Ojpmcm9tX3N0cmVhbShzdHJlYW0pKQogICAgICAg
+IC5tYXBfZXJyKHxlfCB7CiAgICAgICAgICAgIEFwaUVycjo6bmV3KAogICAgICAgICAgICAgICAg
+U3RhdHVzQ29kZTo6SU5URVJOQUxfU0VSVkVSX0VSUk9SLAogICAgICAgICAgICAgICAgInN0cmVh
+bV9pbml0IiwKICAgICAgICAgICAgICAgIGUudG9fc3RyaW5nKCksCiAgICAgICAgICAgICkKICAg
+ICAgICB9KT87CiAgICBPayhyZXNwKQp9CgojW3V0b2lwYTo6cGF0aCgKICAgIGRlbGV0ZSwKICAg
+IHBhdGggPSAiL2NvbGxlY3Rpb25zL3tjb2xsZWN0aW9uX2lkfS9maWVsZHMve2ZpZWxkX25hbWV9
+IiwKICAgIHRhZyA9ICJDb2xsZWN0aW9ucyIsCiAgICBwYXJhbXMoCiAgICAgICAgKCJjb2xsZWN0
+aW9uX2lkIiA9IFN0cmluZywgUGF0aCwgZGVzY3JpcHRpb24gPSAiQ29sbGVjdGlvbiBuYW1lc3Bh
+Y2UiKSwKICAgICAgICAoImZpZWxkX25hbWUiICAgID0gU3RyaW5nLCBQYXRoLCBkZXNjcmlwdGlv
+biA9ICJGaWVsZCB0byBkcm9wIikKICAgICksCiAgICByZXNwb25zZXMoCiAgICAgICAgKHN0YXR1
+cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiRmllbGQgZHJvcHBlZDsgbmV3IHNjaGVtYSB2ZXJzaW9u
+IiwgYm9keSA9IHNlcmRlX2pzb246OlZhbHVlKSwKICAgICAgICAoc3RhdHVzID0gNDA0LCBkZXNj
+cmlwdGlvbiA9ICJVbmtub3duIGNvbGxlY3Rpb24gb3IgZmllbGQiLCAgICAgICBib2R5ID0gQXBp
+RXJyb3IpCiAgICApCildCmFzeW5jIGZuIGRyb3BfZmllbGQoCiAgICBTdGF0ZShzdGF0ZSk6IFN0
+YXRlPEFwcFN0YXRlPiwKICAgIEV4dGVuc2lvbihhdXRoKTogRXh0ZW5zaW9uPEF1dGhDb250ZXh0
+PiwKICAgIFBhdGgoKGNvbGxlY3Rpb25faWQsIGZpZWxkX25hbWUpKTogUGF0aDwoU3RyaW5nLCBT
+dHJpbmcpPiwKKSAtPiBSZXN1bHQ8SnNvbjxzZXJkZV9qc29uOjpWYWx1ZT4sIEFwaUVycj4gewog
+ICAgYXV0aC5lbnN1cmUoJmNvbGxlY3Rpb25faWQsIFJvbGU6OkFkbWluKT87CiAgICBsZXQgdmVy
+c2lvbiA9IHN0YXRlCiAgICAgICAgLndyaXRlX2JhY2tlbmQKICAgICAgICAuZHJvcF9maWVsZChj
+b2xsZWN0aW9uX2lkLmNsb25lKCksIGZpZWxkX25hbWUuY2xvbmUoKSkKICAgICAgICAuYXdhaXQK
+ICAgICAgICAubWFwX2VycihBcGlFcnI6OmZyb20pPzsKICAgIHRyYWNpbmc6OmluZm8hKAogICAg
+ICAgIHRhcmdldDogImx1bWVuLmF1ZGl0IiwKICAgICAgICBldmVudCA9ICJmaWVsZF9kcm9wIiwK
+ICAgICAgICBzdWJqZWN0ID0gYXV0aC5zdWJqZWN0KCkudW53cmFwX29yKCJhbm9ueW1vdXMiKSwK
+ICAgICAgICBjb2xsZWN0aW9uX2lkID0gJWNvbGxlY3Rpb25faWQsCiAgICAgICAgZmllbGRfbmFt
+ZSA9ICVmaWVsZF9uYW1lLAogICAgICAgIHZlcnNpb24sCiAgICApOwogICAgT2soSnNvbihzZXJk
+ZV9qc29uOjpqc29uISh7CiAgICAgICAgImNvbGxlY3Rpb25faWQiOiBjb2xsZWN0aW9uX2lkLAog
+ICAgICAgICJmaWVsZF9uYW1lIjogZmllbGRfbmFtZSwKICAgICAgICAidmVyc2lvbiI6IHZlcnNp
+b24sCiAgICB9KSkpCn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBCYWNrdXAgLyByZXN0b3Jl
+IChjbHVzdGVyLXdpZGUgYWRtaW4pCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8vIER1bXAgdGhl
+IGVudGlyZSBlbmdpbmUgc3RhdGUgYXMgYSBzaW5nbGUgSlNPTiBkb2N1bWVudC4KYXN5bmMgZm4g
+YmFja3VwKAogICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24o
+YXV0aCk6IEV4dGVuc2lvbjxBdXRoQ29udGV4dD4sCikgLT4gUmVzdWx0PEpzb248U25hcHNob3RW
+MT4sIEFwaUVycj4gewogICAgLy8gQ2x1c3Rlci13aWRlIGFkbWluIG9wOiBuZWVkcyBhZG1pbiBv
+biB3aWxkY2FyZC4KICAgIGF1dGguZW5zdXJlKCIqIiwgUm9sZTo6QWRtaW4pPzsKICAgIHRyYWNp
+bmc6OmluZm8hKAogICAgICAgIHRhcmdldDogImx1bWVuLmF1ZGl0IiwKICAgICAgICBldmVudCA9
+ICJiYWNrdXBfc3RhcnRlZCIsCiAgICAgICAgc3ViamVjdCA9IGF1dGguc3ViamVjdCgpLnVud3Jh
+cF9vcigiYW5vbnltb3VzIiksCiAgICApOwogICAgT2soSnNvbihzdGF0ZS5lbmdpbmUuc25hcHNo
+b3QoKS5tYXBfZXJyKEFwaUVycjo6ZnJvbSk/KSkKfQoKI1tkZXJpdmUoRGVidWcsIERlc2VyaWFs
+aXplKV0Kc3RydWN0IExvY2FsQmFja3VwUmVxdWVzdCB7CiAgICAvLy8gRmlsZXN5c3RlbSBwYXRo
+IHRoZSBzbmFwc2hvdCB3aWxsIGJlIHdyaXR0ZW4gaW50by4KICAgIHBhdGg6IFN0cmluZywKICAg
+IC8vLyBLZXkgcHJlZml4OyB0aGUgZmlsZSB3aWxsIGJlIG5hbWVkIGB7cHJlZml4fS17dW5peF9z
+ZWNvbmRzfS5qc29uYC4KICAgICNbc2VyZGUoZGVmYXVsdCA9ICJkZWZhdWx0X2JhY2t1cF9wcmVm
+aXgiKV0KICAgIHByZWZpeDogU3RyaW5nLAp9CgpmbiBkZWZhdWx0X2JhY2t1cF9wcmVmaXgoKSAt
+PiBTdHJpbmcgewogICAgImx1bWVuLWJhY2t1cCIuaW50bygpCn0KCi8vLyBTbmFwc2hvdCB0aGUg
+ZW5naW5lIGFuZCBwZXJzaXN0IGl0IHZpYSBhIGBMb2NhbEZzU2lua2AuIFJldHVybnMgdGhlCi8v
+LyBmaW5hbCBrZXkgdGhlIHNpbmsgY2hvc2UuIFRoZSBwYXRoIGlzIGNyZWF0ZWQgaWYgbWlzc2lu
+Zy4KYXN5bmMgZm4gYmFja3VwX3RvX2xvY2FsKAogICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBT
+dGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxBdXRoQ29udGV4dD4sCiAgICBK
+c29uKHJlcSk6IEpzb248TG9jYWxCYWNrdXBSZXF1ZXN0PiwKKSAtPiBSZXN1bHQ8SnNvbjxzZXJk
+ZV9qc29uOjpWYWx1ZT4sIEFwaUVycj4gewogICAgYXV0aC5lbnN1cmUoIioiLCBSb2xlOjpBZG1p
+bik/OwogICAgbGV0IHNuYXAgPSBzdGF0ZS5lbmdpbmUuc25hcHNob3QoKS5tYXBfZXJyKEFwaUVy
+cjo6ZnJvbSk/OwogICAgbGV0IHBheWxvYWQgPSBzZXJkZV9qc29uOjp0b192ZWMoJnNuYXApCiAg
+ICAgICAgLm1hcF9lcnIofGV8IEFwaUVycjo6bmV3KFN0YXR1c0NvZGU6OklOVEVSTkFMX1NFUlZF
+Ul9FUlJPUiwgImVuY29kZSIsIGUudG9fc3RyaW5nKCkpKT87CiAgICBsZXQgc2luayA9IExvY2Fs
+RnNTaW5rOjpuZXcoJnJlcS5wYXRoLCAmcmVxLnByZWZpeCkKICAgICAgICAubWFwX2Vycih8ZXwg
+QXBpRXJyOjpuZXcoU3RhdHVzQ29kZTo6QkFEX1JFUVVFU1QsICJiYWRfc2luayIsIGUudG9fc3Ry
+aW5nKCkpKT87CiAgICBsZXQga2V5ID0gc2luawogICAgICAgIC5wdXQoc3RkOjp0aW1lOjpTeXN0
+ZW1UaW1lOjpub3coKSwgJnBheWxvYWQpCiAgICAgICAgLm1hcF9lcnIofGV8IEFwaUVycjo6bmV3
+KFN0YXR1c0NvZGU6OklOVEVSTkFMX1NFUlZFUl9FUlJPUiwgInNpbmtfcHV0IiwgZS50b19zdHJp
+bmcoKSkpPzsKICAgIHRyYWNpbmc6OmluZm8hKAogICAgICAgIHRhcmdldDogImx1bWVuLmF1ZGl0
+IiwKICAgICAgICBldmVudCA9ICJiYWNrdXBfbG9jYWwiLAogICAgICAgIHN1YmplY3QgPSBhdXRo
+LnN1YmplY3QoKS51bndyYXBfb3IoImFub255bW91cyIpLAogICAgICAgIHNpbmsgPSAlc2luay5p
+ZGVudGl0eSgpLAogICAgICAgIGtleSA9ICVrZXksCiAgICAgICAgYnl0ZXMgPSBwYXlsb2FkLmxl
+bigpLAogICAgKTsKICAgIE9rKEpzb24oc2VyZGVfanNvbjo6anNvbiEoewogICAgICAgICJzaW5r
+Ijogc2luay5pZGVudGl0eSgpLAogICAgICAgICJrZXkiOiBrZXksCiAgICAgICAgImJ5dGVzIjog
+cGF5bG9hZC5sZW4oKSwKICAgIH0pKSkKfQoKLy8vIFJlc3RvcmUgdGhlIGVuZ2luZSBmcm9tIGEg
+c25hcHNob3QgZHVtcCBwcm9kdWNlZCBieSBgL2FkbWluL2JhY2t1cGAuCi8vLyBSZXBsYWNlcyBh
+bGwgZXhpc3Rpbmcgc3RhdGUuCmFzeW5jIGZuIHJlc3RvcmUoCiAgICBTdGF0ZShzdGF0ZSk6IFN0
+YXRlPEFwcFN0YXRlPiwKICAgIEV4dGVuc2lvbihhdXRoKTogRXh0ZW5zaW9uPEF1dGhDb250ZXh0
+PiwKICAgIEpzb24oc25hcCk6IEpzb248U25hcHNob3RWMT4sCikgLT4gUmVzdWx0PFN0YXR1c0Nv
+ZGUsIEFwaUVycj4gewogICAgYXV0aC5lbnN1cmUoIioiLCBSb2xlOjpBZG1pbik/OwogICAgc3Rh
+dGUuZW5naW5lLnJlc3RvcmUoc25hcCkubWFwX2VycihBcGlFcnI6OmZyb20pPzsKICAgIHRyYWNp
+bmc6OmluZm8hKAogICAgICAgIHRhcmdldDogImx1bWVuLmF1ZGl0IiwKICAgICAgICBldmVudCA9
+ICJyZXN0b3JlX2FwcGxpZWQiLAogICAgICAgIHN1YmplY3QgPSBhdXRoLnN1YmplY3QoKS51bndy
+YXBfb3IoImFub255bW91cyIpLAogICAgKTsKICAgIE9rKFN0YXR1c0NvZGU6Ok5PX0NPTlRFTlQp
+Cn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBSZXNoYXJkIGFkbWluIHZlcmJzICgjMTM4MCk6
+IGJhdGNoLWFwcGx5LCBidWNrZXQtc2NvcGVkIGV4cG9ydCwgZXZpY3QuCi8vIFBsdXMgYC9hZG1p
+bi9jaGVja3BvaW50YCAoIzEzODkpLCB0aGUgb24tZGVtYW5kIGR1cmFiaWxpdHkgc3RlcCB0aGF0
+IG1ha2VzCi8vIHRoZSBvdGhlciB0aHJlZSdzIG11dGF0aW9ucyBzdXJ2aXZlIHRoZSBjdXRvdmVy
+IHJlc3RhcnQgdGhlIGRyaXZlciBpdHNlbGYKLy8gdHJpZ2dlcnMsIGFuZCBgL2FkbWluL3Jlc2hh
+cmQ6cHJ1bmVgICgjMTQ1NyBSMSksIHRoZSBmaW5hbCBtaWdyYXRpb24KLy8gcGFzcydzIGluZGVw
+ZW5kZW50bHkgY2h1bmtlZCBhdXRob3JpdGF0aXZlLXJlcGxhY2Ugc2NvcGUuCi8vCi8vIGByZXNo
+YXJkLnJzYCdzIHRlc3RlZCBwcmltaXRpdmVzIChgYnVja2V0X21vdmVzYCwgYHNuYXBzaG90X3Jl
+c2hhcmRfYmF0Y2hlc2AsCi8vIGBzbmFwc2hvdF9yZXNoYXJkX3BydW5lX2NodW5rc2ApIGVtaXQg
+Ym91bmRlZCBgUmVzaGFyZEJhdGNoYC8KLy8gYFJlc2hhcmRQcnVuZUNodW5rYCB1bml0cyBmb3Ig
+Y2hlY2twb2ludGVkIG1pZ3JhdGlvbjsgdGhlIGZpdmUgdmVyYnMgYmVsb3cKLy8gYXJlIHRoZSB3
+aXJlIHN1cmZhY2UgdGhhdCBtb3ZlcyB0aGVtIGFuZCBtYWtlcyB0aGVtIGR1cmFibGUuIEFsbCBm
+aXZlCi8vIHJlcXVpcmUgYFJvbGU6OkFkbWluYCBvbiBgKmAsIHNhbWUgYXMgYC9hZG1pbi9iYWNr
+dXBgL2AvYWRtaW4vcmVzdG9yZWAKLy8gYWJvdmUuCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKLy8v
+IGBQT1NUIC9hZG1pbi9yZXNoYXJkOmFwcGx5YDogYWRkaXRpdmVseSBtZXJnZSBvbmUgW2BSZXNo
+YXJkQmF0Y2hgXSBpbnRvCi8vLyB0aGUgbGl2ZSBlbmdpbmUgKHVwc2VydCBzZW1hbnRpY3MgZm9y
+IHRoZSBiYXRjaCdzIGRvY3VtZW50czsgbmV2ZXIgYQovLy8gZnVsbCByZXBsYWNlLCB1bmxpa2Ug
+YC9hZG1pbi9yZXN0b3JlYCkuIElkZW1wb3RlbnQg4oCUIGEgcmV0cmllZCBiYXRjaAovLy8gKG9w
+ZXJhdG9yIHJlc3VtZSBhZnRlciBhIGNoZWNrcG9pbnQpIGNvbnZlcmdlcyB0byB0aGUgc2FtZSBx
+dWVyeS12aXNpYmxlCi8vLyBzdGF0ZTsgc2VlIFtgRW5naW5lOjphcHBseV9yZXNoYXJkX2JhdGNo
+YF0uCiNbdXRvaXBhOjpwYXRoKAogICAgcG9zdCwKICAgIHBhdGggPSAiL2FkbWluL3Jlc2hhcmQ6
+YXBwbHkiLAogICAgdGFnID0gIkFkbWluIiwKICAgIHJlcXVlc3RfYm9keSA9IHNlcmRlX2pzb246
+OlZhbHVlLAogICAgcmVzcG9uc2VzKAogICAgICAgIChzdGF0dXMgPSAyMDAsIGRlc2NyaXB0aW9u
+ID0gIkJhdGNoIG1lcmdlZCBhZGRpdGl2ZWx5IChzYWZlIHRvIHJldHJ5KSIsIGJvZHkgPSBzZXJk
+ZV9qc29uOjpWYWx1ZSksCiAgICAgICAgKHN0YXR1cyA9IDQwMCwgZGVzY3JpcHRpb24gPSAiTWFs
+Zm9ybWVkIGJhdGNoIG9yIHNuYXBzaG90IHZlcnNpb24gbWlzbWF0Y2giLCBib2R5ID0gQXBpRXJy
+b3IpCiAgICApCildCmFzeW5jIGZuIHJlc2hhcmRfYXBwbHkoCiAgICBTdGF0ZShzdGF0ZSk6IFN0
+YXRlPEFwcFN0YXRlPiwKICAgIEV4dGVuc2lvbihhdXRoKTogRXh0ZW5zaW9uPEF1dGhDb250ZXh0
+PiwKICAgIEpzb24oYmF0Y2gpOiBKc29uPFJlc2hhcmRCYXRjaD4sCikgLT4gUmVzdWx0PEpzb248
+c2VyZGVfanNvbjo6VmFsdWU+LCBBcGlFcnI+IHsKICAgIGF1dGguZW5zdXJlKCIqIiwgUm9sZTo6
+QWRtaW4pPzsKICAgIGxldCBvdXRjb21lID0gc3RhdGUKICAgICAgICAuZW5naW5lCiAgICAgICAg
+LmFwcGx5X3Jlc2hhcmRfYmF0Y2goYmF0Y2guc25hcHNob3QsIE5vbmUpCiAgICAgICAgLm1hcF9l
+cnIoQXBpRXJyOjpmcm9tKT87CiAgICB0cmFjaW5nOjppbmZvISgKICAgICAgICB0YXJnZXQ6ICJs
+dW1lbi5hdWRpdCIsCiAgICAgICAgZXZlbnQgPSAicmVzaGFyZF9iYXRjaF9hcHBsaWVkIiwKICAg
+ICAgICBzdWJqZWN0ID0gYXV0aC5zdWJqZWN0KCkudW53cmFwX29yKCJhbm9ueW1vdXMiKSwKICAg
+ICAgICBidWNrZXQgPSBiYXRjaC5idWNrZXQsCiAgICAgICAgZnJvbV9zaGFyZCA9IGJhdGNoLmZy
+b21fc2hhcmQsCiAgICAgICAgdG9fc2hhcmQgPSBiYXRjaC50b19zaGFyZCwKICAgICAgICBmcm9t
+X21hcF92ZXJzaW9uID0gYmF0Y2guZnJvbV9tYXBfdmVyc2lvbiwKICAgICAgICB0b19tYXBfdmVy
+c2lvbiA9IGJhdGNoLnRvX21hcF92ZXJzaW9uLAogICAgICAgIGNvbGxlY3Rpb25zX3RvdWNoZWQg
+PSBvdXRjb21lLmNvbGxlY3Rpb25zX3RvdWNoZWQsCiAgICAgICAgZG9jdW1lbnRzX3Vwc2VydGVk
+ID0gb3V0Y29tZS5kb2N1bWVudHNfdXBzZXJ0ZWQsCiAgICAgICAgZG9jdW1lbnRzX3BydW5lZCA9
+IG91dGNvbWUuZG9jdW1lbnRzX3BydW5lZCwKICAgICk7CiAgICBPayhKc29uKHNlcmRlX2pzb246
+Ompzb24hKHsKICAgICAgICAiY29sbGVjdGlvbnNfdG91Y2hlZCI6IG91dGNvbWUuY29sbGVjdGlv
+bnNfdG91Y2hlZCwKICAgICAgICAiZG9jdW1lbnRzX3Vwc2VydGVkIjogb3V0Y29tZS5kb2N1bWVu
+dHNfdXBzZXJ0ZWQsCiAgICAgICAgImRvY3VtZW50c19wcnVuZWQiOiBvdXRjb21lLmRvY3VtZW50
+c19wcnVuZWQsCiAgICB9KSkpCn0KCi8vLyBgUE9TVCAvYWRtaW4vcmVzaGFyZDpwcnVuZWA6IGFj
+Y3VtdWxhdGUgb25lIFtgUmVzaGFyZFBydW5lQ2h1bmtgXSBvZiB0aGUKLy8vIGZpbmFsIG1pZ3Jh
+dGlvbiBwYXNzJ3MgYXV0aG9yaXRhdGl2ZSAia2VlcCIgc2V0IGZvciBvbmUgYChidWNrZXQsCi8v
+LyBjb2xsZWN0aW9uX2lkKWAgcGFpciwgYW5kIHBydW5lIG9uY2UgZXZlcnkgY2h1bmsgaGFzIGFy
+cml2ZWQgKCMxNDU3IFIxKS4KLy8vIFVubGlrZSBgL2FkbWluL3Jlc2hhcmQ6YXBwbHlgIChwdXJl
+bHkgYWRkaXRpdmUpLCB0aGlzIHZlcmIgaXMgd2hhdCBtYWtlcwovLy8gdGhlIGZpbmFsIHBhc3Mg
+YXV0aG9yaXRhdGl2ZSBmb3IgdGhlIGJ1Y2tldHMgaXQgY29waWVzOiBhIGRvY3VtZW50Ci8vLyBk
+ZWxldGVkIG9uIHRoZSBzb3VyY2UgZHVyaW5nIHRoZSBzcGxpdCBpcyBhYnNlbnQgZnJvbSB0aGUg
+YWNjdW11bGF0ZWQKLy8vIGtlZXAgc2V0IGFuZCBpcyBwcnVuZWQgaGVyZSBpbnN0ZWFkIG9mIHN1
+cnZpdmluZyBhcyBhIHN0YWxlIGNvcHkgZnJvbSBhbgovLy8gZWFybGllciBhZGRpdGl2ZSBwYXNz
+LiBJZGVtcG90ZW50IHBlciBjaHVuayAoc2FmZSB0byByZXRyeSBhZnRlciBhIDQxMykKLy8vIGFu
+ZCBhcyBhIHdob2xlIGdyb3VwIChzYWZlIHRvIHJlLXNlbmQgZXZlcnkgY2h1bmsgYWZ0ZXIgYSBk
+cml2ZXIKLy8vIHJlc3RhcnQpOyBzZWUgW2BFbmdpbmU6OmFwcGx5X3Jlc2hhcmRfcHJ1bmVfY2h1
+bmtgXS4KI1t1dG9pcGE6OnBhdGgoCiAgICBwb3N0LAogICAgcGF0aCA9ICIvYWRtaW4vcmVzaGFy
+ZDpwcnVuZSIsCiAgICB0YWcgPSAiQWRtaW4iLAogICAgcmVxdWVzdF9ib2R5ID0gc2VyZGVfanNv
+bjo6VmFsdWUsCiAgICByZXNwb25zZXMoCiAgICAgICAgKHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRp
+b24gPSAiQ2h1bmsgYWNjdW11bGF0ZWQ7IHBydW5lZCBvbmNlIGV2ZXJ5IGNodW5rIG9mIGl0cyBn
+cm91cCBoYXMgYXJyaXZlZCIsIGJvZHkgPSBzZXJkZV9qc29uOjpWYWx1ZSksCiAgICAgICAgKHN0
+YXR1cyA9IDQwMCwgZGVzY3JpcHRpb24gPSAiTWFsZm9ybWVkIGNodW5rIiwgYm9keSA9IEFwaUVy
+cm9yKQogICAgKQopXQphc3luYyBmbiByZXNoYXJkX3BydW5lKAogICAgU3RhdGUoc3RhdGUpOiBT
+dGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxBdXRoQ29udGV4
+dD4sCiAgICBKc29uKGNodW5rKTogSnNvbjxjcmF0ZTo6cmVzaGFyZDo6UmVzaGFyZFBydW5lQ2h1
+bms+LAopIC0+IFJlc3VsdDxKc29uPHNlcmRlX2pzb246OlZhbHVlPiwgQXBpRXJyPiB7CiAgICBh
+dXRoLmVuc3VyZSgiKiIsIFJvbGU6OkFkbWluKT87CiAgICBsZXQgdG9fbWFwX3ZlcnNpb24gPSBj
+aHVuay50b19tYXBfdmVyc2lvbjsKICAgIGxldCBidWNrZXQgPSBjaHVuay5idWNrZXQ7CiAgICBs
+ZXQgY29sbGVjdGlvbl9pZCA9IGNodW5rLmNvbGxlY3Rpb25faWQuY2xvbmUoKTsKICAgIGxldCBj
+aHVua19pbmRleCA9IGNodW5rLmNodW5rX2luZGV4OwogICAgbGV0IHRvdGFsX2NodW5rcyA9IGNo
+dW5rLnRvdGFsX2NodW5rczsKICAgIGxldCBvdXRjb21lID0gc3RhdGUKICAgICAgICAuZW5naW5l
+CiAgICAgICAgLmFwcGx5X3Jlc2hhcmRfcHJ1bmVfY2h1bmsoY2h1bmspCiAgICAgICAgLm1hcF9l
+cnIoQXBpRXJyOjpmcm9tKT87CiAgICBpZiBvdXRjb21lLmNvbXBsZXRlIHsKICAgICAgICB0cmFj
+aW5nOjppbmZvISgKICAgICAgICAgICAgdGFyZ2V0OiAibHVtZW4uYXVkaXQiLAogICAgICAgICAg
+ICBldmVudCA9ICJyZXNoYXJkX3BydW5lX2FwcGxpZWQiLAogICAgICAgICAgICBzdWJqZWN0ID0g
+YXV0aC5zdWJqZWN0KCkudW53cmFwX29yKCJhbm9ueW1vdXMiKSwKICAgICAgICAgICAgYnVja2V0
+LAogICAgICAgICAgICB0b19tYXBfdmVyc2lvbiwKICAgICAgICAgICAgY29sbGVjdGlvbl9pZCA9
+IGNvbGxlY3Rpb25faWQuYXNfc3RyKCksCiAgICAgICAgICAgIGNodW5rX2luZGV4LAogICAgICAg
+ICAgICB0b3RhbF9jaHVua3MsCiAgICAgICAgICAgIGRvY3VtZW50c19wcnVuZWQgPSBvdXRjb21l
+LmRvY3VtZW50c19wcnVuZWQsCiAgICAgICAgKTsKICAgIH0KICAgIE9rKEpzb24oc2VyZGVfanNv
+bjo6anNvbiEoewogICAgICAgICJjb21wbGV0ZSI6IG91dGNvbWUuY29tcGxldGUsCiAgICAgICAg
+ImRvY3VtZW50c19wcnVuZWQiOiBvdXRjb21lLmRvY3VtZW50c19wcnVuZWQsCiAgICB9KSkpCn0K
+CiNbZGVyaXZlKERlYnVnLCBEZXNlcmlhbGl6ZSldCnN0cnVjdCBTY29wZWRCYWNrdXBSZXF1ZXN0
+IHsKICAgIC8vLyBTYW1lIGB2aXJ0dWFsX2J1Y2tldF9jb3VudGAgdGhlIGNhbGxlcidzIFtgVmly
+dHVhbEJ1Y2tldFNoYXJkTWFwYF0KICAgIC8vLyB1c2VzIOKAlCBtdXN0IG1hdGNoIHdoYXQgYHNu
+YXBzaG90X3Jlc2hhcmRfYmF0Y2hlc2Agd2FzL3dpbGwgYmUgY2FsbGVkCiAgICAvLy8gd2l0aCBz
+byBidWNrZXQgbWVtYmVyc2hpcCBhZ3JlZXMuCiAgICB2aXJ0dWFsX2J1Y2tldF9jb3VudDogdTMy
+LAogICAgLy8vIE9ubHkgZG9jdW1lbnRzIHdob3NlIGJ1Y2tldCBpcyBpbiB0aGlzIHNldCBhcmUg
+aW5jbHVkZWQuCiAgICBidWNrZXRzOiBCVHJlZVNldDx1MzI+LAp9CgovLy8gYFBPU1QgL2FkbWlu
+L2JhY2t1cDpzY29wZWRgOiBsaWtlIGBHRVQgL2FkbWluL2JhY2t1cGAsIGJ1dCByZXN0cmljdGVk
+IHRvCi8vLyBkb2N1bWVudHMgcm91dGVkIHRvIHRoZSByZXF1ZXN0ZWQgdmlydHVhbCBidWNrZXRz
+IOKAlCBhIHNvdXJjZSBzaGFyZCBjYW4KLy8vIGV4cG9ydCBqdXN0IHRoZSBidWNrZXRzIHRoYXQg
+YXJlIG1vdmluZyBpbnN0ZWFkIG9mIGEgZnVsbC1lbmdpbmUgZHVtcC4KLy8vIEJ1Y2tldCBtZW1i
+ZXJzaGlwIGlzIGNvbXB1dGVkIHdpdGggdGhlIHNhbWUgaGFzaCBgcmVzaGFyZDo6Ci8vLyBzbmFw
+c2hvdF9yZXNoYXJkX2JhdGNoZXNgIHVzZXMgKFtgY3JhdGU6OnJlc2hhcmQ6OnNuYXBzaG90X2J1
+Y2tldF9zdWJzZXRgXSksCi8vLyBzbyBhbiBleHBvcnQgYW5kIGEgbGF0ZXItY29tcHV0ZWQgYmF0
+Y2ggY2FuIG5ldmVyIGRpc2FncmVlLgojW3V0b2lwYTo6cGF0aCgKICAgIHBvc3QsCiAgICBwYXRo
+ID0gIi9hZG1pbi9iYWNrdXA6c2NvcGVkIiwKICAgIHRhZyA9ICJBZG1pbiIsCiAgICByZXF1ZXN0
+X2JvZHkgPSBzZXJkZV9qc29uOjpWYWx1ZSwKICAgIHJlc3BvbnNlcygKICAgICAgICAoc3RhdHVz
+ID0gMjAwLCBkZXNjcmlwdGlvbiA9ICJTbmFwc2hvdFYxIHJlc3RyaWN0ZWQgdG8gdGhlIHJlcXVl
+c3RlZCB2aXJ0dWFsIGJ1Y2tldHMiLCBib2R5ID0gc2VyZGVfanNvbjo6VmFsdWUpLAogICAgICAg
+IChzdGF0dXMgPSA0MDAsIGRlc2NyaXB0aW9uID0gIkludmFsaWQgdmlydHVhbF9idWNrZXRfY291
+bnQiLCBib2R5ID0gQXBpRXJyb3IpCiAgICApCildCmFzeW5jIGZuIGJhY2t1cF9zY29wZWQoCiAg
+ICBTdGF0ZShzdGF0ZSk6IFN0YXRlPEFwcFN0YXRlPiwKICAgIEV4dGVuc2lvbihhdXRoKTogRXh0
+ZW5zaW9uPEF1dGhDb250ZXh0PiwKICAgIEpzb24ocmVxKTogSnNvbjxTY29wZWRCYWNrdXBSZXF1
+ZXN0PiwKKSAtPiBSZXN1bHQ8SnNvbjxTbmFwc2hvdFYxPiwgQXBpRXJyPiB7CiAgICBhdXRoLmVu
+c3VyZSgiKiIsIFJvbGU6OkFkbWluKT87CiAgICBsZXQgZnVsbCA9IHN0YXRlLmVuZ2luZS5zbmFw
+c2hvdCgpLm1hcF9lcnIoQXBpRXJyOjpmcm9tKT87CiAgICBsZXQgc2NvcGVkID0KICAgICAgICBj
+cmF0ZTo6cmVzaGFyZDo6c25hcHNob3RfYnVja2V0X3N1YnNldCgmZnVsbCwgcmVxLnZpcnR1YWxf
+YnVja2V0X2NvdW50LCAmcmVxLmJ1Y2tldHMpCiAgICAgICAgICAgIC5tYXBfZXJyKEFwaUVycjo6
+ZnJvbSk/OwogICAgdHJhY2luZzo6aW5mbyEoCiAgICAgICAgdGFyZ2V0OiAibHVtZW4uYXVkaXQi
+LAogICAgICAgIGV2ZW50ID0gImJhY2t1cF9zY29wZWQiLAogICAgICAgIHN1YmplY3QgPSBhdXRo
+LnN1YmplY3QoKS51bndyYXBfb3IoImFub255bW91cyIpLAogICAgICAgIHZpcnR1YWxfYnVja2V0
+X2NvdW50ID0gcmVxLnZpcnR1YWxfYnVja2V0X2NvdW50LAogICAgICAgIGJ1Y2tldHMgPSByZXEu
+YnVja2V0cy5sZW4oKSwKICAgICk7CiAgICBPayhKc29uKHNjb3BlZCkpCn0KCiNbZGVyaXZlKERl
+YnVnLCBEZXNlcmlhbGl6ZSldCnN0cnVjdCBSZXNoYXJkRXZpY3RSZXF1ZXN0IHsKICAgIC8vLyBU
+aGlzIHNoYXJkJ3MgcGh5c2ljYWwgaW5kZXggaW4gYGFzc2lnbm1lbnRzYC4KICAgIHNoYXJkOiB1
+MzIsCiAgICAvLy8gVGhlIG5ld2VyIG1hcCB2ZXJzaW9uIGJlaW5nIGN1dCBvdmVyIHRvOyBjYXJy
+aWVkIGZvciBhdWRpdCBsb2dnaW5nLgogICAgbWFwX3ZlcnNpb246IHU2NCwKICAgIC8vLyBgYnVj
+a2V0IC0+IHBoeXNpY2FsIHNoYXJkYCBhc3NpZ25tZW50IGZvciB0aGUgbmV3ZXIgbWFwLiBJdHMg
+bGVuZ3RoCiAgICAvLy8gaXMgdGhlIHZpcnR1YWwgYnVja2V0IGNvdW50LgogICAgYXNzaWdubWVu
+dHM6IFZlYzx1MzI+LAogICAgcGh5c2ljYWxfc2hhcmRfY291bnQ6IHUzMiwKfQoKLy8vIGBQT1NU
+IC9hZG1pbi9yZXNoYXJkOmV2aWN0YDogc291cmNlLXNpZGUgcG9zdC1jdXRvdmVyIGV2aWN0aW9u
+LiBHaXZlbiBhCi8vLyBuZXdlciB2aXJ0dWFsLWJ1Y2tldCBtYXAgYW5kIHRoaXMgc2hhcmQncyBp
+bmRleCB3aXRoaW4gaXQsIHJlbW92ZXMKLy8vIGV4YWN0bHkgdGhlIGRvY3VtZW50cyB3aG9zZSBi
+dWNrZXQgbm8gbG9uZ2VyIHJvdXRlcyB0byB0aGlzIHNoYXJkIOKAlAovLy8gbm90aGluZyBlbHNl
+LiBBIHNlcGFyYXRlLCBleHBsaWNpdGx5LWludm9rZWQgc3RlcDsgbmV2ZXIgaW1wbGljaXQgaW4K
+Ly8vIGAvYWRtaW4vcmVzaGFyZDphcHBseWAgb3IgYC9hZG1pbi9iYWNrdXAqYC4gSWRlbXBvdGVu
+dCDigJQgYSBkb2N1bWVudAovLy8gYWxyZWFkeSBldmljdGVkIGJ5IGEgcHJpb3IgY2FsbCBubyBs
+b25nZXIgbWF0Y2hlcyBhbmQgaXMgc2tpcHBlZC4KI1t1dG9pcGE6OnBhdGgoCiAgICBwb3N0LAog
+ICAgcGF0aCA9ICIvYWRtaW4vcmVzaGFyZDpldmljdCIsCiAgICB0YWcgPSAiQWRtaW4iLAogICAg
+cmVxdWVzdF9ib2R5ID0gc2VyZGVfanNvbjo6VmFsdWUsCiAgICByZXNwb25zZXMoCiAgICAgICAg
+KHN0YXR1cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiRG9jdW1lbnRzIG5vIGxvbmdlciBvd25lZCBi
+eSB0aGlzIHNoYXJkIHJlbW92ZWQiLCBib2R5ID0gc2VyZGVfanNvbjo6VmFsdWUpLAogICAgICAg
+IChzdGF0dXMgPSA0MDAsIGRlc2NyaXB0aW9uID0gIkludmFsaWQgdmlydHVhbCBidWNrZXQgbWFw
+IiwgYm9keSA9IEFwaUVycm9yKQogICAgKQopXQphc3luYyBmbiByZXNoYXJkX2V2aWN0KAogICAg
+U3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAgICBFeHRlbnNpb24oYXV0aCk6IEV4dGVu
+c2lvbjxBdXRoQ29udGV4dD4sCiAgICBKc29uKHJlcSk6IEpzb248UmVzaGFyZEV2aWN0UmVxdWVz
+dD4sCikgLT4gUmVzdWx0PEpzb248c2VyZGVfanNvbjo6VmFsdWU+LCBBcGlFcnI+IHsKICAgIGF1
+dGguZW5zdXJlKCIqIiwgUm9sZTo6QWRtaW4pPzsKICAgIGxldCBtYXAgPQogICAgICAgIFZpcnR1
+YWxCdWNrZXRTaGFyZE1hcDo6bmV3KHJlcS5tYXBfdmVyc2lvbiwgcmVxLmFzc2lnbm1lbnRzLCBy
+ZXEucGh5c2ljYWxfc2hhcmRfY291bnQpCiAgICAgICAgICAgIC5tYXBfZXJyKEFwaUVycjo6ZnJv
+bSk/OwogICAgbGV0IG91dGNvbWUgPSBzdGF0ZQogICAgICAgIC5lbmdpbmUKICAgICAgICAuZXZp
+Y3Rfbm90X293bmVkKCZtYXAsIHJlcS5zaGFyZCkKICAgICAgICAubWFwX2VycihBcGlFcnI6OmZy
+b20pPzsKICAgIHRyYWNpbmc6OmluZm8hKAogICAgICAgIHRhcmdldDogImx1bWVuLmF1ZGl0IiwK
+ICAgICAgICBldmVudCA9ICJyZXNoYXJkX2V2aWN0IiwKICAgICAgICBzdWJqZWN0ID0gYXV0aC5z
+dWJqZWN0KCkudW53cmFwX29yKCJhbm9ueW1vdXMiKSwKICAgICAgICBzaGFyZCA9IHJlcS5zaGFy
+ZCwKICAgICAgICBtYXBfdmVyc2lvbiA9IHJlcS5tYXBfdmVyc2lvbiwKICAgICAgICBjb2xsZWN0
+aW9uc190b3VjaGVkID0gb3V0Y29tZS5jb2xsZWN0aW9uc190b3VjaGVkLAogICAgICAgIGRvY3Vt
+ZW50c19ldmljdGVkID0gb3V0Y29tZS5kb2N1bWVudHNfZXZpY3RlZCwKICAgICk7CiAgICBPayhK
+c29uKHNlcmRlX2pzb246Ompzb24hKHsKICAgICAgICAiY29sbGVjdGlvbnNfdG91Y2hlZCI6IG91
+dGNvbWUuY29sbGVjdGlvbnNfdG91Y2hlZCwKICAgICAgICAiZG9jdW1lbnRzX2V2aWN0ZWQiOiBv
+dXRjb21lLmRvY3VtZW50c19ldmljdGVkLAogICAgfSkpKQp9CgovLy8gYFBPU1QgL2FkbWluL2No
+ZWNrcG9pbnRgICgjMTM4OSk6IGZvcmNlIGEgc3luY2hyb25vdXMgZHVyYWJpbGl0eQovLy8gY2hl
+Y2twb2ludCBvZiB0aGUgbGl2ZSBlbmdpbmUgc3RhdGUgYW5kIHJldHVybiBvbmx5IG9uY2UgaXQg
+aXMgY29tbWl0dGVkLgovLy8gVGhlIHJlc2hhcmQgZHJpdmVyJ3MgY3V0b3ZlciBjYWxscyB0aGlz
+IG9uIGV2ZXJ5IHNoYXJkIGl0IGp1c3QgbWlncmF0ZWQKLy8vIGRhdGEgaW50byBvciBldmljdGVk
+IGRhdGEgZnJvbSwgc28gYC9hZG1pbi9yZXNoYXJkOmFwcGx5YC9gOmV2aWN0YCdzCi8vLyBtdXRh
+dGlvbnMg4oCUIHdoaWNoIGJ5cGFzcyBgV3JpdGVDb29yZGluYXRvcmAvdGhlIEFPRiDigJQgcmVh
+Y2ggZHVyYWJpbGl0eQovLy8gYmVmb3JlIHRoZSBkcml2ZXIgdHJpZ2dlcnMgdGhlIGN1dG92ZXIg
+cm9sbGluZyByZXN0YXJ0LCBpbnN0ZWFkIG9mCi8vLyBkZXBlbmRpbmcgb24gdGhlIG5leHQgcGVy
+aW9kaWMgYExVTUVOX1NOQVBTSE9UX1NFQ1NgIHRpY2suIGBwZXJzaXN0ZWQ6Ci8vLyBmYWxzZWAg
+bWVhbnMgbm8gZHVyYWJsZSBzdG9yZSBpcyBjb25maWd1cmVkIG9uIHRoaXMgbm9kZSAobm90aGlu
+ZyB0bwovLy8gbG9zZSBvbiByZXN0YXJ0LCBlLmcuIGRldiBtb2RlKTsgYSBwcm9kdWN0aW9uL29w
+ZXJhdG9yIGRlcGxveW1lbnQgd2l0aAovLy8gc2VnbWVudCBwZXJzaXN0ZW5jZSBjb25maWd1cmVk
+IGFsd2F5cyByZXBvcnRzIGB0cnVlYCBvbiBzdWNjZXNzLiBTZWUKLy8vIFtgQ2hlY2twb2ludFNp
+bmtgXS4KI1t1dG9pcGE6OnBhdGgoCiAgICBwb3N0LAogICAgcGF0aCA9ICIvYWRtaW4vY2hlY2tw
+b2ludCIsCiAgICB0YWcgPSAiQWRtaW4iLAogICAgcmVzcG9uc2VzKAogICAgICAgIChzdGF0dXMg
+PSAyMDAsIGRlc2NyaXB0aW9uID0gIkNoZWNrcG9pbnQgY29tbWl0dGVkIChvciB2YWN1b3VzbHkg
+c2F0aXNmaWVkIGlmIG5vIGR1cmFibGUgc3RvcmUgaXMgY29uZmlndXJlZCkiLCBib2R5ID0gc2Vy
+ZGVfanNvbjo6VmFsdWUpLAogICAgICAgIChzdGF0dXMgPSA0MDAsIGRlc2NyaXB0aW9uID0gIkNo
+ZWNrcG9pbnQgd3JpdGUgZmFpbGVkIiwgYm9keSA9IEFwaUVycm9yKQogICAgKQopXQphc3luYyBm
+biBhZG1pbl9jaGVja3BvaW50KAogICAgU3RhdGUoc3RhdGUpOiBTdGF0ZTxBcHBTdGF0ZT4sCiAg
+ICBFeHRlbnNpb24oYXV0aCk6IEV4dGVuc2lvbjxBdXRoQ29udGV4dD4sCikgLT4gUmVzdWx0PEpz
+b248c2VyZGVfanNvbjo6VmFsdWU+LCBBcGlFcnI+IHsKICAgIGF1dGguZW5zdXJlKCIqIiwgUm9s
+ZTo6QWRtaW4pPzsKICAgIGxldCBwZXJzaXN0ZWQgPSBzdGF0ZQogICAgICAgIC5jaGVja3BvaW50
+CiAgICAgICAgLmNoZWNrcG9pbnRfbm93KCkKICAgICAgICAuYXdhaXQKICAgICAgICAubWFwX2Vy
+cihBcGlFcnI6OmZyb20pPzsKICAgIHRyYWNpbmc6OmluZm8hKAogICAgICAgIHRhcmdldDogImx1
+bWVuLmF1ZGl0IiwKICAgICAgICBldmVudCA9ICJhZG1pbl9jaGVja3BvaW50IiwKICAgICAgICBz
+dWJqZWN0ID0gYXV0aC5zdWJqZWN0KCkudW53cmFwX29yKCJhbm9ueW1vdXMiKSwKICAgICAgICBw
+ZXJzaXN0ZWQsCiAgICApOwogICAgT2soSnNvbihzZXJkZV9qc29uOjpqc29uISh7ICJwZXJzaXN0
+ZWQiOiBwZXJzaXN0ZWQgfSkpKQp9CgpmbiBkZWZhdWx0X2ZlbmNlX3R0bF9zZWNzKCkgLT4gdTY0
+IHsKICAgIDMwMAp9CgovLy8gVXBwZXIgYm91bmQgb24gYFJlc2hhcmRGZW5jZVJlcXVlc3Q6OnR0
+bF9zZWNzYCAoIzE0NDMgUjMpOiB3ZWxsIGFib3ZlIGFueQovLy8gcmVhbCBkcml2ZXIgdGljaywg
+YnV0IHNtYWxsIGVub3VnaCB0aGF0IGBJbnN0YW50Ojpub3coKS5jaGVja2VkX2FkZGAgbmV2ZXIK
+Ly8vIG92ZXJmbG93cyBhbmQgYSBtYWxmb3JtZWQvbWFsaWNpb3VzIGFkbWluIHJlcXVlc3QgY2Fu
+IG5ldmVyIGFybSBhbgovLy8gZWZmZWN0aXZlbHktcGVybWFuZW50IHdyaXRlIHBhdXNlLgpjb25z
+dCBNQVhfRkVOQ0VfVFRMX1NFQ1M6IHU2NCA9IDM2MDA7CgojW2Rlcml2ZShEZWJ1ZywgRGVzZXJp
+YWxpemUpXQpzdHJ1Y3QgUmVzaGFyZEZlbmNlUmVxdWVzdCB7CiAgICAvLy8gU2FtZSBgdmlydHVh
+bF9idWNrZXRfY291bnRgIHRoZSBjYWxsZXIncyBtYXAgdXNlcywgbWF0Y2hpbmcKICAgIC8vLyBb
+YFNjb3BlZEJhY2t1cFJlcXVlc3RgXSdzIGNvbnZlbnRpb24uCiAgICB2aXJ0dWFsX2J1Y2tldF9j
+b3VudDogdTMyLAogICAgLy8vIEJ1Y2tldHMgdG8gcGF1c2Ugd3JpdGVzIG9uLiBBbiBlbXB0eSBz
+ZXQgZXhwbGljaXRseSBjbGVhcnMgYW55CiAgICAvLy8gY3VycmVudGx5LWFybWVkIGZlbmNlLCBp
+bmRlcGVuZGVudCBvZiBpdHMgZGVhZGxpbmUuCiAgICBidWNrZXRzOiBCVHJlZVNldDx1MzI+LAog
+ICAgLy8vIEhvdyBsb25nIHRoZSBwYXVzZSBzdGF5cyBhcm1lZCBpZiBuZXZlciBleHBsaWNpdGx5
+IGNsZWFyZWQgKGEKICAgIC8vLyBjcmFzaGVkLWRyaXZlciBiYWNrc3RvcDsgc2VlIFtgV3JpdGVG
+ZW5jZWBdJ3MgZG9jKS4gRGVmYXVsdHMgdG8gMzAwcyDigJQKICAgIC8vLyBnZW5lcm91cyByZWxh
+dGl2ZSB0byBvbmUgZHJpdmVyIHRpY2sgKGBEUklWRVJfUE9MTF9JTlRFUlZBTGAsIDIwcyBpbgog
+ICAgLy8vIGByZXNoYXJkX2RyaXZlci5yc2ApIHBsdXMgYSBmdWxsIG1pZ3JhdGlvbi1wYXNzIEhU
+VFAgcm91bmQgdHJpcCwgd2hpbGUKICAgIC8vLyBzdGlsbCBib3VuZGVkIHdlbGwgdW5kZXIgYW55
+IG9wZXJhdG9yLXZpc2libGUgU0xPLgogICAgI1tzZXJkZShkZWZhdWx0ID0gImRlZmF1bHRfZmVu
+Y2VfdHRsX3NlY3MiKV0KICAgIHR0bF9zZWNzOiB1NjQsCn0KCi8vLyBgUE9TVCAvYWRtaW4vcmVz
+aGFyZDpmZW5jZWA6IGFybSBvciBjbGVhciBhIGJvdW5kZWQgd3JpdGUgcGF1c2Ugb24gYSBzZXQK
+Ly8vIG9mIHZpcnR1YWwgYnVja2V0cyAoIzEzOTYgUjIpLiBUaGUgcmVzaGFyZCBkcml2ZXIncyBj
+dXRvdmVyCi8vLyAoYHNlcnZpY2VfazhzOjpyZXNoYXJkX2RyaXZlcjo6YWR2YW5jZV9jYXRjaGlu
+Z191cGApIGFybXMgdGhpcyBvdmVyIGV4YWN0bHkKLy8vIHRoZSBidWNrZXRzIGl0cyBmaW5hbCBg
+Q2F0Y2hpbmdVcGAgbWlncmF0aW9uIHBhc3MgaXMgYWJvdXQgdG8gY29weSwKLy8vIGltbWVkaWF0
+ZWx5IGJlZm9yZSB0aGF0IHBhc3MsIGFuZCBjbGVhcnMgaXQgKGBidWNrZXRzOiBbXWApIG9uY2Ug
+dGhlCi8vLyBwYXNzL2V2aWN0L2NoZWNrcG9pbnQvY3V0b3ZlciBzZXF1ZW5jZSBmaW5pc2hlcyDi
+gJQgb24gc3VjY2VzcyBvciBvbgovLy8gYEJsb2NrZWRgLiBBIHdyaXRlIHRvIGEgZmVuY2VkIGJ1
+Y2tldCBpcyByZWplY3RlZCB3aXRoIGA1MDMKLy8vIGJ1Y2tldF93cml0ZV9wYXVzZWRgIHJhdGhl
+ciB0aGFuIHNpbGVudGx5IGRyb3BwZWQgb3IgYXBwbGllZCBhZ2FpbnN0IGEKLy8vIG1hcCB0aGF0
+IGlzIGFib3V0IHRvIGNoYW5nZTsgc2VlIFtgV3JpdGVGZW5jZWBdIGZvciB0aGUgY3Jhc2gtc2Fm
+ZXR5Ci8vLyAoVFRMKSBhcmd1bWVudC4KI1t1dG9pcGE6OnBhdGgoCiAgICBwb3N0LAogICAgcGF0
+aCA9ICIvYWRtaW4vcmVzaGFyZDpmZW5jZSIsCiAgICB0YWcgPSAiQWRtaW4iLAogICAgcmVxdWVz
+dF9ib2R5ID0gc2VyZGVfanNvbjo6VmFsdWUsCiAgICByZXNwb25zZXMoCiAgICAgICAgKHN0YXR1
+cyA9IDIwMCwgZGVzY3JpcHRpb24gPSAiRmVuY2UgYXJtZWQgb3IgY2xlYXJlZCIsIGJvZHkgPSBz
+ZXJkZV9qc29uOjpWYWx1ZSksCiAgICAgICAgKHN0YXR1cyA9IDQwMCwgZGVzY3JpcHRpb24gPSAi
+SW52YWxpZCB2aXJ0dWFsX2J1Y2tldF9jb3VudCIsIGJvZHkgPSBBcGlFcnJvcikKICAgICkKKV0K
+YXN5bmMgZm4gcmVzaGFyZF9mZW5jZSgKICAgIFN0YXRlKHN0YXRlKTogU3RhdGU8QXBwU3RhdGU+
+LAogICAgRXh0ZW5zaW9uKGF1dGgpOiBFeHRlbnNpb248QXV0aENvbnRleHQ+LAogICAgSnNvbihy
+ZXEpOiBKc29uPFJlc2hhcmRGZW5jZVJlcXVlc3Q+LAopIC0+IFJlc3VsdDxKc29uPHNlcmRlX2pz
+b246OlZhbHVlPiwgQXBpRXJyPiB7CiAgICBhdXRoLmVuc3VyZSgiKiIsIFJvbGU6OkFkbWluKT87
+CiAgICBpZiByZXEudmlydHVhbF9idWNrZXRfY291bnQgPT0gMCB7CiAgICAgICAgcmV0dXJuIEVy
+cihBcGlFcnI6Om5ldygKICAgICAgICAgICAgU3RhdHVzQ29kZTo6QkFEX1JFUVVFU1QsCiAgICAg
+ICAgICAgICJpbnZhbGlkX3ZpcnR1YWxfYnVja2V0X2NvdW50IiwKICAgICAgICAgICAgInZpcnR1
+YWxfYnVja2V0X2NvdW50IG11c3QgYmUgPiAwIiwKICAgICAgICApKTsKICAgIH0KICAgIGlmIHJl
+cS5idWNrZXRzLmlzX2VtcHR5KCkgewogICAgICAgIHN0YXRlLndyaXRlX2ZlbmNlLmNsZWFyKCk7
+CiAgICAgICAgdHJhY2luZzo6aW5mbyEoCiAgICAgICAgICAgIHRhcmdldDogImx1bWVuLmF1ZGl0
+IiwKICAgICAgICAgICAgZXZlbnQgPSAicmVzaGFyZF9mZW5jZV9jbGVhcmVkIiwKICAgICAgICAg
+ICAgc3ViamVjdCA9IGF1dGguc3ViamVjdCgpLnVud3JhcF9vcigiYW5vbnltb3VzIiksCiAgICAg
+ICAgKTsKICAgIH0gZWxzZSB7CiAgICAgICAgLy8gIzE0NDMgUjM6IHJlamVjdCBhIG5vbnNlbnNp
+Y2FsIFRUTCBhcyA0MDAgcmF0aGVyIHRoYW4gbGV0dGluZwogICAgICAgIC8vIGBXcml0ZUZlbmNl
+Ojphcm1gJ3MgYEluc3RhbnQ6Om5vdygpICsgdHRsYCBvdmVyZmxvdyDigJQgYDBgIHdvdWxkCiAg
+ICAgICAgLy8gYXJtLXRoZW4taW1tZWRpYXRlbHktZXhwaXJlIChuZXZlciBhY3R1YWxseSBwYXVz
+aW5nIGFueXRoaW5nLCBhCiAgICAgICAgLy8gc2lsZW50IG5vLW9wIHRoZSBjYWxsZXIgd291bGQg
+d3JvbmdseSBiZWxpZXZlIGNsb3NlZCB0aGUgd3JpdGUKICAgICAgICAvLyB3aW5kb3cpLCBhbmQg
+YW55dGhpbmcgYWJvdmUgdGhlIGdlbmVyb3VzIHVwcGVyIGJvdW5kIGlzIGVpdGhlciBhCiAgICAg
+ICAgLy8gbWFsZm9ybWVkIHJlcXVlc3Qgb3Igd291bGQgYXJtIGFuIGVmZmVjdGl2ZWx5LXBlcm1h
+bmVudCBwYXVzZS4KICAgICAgICBpZiByZXEudHRsX3NlY3MgPT0gMCB8fCByZXEudHRsX3NlY3Mg
+PiBNQVhfRkVOQ0VfVFRMX1NFQ1MgewogICAgICAgICAgICByZXR1cm4gRXJyKEFwaUVycjo6bmV3
+KAogICAgICAgICAgICAgICAgU3RhdHVzQ29kZTo6QkFEX1JFUVVFU1QsCiAgICAgICAgICAgICAg
+ICAiaW52YWxpZF90dGxfc2VjcyIsCiAgICAgICAgICAgICAgICBmb3JtYXQhKAogICAgICAgICAg
+ICAgICAgICAgICJ0dGxfc2VjcyBtdXN0IGJlIGluIDEuLj17TUFYX0ZFTkNFX1RUTF9TRUNTfSwg
+Z290IHt9IiwKICAgICAgICAgICAgICAgICAgICByZXEudHRsX3NlY3MKICAgICAgICAgICAgICAg
+ICksCiAgICAgICAgICAgICkpOwogICAgICAgIH0KICAgICAgICBpZiAhc3RhdGUud3JpdGVfZmVu
+Y2UuYXJtKAogICAgICAgICAgICByZXEudmlydHVhbF9idWNrZXRfY291bnQsCiAgICAgICAgICAg
+IHJlcS5idWNrZXRzLmNsb25lKCksCiAgICAgICAgICAgIER1cmF0aW9uOjpmcm9tX3NlY3MocmVx
+LnR0bF9zZWNzKSwKICAgICAgICApIHsKICAgICAgICAgICAgLy8gVW5yZWFjaGFibGUgaW4gcHJh
+Y3RpY2Ugbm93IHRoYXQgdHRsX3NlY3MgaXMgYm91bmRlZCBhYm92ZSwKICAgICAgICAgICAgLy8g
+YnV0IGBhcm1gIHN0aWxsIHJlcG9ydHMgb3ZlcmZsb3cgZXhwbGljaXRseSAoIzE0NDMgUjMpIHJh
+dGhlcgogICAgICAgICAgICAvLyB0aGFuIHBhbmlja2luZyDigJQgc3VyZmFjZSBpdCBhcyB0aGUg
+c2FtZSA0MDAgc2hhcGUgaW5zdGVhZCBvZiBhCiAgICAgICAgICAgIC8vIHNpbGVudGx5LXVuYXJt
+ZWQgMjAwLgogICAgICAgICAgICByZXR1cm4gRXJyKEFwaUVycjo6bmV3KAogICAgICAgICAgICAg
+ICAgU3RhdHVzQ29kZTo6QkFEX1JFUVVFU1QsCiAgICAgICAgICAgICAgICAiaW52YWxpZF90dGxf
+c2VjcyIsCiAgICAgICAgICAgICAgICAidHRsX3NlY3Mgd291bGQgb3ZlcmZsb3cgdGhlIGZlbmNl
+IGRlYWRsaW5lIiwKICAgICAgICAgICAgKSk7CiAgICAgICAgfQogICAgICAgIHRyYWNpbmc6Omlu
+Zm8hKAogICAgICAgICAgICB0YXJnZXQ6ICJsdW1lbi5hdWRpdCIsCiAgICAgICAgICAgIGV2ZW50
+ID0gInJlc2hhcmRfZmVuY2VfYXJtZWQiLAogICAgICAgICAgICBzdWJqZWN0ID0gYXV0aC5zdWJq
+ZWN0KCkudW53cmFwX29yKCJhbm9ueW1vdXMiKSwKICAgICAgICAgICAgdmlydHVhbF9idWNrZXRf
+Y291bnQgPSByZXEudmlydHVhbF9idWNrZXRfY291bnQsCiAgICAgICAgICAgIGJ1Y2tldHMgPSBy
+ZXEuYnVja2V0cy5sZW4oKSwKICAgICAgICAgICAgdHRsX3NlY3MgPSByZXEudHRsX3NlY3MsCiAg
+ICAgICAgKTsKICAgIH0KICAgIE9rKEpzb24oc2VyZGVfanNvbjo6anNvbiEoewogICAgICAgICJh
+cm1lZCI6ICFyZXEuYnVja2V0cy5pc19lbXB0eSgpLAogICAgICAgICJidWNrZXRzIjogcmVxLmJ1
+Y2tldHMsCiAgICB9KSkpCn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQovLyBPcGVuQVBJCi8vIC0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLQoKLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50
+aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLWFwaS1ycy5tZCNzb3VyY2UKcHViIGZuIG9wZW5hcGko
+KSAtPiB1dG9pcGE6Om9wZW5hcGk6Ok9wZW5BcGkgewogICAgbGV0IG11dCBkb2MgPSBBcGlEb2M6
+Om9wZW5hcGkoKTsKICAgIGRvYy5pbmZvLnZlcnNpb24gPSBlbnYhKCJDQVJHT19QS0dfVkVSU0lP
+TiIpLnRvX3N0cmluZygpOwogICAgaW5qZWN0X3F1ZXJ5X3R3aW5zKCZtdXQgZG9jKTsKICAgIGRv
+Ywp9CgovLy8gRGVzY3JpYmUgdGhlICMxMjk3IGBRVUVSWWAgdHdpbnMgKE9wZW5BUEkgMy4yIC8g
+UkZDIDEwMDA4LCBlcGljICMxMjk2IFIxKQovLy8gaW4gdGhlIGdlbmVyYXRlZCBkb2N1bWVudDog
+YFFVRVJZIC9jb2xsZWN0aW9uc2AgKHR3aW4gb2YgYFBPU1QKLy8vIC9jb2xsZWN0aW9uczpzZWFy
+Y2hgKSBhbmQgYFFVRVJZIC9jb2xsZWN0aW9ucy97Y29sbGVjdGlvbl9pZH1gICh0d2luIG9mCi8v
+LyBgUE9TVCAvY29sbGVjdGlvbnMve2NvbGxlY3Rpb25faWR9L3NlYXJjaGApLgovLy8KLy8vIHV0
+b2lwYSA0LjIuMyBwcmVkYXRlcyBPcGVuQVBJIDMuMiBhbmQgaGFzIG5vIGBQYXRoSXRlbVR5cGU6
+OlF1ZXJ5YAovLy8gdmFyaWFudCwgc28gdGhlIG9wZXJhdGlvbiBpcyBpbmplY3RlZCBhcyByYXcg
+SlNPTiB2aWEKLy8vIGBQYXRoSXRlbTo6ZXh0ZW5zaW9uc2Ag4oCUIHV0b2lwYSBgI1tzZXJkZShm
+bGF0dGVuKV1gcyB0aGF0IG1hcCBpbnRvIHRoZQovLy8gc2VyaWFsaXplZCBwYXRoLWl0ZW0gb2Jq
+ZWN0IG5leHQgdG8gYGdldGAvYHBvc3RgL2V0YywgZ2l2aW5nIGEgYCJxdWVyeSJgCi8vLyBrZXkg
+Ynl0ZS1pZGVudGljYWwgaW4gc2hhcGUgdG8gYSBuYXRpdmUgb25lLiBgbGlicy9vcGVuYXBpLWNv
+ZGVnZW5gJ3MgSVIKLy8vIChgaXIvb3BlcmF0aW9ucy5yc2AsICMxMjk4KSBvbmx5IG5lZWRzIHRo
+YXQgc2VyaWFsaXplZCBgInF1ZXJ5ImAga2V5IHBsdXMKLy8vIGFuIGB4LXBvc3QtdHdpbmAgZXh0
+ZW5zaW9uIHBvaW50aW5nIGF0IHRoZSBQT1NUIHR3aW4gcGF0aDsgaXQgZG9lcyBub3QKLy8vIHJl
+cXVpcmUgYSB0eXBlZCBlbnVtIHZhcmlhbnQgdG8gcGFyc2UgdGhlIG9wZXJhdGlvbi4gKFRoZSBg
+Im9wZW5hcGkiYAovLy8gdmVyc2lvbiBmaWVsZCBpdHNlbGYgc3RheXMgYXQgdXRvaXBhJ3MgZml4
+ZWQgYDMuMC4zYCBoZXJlIOKAlCB0aGF0IGVudW0gaGFzCi8vLyBubyAzLjIgdmFyaWFudCDigJQg
+YGx1bWVuIHNwZWNgJ3Mgb2ZmbGluZSBvdXRwdXQgc3RhbXBzIDMuMiBvbiB0b3A7IHNlZQovLy8g
+YHNwZWM6Om9wZW5hcGlfdmFsdWVgLikKZm4gaW5qZWN0X3F1ZXJ5X3R3aW5zKGRvYzogJm11dCB1
+dG9pcGE6Om9wZW5hcGk6Ok9wZW5BcGkpIHsKICAgIGxldCB0d2luID0gfGRvYzogJnV0b2lwYTo6
+b3BlbmFwaTo6T3BlbkFwaSwgdHdpbl9wYXRoOiAmc3RyLCBvcGVyYXRpb25faWQ6ICZzdHJ8IHsK
+ICAgICAgICBsZXQgbXV0IG9wID0gZG9jCiAgICAgICAgICAgIC5wYXRocwogICAgICAgICAgICAu
+cGF0aHMKICAgICAgICAgICAgLmdldCh0d2luX3BhdGgpPwogICAgICAgICAgICAub3BlcmF0aW9u
+cwogICAgICAgICAgICAuZ2V0KCZvcGVuYXBpOjpQYXRoSXRlbVR5cGU6OlBvc3QpPwogICAgICAg
+ICAgICAuY2xvbmUoKTsKICAgICAgICBvcC5vcGVyYXRpb25faWQgPSBTb21lKG9wZXJhdGlvbl9p
+ZC50b19zdHJpbmcoKSk7CiAgICAgICAgb3AuZXh0ZW5zaW9ucwogICAgICAgICAgICAuZ2V0X29y
+X2luc2VydF93aXRoKERlZmF1bHQ6OmRlZmF1bHQpCiAgICAgICAgICAgIC5pbnNlcnQoIngtcG9z
+dC10d2luIi50b19zdHJpbmcoKSwgc2VyZGVfanNvbjo6anNvbiEodHdpbl9wYXRoKSk7CiAgICAg
+ICAgU29tZShzZXJkZV9qc29uOjp0b192YWx1ZSgmb3ApLmV4cGVjdCgiT3BlcmF0aW9uIHNlcmlh
+bGl6ZXMgdG8gSlNPTiIpKQogICAgfTsKCiAgICBpZiBsZXQgU29tZShxdWVyeV9vcCkgPSB0d2lu
+KAogICAgICAgIGRvYywKICAgICAgICAiL2NvbGxlY3Rpb25zL3tjb2xsZWN0aW9uX2lkfS9zZWFy
+Y2giLAogICAgICAgICJxdWVyeV9jb2xsZWN0aW9uIiwKICAgICkgewogICAgICAgIGlmIGxldCBT
+b21lKGl0ZW0pID0gZG9jLnBhdGhzLnBhdGhzLmdldF9tdXQoIi9jb2xsZWN0aW9ucy97Y29sbGVj
+dGlvbl9pZH0iKSB7CiAgICAgICAgICAgIGl0ZW0uZXh0ZW5zaW9ucwogICAgICAgICAgICAgICAg
+LmdldF9vcl9pbnNlcnRfd2l0aChEZWZhdWx0OjpkZWZhdWx0KQogICAgICAgICAgICAgICAgLmlu
+c2VydCgicXVlcnkiLnRvX3N0cmluZygpLCBxdWVyeV9vcCk7CiAgICAgICAgfQogICAgfQoKICAg
+IGlmIGxldCBTb21lKHF1ZXJ5X29wKSA9IHR3aW4oZG9jLCAiL2NvbGxlY3Rpb25zOnNlYXJjaCIs
+ICJxdWVyeV9jb2xsZWN0aW9ucyIpIHsKICAgICAgICBpZiBsZXQgU29tZShpdGVtKSA9IGRvYy5w
+YXRocy5wYXRocy5nZXRfbXV0KCIvY29sbGVjdGlvbnMiKSB7CiAgICAgICAgICAgIGl0ZW0uZXh0
+ZW5zaW9ucwogICAgICAgICAgICAgICAgLmdldF9vcl9pbnNlcnRfd2l0aChEZWZhdWx0OjpkZWZh
+dWx0KQogICAgICAgICAgICAgICAgLmluc2VydCgicXVlcnkiLnRvX3N0cmluZygpLCBxdWVyeV9v
+cCk7CiAgICAgICAgfQogICAgfQp9CgovLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KLy8gRXJyb3IgbWFw
+cGluZwovLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KCg==
+```
+
+### Source Partition 0003
+<!-- aw-source-partition: index=3 count=3 bytes=10838 payload_bytes=14642 encoding=base64 digest=sha256:67eccdcbb5d70e825950145304d7584de5f5113be5f594d22d10452c30233881 boundary=ast terminal_newline=true -->
+
+```text
+Ly8vIEhUVFAtZnJpZW5kbHkgd3JhcHBlciB0aGF0IGNsYXNzaWZpZXMgc3RvcmFnZSBlcnJvcnMg
+dG8gc3RhdHVzIGNvZGVzLgovLy8gQSBuZXd0eXBlIG92ZXIgdGhlIHNoYXJlZCBgc2VydmljZV9o
+dHRwOjpBcGlFcnJgIChzdGF0dXMgKyBraW5kICsKLy8vIG1lc3NhZ2UsIGBJbnRvUmVzcG9uc2Vg
+IHJlbmRlcnMgYHNlcnZpY2VfaHR0cDo6RXJyb3JFbnZlbG9wZWAgSlNPTikg4oCUCi8vLyB0aGlz
+IGZpbGUga2VlcHMgb25seSB0aGUgYFN0b3JhZ2VFcnJvcmAgLyBgQXV0aEVycmAg4oaSIChzdGF0
+dXMsIGtpbmQpCi8vLyBjbGFzc2lmaWNhdGlvbiBhcm1zLiAoYGNyYXRlOjp0eXBlczo6QXBpRXJy
+b3JgIHN0YXlzIGEgZGlzdGluY3QgbG9jYWwKLy8vIHN0cnVjdCBvZiB0aGUgc2FtZSBge2Vycm9y
+LCBtZXNzYWdlfWAgc2hhcGUgcHVyZWx5IGZvciBPcGVuQVBJIHNjaGVtYQovLy8gaWRlbnRpdHkg
+4oCUIHNlZSBpdHMgZG9jIGNvbW1lbnQuKQovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2ln
+bi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJjZQpwdWIgc3Ry
+dWN0IEFwaUVycihzZXJ2aWNlX2h0dHA6OkFwaUVycik7CgovLy8gQHNwZWMgYXBwcy9sdW1lbi90
+ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJj
+ZQppbXBsIEFwaUVyciB7CiAgICBmbiBuZXcoc3RhdHVzOiBTdGF0dXNDb2RlLCBraW5kOiAmJ3N0
+YXRpYyBzdHIsIG1lc3NhZ2U6IGltcGwgSW50bzxTdHJpbmc+KSAtPiBTZWxmIHsKICAgICAgICBT
+ZWxmKHNlcnZpY2VfaHR0cDo6QXBpRXJyOjpuZXcoc3RhdHVzLCBraW5kLCBtZXNzYWdlKSkKICAg
+IH0KCiAgICBmbiBub3RfZm91bmQobXNnOiBpbXBsIEludG88U3RyaW5nPikgLT4gU2VsZiB7CiAg
+ICAgICAgU2VsZjo6bmV3KFN0YXR1c0NvZGU6Ok5PVF9GT1VORCwgIm5vdF9mb3VuZCIsIG1zZykK
+ICAgIH0KfQoKLy8vIE9uZS1ob3Agc2hhcmQtZm9yd2FyZCBmYWlsdXJlIOKAlCB0aGUgb3duaW5n
+IHNoYXJkIHdhcyB1bnJlYWNoYWJsZSAocG9kCi8vLyBkb3duL3JvbGxpbmcpIG9yIGl0cyByZXNw
+b25zZSBjb3VsZCBub3QgYmUgZGVjb2RlZC4gUmFpc2VkIHZpYSBgYW55aG93YAovLy8gYnkgYHJv
+dXRpbmdfcmVtb3RlOjpSb3V0ZWRSb3V0ZXJgIHNvIGBBcGlFcnJgJ3MgY2xhc3NpZmljYXRpb24g
+c3RheXMKLy8vIGNlbnRyYWxpemVkIGhlcmUgcmF0aGVyIHRoYW4gZHVwbGljYXRlZCBpbiB0aGUg
+YG9wZXJhdG9yYC1nYXRlZCBtb2R1bGU7Ci8vLyBSMiByZXF1aXJlcyB0aGlzIHRvIHN1cmZhY2Ug
+YXMgYSBjbGVhciwgZGlzdGluY3RseS1raW5kZWQgcmV0cnlhYmxlCi8vLyBlcnJvciwgbmV2ZXIg
+YSBzaWxlbnQgbG9jYWwgYW5zd2VyLgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9z
+ZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJjZQojW2Rlcml2ZShE
+ZWJ1ZyldCnB1YiBzdHJ1Y3QgU2hhcmRGb3J3YXJkVW5hdmFpbGFibGUocHViIFN0cmluZyk7Cgov
+Ly8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1l
+bi1zcmMtYXBpLXJzLm1kI3NvdXJjZQppbXBsIHN0ZDo6Zm10OjpEaXNwbGF5IGZvciBTaGFyZEZv
+cndhcmRVbmF2YWlsYWJsZSB7CiAgICBmbiBmbXQoJnNlbGYsIGY6ICZtdXQgc3RkOjpmbXQ6OkZv
+cm1hdHRlcjwnXz4pIC0+IHN0ZDo6Zm10OjpSZXN1bHQgewogICAgICAgIHdyaXRlIShmLCAie30i
+LCBzZWxmLjApCiAgICB9Cn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFu
+dGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCmltcGwgc3RkOjplcnJv
+cjo6RXJyb3IgZm9yIFNoYXJkRm9yd2FyZFVuYXZhaWxhYmxlIHt9CgovLy8gVGhlIG93bmluZyBz
+aGFyZCB3YXMgcmVhY2hlZCBhbmQgYW5zd2VyZWQsIGJ1dCB3aXRoIGEgbm9uLTJ4eCBzdGF0dXMK
+Ly8vIChlLmcuIGEgZm9yd2FyZGVkIHdyaXRlIGhpdCBgNDA0YC9gNDIyYCkuIFJlLWVtaXR0ZWQg
+bG9jYWxseSB3aXRoIHRoZQovLy8gc2FtZSBzdGF0dXMgc28gYSBmb3J3YXJkZWQgZXJyb3IgaXMg
+YXMgbGVnaWJsZSBhcyBhIGxvY2FsIG9uZTsgYG1lc3NhZ2VgCi8vLyBjYXJyaWVzIHRoZSByZW1v
+dGUncyBvd24gYHtlcnJvciwgbWVzc2FnZX1gIGVudmVsb3BlIHZlcmJhdGltLgovLy8gQHNwZWMg
+YXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBp
+LXJzLm1kI3NvdXJjZQojW2Rlcml2ZShEZWJ1ZyldCnB1YiBzdHJ1Y3QgU2hhcmRGb3J3YXJkUmVt
+b3RlRXJyb3IgewogICAgcHViIHN0YXR1czogdTE2LAogICAgcHViIG1lc3NhZ2U6IFN0cmluZywK
+fQoKLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMt
+bHVtZW4tc3JjLWFwaS1ycy5tZCNzb3VyY2UKaW1wbCBzdGQ6OmZtdDo6RGlzcGxheSBmb3IgU2hh
+cmRGb3J3YXJkUmVtb3RlRXJyb3IgewogICAgZm4gZm10KCZzZWxmLCBmOiAmbXV0IHN0ZDo6Zm10
+OjpGb3JtYXR0ZXI8J18+KSAtPiBzdGQ6OmZtdDo6UmVzdWx0IHsKICAgICAgICB3cml0ZSEoZiwg
+InNoYXJkIGZvcndhcmQgZXJyb3IgKHt9KToge30iLCBzZWxmLnN0YXR1cywgc2VsZi5tZXNzYWdl
+KQogICAgfQp9CgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3Vy
+Y2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJjZQppbXBsIHN0ZDo6ZXJyb3I6OkVycm9y
+IGZvciBTaGFyZEZvcndhcmRSZW1vdGVFcnJvciB7fQoKLy8vIEEgZm9yd2FyZGVkIHJlcXVlc3Qg
+ZGVjbGFyZWQgYSBzaGFyZC1tYXAgdmVyc2lvbiB0aGF0IGRpc2FncmVlcyB3aXRoCi8vLyB0aGlz
+IHBvZCdzIG93biBsaXZlIG1hcCAoIzE0NDIgUjIpLiBBIHJvbGxpbmcgcmVzdGFydCBhZnRlciBh
+IGNvbXBsZXRlZAovLy8gcmVzaGFyZCBzcGxpdCBjYW4gcnVuIHBvZHMgb24gdHdvIGRpZmZlcmVu
+dCBgU0hBUkRfTUFQXypgIGVudiBzbmFwc2hvdHMKLy8vIGZvciBhIGJvdW5kZWQgd2luZG93IChw
+b2RzIG9ubHkgcmVhZCBlbnYgYXQgYm9vdCkg4oCUIHJhdGhlciB0aGFuIGxldCB0aGUKLy8vIG9u
+ZS1ob3AgZ3VhcmQgZm9yY2UgYSBsb2NhbCBhbnN3ZXIgdGhhdCBtYXkgYmUgd3Jvbmcgb24gZWl0
+aGVyIHNpZGUgb2YKLy8vIHRoZSBzcGxpdCwgdGhlIHJlY2VpdmVyIHJlamVjdHMgd2l0aCB0aGlz
+IGRpc3RpbmN0LCByZXRyeWFibGUgZXJyb3Igc28KLy8vIHRoZSBjYWxsZXIgKG9yIGl0cyBvd24g
+cmV0cnkgcG9saWN5KSB3YWl0cyBmb3IgdGhlIHJvbGxvdXQgdG8gY29udmVyZ2UuCi8vLyBAc3Bl
+YyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1h
+cGktcnMubWQjc291cmNlCiNbZGVyaXZlKERlYnVnKV0KcHViIHN0cnVjdCBTaGFyZE1hcFZlcnNp
+b25NaXNtYXRjaCB7CiAgICBwdWIgc2VuZGVyX3ZlcnNpb246IHU2NCwKICAgIHB1YiBsb2NhbF92
+ZXJzaW9uOiB1NjQsCn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGlj
+L3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCmltcGwgc3RkOjpmbXQ6OkRp
+c3BsYXkgZm9yIFNoYXJkTWFwVmVyc2lvbk1pc21hdGNoIHsKICAgIGZuIGZtdCgmc2VsZiwgZjog
+Jm11dCBzdGQ6OmZtdDo6Rm9ybWF0dGVyPCdfPikgLT4gc3RkOjpmbXQ6OlJlc3VsdCB7CiAgICAg
+ICAgd3JpdGUhKAogICAgICAgICAgICBmLAogICAgICAgICAgICAiZm9yd2FyZGVkIHJlcXVlc3Qn
+cyBzaGFyZC1tYXAgdmVyc2lvbiB7fSBkaXNhZ3JlZXMgd2l0aCB0aGlzIHBvZCdzIGxpdmUgdmVy
+c2lvbiB7fSIsCiAgICAgICAgICAgIHNlbGYuc2VuZGVyX3ZlcnNpb24sIHNlbGYubG9jYWxfdmVy
+c2lvbgogICAgICAgICkKICAgIH0KfQoKLy8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24v
+c2VtYW50aWMvc291cmNlL2FwcHMtbHVtZW4tc3JjLWFwaS1ycy5tZCNzb3VyY2UKaW1wbCBzdGQ6
+OmVycm9yOjpFcnJvciBmb3IgU2hhcmRNYXBWZXJzaW9uTWlzbWF0Y2gge30KCi8vLyBBIGZvcndh
+cmRlZCByZXF1ZXN0J3Mgb25lLWhvcCBtYXJrZXIgKGB4LWx1bWVuLWZvcndhcmRlZGApIGNsYWlt
+ZWQgdGhpcwovLy8gcG9kLCBidXQgcmVjb21wdXRpbmcgb3duZXJzaGlwIGZyb20gdGhpcyBwb2Qn
+cyBvd24gc2hhcmQgbWFwIGRpc2FncmVlcwovLy8gKCMxNDQyIFIxKS4gVGhlIG1hcmtlciBhbG9u
+ZSBpcyBjYWxsZXItY29udHJvbGxlZCDigJQgYW4gZXh0ZXJuYWwgY2xpZW50Ci8vLyBjYW4gc2V0
+IGl0IGRpcmVjdGx5IG9uIGEgcmVxdWVzdCB0byBhbnkgcG9kLCBmb3JjaW5nIGxvY2FsIGhhbmRs
+aW5nIG9uIGEKLy8vIGJ1Y2tldCB0aGF0IHBvZCBkb2Vzbid0IGFjdHVhbGx5IG93biDigJQgc28g
+aXQgaXMgbm93IHZhbGlkYXRlZCBvbgovLy8gcmVjZWlwdCByYXRoZXIgdGhhbiB0cnVzdGVkIGJs
+aW5kbHk7IGEgc3Bvb2ZlZCBvciBnZW51aW5lbHkgbWlzcm91dGVkCi8vLyBmb3J3YXJkIGlzIHJl
+amVjdGVkLCBuZXZlciBob25vcmVkLgovLy8gQHNwZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9z
+ZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMtYXBpLXJzLm1kI3NvdXJjZQojW2Rlcml2ZShE
+ZWJ1ZyldCnB1YiBzdHJ1Y3QgU2hhcmRGb3J3YXJkTWlzcm91dGVkIHsKICAgIHB1YiBidWNrZXQ6
+IHUzMiwKICAgIHB1YiBvd25lcl9zaGFyZDogdTMyLAogICAgcHViIGxvY2FsX3NoYXJkOiB1MzIs
+Cn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBz
+LWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCmltcGwgc3RkOjpmbXQ6OkRpc3BsYXkgZm9yIFNo
+YXJkRm9yd2FyZE1pc3JvdXRlZCB7CiAgICBmbiBmbXQoJnNlbGYsIGY6ICZtdXQgc3RkOjpmbXQ6
+OkZvcm1hdHRlcjwnXz4pIC0+IHN0ZDo6Zm10OjpSZXN1bHQgewogICAgICAgIHdyaXRlISgKICAg
+ICAgICAgICAgZiwKICAgICAgICAgICAgImZvcndhcmRlZCByZXF1ZXN0IHRhcmdldHMgdmlydHVh
+bCBidWNrZXQge30gKG93bmVkIGJ5IHNoYXJkIHt9KSwgYnV0IHRoaXMgcG9kIGlzIFwKICAgICAg
+ICAgICAgIHNoYXJkIHt9OyByZWZ1c2luZyB0byBob25vciBhbiB1bnZlcmlmaWVkIGZvcndhcmRl
+ZC1ob3AgbWFya2VyIiwKICAgICAgICAgICAgc2VsZi5idWNrZXQsIHNlbGYub3duZXJfc2hhcmQs
+IHNlbGYubG9jYWxfc2hhcmQKICAgICAgICApCiAgICB9Cn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVu
+L3RlY2gtZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291
+cmNlCmltcGwgc3RkOjplcnJvcjo6RXJyb3IgZm9yIFNoYXJkRm9yd2FyZE1pc3JvdXRlZCB7fQoK
+Ly8vIEBzcGVjIGFwcHMvbHVtZW4vdGVjaC1kZXNpZ24vc2VtYW50aWMvc291cmNlL2FwcHMtbHVt
+ZW4tc3JjLWFwaS1ycy5tZCNzb3VyY2UKaW1wbCBGcm9tPGFueWhvdzo6RXJyb3I+IGZvciBBcGlF
+cnIgewogICAgZm4gZnJvbShlOiBhbnlob3c6OkVycm9yKSAtPiBTZWxmIHsKICAgICAgICAvLyAj
+MTQ4NiBSMjogYSB3cml0ZSB3YWl0ZXIgcmVsZWFzZWQgd2l0aG91dCBhIGdlbnVpbmUgYXBwbHkg
+b3V0Y29tZQogICAgICAgIC8vIChkZWR1cC1ndWFyZCBza2lwIG9yIGEgYm91bmRlZCBzdWJtaXQo
+KSB0aW1lb3V0KSBpcyB0cmFuc2llbnQg4oCUCiAgICAgICAgLy8gc3VyZmFjZSBpdCBhcyBhIHJl
+dHJ5YWJsZSA1MDMsIG5ldmVyIHRoZSBnZW5lcmljIDQwMCBmYWxsYmFjawogICAgICAgIC8vIGJl
+bG93ICh3aGljaCB3b3VsZCBtaXNyZXBvcnQgaXQgYXMgYSBiYWQgcmVxdWVzdCkgYW5kIG5ldmVy
+IGEKICAgICAgICAvLyBzaWxlbnQgaGFuZyAodGhlIG9yaWdpbmFsIGRlZmVjdCkuCiAgICAgICAg
+aWYgZS5kb3duY2FzdF9yZWY6OjxTdWJtaXRTdGFsbGVkPigpLmlzX3NvbWUoKSB7CiAgICAgICAg
+ICAgIHJldHVybiBTZWxmOjpuZXcoCiAgICAgICAgICAgICAgICBTdGF0dXNDb2RlOjpTRVJWSUNF
+X1VOQVZBSUxBQkxFLAogICAgICAgICAgICAgICAgIndyaXRlX3N0YWxsZWQiLAogICAgICAgICAg
+ICAgICAgZS50b19zdHJpbmcoKSwKICAgICAgICAgICAgKTsKICAgICAgICB9CiAgICAgICAgaWYg
+ZS5kb3duY2FzdF9yZWY6OjxTaGFyZEZvcndhcmRVbmF2YWlsYWJsZT4oKS5pc19zb21lKCkgewog
+ICAgICAgICAgICByZXR1cm4gU2VsZjo6bmV3KAogICAgICAgICAgICAgICAgU3RhdHVzQ29kZTo6
+U0VSVklDRV9VTkFWQUlMQUJMRSwKICAgICAgICAgICAgICAgICJzaGFyZF9mb3J3YXJkX3VuYXZh
+aWxhYmxlIiwKICAgICAgICAgICAgICAgIGUudG9fc3RyaW5nKCksCiAgICAgICAgICAgICk7CiAg
+ICAgICAgfQogICAgICAgIGlmIGxldCBTb21lKHJlKSA9IGUuZG93bmNhc3RfcmVmOjo8U2hhcmRG
+b3J3YXJkUmVtb3RlRXJyb3I+KCkgewogICAgICAgICAgICBsZXQgc3RhdHVzID0gU3RhdHVzQ29k
+ZTo6ZnJvbV91MTYocmUuc3RhdHVzKS51bndyYXBfb3IoU3RhdHVzQ29kZTo6QkFEX0dBVEVXQVkp
+OwogICAgICAgICAgICByZXR1cm4gU2VsZjo6bmV3KHN0YXR1cywgInNoYXJkX2ZvcndhcmRlZF9l
+cnJvciIsIHJlLm1lc3NhZ2UuY2xvbmUoKSk7CiAgICAgICAgfQogICAgICAgIGlmIGUuZG93bmNh
+c3RfcmVmOjo8U2hhcmRNYXBWZXJzaW9uTWlzbWF0Y2g+KCkuaXNfc29tZSgpIHsKICAgICAgICAg
+ICAgcmV0dXJuIFNlbGY6Om5ldygKICAgICAgICAgICAgICAgIFN0YXR1c0NvZGU6OlNFUlZJQ0Vf
+VU5BVkFJTEFCTEUsCiAgICAgICAgICAgICAgICAic2hhcmRfbWFwX3ZlcnNpb25fbWlzbWF0Y2gi
+LAogICAgICAgICAgICAgICAgZS50b19zdHJpbmcoKSwKICAgICAgICAgICAgKTsKICAgICAgICB9
+CiAgICAgICAgaWYgZS5kb3duY2FzdF9yZWY6OjxTaGFyZEZvcndhcmRNaXNyb3V0ZWQ+KCkuaXNf
+c29tZSgpIHsKICAgICAgICAgICAgcmV0dXJuIFNlbGY6Om5ldygKICAgICAgICAgICAgICAgIFN0
+YXR1c0NvZGU6OlNFUlZJQ0VfVU5BVkFJTEFCTEUsCiAgICAgICAgICAgICAgICAic2hhcmRfZm9y
+d2FyZF9taXNyb3V0ZWQiLAogICAgICAgICAgICAgICAgZS50b19zdHJpbmcoKSwKICAgICAgICAg
+ICAgKTsKICAgICAgICB9CiAgICAgICAgaWYgbGV0IFNvbWUoc2UpID0gZS5kb3duY2FzdF9yZWY6
+OjxTdG9yYWdlRXJyb3I+KCkgewogICAgICAgICAgICByZXR1cm4gbWF0Y2ggc2UgewogICAgICAg
+ICAgICAgICAgU3RvcmFnZUVycm9yOjpDb2xsZWN0aW9uTm90Rm91bmQoXykgPT4gewogICAgICAg
+ICAgICAgICAgICAgIFNlbGY6Om5ldyhTdGF0dXNDb2RlOjpOT1RfRk9VTkQsICJub3RfZm91bmQi
+LCBlLnRvX3N0cmluZygpKQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgU3RvcmFn
+ZUVycm9yOjpJbnZhbGlkQ29sbGVjdGlvbk5hbWUoXykgPT4gU2VsZjo6bmV3KAogICAgICAgICAg
+ICAgICAgICAgIFN0YXR1c0NvZGU6OkJBRF9SRVFVRVNULAogICAgICAgICAgICAgICAgICAgICJp
+bnZhbGlkX2NvbGxlY3Rpb25fbmFtZSIsCiAgICAgICAgICAgICAgICAgICAgZS50b19zdHJpbmco
+KSwKICAgICAgICAgICAgICAgICksCiAgICAgICAgICAgICAgICBTdG9yYWdlRXJyb3I6OlVua25v
+d25GaWVsZCB7IC4uIH0gPT4gU2VsZjo6bmV3KAogICAgICAgICAgICAgICAgICAgIFN0YXR1c0Nv
+ZGU6OlVOUFJPQ0VTU0FCTEVfRU5USVRZLAogICAgICAgICAgICAgICAgICAgICJ1bmtub3duX2Zp
+ZWxkIiwKICAgICAgICAgICAgICAgICAgICBlLnRvX3N0cmluZygpLAogICAgICAgICAgICAgICAg
+KSwKICAgICAgICAgICAgICAgIFN0b3JhZ2VFcnJvcjo6VHlwZU1pc21hdGNoIHsgLi4gfSA9PiBT
+ZWxmOjpuZXcoCiAgICAgICAgICAgICAgICAgICAgU3RhdHVzQ29kZTo6VU5QUk9DRVNTQUJMRV9F
+TlRJVFksCiAgICAgICAgICAgICAgICAgICAgInR5cGVfbWlzbWF0Y2giLAogICAgICAgICAgICAg
+ICAgICAgIGUudG9fc3RyaW5nKCksCiAgICAgICAgICAgICAgICApLAogICAgICAgICAgICAgICAg
+U3RvcmFnZUVycm9yOjpEdXBsaWNhdGVzT25UZXh0KF8pID0+IHsKICAgICAgICAgICAgICAgICAg
+ICBTZWxmOjpuZXcoU3RhdHVzQ29kZTo6QkFEX1JFUVVFU1QsICJiYWRfcmVxdWVzdCIsIGUudG9f
+c3RyaW5nKCkpCiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICBTdG9yYWdlRXJyb3I6
+OkludmFsaWROdW1iZXIoXykgPT4gU2VsZjo6bmV3KAogICAgICAgICAgICAgICAgICAgIFN0YXR1
+c0NvZGU6OlVOUFJPQ0VTU0FCTEVfRU5USVRZLAogICAgICAgICAgICAgICAgICAgICJpbnZhbGlk
+X251bWJlciIsCiAgICAgICAgICAgICAgICAgICAgZS50b19zdHJpbmcoKSwKICAgICAgICAgICAg
+ICAgICksCiAgICAgICAgICAgICAgICBTdG9yYWdlRXJyb3I6OkJ1bGtMaW1pdCB7IC4uIH0gPT4g
+ewogICAgICAgICAgICAgICAgICAgIFNlbGY6Om5ldyhTdGF0dXNDb2RlOjpQQVlMT0FEX1RPT19M
+QVJHRSwgImJ1bGtfbGltaXQiLCBlLnRvX3N0cmluZygpKQogICAgICAgICAgICAgICAgfQogICAg
+ICAgICAgICAgICAgU3RvcmFnZUVycm9yOjpRdWVyeVRvb0NvbXBsZXgoXykgPT4gewogICAgICAg
+ICAgICAgICAgICAgIFNlbGY6Om5ldyhTdGF0dXNDb2RlOjpCQURfUkVRVUVTVCwgInF1ZXJ5X3Rv
+b19jb21wbGV4IiwgZS50b19zdHJpbmcoKSkKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAg
+ICAgIFN0b3JhZ2VFcnJvcjo6SW52YWxpZFBhZ2luYXRpb24oXykgPT4gewogICAgICAgICAgICAg
+ICAgICAgIFNlbGY6Om5ldyhTdGF0dXNDb2RlOjpCQURfUkVRVUVTVCwgImludmFsaWRfcGFnaW5h
+dGlvbiIsIGUudG9fc3RyaW5nKCkpCiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICBT
+dG9yYWdlRXJyb3I6OkdvbmUoXykgPT4gU2VsZjo6bmV3KFN0YXR1c0NvZGU6OkdPTkUsICJnb25l
+IiwgZS50b19zdHJpbmcoKSksCiAgICAgICAgICAgICAgICBTdG9yYWdlRXJyb3I6OlVuc3VwcG9y
+dGVkU29ydChfKSA9PiB7CiAgICAgICAgICAgICAgICAgICAgU2VsZjo6bmV3KFN0YXR1c0NvZGU6
+OkJBRF9SRVFVRVNULCAidW5zdXBwb3J0ZWRfc29ydCIsIGUudG9fc3RyaW5nKCkpCiAgICAgICAg
+ICAgICAgICB9CiAgICAgICAgICAgICAgICAvLyAjMTQ2NyBSNDogY2FsbGVyLWRlY2xhcmVkIGB0
+b3RhbF9jaHVua3NgIGZhaWxlZCB0aGUgc2FuaXR5CiAgICAgICAgICAgICAgICAvLyBjYXAg4oCU
+IGEgY2xpZW50L3Byb3RvY29sIGVycm9yLCBub3QgYSB0cmFuc2llbnQgb25lLgogICAgICAgICAg
+ICAgICAgU3RvcmFnZUVycm9yOjpJbnZhbGlkUHJ1bmVDaHVuayB7IC4uIH0gPT4gU2VsZjo6bmV3
+KAogICAgICAgICAgICAgICAgICAgIFN0YXR1c0NvZGU6OkJBRF9SRVFVRVNULAogICAgICAgICAg
+ICAgICAgICAgICJpbnZhbGlkX3BydW5lX2NodW5rIiwKICAgICAgICAgICAgICAgICAgICBlLnRv
+X3N0cmluZygpLAogICAgICAgICAgICAgICAgKSwKICAgICAgICAgICAgICAgIC8vICMxNDY3IFI0
+OiB0aGUgcHJ1bmUgYWNjdW11bGF0b3IgaXMgYXQgaXRzIGVudHJ5IGNhcCDigJQgYQogICAgICAg
+ICAgICAgICAgLy8gNDI5LWNsYXNzIHNpZ25hbCAocmV0cnlhYmxlIG9uY2UgdGhlIGRyaXZlcidz
+IG90aGVyLAogICAgICAgICAgICAgICAgLy8gcHJlc3VtYWJseS1zdHVjayBwYXNzZXMgR0Mgb3V0
+IG9yIGNvbXBsZXRlKSByYXRoZXIgdGhhbiBhCiAgICAgICAgICAgICAgICAvLyBwZXJtYW5lbnQg
+NHh4LgogICAgICAgICAgICAgICAgU3RvcmFnZUVycm9yOjpQcnVuZUFjY3VtdWxhdG9yRnVsbCB7
+IC4uIH0gPT4gU2VsZjo6bmV3KAogICAgICAgICAgICAgICAgICAgIFN0YXR1c0NvZGU6OlRPT19N
+QU5ZX1JFUVVFU1RTLAogICAgICAgICAgICAgICAgICAgICJwcnVuZV9hY2N1bXVsYXRvcl9mdWxs
+IiwKICAgICAgICAgICAgICAgICAgICBlLnRvX3N0cmluZygpLAogICAgICAgICAgICAgICAgKSwK
+ICAgICAgICAgICAgfTsKICAgICAgICB9CiAgICAgICAgU2VsZjo6bmV3KFN0YXR1c0NvZGU6OkJB
+RF9SRVFVRVNULCAiYmFkX3JlcXVlc3QiLCBlLnRvX3N0cmluZygpKQogICAgfQp9CgovLy8gQHNw
+ZWMgYXBwcy9sdW1lbi90ZWNoLWRlc2lnbi9zZW1hbnRpYy9zb3VyY2UvYXBwcy1sdW1lbi1zcmMt
+YXBpLXJzLm1kI3NvdXJjZQppbXBsIEludG9SZXNwb25zZSBmb3IgQXBpRXJyIHsKICAgIGZuIGlu
+dG9fcmVzcG9uc2Uoc2VsZikgLT4gYXh1bTo6cmVzcG9uc2U6OlJlc3BvbnNlIHsKICAgICAgICBz
+ZWxmLjAuaW50b19yZXNwb25zZSgpCiAgICB9Cn0KCi8vLyBAc3BlYyBhcHBzL2x1bWVuL3RlY2gt
+ZGVzaWduL3NlbWFudGljL3NvdXJjZS9hcHBzLWx1bWVuLXNyYy1hcGktcnMubWQjc291cmNlCmlt
+cGwgRnJvbTxjcmF0ZTo6YXV0aDo6QXV0aEVycj4gZm9yIEFwaUVyciB7CiAgICBmbiBmcm9tKGU6
+IGNyYXRlOjphdXRoOjpBdXRoRXJyKSAtPiBTZWxmIHsKICAgICAgICBtYXRjaCBlIHsKICAgICAg
+ICAgICAgY3JhdGU6OmF1dGg6OkF1dGhFcnI6OkZvcmJpZGRlbiB7CiAgICAgICAgICAgICAgICBz
+dWJqZWN0LAogICAgICAgICAgICAgICAgbmVlZGVkLAogICAgICAgICAgICAgICAgY29sbGVjdGlv
+bl9pZCwKICAgICAgICAgICAgfSA9PiBTZWxmOjpuZXcoCiAgICAgICAgICAgICAgICBTdGF0dXND
+b2RlOjpGT1JCSURERU4sCiAgICAgICAgICAgICAgICAiZm9yYmlkZGVuIiwKICAgICAgICAgICAg
+ICAgIGZvcm1hdCEoInN1YmplY3QgYHtzdWJqZWN0fWAgbGFja3Mge25lZWRlZDo/fSBvbiBge2Nv
+bGxlY3Rpb25faWR9YCIpLAogICAgICAgICAgICApLAogICAgICAgIH0KICAgIH0KfQovLyBDT0RF
+R0VOLUVORAo=
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -2667,121 +1979,7 @@ changes:
     section: rust-source-unit
     impl_mode: codegen
     description: |
-      rust-source-unit (td_ast) source for `apps/lumen/src/api.rs` captured during lumen
-      standardization onto the per-file codegen ladder.
-  - path: apps/lumen/src/api.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1396 R2: add a bounded write-pause seam for the reshard driver's
-      final `CatchingUp` pass. New `WriteFence` type (armed/cleared via a
-      new `POST /admin/reshard:fence` admin route, `ReshardFenceRequest`)
-      tracks a set of paused virtual buckets behind a TTL deadline enforced
-      by this serving pod itself, independent of the driver process's
-      liveness — a crashed driver that never explicitly clears the fence
-      cannot wedge writes forever. A new `enforce_write_fence` helper is
-      checked in `index`, `replace_docs`, and `replace_doc` (not
-      `delete_external_id`, which is safe to race either way); a write to a
-      fenced bucket is rejected `503 bucket_write_paused`. `AppState` gained
-      a `write_fence: WriteFence` field (defaulted in `with_components`).
-  - path: apps/lumen/src/api.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1398 R1-R3: cross-pod shard routing for operator/k8s serving pods.
-      New `RoutedBackend` trait (`search`/`index`/`replace_docs`/`delete`,
-      all take the inbound `headers` so the one implementation can forward
-      `Authorization` + `x-read-consistency`); new `AppState.routed:
-      Option<Arc<dyn RoutedBackend>>` field (defaulted `None` in
-      `with_components`, wired via new `with_routed`). `search_core`,
-      `batch_search_core`, `index`, `delete_external_id`, `replace_docs`,
-      and `replace_doc` all branch on `state.routed` first and fall back to
-      the existing local `search_backend`/`write_backend` path unchanged
-      when it is absent, so `shardCount:1` serving never constructs a
-      router (AC5). New `ShardForwardUnavailable`/`ShardForwardRemoteError`
-      error types classify forwarding failures distinctly from local
-      errors via new `From<anyhow::Error> for ApiErr` downcast arms. The
-      `duplicates` handler is deliberately not wired to `state.routed`
-      (per-shard `min_group_size` filtering happens before a cross-shard
-      merge could be correct) — out of #1398's scope, left local-only.
-  - path: apps/lumen/src/api.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1442 round-2 hardening: new `ShardMapVersionMismatch` (R2, `503
-      shard_map_version_mismatch`) and `ShardForwardMisrouted` (R1, `503
-      shard_forward_misrouted`) error types plus matching
-      `From<anyhow::Error> for ApiErr` downcast arms, produced by
-      `routing_remote::RoutedRouter`'s new validate-on-receipt checks. `R6`:
-      `duplicates` now rejects with `501 duplicates_not_routed` when
-      `state.routed.is_some()` instead of silently answering from
-      local-shard data only; `reindex_stream` now rejects with `501
-      reindex_stream_not_routed` in routed mode for the same reason (its
-      spawned batch loop bypasses both per-item shard ownership and
-      `enforce_write_fence`), directing callers to `POST .../index` instead.
-  - path: apps/lumen/src/api.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1443 R3/R4 hardening of the #1396/#1442 write fence. `WriteFence::arm`
-      now computes its deadline with `Instant::checked_add` and returns
-      `bool` instead of panicking on overflow; its internal mutex lock is
-      poison-proof (`unwrap_or_else(poisoned -> into_inner)`), matching
-      `segment_rdb`'s save-lock pattern, so a prior panic can never wedge the
-      fence into a permanent outage. `reshard_fence` validates
-      `ttl_secs` against a new `MAX_FENCE_TTL_SECS = 3600` bound (`0` or
-      `> 3600` is rejected `400 invalid_ttl_secs` before ever reaching
-      `arm`) and surfaces `arm`'s new `false` return as the same 400 shape
-      instead of a silently-unarmed 200. `reshard_apply` now accepts an
-      optional `replace_ids`/`bucket`/`virtual_bucket_count` on
-      `ReshardBatch` (R2: authoritative-subset replace for a moving
-      bucket's final fenced re-sync, closing a delete-resurrection gap —
-      `delete_external_id` itself stays fence-exempt and unchanged) and
-      passes the resulting `ReshardBatchReplaceScope` through to
-      `Engine::apply_reshard_batch`, logging/returning the new
-      `documents_pruned` count alongside `documents_upserted`.
-      `enforce_write_fence`'s doc comment now explains the R2 design choice
-      and its one disclosed residual gap (see `reshard.rs`'s changelog
-      entry for the full rationale).
-  - path: apps/lumen/src/api.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1444 R2: `router`'s `DefaultBodyLimit::max(..)` now reads
-      `crate::reshard::ADMIN_ROUTE_BODY_LIMIT_BYTES` instead of a
-      hand-copied `8 * 1024 * 1024` literal, so this route's actual
-      enforced body limit can never drift from the constant the reshard
-      driver's oversize-batch detection compares against.
-  - path: apps/lumen/src/api.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1458 R2: `delete_external_id` now calls `enforce_write_fence` like
-      every other write path, replacing the earlier deliberate DELETE
-      exemption — a delete racing strictly inside the sub-window between a
-      final fenced pass's scoped-backup read and its eviction is now
-      rejected with a retryable 503 `bucket_write_paused` instead of being
-      silently accepted. `enforce_write_fence`'s doc comment updated to
-      match.
-  - path: apps/lumen/src/api.rs
-    action: modify
-    section: rust-source-unit
-    impl_mode: hand-written
-    description: |
-      #1467 R4: error mapping for the two new `apply_reshard_prune_chunk`
-      accumulator-hardening errors. `StorageError::InvalidPruneChunk`
-      (caller-declared `total_chunks` of `0` or beyond the sanity cap) maps
-      to `400 invalid_prune_chunk` -- a client/protocol error, not
-      transient. `StorageError::PruneAccumulatorFull` (the receiver's
-      bounded in-flight-group accumulator is at capacity) maps to
-      `429 prune_accumulator_full` -- a retryable signal once the driver's
-      other stuck/abandoned passes age-GC out or complete, distinct from a
-      permanent 4xx. `batch_search_storage_error`'s reason-string mapping
-      updated to match for parity with the single-search error path.
+      Canonical lossless source unit for Lumen public, administrative, and
+      operational HTTP routing. Runtime behavior is regenerated exactly from
+      the authoritative rust-source-unit captured above.
 ```

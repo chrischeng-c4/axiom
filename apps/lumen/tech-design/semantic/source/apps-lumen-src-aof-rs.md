@@ -20,23 +20,22 @@ Public API manifest for `apps/lumen/src/aof.rs` generated from AST during Score 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AofReader` | apps/lumen/src/aof.rs | struct | pub | 337 |  |
-| `AofWriter` | apps/lumen/src/aof.rs | struct | pub | 97 |  |
-| `FsyncPolicy` | apps/lumen/src/aof.rs | enum | pub | 79 |  |
-| `append` | apps/lumen/src/aof.rs | function | pub | 198 | append(&mut self, seq: u64, record: &WalRecord) -> Result<()> |
-| `flush` | apps/lumen/src/aof.rs | function | pub | 220 | flush(&mut self) -> Result<()> |
-| `maybe_sync` | apps/lumen/src/aof.rs | function | pub | 238 | maybe_sync(&mut self) -> Result<()> |
-| `open` | apps/lumen/src/aof.rs | function | pub | 113 | open(path: impl Into<PathBuf>) -> Result<Self> |
-| `open_with_policy` | apps/lumen/src/aof.rs | function | pub | 120 | open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> |
-| `replay` | apps/lumen/src/aof.rs | function | pub | 349 | replay(         path: impl AsRef<Path>,         from_seq: u64,         mut apply: impl FnMut(u64, WalRecord),     ) -> Result<u64> |
-| `replay_aof_into` | apps/lumen/src/aof.rs | function | pub | 410 | replay_aof_into(     engine: &std::sync::Arc<crate::storage::Engine>,     path: impl AsRef<Path>,     from_seq: u64, ) -> Result<u64> |
-| `sync` | apps/lumen/src/aof.rs | function | pub | 226 | sync(&mut self) -> Result<()> |
-| `truncate_through` | apps/lumen/src/aof.rs | function | pub | 257 | truncate_through(&mut self, through: u64) -> Result<()> |
+| `AofReader` | apps/lumen/src/aof.rs | struct | pub | 149 |  |
+| `AofWriter` | apps/lumen/src/aof.rs | struct | pub | 84 |  |
+| `append` | apps/lumen/src/aof.rs | function | pub | 108 | append(&mut self, seq: u64, record: &WalRecord) -> Result<()> |
+| `flush` | apps/lumen/src/aof.rs | function | pub | 115 | flush(&mut self) -> Result<()> |
+| `maybe_sync` | apps/lumen/src/aof.rs | function | pub | 128 | maybe_sync(&mut self) -> Result<()> |
+| `open` | apps/lumen/src/aof.rs | function | pub | 92 | open(path: impl Into<PathBuf>) -> Result<Self> |
+| `open_with_policy` | apps/lumen/src/aof.rs | function | pub | 99 | open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> |
+| `replay` | apps/lumen/src/aof.rs | function | pub | 161 | replay(         path: impl AsRef<Path>,         from_seq: u64,         mut apply: impl FnMut(u64, WalRecord),     ) -> Result<u64> |
+| `replay_aof_into` | apps/lumen/src/aof.rs | function | pub | 184 | replay_aof_into(     engine: &std::sync::Arc<crate::storage::Engine>,     path: impl AsRef<Path>,     from_seq: u64, ) -> Result<u64> |
+| `sync` | apps/lumen/src/aof.rs | function | pub | 120 | sync(&mut self) -> Result<()> |
+| `truncate_through` | apps/lumen/src/aof.rs | function | pub | 141 | truncate_through(&mut self, through: u64) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Local append-only log (Stage 2 Phase 2f-3) — the binary's "AOF".
 //!
@@ -118,12 +117,12 @@ fn decode_payload(bytes: &[u8]) -> Result<WalRecord> {
 /// Append-only writer keyed by applied seq. Frames are appended in seq order;
 /// `open` first truncates any torn tail left by a crash mid-append, so the file
 /// always starts in a clean, fully-decodable state.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub struct AofWriter {
     inner: FramedLogWriter,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 impl AofWriter {
     /// Open `path` for appending with the default [`FsyncPolicy::EverySec`],
     /// first truncating any torn tail.
@@ -183,10 +182,10 @@ impl AofWriter {
 
 /// Replay frames from an AOF, applying each `(seq, WalRecord)` with `seq >
 /// from_seq` to a caller closure in order, stopping cleanly at a torn tail.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub struct AofReader;
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 impl AofReader {
     /// Iterate every frame in `path` in order, SKIP frames with `seq <=
     /// from_seq` (already covered by the RDB baseline), and call `apply(seq,
@@ -218,7 +217,7 @@ impl AofReader {
 /// via [`crate::storage::Engine::apply_raft_entry`], returning the max seq
 /// replayed. This is step 2 of cold start (RDB → **AOF** → broker); the engine is
 /// already seeded to `from_seq` by the segment checkpoint.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-aof-rs.md#source
 pub fn replay_aof_into(
     engine: &std::sync::Arc<crate::storage::Engine>,
     path: impl AsRef<Path>,
@@ -585,6 +584,7 @@ mod crux_recovery_tests {
         SearchRequest {
             query,
             limit,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,

@@ -45,6 +45,9 @@ pub enum SectionType {
     Doc,
     Manifest,
     ToolContract,
+    /// Developer/agent task-navigation contract. Deliberately separate from
+    /// `ToolContract`, which is reserved for external-contract tool manifests.
+    DxContract,
     RustSourceUnit,
     TextSourceUnit,
 }
@@ -237,11 +240,12 @@ impl SectionType {
             SectionType::UnitTest => 21,
             SectionType::E2eTest => 22,
             SectionType::ToolContract => 23,
-            SectionType::RustSourceUnit => 24,
-            SectionType::TextSourceUnit => 25,
-            // 26-27: delta and doc (last)
-            SectionType::Changes => 26,
-            SectionType::Doc => 27,
+            SectionType::DxContract => 24,
+            SectionType::RustSourceUnit => 25,
+            SectionType::TextSourceUnit => 26,
+            // 27-28: delta and doc (last)
+            SectionType::Changes => 27,
+            SectionType::Doc => 28,
         }
     }
 
@@ -287,6 +291,7 @@ impl SectionType {
             | SectionType::Deployment
             | SectionType::Manifest
             | SectionType::ToolContract
+            | SectionType::DxContract
             | SectionType::E2eTest => "yaml",
             SectionType::RustSourceUnit => "rust",
             SectionType::TextSourceUnit => "bash",
@@ -321,6 +326,7 @@ impl SectionType {
             SectionType::Doc => "doc",
             SectionType::Manifest => "manifest",
             SectionType::ToolContract => "tool-contract",
+            SectionType::DxContract => "dx-contract",
             SectionType::RustSourceUnit => "rust-source-unit",
             SectionType::TextSourceUnit => "text-source-unit",
         }
@@ -352,6 +358,7 @@ impl SectionType {
             SectionType::DesignToken,
             SectionType::Manifest,
             SectionType::ToolContract,
+            SectionType::DxContract,
             SectionType::RuntimeImage,
             SectionType::Deployment,
             SectionType::Doc,
@@ -405,6 +412,7 @@ impl FromStr for SectionType {
             "tool-contract" | "tool_contract" | "ec-tool-contract" | "ec_tool_contract" => {
                 Ok(SectionType::ToolContract)
             }
+            "dx-contract" | "dx_contract" => Ok(SectionType::DxContract),
             "rust-source-unit" | "rust_source_unit" => Ok(SectionType::RustSourceUnit),
             "text-source-unit" | "text_source_unit" => Ok(SectionType::TextSourceUnit),
             _ => Err(format!("Unknown section type: {}", s)),
@@ -1032,8 +1040,8 @@ mod tests {
         // Updated as section types are added. Change together with
         // `AUTHORING.md`'s "Section Type Registry" header count.
         // 21 → +Manifest → +UnitTest/+E2eTest → +RuntimeImage/+Deployment
-        // → +ToolContract → +RustSourceUnit/+TextSourceUnit = 28.
-        assert_eq!(SectionType::all_in_fill_order().len(), 28);
+        // → +ToolContract → +DxContract → +RustSourceUnit/+TextSourceUnit = 29.
+        assert_eq!(SectionType::all_in_fill_order().len(), 29);
     }
 
     #[test]

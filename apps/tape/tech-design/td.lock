@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-15T02:45:30.017991+00:00"
-digest = "sha256:ac2ce521a5caea94a8471144e77679518a850e02ed4e99f48bdeb77b62e897fd"
-source_digest = "sha256:ac2ce521a5caea94a8471144e77679518a850e02ed4e99f48bdeb77b62e897fd"
-ir_digest = "sha256:048366a3ff13fdd356c8759301c130a9149287bb3570445c2dcc039e757a71f6"
+generated_at = "2026-07-16T02:55:13.553646+00:00"
+digest = "sha256:309d71f02f79016f8b3f4e0a3e789fd5791e2e9747ef4c808c0c6ba4240e2a90"
+source_digest = "sha256:309d71f02f79016f8b3f4e0a3e789fd5791e2e9747ef4c808c0c6ba4240e2a90"
+ir_digest = "sha256:adc9850acc8957d54fc8d3cc4bb9152d9df2dd45ba0b9e3bd1a6cd7aa4399351"
 
 [[files]]
 path = "README.md"
@@ -15,8 +15,8 @@ section_count = 0
 
 [[files]]
 path = "interfaces/rest/service-http-shell-h2c-serve-standard-endpoints.md"
-digest = "sha256:c07f9ef9265216014ef464a0e0d4aa5dfe01f36a2c2abcb57138a8c5e08ad6d5"
-ir_digest = "sha256:54a47ef3cff55c82145b2ced587c29a6928e915c43092bb3671217fe1fd7c5ec"
+digest = "sha256:65e226b91ee94c06e2231b0b4b1761d3839ad580bd1fa61fc28441b7fb15565b"
+ir_digest = "sha256:38aec4976f7404f88d9c7d19498f75b219bf011adf1b1b27e3fa034a96f1d50b"
 section_count = 3
 
 [[files]]
@@ -26,9 +26,27 @@ ir_digest = "sha256:08d2e53f4bd35197f47fde2df1486c37a1c4aaa092a2df29d78fc8cb09cd
 section_count = 3
 
 [[files]]
+path = "logic/add-operator-kind-restart-and-durable-replay-dogfood.md"
+digest = "sha256:ae824271162945fe67f11e9d20d459a1c973002beade72178b060c565e1d9a12"
+ir_digest = "sha256:cc1ec2b3df9fef4864878d1eccbaff91d01a39caa5da04dc44a2866cf2b4036b"
+section_count = 2
+
+[[files]]
 path = "logic/adopt-shared-service-http-otlp-tracing.md"
 digest = "sha256:b427225b5b5f5544827dc6a91708e809b1afe45bc6d53f745a26fb7418092bf9"
 ir_digest = "sha256:c781cd0dc875cede456724ccc224c41599571d23684f9f7e2eb6d92e8b9d1e12"
+section_count = 3
+
+[[files]]
+path = "logic/expose-subscriptions-as-topic-delivery-resources.md"
+digest = "sha256:3b21917a9022ea8cd1410f913e1a0382057b62162b50d086fe1c99bc8a55e984"
+ir_digest = "sha256:09aacd5ec58eaab92a149135287d13b492e0cf980a000ec3290e2e322a46ca99"
+section_count = 3
+
+[[files]]
+path = "logic/normalize-replay-checkpoints-into-pull-subscriptions.md"
+digest = "sha256:1f61ae73eb41d5ef90d5aa04670eef210064f4246d2821ce70de0ce7a3ea63db"
+ir_digest = "sha256:aca744a06a27f4f86ab56d5eead6f8561c915e3693257dd924223af272b9abd3"
 section_count = 3
 
 [[files]]
@@ -38,6 +56,36 @@ ir_digest = "sha256:70017ec804dac54c3892141a59a77d3d76d6ff87f1cbe178511b4a078779
 section_count = 3
 
 [[files]]
+path = "logic/project-the-stateful-service-workload-baseline.md"
+digest = "sha256:70580f5793c3ae5def3fed1a90c3ee9ed3b0d9680e8d739a79aca7810c1f7e7f"
+ir_digest = "sha256:95a97cc2d19a8b7bf8a1883623a517ce5b90b4d4078f84727aed959f5457abaa"
+section_count = 2
+
+[[files]]
+path = "logic/prove-repeated-raft-restart-recovery-under-sustained-append-and.md"
+digest = "sha256:28f93b3fcbbc1259229d6e176eca7ebfc31b976136bb99050b0bc20b5adfadab"
+ir_digest = "sha256:4f9ea089588dc709bb0b5e0aae7121c8d1f715c994f101649362dcb937b6bcb7"
+section_count = 2
+
+[[files]]
+path = "logic/seed-empty-pvcs-from-a-backup-snapshot-before-raft-catch-up.md"
+digest = "sha256:10d00a856b97be22e40afbd1ae92dc11f076d971606362cd90f3b81c2446ae0c"
+ir_digest = "sha256:1ef9c6dc78ec6af339d92df4206b495705fe5f1178d46275e6fff7ac907d605b"
+section_count = 2
+
+[[files]]
+path = "logic/ship-opt-in-default-deny-networkpolicy-component.md"
+digest = "sha256:25d36690e57e938f3745049f70d59f51e68d5a97b74cc42281756ec615d6ff41"
+ir_digest = "sha256:a5c9e0863f9ae0bcb170fb09deb6e78a524073143983322aad34aea992680215"
+section_count = 2
+
+[[files]]
+path = "logic/ship-prometheus-operator-scrape-and-alert-manifests.md"
+digest = "sha256:a1bdb03c14c3044134191a14e461e28ad4e17cbc5a7d1b20f0fbe89025f577a7"
+ir_digest = "sha256:d51a1baeedc227682c2fad86351cdd76142ae3df76a0a2a8658775782487d798"
+section_count = 2
+
+[[files]]
 path = "logic/tape-backup-service-tls-spec-gen-clients.md"
 digest = "sha256:7ea070320715478f8f67185c84f0f303cd765b1dc1e050725b8480edfb4fcea9"
 ir_digest = "sha256:601dcc9441fc7f19d8cc365ff98f4065383f2ca197e04ce6cb4cd2f0af6a853d"
@@ -45,20 +93,20 @@ section_count = 3
 
 [[files]]
 path = "logic/tape-docs-scripts-traits-polish.md"
-digest = "sha256:48d882da92a5f90775134133eb220248b13b256a6c2065e262dad047e18fa027"
-ir_digest = "sha256:3bf94e584c861b8f600020ba863e9d365cbffc6ce6b47680835ceed7624af6f8"
+digest = "sha256:a3cf0e945223478def36454aef2e501b2ca4444c2e17e1cb662a0fdfd3af76d9"
+ir_digest = "sha256:25ddb6a60f24d0a6aa6dd121d1bb0e94a326be34f3bb9718ebd797de01babf83"
 section_count = 3
 
 [[files]]
 path = "logic/tape-operator-k8s-dockerfile-cli.md"
-digest = "sha256:28e2a16ce98228be5a97c824afca2949abe7cd75e915423fabf5ec729e7c9b30"
-ir_digest = "sha256:0165a40acac06a3aa22126b07ae1c86da2250a72e59e3a85f5b2641cf7f8820a"
+digest = "sha256:a8ccee3c580ed603f2b2739ee4fb227092479b6694b5139db650d7c4bae23d98"
+ir_digest = "sha256:04d29259e75b8601718cd2a97f9b157785142cab961fb273e585869dc06738bb"
 section_count = 3
 
 [[files]]
 path = "logic/tape-raft-host-primary-replicas.md"
-digest = "sha256:72ee950649d4c5ac6d73eb95f22e512a5d8dc0bb91806f0ff349d12b6489fae7"
-ir_digest = "sha256:3ecb0fd4bb6e6e967a940d43cc4b397a55c4c335d78903401ec4af00d8752a03"
+digest = "sha256:798a67cc5e32ba1acd46ffe8846d54d1a947db94e9027c54c9070caa99193ec9"
+ir_digest = "sha256:a8637768312978a08d307638e8ef57e8276076c0b7690f337a470f08febbf96e"
 section_count = 3
 
 [[files]]
@@ -87,26 +135,26 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/apps-tape-src-bin-tape-rs.md"
-digest = "sha256:c73310d4348958639b7894c8e768f0dd8346ab1314fb96c9187efcac625fc883"
-ir_digest = "sha256:d436416b1bb970ce00d330bccf344dde58dd052d3d6babc4a202aadf9036fd6a"
+digest = "sha256:1f0d7aa2b3332c3c3bd54ae761b80324bb3a981d310691efda48a1f8e622f1ef"
+ir_digest = "sha256:8e20412ceab144a0e02b4091c1691dc4af06f5995142aa30003348c81ac8c6c8"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-lib-rs.md"
-digest = "sha256:02d35a42dcd4a2ed3a6e2e1f39923376a932639b0a8fe4a390b2a535cf173a04"
-ir_digest = "sha256:69e4d27fa24958e93a208c4380f095a92f35c527fc8744065cc7f541d8d99437"
+digest = "sha256:8d5731ec1b63ea4bd3fc01d534a4c4d30d5def4317e5a7d74723c0a56e7a63bc"
+ir_digest = "sha256:3ccc03e8c8d9da31458fe64226a0ab1f1488390a1983c01f1c2c960aec41c854"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-src-spec-rs.md"
-digest = "sha256:9d5cc9fc94364202a8c19b8d500407482ced1b30f1414d0f9ccffddb38387502"
-ir_digest = "sha256:24d5c39506969c73d044f64520128e05349548d66b411c2995a0da154c2065c2"
+digest = "sha256:0b5053134cd7563862837e70ae6db567b9873c05669787b8b795e56ecb9c179e"
+ir_digest = "sha256:789c8d75c9ef0941e4848fa96e56f97cfa857ac1c777e97f98c4b2320100030b"
 section_count = 4
 
 [[files]]
 path = "semantic/source/apps-tape-tests-cli-contract-rs.md"
-digest = "sha256:ccae58f10a530a48a3ee05f3f5985d989032c5b867be397e339d5e7d5e83ce0a"
-ir_digest = "sha256:f6110fd06ab7d20409ec9d7d2afdcc7244ad952ad0cebc32c90044684a3f6d96"
+digest = "sha256:670df7c15a86ea61110b2ac48597b2304ab353b9e96e8fa57246d63a6da3ba17"
+ir_digest = "sha256:de9777b31ba62848326d842fe97e1d199c412cdcbb8feb90effbc94416fe7ed2"
 section_count = 3
 
 [[files]]
@@ -144,3 +192,15 @@ path = "semantic/tape-install-script.md"
 digest = "sha256:4212305a743b209d7977347730c010de5a3c6c7cb8850f9ea5098fa146e057d2"
 ir_digest = "sha256:a17e69751a12aaafa6775f753a194fcde6acfa0f827ae5f845e840d88a1c3e47"
 section_count = 3
+
+[[files]]
+path = "validate/align-release-dockerfile-fixture-with-renderer.md"
+digest = "sha256:11b96d9462a8d0966bb7c39447c3919f1bc03276e3fe52ad2f659a71b3640783"
+ir_digest = "sha256:803d66d1523dbc42a5027b44556a1a1a1ce737cdb46434afaee263d75f47b8a2"
+section_count = 2
+
+[[files]]
+path = "validate/real-kafka-calibrated-performance-benchmark-kraft-docker-mirrors.md"
+digest = "sha256:5cbd399c655a6268efd81a030fc65e9d26bca9a6c1a34eb18f94c15e1ffb97ed"
+ir_digest = "sha256:82fe411d765f87ee80e7d637be7dfa7a4366ce19cb6e238ca1caad8884b35bd0"
+section_count = 2

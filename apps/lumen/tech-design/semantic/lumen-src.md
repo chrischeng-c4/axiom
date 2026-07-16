@@ -22,6 +22,16 @@ semantic_domain:
   coverage_kind: semantic
   evidence:
     source_units:
+      - path: "apps/lumen/src/dx.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method"]
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "apps/lumen/src"
       - path: "apps/lumen/src/spec.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -1937,6 +1947,13 @@ semantic_domain:
 ```yaml
 coverage_kind: semantic
 changes:
+  - path: "apps/lumen/src/dx.rs"
+    action: modify
+    section: schema
+    description: |
+      Semantic inventory edge for the runtime field catalogue and LLM v2
+      renderer; the DX contract remains the behavioral decision source.
+    impl_mode: hand-written
   - path: "apps/lumen/src/spec.rs"
     action: modify
     section: schema
@@ -1951,10 +1968,10 @@ changes:
     impl_mode: hand-written
   - path: "apps/lumen/src/raft_sm.rs"
     action: modify
-    section: rust-source-unit
+    section: schema
     description: |
-      Full-file rust-source-unit artifact is replayed from its SPEC-MANAGED CODEGEN block.
-    impl_mode: codegen
+      Semantic inventory edge only; the exact per-file source TD owns deterministic replay.
+    impl_mode: hand-written
   - path: "apps/lumen/src/reshard.rs"
     action: modify
     section: schema

@@ -16,3 +16,4 @@ axum = { workspace = true }
 tokio = { workspace = true }
 tower-http = { workspace = true, features = ["trace"] }
 tracing = { workspace = true }
+anyhow = { workspace = true }

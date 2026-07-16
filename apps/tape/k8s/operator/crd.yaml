@@ -32,8 +32,12 @@ spec:
             description: '`tape.dev/v1alpha1` `Tape`. Namespaced: every child object the operator renders lands in this object''s namespace, so independent tape deployments coexist by name.'
             properties:
               auth:
-                default: off
+                default: "off"
                 description: 'Request-auth mode for the data plane: `off` (default) or `required`. A flat string, not an enum with divergent variant schemas (Kubernetes structural schemas cannot represent those). `required` takes effect only together with [`Self::tokens_secret`].'
+                type: string
+              bootstrapSeedUri:
+                description: Exact backup object URI used only when a replacement replica starts on a fresh PVC. The server consumes it before Raft catch-up and refuses a non-empty data directory, so this is cold recovery rather than live replica synchronization.
+                nullable: true
                 type: string
               graceSecs:
                 default: 10
@@ -51,13 +55,14 @@ spec:
                 type: string
               replicasPerShard:
                 default: 1
+                description: Starting/minimum members per shard. With startup-static raft-runtime membership this is also the fixed desired value; a future membership controller may plan whole replica layers above this floor.
                 type: integer
                 minimum: 0.0
               resources:
                 default:
                   cpu: ''
                   memory: ''
-                description: CPU/memory request==limit (Guaranteed QoS).
+                description: Per-pod CPU/memory requests. Empty values resolve to the shared data-plane defaults (`1` CPU / `4Gi`) at render time. Limits are intentionally omitted so a dedicated-node pod can use otherwise-idle node capacity. @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-service-rs.md#source
                 properties:
                   cpu:
                     default: ''

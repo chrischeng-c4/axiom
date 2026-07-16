@@ -2,10 +2,16 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-15T07:37:40.287407+00:00"
-digest = "sha256:126e3c05f5ea7b85af68547b11b3942d58f81153615cd010e66f0f6a626577b8"
-source_digest = "sha256:126e3c05f5ea7b85af68547b11b3942d58f81153615cd010e66f0f6a626577b8"
-ir_digest = "sha256:91d8856e8c42fa9e273536dbf448ce9bd7e467a47230e0b4752ef13916cfa41c"
+generated_at = "2026-07-15T09:49:44.734261+00:00"
+digest = "sha256:af5e694f405b9ea165b8ab8df3a9094c8082feb3bbde0d5741b10909477267c5"
+source_digest = "sha256:af5e694f405b9ea165b8ab8df3a9094c8082feb3bbde0d5741b10909477267c5"
+ir_digest = "sha256:6153a53c18b2524684e287d9c97f0e33ebd46d851ea077c445f5daea05ebb5c0"
+
+[[files]]
+path = "logic/adopt-shared-labeled-prometheus-metrics-encoder.md"
+digest = "sha256:56c6f9c72cd38afe400a4589b728014fc4c0e93c555217c01a54723099d4b29f"
+ir_digest = "sha256:b28403033987f04d30350bb221bedc264e89fb7d8f130a6395ea4ae51c3b0dcb"
+section_count = 3
 
 [[files]]
 path = "logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md"
@@ -21,8 +27,8 @@ section_count = 5
 
 [[files]]
 path = "logic/served-admin-plane-with-drain-aware-readiness.md"
-digest = "sha256:5910d0d19af5a5859444fc052c242212af563a35638bc72cc6c9f8d37c1ac5ed"
-ir_digest = "sha256:82cda8f934e16da9a8eed3524159d7ca2578b0b396feaf90833b9f0969cdc164"
+digest = "sha256:8b400d8ca445bf548e2d186d396f82d83018b3a05c1ed9ecd6642ebfd82183b7"
+ir_digest = "sha256:6e7a0aa53233561ec270f7a708379d5689a427f6d7769eb6ac932003be0ea447"
 section_count = 6
 
 [[files]]
