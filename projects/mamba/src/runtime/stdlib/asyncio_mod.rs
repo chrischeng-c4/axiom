@@ -1927,6 +1927,13 @@ mod tests {
 
     #[test]
     fn test_task_cancel_marks_cancelled_and_await_raises() {
+        // #1845: hold ASYNC_STATE_TEST_LOCK for the whole test — this test
+        // manipulates the shared COROUTINES/TASKS registries directly
+        // (bypassing the Driver), so it must serialize the same way
+        // execute_jit_entry does.
+        let _async_guard = crate::runtime::async_rt::ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::runtime::async_rt::cleanup_all_async();
         exception::mb_clear_exception();
         let name = MbValue::from_ptr(MbObject::new_str("test-task".to_string()));
@@ -1950,6 +1957,10 @@ mod tests {
 
     #[test]
     fn test_start_server_and_open_connection_echo_flow() {
+        // #1845: see test_task_cancel_marks_cancelled_and_await_raises.
+        let _async_guard = crate::runtime::async_rt::ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::runtime::async_rt::cleanup_all_async();
         exception::mb_clear_exception();
         clear_tcp_servers();
@@ -2003,6 +2014,10 @@ mod tests {
 
     #[test]
     fn test_to_thread_runs_native_callable_in_background() {
+        // #1845: see test_task_cancel_marks_cancelled_and_await_raises.
+        let _async_guard = crate::runtime::async_rt::ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::runtime::async_rt::cleanup_all_async();
         exception::mb_clear_exception();
 
@@ -2024,6 +2039,10 @@ mod tests {
 
     #[test]
     fn test_to_thread_parallelizes_direct_function_pointer_calls() {
+        // #1845: see test_task_cancel_marks_cancelled_and_await_raises.
+        let _async_guard = crate::runtime::async_rt::ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::runtime::async_rt::cleanup_all_async();
         exception::mb_clear_exception();
         register();

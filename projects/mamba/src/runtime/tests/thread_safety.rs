@@ -38,6 +38,12 @@ fn test_safepoint_gc_collect_from_registered_thread() {
 
 #[test]
 fn test_multi_thread_coroutine_access() {
+    // #1845: serialize against any other test/execution touching the shared
+    // COROUTINES/TASKS registries (see ASYNC_STATE_TEST_LOCK's doc comment).
+    let _lock = async_rt::ASYNC_STATE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     // Multiple threads reading/writing coroutine state concurrently
     let name = MbValue::from_ptr(MbObject::new_str("shared".to_string()));
     let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -61,6 +67,11 @@ fn test_multi_thread_coroutine_access() {
 
 #[test]
 fn test_concurrent_coroutine_creation() {
+    // #1845: see test_multi_thread_coroutine_access.
+    let _lock = async_rt::ASYNC_STATE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     // Multiple threads creating coroutines concurrently — IDs must be unique
     let mut handles = Vec::new();
     for _ in 0..4 {
@@ -92,9 +103,10 @@ fn test_concurrent_coroutine_creation() {
 
 #[test]
 fn test_tokio_spawn_from_multiple_threads() {
-    // Hold the shared Tokio test lock: tokio_exec's tests clear the global
-    // TASKS map (reset_async_for_test), which would race with this test.
-    let _lock = tokio_exec::TOKIO_TEST_LOCK
+    // #1845: see test_multi_thread_coroutine_access. Also serializes against
+    // tokio_exec's own tests, which clear the global COROUTINES/TASKS maps
+    // via reset_async_for_test() and would otherwise race with this test.
+    let _lock = async_rt::ASYNC_STATE_TEST_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
 
@@ -121,6 +133,11 @@ fn test_tokio_spawn_from_multiple_threads() {
 
 #[test]
 fn test_tokio_gather_parallel_execution() {
+    // #1845: see test_multi_thread_coroutine_access.
+    let _lock = async_rt::ASYNC_STATE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     let mut coros = Vec::new();
     for i in 0..4 {
         let name = MbValue::from_ptr(MbObject::new_str(format!("gather_coro_{i}")));

@@ -242,6 +242,13 @@ impl CompilerSession {
     }
 
     fn execute_jit_entry(entry: *const u8) -> crate::error::Result<()> {
+        // #1845: serialize against any other execution touching the
+        // process-global async runtime state (see ASYNC_STATE_TEST_LOCK's
+        // doc comment) — this run's coroutines/tasks live from here through
+        // cleanup_all_runtime_state() below.
+        let _async_guard = crate::runtime::async_rt::ASYNC_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let main_fn: fn() -> i64 = unsafe { std::mem::transmute(entry) };
         let _result = main_fn();
 
