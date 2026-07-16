@@ -1464,7 +1464,11 @@ pub(crate) fn class_defines_own_method(name: &str, method: &str) -> bool {
 
 fn call_set_name_if_present(owner_name: &str, attr_name: &str, val: MbValue) {
     if let Some(set_name_method) = try_get_dunder_on_value(val, "__set_name__") {
-        let addr = extract_func_addr(set_name_method);
+        // Closure-handle __set_name__ bodies are small tagged ints that never
+        // coincidentally match a CALLABLE_REGISTRY address, so the raw
+        // extractor silently no-ops here; resolve via the registry instead
+        // (#1821).
+        let addr = extract_registered_func_addr(set_name_method);
         if addr != 0 {
             let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
             if is_registered {
@@ -1694,7 +1698,17 @@ pub(crate) fn dispatch_type_new_creation_hooks(name: &str) {
                 // `__init__` fast-path fix above.
                 let addr = extract_registered_func_addr(hook);
                 if addr != 0 {
-                    let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+                    // #1794: exec()-defined `__init_subclass__` methods are
+                    // represented as `__exec_function__` marker Instances
+                    // (see is_exec_function_value below), not raw function
+                    // pointers/closures. extract_registered_func_addr's
+                    // legacy fallback returns their real (but never
+                    // CALLABLE_REGISTRY-registered) heap address, so the
+                    // registry check alone silently skipped the hook. OR in
+                    // the same exec-function recognition already used for
+                    // bound-method construction (:8599-8604 below).
+                    let is_registered = is_exec_function_value(hook)
+                        || CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                     if is_registered {
                         let cls_val = class_type_object(name);
                         let pos_args = MbValue::from_ptr(MbObject::new_list(vec![cls_val]));
@@ -2770,7 +2784,13 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
     let method_like = !value.is_none() && super::builtins::resolve_callable_pub(value).is_some();
     if method_like {
         let (unwrapped, _dk) = unwrap_descriptor_method(value);
-        for addr in [extract_func_addr(unwrapped), extract_func_addr(value)] {
+        // Register the resolved real address, not a closure-handle's small
+        // tagged int, or downstream dispatch sites' registry-membership
+        // checks fail even though they themselves unwrap correctly (#1821).
+        for addr in [
+            extract_registered_func_addr(unwrapped),
+            extract_registered_func_addr(value),
+        ] {
             if addr != 0 {
                 CALLABLE_REGISTRY.with(|reg| {
                     reg.borrow_mut().insert(addr);
@@ -3533,8 +3553,14 @@ fn call_init_for_instance(init_class: &str, instance: MbValue, args_list: MbValu
             }
             let args_list = splice_init_defaults(MbValue::from_func(addr as usize), args_list);
             call_init_with_args(addr, instance, args_list);
+            return true;
         }
-        return true;
+        // #1794: a cached-but-unregistered address means `__init__` wasn't a
+        // JIT-compiled function when the cache was populated — e.g. an
+        // exec()-defined `__init__`, represented as a `__exec_function__`
+        // marker Instance whose "address" is just a heap pointer, never a
+        // real callable. Fall through to the generic lookup below instead of
+        // silently reporting `has_init = true` without ever calling it.
     }
 
     let init_method = lookup_method(init_class, "__init__");
@@ -3552,6 +3578,25 @@ fn call_init_for_instance(init_class: &str, instance: MbValue, args_list: MbValu
             }
             let args_list = splice_init_defaults(init_method, args_list);
             call_init_with_args(addr, instance, args_list);
+        } else if is_exec_function_value(init_method) {
+            // #1794: exec()-defined `__init__` methods are `__exec_function__`
+            // marker Instances, not JIT-compiled function pointers —
+            // extract_registered_func_addr's legacy fallback returns their
+            // heap address, which is never in CALLABLE_REGISTRY and is not
+            // safe to transmute-call. Dispatch through the generic exec-aware
+            // call path instead (mirrors the __init_subclass__ fix above),
+            // passing `instance` explicitly as the unbound `self` arg.
+            unsafe {
+                super::rc::retain_if_ptr(instance);
+            }
+            let mut call_args =
+                Vec::with_capacity(super::builtins::extract_items(args_list).len() + 1);
+            call_args.push(instance);
+            call_args.extend(super::builtins::extract_items(args_list));
+            super::builtins::mb_call_spread(
+                init_method,
+                MbValue::from_ptr(MbObject::new_list(call_args)),
+            );
         }
     }
     true
@@ -5570,7 +5615,11 @@ fn user_abc_subclasshook(parent: &str, child_name: &str) -> Option<bool> {
     // `__subclasshook__` is a @classmethod — unwrap the descriptor to get the
     // underlying function pointer before invoking it.
     let (hook_fn, _dk) = unwrap_descriptor_method(hook);
-    let addr = extract_func_addr(hook_fn);
+    // Closure-handle hook bodies are small tagged ints that never
+    // coincidentally match a CALLABLE_REGISTRY address, so the raw
+    // extractor silently no-ops here; resolve via the registry instead
+    // (#1821).
+    let addr = extract_registered_func_addr(hook_fn);
     if addr == 0 {
         return None;
     }
@@ -9817,7 +9866,11 @@ fn invoke_descriptor_set(desc: MbValue, instance: MbValue, value: MbValue) {
     }
     // General __set__ protocol: call desc.__set__(instance, value)
     if let Some(method) = try_get_dunder(desc, "__set__") {
-        let addr = extract_func_addr(method);
+        // Closure-handle __set__ bodies (e.g. #1379's zero-arg super()/
+        // __class__ compilation) are small tagged ints, not real function
+        // addresses; extract_registered_func_addr resolves them via the
+        // closure registry instead of transmuting garbage (#1821).
+        let addr = extract_registered_func_addr(method);
         if addr != 0 {
             // REQ: JIT-compiled functions use SystemV/C calling convention.
             let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
@@ -9883,7 +9936,9 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
     }
     // General __delete__ protocol: call desc.__delete__(instance)
     if let Some(method) = try_get_dunder(desc, "__delete__") {
-        let addr = extract_func_addr(method);
+        // See invoke_descriptor_set above: closure-handle bodies need the
+        // registry-resolving extractor, not the raw one (#1821).
+        let addr = extract_registered_func_addr(method);
         if addr != 0 {
             // REQ: JIT-compiled functions use SystemV/C calling convention.
             let func: extern "C" fn(MbValue, MbValue) -> MbValue =
@@ -15758,6 +15813,11 @@ pub fn mb_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
     }
     // Class instances: look up __exit__
     let result = if let Some(method) = try_get_dunder(obj, "__exit__") {
+        // Intentionally the raw extractor, not extract_registered_func_addr:
+        // a closure-handle __exit__ resolves to a small tagged int here,
+        // fails the CALLABLE_REGISTRY check below, and safely falls back to
+        // the name-based mb_call_method dispatch (not a crash or silent
+        // no-op — just the slow path) (#1821).
         let addr = extract_func_addr(method);
         let none = MbValue::none();
         let (exc_type, exc_val, exc_tb) = if has_pending {
@@ -16272,7 +16332,11 @@ fn mb_call0_impl(func: MbValue) -> MbValue {
                 let _ = fields; // silence unused when the next block moves to methods
                 let call_method = lookup_method(class_name, "__call__");
                 if !call_method.is_none() {
-                    let addr = extract_func_addr(call_method);
+                    // Closure-handle __call__ bodies resolve to a small
+                    // tagged int under the raw extractor, fail addr > 4096,
+                    // and fall all the way through to "object is not
+                    // callable"; resolve via the registry instead (#1821).
+                    let addr = extract_registered_func_addr(call_method);
                     if addr > 4096 {
                         if super::module::is_variadic_func(addr as u64)
                             || super::module::is_kwargs_func(addr as u64)
@@ -20555,7 +20619,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             } else {
                                 method
                             };
-                            let addr = extract_func_addr(call_method);
+                            // Closure-handle bound methods are small tagged
+                            // ints that never coincidentally match a
+                            // CALLABLE_REGISTRY address under the raw
+                            // extractor; resolve via the registry (#1821).
+                            let addr = extract_registered_func_addr(call_method);
                             if addr != 0 {
                                 let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
                                 if is_reg {
@@ -20742,7 +20810,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                         } else {
                                             inherited
                                         };
-                                        let addr = extract_func_addr(call_method);
+                                        // Closure-handle bound methods need
+                                        // the registry-resolving extractor,
+                                        // not the raw one (#1821).
+                                        let addr = extract_registered_func_addr(call_method);
                                         if addr != 0 {
                                             let is_reg = CALLABLE_REGISTRY
                                                 .with(|r| r.borrow().contains(&addr));
@@ -20780,7 +20851,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             } else {
                                 method
                             };
-                            let addr = extract_func_addr(call_method);
+                            // Closure-handle bound methods need the
+                            // registry-resolving extractor, not the raw one
+                            // (#1821).
+                            let addr = extract_registered_func_addr(call_method);
                             if addr != 0 {
                                 let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
                                 if is_reg {
@@ -20945,7 +21019,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 }
                             }
                         }
-                        let addr = extract_func_addr(call_method);
+                        // Closure-handle bound methods need the
+                        // registry-resolving extractor, not the raw one
+                        // (#1821).
+                        let addr = extract_registered_func_addr(call_method);
                         if addr != 0 {
                             let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
                             if is_reg {
@@ -26268,5 +26345,156 @@ mod tests {
         );
         crate::runtime::exception::mb_clear_exception();
         cleanup_all_classes();
+    }
+
+    // ── #1821: closure-handle dunder bodies must dispatch via
+    // extract_registered_func_addr, not the raw extractor ──────────────────
+
+    #[test]
+    fn test_1821_closure_handle_descriptor_set_delete_dispatches_correctly() {
+        use std::sync::atomic::AtomicBool;
+
+        static SET_CALLED: AtomicBool = AtomicBool::new(false);
+        static SET_VALUE: AtomicU64 = AtomicU64::new(0);
+        static DELETE_CALLED: AtomicBool = AtomicBool::new(false);
+
+        extern "C" fn closure_set_1821(_desc: MbValue, _instance: MbValue, value: MbValue) -> MbValue {
+            SET_CALLED.store(true, Ordering::SeqCst);
+            SET_VALUE.store(value.as_int().unwrap_or(-1) as u64, Ordering::SeqCst);
+            MbValue::none()
+        }
+        extern "C" fn closure_delete_1821(_desc: MbValue, _instance: MbValue) -> MbValue {
+            DELETE_CALLED.store(true, Ordering::SeqCst);
+            MbValue::none()
+        }
+
+        let set_addr = closure_set_1821 as *const () as usize;
+        let delete_addr = closure_delete_1821 as *const () as usize;
+        CALLABLE_REGISTRY.with(|reg| {
+            reg.borrow_mut().insert(set_addr as u64);
+            reg.borrow_mut().insert(delete_addr as u64);
+        });
+
+        // Wrap each real function in a closure handle — a small tagged int,
+        // exactly what #1379 produces for a __set__/__delete__ body
+        // referencing bare __class__ or zero-arg super().
+        let set_closure = super::super::closure::mb_closure_new(
+            s("set_1821"),
+            MbValue::from_func(set_addr),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        let delete_closure = super::super::closure::mb_closure_new(
+            s("delete_1821"),
+            MbValue::from_func(delete_addr),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert!(
+            set_closure.as_int().is_some() && set_closure.as_func().is_none(),
+            "closure handle must be a tagged int, not TAG_FUNC — this is what \
+             makes the raw extractor unsafe (#1821)"
+        );
+
+        let mut desc_methods = HashMap::new();
+        desc_methods.insert("__set__".to_string(), set_closure);
+        desc_methods.insert("__delete__".to_string(), delete_closure);
+        mb_class_register("ClosureDescriptor1821", vec![], desc_methods);
+        mb_class_register("ClosureDescHost1821", vec![], HashMap::new());
+
+        let desc = mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str("ClosureDescriptor1821".to_string())),
+            MbValue::none(),
+        );
+        let host = mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str("ClosureDescHost1821".to_string())),
+            MbValue::none(),
+        );
+
+        invoke_descriptor_set(desc, host, MbValue::from_int(42));
+        assert!(
+            SET_CALLED.load(Ordering::SeqCst),
+            "closure-handle __set__ must dispatch via extract_registered_func_addr, \
+             not silently no-op or wild-call crash (#1821)"
+        );
+        assert_eq!(SET_VALUE.load(Ordering::SeqCst), 42);
+
+        invoke_descriptor_delete(desc, host);
+        assert!(
+            DELETE_CALLED.load(Ordering::SeqCst),
+            "closure-handle __delete__ must dispatch via extract_registered_func_addr (#1821)"
+        );
+    }
+
+    #[test]
+    fn test_1821_closure_handle_set_name_dispatches_correctly() {
+        use std::sync::atomic::AtomicBool;
+
+        static SET_NAME_CALLED: AtomicBool = AtomicBool::new(false);
+
+        extern "C" fn closure_set_name_1821(_val: MbValue, _owner: MbValue, _name: MbValue) -> MbValue {
+            SET_NAME_CALLED.store(true, Ordering::SeqCst);
+            MbValue::none()
+        }
+
+        let addr = closure_set_name_1821 as *const () as usize;
+        CALLABLE_REGISTRY.with(|reg| reg.borrow_mut().insert(addr as u64));
+
+        let closure = super::super::closure::mb_closure_new(
+            s("set_name_1821"),
+            MbValue::from_func(addr),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+
+        let mut desc_methods = HashMap::new();
+        desc_methods.insert("__set_name__".to_string(), closure);
+        mb_class_register("ClosureSetNameDescriptor1821", vec![], desc_methods);
+        mb_class_register("ClosureSetNameHost1821", vec![], HashMap::new());
+
+        let desc_inst = mb_instance_new(
+            MbValue::from_ptr(MbObject::new_str("ClosureSetNameDescriptor1821".to_string())),
+            MbValue::none(),
+        );
+
+        call_set_name_if_present("ClosureSetNameHost1821", "field_1821", desc_inst);
+
+        assert!(
+            SET_NAME_CALLED.load(Ordering::SeqCst),
+            "closure-handle __set_name__ must fire via extract_registered_func_addr, \
+             not silently no-op (#1821)"
+        );
+    }
+
+    #[test]
+    fn test_1821_class_set_class_attr_registers_resolved_addr_for_closure_handle() {
+        extern "C" fn closure_method_1821(_self_v: MbValue, _args: MbValue) -> MbValue {
+            MbValue::none()
+        }
+        let real_addr = closure_method_1821 as *const () as usize;
+
+        let closure_handle = super::super::closure::mb_closure_new(
+            s("method_1821"),
+            MbValue::from_func(real_addr),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        assert!(
+            closure_handle.as_int().is_some() && closure_handle.as_func().is_none(),
+            "closure handle must be a tagged int distinct from a real TAG_FUNC value"
+        );
+
+        mb_class_register("ClosureAttrHost1821", vec![], HashMap::new());
+        mb_class_set_class_attr(
+            s("ClosureAttrHost1821"),
+            s("method_1821"),
+            closure_handle,
+        );
+
+        let real_addr_registered =
+            CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&(real_addr as u64)));
+        assert!(
+            real_addr_registered,
+            "mb_class_set_class_attr must register the closure's resolved real \
+             function address, not the closure handle's own tagged int, so \
+             downstream dispatch sites' CALLABLE_REGISTRY membership checks \
+             succeed (#1821)"
+        );
     }
 }
