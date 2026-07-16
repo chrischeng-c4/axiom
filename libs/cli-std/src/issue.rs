@@ -185,14 +185,6 @@ fn issue_url(repo: &str, number: u64) -> String {
     format!("https://github.com/{repo}/issues/{number}")
 }
 
-/// Split `"owner/name"` into its two path segments for courier's
-/// `/v1/issues/{owner}/{name}...` routes.
-#[cfg(feature = "online")]
-fn split_repo_owner_name(repo: &str) -> Result<(&str, &str)> {
-    repo.split_once('/')
-        .filter(|(owner, name)| !owner.is_empty() && !name.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("repo must be \"owner/name\", got {repo:?}"))
-}
 
 // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
 // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="mechanical extraction of search()/view()'s pre-existing direct-api.github.com URL construction into named, pure, unit-tested functions -- byte-identical format!() computation, unchanged output -- so AC3 (fallback path stays byte-identical when courier is unconfigured) is verifiable without a live network call, mirroring courier_search_url()/courier_view_url() above."
