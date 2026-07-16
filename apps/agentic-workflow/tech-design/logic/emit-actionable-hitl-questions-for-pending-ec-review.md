@@ -55,6 +55,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: "const WI_MD: &str"
   - path: apps/agentic-workflow/tech-design/logic/emit-actionable-hitl-questions-for-pending-ec-review.md
     action: modify
     section: logic
