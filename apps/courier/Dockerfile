@@ -15,6 +15,9 @@ COPY apps/ apps/
 COPY libs/ libs/
 COPY crates/ crates/
 
+# Strip projects/ workspace members — those crates aren't in this build context
+RUN sed -i '/\"projects\//d' Cargo.toml
+
 # Build only the courier binary in release mode
 RUN cargo build --release -p courier
 
