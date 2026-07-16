@@ -70,6 +70,9 @@ cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 # schema types and the local sink are cheap; only the HTTP fetch path of
 # `tape backup` needs the `backup` feature (reqwest + the lib's s3 sink).
 service-backup = { path = "../../libs/service-backup" }
+# Shared durable file replacement for Tape's Raft marker and journal snapshot
+# bytes. Tape retains the domain serialization and recovery ordering.
+storage-durable = { path = "../../libs/storage-durable" }
 # HTTP client for `tape backup`'s snapshot fetch (feature `backup` only; the
 # serving image stays reqwest-free by default). Also a dev-dependency for the
 # transport tests either way.
