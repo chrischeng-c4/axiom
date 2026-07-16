@@ -2,9 +2,10 @@
 """fixture_gen.py — manifest -> mamba conformance fixture generator.
 
 Reads a per-lib manifest TOML (one [[case]] table per fixture) and emits one
-self-contained PEP 723 fixture file per case under
+self-contained PEP 723 fixture file per case under the facet-first layout
+(see tests/harness/cpython/conventions/FIXTURE-LAYOUT.md):
 
-    tests/cpython/fixtures/<bucket>/<lib>/<dimension>/<case>.py
+    tests/cpython/<dimension>/<bucket>/<lib>/<case>.py
 
 Every emitted file embeds a [tool.mamba] metadata table inside its PEP 723
 '# /// script' block. Mechanical cases (surface / errors with a declared probe
@@ -38,9 +39,13 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 TOOLS_DIR = Path(__file__).resolve().parent
-CPYTHON_DIR = TOOLS_DIR.parent / "tests" / "cpython"
-FIXTURES_ROOT = CPYTHON_DIR / "fixtures"
-MANIFESTS_ROOT = CPYTHON_DIR / "config" / "manifests"
+REPO_ROOT = TOOLS_DIR.parent
+# Fixtures live directly under tests/cpython/<dimension>/... (facet-first;
+# see FIXTURE-LAYOUT.md) — there is no separate "fixtures/" subdir. Manifests
+# live under a DIFFERENT parent, tests/harness/cpython/config/manifests/ (the
+# harness owns its config surface), not under tests/cpython/ itself.
+FIXTURES_ROOT = REPO_ROOT / "tests" / "cpython"
+MANIFESTS_ROOT = REPO_ROOT / "tests" / "harness" / "cpython" / "config" / "manifests"
 
 BUCKETS = {"core", "builtin-libs", "std-libs", "pep", "type-strict", "3rd-libs"}
 DIMENSIONS = {"surface", "behavior", "errors", "bench", "real_world", "security"}
@@ -364,7 +369,7 @@ def render_file(bucket: str, lib: str, case: dict) -> str:
 
 
 def output_path(bucket: str, lib: str, case: dict) -> Path:
-    return FIXTURES_ROOT / bucket / lib / case["dimension"] / f"{case['case']}.py"
+    return FIXTURES_ROOT / case["dimension"] / bucket / lib / f"{case['case']}.py"
 
 
 # ---------------------------------------------------------------------------
