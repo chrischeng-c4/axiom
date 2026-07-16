@@ -41,6 +41,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: dependencies
     description: "Declare storage-durable as Tape's direct shared durability dependency."
   - path: apps/tape/src/raft.rs
     action: modify
