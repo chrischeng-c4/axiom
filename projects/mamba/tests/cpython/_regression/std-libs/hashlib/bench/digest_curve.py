@@ -52,8 +52,8 @@ Gates:
 
 To consume the data:
 
-    python3 tests/cpython/fixtures/std-libs/hashlib/bench/digest_curve.py > /tmp/cpython_curve.csv
-    target/release/mamba run tests/cpython/fixtures/std-libs/hashlib/bench/digest_curve.py > /tmp/mamba_curve.csv
+    python3 tests/cpython/_regression/std-libs/hashlib/bench/digest_curve.py > /tmp/cpython_curve.csv
+    target/release/mamba run tests/cpython/_regression/std-libs/hashlib/bench/digest_curve.py > /tmp/mamba_curve.csv
 
 then paste both CSVs into a side-by-side ratio analysis.
 

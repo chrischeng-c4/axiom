@@ -380,6 +380,24 @@ fn cpython_oracle_authoring_gate_is_present() {
 }
 
 #[test]
+fn fixture_gen_writes_under_facet_first_fixtures_root() {
+    let tool = manifest_dir().join("tools/fixture_gen.py");
+    let raw = std::fs::read_to_string(&tool)
+        .unwrap_or_else(|err| panic!("cannot read {}: {err}", tool.display()));
+    for required in [
+        "FIXTURES_ROOT = REPO_ROOT / \"tests\" / \"cpython\"",
+        "MANIFESTS_ROOT = REPO_ROOT / \"tests\" / \"harness\" / \"cpython\" / \"config\" / \"manifests\"",
+        "FIXTURES_ROOT / case[\"dimension\"] / bucket / lib / f\"{case['case']}.py\"",
+    ] {
+        assert!(
+            raw.contains(required),
+            "{} missing required fixture-root marker `{required}` — regressed to a dead root? (#1767)",
+            tool.display()
+        );
+    }
+}
+
+#[test]
 fn py314_ast_type_fixtures_are_version_excluded_consistently() {
     for rel in [
         "tools/verify_cpython_oracle.py",
