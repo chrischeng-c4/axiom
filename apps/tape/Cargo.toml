@@ -73,10 +73,6 @@ service-backup = { path = "../../libs/service-backup" }
 # Shared durable file replacement for Tape's Raft marker and journal snapshot
 # bytes. Tape retains the domain serialization and recovery ordering.
 storage-durable = { path = "../../libs/storage-durable" }
-# HTTP client for `tape backup`'s snapshot fetch (feature `backup` only; the
-# serving image stays reqwest-free by default). Also a dev-dependency for the
-# transport tests either way.
-reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-nats = { workspace = true }
@@ -109,7 +105,7 @@ operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s"]
 # destination sink (relay #1209 layout). Enables the lib's s3 sink; file://
 # always works. The endpoint itself is always served — this gates only the
 # CLI verb's HTTP fetch path.
-backup = ["dep:reqwest", "service-backup/s3"]
+backup = ["service-backup/http-client", "service-backup/s3"]
 # Optional shared OTLP trace export. No Tape-local exporter exists: this
 # enables service-http's stable identity, fallback, and W3C propagation path.
 otel = ["service-http/otlp"]

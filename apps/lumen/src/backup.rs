@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:ff759770" tracker="1646" reason="New module gated #[cfg(feature = 'backup')]: run_backup(base_url, token, dest, retention) fetches {base_url}/admin/backup via reqwest (Bearer auth when token is Some), then hands the response bytes to service_backup::run_backup_once against sink_from_destination(dest) and the given RetentionPolicy, returning a BackupRunResult; unit tests use wiremock to stand in for the admin API and a tempdir + file:// destination for the sink."
+// HANDWRITE-BEGIN gap="missing-generator:logic:ff759770" tracker="1646" reason="Lumen owns only its restore endpoint; service-backup owns the shared authenticated GET /admin/backup fetch and sink upload contract, re-exported under Lumen's compatible helper names."
 //! `lumen backup` (#808): fetch a consistent snapshot from a running serving
 //! fleet's already-existing `GET /admin/backup` endpoint and hand the bytes to
 //! a `libs/service-backup` destination sink. This module owns no new
@@ -8,35 +8,10 @@
 //! CronJob (`spec.serving.backup`, see `service_k8s::render::backup_cron_job`)
 //! or invoked ad hoc via the CLI.
 
-use std::time::SystemTime;
-
 use anyhow::{bail, Context, Result};
-use service_backup::{
-    run_backup_once, sink_from_destination, BackupDestination, BackupRunResult, RetentionPolicy,
+pub use service_backup::{
+    fetch_admin_snapshot as fetch_snapshot_bytes, run_admin_snapshot_backup as run_backup,
 };
-
-/// Fetch `{base_url}/admin/backup` (Bearer `token` when set) and return the
-/// exact snapshot response bytes.
-/// @spec apps/lumen/tech-design/interfaces/cli/lumen-cli-add-dump-load-export-import-snapshot-verbs.md#logic
-pub async fn fetch_snapshot_bytes(base_url: &str, token: Option<&str>) -> Result<Vec<u8>> {
-    let url = format!("{}/admin/backup", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::new();
-    let mut req = client.get(&url);
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req.send().await.with_context(|| format!("GET {url}"))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        bail!("GET {url} returned {status}: {body}");
-    }
-    let payload = resp
-        .bytes()
-        .await
-        .with_context(|| format!("read response body from {url}"))?;
-    Ok(payload.to_vec())
-}
 
 /// POST exact SnapshotV1 JSON bytes to `{base_url}/admin/restore` (Bearer
 /// `token` when set).
@@ -64,23 +39,10 @@ pub async fn restore_snapshot_bytes(
     Ok(())
 }
 
-/// Fetch `{base_url}/admin/backup` (Bearer `token` when set) and ship the
-/// returned bytes to `dest` via `service_backup::run_backup_once`, applying
-/// `retention` afterward.
-pub async fn run_backup(
-    base_url: &str,
-    token: Option<&str>,
-    dest: &BackupDestination,
-    retention: &RetentionPolicy,
-) -> Result<BackupRunResult> {
-    let payload = fetch_snapshot_bytes(base_url, token).await?;
-    let sink = sink_from_destination(dest)?;
-    run_backup_once(sink.as_ref(), SystemTime::now(), &payload, retention)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use service_backup::{BackupDestination, RetentionPolicy};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

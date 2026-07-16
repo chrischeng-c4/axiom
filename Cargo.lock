@@ -12140,6 +12140,7 @@ dependencies = [
  "storage-durable",
  "tokio",
  "urlencoding",
+ "wiremock",
 ]
 
 [[package]]

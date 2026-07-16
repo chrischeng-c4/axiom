@@ -122,7 +122,7 @@ operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s"]
 # destination sink (lumen #808 layout). Enables the lib's s3 sink; file://
 # always works. The endpoint itself is always served — this gates only the
 # CLI verb's HTTP fetch path.
-backup = ["dep:reqwest", "service-backup/s3"]
+backup = ["dep:reqwest", "service-backup/http-client", "service-backup/s3"]
 # NOTE: the former private `rustls-provider` feature is gone — peer-tls
 # links rustls unconditionally now (#1209), so src/tls.rs installs the
 # process-level crypto provider in every build.
