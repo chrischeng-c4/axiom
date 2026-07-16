@@ -771,6 +771,10 @@ pub struct EcProjectContext {
     /// `either`), resolved from `Project::ec_review_backing` and defaulting
     /// to `human` when absent or unrecognized.
     pub review_backing: String,
+    /// #1828: this project's EC review-timing policy (`blocking` |
+    /// `deferred`), resolved from `Project::ec_review_mode` and defaulting
+    /// to `blocking` when absent or unrecognized.
+    pub review_mode: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1102,6 +1106,37 @@ pub fn project_ec_review_backing(project: &str) -> Result<String> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     Ok(ctx.review_backing)
+}
+
+/// #1828: this project's resolved EC review-timing policy (`blocking` |
+/// `deferred`), for `aw health`/reporting surfaces that need to classify a
+/// pending review as advisory (deferred) vs a hard blocker (blocking)
+/// without duplicating the resolution logic in `resolve_ec_project_context`.
+/// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub fn project_ec_review_mode(project: &str) -> Result<String> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    Ok(ctx.review_mode)
+}
+
+/// #1828: this project's outstanding EC review queue entry, if any — a
+/// human-readable summary of the outstanding review findings, for `aw
+/// health`/reporting surfaces to render as an advisory (deferred mode) or
+/// hard-blocker (blocking mode) pending-review queue entry, classified by
+/// `project_ec_review_mode`. `Ok(None)` when there is no EC inventory yet or
+/// no outstanding review requirement.
+/// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub fn project_pending_ec_review(project: &str) -> Result<Option<String>> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    let Some((_, manifest)) = load_ec_manifest(&ctx)? else {
+        return Ok(None);
+    };
+    let outstanding = ec_review_outstanding_findings(&ctx, &manifest)?;
+    if outstanding.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(outstanding.join("; ")))
 }
 
 fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
@@ -1921,6 +1956,42 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 args.json,
             );
         }
+        // #1828: in `deferred` mode, a pending human review is recorded and
+        // surfaced but does not block — the runner does not stop for it.
+        // The resume command is the same `--evidence-file` invocation as
+        // blocking mode's HITL `next`, so post-hoc `aw ec review` finalizes
+        // with an identical digest-bound evidence shape (AC4).
+        if ec_review_mode_is_deferred(&ctx) {
+            return emit_ec_review_summary_for_wi(
+                &project_root,
+                args.wi.as_deref(),
+                &EcReviewSummary {
+                    project: ctx.project.clone(),
+                    status: "deferred_pending_human".to_string(),
+                    clean: false,
+                    requires_hitl: false,
+                    source_digest: manifest.generated_from_td_digest,
+                    review_path: review_path_rel,
+                    payload_path: Some(payload_path.to_string_lossy().into_owned()),
+                    hitl_question: None,
+                    findings: vec![
+                        "independent EC semantic review is deferred to post-completion batch review; it does not block the loop (review_mode = \"deferred\")"
+                            .to_string(),
+                    ],
+                    next: Some(command_with_wi(
+                        format!(
+                            "aw ec review --project {} --evidence-file '{}'",
+                            ctx.project,
+                            payload_path.to_string_lossy().replace('\'', "'\\''")
+                        ),
+                        args.wi.as_deref(),
+                    )),
+                    backing: None,
+                    agent_review_prompt: None,
+                },
+                args.json,
+            );
+        }
         return emit_ec_review_summary_for_wi(
             &project_root,
             args.wi.as_deref(),
@@ -2391,7 +2462,16 @@ fn ec_review_record_findings(
     findings
 }
 
-fn ec_review_gate_findings(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<Vec<String>> {
+/// #1828: byte-for-byte identical to pre-#1828 behavior (AC2) — always
+/// computes the full merged finding set regardless of `review_mode`. Callers
+/// that must respect `review_mode` (the terminal EC gate, `aw ec gen
+/// --verify`) call `ec_review_gate_findings`, which downgrades this list to
+/// empty in `deferred` mode unless an outstanding finding is an active,
+/// non-deferrable rejection (see `ec_review_outstanding_is_deferrable`).
+fn ec_review_outstanding_findings(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+) -> Result<Vec<String>> {
     if !ec_semantic_review_required(manifest) {
         return Ok(Vec::new());
     }
@@ -2406,6 +2486,72 @@ fn ec_review_gate_findings(ctx: &EcProjectContext, manifest: &EcManifest) -> Res
     findings.sort();
     findings.dedup();
     Ok(findings)
+}
+
+/// #1828: is the outstanding review requirement for `ctx`/`manifest`
+/// deferrable in `deferred` mode? Structural EC content findings (missing
+/// claim/capability mapping, placeholder assertions, false-green risk,
+/// evaluator gaps — `ec_semantic_review_findings`) and an explicit
+/// `needs_revision` decision are active rejections that require action, not
+/// merely "hasn't happened yet" — those always block regardless of mode
+/// (R6: this WI changes *when* review must happen, never *who* may review
+/// or *what* content is acceptable). A missing/stale/incomplete-evidence
+/// finding with no explicit rejection is deferrable.
+fn ec_review_outstanding_is_deferrable(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+) -> Result<bool> {
+    if !ec_semantic_review_findings(ctx, &manifest.cases).is_empty() {
+        return Ok(false);
+    }
+    if let Some(record) = load_ec_review_record(ctx)? {
+        if record.decision == EcReviewDecision::NeedsRevision {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The terminal EC gate's finding set (`aw ec gen --verify`, `aw td
+/// code-check`): identical to `ec_review_outstanding_findings` in `blocking`
+/// mode (AC2, byte-for-byte). In `deferred` mode, a deferrable outstanding
+/// finding set is downgraded to empty here — non-blocking — and instead
+/// surfaced by `ec_review_deferred_pending_findings`/
+/// `project_pending_ec_review` as an advisory `deferred_pending_human` queue
+/// entry (#1828).
+fn ec_review_gate_findings(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<Vec<String>> {
+    let findings = ec_review_outstanding_findings(ctx, manifest)?;
+    if findings.is_empty() || !ec_review_mode_is_deferred(ctx) {
+        return Ok(findings);
+    }
+    if ec_review_outstanding_is_deferrable(ctx, manifest)? {
+        Ok(Vec::new())
+    } else {
+        Ok(findings)
+    }
+}
+
+/// #1828: `Some(findings)` iff `ctx`/`manifest` has an outstanding EC review
+/// requirement that `ec_review_gate_findings` is deferring (non-blocking)
+/// because `review_mode = "deferred"`. `None` when the review gate is clear
+/// or is actively blocking (structural findings, explicit needs_revision, or
+/// `blocking` mode) — those are covered by `ec_review_gate_findings` itself.
+fn ec_review_deferred_pending_findings(
+    ctx: &EcProjectContext,
+    manifest: &EcManifest,
+) -> Result<Option<Vec<String>>> {
+    if !ec_review_mode_is_deferred(ctx) {
+        return Ok(None);
+    }
+    let findings = ec_review_outstanding_findings(ctx, manifest)?;
+    if findings.is_empty() {
+        return Ok(None);
+    }
+    if ec_review_outstanding_is_deferrable(ctx, manifest)? {
+        Ok(Some(findings))
+    } else {
+        Ok(None)
+    }
 }
 
 fn ec_fill_command_for_target(ctx: &EcProjectContext, target: &str) -> Option<String> {
@@ -2577,6 +2723,16 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
             "ec verify {}: passed ({}/{} command(s))",
             summary.project, summary.passed_count, summary.command_count
         );
+        // #1828: a deferred pending review never taints `clean`, but it is
+        // still a queue entry a human should eventually batch-review.
+        for result in &summary.results {
+            if result.status == "deferred" {
+                println!(
+                    "  - {} deferred (pending human review): {}",
+                    result.case_id, result.stderr_tail
+                );
+            }
+        }
     } else {
         println!(
             "ec verify {}: failed ({} failed / {} command(s))",
@@ -3086,6 +3242,11 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         .and_then(|project| project.ec_review_backing.as_deref())
         .map(normalize_review_backing)
         .unwrap_or_else(|| EC_REVIEW_BACKING_HUMAN.to_string());
+    let review_mode = project_model
+        .as_ref()
+        .and_then(|project| project.ec_review_mode.as_deref())
+        .map(normalize_review_mode)
+        .unwrap_or_else(|| EC_REVIEW_MODE_BLOCKING.to_string());
 
     Ok(EcProjectContext {
         project_root: project_root.to_path_buf(),
@@ -3102,6 +3263,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         package_name,
         ec_bindings,
         review_backing,
+        review_mode,
     })
 }
 
@@ -3127,6 +3289,26 @@ fn ec_review_backing_allows(policy: &str, reviewer_kind: &str) -> bool {
         "agent" => policy == EC_REVIEW_BACKING_AGENT || policy == EC_REVIEW_BACKING_EITHER,
         _ => false,
     }
+}
+
+/// #1828: `blocking` (default) and `deferred` are recognized review-timing
+/// policies; any other value falls back to `blocking` so production
+/// behavior stays unchanged (byte-for-byte, AC2) for projects that mistype
+/// the key or never set it.
+const EC_REVIEW_MODE_BLOCKING: &str = "blocking";
+const EC_REVIEW_MODE_DEFERRED: &str = "deferred";
+
+fn normalize_review_mode(value: &str) -> String {
+    match value.trim() {
+        EC_REVIEW_MODE_DEFERRED => EC_REVIEW_MODE_DEFERRED.to_string(),
+        _ => EC_REVIEW_MODE_BLOCKING.to_string(),
+    }
+}
+
+/// #1828: is `ctx`'s project configured for deferred (non-blocking) EC
+/// review timing?
+fn ec_review_mode_is_deferred(ctx: &EcProjectContext) -> bool {
+    ctx.review_mode == EC_REVIEW_MODE_DEFERRED
 }
 
 fn package_name_for(source_root: &Path) -> Option<String> {
@@ -4984,6 +5166,24 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
         });
     }
     let mut results = Vec::new();
+    // #1828: a deferred (non-blocking) pending review is recorded as a
+    // `deferred` status entry rather than a `failed` one — it is visible in
+    // `results`/reporting but never counted toward `command_count`/
+    // `passed_count`/`failed_count`, so it can never taint `clean`.
+    if let Some(deferred_findings) = ec_review_deferred_pending_findings(ctx, &manifest)? {
+        results.push(EcVerifyCommandResult {
+            case_id: "ec-semantic-review".to_string(),
+            capability_id: String::new(),
+            claim_id: String::new(),
+            category: "review".to_string(),
+            command: format!("aw ec review --project {}", ctx.project),
+            status: "deferred".to_string(),
+            failure_kind: None,
+            exit_code: None,
+            stdout_tail: String::new(),
+            stderr_tail: deferred_findings.join("; "),
+        });
+    }
     let mut seen_commands = BTreeSet::new();
     for case in &manifest.cases {
         if required_only && !case.required_for_production {
@@ -5023,7 +5223,7 @@ fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVe
     }
     let executed_count = results
         .iter()
-        .filter(|result| result.status != "skipped")
+        .filter(|result| result.status != "skipped" && result.status != "deferred")
         .count();
     let passed_count = results
         .iter()
@@ -6450,6 +6650,7 @@ e2e_tests:
             package_name: "demo-crate".to_string(),
             ec_bindings: BTreeMap::new(),
             review_backing: "human".to_string(),
+            review_mode: "blocking".to_string(),
         }
     }
 
@@ -6635,6 +6836,7 @@ e2e_tests:
             package_name: "tape".to_string(),
             ec_bindings: BTreeMap::new(),
             review_backing: "human".to_string(),
+            review_mode: "blocking".to_string(),
         };
 
         assert_eq!(
@@ -6913,6 +7115,208 @@ e2e_tests:
         human_audit.target_path = "projects/demo/external-contracts/behavior/search.md".to_string();
         validate_ec_review_payload(&ctx, &manifest, &human_audit)
             .expect("human audit reopening an agent-accepted EC must remain valid evidence");
+    }
+
+    // A manifest whose one case is fully mapped (capability/claim set,
+    // clean command, no placeholder assertions/evaluators) — i.e.
+    // `ec_semantic_review_findings` is empty — so only the review-evidence
+    // requirement itself (missing/stale/needs_revision) drives
+    // `ec_review_outstanding_findings`. Used by the #1828 deferred-mode
+    // tests below, which must isolate "review hasn't happened yet" from
+    // structural content findings (those always block, see R6).
+    fn manifest_with_clean_mapped_case() -> EcManifest {
+        let mut mapped_case = case("demo-happy-path", "demo-capability", "behavior");
+        // Not `cargo test` (avoids the runtime "0 tests executed" false-green
+        // check) and not a bare `true`/`echo`/`|| true` (avoids the static
+        // false-green-risk structural finding) — a real, cheap, always-green
+        // command so `verify_ec_context` executing it for real stays clean.
+        mapped_case.command = "sh -c 'exit 0'".to_string();
+        EcManifest {
+            version: EC_MANIFEST_VERSION,
+            project: "demo".to_string(),
+            generated_from_td_digest: "sha256:fixture".to_string(),
+            cases: vec![mapped_case],
+            tool_manifests: Vec::new(),
+        }
+    }
+
+    // #1828 AC1/R2: `review_mode = "deferred"` with a missing (never-run)
+    // review does not block the terminal gate — the finding set is
+    // downgraded to empty and instead surfaced as a deferred-pending entry.
+    #[test]
+    fn ec_review_gate_findings_deferred_mode_bypasses_missing_review() {
+        let (_tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_mode = "deferred".to_string();
+        let manifest = manifest_with_clean_mapped_case();
+        assert!(
+            ec_semantic_review_findings(&ctx, &manifest.cases).is_empty(),
+            "fixture must have no structural findings so this test isolates missing-evidence deferral"
+        );
+
+        let gate_findings = ec_review_gate_findings(&ctx, &manifest).unwrap();
+        assert!(
+            gate_findings.is_empty(),
+            "deferred mode must not block on a missing review: {gate_findings:?}"
+        );
+
+        let deferred = ec_review_deferred_pending_findings(&ctx, &manifest)
+            .unwrap()
+            .expect("a missing review must be recorded as a deferred-pending queue entry");
+        assert!(deferred
+            .iter()
+            .any(|finding| finding.contains("independent EC semantic review evidence is missing")));
+    }
+
+    // #1828 AC2: without the config key (the default), a missing review
+    // still blocks with byte-for-byte the same finding text as pre-#1828,
+    // and there is no deferred-pending queue entry.
+    #[test]
+    fn ec_review_gate_findings_blocking_mode_is_unchanged() {
+        let (_tmp, ctx) = write_demo_repo();
+        assert_eq!(ctx.review_mode, "blocking");
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        let outstanding = ec_review_outstanding_findings(&ctx, &manifest).unwrap();
+        let gate_findings = ec_review_gate_findings(&ctx, &manifest).unwrap();
+        assert_eq!(
+            gate_findings, outstanding,
+            "blocking mode's gate findings must equal the full outstanding set"
+        );
+        assert!(!gate_findings.is_empty());
+        assert!(ec_review_deferred_pending_findings(&ctx, &manifest)
+            .unwrap()
+            .is_none());
+    }
+
+    // #1828 R6: an explicit `needs_revision` decision is an active
+    // rejection, not merely "hasn't happened yet" — it always blocks, even
+    // in deferred mode. Deferred mode changes *when* review must happen,
+    // never *what* content is acceptable.
+    #[test]
+    fn ec_review_gate_findings_deferred_mode_still_blocks_explicit_needs_revision() {
+        let (_tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_mode = "deferred".to_string();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        let mut record = ec_review_payload_template(&ctx, &manifest);
+        record.decision = EcReviewDecision::NeedsRevision;
+        record.reviewer_kind = "human".to_string();
+        record.reviewed_by = "human-reviewer".to_string();
+        record.summary = "Coverage gap found.".to_string();
+        record.findings = vec!["missing oracle-independence evidence".to_string()];
+        write_ec_review_record(&ec_review_path(&ctx), &record).unwrap();
+
+        let gate_findings = ec_review_gate_findings(&ctx, &manifest).unwrap();
+        assert!(
+            !gate_findings.is_empty(),
+            "an explicit needs_revision decision must still block in deferred mode"
+        );
+        assert!(
+            ec_review_deferred_pending_findings(&ctx, &manifest)
+                .unwrap()
+                .is_none(),
+            "an active rejection is not a deferrable queue entry"
+        );
+    }
+
+    // #1828 AC1: `verify_ec_context` in deferred mode with a deferrable
+    // pending review is `clean: true` — the terminal gate (`aw ec gen
+    // --verify`, `aw td code-check`) and the runner (`aw wi run`/`aw
+    // capability run`) can reach terminal — while still recording a
+    // `deferred`-status entry (never counted toward pass/fail) so the
+    // pending review remains visible.
+    #[test]
+    fn ec_verify_context_deferred_mode_is_clean_with_deferred_status_entry() {
+        let (_tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_mode = "deferred".to_string();
+        let manifest = manifest_with_clean_mapped_case();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx, false).unwrap();
+
+        assert!(
+            summary.clean,
+            "a deferrable pending review must not block verify_ec_context: {summary:?}"
+        );
+        let deferred = summary
+            .results
+            .iter()
+            .find(|result| result.case_id == "ec-semantic-review")
+            .expect("a deferred-pending pseudo-result must be present");
+        assert_eq!(deferred.status, "deferred");
+        assert!(deferred.failure_kind.is_none());
+        assert!(deferred
+            .stderr_tail
+            .contains("independent EC semantic review evidence is missing"));
+    }
+
+    // #1828 AC4: post-hoc `aw ec review` acceptance finalizes a deferred
+    // pending review with the same digest-bound evidence shape as blocking
+    // mode — accepting clears both the gate findings and the
+    // deferred-pending queue entry.
+    #[test]
+    fn ec_review_deferred_mode_post_hoc_acceptance_clears_the_queue() {
+        let (_tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_mode = "deferred".to_string();
+        let manifest = manifest_with_clean_mapped_case();
+
+        // Before review: deferred-pending, non-blocking.
+        assert!(ec_review_gate_findings(&ctx, &manifest).unwrap().is_empty());
+        assert!(ec_review_deferred_pending_findings(&ctx, &manifest)
+            .unwrap()
+            .is_some());
+
+        write_accepted_ec_review(&ctx, &manifest);
+
+        // After post-hoc acceptance: clean, and no longer a queue entry.
+        assert!(ec_review_gate_findings(&ctx, &manifest).unwrap().is_empty());
+        assert!(ec_review_deferred_pending_findings(&ctx, &manifest)
+            .unwrap()
+            .is_none());
+    }
+
+    // #1828 AC3: the `deferred_pending_human` `EcReviewSummary` shape is
+    // non-blocking (`requires_hitl: false`) but still carries an executable
+    // `next.command` identical in form to blocking mode's HITL resume
+    // command, so a post-hoc human reviewer can finalize with the same
+    // `--evidence-file` invocation.
+    #[test]
+    fn ec_review_summary_deferred_pending_human_shape_is_non_blocking() {
+        let (_tmp, ctx) = write_demo_repo();
+        let payload_path = ec_review_payload_path(&ctx);
+        let summary = EcReviewSummary {
+            project: ctx.project.clone(),
+            status: "deferred_pending_human".to_string(),
+            clean: false,
+            requires_hitl: false,
+            source_digest: "sha256:fixture".to_string(),
+            review_path: relative_to(&ctx.project_root, &ec_review_path(&ctx)),
+            payload_path: Some(payload_path.to_string_lossy().into_owned()),
+            hitl_question: None,
+            findings: vec![
+                "independent EC semantic review is deferred to post-completion batch review; it does not block the loop (review_mode = \"deferred\")"
+                    .to_string(),
+            ],
+            next: Some(format!(
+                "aw ec review --project {} --evidence-file '{}'",
+                ctx.project,
+                payload_path.to_string_lossy()
+            )),
+            backing: None,
+            agent_review_prompt: None,
+        };
+
+        let output = serde_json::to_value(&summary).unwrap();
+        assert_eq!(output["status"], "deferred_pending_human");
+        assert_eq!(output["requires_hitl"], false);
+        assert!(output["hitl_question"].is_null());
+        let next = output["next"].as_str().expect("next command string");
+        assert!(next.contains("aw ec review --project"));
+        assert!(next.contains("--evidence-file"));
     }
 
     #[test]

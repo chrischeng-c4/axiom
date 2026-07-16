@@ -202,7 +202,13 @@ Composition notes:
   `requires_hitl: true` for the agent branch. Deferred/batched timing (when
   a project chooses to run its review loop) is entirely #1828's concern;
   this protocol only defines what happens once `aw ec review` actually
-  runs, independent of when that is.
+  runs, independent of when that is. See `aw-ec-deferred-review-queue.md`
+  for the pending-review queue surface, `aw health` advisory-vs-blocker
+  classification, and post-hoc finalize/reopen semantics for a project that
+  additionally opts into `ec_review_mode: deferred`; the two policies
+  (`ec_review_backing` and `ec_review_mode`) are orthogonal and a deferred,
+  agent-eligible project still prefers this protocol's `pending_agent_review`
+  envelope over the deferred queue whenever a reviewer can run immediately.
 - **Human audit reopen (S6)**: no new reopening mechanism exists. A human
   `--evidence-file` submission (`reviewer_kind: human`) is always valid
   input to the same `submit` -> `policycheck` -> `record` path regardless of
