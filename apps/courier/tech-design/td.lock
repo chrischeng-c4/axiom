@@ -2,16 +2,16 @@ version = 2
 project = "courier"
 ir_kind = "td"
 td_path = "apps/courier/tech-design"
-generated_at = "2026-07-16T05:09:36.553799+00:00"
-digest = "sha256:a2e86ed2813a56bd43576dc767afd28519a4e7c87b3819f3f826f5852b137791"
-source_digest = "sha256:a2e86ed2813a56bd43576dc767afd28519a4e7c87b3819f3f826f5852b137791"
-ir_digest = "sha256:eea03bf12a1c956dd325921127b633e261f6deb35c1a03f5812f595359f177a1"
+generated_at = "2026-07-16T05:10:07.839862+00:00"
+digest = "sha256:b3eed37c1c7e7430653551ca3fe65e78f3fc6f2c5fa5a900ad3523f3f8a2f1aa"
+source_digest = "sha256:b3eed37c1c7e7430653551ca3fe65e78f3fc6f2c5fa5a900ad3523f3f8a2f1aa"
+ir_digest = "sha256:41bbc7913500abbe576e8e3d37dcd26de2e5e2ac9de4d7543bd4d203ecafaf30"
 
 [[files]]
 path = "semantic/courier-apps-courier.md"
-digest = "sha256:852fc560a25b06c5602b9af681f061e61303b0be2e0e55ad6304c5e141d0fa24"
-ir_digest = "sha256:d1a66daa6d1141ac7c88743953fd5ec37a8f593257f5f82273149282e443d2ce"
-section_count = 3
+digest = "sha256:3595c81bffe5475ae803da1278b731d88de41844fc09a777238de3422d86cdcc"
+ir_digest = "sha256:2d1653c3ac766e5fd889faa5daafa4c9f36a3544db713685964d83115d61b52d"
+section_count = 2
 
 [[files]]
 path = "semantic/src/bin/courier.md"
