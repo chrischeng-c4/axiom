@@ -87,6 +87,10 @@ spec:
                 description: 'Name of the Secret carrying the bearer-token registry (key `token-registry.json`). When set with `auth: required`, the render mounts it read-only at `/var/run/secrets/tape` and injects `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen''s pattern; off unless the CR asks).'
                 nullable: true
                 type: string
+              tokensSecretProviderClass:
+                description: 'Name of a Secrets Store CSI `SecretProviderClass` that projects the same `token-registry.json` file as [`Self::tokens_secret`]. It is used only with `auth: required`; when both sources are set, `tokensSecret` wins for backward compatibility.'
+                nullable: true
+                type: string
               voterCount:
                 default: 1
                 type: integer

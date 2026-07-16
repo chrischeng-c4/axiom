@@ -32,6 +32,7 @@ fn spec(replicas: u32) -> TapeSpec {
         log_level: None,
         auth: "off".into(),
         tokens_secret: None,
+        tokens_secret_provider_class: None,
         bootstrap_seed_uri: None,
     }
 }
@@ -85,6 +86,7 @@ fn crd_flattens_cluster_spec() {
         "logLevel",
         "auth",
         "tokensSecret",
+        "tokensSecretProviderClass",
         "bootstrapSeedUri",
     ] {
         assert!(props.get(field).is_some(), "missing tape knob `{field}`");
@@ -292,6 +294,50 @@ fn token_registry_secret_wiring_is_opt_in() {
         .expect("token-registry mount");
     assert_eq!(mount["mountPath"], "/var/run/secrets/tape");
     assert_eq!(mount["readOnly"], true);
+
+    // auth: required + CSI provider class: same process contract, but no
+    // Kubernetes Secret object; the shared projection helper emits the CSI
+    // volume exactly once.
+    let mut csi = spec(3);
+    csi.auth = "required".into();
+    csi.tokens_secret_provider_class = Some("tape-registry-csi".into());
+    let objs = render(&Tape::new("tape", csi));
+    let sts = of_kind(&objs, "StatefulSet");
+    let env = env_of(sts);
+    let get = |k: &str| env.iter().find(|(n, _)| *n == k).unwrap().1;
+    assert_eq!(get("TAPE_AUTH")["value"], "required");
+    assert_eq!(
+        get("TAPE_TOKEN_REGISTRY_FILE")["value"],
+        "/var/run/secrets/tape/token-registry.json"
+    );
+    let vol = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "tape-token-registry")
+        .expect("CSI token-registry volume");
+    assert_eq!(vol["csi"]["driver"], "secrets-store.csi.k8s.io");
+    assert_eq!(
+        vol["csi"]["volumeAttributes"]["secretProviderClass"],
+        "tape-registry-csi"
+    );
+
+    // Explicit Secret retains precedence over CSI, matching Lumen's
+    // backwards-compatible deployment contract.
+    let mut both = spec(3);
+    both.auth = "required".into();
+    both.tokens_secret = Some("tape-registry-secret".into());
+    both.tokens_secret_provider_class = Some("tape-registry-csi".into());
+    let objs = render(&Tape::new("tape", both));
+    let sts = of_kind(&objs, "StatefulSet");
+    let vol = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "tape-token-registry")
+        .expect("token-registry volume");
+    assert_eq!(vol["secret"]["secretName"], "tape-registry-secret");
+    assert!(vol.get("csi").is_none());
 }
 
 /// The optional cold-recovery seed stays absent by default and projects to the

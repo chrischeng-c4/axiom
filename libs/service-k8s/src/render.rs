@@ -136,6 +136,53 @@ pub struct WorkloadVolumeClaim<'a> {
     pub read_only: bool,
 }
 
+/// Source for a bearer-token registry projection. A service can use a normal
+/// Kubernetes Secret or delegate material delivery to the Secrets Store CSI
+/// driver without re-implementing the volume shape in every operator.
+pub enum TokenRegistrySource<'a> {
+    Secret { name: &'a str, key: &'a str },
+    Csi { provider_class: &'a str },
+}
+
+/// One read-only token-registry volume and its corresponding container mount.
+/// Services retain their external env names and mount paths; this helper owns
+/// the common Kubernetes projection contract.
+pub struct TokenRegistryProjection<'a> {
+    pub volume_name: &'a str,
+    pub mount_path: &'a str,
+    pub source: TokenRegistrySource<'a>,
+}
+
+/// Render the read-only container mount for a token registry projection.
+pub fn token_registry_mount(projection: &TokenRegistryProjection<'_>) -> Value {
+    json!({
+        "name": projection.volume_name,
+        "mountPath": projection.mount_path,
+        "readOnly": true,
+    })
+}
+
+/// Render the Kubernetes volume backing a token registry projection.
+pub fn token_registry_volume(projection: &TokenRegistryProjection<'_>) -> Value {
+    let mut volume = json!({ "name": projection.volume_name });
+    match &projection.source {
+        TokenRegistrySource::Secret { name, key } => {
+            volume["secret"] = json!({
+                "secretName": name,
+                "items": [{ "key": key, "path": key }],
+            });
+        }
+        TokenRegistrySource::Csi { provider_class } => {
+            volume["csi"] = json!({
+                "driver": "secrets-store.csi.k8s.io",
+                "readOnly": true,
+                "volumeAttributes": { "secretProviderClass": provider_class },
+            });
+        }
+    }
+    volume
+}
+
 /// A ServiceAccount for the workload pods.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub fn service_account(cx: &RenderCtx, component: &str) -> Value {
@@ -715,6 +762,32 @@ mod tests {
         assert_eq!(
             cx.labels("server")["app.kubernetes.io/managed-by"],
             "svc-operator"
+        );
+
+        let secret = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Secret {
+                name: "svc-registry",
+                key: "token-registry.json",
+            },
+        };
+        assert_eq!(token_registry_mount(&secret)["readOnly"], true);
+        assert_eq!(
+            token_registry_volume(&secret)["secret"]["secretName"],
+            "svc-registry"
+        );
+
+        let csi = TokenRegistryProjection {
+            volume_name: "registry",
+            mount_path: "/var/run/secrets/svc",
+            source: TokenRegistrySource::Csi {
+                provider_class: "svc-registry",
+            },
+        };
+        assert_eq!(
+            token_registry_volume(&csi)["csi"]["volumeAttributes"]["secretProviderClass"],
+            "svc-registry"
         );
     }
 
