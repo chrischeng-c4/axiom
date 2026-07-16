@@ -41,15 +41,14 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add the explicit storage-durable dependency required by Tape's domain snapshot adapter."
+    description: "Declare storage-durable as Tape's direct shared durability dependency."
   - path: apps/tape/src/raft.rs
     action: modify
     section: logic
     impl_mode: hand-written
     anchor: prepare_bootstrap_seed
-    description: "Replace Tape-local atomic file persistence with storage_durable::atomic_write while retaining the JournalSnapshot codec and recovery ordering."
+    description: "Delegate bootstrap, applied-marker, and journal-snapshot atomic writes to storage_durable::atomic_write with FsyncPolicy Always. generator gap: missing-generator:storage-durable-adoption (#1812)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
