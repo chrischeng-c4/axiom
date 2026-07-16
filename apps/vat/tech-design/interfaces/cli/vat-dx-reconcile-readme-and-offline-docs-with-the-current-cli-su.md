@@ -50,3 +50,28 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-dx-readme-surface-verification
+requirements:
+  boundaries_are_explicit:
+    id: AC2
+    text: "README and offline llm guide state the bounded Apple Container support and reject Docker Engine/API, generic Compose, and persistent Kubernetes claims."
+    kind: regression
+    risk: medium
+    verify: vat_cli_convention::dx_docs_state_supported_boundaries
+  documented_commands_match_help:
+    id: AC1
+    text: "The README agent command inventory names build, compose, docker, and k8s only when each is exposed by the built vat binary's top-level help."
+    kind: regression
+    risk: high
+    verify: vat_cli_convention::documented_agent_commands_match_help
+---
+flowchart TD
+    ac1[AC1 documented commands match help] --> vat_cli_convention_documented_agent_commands_match_help[vat_cli_convention::documented_agent_commands_match_help]
+    ac2[AC2 boundaries are explicit] --> vat_cli_convention_dx_docs_state_supported_boundaries[vat_cli_convention::dx_docs_state_supported_boundaries]
+```
