@@ -120,6 +120,18 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                 ObjData::Str(_) => super::super::string_ops::mb_str_hash(val),
                 ObjData::Tuple(_) => super::super::tuple_ops::mb_tuple_hash(val),
                 ObjData::FrozenSet(items) => MbValue::from_int(frozenset_hash(items)),
+                // Heap-boxed BigInt (magnitude beyond the inline 48-bit
+                // range): without this arm it fell through to the generic
+                // pointer-identity fallback below, producing allocation-order
+                // hashes instead of CPython-compatible magnitude-based ones.
+                // The hash itself spans up to 61 bits (sys.hash_info.width),
+                // which exceeds Mamba's 48-bit inline int payload, so the
+                // result must go through int_from_i64 (auto-boxing to a
+                // heap BigInt when it doesn't fit inline) rather than the
+                // inline-only MbValue::from_int, which silently truncates.
+                ObjData::BigInt(_) => {
+                    super::super::bigint_ops::int_from_i64(super::super::bigint_ops::mb_int_hash(val))
+                }
                 // CPython: hash(z) = float_hash(re) + HASH_IMAG * float_hash(im)
                 // (HASH_IMAG = 1000003). A real-valued complex (im == 0) hashes
                 // exactly like float_hash(re), so hash(complex(x, 0)) == hash(x).

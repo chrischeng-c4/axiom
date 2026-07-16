@@ -388,7 +388,13 @@ pub unsafe fn mb_int_eq(a: MbValue, b: MbValue) -> bool {
 
 /// Compute a Python-compatible hash for an integer MbValue.
 /// Inline integers: hash is the value itself (mod Python hash modulus).
-/// BigInt: reduce modulo `sys.hash_info.modulus` (2^61 - 1 on 64-bit).
+/// BigInt: reduce modulo `sys.hash_info.modulus` (2^61 - 1 on 64-bit),
+/// matching CPython's `long_hash` (Objects/longobject.c): since
+/// 2^61 ≡ 1 (mod 2^61-1), CPython's per-digit rotate-and-add is
+/// mathematically identical to `sign * (magnitude mod (2^61-1))`, computed
+/// here directly via full-precision BigInt division so every digit
+/// contributes (a single-digit truncation would discard high-order digits
+/// for values spanning more than one 64-bit limb).
 ///
 /// # Safety
 /// `val` must be a valid integer MbValue.
@@ -396,21 +402,16 @@ pub unsafe fn mb_int_hash(val: MbValue) -> i64 {
     // Python hash modulus for integers on 64-bit: 2^61 - 1
     const HASH_MODULUS: i64 = (1i64 << 61) - 1;
     if let Some(i) = val.as_int() {
-        // Small integers hash to themselves (Python semantics).
-        return i;
+        // Small integers hash to themselves (Python semantics), with the
+        // CPython -1 -> -2 remap (-1 is a C-API error sentinel).
+        return if i == -1 { -2 } else { i };
     }
     if let Some(big) = extract_bigint(val) {
-        // Reduce magnitude modulo HASH_MODULUS, preserve sign.
-        if let Some(small) = big.to_i64() {
-            return small % HASH_MODULUS;
-        }
-        // For very large values, use the low 61 bits with sign.
-        let low: i64 = big
-            .iter_u64_digits()
-            .next()
-            .map(|d| (d & (HASH_MODULUS as u64)) as i64)
-            .unwrap_or(0);
-        return if big < BigInt::zero() { -low } else { low };
+        let modulus = BigInt::from(HASH_MODULUS);
+        // num_bigint's `%` follows dividend sign (like Rust's primitive
+        // `%`), so this already yields sign * (magnitude mod HASH_MODULUS).
+        let h = (&big % &modulus).to_i64().unwrap_or(0);
+        return if h == -1 { -2 } else { h };
     }
     0
 }
@@ -736,7 +737,9 @@ mod tests {
         unsafe {
             assert_eq!(mb_int_hash(inline(0)), 0);
             assert_eq!(mb_int_hash(inline(42)), 42);
-            assert_eq!(mb_int_hash(inline(-1)), -1);
+            // CPython remaps a hash result of -1 to -2 (-1 is a C-API error
+            // sentinel), so hash(-1) == -2, not -1.
+            assert_eq!(mb_int_hash(inline(-1)), -2);
         }
     }
 
