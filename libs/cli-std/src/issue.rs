@@ -307,12 +307,22 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
             println!("next: done");
             return Ok(());
         }
-        let (owner, name) = split_repo_owner_name(&repo)?;
-        let url = courier_create_url(&courier_url, owner, name);
+        let url = format!("{}/issues", courier_url.trim_end_matches('/'));
+        let batch_payload = serde_json::json!({
+            "repo": repo,
+            "ops": [
+                {
+                    "op": "create",
+                    "title": opts.title,
+                    "body": body,
+                    "labels": opts.label
+                }
+            ]
+        });
         let filed_url = submit_issue_via_courier(
             &client,
             &url,
-            &issue_payload(&opts.title, &body, &opts.label),
+            &batch_payload,
         )
         .await?;
         println!("filed: {filed_url}");
@@ -388,9 +398,18 @@ pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
             return Ok(());
         }
         let client = http_client(tool)?;
-        let (owner, name) = split_repo_owner_name(&repo)?;
-        let url = courier_comment_url(&courier_url, owner, name, opts.number);
-        let comment_url = post_issue_comment_via_courier(&client, &url, &body).await?;
+        let url = format!("{}/issues", courier_url.trim_end_matches('/'));
+        let batch_payload = serde_json::json!({
+            "repo": repo,
+            "ops": [
+                {
+                    "op": "comment",
+                    "number": opts.number,
+                    "body": body
+                }
+            ]
+        });
+        let comment_url = post_issue_comment_via_courier(&client, &url, &batch_payload).await?;
         println!("issue: {}", issue_url(&repo, opts.number));
         println!("commented: {comment_url}");
         println!("next: done");
@@ -478,7 +497,6 @@ pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
     // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
     // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; route through courier when configured, else fall through unchanged to the direct api.github.com path below."
     let v: serde_json::Value = if let Some(courier_url) = crate::resolve_courier_url() {
-        let (owner, name) = split_repo_owner_name(tool.repo)?;
         let mut q = format!("label:\"{label}\"");
         if let Some(text) = opts.query.as_deref() {
             if !text.trim().is_empty() {
@@ -486,7 +504,7 @@ pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
                 q.push_str(text.trim());
             }
         }
-        let url = courier_search_url(&courier_url, owner, name, &opts.state, &q, opts.limit);
+        let url = courier_search_url(&courier_url, tool.repo, &opts.state, &q, opts.limit);
         courier_get(&client, &url)
             .await?
             .json()
@@ -548,8 +566,7 @@ pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
     // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
     // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; route through courier when configured, else fall through unchanged to the direct api.github.com path below."
     let v: serde_json::Value = if let Some(courier_url) = crate::resolve_courier_url() {
-        let (owner, name) = split_repo_owner_name(tool.repo)?;
-        let url = courier_view_url(&courier_url, owner, name, number);
+        let url = courier_view_url(&courier_url, tool.repo, number);
         courier_get(&client, &url)
             .await?
             .json()
@@ -730,61 +747,36 @@ async fn post_issue_comment(
 
 // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
 // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; shared courier request helpers used by the search/view/create/comment courier branches above -- authenticate with resolve_courier_token() (the courier bearer token, not the GitHub token) the same way crate::github_get() authenticates with resolve_github_token()."
-/// `GET {courier}/v1/issues/{owner}/{name}?state=&q=&limit=` — courier's
-/// search endpoint URL. Pure and unit-tested so proxy-mode request routing
-/// is verifiable without network I/O; `search()`'s courier branch calls this
-/// directly (single source of truth).
+/// `GET {courier}/issues?repo=&state=&q=&limit=` — courier's search endpoint URL.
 #[cfg(feature = "online")]
 fn courier_search_url(
     courier_url: &str,
-    owner: &str,
-    name: &str,
+    repo: &str,
     state: &str,
     q: &str,
     limit: u32,
 ) -> String {
     format!(
-        "{}/v1/issues/{owner}/{name}?state={}&q={}&limit={limit}",
+        "{}/issues?repo={}&state={}&q={}&limit={limit}",
         courier_url.trim_end_matches('/'),
+        percent_encode_query(repo),
         percent_encode_query(state),
         percent_encode_query(q),
     )
 }
 
-/// `GET {courier}/v1/issues/{owner}/{name}/{number}` — courier's view
-/// endpoint URL. Pure and unit-tested; `view()`'s courier branch calls this
-/// directly.
+/// `GET {courier}/issues?repo=&number=` — courier's view endpoint URL.
 #[cfg(feature = "online")]
-fn courier_view_url(courier_url: &str, owner: &str, name: &str, number: u64) -> String {
+fn courier_view_url(courier_url: &str, repo: &str, number: u64) -> String {
     format!(
-        "{}/v1/issues/{owner}/{name}/{number}",
-        courier_url.trim_end_matches('/')
+        "{}/issues?repo={}&number={}",
+        courier_url.trim_end_matches('/'),
+        percent_encode_query(repo),
+        number
     )
 }
 
-/// `POST {courier}/v1/issues/{owner}/{name}` — courier's create endpoint URL.
-/// Pure and unit-tested; `create()`'s courier branch calls this directly.
-#[cfg(feature = "online")]
-fn courier_create_url(courier_url: &str, owner: &str, name: &str) -> String {
-    format!(
-        "{}/v1/issues/{owner}/{name}",
-        courier_url.trim_end_matches('/')
-    )
-}
-
-/// `POST {courier}/v1/issues/{owner}/{name}/{number}/comments` — courier's
-/// comment endpoint URL. Pure and unit-tested; `comment()`'s courier branch
-/// calls this directly.
-#[cfg(feature = "online")]
-fn courier_comment_url(courier_url: &str, owner: &str, name: &str, number: u64) -> String {
-    format!(
-        "{}/v1/issues/{owner}/{name}/{number}/comments",
-        courier_url.trim_end_matches('/')
-    )
-}
-
-/// `GET` against courier, authenticated with `resolve_courier_token()` (the
-/// courier bearer token, not a GitHub token) — mirrors `crate::github_get()`.
+/// `GET` against courier, authenticated with `resolve_courier_token()`.
 #[cfg(feature = "online")]
 async fn courier_get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
     use anyhow::Context;
@@ -799,8 +791,7 @@ async fn courier_get(client: &reqwest::Client, url: &str) -> Result<reqwest::Res
         .with_context(|| format!("courier error for {url}"))
 }
 
-/// `POST` against courier with a JSON body, authenticated with
-/// `resolve_courier_token()`.
+/// `POST` against courier with a JSON body, authenticated with `resolve_courier_token()`.
 #[cfg(feature = "online")]
 async fn courier_post(
     client: &reqwest::Client,
@@ -819,8 +810,7 @@ async fn courier_post(
         .with_context(|| format!("courier error for {url}"))
 }
 
-/// `POST /v1/issues/{owner}/{name}` via courier — same response shape as
-/// `submit_issue()` (GitHub's created-issue JSON, forwarded verbatim).
+/// `POST /issues` via courier (batch create) — extract the first result.
 #[cfg(feature = "online")]
 async fn submit_issue_via_courier(
     client: &reqwest::Client,
@@ -828,35 +818,48 @@ async fn submit_issue_via_courier(
     payload: &serde_json::Value,
 ) -> Result<String> {
     use anyhow::Context;
-    let value: serde_json::Value = courier_post(client, url, payload)
+    let results: serde_json::Value = courier_post(client, url, payload)
         .await?
         .json()
         .await
-        .context("parse courier issue response")?;
-    Ok(value
+        .context("parse courier response")?;
+    let status = results.get(0).and_then(|r| r.get("status").and_then(|s| s.as_u64())).unwrap_or(500);
+    if status >= 400 {
+        let err_msg = results.get(0).and_then(|r| r.get("body").and_then(|b| b.as_str())).unwrap_or("unknown error");
+        return Err(anyhow::anyhow!("courier batch op failed (status {status}): {err_msg}"));
+    }
+    let body = results.get(0).and_then(|r| r.get("body")).ok_or_else(|| {
+        anyhow::anyhow!("empty batch response from courier")
+    })?;
+    Ok(body
         .get("html_url")
         .and_then(|u| u.as_str())
         .unwrap_or("(issue created)")
         .to_string())
 }
 
-/// `POST /v1/issues/{owner}/{name}/{number}/comments` via courier — courier
-/// reopens the issue server-side then creates the comment in one round
-/// trip, returning the created-comment JSON (same shape as
-/// `post_issue_comment()`'s response).
+/// `POST /issues` via courier (batch comment) — extract the first result.
 #[cfg(feature = "online")]
 async fn post_issue_comment_via_courier(
     client: &reqwest::Client,
     url: &str,
-    body: &str,
+    payload: &serde_json::Value,
 ) -> Result<String> {
     use anyhow::Context;
-    let value: serde_json::Value = courier_post(client, url, &comment_payload(body))
+    let results: serde_json::Value = courier_post(client, url, payload)
         .await?
         .json()
         .await
-        .context("parse courier comment response")?;
-    Ok(value
+        .context("parse courier response")?;
+    let status = results.get(0).and_then(|r| r.get("status").and_then(|s| s.as_u64())).unwrap_or(500);
+    if status >= 400 {
+        let err_msg = results.get(0).and_then(|r| r.get("body").and_then(|b| b.as_str())).unwrap_or("unknown error");
+        return Err(anyhow::anyhow!("courier batch op failed (status {status}): {err_msg}"));
+    }
+    let body = results.get(0).and_then(|r| r.get("body")).ok_or_else(|| {
+        anyhow::anyhow!("empty batch response from courier")
+    })?;
+    Ok(body
         .get("html_url")
         .and_then(|u| u.as_str())
         .unwrap_or("(comment created)")
@@ -874,44 +877,27 @@ mod courier_routing_tests {
     fn search_routes_through_courier_when_url_configured() {
         let url = courier_search_url(
             "https://courier.internal",
-            "chrischeng-c4",
-            "axiom",
+            "chrischeng-c4/axiom",
             "open",
             "label:\"app:lumen\"",
             20,
         );
         assert_eq!(
             url,
-            "https://courier.internal/v1/issues/chrischeng-c4/axiom?state=open&q=label%3A%22app%3Alumen%22&limit=20"
+            "https://courier.internal/issues?repo=chrischeng-c4%2Faxiom&state=open&q=label%3A%22app%3Alumen%22&limit=20"
         );
         // trailing-slash courier URLs are normalized the same way.
         assert_eq!(
-            courier_search_url("https://courier.internal/", "o", "n", "all", "x", 5),
-            "https://courier.internal/v1/issues/o/n?state=all&q=x&limit=5"
+            courier_search_url("https://courier.internal/", "o/n", "all", "x", 5),
+            "https://courier.internal/issues?repo=o%2Fn&state=all&q=x&limit=5"
         );
     }
 
     #[test]
     fn view_routes_through_courier_when_url_configured() {
         assert_eq!(
-            courier_view_url("https://courier.internal", "o", "n", 42),
-            "https://courier.internal/v1/issues/o/n/42"
-        );
-    }
-
-    #[test]
-    fn create_routes_through_courier_when_url_configured() {
-        assert_eq!(
-            courier_create_url("https://courier.internal", "o", "n"),
-            "https://courier.internal/v1/issues/o/n"
-        );
-    }
-
-    #[test]
-    fn comment_routes_through_courier_when_url_configured() {
-        assert_eq!(
-            courier_comment_url("https://courier.internal", "o", "n", 7),
-            "https://courier.internal/v1/issues/o/n/7/comments"
+            courier_view_url("https://courier.internal", "o/n", 42),
+            "https://courier.internal/issues?repo=o%2Fn&number=42"
         );
     }
 

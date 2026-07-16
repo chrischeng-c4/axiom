@@ -10,7 +10,7 @@ steps:
           -t asia-east1-docker.pkg.dev/axiom-502607/courier/courier:$COMMIT_SHA \
           -t asia-east1-docker.pkg.dev/axiom-502607/courier/courier:latest \
           -f /workspace/src/apps/courier/Dockerfile \
-          /workspace/src
+          /workspace/src/apps/courier
 
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '--all-tags', 'asia-east1-docker.pkg.dev/axiom-502607/courier/courier']
