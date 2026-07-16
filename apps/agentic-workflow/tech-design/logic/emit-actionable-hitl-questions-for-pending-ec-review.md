@@ -52,10 +52,9 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: "run_review"
-  - path: apps/agentic-workflow/tech-design/logic/emit-actionable-hitl-questions-for-pending-ec-review.md
-    action: modify
-    section: logic
-    impl_mode: hand-written
+    gap: "missing-generator:logic"
+    tracker: "#1806"
+    reason: "EC review HITL question requires bounded integration in run_review."
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
