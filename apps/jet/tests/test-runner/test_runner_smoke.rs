@@ -5,6 +5,7 @@
 //! Builds a tempdir containing a `.spec.ts` file, runs the runner, and
 //! asserts the summary reflects the expected pass/fail/skip counts.
 
+use jet::test_runner::config::TestEnvironment;
 use jet::test_runner::{self, Outcome, RunnerConfig};
 use std::{fs, process::Command};
 
@@ -973,6 +974,85 @@ test("loads a CJS default import from a physical prebuilt ESM dist file", () => 
     assert_eq!(
         summary.failed, 0,
         "Jet's Node loader must preserve CJS default-import interop for a physical prebuilt ESM dist file: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_uses_root_jest_jsdom_environment_despite_node_cli_fallback() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let jsdom = tmp.path().join("node_modules/jsdom");
+    fs::create_dir_all(&jsdom).unwrap();
+    fs::write(
+        tmp.path().join("jest.config.ts"),
+        r#"export default { testEnvironment: "jsdom" };"#,
+    )
+    .unwrap();
+    fs::write(
+        jsdom.join("package.json"),
+        r#"{"name":"jsdom","type":"module","exports":"./index.mjs"}"#,
+    )
+    .unwrap();
+    fs::write(
+        jsdom.join("index.mjs"),
+        r#"
+export class JSDOM {
+  constructor() {
+    class HTMLElement {}
+    const document = {
+      createElement(name) {
+        return { tagName: String(name).toUpperCase() };
+      },
+    };
+    this.window = {
+      document,
+      navigator: { userAgent: "jet-test-jsdom" },
+      HTMLElement,
+      HTMLMediaElement: class HTMLMediaElement {},
+      Element: HTMLElement,
+      Node: HTMLElement,
+      Event: class Event {},
+      CustomEvent: class CustomEvent {},
+    };
+  }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("jest-jsdom-environment.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+
+test("uses the project's jsdom globals", () => {
+  const element = document.createElement("section");
+  expect(element.tagName).toBe("SECTION");
+  expect(typeof HTMLElement).toBe("function");
+  expect(typeof HTMLMediaElement).toBe("function");
+  expect(window.document).toBe(document);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    assert_eq!(cfg.environment, TestEnvironment::Dom);
+    // `--env node` is Jet's compatibility fallback and does not override an
+    // explicit root Jest jsdom configuration.
+    cfg.environment = cfg.environment.with_cli_request("node").unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "Jet must make the project's jsdom globals available: {:#?}",
         summary.reports
     );
     assert_eq!(summary.passed, 1);

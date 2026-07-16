@@ -14,7 +14,7 @@ use crate::browser::{Browser, LaunchOptions};
 use crate::cdp_driver::{dispatch_page_request, parse_page_request, write_page_response};
 use crate::resolver::alias::AliasResolver;
 use crate::resolver::{is_node_builtin_specifier, ModuleResolver, ResolveOptions};
-use crate::test_runner::config::{LiveE2eConfig, RunnerConfig};
+use crate::test_runner::config::{LiveE2eConfig, RunnerConfig, TestEnvironment};
 use crate::test_runner::discovery::SpecFile;
 use crate::test_runner::reporter::{
     BrowserSessionReport, MultiReporter, Outcome, Summary, TestReport, TestStepReport,
@@ -45,6 +45,54 @@ const PAGE_SHIM: &str = include_str!("../../data/runtime/test/page.js");
 
 /// Matchers shim — polling Locator/Page matchers module imported by index.mjs.
 const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
+
+/// DOM globals installed before loading a spec whose root Jest config selects
+/// `testEnvironment: "jsdom"`. The boot module lives under the project root,
+/// so Node resolves `jsdom` from the same project dependency tree as Jest.
+const JSDOM_BOOTSTRAP: &str = r#"
+let __jetJSDOM;
+try {
+  ({ JSDOM: __jetJSDOM } = await import("jsdom"));
+} catch (error) {
+  throw new Error(
+    "Jet selected the jsdom test environment but could not import the project's `jsdom` package. Install `jsdom` as a project dev dependency. " +
+      (error?.message ?? error),
+  );
+}
+if (typeof __jetJSDOM !== "function") {
+  throw new Error("Jet selected the jsdom test environment but its `jsdom` package does not export JSDOM.");
+}
+const __jetDom = new __jetJSDOM("<!doctype html><html><head></head><body></body></html>", {
+  url: "http://localhost/",
+  pretendToBeVisual: true,
+});
+const __jetWindow = __jetDom.window;
+for (const key of [
+  "document", "navigator", "location", "history", "HTMLElement", "HTMLMediaElement", "Element", "Node", "Text",
+  "Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "FocusEvent", "InputEvent", "UIEvent",
+  "MutationObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
+  "DOMParser", "URL", "URLSearchParams", "FormData", "File", "Blob",
+]) {
+  if (key in __jetWindow) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value: __jetWindow[key],
+    });
+  }
+}
+Object.defineProperty(globalThis, "window", {
+  configurable: true,
+  writable: true,
+  value: __jetWindow,
+});
+Object.defineProperty(globalThis, "self", {
+  configurable: true,
+  writable: true,
+  value: __jetWindow,
+});
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+"#;
 
 /// Node 18-compatible ESM loader used only by the native test worker.
 ///
@@ -3249,9 +3297,13 @@ fn build_boot(spec_path: &Path, spec: &SpecFile, config: &RunnerConfig) -> Strin
     };
     let artifacts_dir_js =
         serde_json::to_string(&config.auto_artifacts_dir.display().to_string()).unwrap();
+    let environment_bootstrap = match config.environment {
+        TestEnvironment::Dom => JSDOM_BOOTSTRAP,
+        TestEnvironment::Node | TestEnvironment::Component => "",
+    };
 
     format!(
-        r#"import {{ __jetRun }} from "@jet/test";
+        r#"{environment_bootstrap}import {{ __jetRun }} from "@jet/test";
 await __jetRun({{
   specUrl: {spec},
   file: {file},
@@ -3272,6 +3324,7 @@ await __jetRun({{
         auto_artifacts = auto_artifacts_js,
         artifacts_dir = artifacts_dir_js,
         live_control = live_control_js,
+        environment_bootstrap = environment_bootstrap,
     )
 }
 
@@ -3626,6 +3679,21 @@ const formatDay = (value: Dayjs) => dayjs(value);
             TEST_ASSET_LOADER.contains("hasTopLevelStaticEsmSyntax"),
             "asset loader must classify static ESM syntax lexically"
         );
+    }
+
+    #[test]
+    fn jsdom_bootstrap_is_valid_javascript() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(JSDOM_BOOTSTRAP, None).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "embedded jsdom bootstrap has JavaScript syntax errors"
+        );
+        assert!(JSDOM_BOOTSTRAP.contains("await import(\"jsdom\")"));
+        assert!(JSDOM_BOOTSTRAP.contains("\"document\", \"navigator\""));
     }
 
     #[test]
