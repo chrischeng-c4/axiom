@@ -51,6 +51,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: AdmissionController
     description: "Expose a typed optional controller configuration parser for all service adopters. generator gap: missing-generator:service-http-admission-config (#1823)."
 ```
 ## Unit Test
