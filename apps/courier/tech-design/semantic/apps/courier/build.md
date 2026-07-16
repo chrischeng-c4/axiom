@@ -2,6 +2,11 @@
 id: apps-courier-build-rs
 summary: Lossless rust-source-unit coverage for `apps/courier/build.rs`.
 fill_sections: [rust-source-unit, changes]
+capability_refs:
+  - id: github-issues-proxy
+    role: primary
+    claim: github-issues-proxy-service
+    coverage: full
 ---
 
 # Fillback apps/courier/build.rs
@@ -27,6 +32,7 @@ fn main() {
 <!-- type: changes lang: yaml -->
 
 ```yaml
+coverage_kind: semantic
 changes:
   - path: "apps/courier/build.rs"
     action: modify

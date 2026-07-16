@@ -1,6 +1,11 @@
 ---
 id: github
 fill_sections: [overview, schema, changes]
+capability_refs:
+  - id: github-issues-proxy
+    role: primary
+    claim: github-issues-proxy-service
+    coverage: full
 ---
 
 ## Overview
@@ -103,12 +108,15 @@ schemas:
 <!-- type: changes lang: yaml -->
 
 ```yaml
+coverage_kind: semantic
 changes:
-  - path: apps/courier/src/http/github.rs
-    action: modify
-    impl_mode: hand-written
-    description: |
-      Pre-existing module captured by `score fillback`.
+  - action: modify
+    description: 'Pre-existing module captured by `score fillback`.
+  
       Governance: hand-written until extended with
-      Schema / Logic / Interface sections.
+  
+      Schema / Logic / Interface sections.'
+    impl_mode: hand-written
+    path: apps/courier/src/http/github.rs
+    section: schema
 ```
