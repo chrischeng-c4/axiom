@@ -137,7 +137,7 @@ pub fn snapshot_bytes(journal: &Arc<Mutex<TapeJournal>>, up_to: Index) -> Result
     })?)
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#1812" reason="Tape delegates the generic marker and snapshot atomic-write mechanics to storage-durable while retaining JournalSnapshot serialization and recovery ordering.">
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in raft.rs is hand-written pending codegen support">
 /// Prepare an empty replica PVC to recover from one exact backup object.
 ///
 /// This is deliberately a cold-start-only operation: it refuses any existing
@@ -166,14 +166,35 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
     }
 
     let raft_dir = data_dir.join("raft");
-    let store = RaftStore::open(
-        raft_dir
-            .to_str()
-            .context("raft data dir is not valid UTF-8")?,
-        node_id,
-        FsyncPolicy::Always,
-    )?;
-    store.seed_snapshot(snapshot.up_to, 0, bytes.to_vec())?;
+    std::fs::create_dir(&raft_dir)
+        .with_context(|| format!("create bootstrap raft dir {}", raft_dir.display()))?;
+    let marker = raft_dir.join(format!("applied-{node_id}.idx"));
+    let snapshot_path = snapshot_path_for(&marker);
+    let snapshot_bytes =
+        serde_json::to_vec(&snapshot).context("encode bootstrap JournalSnapshot")?;
+
+    // Publish the snapshot before its floor marker. A crash after the first
+    // rename is still safe: TapeStateMachine::new sees the snapshot and its
+    // own `up_to`; it must never see a marker that claims an absent snapshot.
+    write_atomic(&snapshot_path, &snapshot_bytes)?;
+    write_atomic(&marker, snapshot.up_to.to_string().as_bytes())?;
+    Ok(())
+}
+// </HANDWRITE>
+
+/// Atomic file replacement shared by cold seed preparation. The files live
+/// on the PVC and have no parent creation race because the empty-directory
+/// guard creates `raft/` before this helper runs.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    let mut file = std::fs::File::create(&tmp)
+        .with_context(|| format!("create bootstrap temp file {}", tmp.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("write bootstrap temp file {}", tmp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("sync bootstrap temp file {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("publish bootstrap file {}", path.display()))?;
     Ok(())
 }
 // </HANDWRITE>
