@@ -1176,4 +1176,62 @@ const implementation = function (this: typeof mockReader, value: string) {
         );
     }
 }
+
+#[test]
+fn strips_function_type_and_generic_return_type_from_class_assignment() {
+    let source = r#"
+export class FormDraftEditor {}
+FormDraftEditor.mapToGSDownLoadURL = async (
+  content: string,
+  gsDownLoadFunc: (string) => Promise<string>,
+): Promise<string | null> => {
+  return gsDownLoadFunc(content);
+};
+"#;
+    let options = TransformOptions::default();
+    for result in [
+        transform_tsx(source, &options).unwrap(),
+        transform_typescript(source, &options).unwrap(),
+    ] {
+        assert!(
+            result.code.contains("gsDownLoadFunc,")
+                && result.code.contains(") => {")
+                && result.code.contains("return gsDownLoadFunc(content);"),
+            "function-type parameter and generic return type must be erased: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("gsDownLoadFunc => Promise")
+                && !result.code.contains("): Promise")
+                && !result.code.contains("Promise<string"),
+            "function-type residue must not reach JavaScript: {}",
+            result.code
+        );
+    }
+}
+
+#[test]
+fn jsx_attribute_keeps_expression_after_leading_block_comment() {
+    let source = r#"
+const modal = <Modal
+  getContainer={/* istanbul ignore next */ () => formRef.current || document.body}
+  onCancel={handleClose}
+/>;
+"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result
+            .code
+            .contains("getContainer: () => formRef.current || document.body"),
+        "JSX comment must not replace the attribute expression: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("onCancel: handleClose"),
+        "the following JSX attribute must remain intact: {}",
+        result.code
+    );
+}
 // CODEGEN-END

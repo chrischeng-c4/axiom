@@ -593,7 +593,15 @@ async fn test_worker_handles_physical_esm_directory_imports_and_workspace_tsx_in
     .unwrap();
     fs::write(
         workspace_source.join("source/index.tsx"),
-        "export function WorkspacePanel() { return <section>workspace</section>; }\n",
+        r#"
+type WorkspaceOptions = { isNullable?: boolean };
+
+export const workspaceValue = (
+  { isNullable = true }: WorkspaceOptions = {},
+) => isNullable ? "workspace-default" : "workspace-explicit";
+
+export function WorkspacePanel() { return <section>workspace</section>; }
+"#,
     )
     .unwrap();
     fs::write(
@@ -615,7 +623,7 @@ export const jsxs = jsx;
         r#"
 import { test, expect } from "@jet/test";
 import { affixValue } from "physical-esm";
-import { WorkspacePanel } from "workspace-source";
+import { WorkspacePanel, workspaceValue } from "workspace-source";
 import { calendarAddon } from "calendar-wrapper";
 import { tableHook } from "table-wrapper";
 
@@ -624,6 +632,8 @@ test("loads physical ESM directory indexes and workspace TSX package indexes", (
   expect(calendarAddon).toBe("legacy-calendar-addon");
   expect(tableHook).toBe("legacy-table-hook");
   expect(typeof WorkspacePanel).toBe("function");
+  expect(workspaceValue()).toBe("workspace-default");
+  expect(workspaceValue({ isNullable: false })).toBe("workspace-explicit");
 });
 "#,
     )
@@ -839,7 +849,9 @@ module.exports = Object.assign({}, api);
     );
     assert!(
         native_stderr.contains("Named export 'getter' not found")
-            || native_stderr.contains("Named export 'forEach' not found"),
+            || native_stderr.contains("Named export 'forEach' not found")
+            || native_stderr.contains("does not provide an export named 'getter'")
+            || native_stderr.contains("does not provide an export named 'forEach'"),
         "native ESM failure must identify the unavailable CommonJS named export: {native_stderr}",
     );
 
@@ -911,7 +923,16 @@ async fn test_worker_preserves_trailing_named_exports_from_physical_esm_packages
     fs::create_dir_all(package.join("dist/@testing-library")).unwrap();
     fs::write(
         package.join("package.json"),
-        r#"{"name":"@testing-library/react","type":"module","exports":{".":"./dist/@testing-library/react.esm.js"}}"#,
+        r#"{
+  "name": "@testing-library/react",
+  "main": "dist/index.js",
+  "module": "dist/@testing-library/react.esm.js"
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        package.join("dist/index.js"),
+        "module.exports = { legacy: true };\n",
     )
     .unwrap();
     fs::write(
@@ -925,7 +946,7 @@ export { act, render, renderHook };
     )
     .unwrap();
     fs::write(
-        tmp.path().join("physical-esm-named-exports.test.ts"),
+        tmp.path().join("physical-esm-named-exports.test.tsx"),
         r#"
 import { test, expect } from "@jet/test";
 import { act, render, renderHook } from "@testing-library/react";
@@ -994,6 +1015,50 @@ test("imports TypeScript class fields without raw TS syntax", () => {
     assert_eq!(
         summary.failed, 0,
         "imported TypeScript class syntax must be stripped: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_strips_typescript_this_parameters_in_imported_modules() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        src.join("reader.ts"),
+        r#"
+export const formatWithReader = function (this: { prefix: string }, value: string) {
+  return `${this.prefix}:${value}`;
+};
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("this-parameter.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { formatWithReader } from "./src/reader";
+
+test("imports a TypeScript this pseudo-parameter without raw TS syntax", () => {
+  expect(formatWithReader.call({ prefix: "jet" }, "test")).toBe("jet:test");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "imported TypeScript this pseudo-parameters must be stripped: {:#?}",
         summary.reports
     );
     assert_eq!(summary.passed, 1);
@@ -1250,6 +1315,53 @@ test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", asy
     assert_eq!(
         summary.failed, 0,
         "Jest-compatible extensions must execute with real semantics: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
+async fn test_worker_hoists_jest_mocks_for_static_import_bindings() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("jest-static-mocks.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { getWorkspaceTypeAndId } from "./get-workspace-type-and-id";
+import { NumberFormat } from "@tw-tech/shared-utils";
+
+jest.mock("./get-workspace-type-and-id");
+jest.mock("@tw-tech/shared-utils", () => ({
+  NumberFormat: { baseFormat: jest.fn() },
+}));
+
+test("hoists auto and factory mocks before their static bindings", () => {
+  getWorkspaceTypeAndId.mockImplementation((id) => ({ id, kind: "workspace" }));
+  expect(getWorkspaceTypeAndId("jet")).toEqual({ id: "jet", kind: "workspace" });
+
+  const mockBaseFormat = NumberFormat.baseFormat;
+  mockBaseFormat.mockImplementation((value) => value.toFixed(2));
+  expect(mockBaseFormat(1.2)).toBe("1.20");
+  mockBaseFormat.mockImplementationOnce((value) => `once:${value}`);
+  expect(mockBaseFormat(3)).toBe("once:3");
+  expect(mockBaseFormat(3)).toBe("3.00");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "static Jest mock bindings must expose the full mock API: {:#?}",
         summary.reports
     );
     assert_eq!(summary.passed, 1);
