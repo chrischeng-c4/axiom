@@ -36,6 +36,35 @@ false)`) owns every real call site and is permissive — `ord(b"A")` /
 against a fresh binary before trusting a layer-3 signature reading; #1550's
 `ord`/bytes suspicion did not reproduce.
 
+`isinstance(obj, class_or_tuple, /)` is positional-only in real CPython; a
+keyword-shaped call is always illegal. `isinstance` is also one of the
+#1775 iterable-arg bypass targets (`check_expr.rs:4493`), deferring the
+whole call to legacy `check_stdlib_call` (`:4818`) — but `ParamSig` has no
+positional-only/keyword-only concept at all (`stdlib_sigs.rs:90-96`), so
+its keyword-name-matching loop (`check_expr.rs:5040`) would silently
+accept a keyword-shaped call despite `isinstance`'s own row being
+`enforceable: true`. A dedicated pre-bypass check (`:4450`) rejects
+keyword-shaped `isinstance` calls before the bypass fires, leaving the
+positional-call path unaffected (tracked: #1794).
+
+AbstractSet params are the nominal exception to this permissive stack:
+`collections.abc.Set` defines no `__subclasshook__` (unlike structural
+`Iterable`/`Sized`/`Container`), so `set`/`frozenset`'s rich/in-place
+operators (`__and__ __or__ __sub__ __xor__ __iand__ __ior__ __isub__
+__ixor__ __ge__ __gt__ __le__ __lt__`) defer out of
+`check_structured_stdlib_call` (`check_expr.rs:4566`) instead of resolving
+there — the generated evaluator has no class-hierarchy model, so it would
+otherwise silently accept any class merely defining `__contains__`. The
+legacy path's `check_stdlib_scalar_arg`'s `TypedNamed("AbstractSet")` arm
+(`check_expr.rs:5099`) enforces the real requirement via
+`set_derived_classes`/`set_derived_class_symbols` (`check.rs:865-866`),
+populated at `Stmt::ClassDef` (`check.rs:2511`) with the same
+single-forward-lookup chain resolution as `numeric_derived_classes`; the
+builtin roots `set`/`frozenset` are matched by name and never populate the
+registry themselves (tracked: #1794). `Ty::Set` has no mutable/frozen split, so a
+`Ty::Set` receiver's member signatures resolve via the `set` STDLIB_SIGS
+qualifier, a strict superset of frozenset's rows (`check_expr.rs:4911`).
+
 ## Proven widenings (each keeps its guard set red)
 
 | Legal shape | Rule established | Where |
@@ -49,6 +78,7 @@ against a fresh binary before trusting a layer-3 signature reading; #1550's
 | Slice-assign RHS | any non-container RHS defers to runtime (CPython accepts any iterable) | check_subscript_assignment |
 | Unbound `__init__` receiver | `Class.__init__(recv, …)` always skips arg 0 — `__init__` can never be class/staticmethod | both call-resolution paths |
 | Per-builtin kwargs facts | list/set/frozenset REJECT kwargs; dict ACCEPTS them (tracked: #1549) — never share the arms | ast_to_hir rejection arm |
+| Loop/try-body accumulator reassignment | `total = 0; for x in xs: total += x` (tracked: #1775) or `total = total + x` (tracked: #1794, one level+ inside while/for/async-for/try-body/else/finally) widens instead of forcing `Any`; if/elif/else and except branches keep the pessimistic treatment | same_scope_loop_reassign_counts (check.rs:598) |
 
 ## Known wall gaps (negative-contract violations)
 
@@ -60,15 +90,6 @@ against a fresh binary before trusting a layer-3 signature reading; #1550's
   (tracked: #1628).
 - Residual over-walling clusters (~470 corpus-wide post wave-1/2) — same
   fix pattern; goal-loop waves burn them down (tracked: #1615).
-- `all(42)`/`any(42)`-shape non-iterable args to iterable-consuming builtins
-  compile-reject instead of deferring to the runtime `TypeError` the fixture
-  expects to catch — live-reproduced 2026-07-15 across ≥10 fixtures in
-  `_regression/builtin-libs/builtins/` (`all`, `any`, `map`, `max`, `min`,
-  `reversed`, `isinstance`, `bytearray_methods`, `errors.py`,
-  `long_tail/slice/slice_basic.py`); `range_broad.py` separately DIVERGEs
-  on an int-vs-float value (int arithmetic returning `55.0` not `55`).
-  Newly discovered during #1550 verification, distinct root cause(s) from
-  #1550's original 4 — tracked: #1775.
 
 ## Working rule for any new widening
 

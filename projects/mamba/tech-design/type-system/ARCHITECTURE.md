@@ -1,7 +1,7 @@
 # type-system — architecture (as-is, 2026-07-15)
 
 Domain per `tech-design/README.md`: strict-type checker, signatures, walls, ingress enforcement. Source: `src/types/`.
-Fix TDs in this dir (cross-referenced, not restated): `ingress-overwalling-shapes.md`, `list-call-and-container-walls.md`, `unbound-init-arg-alignment.md`, `reflexive-container-inference.md`.
+Fix TDs in this dir (cross-referenced, not restated): `walls-and-widening.md` §Fire/defer semantics, §Proven widenings.
 
 ## Responsibilities
 
@@ -33,7 +33,7 @@ Wall fire/defer decision table:
 | User/intrinsic `Ty::Fn` (`check_expr.rs:675`) | arity mismatch (no stars/kwargs/defaults, `:697`) or `types_compatible` false (`:839`) | `structured_stdlib_authoritative` (`:669`); Any/TypeVar/Error on either side (`check.rs:3594-3600`) |
 | Runtime ingress (`builtins/mod.rs:6270`) | dynamic-route arg violates scalar contract → catchable TypeError pre-body | contract `None`; legacy 5/6-tuple metadata fail-open (`:7147` test); kind 2/4 packs validated element-wise, containers never replaced |
 
-Constructor_bypass allowlist (`check_expr.rs:4510`, exact as-is): Constructor: `builtins.{ImportError,range,type}`, `functools.partial`; ModuleFn: `functools.{reduce,lru_cache}`. Entry criterion: mamba's runtime independently raises the matching TypeError (see comment block `:4471-4509`; extension protocol in `ingress-overwalling-shapes.md`).
+Constructor_bypass allowlist (`check_expr.rs:4510`, exact as-is): Constructor: `builtins.{ImportError,range,type}`, `functools.partial`; ModuleFn: `functools.{reduce,lru_cache}`. Entry criterion: mamba's runtime independently raises the matching TypeError (see comment block `:4471-4509`; extension protocol in `walls-and-widening.md` §Fire/defer semantics).
 
 ## Control flow
 
@@ -47,16 +47,17 @@ Constructor_bypass allowlist (`check_expr.rs:4510`, exact as-is): Constructor: `
 
 ## Known hazards
 
-- **Over-walling is the standing failure mode** — a wall firing on a behavior/errors/real_world fixture is by definition a checker bug; `ingress-overwalling-shapes.md` is the rolling family (remainder #1615). Never blanket-disable; per-shape alignment only.
+- **Over-walling is the standing failure mode** — a wall firing on a behavior/errors/real_world fixture is by definition a checker bug; `walls-and-widening.md` §Fire/defer semantics is the rolling family (remainder #1615). Never blanket-disable; per-shape alignment only.
 - **`constructor_bypass` without runtime validation = silent leak** — adding a class whose mamba runtime does NOT validate args removes its whole error surface, regressing `type/` guards (`check_expr.rs:4480-4487`).
 - **Dual signature sources starve each other** — structured `Some(..)` short-circuits the legacy curated walls: #1611 needed an explicit defer for `classmethod/staticmethod.__get__` (`:4343`); regenerating typeshed coverage can silently disable a curated wall with no test failing except `type/` guards.
 - **Generated fixed arity ≠ CPython runtime arity** — typeshed folds overloads; CPython validates argc at runtime (#1550 `dir()` defer `:4352`). Weakening the evaluator instead of adding a targeted defer breaks other walls.
-- **Element-type pinning vs self-reference** — `self_referential_mutation_widen` (`:1573`) only matches literal AST shapes (`x.append(x)`, `x.extend([x])`); an aliased receiver (`y = x; x.append(y)`) still walls. Note: `reflexive-container-inference.md` status says OPEN but the widen shipped — TD status lines can lag code in this dir.
-- **Unbound `__init__` arg-0 skip lives in TWO paths** — `check_expr.rs:4622` (import_origins class_sig) and `:4666` (Ty::Class fallback); a third resolution path without the skip re-introduces the off-by-one (`unbound-init-arg-alignment.md`).
-- **kwargs acceptance is per-builtin, not per-family** — the `list/set/frozenset` kwargs rejection lives in ast_to_hir, NOT `src/types/`; `dict` accepts kwargs (#1549) (`list-call-and-container-walls.md`).
+- **Element-type pinning vs self-reference** — `self_referential_mutation_widen` (`:1573`) only matches literal AST shapes (`x.append(x)`, `x.extend([x])`); an aliased receiver (`y = x; x.append(y)`) still walls. Note: the superseded fix TD (`walls-and-widening.md` §Proven widenings) listed status OPEN though the widen had shipped — TD status lines can lag code in this dir.
+- **Unbound `__init__` arg-0 skip lives in TWO paths** — `check_expr.rs:4622` (import_origins class_sig) and `:4666` (Ty::Class fallback); a third resolution path without the skip re-introduces the off-by-one (`walls-and-widening.md` §Proven widenings).
+- **kwargs acceptance is per-builtin, not per-family** — the `list/set/frozenset` kwargs rejection lives in ast_to_hir, NOT `src/types/`; `dict` accepts kwargs (#1549) (`walls-and-widening.md` §Proven widenings).
 - **`structured_stdlib_authoritative` requires an Ident callee** (`:669-670 func_name.is_some()`) — attr-called stdlib fns can still hit the `Ty::Fn` double-check path.
 - **Table lookups are linear scans** — `stdlib_sigs.rs:8651 get()` walks curated then 13k generated rows per call site; fine today, a trap for hot-path additions.
 - **Protocol widenings are name-string arms** — `SupportsIndex→Int|Bool`, `SupportsFloat→Int|Float|Bool` hardcoded at `check.rs:3712-3713`; open-inheritance leniency keys off `class_inheritance_open` (`check.rs:3862-3877`, `check_expr.rs:3251`). New structural names default to rejection.
+- **Deferring a structured call to legacy doesn't guarantee legacy re-checks the same shape** — `ParamSig` has no positional-only/keyword-only concept at all (`stdlib_sigs.rs:90-96`), so a bypassed callable's legacy row can't reject a keyword-shaped call to a real positional-only param by itself (`isinstance`'s #1775 bypass needed its own pre-check to keep that rejection, `check_expr.rs:4450`); conversely, deferring can be the only way to reach a check the structured evaluator can't express at all (`AbstractSet`'s nominal inheritance requirement — see `walls-and-widening.md`'s Fire/defer semantics, tracked: #1794).
 
 ## Extension points
 

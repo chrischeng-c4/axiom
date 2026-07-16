@@ -2,7 +2,7 @@
 
 Scope: `src/runtime/exception.rs` (3.7k L), `src/runtime/stdlib/traceback_mod.rs` (4.1k L),
 raise/catch slots in `src/runtime/class/mod.rs` (~4788–5223), lowering in `src/lower/hir_to_mir.rs`.
-Fix TDs in this dir: `exception-construction-contracts.md` (landed), `exc-subclass-init-shapes.md` (OPEN).
+Fix TDs in this dir: `construction-and-rendering.md` (main body landed; §Known gaps OPEN).
 
 ## Responsibilities
 
@@ -32,7 +32,7 @@ Invariants that must hold:
 
 - **Dual-channel raise**: an instance raise sets BOTH `CURRENT_EXCEPTION` (name+msg summary, class/mod.rs:4832) and `LAST_RAISED_INSTANCE` (retained instance). Every `mb_raise*` first calls `clear_last_raised_instance` so a summary can never pair with a stale instance.
 - **Poll-based propagation, no unwinding**: lowering emits `mb_has_exception()` checks after calls inside try scope; a raise = `mb_raise*` call + terminator (goto handler / with-exit / return None). Nothing longjmps.
-- **unicode_error_str recompute rule**: `str(Unicode*Error)` is ALWAYS recomputed from `encoding/object/start/end/reason` instance fields (string_ops.rs:5122 → exception.rs:490); a message-only `mb_raise` leaves them unset → renders `""`. Structured raise helper is mandatory (see `exception-construction-contracts.md`).
+- **unicode_error_str recompute rule**: `str(Unicode*Error)` is ALWAYS recomputed from `encoding/object/start/end/reason` instance fields (string_ops.rs:5122 → exception.rs:490); a message-only `mb_raise` leaves them unset → renders `""`. Structured raise helper is mandatory (see `construction-and-rendering.md`).
 - **kwargs probes use `dict_get_exact_str`** (exception.rs:403) — raw `&str` hash misses `DictKey::Str` (hash-domain defect, cross-domain).
 - **StopIteration dual signal**: any raise spelling of StopIteration must flip `iter::signal_stop_iteration()` (mb_raise:764, mb_raise_instance:4799/4838); catching one must `iter::check_and_clear_stop()` (class/mod.rs:5206).
 - **Chain preservation**: converting instance → `MbException` walks the full `__cause__`/`__context__` chain (`mbvalue_to_mbexception`, depth cap 4096); `raise X from Y` always sets `suppress_context=true`.
@@ -58,14 +58,14 @@ Invariants that must hold:
 - **Dual-channel desync** — any new raise path that sets one slot but not the other. WHY: catch sees a stale/absent instance and reconstructs from summary, dropping custom fields.
 - **Pending exception blocks all calls** — `mb_call_spread_impl`'s post-bind check aborts any call while an exception is pending; `suspend_current_exception`/`restore_suspended_exception` (exception.rs:1082, #1535) is the only carve-out (trace callbacks). WHY: runtime code that must call user code during unwind silently no-ops.
 - **`exception_notified` staleness** — flag must be reset on every clear path (catch/clear/uncaught). WHY: a later distinct exception in the same still-active frame loses its `'exception'` event.
-- **kwargs hash-domain probe** — raw dict `.get(&str)` misses; use `dict_get_exact_str`. Detail: `exception-construction-contracts.md`.
-- **Message-only Unicode*Error raise renders `str()` empty** — recompute rule above. Detail: `exception-construction-contracts.md`.
+- **kwargs hash-domain probe** — raw dict `.get(&str)` misses; use `dict_get_exact_str`. Detail: `construction-and-rendering.md`.
+- **Message-only Unicode*Error raise renders `str()` empty** — recompute rule above. Detail: `construction-and-rendering.md`.
 - **`store_exception_as_value` round-trip loses custom fields** — `MbException` carries only type/message/chain/tb. WHY: fallback catch (no `LAST_RAISED_INSTANCE`) yields a synthetic instance; user attrs vanish.
 - **`LAST_HANDLED_EXCEPTION` never auto-cleared** — deliberate for post-handler `format_exc()`, but `mb_reraise_handled` can resurrect it far from the original handler.
 - **Save-stack retain parking** — abnormal region exits discard deeper slots; each parked retain must release exactly once. WHY: earlier miscount surfaced as intermittent double-free in nested try/except (class/mod.rs:5140 comment).
 - **StopIteration flag leak** — user `except StopIteration:` without the class/mod.rs:5206 clear makes the next generator resume read phantom exhaustion.
 - **Synthetic tracebacks** — traceback_mod.rs header carve-out: no real frame walk/linecache; several `traceback` functions return empty surfaces; `mb_take_uncaught_traceback` prints a fixed one-frame header. WHY: callers pretty-printing real tracebacks observe empty/wrong output while gates still pass.
-- **Open #1557 shapes** — unbound `Exception.__init__(self,…)` chain loses attrs; `__new__` args not pre-stored (P3 `str()` falls to generic repr); composite NoneType-callable crash. See `exc-subclass-init-shapes.md` (do not "fix" past its red lines).
+- **Open #1557 shapes** — unbound `Exception.__init__(self,…)` chain loses attrs; `__new__` args not pre-stored (P3 `str()` falls to generic repr); composite NoneType-callable crash. See `construction-and-rendering.md` §Known gaps (do not "fix" past its red lines).
 
 ## Extension points
 
