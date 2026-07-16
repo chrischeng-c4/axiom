@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-16T02:52:40.440632+00:00"
-digest = "sha256:3149531c4a18b6d176874775eef65a367fea9d1fb5471fe5f9647c3241c22074"
-source_digest = "sha256:3149531c4a18b6d176874775eef65a367fea9d1fb5471fe5f9647c3241c22074"
-ir_digest = "sha256:e5f2c3a27c79f219f042491e3a6f931755482b9d916c803759d63bdf3fa67f73"
+generated_at = "2026-07-16T08:17:17.982576+00:00"
+digest = "sha256:c564788aee95608e12a87a8207c32c4437d7ad3b232a61c58f1c17d99be274c9"
+source_digest = "sha256:c564788aee95608e12a87a8207c32c4437d7ad3b232a61c58f1c17d99be274c9"
+ir_digest = "sha256:0dd6fb691ded9e6c8b2140b4343a94225f2a32de21e793abf04b0600cdba22ce"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4505,6 +4505,12 @@ ir_digest = "sha256:02d665b078c4d2210c76130e3397e5799713dd8699da6ed67110400c8ead
 section_count = 3
 
 [[files]]
+path = "logic/emit-actionable-hitl-questions-for-pending-ec-review.md"
+digest = "sha256:549b807c67d540bfa746226ed356ebaaa5241a0b86fe6e277975d0a50e15d54e"
+ir_digest = "sha256:5f0387989a21d322aafc5a9ca87e4a65a1b2508d86c88dfa38bfcc413c2d6f9c"
+section_count = 3
+
+[[files]]
 path = "logic/ignore-foreign-legacy-tds-during-lock-generation.md"
 digest = "sha256:d6bc1c4de969183b7dae3c1013841863f274e368bed3929a5ab51e0b0b92abcd"
 ir_digest = "sha256:4dc67174123cfbcc2b6a876a330a1171e687604df3ac481eb340b60a7b347b76"
@@ -4584,8 +4590,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:cfbb0654a456ac148584e3b9030b5158e37450f55ccab94dab2e5578ce327ccb"
-ir_digest = "sha256:ae0ee13c706fe748c01499eaada51c77815416822dec2e367dc17f7eb7ddf302"
+digest = "sha256:b4c4c4a359d4b4094939b5c0362e305049455371b0d654672a4c4bdc11aba263"
+ir_digest = "sha256:3ce32c8b33822909ed91d157e5c30a329dc1837ca428f3df88c510a12ecbdc4f"
 section_count = 2
 
 [[files]]
@@ -4959,8 +4965,8 @@ section_count = 1
 
 [[files]]
 path = "surface/interfaces/src/cb.md"
-digest = "sha256:048a0b1d5bd36ed45f2a9042521fd8dec67bdfbe323552a1341a7774b7747ced"
-ir_digest = "sha256:7e686ff4cb1e77b7d2b297703acda939dbdc2fc6ab81efed5852a0bbced20278"
+digest = "sha256:219c4800448b576836a9a51cb1f7f1bef30f9d6d2316503d9bd38064f2997921"
+ir_digest = "sha256:fe9ff94bbe137eed48274d84c54211ea3c537f2e9dc6a2569120127cd374d086"
 section_count = 4
 
 [[files]]
@@ -4971,8 +4977,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/cb_fill.md"
-digest = "sha256:20e3633e810be798de23c2caa214add4027f2975be11347feb670e79ef5f5ae4"
-ir_digest = "sha256:7fafb6eef90cff27eff0c430429d2d926845a34f1d2f8fdff6b2782cbc523b0c"
+digest = "sha256:72685a30ec01591021bdd3ae43b13aba6ccdc35effb068cd05527912a7290d97"
+ir_digest = "sha256:e4cc00099b5893a6f15741902f5ac101b158d91c75059c042bb2ad7e5f31ab93"
 section_count = 2
 
 [[files]]
