@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T02:30:58.295397+00:00"
-digest = "sha256:de0b382ad92592605de77c8a5798c329c33add12fd073d5dce3b0582fe882208"
-source_digest = "sha256:de0b382ad92592605de77c8a5798c329c33add12fd073d5dce3b0582fe882208"
-ir_digest = "sha256:9f223a6e62e2b0c3891bfb15a1ff5a067b763d936a8eb4cb4edfdde2958c7b8a"
+generated_at = "2026-07-16T02:32:08.209297+00:00"
+digest = "sha256:1060ddec37efbdf62f99755a57c7be73a9905e8586f680cc303666e39d25aaa1"
+source_digest = "sha256:1060ddec37efbdf62f99755a57c7be73a9905e8586f680cc303666e39d25aaa1"
+ir_digest = "sha256:61b81d25e1051adab652294f2e47525483cac6dacf36a850d4659e3d6f626cf9"
 
 [[files]]
 path = "README.md"
@@ -33,8 +33,8 @@ section_count = 3
 
 [[files]]
 path = "logic/expose-subscriptions-as-topic-delivery-resources.md"
-digest = "sha256:2abd90120cc7ed0d6f9cfdea97326d6d430fb8d328d75bce27a3893fca3da540"
-ir_digest = "sha256:58f693fba575160b20bbeb8c911e8c7abda0df290f801781ef2f5e7fdb111dce"
+digest = "sha256:3b21917a9022ea8cd1410f913e1a0382057b62162b50d086fe1c99bc8a55e984"
+ir_digest = "sha256:09aacd5ec58eaab92a149135287d13b492e0cf980a000ec3290e2e322a46ca99"
 section_count = 3
 
 [[files]]
