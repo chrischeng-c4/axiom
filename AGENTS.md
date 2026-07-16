@@ -464,7 +464,7 @@ Optimize every artifact tree so an agent learns *what exists* and *where to act*
 
 Push granularity as fine as your tooling keeps consistent: a generator+linter (`fixture_gen`/`fixture_lint`) makes maximal one-case-per-file cheap; hand-authored trees lean toward cohesion. Strongest for naturally decomposable trees (fixtures/configs/generated/docs); applied with judgment to cohesive code (Rust `#[test]` fns stay in a `mod tests`).
 
-Full principle: **`CONTRIBUTING.md`**. mamba CPython-test mechanics (PEP 723 `[tool.mamba]`, the six dimensions, `tools/fixture_gen.py` → fill → `tools/fixture_lint.py`, manifest): **`projects/mamba/tests/harness/cpython/conventions/FIXTURE-LAYOUT.md`** — read before authoring/decomposing fixtures.
+Full principle: **`CONTRIBUTING.md`**. mamba CPython-test mechanics (PEP 723 `[tool.mamba]`, the six dimensions, `tools/fixture_gen.py` → fill → `tests/harness/cpython/tools/fixture_lint.py`, manifest): **`projects/mamba/tests/harness/cpython/conventions/FIXTURE-LAYOUT.md`** — read before authoring/decomposing fixtures.
 
 ## Testing
 

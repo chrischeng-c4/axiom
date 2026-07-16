@@ -1,7 +1,7 @@
 //! Inline migration of tests/async_gen_event_loop_interleaving_gate_fixture_1255.rs (#1255).
 //!
 //! Locks the shape of the C5 async-generator real-event-loop interleaving fixture
-//! pinned by tests/cpython/core/async/async_gen_event_loop_interleaving_gate/manifest.toml.
+//! pinned by tests/harness/cpython/config/gates/async_gen_event_loop_interleaving_gate/manifest.toml.
 
 #![cfg(test)]
 
@@ -11,10 +11,9 @@ use std::path::PathBuf;
 use toml::Value;
 
 fn manifest_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "{}/core/async/async_gen_event_loop_interleaving_gate/manifest.toml",
-        crate::conformance::FIXTURES_ROOT
-    ))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "tests/harness/cpython/config/gates/async_gen_event_loop_interleaving_gate/manifest.toml",
+    )
 }
 
 fn manifest() -> Value {
@@ -296,7 +295,7 @@ fn r5_concurrent_fixture_pins_interleave_behavior() {
     }
     assert_eq!(
         c["concurrent_fixture_relative_path"].as_str(),
-        Some("projects/mamba/tests/cpython/core/async/async_gen_concurrent")
+        Some("projects/mamba/tests/cpython/real_world/core/async_gen_concurrent")
     );
     assert_eq!(
         c["concurrent_fixture_relative_path_field_name"].as_str(),

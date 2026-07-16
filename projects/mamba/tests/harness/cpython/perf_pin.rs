@@ -7,7 +7,7 @@
 //! ```toml
 //! issue = 1447
 //! lib   = "abc"
-//! fixture = "tests/cpython/std-libs/abc/bench/get_cache_token_hot.py"
+//! fixture = "tests/cpython/_regression/std-libs/abc/bench/get_cache_token_hot.py"
 //! floor   = 1.0
 //! mem_floor = 1.0      # applies to workload RSS after the fixed runtime floor
 //! samples = 1            # 1 = single shot; N>=3 = median-of-N

@@ -29,7 +29,7 @@ is auto-quarantined into ``ported/_invalid/`` for hand review.
 Usage:
     python3 projects/mamba/tools/cpython_port.py \\
         --source /path/to/cpython/Lib/test/test_bool.py \\
-        --dest projects/mamba/tests/cpython/fixtures/builtin-libs/bool_type/behavior
+        --dest projects/mamba/tests/cpython/behavior/builtin-libs/bool_type
 """
 
 from __future__ import annotations
@@ -1132,7 +1132,7 @@ def main():
                     help="CPython Lib/test/test_X.py to port")
     ap.add_argument("--dest", required=True, type=Path,
                     help="Destination dimension dir, e.g. "
-                         "tests/cpython/fixtures/builtin-libs/bool_type/behavior")
+                         "tests/cpython/behavior/builtin-libs/bool_type")
     ap.add_argument("--bucket", choices=sorted(BUCKETS),
                     help="Fixture bucket; inferred from --dest when possible")
     ap.add_argument("--lib",

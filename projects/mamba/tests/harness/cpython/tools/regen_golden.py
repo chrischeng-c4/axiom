@@ -7,7 +7,7 @@ Usage:
 Walks all .py files under the conformance directory, runs each with
 CPython, and writes the stdout to a .expected file alongside.
 
-Type-strict fixtures (under `tests/cpython/type-strict/`) use the
+Type-strict fixtures (under `tests/cpython/type/`) use the
 two-golden form: each fixture produces `<name>.cpython.expected` AND
 `<name>.mamba.expected` because the runtimes are EXPECTED to diverge
 by design (mamba raises TypeError where CPython accepts wrong-typed

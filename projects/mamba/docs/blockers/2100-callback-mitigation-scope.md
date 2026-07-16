@@ -169,10 +169,10 @@ CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
   cargo build --release -p mamba --bin mamba
 samply record --save-only --unstable-presymbolicate --no-open \
   --output projects/mamba/docs/blockers/2100-reduce-profile.json \
-  ./target/release/mamba run projects/mamba/tests/cpython/fixtures/std-libs/functools/bench/reduce_add.py
+  ./target/release/mamba run projects/mamba/tests/cpython/_regression/std-libs/functools/bench/reduce_add.py
 samply record --save-only --unstable-presymbolicate --no-open \
   --output projects/mamba/docs/blockers/2100-colorsys-profile.json \
-  ./target/release/mamba run projects/mamba/tests/cpython/fixtures/std-libs/colorsys/bench/rgb_to_hls_bulk.py
+  ./target/release/mamba run projects/mamba/tests/cpython/_regression/std-libs/colorsys/bench/rgb_to_hls_bulk.py
 ```
 
 To symbolicate hex-address leaf frames (Firefox Profiler doesn't auto-symbolicate from Mach-O):
