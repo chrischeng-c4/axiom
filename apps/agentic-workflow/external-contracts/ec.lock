@@ -3,9 +3,9 @@ project = "agentic-workflow"
 ir_kind = "ec"
 ec_path = "apps/agentic-workflow/external-contracts"
 inventory_path = "apps/agentic-workflow/aw.toml"
-generated_at = "2026-07-15T03:04:31.442989+00:00"
-ir_digest = "sha256:cd98619aa665b08286477acf289b6450f5e71493e30e89cd04dacbabff949544"
-source_digest = "sha256:da3e8ff04d48162c59c5f6bcc8be4ca58f142e50c4561f4d29aa044b722f8827"
+generated_at = "2026-07-16T06:08:08.048819+00:00"
+ir_digest = "sha256:bbeed4ae16e479e3431436c762803def91bf3fb175fb9dd759dcd9f085df077c"
+source_digest = "sha256:e46913a7414d14ecc674abb26c1712bfa63e9918e7f822c4dd67773ebdefbce8"
 tool_contracts = []
 
 [[sources]]
@@ -90,7 +90,7 @@ digest = "sha256:37923e6a0f05e640d2190cb952777f0ace78dc7faa77af0783efd4653d14ffc
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-claim-closure-ec-inventory.md"
-digest = "sha256:6dc575aecbfab1e010c00d7f609c5f235077c9d90125c844d351ce5ac525247f"
+digest = "sha256:fb099ed965ef69d4c144b2592575b3586e83794424b7bdc7e04fa61bf5b42a51"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-completeness-placeholder-gate.md"
@@ -107,6 +107,10 @@ digest = "sha256:833663181a363c4fef6513b3b0e6f35a922963815f0e79730438a4ad29dbda6
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md"
 digest = "sha256:fb0ccab3becc7bfe1263ddd481807065696cb5383c78ad6e4a5d9bdeedb260d9"
+
+[[sources]]
+path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md"
+digest = "sha256:bab4bc21cb99161d6f16822ecf5d0be49664bea1106cefcf5724333d67a511ae"
 
 [[sources]]
 path = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md"
@@ -508,10 +512,10 @@ source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-capability-clai
 test_path = "apps/agentic-workflow/tests/behavior_existing_project_standardization_shared_service_kit_substrate.rs"
 command = "cargo test -p server-lifecycle -p server-tcp -p server-http -p transport-h2c -p service-http"
 required_for_production = true
-assertions = ["the shared server substrate crates (server-core, tcp-server, http-server, h2c, service-http) build and pass their unit and doc tests (#1241)"]
+assertions = ["the shared server substrate crates (server-lifecycle, server-tcp, server-http, transport-h2c, service-http) build and pass their unit and doc tests (#1241)"]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:296f2cc8575f82c9800a087b75f06831f047183450e707b314446220330be005"
+digest = "sha256:e54ae437b68f59f1bf9ea2c74234f9233c47b6501a0ce181b9f245e66ad6eea2"
 
 [[cases]]
 id = "existing-project-standardization-traceability-closure-gate"
@@ -1295,6 +1299,42 @@ assertions = [
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 digest = "sha256:d819d59cbcae83f54102b6c46aecec596b3724749769f23ec714105bde742c06"
+
+[[cases]]
+id = "wi-ec-td-root-loop-fixture"
+capability_id = "workflow-root-runner"
+claim_id = "wi-ec-td-root-loop"
+contract_id = "wi-ec-td-root-loop-fixture"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md#wi-ec-td-root-loop-fixture"
+test_path = "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_fixture.rs"
+command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture"
+required_for_production = true
+assertions = [
+    "fixture root follows emitted commands until completion.workflow_complete=true",
+    "no retired lifecycle command or hidden agent-only step is required",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:ff6ac2838f18997e9222c8a30bf2b4c299f43c315486ce0205f5f11d1f9e4e01"
+
+[[cases]]
+id = "wi-ec-td-root-loop-self-hosted-unit"
+capability_id = "workflow-root-runner"
+claim_id = "wi-ec-td-root-loop"
+contract_id = "wi-ec-td-root-loop-self-hosted-unit"
+dimension = "behavior"
+source_ref = "apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md#wi-ec-td-root-loop-self-hosted-unit"
+test_path = "apps/agentic-workflow/tests/behavior_wi_ec_td_root_loop_self_hosted_unit.rs"
+command = "cargo test -p agentic-workflow --lib ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check -- --nocapture"
+required_for_production = true
+assertions = [
+    "red and green EC loop states expose exact bounded TD commands",
+    "a tracker-backed root has a local lifecycle ledger before EC transitions write next_action",
+]
+evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+digest = "sha256:00aa766e2e3a93d84a24a5010564347eeed6db7985d3719f9fddf5a8900138b9"
 
 [[cases]]
 id = "wi-remove-agent-estimate-build"
