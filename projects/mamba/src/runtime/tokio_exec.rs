@@ -156,13 +156,6 @@ pub fn mb_tokio_shutdown() {
     // Tokio handles cleanup on process exit.
 }
 
-/// Serializes tests that touch the global COROUTINES / TASKS maps. Shared
-/// with `runtime::tests::thread_safety` — its Tokio tests would otherwise
-/// race with `reset_async_for_test()` clearing TASKS underneath them.
-#[cfg(test)]
-pub(crate) static TOKIO_TEST_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
-
 /// Test helper: poll a task id until `done` or the deadline elapses. A fixed
 /// sleep is flaky under full-suite parallel load.
 #[cfg(test)]
@@ -187,7 +180,7 @@ pub(crate) fn wait_task_done(task_id: u64, timeout: std::time::Duration) -> bool
 
 #[cfg(test)]
 mod tests {
-    use super::super::async_rt::{mb_coroutine_complete, mb_coroutine_new};
+    use super::super::async_rt::{mb_coroutine_complete, mb_coroutine_new, ASYNC_STATE_TEST_LOCK};
     use super::super::gc::{gc_disable, gc_enable};
     use super::*;
 
@@ -207,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_tokio_spawn_completed_coro() {
-        let _lock = TOKIO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = ASYNC_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_async_for_test();
         let name = MbValue::from_ptr(MbObject::new_str("tokio_test".to_string()));
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -225,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_tokio_gather_empty() {
-        let _lock = TOKIO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = ASYNC_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_async_for_test();
         let coros = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = mb_tokio_gather(coros);
@@ -238,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_tokio_gather_completed_coros() {
-        let _lock = TOKIO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = ASYNC_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_async_for_test();
         let n1 = MbValue::from_ptr(MbObject::new_str("g1".to_string()));
         let l1 = MbValue::from_ptr(MbObject::new_list(vec![]));
