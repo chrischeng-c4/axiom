@@ -155,12 +155,13 @@ impl service_http::MetricsProvider for AppState {
     }
 }
 
-// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="#1805" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="pending-tracker" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
 /// Build the HTTP router for the tape transport: the `/topics` data plane
 /// merged onto the shared service shell's standard probe routes.
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
 }
+// </HANDWRITE>
 
 /// Build the public router for a deployment whose Raft peer routes are owned
 /// by the dedicated mTLS listener. The underlying application composition is
