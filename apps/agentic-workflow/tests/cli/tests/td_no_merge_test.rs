@@ -2519,8 +2519,7 @@ async fn test_code_check_prefers_project_td_when_implements_cache_is_absent() {
     let lumen_target = "apps/lumen/src/server.rs";
     let lumen_spec = "apps/lumen/tech-design/logic/preserve-fallback-scope.md";
     let foreign_target = "projects/mamba/src/pkgmanage/add.rs";
-    let foreign_legacy_spec =
-        ".aw/tech-design/projects/mamba/logic/foreign-legacy-fallback.md";
+    let foreign_legacy_spec = ".aw/tech-design/projects/mamba/logic/foreign-legacy-fallback.md";
     let lumen_target_abs = root.join(lumen_target);
     std::fs::create_dir_all(lumen_target_abs.parent().unwrap()).unwrap();
     std::fs::write(&lumen_target_abs, "pub fn server() { /* before */ }\n").unwrap();

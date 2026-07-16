@@ -13,7 +13,8 @@
 // Contract: the epic's terminal EC-gated fixture-loop proof (#1270 children
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec() {
+fn td_cb_lifecycle_automation_td_surface_convergence_ec_gated_terminal_check_unification_verb_lifecycle_policy_fixture_loop_self_ec(
+) {
     let command = "cargo test -p agentic-workflow --test cli_tests fixture_loop -- --nocapture";
     let id = "td-cb-lifecycle-automation-td-surface-convergence-ec-gated-terminal-check-unification-verb-lifecycle-policy-fixture-loop-self-ec";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
