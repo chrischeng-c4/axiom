@@ -162,6 +162,28 @@ impl Cluster {
             .map(|e| e.payload["n"].as_i64().unwrap())
             .collect()
     }
+
+    /// A follower may expose a matching end offset while its last committed
+    /// apply is still crossing the host's asynchronous peer-pump boundary.
+    /// Stability proof therefore waits for the actual semantic event set, not
+    /// only its count.
+    async fn wait_payloads(&self, want: &[i64]) {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            let converged = self.live().all(|(id, _)| {
+                let got = self.payload_ns(id);
+                want.iter().all(|expected| got.contains(expected))
+            });
+            if converged {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "journals did not converge to payloads {want:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 async fn propose(raft: &TapeRaft, n: i64) -> tape::raft::TapeOutcome {
@@ -240,6 +262,7 @@ async fn three_node_group_elects_replicates_forwards_and_fails_over() {
         _ => panic!("expected Appended outcome"),
     }
     c.wait_converged(3).await;
+    c.wait_payloads(&[1, 2, 3]).await;
 
     for (i, _) in c.live() {
         let got = c.payload_ns(i);
