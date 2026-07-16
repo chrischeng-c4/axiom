@@ -1,3 +1,4 @@
+// HANDWRITE-BEGIN gap="vat-headless-docker-command-shim-tests" tracker="#1685" reason="The opt-in shim requires process-level argv, JSON receipt, and exact-cleanup evidence that no generic test generator owns."
 //! Regression coverage for VAT's opt-in docker-to-vat Apple Container shim.
 //!
 //! These tests execute the real VAT binary through a temporary docker symlink,
@@ -7227,6 +7228,7 @@ fn apple_container_docker_run_json_ephemeral_contract() {
     );
     cleanup.active = false;
 }
+// HANDWRITE-END
 
 #[test]
 #[ignore = "real Apple Container strict Docker image inspect JSON contract; run only with VAT_DOCKER_IMAGE_INSPECT_JSON_E2E_REQUIRED=1"]

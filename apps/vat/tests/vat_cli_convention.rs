@@ -12,7 +12,7 @@ fn vat() -> &'static str {
     env!("CARGO_BIN_EXE_vat")
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in vat_cli_convention.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1817" reason="DX command-inventory regression is hand-written pending codegen support">
 #[test]
 fn cli_convention_help_lists_all_three() {
     let out = Command::new(vat()).arg("--help").output().unwrap();

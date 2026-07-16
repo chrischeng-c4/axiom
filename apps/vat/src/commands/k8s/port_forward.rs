@@ -1,3 +1,4 @@
+// HANDWRITE-BEGIN gap="missing-generator:ephemeral-k8s-session-port-forward" tracker="#1693" reason="A foreground Service tunnel coordinates private credentials, an owned process group, exact cleanup, and bounded host-child output; no generator owns that lifecycle."
 //! Foreground, loopback-only host access to a Service in a leased K3s session.
 //!
 //! A port-forward is deliberately not a daemon. VAT owns it only while one
@@ -2158,3 +2159,4 @@ mod tests {
         );
     }
 }
+// HANDWRITE-END

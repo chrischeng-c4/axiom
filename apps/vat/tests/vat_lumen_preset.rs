@@ -1,3 +1,4 @@
+// HANDWRITE-BEGIN gap="vat-versioned-native-lumen-preset-tests" tracker="#1813" reason="Version-selector parsing and native-only config rejection are integration contracts not represented by a generated test primitive."
 use std::fs;
 
 use tempfile::tempdir;
@@ -22,3 +23,4 @@ fn config_accepts_native_lumen_and_rejects_container_runtime() {
     fs::write(&bad, "version = 1\n[[services]]\nid = 'search'\npreset = 'lumen'\nruntime = 'docker'\n[[runners]]\nid = 'smoke'\nrequires = ['search']\ncmd = ['true']\n").unwrap();
     assert!(load_file(&bad).unwrap_err().to_string().contains("native-only"));
 }
+// HANDWRITE-END

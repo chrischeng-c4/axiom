@@ -1,3 +1,4 @@
+# HANDWRITE-BEGIN gap="missing-generator:ephemeral-k8s-machine-image" tracker="#1693" reason="The embedded K3s machine substrate is a host-runtime build asset, not a generated Rust source unit."
 # This asset is embedded in the released VAT binary. Apple Container machines
 # boot the image init process, so an ordinary application image is not a usable
 # K3s substrate. This is deliberately the Phase-0-proven Ubuntu/systemd setup;
@@ -35,3 +36,4 @@ RUN : > /etc/machine-id && \
         console-getty.service && \
     systemctl disable networkd-dispatcher.service && \
     sed -i -e 's/^AcceptEnv LANG LC_\\*$/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_config
+# HANDWRITE-END

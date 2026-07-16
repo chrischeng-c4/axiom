@@ -1384,7 +1384,7 @@ const TOPICS: &[cli_std::llm::Topic] = &[cli_std::llm::Topic {
     body: GUIDE,
 }];
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in llm.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1817" reason="DX command-inventory contract and offline guide text are hand-written pending codegen support">
 /// @spec apps/vat/tech-design/logic/llm-agent-usage-guide.md#cli
 pub fn exec(topic: &str, format: cli_std::llm::Format) -> Result<ExitCode> {
     let out = cli_std::llm::render("vat", crate::VERSION, TOPICS, topic, format)?;
