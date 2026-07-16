@@ -13106,6 +13106,7 @@ dependencies = [
  "service-backup",
  "service-http",
  "service-k8s",
+ "storage-durable",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

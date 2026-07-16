@@ -26,7 +26,6 @@
 //! recipe, not keep's derive-at-recovery) and skips entries at or below the
 //! recovered floor.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -39,6 +38,7 @@ use raft_runtime::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use storage_durable::atomic_write;
 
 use crate::{ConsumerCheckpoint, TapeError, TapeEvent, TapeJournal};
 
@@ -95,7 +95,7 @@ pub fn snapshot_bytes(journal: &Arc<Mutex<TapeJournal>>, up_to: Index) -> Result
     Ok(serde_json::to_vec(&JournalSnapshot { up_to, journal })?)
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in raft.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1812" reason="Tape delegates the generic marker and snapshot atomic-write mechanics to storage-durable while retaining JournalSnapshot serialization and recovery ordering.">
 /// Prepare an empty replica PVC to recover from one exact backup object.
 ///
 /// This is deliberately a cold-start-only operation: it refuses any existing
@@ -134,27 +134,15 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
     // Publish the snapshot before its floor marker. A crash after the first
     // rename is still safe: TapeStateMachine::new sees the snapshot and its
     // own `up_to`; it must never see a marker that claims an absent snapshot.
-    write_atomic(&snapshot_path, &snapshot_bytes)?;
-    write_atomic(&marker, snapshot.up_to.to_string().as_bytes())?;
+    atomic_write(&snapshot_path, &snapshot_bytes, FsyncPolicy::Always)?;
+    atomic_write(
+        &marker,
+        snapshot.up_to.to_string().as_bytes(),
+        FsyncPolicy::Always,
+    )?;
     Ok(())
 }
 // </HANDWRITE>
-
-/// Atomic file replacement shared by cold seed preparation. The files live
-/// on the PVC and have no parent creation race because the empty-directory
-/// guard creates `raft/` before this helper runs.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&tmp)
-        .with_context(|| format!("create bootstrap temp file {}", tmp.display()))?;
-    file.write_all(bytes)
-        .with_context(|| format!("write bootstrap temp file {}", tmp.display()))?;
-    file.sync_all()
-        .with_context(|| format!("sync bootstrap temp file {}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("publish bootstrap file {}", path.display()))?;
-    Ok(())
-}
 
 /// tape's [`TapeJournal`] driven as a [`RaftStateMachine`].
 ///
@@ -262,16 +250,7 @@ impl TapeStateMachine {
     /// large enough for it to matter.
     fn persist_marker(&self, index: Index) {
         let Some(path) = &self.marker else { return };
-        let write_marker = || -> std::io::Result<()> {
-            let tmp = path.with_extension("tmp");
-            {
-                let mut f = std::fs::File::create(&tmp)?;
-                f.write_all(index.to_string().as_bytes())?;
-                f.sync_all()?;
-            }
-            std::fs::rename(&tmp, path)
-        };
-        if let Err(e) = write_marker() {
+        if let Err(e) = atomic_write(path, index.to_string().as_bytes(), FsyncPolicy::Always) {
             tracing::warn!(index, error = %e, "raft: applied-marker persist failed (floor stale-low; entries at/below it may re-apply on restart)");
         }
 
@@ -282,14 +261,7 @@ impl TapeStateMachine {
                 up_to: index,
                 journal,
             })?;
-            let tmp = snap_path.with_extension("tmp");
-            {
-                let mut f = std::fs::File::create(&tmp)?;
-                f.write_all(&bytes)?;
-                f.sync_all()?;
-            }
-            std::fs::rename(&tmp, &snap_path)?;
-            Ok(())
+            atomic_write(&snap_path, &bytes, FsyncPolicy::Always)
         };
         if let Err(e) = write_snapshot() {
             tracing::warn!(index, error = %e, "raft: journal-snapshot persist failed (restart may recover stale journal content)");
