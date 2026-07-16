@@ -118,15 +118,14 @@ keep the CR name `tape` — `tape serve` derives raft peer DNS as
 | Shutdown | `TAPE_GRACE_SECS` (`--grace-secs`) | `10` |
 | **Auth** | `TAPE_AUTH` (`--auth`) — `off`\|`required`; `TAPE_TOKEN_REGISTRY_FILE` (`--token-registry-file`) bearer-token registry JSON; `TAPE_TOKENS` legacy/dev inline fallback | `off` |
 | **Raft HA** | `TAPE_DATA_DIR` (`--data-dir`), `TAPE_PEER_SERVICE` (`--peer-service`), `TAPE_PEERS`, plus the standard `POD_NAME`/`SHARD_COUNT`/`REPLICAS_PER_SHARD`/`VOTER_COUNT` downward-API quartet | peer-service `tape` |
-| Peer mTLS (config-surface only) | `TAPE_PEER_TLS_CERT`/`_KEY`/`_CA`, `TAPE_PEER_MTLS=on\|off` | unset |
+| Peer mTLS | `TAPE_PEER_TLS_CERT`/`_KEY`/`_CA`, `TAPE_PEER_MTLS=on\|off` | unset (cleartext peer transport only when mTLS is off) |
 | Backup | `TAPE_BACKUP_TOKEN` (`tape backup --token`) | unset |
 
 > **Production:** set `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE`, and
 > for HA deployments set `REPLICAS_PER_SHARD>1` plus a durable `TAPE_DATA_DIR`
-> volume. Peer-mTLS material validates at startup but termination is not yet
-> applied on the raft peer port (raft-runtime's h2c transport has no TLS seam
-> yet — peer RPCs stay plain h2c even with `TAPE_PEER_MTLS=on`; tracked as a
-> known gap, not a silent security regression).
+> volume. With `TAPE_PEER_MTLS=on`, complete peer material is validated before
+> serving and the shared `raft-runtime` transport binds a dedicated required-mTLS
+> raft listener. Public HTTP remains on the separate h2c + HTTP/1.1 port.
 
 ---
 
@@ -195,6 +194,8 @@ unless noted):
 cargo build -p tape
 cargo test -p tape
 
+TAPE_SOAK_AUTOSTART=1 TAPE_SOAK_DURATION_SECS=60 bash apps/tape/scripts/soak.sh
+
 aw health --project tape
 aw td code-check <wi-id>   # per-slice terminal gate
 
@@ -202,10 +203,11 @@ cd apps/tape && ../../target/debug/vat run meter-perf
 cd apps/tape && ../../target/debug/vat run guard-security
 ```
 
-> Retention/backfill, long-running soak, and security-hardening (authz/audit/
-> secret-rotation) gates remain genuinely `planned` — see
-> `apps/tape/README.md`'s Capability Index. They are out of scope for the
-> service-archetype convergence epic (#1324) and are not claimed here.
+> Shared service hardening is runnable here: topic authz, projected-secret
+> rotation, bounded request admission, redacted management audit, and the
+> bounded replay/checkpoint soak and shared raft-host peer mTLS. Retention/
+> backfill and compaction are Tape domain work; multi-hour production soak
+> remains separate evidence and is not claimed by this gate.
 
 ---
 
