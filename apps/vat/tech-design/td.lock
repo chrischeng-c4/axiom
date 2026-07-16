@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-16T08:21:06.204243+00:00"
-digest = "sha256:aa3a06a852d477e68a6fbf2dd2c5bfc47a3a7be1d5958d66bbc39ae652570018"
-source_digest = "sha256:aa3a06a852d477e68a6fbf2dd2c5bfc47a3a7be1d5958d66bbc39ae652570018"
-ir_digest = "sha256:7fa297ad17ad136904732c04640d5480cffbef46b77a2fdb2dadfbb510ffd55f"
+generated_at = "2026-07-16T08:21:35.115103+00:00"
+digest = "sha256:645c85b236ce4eb33724703993ec264eb4d73ffa9f36185c604c738c6e4e2a29"
+source_digest = "sha256:645c85b236ce4eb33724703993ec264eb4d73ffa9f36185c604c738c6e4e2a29"
+ir_digest = "sha256:191d52f8fac326c08f877ab48f39bf2bd79b284ae263fef68c5ea6a0ca628fc7"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -134,8 +134,8 @@ section_count = 6
 
 [[files]]
 path = "logic/vat-dx-split-llm-onboarding-into-task-scoped-topics.md"
-digest = "sha256:e06670fc07eebe97e13e1eabe237ea26598f81972762e16a7ca12ecff2fe59eb"
-ir_digest = "sha256:226519cc93aa1ee8a3385c31ee439eb1cf439cc1fd2e0d11588643edd0ac0fc5"
+digest = "sha256:74195fe3ad526e7e011b04b7fa7bbf04b4256d8b5bd5f54acced582252bb3b7d"
+ir_digest = "sha256:c9acbce5d1903696da061dbd0a8fc39918745115cb1c6ca5631dd89ad3122697"
 section_count = 3
 
 [[files]]
