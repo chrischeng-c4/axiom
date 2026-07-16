@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-16T13:41:08.162139+00:00"
-digest = "sha256:cacf7d174896403b681f49c4bbe12b6ef0e08039906513326c317ced4bab9fc9"
-source_digest = "sha256:cacf7d174896403b681f49c4bbe12b6ef0e08039906513326c317ced4bab9fc9"
-ir_digest = "sha256:def5aec55ff349d5c98d7db52651761cab0c37f500fedb8ddb2b7a89a1a33d8c"
+generated_at = "2026-07-16T13:45:21.293514+00:00"
+digest = "sha256:a0e0e3543b34fbb5d898aa3dc4a403803dbb1c9378e3857f8fa75ed96d2b37e1"
+source_digest = "sha256:a0e0e3543b34fbb5d898aa3dc4a403803dbb1c9378e3857f8fa75ed96d2b37e1"
+ir_digest = "sha256:387933ccf9ed649d4ac5350b115630847ba204c8679f42ce4ea4867d8b48f069"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5233,14 +5233,20 @@ section_count = 4
 
 [[files]]
 path = "surface/specs/aw-ec-agent-review-protocol.md"
-digest = "sha256:39ec91be0c12f2d36463d7dfe4b1c0b321f729ccd30ab60518d73e7daaab162a"
-ir_digest = "sha256:40f410ca6302bf924e6629b53cf5400ac0c55d5248ed5460ed00f043393116ac"
+digest = "sha256:a0543b2491b48b9c696789fbec16a62cecbbbfa3da1182e020d2b3342e568d8d"
+ir_digest = "sha256:c42a036b8209f4d403aef5d9cf7c346fc3e6824f9d32f052cc7863ee52c1b885"
+section_count = 5
+
+[[files]]
+path = "surface/specs/aw-ec-deferred-review-queue.md"
+digest = "sha256:ce393412efbc429cb3efd421a211e7e358097898b8b50cdc80d69119b6c9a664"
+ir_digest = "sha256:8fc3a03a77ccc0d53e6e3e9014a32b823c7a1161ea7aaa5bbe6184169f2e974e"
 section_count = 5
 
 [[files]]
 path = "surface/specs/aw-ec-only-semantic-approval.md"
-digest = "sha256:367438afd5a7dfe711edd1e4dfcbd66092e9d1e81b45c127064f8e1601959432"
-ir_digest = "sha256:bdef1f958f6fb75504e7c8bee51bf96d09670adff928fee1a25b86b485ac2aaf"
+digest = "sha256:3043e4038c64fd0d373ce81a0907594ac54a79b9c4293dec31e45b2f06440752"
+ir_digest = "sha256:eee8114006e69f7f6afb5033e6d1b9a6fc815c1d176031f8b55d7b5dadc963d7"
 section_count = 5
 
 [[files]]
