@@ -114,7 +114,7 @@ fn crd_flattens_cluster_spec() {
     );
 }
 
-// <HANDWRITE gap="missing-generator:kubernetes-peer-port-test" tracker="pending-tracker" reason="kubernetes-peer-port-test section in operator.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:kubernetes-peer-port-test" tracker="#1805" reason="kubernetes-peer-port-test section in operator.rs is hand-written pending codegen support">
 /// R5 — the rendered StatefulSet carries exactly the downward-API env tape's
 /// serve reads, the right replica count (single group), tape's runtime env +
 /// disk tier, the probe contract, and the sibling child objects.
@@ -132,7 +132,7 @@ fn render_emits_expected_child_objects() {
     let env = env_of(sts);
     let keys: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
     // The exact contract serve reads: raft_runtime::cluster (quartet) +
-    // --peer-service (TAPE_PEER_SERVICE) + bind/data-dir/grace.
+    // --peer-service (TAPE_PEER_SERVICE) + public/raft binds + data-dir/grace.
     for k in [
         "POD_NAME",
         "SHARD_COUNT",
@@ -140,6 +140,7 @@ fn render_emits_expected_child_objects() {
         "VOTER_COUNT",
         "TAPE_PEER_SERVICE",
         "TAPE_BIND",
+        "TAPE_RAFT_PORT",
         "TAPE_DATA_DIR",
         "TAPE_GRACE_SECS",
     ] {
@@ -155,6 +156,7 @@ fn render_emits_expected_child_objects() {
     assert_eq!(get("VOTER_COUNT")["value"], "3");
     assert_eq!(get("TAPE_PEER_SERVICE")["value"], "tape-headless");
     assert_eq!(get("TAPE_BIND")["value"], "0.0.0.0:7137");
+    assert_eq!(get("TAPE_RAFT_PORT")["value"], "7138");
     assert_eq!(get("TAPE_DATA_DIR")["value"], "/data");
 
     // Probe contract on the serve port: /readyz readiness, /healthz liveness
@@ -164,6 +166,8 @@ fn render_emits_expected_child_objects() {
     assert_eq!(container["livenessProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["startupProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["ports"][0]["containerPort"], 7137);
+    assert_eq!(container["ports"][1]["name"], "raft");
+    assert_eq!(container["ports"][1]["containerPort"], 7138);
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
     assert_eq!(container["resources"]["requests"]["cpu"], "1");
     assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
@@ -188,11 +192,15 @@ fn render_emits_expected_child_objects() {
         .find(|o| o["kind"] == "Service" && o["spec"]["clusterIP"] == "None")
         .expect("headless service");
     assert_eq!(headless["metadata"]["name"], "tape-headless");
+    assert_eq!(headless["spec"]["ports"][0]["port"], 7137);
+    assert_eq!(headless["spec"]["ports"][1]["name"], "raft");
+    assert_eq!(headless["spec"]["ports"][1]["port"], 7138);
     let client = objs
         .iter()
         .find(|o| o["kind"] == "Service" && o["spec"]["type"] == "ClusterIP")
         .expect("client service");
     assert_eq!(client["spec"]["ports"][0]["port"], 7137);
+    assert_eq!(client["spec"]["ports"].as_array().unwrap().len(), 1);
     assert_eq!(
         of_kind(&objs, "PodDisruptionBudget")["spec"]["maxUnavailable"],
         1

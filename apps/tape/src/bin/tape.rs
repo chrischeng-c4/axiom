@@ -246,6 +246,10 @@ struct ServeArgs {
     /// (`ClusterTopology::from_env`).
     #[arg(long, env = "TAPE_PEER_SERVICE", default_value = "tape")]
     peer_service: String,
+    /// Dedicated port for authenticated Raft peer RPCs when
+    /// `TAPE_PEER_MTLS=on`. The public h2c port remains unchanged.
+    #[arg(long, env = "TAPE_RAFT_PORT", default_value_t = 7138)]
+    raft_port: u16,
 }
 
 /// `tape spec [--format ...]` or `tape spec gen ...`. Positional slots are
@@ -856,14 +860,12 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     let mut state = tape::server::AppState::with_auth(journal, store, auth);
 
     // Auto-mode HA (#1327): the standard downward-API quartet flips replica
-    // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. Topology comes
-    // from raft-runtime (never re-derive the ordinal math locally); the raft
-    // group replicates append/checkpoint-put into this process's journal and
-    // its peer router rides the serve port OUTSIDE the bearer-auth data plane
-    // (cluster traffic, tokenless like probes; mTLS termination is a later
-    // slice — raft-runtime's h2c transport has no TLS seam yet). Held for the
-    // process lifetime via `state` — dropping it would abort the tick/pump
-    // tasks.
+    // mode (REPLICAS_PER_SHARD > 1) — no tape-specific flag. With no peer TLS
+    // material the established public-port h2c topology is unchanged. A
+    // complete required mTLS configuration instead makes Raft use https URLs
+    // and the dedicated peer listener below.
+    let mut peer_transport = None;
+    let mut peer_router = None;
     if args.bootstrap_seed_uri.is_some() {
         anyhow::ensure!(
             replica_mode,
@@ -875,48 +877,32 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         );
     }
     if replica_mode {
-        // Peer-mTLS material (#1327): load + validate BEFORE the raft group
-        // spawns, so a misconfigured deployment (partial TAPE_PEER_TLS_* set,
-        // mis-pointed path, unusable PEM) exits nonzero at startup instead of
-        // failing at dial time. Termination on the peer port is NOT yet
-        // applied — raft-runtime's h2c transport has no TLS seam (the filed gap
-        // in the TD); this proves the mounted material is usable today.
-        match tape::peer_tls::from_env()? {
-            Some(tls) => {
-                tls.rustls_server_config()?;
-                tls.rustls_client_config()?;
-                if tls.required {
-                    tracing::warn!(
-                        cert = %tls.cert.display(),
-                        "peer TLS material validated; TAPE_PEER_MTLS=on requested but mTLS \
-                         termination on the raft peer port is not yet applied (raft-runtime/h2c \
-                         TLS seam gap) — peer RPCs stay h2c"
-                    );
-                } else {
-                    tracing::info!(
-                        cert = %tls.cert.display(),
-                        "peer TLS material validated (not required); peer RPCs stay h2c until \
-                         the raft-runtime TLS seam lands"
-                    );
-                }
-            }
-            None => tracing::info!(
-                "no peer TLS material configured (TAPE_PEER_TLS_*); peer RPCs are plain h2c"
+        let transport = tape::peer_tls::from_env()?
+            .map(|config| tape::peer_tls::peer_transport(&config))
+            .transpose()
+            .context("raft: build shared required-mTLS peer transport")?;
+        let (peer_port, peer_scheme) = match transport.as_ref() {
+            Some(_) => (args.raft_port, "https"),
+            None => (
+                args.bind
+                    .rsplit(':')
+                    .next()
+                    .and_then(|port| port.parse::<u16>().ok())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "cannot derive the h2c raft peer port from --bind {}",
+                            args.bind
+                        )
+                    })?,
+                "http",
             ),
-        }
-        let peer_port = args
-            .bind
-            .rsplit(':')
-            .next()
-            .and_then(|p| p.parse::<u16>().ok())
-            .ok_or_else(|| {
-                anyhow::anyhow!("cannot derive the raft peer port from --bind {}", args.bind)
-            })?;
-        let topo = raft_runtime::ClusterTopology::from_env(
+        };
+        let topo = raft_runtime::ClusterTopology::from_env_with_scheme(
             "tape",
             &args.peer_service,
             peer_port,
             "TAPE_PEERS",
+            peer_scheme,
         )?;
         let data_dir = args.data_dir.clone().ok_or_else(|| {
             anyhow::anyhow!("replica/HA mode requires a durable --data-dir (TAPE_DATA_DIR)")
@@ -935,22 +921,41 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
                 "bootstrap seed prepared before raft catch-up"
             );
         }
-        let raft = std::sync::Arc::new(tape::raft::TapeRaft::from_topology(
-            state.journal_handle(),
-            &data_dir,
-            &topo,
-            tape::raft::TapeRaft::host_config(tape::raft::SNAPSHOT_EVERY),
-        )?);
+        let raft = std::sync::Arc::new(match transport.clone() {
+            Some(transport) => tape::raft::TapeRaft::from_topology_with_peer_transport(
+                state.journal_handle(),
+                &data_dir,
+                &topo,
+                tape::raft::TapeRaft::host_config(tape::raft::SNAPSHOT_EVERY),
+                transport,
+            )?,
+            None => tape::raft::TapeRaft::from_topology(
+                state.journal_handle(),
+                &data_dir,
+                &topo,
+                tape::raft::TapeRaft::host_config(tape::raft::SNAPSHOT_EVERY),
+            )?,
+        });
         tracing::info!(
             node_id = topo.node_id,
             replicas = topo.replicas_per_shard,
             voters = topo.membership.voters.len(),
-            "raft: replica/HA mode — append/checkpoint-put replicate; peer RPCs on the serve port"
+            peer_scheme,
+            peer_port,
+            "raft: replica/HA mode — append/checkpoint-put replicate"
         );
+        if let Some(transport) = transport {
+            peer_router = Some(raft.router());
+            peer_transport = Some(transport);
+        }
         state.set_raft(raft);
     }
 
-    let app = tape::server::router(state.clone());
+    let app = if peer_transport.is_some() {
+        tape::server::router_without_raft_routes(state.clone())
+    } else {
+        tape::server::router(state.clone())
+    };
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
     tracing::info!(
@@ -958,17 +963,47 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         "tape listening (HTTP/1.1 + HTTP/2 cleartext)"
     );
 
+    let peer_server = match (peer_transport, peer_router) {
+        (Some(transport), Some(router)) => {
+            let peer_bind = peer_bind_address(&args.bind, args.raft_port)?;
+            let peer_listener = tokio::net::TcpListener::bind(&peer_bind)
+                .await
+                .with_context(|| format!("bind authenticated raft peer listener {peer_bind}"))?;
+            let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
+            tracing::info!(
+                addr = %peer_bind,
+                tls_generation = transport.generation(),
+                "tape raft peer mTLS listening"
+            );
+            let serve = tokio::spawn(async move {
+                transport
+                    .serve(peer_listener, router, async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+            });
+            Some((shutdown, serve))
+        }
+        (None, None) => None,
+        _ => unreachable!("peer transport and router are configured together"),
+    };
+
     let grace = Duration::from_secs(args.grace_secs);
+    let drain_state = state.clone();
     service_http::serve(
         listener,
         app,
-        service_http::shutdown_with_drain(move || state.start_drain(), grace),
+        service_http::shutdown_with_drain(move || drain_state.start_drain(), grace),
     )
     .await;
+    if let Some((shutdown, serve)) = peer_server {
+        let _ = shutdown.send(());
+        serve.await.context("raft peer listener task panicked")??;
+    }
     Ok(())
 }
 
-// <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="pending-tracker" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="#1805" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
 /// Resolve the local journal path for a serving process. Replica mode owns
 /// durability through Raft; only a single-node process derives a store from
 /// its mounted data directory.
@@ -984,6 +1019,20 @@ fn resolve_journal_store(
             data_dir.map(|dir| dir.join("journal.json"))
         }
     })
+}
+
+/// Reuse the public listener's host portion for the dedicated peer port.
+/// This preserves `0.0.0.0`, hostname, and bracketed IPv6 bindings without
+/// allowing a Raft port to silently replace the public data-plane port.
+fn peer_bind_address(bind: &str, raft_port: u16) -> Result<String> {
+    let (host, _) = bind.rsplit_once(':').ok_or_else(|| {
+        anyhow::anyhow!("cannot derive authenticated raft bind address from --bind {bind}")
+    })?;
+    anyhow::ensure!(
+        !host.is_empty(),
+        "--bind must include a host before its port"
+    );
+    Ok(format!("{host}:{raft_port}"))
 }
 // </HANDWRITE>
 

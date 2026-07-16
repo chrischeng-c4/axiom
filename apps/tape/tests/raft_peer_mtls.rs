@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:peer-transport-integration-test:11d421bd" tracker="pending-tracker" reason="Exercise real TapeRaft replication over trusted shared mTLS transports and prove an untrusted certificate is rejected before the Raft router handles a request."
+// HANDWRITE-BEGIN gap="missing-generator:peer-transport-integration-test:11d421bd" tracker="#1805" reason="Exercise real TapeRaft replication over trusted shared mTLS transports and prove an untrusted certificate is rejected before the Raft router handles a request."
 //! Tape's peer-transport adapter integration proof (#1805).
 //!
 //! The shared `raft-runtime` suite proves TLS handshakes in isolation. These
@@ -11,7 +11,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use raft_runtime::{Membership, PeerTransport};
-use rcgen::{BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair};
+use rcgen::{
+    BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair,
+};
 use tape::peer_tls::PeerTlsConfig;
 use tape::raft::{TapeOutcome, TapeRaft};
 use tape::TapeJournal;
@@ -87,7 +90,13 @@ impl SecureCluster {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind peer listener");
-            urls.insert(id, format!("https://localhost:{}", listener.local_addr().unwrap().port()));
+            urls.insert(
+                id,
+                format!(
+                    "https://localhost:{}",
+                    listener.local_addr().unwrap().port()
+                ),
+            );
             listeners.push(listener);
         }
         let membership = Membership {
@@ -104,7 +113,8 @@ impl SecureCluster {
                 .collect();
             let journal = Arc::new(Mutex::new(TapeJournal::default()));
             let dir = tempfile::tempdir().expect("raft directory");
-            let transport = PeerTransport::from_config(&material.config).expect("shared peer transport");
+            let transport =
+                PeerTransport::from_config(&material.config).expect("shared peer transport");
             let raft = Arc::new(
                 TapeRaft::spawn_with_peer_transport(
                     journal,
@@ -126,7 +136,12 @@ impl SecureCluster {
                     })
                     .await
             });
-            nodes.push(Node { raft, _dir: dir, shutdown, serve });
+            nodes.push(Node {
+                raft,
+                _dir: dir,
+                shutdown,
+                serve,
+            });
         }
         Self { nodes }
     }
@@ -162,7 +177,10 @@ impl SecureCluster {
     async fn shutdown(self) {
         for node in self.nodes {
             let _ = node.shutdown.send(());
-            node.serve.await.expect("peer server task").expect("peer server result");
+            node.serve
+                .await
+                .expect("peer server task")
+                .expect("peer server result");
         }
     }
 }
@@ -194,8 +212,10 @@ async fn untrusted_peer_is_rejected_before_tape_raft_router() {
     let rogue_ca = Authority::generate("rogue tape peer CA");
     let server_material = material(&trusted_ca, &trusted_ca, "localhost");
     let rogue_material = material(&rogue_ca, &trusted_ca, "rogue.local");
-    let server_transport = PeerTransport::from_config(&server_material.config).expect("server transport");
-    let rogue_transport = PeerTransport::from_config(&rogue_material.config).expect("rogue transport");
+    let server_transport =
+        PeerTransport::from_config(&server_material.config).expect("server transport");
+    let rogue_transport =
+        PeerTransport::from_config(&rogue_material.config).expect("rogue transport");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind peer listener");
@@ -206,17 +226,21 @@ async fn untrusted_peer_is_rejected_before_tape_raft_router() {
             Arc::new(Mutex::new(TapeJournal::default())),
             dir.path(),
             0,
-            Membership { voters: vec![0], learners: vec![] },
+            Membership {
+                voters: vec![0],
+                learners: vec![],
+            },
             HashMap::new(),
             TapeRaft::host_config(1024),
             server_transport.clone(),
         )
         .expect("spawn secure tape raft"),
     );
+    let router = raft.router();
     let (shutdown, shutdown_rx) = oneshot::channel();
     let task = tokio::spawn(async move {
         server_transport
-            .serve(listener, raft.router(), async move {
+            .serve(listener, router, async move {
                 let _ = shutdown_rx.await;
             })
             .await

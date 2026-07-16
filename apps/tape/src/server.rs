@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{header, Method, StatusCode};
-use axum::middleware::from_fn_with_state;
+use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -152,11 +152,29 @@ impl service_http::MetricsProvider for AppState {
     }
 }
 
-// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="pending-tracker" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="#1805" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
 /// Build the HTTP router for the tape transport: the `/topics` data plane
 /// merged onto the shared service shell's standard probe routes.
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
+}
+
+/// Build the public router for a deployment whose Raft peer routes are owned
+/// by the dedicated mTLS listener. The underlying application composition is
+/// deliberately unchanged so data, probes, auth, admission, and metrics stay
+/// identical; a first middleware rejects the two peer route families before
+/// route dispatch can expose them on the public h2c listener.
+pub fn router_without_raft_routes(state: AppState) -> Router {
+    router_with_admission(state, None).layer(from_fn(reject_public_raft_routes))
+}
+
+async fn reject_public_raft_routes(request: axum::extract::Request, next: Next) -> Response {
+    let path = request.uri().path();
+    if path == "/raftz" || path.starts_with("/raft/") {
+        StatusCode::NOT_FOUND.into_response()
+    } else {
+        next.run(request).await
+    }
 }
 // </HANDWRITE>
 
@@ -615,6 +633,41 @@ mod tests {
             .to_bytes();
         let expected = crate::raft::snapshot_bytes(&handle, 0).unwrap();
         assert_eq!(&bytes[..], &expected[..]);
+    }
+
+    #[tokio::test]
+    async fn secure_peer_mode_does_not_expose_raft_routes_on_public_router() {
+        use tower::ServiceExt;
+
+        let journal = Arc::new(Mutex::new(TapeJournal::default()));
+        let dir = tempfile::tempdir().unwrap();
+        let raft = Arc::new(
+            TapeRaft::spawn(
+                Arc::clone(&journal),
+                dir.path(),
+                0,
+                raft_runtime::Membership {
+                    voters: vec![0],
+                    learners: vec![],
+                },
+                std::collections::HashMap::new(),
+                TapeRaft::host_config(1024),
+            )
+            .unwrap(),
+        );
+        let mut state = AppState::new(TapeJournal::default(), None);
+        state.set_raft(raft);
+
+        let response = router_without_raft_routes(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/raftz")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     // Small oneshot helpers so both this module's tests and

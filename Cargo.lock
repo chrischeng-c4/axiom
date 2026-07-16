@@ -13094,6 +13094,7 @@ dependencies = [
  "metrics-prometheus",
  "peer-tls",
  "raft-runtime",
+ "rcgen",
  "reqwest 0.12.28",
  "rig",
  "rskafka",
