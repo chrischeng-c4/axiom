@@ -9,29 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: vat-dx-readme-surface-logic
-entry: start
+id: vat-dx-readme-surface-contract
+entry: cli
 nodes:
-  start: { kind: start, label: "VAT documentation reconciliation begins" }
-  inspect_cli: { kind: process, label: "derive agent-facing top-level command inventory from the real Cmd clap variants and vat --help" }
-  compare_readme: { kind: decision, label: "README inventory and product boundary match the shipped command surface" }
-  update_docs: { kind: process, label: "document build, compose, opt-in docker shim, and Apple Container k8s with their supported boundaries" }
-  update_llm: { kind: process, label: "align the offline guide with the same command and boundary vocabulary" }
-  regression: { kind: process, label: "test the built binary help output against the documented command inventory" }
-  done: { kind: terminal, label: "docs teach only supported VAT paths and drift fails deterministically" }
+  cli: { kind: start, label: "built vat --help is the command inventory authority" }
+  docs: { kind: process, label: "README and llm describe the same agent-facing command surface" }
+  boundaries: { kind: process, label: "state Apple Container support and Docker Engine, generic Compose, persistent K8s exclusions" }
+  test: { kind: process, label: "built-binary test asserts command inventory and boundary phrases" }
+  done: { kind: terminal, label: "documentation drift is a failing test" }
 edges:
-  - { from: start, to: inspect_cli }
-  - { from: inspect_cli, to: compare_readme }
-  - { from: compare_readme, to: update_docs, label: "drift" }
-  - { from: compare_readme, to: regression, label: "aligned" }
-  - { from: update_docs, to: update_llm }
-  - { from: update_llm, to: regression }
-  - { from: regression, to: done }
+  - { from: cli, to: docs }
+  - { from: docs, to: boundaries }
+  - { from: boundaries, to: test }
+  - { from: test, to: done }
 ---
 ```
 
-The canonical agent-facing command inventory is the executable VAT clap surface. README and `vat llm` explain that `vat build` and bounded `vat compose` use Apple Container, `vat docker` is an opt-in limited command shim, and `vat k8s` supports bounded ephemeral Apple-Container-backed local Kubernetes flows. They explicitly exclude Docker Engine/API compatibility, unbounded generic Compose support, and persistent Kubernetes lifecycle claims. A built-binary regression test reads `vat --help` and asserts that every documented agent-facing command is present, so a future CLI or documentation edit cannot silently create an obsolete onboarding path.
-
+The public contract is documentation-only: no command behavior changes. The README and offline `vat llm` guide enumerate `build`, `compose`, `docker`, and `k8s` as shipped agent-facing commands, state their Apple Container limits, and avoid promising Docker Engine/API emulation, general Compose compatibility, or persistent Kubernetes. The test obtains the actual binary help and fails if the documented inventory gets ahead of the executable surface.
 ## Changes
 <!-- type: changes lang: yaml -->
 
