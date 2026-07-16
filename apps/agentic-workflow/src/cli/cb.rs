@@ -3120,20 +3120,21 @@ fn collect_tree_files_inner(
 mod tests {
     use super::{
         bare_code_check_guidance_envelope, cb_verify_summary_from_report, claim_issue_create_args,
-        claim_issue_title, classify_codegen_origin_spec, collect_force_regen_specs,
-        collect_source_scope_files, collect_tree_files, commit_cb_claim_trailer,
-        commit_force_regen, compare_source_roots, copy_tree, ensure_claim_issue,
-        extract_cold_rebuild_target_paths, extract_project_root_llms_target_paths,
-        extract_spec_managed_ref, extract_spec_managed_refs, fillback_dispatch_next,
-        fillback_hitl_next, format_rust_files, has_handwrite_ownership_marker,
-        is_minified_asset_file, repo_relative_code_path, resolve_project_force_regen_scope,
-        run_force_regen, run_force_regen_specs, sample_count, sample_semantic_review_units,
-        spec_declares_source_section, td_public_symbol_semantic_coverage,
-        terminal_ec_failure_envelope, upsert_public_api_overview,
-        upsert_public_api_overview_targets, verify_force_regen_conformance,
-        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs, ClaimIssueRef,
-        CwdGuard, ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
-        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
+        claim_issue_title, classify_codegen_origin_spec, code_check_guidance_project,
+        collect_force_regen_specs, collect_source_scope_files, collect_tree_files,
+        commit_cb_claim_trailer, commit_force_regen, compare_source_roots, copy_tree,
+        ensure_claim_issue, extract_cold_rebuild_target_paths,
+        extract_project_root_llms_target_paths, extract_spec_managed_ref,
+        extract_spec_managed_refs, fillback_dispatch_next, fillback_hitl_next, format_rust_files,
+        has_handwrite_ownership_marker, is_minified_asset_file, repo_relative_code_path,
+        resolve_project_force_regen_scope, run_force_regen, run_force_regen_specs, sample_count,
+        sample_semantic_review_units, spec_declares_source_section,
+        td_public_symbol_semantic_coverage, terminal_ec_failure_envelope,
+        upsert_public_api_overview, upsert_public_api_overview_targets,
+        verify_force_regen_conformance, write_project_root_llms_targets, CbCodegenOriginClass,
+        CbCommand, CbGenArgs, ClaimIssueRef, CwdGuard, ForceRegenConformanceReport,
+        ForceRegenScope, PublicApiManifestSymbol, PublicApiManifestTarget,
+        PublicSymbolSemanticCoverage, SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -4673,6 +4674,20 @@ pub fn signature_only() -> Result<()>
     }
 
     #[test]
+    fn bare_code_check_guidance_prefers_the_configured_project_token() {
+        let project = code_check_guidance_project(
+            Some("agentic-workflow"),
+            std::path::Path::new("/workspace/app_aw"),
+        );
+
+        assert_eq!(project, "agentic-workflow");
+        assert_eq!(
+            bare_code_check_guidance_envelope(&project)["next"]["command"].as_str(),
+            Some("aw health --project agentic-workflow drift-marker --verbose")
+        );
+    }
+
+    #[test]
     fn terminal_ec_missing_semantic_review_routes_to_hitl() {
         let summary = crate::cli::ec::EcVerifySummary {
             project: "demo".to_string(),
@@ -4730,7 +4745,7 @@ pub(crate) fn code_check_target_is_slug(project_root: &std::path::Path, target: 
 // the historical audit behaviour.
 ///
 // @spec apps/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-pub async fn run_check(args: CbCheckArgs) -> Result<()> {
+pub async fn run_check(args: CbCheckArgs, configured_project: Option<&str>) -> Result<()> {
     let project_root = crate::find_project_root()?;
     if let Some(target) = args.target.as_deref() {
         if code_check_target_is_slug(&project_root, target)
@@ -4759,10 +4774,7 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
     // just points there instead of doing the scan itself. Explicit
     // human/utility invocations (`aw td code-check <target>`, a real path or
     // slug) are unaffected and still audit that target directly above.
-    let project = project_root
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "<project>".to_string());
+    let project = code_check_guidance_project(configured_project, &project_root);
     println!(
         "{}",
         serde_json::to_string(&bare_code_check_guidance_envelope(&project))?
@@ -4774,6 +4786,21 @@ pub async fn run_check(args: CbCheckArgs) -> Result<()> {
 /// prints instead of running `td::run_audit`'s whole-tree walker (see
 /// `run_check` above). Split out as a pure function so the shape is
 /// unit-testable without a real project-root/git fixture.
+fn code_check_guidance_project(
+    configured_project: Option<&str>,
+    project_root: &std::path::Path,
+) -> String {
+    configured_project.map_or_else(
+        || {
+            project_root
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "<project>".to_string())
+        },
+        str::to_owned,
+    )
+}
+
 fn bare_code_check_guidance_envelope(project: &str) -> serde_json::Value {
     serde_json::json!({
         "action": "guidance",

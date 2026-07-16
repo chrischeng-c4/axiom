@@ -3465,7 +3465,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Claim(a) => run_claim(a).await,
         TdCommand::Gen(a) => super::cb::run_gen(a).await,
         TdCommand::GenSource(a) => super::cb::run_gen_source(a),
-        TdCommand::CodeCheck(a) => super::cb::run_check(a).await,
+        TdCommand::CodeCheck(a) => super::cb::run_check(a, project.as_deref()).await,
         TdCommand::Fill(a) => super::cb_fill::run(a).await,
         TdCommand::Promote(a) => run_promote(a),
         TdCommand::AuditRecord(a) => {
