@@ -865,10 +865,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         // replacement becomes visible to the live data-plane middleware
         // without restarting the Tape pod. Invalid replacements remain on the
         // shared last-known-good snapshot and emit redacted audit events.
-        std::mem::drop(service_auth::spawn_registry_file_watcher(
-            state.verifier(),
-            path,
-        ));
+        let _ = service_auth::spawn_registry_file_watcher(state.verifier(), path);
         tracing::info!(
             path = %path.display(),
             "watching bearer token registry for credential rotation"
