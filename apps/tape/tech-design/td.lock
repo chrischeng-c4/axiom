@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T04:36:34.266129+00:00"
-digest = "sha256:433cf58e6ebedb0e428d7936d6a1134259e5ad2ace30f8fa3a3fe4bdd8896e1f"
-source_digest = "sha256:433cf58e6ebedb0e428d7936d6a1134259e5ad2ace30f8fa3a3fe4bdd8896e1f"
-ir_digest = "sha256:a488db106596c881bf1d3347fc73817bfb1fca1bf10e20f765d8bf48c5dc5565"
+generated_at = "2026-07-16T05:16:29.268903+00:00"
+digest = "sha256:a3fdd4b2340885834594ae337ea920a59cc5f4c54fe21873deadf03e9be52d9b"
+source_digest = "sha256:a3fdd4b2340885834594ae337ea920a59cc5f4c54fe21873deadf03e9be52d9b"
+ir_digest = "sha256:e852d71cc6e3dd6971ee74987c6e3856ec38bbd955c7be64466c3ab2bb097cdc"
 
 [[files]]
 path = "README.md"
@@ -42,6 +42,11 @@ path = "logic/adopt-shared-service-http-otlp-tracing.md"
 digest = "sha256:b427225b5b5f5544827dc6a91708e809b1afe45bc6d53f745a26fb7418092bf9"
 ir_digest = "sha256:c781cd0dc875cede456724ccc224c41599571d23684f9f7e2eb6d92e8b9d1e12"
 section_count = 3
+
+[[files]]
+path = "logic/compose-shared-statefulset-workload-projection.md"
+digest = "sha256:daf1c02f37e74190673623f94db46211e2ad2797087cd077a26ce84301d80385"
+parse_error = "changes:51-66: section 'changes' at lines 51..66: Changes typed-payload parse error: mapping values are not allowed in this context at line 6 column 227"
 
 [[files]]
 path = "logic/expose-subscriptions-as-topic-delivery-resources.md"
