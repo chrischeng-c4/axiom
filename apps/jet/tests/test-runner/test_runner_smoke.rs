@@ -849,7 +849,9 @@ module.exports = Object.assign({}, api);
     );
     assert!(
         native_stderr.contains("Named export 'getter' not found")
-            || native_stderr.contains("Named export 'forEach' not found"),
+            || native_stderr.contains("Named export 'forEach' not found")
+            || native_stderr.contains("does not provide an export named 'getter'")
+            || native_stderr.contains("does not provide an export named 'forEach'"),
         "native ESM failure must identify the unavailable CommonJS named export: {native_stderr}",
     );
 

@@ -3067,9 +3067,55 @@ fn normalize_jet_test_virtual_imports(source: String) -> String {
         return source;
     }
 
-    source
-        .replace("\"jet:test\"", "\"@jet/test\"")
-        .replace("'jet:test'", "'@jet/test'")
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .is_err()
+    {
+        return source;
+    }
+    let Some(tree) = parser.parse(&source, None) else {
+        return source;
+    };
+    if tree.root_node().has_error() {
+        return source;
+    }
+
+    let root = tree.root_node();
+    let mut replacements = Vec::new();
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if statement.kind() != "import_statement" {
+            continue;
+        }
+        let mut import_cursor = statement.walk();
+        for child in statement.children(&mut import_cursor) {
+            if child.kind() != "string" {
+                continue;
+            }
+            let specifier = &source[child.byte_range()];
+            let replacement = match specifier {
+                "\"jet:test\"" => "\"@jet/test\"",
+                "'jet:test'" => "'@jet/test'",
+                _ => continue,
+            };
+            replacements.push((child.start_byte(), child.end_byte(), replacement));
+        }
+    }
+
+    if replacements.is_empty() {
+        return source;
+    }
+
+    let mut normalized = String::with_capacity(source.len() + replacements.len() * 2);
+    let mut last = 0usize;
+    for (start, end, replacement) in replacements {
+        normalized.push_str(&source[last..start]);
+        normalized.push_str(replacement);
+        last = end;
+    }
+    normalized.push_str(&source[last..]);
+    normalized
 }
 
 /// Build the boot ESM module that wires the runtime to the spec and writes
@@ -3173,6 +3219,22 @@ mod tests {
         assert!(out.contains("const x"));
         // `: number` annotation should be gone
         assert!(!out.contains(": number"));
+    }
+
+    #[test]
+    fn normalize_jet_test_virtual_imports_only_rewrites_import_specifiers() {
+        let source = r#"
+import { test } from "jet:test";
+import 'jet:test';
+const label = "jet:test";
+const quoted = 'jet:test';
+"#;
+
+        let normalized = normalize_jet_test_virtual_imports(source.to_string());
+        assert!(normalized.contains("from \"@jet/test\""));
+        assert!(normalized.contains("import '@jet/test'"));
+        assert!(normalized.contains("const label = \"jet:test\""));
+        assert!(normalized.contains("const quoted = 'jet:test'"));
     }
 
     #[test]
