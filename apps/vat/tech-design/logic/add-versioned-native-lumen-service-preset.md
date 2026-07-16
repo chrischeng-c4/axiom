@@ -73,49 +73,48 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    reason: Define the versioned native Lumen preset lifecycle and public contract.
+    reason: Contract the versioned native Lumen preset lifecycle.
   - path: apps/vat/Cargo.toml
     action: modify
     section: changes
     impl_mode: codegen
-    reason: Declare only the archive and checksum dependencies required by the VAT-owned Lumen release cache.
+    reason: Add deterministic archive and checksum dependencies.
   - path: apps/vat/src/lib.rs
     action: modify
     section: changes
     impl_mode: codegen
-    reason: Expose the dedicated Lumen release resolver module.
+    reason: Register the Lumen release resolver.
   - path: apps/vat/src/lumen_release.rs
     action: create
     section: changes
     impl_mode: codegen
-    reason: Isolate release-tag normalization, latest discovery, target archive download, checksum verification, atomic cache materialization, and cached binary lookup.
+    reason: Own target release discovery, verified caching, and executable resolution.
   - path: apps/vat/src/config.rs
     action: modify
     section: changes
     impl_mode: codegen
-    reason: Add the lumen preset token and native-only runtime/version validation.
+    reason: Extend the preset and validation schema.
   - path: apps/vat/src/commands/run.rs
     action: modify
     section: changes
     impl_mode: codegen
-    reason: Resolve the cached Lumen binary, construct loopback serve command, readiness, exports, and teardown evidence without image fallback.
+    reason: Build native Lumen service plans and fail closed for container runtimes.
   - path: apps/vat/src/commands/doctor.rs
     action: modify
     section: changes
     impl_mode: codegen
-    reason: Report versioned native Lumen cache/download readiness and remediation.
+    reason: Surface cache/download readiness and remediation.
   - path: apps/vat/tests/vat_lumen_preset.rs
     action: create
     section: unit-test
     impl_mode: codegen
-    reason: Cover deterministic resolver/cache/runtime behavior and an opt-in real Lumen process contract.
+    reason: Verify selector, cache, process, environment, and failure contracts.
   - path: apps/vat/README.md
     action: modify
     section: changes
     impl_mode: hand-written
-    reason: Document version pinning, latest selection, native-only execution, LUMEN_URL, and the no-persistent-data boundary.
+    reason: Publish the configuration and lifecycle boundary to agents.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
