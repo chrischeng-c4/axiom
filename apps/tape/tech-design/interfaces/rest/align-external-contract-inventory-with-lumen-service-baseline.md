@@ -9,40 +9,43 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: tape-lumen-ec-baseline-alignment
-entry: inventory
+id: tape-lumen-ec-baseline-contract
+entry: lumen_taxonomy
 nodes:
-  inventory:
+  lumen_taxonomy:
     kind: start
-    label: "Compare Lumen and Tape EC taxonomies"
-  project:
+    label: "Lumen EC taxonomy is the structural reference"
+  tape_adapter:
     kind: process
-    label: "Project shared-service categories onto Tape commands and tests"
-  verify:
+    label: "Rewrite every command and assertion for Tape"
+  tape_cases:
     kind: process
-    label: "Generate EC inventory and run focused Tape gates"
-  classify:
+    label: "Emit CLI, topology, resilience, meta API, and security cases"
+  aw_inventory:
+    kind: process
+    label: "AW generates and checks the EC inventory"
+  failures:
     kind: decision
-    label: "Does a failure expose a shared mechanism?"
-  shared:
+    label: "Classify failing proof by mechanism ownership"
+  library_gap:
     kind: terminal
-    label: "Create a libs follow-up"
-  domain:
+    label: "Shared capability follow-up under libs"
+  tape_gap:
     kind: terminal
-    label: "Create a Tape domain follow-up"
+    label: "Topic/replay follow-up under Tape"
 edges:
-  - { from: inventory, to: project }
-  - { from: project, to: verify }
-  - { from: verify, to: classify }
-  - { from: classify, to: shared, label: shared }
-  - { from: classify, to: domain, label: domain }
+  - { from: lumen_taxonomy, to: tape_adapter }
+  - { from: tape_adapter, to: tape_cases }
+  - { from: tape_cases, to: aw_inventory }
+  - { from: aw_inventory, to: failures }
+  - { from: failures, to: library_gap, label: reusable }
+  - { from: failures, to: tape_gap, label: domain }
 ---
 flowchart TD
-  inventory["Compare Lumen and Tape EC taxonomies"] --> project["Project only shared-service categories onto Tape"] --> verify["Generate EC inventory and run focused Tape gates"] --> classify{"Shared mechanism missing?"}
-  classify -->|yes| shared(["Create libs follow-up"])
-  classify -->|no| domain(["Create Tape-domain follow-up"])
+  lumen_taxonomy["Lumen EC taxonomy: structure only"] --> tape_adapter["Rewrite each command and assertion for Tape"] --> tape_cases["Tape CLI, topology, resilience, meta API, security cases"] --> aw_inventory["AW generates and checks inventory"] --> failures{"Who owns the missing proof?"}
+  failures -->|reusable| library_gap(["libs follow-up"])
+  failures -->|domain| tape_gap(["Tape follow-up"])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
