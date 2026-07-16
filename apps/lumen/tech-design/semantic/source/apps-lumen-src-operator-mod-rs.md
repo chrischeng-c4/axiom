@@ -21,17 +21,17 @@ Public API manifest for `apps/lumen/src/operator/mod.rs` generated from AST duri
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `crd` | apps/lumen/src/operator/mod.rs | module | pub | 15 |  |
+| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 27 | crd_yaml() -> String |
 | `lease` | apps/lumen/src/operator/mod.rs | module | pub | 16 |  |
 | `reconcile` | apps/lumen/src/operator/mod.rs | module | pub | 17 |  |
 | `render` | apps/lumen/src/operator/mod.rs | module | pub | 18 |  |
 | `reshard_driver` | apps/lumen/src/operator/mod.rs | module | pub | 19 |  |
 | `resize` | apps/lumen/src/operator/mod.rs | module | pub | 20 |  |
-| `crd_yaml` | apps/lumen/src/operator/mod.rs | function | pub | 26 | crd_yaml() -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
 //! loop ([`reconcile`]) that renders ([`render`]) and applies the serving
@@ -56,7 +56,7 @@ pub use crd::{Lumen, LumenSpec, LumenStatus};
 pub use reconcile::run;
 
 /// The `Lumen` CustomResourceDefinition as YAML, for `kubectl apply`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
 pub fn crd_yaml() -> String {
     use kube::CustomResourceExt;
     let mut crd = serde_json::to_value(crd::Lumen::crd()).expect("CRD serializes to JSON");

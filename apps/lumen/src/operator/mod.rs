@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
 //! loop ([`reconcile`]) that renders ([`render`]) and applies the serving
@@ -23,7 +23,7 @@ pub use crd::{Lumen, LumenSpec, LumenStatus};
 pub use reconcile::run;
 
 /// The `Lumen` CustomResourceDefinition as YAML, for `kubectl apply`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-mod-rs.md#source
 pub fn crd_yaml() -> String {
     use kube::CustomResourceExt;
     let mut crd = serde_json::to_value(crd::Lumen::crd()).expect("CRD serializes to JSON");

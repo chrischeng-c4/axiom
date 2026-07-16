@@ -2,7 +2,7 @@
 name = "service-http"
 version = "0.1.0"
 edition = "2021"
-description = "Shared HTTP-service scaffolding for the ecosystem's k8s-native services: the standard probe routes (/healthz /readyz /metrics /openapi.json /docs), env-driven tracing init, SIGTERM-aware graceful-drain shutdown, the h2c transport, and the {error, message} HTTP error envelope — the common shape lumen/keep/relay/loom each hand-roll today."
+description = "Shared HTTP-service policy and adapters: standard probe routes, observability compatibility, lifecycle readiness, runtime delegation, and the {error, message} envelope."
 
 [lib]
 name = "service_http"
@@ -12,9 +12,8 @@ path = "src/lib.rs"
 # The default service shell stays logging-only. Applications opt into trace
 # export and retain ownership of their service identity and endpoint.
 otlp = [
+    "service-observability/otlp",
     "dep:opentelemetry",
-    "dep:opentelemetry-otlp",
-    "dep:opentelemetry_sdk",
     "dep:tracing-opentelemetry",
 ]
 
@@ -25,18 +24,18 @@ tower = { workspace = true }
 tower-http = { workspace = true, features = ["trace"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 utoipa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+sha2 = "0.10"
 opentelemetry = { version = "0.21", optional = true }
-opentelemetry-otlp = { version = "0.14", features = ["tonic"], optional = true }
-opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true }
 tracing-opentelemetry = { version = "0.22", optional = true }
 
 # The HTTP runtime (HTTP/1.1 + h2c on one port) is composed, not re-implemented.
 server-http = { path = "../server-http" }
+server-lifecycle = { path = "../server-lifecycle" }
+service-observability = { path = "../service-observability" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

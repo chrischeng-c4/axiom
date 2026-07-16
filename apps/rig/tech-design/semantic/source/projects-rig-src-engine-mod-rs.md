@@ -28,6 +28,7 @@ Public API manifest for `apps/rig/src/engine/mod.rs` generated from AST during S
 | `rss` | apps/rig/src/engine/mod.rs | module | pub | 15 |  |
 | `run_scenario` | apps/rig/src/engine/mod.rs | function | pub | 42 | run_scenario(scenario: &Scenario) -> ScenarioRun |
 | `sample` | apps/rig/src/engine/mod.rs | module | pub | 16 |  |
+| `stateful` | apps/rig/src/engine/mod.rs | module | pub | 17 |  |
 | `timeout` | apps/rig/src/engine/mod.rs | module | pub | 17 |  |
 | `transport` | apps/rig/src/engine/mod.rs | module | pub | 18 |  |
 ## Source
@@ -48,6 +49,7 @@ pub mod http;
 pub mod loadgen;
 pub mod rss;
 pub mod sample;
+pub mod stateful;
 pub mod timeout;
 pub mod transport;
 

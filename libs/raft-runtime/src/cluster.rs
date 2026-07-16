@@ -149,6 +149,22 @@ impl ClusterTopology {
         peer_port: u16,
         peers_override: &str,
     ) -> Result<Self> {
+        Self::from_env_with_scheme(prefix, headless_service, peer_port, peers_override, "http")
+    }
+
+    /// TLS-aware variant used by stateful services serving Raft on a dedicated
+    /// mTLS peer port. Only `http` and `https` are accepted so a malformed
+    /// scheme cannot silently weaken or redirect peer traffic.
+    pub fn from_env_with_scheme(
+        prefix: &str,
+        headless_service: &str,
+        peer_port: u16,
+        peers_override: &str,
+        scheme: &str,
+    ) -> Result<Self> {
+        if !matches!(scheme, "http" | "https") {
+            bail!("raft peer URL scheme must be http or https");
+        }
         let dims = ClusterDims::from_env()?;
         let shard_count = dims.shard_count;
         let replicas_per_shard = dims.replicas_per_shard;
@@ -179,11 +195,11 @@ impl ClusterTopology {
                 continue;
             }
             let url = match overrides.get(replica as usize) {
-                Some(addr) if addr.contains(':') => format!("http://{addr}"),
-                Some(addr) => format!("http://{addr}:{peer_port}"),
+                Some(addr) if addr.contains(':') => format!("{scheme}://{addr}"),
+                Some(addr) => format!("{scheme}://{addr}:{peer_port}"),
                 None => {
                     let ordinal = peer_ordinal(shard_count, shard_index, replica);
-                    format!("http://{prefix}-{ordinal}.{headless_service}:{peer_port}")
+                    format!("{scheme}://{prefix}-{ordinal}.{headless_service}:{peer_port}")
                 }
             };
             peers.insert(id, url);
@@ -252,6 +268,23 @@ mod tests {
         assert_eq!(t.peers.get(&0).unwrap(), "http://10.0.0.0:9001");
         assert_eq!(t.peers.get(&2).unwrap(), "http://10.0.0.2:9003");
         assert!(t.peers.get(&1).is_none());
+        let tls = ClusterTopology::from_env_with_scheme(
+            "svc",
+            "svc-headless",
+            7000,
+            "SVC_PEERS",
+            "https",
+        )
+        .unwrap();
+        assert_eq!(tls.peers.get(&0).unwrap(), "https://10.0.0.0:9001");
+        assert!(ClusterTopology::from_env_with_scheme(
+            "svc",
+            "svc-headless",
+            7000,
+            "SVC_PEERS",
+            "ftp",
+        )
+        .is_err());
         for k in [
             "SHARD_COUNT",
             "REPLICAS_PER_SHARD",

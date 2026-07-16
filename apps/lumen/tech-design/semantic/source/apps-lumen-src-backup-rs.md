@@ -1,4 +1,4 @@
-<!-- HANDWRITE-BEGIN gap="missing-generator:source:c3730096" tracker="pending-tracker" reason="New SPEC-MANAGED tech-design doc for the new backup.rs module (rust-source-unit), mirroring the format of the other projects-lumen-src-operator-*-rs.md docs." -->
+<!-- HANDWRITE-BEGIN gap="missing-generator:source:c3730096" tracker="1646" reason="New SPEC-MANAGED tech-design doc for the new backup.rs module (rust-source-unit), mirroring the format of the other projects-lumen-src-operator-*-rs.md docs." -->
 ---
 id: projects-lumen-src-backup-rs
 capability_refs:
@@ -48,7 +48,7 @@ feature; the default (no-feature) build links no HTTP client.
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// HANDWRITE-BEGIN gap="missing-generator:logic:ff759770" tracker="pending-tracker" reason="New module gated #[cfg(feature = 'backup')]: run_backup(base_url, token, dest, retention) fetches {base_url}/admin/backup via reqwest (Bearer auth when token is Some), then hands the response bytes to service_backup::run_backup_once against sink_from_destination(dest) and the given RetentionPolicy, returning a BackupRunResult; unit tests use wiremock to stand in for the admin API and a tempdir + file:// destination for the sink."
+// HANDWRITE-BEGIN gap="missing-generator:logic:ff759770" tracker="1646" reason="New module gated #[cfg(feature = 'backup')]: run_backup(base_url, token, dest, retention) fetches {base_url}/admin/backup via reqwest (Bearer auth when token is Some), then hands the response bytes to service_backup::run_backup_once against sink_from_destination(dest) and the given RetentionPolicy, returning a BackupRunResult; unit tests use wiremock to stand in for the admin API and a tempdir + file:// destination for the sink."
 //! `lumen backup` (#808): fetch a consistent snapshot from a running serving
 //! fleet's already-existing `GET /admin/backup` endpoint and hand the bytes to
 //! a `libs/service-backup` destination sink. This module owns no new

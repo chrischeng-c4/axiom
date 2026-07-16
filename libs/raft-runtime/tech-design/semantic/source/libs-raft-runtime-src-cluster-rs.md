@@ -46,7 +46,7 @@ Public API manifest for `libs/raft-runtime/src/cluster.rs` captured during libs 
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::{Membership, NodeId};
 
@@ -60,6 +60,20 @@ pub fn replica_mode() -> bool {
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(1)
         > 1
+}
+
+/// Guard a controller that is still backed by raft-runtime's startup-static
+/// membership. Changing the StatefulSet replica count without a replicated
+/// membership transition is unsafe: existing members and new pods would run
+/// with different quorum sets. Callers must keep the replica layer unchanged
+/// until raft-core/raft-runtime expose the joint-consensus workflow.
+pub fn ensure_static_membership_unchanged(current: u32, desired: u32) -> Result<()> {
+    if current != desired {
+        bail!(
+            "unsafe replica transition {current}->{desired}: raft-runtime membership is static; complete a replicated membership transition before changing StatefulSet replicas"
+        );
+    }
+    Ok(())
 }
 
 /// The scalar shard/replica/voter derivation from the standard downward-API
@@ -165,12 +179,40 @@ impl ClusterTopology {
         peer_port: u16,
         peers_override: &str,
     ) -> Result<Self> {
+        Self::from_env_with_scheme(prefix, headless_service, peer_port, peers_override, "http")
+    }
+
+    /// TLS-aware variant used by stateful services serving Raft on a dedicated
+    /// mTLS peer port. Only `http` and `https` are accepted so a malformed
+    /// scheme cannot silently weaken or redirect peer traffic.
+    pub fn from_env_with_scheme(
+        prefix: &str,
+        headless_service: &str,
+        peer_port: u16,
+        peers_override: &str,
+        scheme: &str,
+    ) -> Result<Self> {
+        if !matches!(scheme, "http" | "https") {
+            bail!("raft peer URL scheme must be http or https");
+        }
         let dims = ClusterDims::from_env()?;
         let shard_count = dims.shard_count;
         let replicas_per_shard = dims.replicas_per_shard;
         let voter_count = dims.voter_count;
+        if shard_count == 0 {
+            bail!("SHARD_COUNT must be greater than zero");
+        }
+        if replicas_per_shard == 0 {
+            bail!("REPLICAS_PER_SHARD must be greater than zero");
+        }
+        if voter_count == 0 || voter_count > replicas_per_shard {
+            bail!("VOTER_COUNT must be in 1..=REPLICAS_PER_SHARD");
+        }
         let shard_index = dims.shard_index()?;
         let node_id = dims.replica_index()? as NodeId;
+        if node_id >= replicas_per_shard as NodeId {
+            bail!("POD_NAME ordinal resolves outside REPLICAS_PER_SHARD");
+        }
 
         // pod ordinal → (shard, replica) is pure integer math, so peers are found
         // via headless DNS with no discovery service. `index N → replica N`.
@@ -183,11 +225,11 @@ impl ClusterTopology {
                 continue;
             }
             let url = match overrides.get(replica as usize) {
-                Some(addr) if addr.contains(':') => format!("http://{addr}"),
-                Some(addr) => format!("http://{addr}:{peer_port}"),
+                Some(addr) if addr.contains(':') => format!("{scheme}://{addr}"),
+                Some(addr) => format!("{scheme}://{addr}:{peer_port}"),
                 None => {
                     let ordinal = peer_ordinal(shard_count, shard_index, replica);
-                    format!("http://{prefix}-{ordinal}.{headless_service}:{peer_port}")
+                    format!("{scheme}://{prefix}-{ordinal}.{headless_service}:{peer_port}")
                 }
             };
             peers.insert(id, url);
@@ -235,6 +277,13 @@ mod tests {
     }
 
     #[test]
+    fn static_membership_rejects_replica_delta() {
+        ensure_static_membership_unchanged(3, 3).unwrap();
+        let err = ensure_static_membership_unchanged(1, 3).unwrap_err();
+        assert!(err.to_string().contains("replicated membership transition"));
+    }
+
+    #[test]
     fn topology_from_env_with_local_override() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("SHARD_COUNT", "1");
@@ -249,6 +298,23 @@ mod tests {
         assert_eq!(t.peers.get(&0).unwrap(), "http://10.0.0.0:9001");
         assert_eq!(t.peers.get(&2).unwrap(), "http://10.0.0.2:9003");
         assert!(t.peers.get(&1).is_none());
+        let tls = ClusterTopology::from_env_with_scheme(
+            "svc",
+            "svc-headless",
+            7000,
+            "SVC_PEERS",
+            "https",
+        )
+        .unwrap();
+        assert_eq!(tls.peers.get(&0).unwrap(), "https://10.0.0.0:9001");
+        assert!(ClusterTopology::from_env_with_scheme(
+            "svc",
+            "svc-headless",
+            7000,
+            "SVC_PEERS",
+            "ftp",
+        )
+        .is_err());
         for k in [
             "SHARD_COUNT",
             "REPLICAS_PER_SHARD",

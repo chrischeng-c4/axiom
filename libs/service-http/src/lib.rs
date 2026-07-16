@@ -3,23 +3,22 @@
 //! `service-http` — shared HTTP-service scaffolding for the ecosystem's
 //! k8s-native services.
 //!
-//! lumen, keep, relay, and loom each hand-roll the same service shell today: the
+//! lumen, keep, relay, and loom compose the same HTTP policy shell: the
 //! standard probe/admin endpoints (`/healthz` `/readyz` `/metrics`
-//! `/openapi.json` `/docs`), env-driven `tracing` init, a SIGTERM-aware
-//! graceful-drain shutdown, the h2c serve loop (HTTP/1.1 + HTTP/2 cleartext
-//! on one port), and the `{"error", "message"}` HTTP error envelope
+//! `/openapi.json` `/docs`), observability compatibility adapters, lifecycle
+//! readiness/shutdown re-exports, runtime delegation, and the
+//! `{"error", "message"}` HTTP error envelope
 //! ([`error`]) each service renders for its error responses. This crate is
-//! the one place that shape lives — the 6th service-kit lib, after `h2c`
-//! (transport), `cli-std` (the `llm`/`upgrade`/`issue` CLI convention),
-//! `raft-core` + `raft-runtime` (replication), and `operator` (the k8s
-//! reconcile scaffold). It operationalizes the CONTRIBUTING "standard
+//! the one place that HTTP shape lives. Protocol-neutral logging, tracing,
+//! metric-provider, and lifecycle metric ownership belongs to
+//! `service-observability`. This crate operationalizes the CONTRIBUTING "standard
 //! endpoints" convention: every service exposes the same probe surface,
 //! with the same auth-exempt / no-body-limit treatment.
 //!
 //! ## Composition
 //!
-//! It composes, it does not replace: [`transport::serve`] delegates to
-//! [`transport_h2c::serve`]; [`probes::standard_probe_routes`] returns an `axum::Router`
+//! It composes, it does not replace: [`transport::serve`] delegates listener
+//! ownership to `server-http`; [`probes::standard_probe_routes`] returns an `axum::Router`
 //! a service `.merge`s its own (auth'd, body-limited) data plane onto.
 //!
 //! ## What a service wires
@@ -73,6 +72,7 @@
 //! wrapper — it carries no `ToSchema`) has no such constraint and is meant
 //! to be adopted directly.
 
+pub mod admission;
 pub mod config;
 pub mod error;
 pub mod logging;
@@ -82,6 +82,11 @@ pub mod readiness;
 pub mod signal;
 pub mod transport;
 
+pub use admission::{
+    admission_middleware, AdmissionController, AdmissionDecision, AdmissionEvent, AdmissionInput,
+    AdmissionMiddleware, AdmissionObserver, AdmissionOutcome, AdmissionPolicy,
+    AdmissionPolicyError, NoopAdmissionObserver,
+};
 pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};
 #[cfg(feature = "otlp")]
@@ -90,8 +95,9 @@ pub use logging::{
     init_tracing, init_tracing_with_identity, tracing_mode, OtelFallback, TracingMode,
 };
 pub use metrics::MetricsProvider;
-pub use probes::standard_probe_routes;
+pub use probes::{standard_probe_routes, standard_probe_routes_canonical_json};
 pub use readiness::ReadinessHook;
+pub use service_observability::LifecycleMetrics;
 pub use signal::{shutdown_with_drain, wait_shutdown_signal};
 pub use transport::{serve, trace_layer, PropagatingMakeSpan};
 // CODEGEN-END

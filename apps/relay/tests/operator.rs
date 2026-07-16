@@ -308,9 +308,11 @@ fn backup_cron_job_renders_only_when_policy_set() {
     // Policy set => one CronJob with the full runner wiring.
     let mut with_backup = spec(3);
     with_backup.backup = Some(relay::operator::crd::RelayBackupSpec {
-        schedule: "0 3 * * *".into(),
-        destination: "s3://relay-backups/prod".into(),
-        retention_secs: Some(604_800),
+        policy: service_backup::ScheduledBackupPolicy {
+            schedule: "0 3 * * *".into(),
+            destination: "s3://relay-backups/prod".into(),
+            retention_secs: Some(604_800),
+        },
         admin_token_secret: Some("relay-backup-token".into()),
     });
     let mut cr = Relay::new("relay", with_backup);

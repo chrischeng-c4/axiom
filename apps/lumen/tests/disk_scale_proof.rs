@@ -281,6 +281,7 @@ fn search_ids(e: &Engine, coll: &str, query: QueryNode, limit: u32) -> Vec<Strin
         SearchRequest {
             query,
             limit,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort: None,

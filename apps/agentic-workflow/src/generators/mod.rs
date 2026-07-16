@@ -29,6 +29,7 @@ pub mod scenarios;
 // Mermaid diagram sections
 pub mod db_model;
 pub mod dependency;
+pub mod dx_contract;
 pub mod flowchart;
 pub mod mindmap;
 pub mod sequence;
@@ -151,6 +152,7 @@ pub fn get_generator(section_type: SectionType) -> Option<Box<dyn Generator>> {
         SectionType::RestApi => Some(Box::new(rest_api::RestApiGenerator {})),
         SectionType::RpcApi => Some(Box::new(rpc_api::RpcApiGenerator {})),
         SectionType::AsyncApi => Some(Box::new(async_api::AsyncApiGenerator {})),
+        SectionType::DxContract => Some(Box::new(dx_contract::DxContractGenerator {})),
         // New section types (no dedicated generators yet — return None)
         SectionType::Cli
         | SectionType::Schema

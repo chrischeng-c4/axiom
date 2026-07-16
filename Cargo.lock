@@ -3301,6 +3301,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32c"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
+dependencies = [
+ "rustc_version",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6158,6 +6167,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "integer-encoding"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14c00403deb17c3221a1fe4fb571b9ed0370b3dcd116553c77fa294a3d918699"
+
+[[package]]
 name = "interpolate_name"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7282,7 +7297,7 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "0.4.20"
+version = "0.4.21"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -7321,6 +7336,7 @@ dependencies = [
  "rand 0.8.6",
  "rayon",
  "reqwest 0.12.28",
+ "rig",
  "roaring",
  "rustc-hash 2.1.2",
  "rustls 0.23.40",
@@ -7342,11 +7358,29 @@ dependencies = [
  "tower 0.5.3",
  "tower-http 0.6.11",
  "tracing",
- "tracing-opentelemetry",
  "tracing-subscriber",
  "transport-h2c",
  "utoipa",
  "wiremock",
+]
+
+[[package]]
+name = "lz4"
+version = "1.28.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a20b523e860d03443e98350ceaac5e71c6ba89aea7d960769ec3ce37f4de5af4"
+dependencies = [
+ "lz4-sys",
+]
+
+[[package]]
+name = "lz4-sys"
+version = "1.11.1+lz4-1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]
@@ -10418,12 +10452,17 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "cli-std",
+ "peer-tls",
  "raft-core",
+ "rcgen",
  "reqwest 0.12.28",
+ "rustls 0.23.40",
  "serde",
  "serde_json",
  "storage-durable",
+ "tempfile",
  "tokio",
+ "tokio-rustls 0.26.4",
  "tracing",
  "transport-h2c",
 ]
@@ -11150,6 +11189,47 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rsasl"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed828a88913fd477c73bc3768b05d4b335ee775e29f2397bb59b9a4dd69ffb83"
+dependencies = [
+ "base64 0.22.1",
+ "digest 0.10.7",
+ "hmac 0.12.1",
+ "pbkdf2",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "stringprep",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rskafka"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "849b87417a191e37e16b8893eba8928bbd10e1989e6b57c4f8531549eaa29bdc"
+dependencies = [
+ "bytes",
+ "chrono",
+ "crc32c",
+ "flate2",
+ "futures",
+ "integer-encoding",
+ "lz4",
+ "parking_lot",
+ "rand 0.8.6",
+ "rsasl",
+ "snap",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -11948,6 +12028,7 @@ dependencies = [
 name = "server-http"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum 0.8.9",
  "server-lifecycle",
  "server-tcp",
@@ -11989,6 +12070,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower 0.5.3",
+ "tracing",
 ]
 
 [[package]]
@@ -12014,17 +12096,17 @@ dependencies = [
  "axum 0.8.9",
  "http-body-util",
  "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "serde",
  "serde_json",
  "server-http",
+ "server-lifecycle",
+ "service-observability",
+ "sha2 0.10.9",
  "tokio",
  "tower 0.5.3",
  "tower-http 0.5.2",
  "tracing",
  "tracing-opentelemetry",
- "tracing-subscriber",
  "utoipa",
 ]
 
@@ -12044,6 +12126,22 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "service-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http 1.4.0",
+ "metrics-prometheus",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "server-lifecycle",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -12331,6 +12429,12 @@ dependencies = [
  "borsh",
  "serde_core",
 ]
+
+[[package]]
+name = "snap"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
 
 [[package]]
 name = "socket2"
@@ -12880,6 +12984,7 @@ dependencies = [
  "axum 0.8.9",
  "build-stamp",
  "cclab-openapi-codegen",
+ "chrono",
  "clap",
  "cli-std",
  "futures",
@@ -12890,6 +12995,8 @@ dependencies = [
  "peer-tls",
  "raft-runtime",
  "reqwest 0.12.28",
+ "rig",
+ "rskafka",
  "schemars",
  "serde",
  "serde_json",

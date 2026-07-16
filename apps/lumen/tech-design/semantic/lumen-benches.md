@@ -24,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "apps/lumen/benches/bench_duplicates.rs"
         language: "rust"
-        ownership_state: "codegen"
+        ownership_state: "handwrite"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "N"
@@ -56,7 +56,7 @@ semantic_domain:
           domain: "apps/lumen/benches"
       - path: "apps/lumen/benches/bench_search.rs"
         language: "rust"
-        ownership_state: "codegen"
+        ownership_state: "handwrite"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "N"
@@ -94,7 +94,7 @@ semantic_domain:
           domain: "apps/lumen/benches"
       - path: "apps/lumen/benches/bench_index.rs"
         language: "rust"
-        ownership_state: "codegen"
+        ownership_state: "handwrite"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "N"
@@ -167,19 +167,19 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: codegen
+    impl_mode: hand-written
   - path: "apps/lumen/benches/bench_search.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: codegen
+    impl_mode: hand-written
   - path: "apps/lumen/benches/bench_index.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: codegen
+    impl_mode: hand-written
   - action: annotate
     section: unit-test
     impl_mode: hand-written

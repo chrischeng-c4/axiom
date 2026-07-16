@@ -14,6 +14,10 @@ pub struct Topic {
     pub body: &'static str,
 }
 
+/// Typed, task-navigation protocol for tools that need stronger machine
+/// semantics than a static topic body.
+pub mod v2;
+
 /// Output format for `llm`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-llm-rs.md#source

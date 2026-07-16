@@ -61,6 +61,7 @@ fn req(query: QueryNode, sort: Option<Vec<SortSpec>>) -> SearchRequest {
     SearchRequest {
         query,
         limit: 100_000, // larger than any corpus → page == full match set
+        offset: 0,
         cursor: None,
         routing_key: None,
         sort,

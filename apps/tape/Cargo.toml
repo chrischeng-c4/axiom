@@ -78,12 +78,15 @@ reqwest = { workspace = true, optional = true }
 [dev-dependencies]
 async-nats = { workspace = true }
 futures = { workspace = true }
+rig = { path = "../rig" }
 tempfile = "3"
 tokio = { workspace = true, features = ["full"] }
 reqwest = { workspace = true }
 transport-h2c = { path = "../../libs/transport-h2c" }
 http-body-util = "0.1"
 tower = { workspace = true, features = ["util"] }
+rskafka = "0.6.0"
+chrono = { workspace = true }
 
 [build-dependencies]
 build-stamp = { path = "../../libs/build-stamp" }

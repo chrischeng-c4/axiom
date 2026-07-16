@@ -14,7 +14,7 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `apps/lumen/tests/generated_clients_crud_e2e.rs` generated from AST during Lumen AW health remediation.
+Public API manifest for `apps/lumen/tests/generated_clients_crud_e2e.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
@@ -22,8 +22,8 @@ No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
-````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-tests-generated_clients_crud_e2e-rs.md#rust-source-unit
+```rust
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-tests-generated_clients_crud_e2e-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 // @contract spec-gen-generated-clients-public-api-journey
 //! Generated-client delivery gate for Lumen itself.
@@ -51,7 +51,7 @@ struct LumenServer {
     handle: tokio::task::JoinHandle<()>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-tests-generated_clients_crud_e2e-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-tests-generated_clients_crud_e2e-rs.md#source
 impl LumenServer {
     async fn start() -> Self {
         let engine = Arc::new(lumen::storage::Engine::new());
@@ -443,6 +443,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         "users".to_string(),
         models::SearchRequest {{
             collapse: None,
+            offset: Some(0),
             cursor: None,
             limit: Some(10),
             query: query.clone(),
@@ -465,6 +466,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         "users".to_string(),
         models::SearchRequest {{
             collapse: None,
+            offset: Some(0),
             cursor: None,
             limit: Some(10),
             query,
@@ -503,7 +505,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let _ = fs::remove_dir_all(&dir);
 }
 // CODEGEN-END
-````
+```
 
 ## Changes
 <!-- type: changes lang: yaml -->

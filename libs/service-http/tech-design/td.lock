@@ -2,10 +2,22 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-14T03:21:26.010491+00:00"
-digest = "sha256:65c53a3f17186e7b95349081b335bdd05d76c162c8191223207c7b2ec61475cb"
-source_digest = "sha256:65c53a3f17186e7b95349081b335bdd05d76c162c8191223207c7b2ec61475cb"
-ir_digest = "sha256:8b54936de994743ce64efd6477f3cd97ed6d01a7171825bfa5398cd4667c3027"
+generated_at = "2026-07-15T17:01:13.741209+00:00"
+digest = "sha256:45ada323e7a2d00688d50b0f8ddcb79b418b0697dfc29dbaef19704ae740bd1d"
+source_digest = "sha256:45ada323e7a2d00688d50b0f8ddcb79b418b0697dfc29dbaef19704ae740bd1d"
+ir_digest = "sha256:49cf997f2f3661d0cb4af56f6bb3f1729e919a730d6f64f7a3bafa38906d5a9c"
+
+[[files]]
+path = "interfaces/rest/extract-protocol-neutral-service-observability-integration.md"
+digest = "sha256:fc62e6a5bbf9536eaf55f255d7d42ea50da92b7bdc109341df1abac62ba2893f"
+ir_digest = "sha256:91244122110ca295e73c972f683766679ad2e93d05b4e6b1b542130856bcfc91"
+section_count = 3
+
+[[files]]
+path = "logic/add-shared-opaque-key-admission-control.md"
+digest = "sha256:1f4cf1730baffaad653e5bb73ea10b45b6a4b9b14dc5f34dbb5982a9d13993c1"
+ir_digest = "sha256:5aa5c1582186b07a2dd0e9edecd9daa1fc87d4d57fb6549113ac2c99698a5707"
+section_count = 3
 
 [[files]]
 path = "logic/extract-shared-otlp-tracing-baseline-for-lumen-and-tape.md"
@@ -20,8 +32,8 @@ parse_error = "schema:15-136: section 'schema' at lines 15..136: JSON Schema typ
 
 [[files]]
 path = "semantic/source/libs-service-http-src-config-rs.md"
-digest = "sha256:20ad154c37fe83a705548d69aceda9476263862181e70381083677d09602a175"
-ir_digest = "sha256:a24db62aed4e23e1905a1d9bc54ba3384825cf15ada7ede7f58942009a17f8b3"
+digest = "sha256:61d6fe6f85d169d84c99a649a91bdc5f353006c6cd3a6f854143b92ba64e9a58"
+ir_digest = "sha256:69f6744385325b0adfe814d94fea401e9d44d9f9422403cf75d754de80086d88"
 section_count = 3
 
 [[files]]
@@ -32,20 +44,20 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-http-src-lib-rs.md"
-digest = "sha256:36d28caba0f9282d40c30d225dce2ae0b6c0c87ac533a66eab01424d87abd1c2"
-ir_digest = "sha256:6f5782645a7ed1cdb086deb42509a16082131d2edc2654d001db98b3497896f6"
+digest = "sha256:322e88d9a096eac19b27ca4282dc886dc6071aed710be415668ebc5d167482ed"
+ir_digest = "sha256:aff71021ea5d9f820cfbde076b155ac1d23be84c5449be49d7a1fb7880a6144d"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-http-src-logging-rs.md"
-digest = "sha256:c2569ec7f7c1af68bd104391b1089216c499ad98ec5cf381ce0fcffa914797e9"
-ir_digest = "sha256:816ac3934e494bb6228397f96adf91608fbb3566b36db3b7238bf66664b23f0d"
+digest = "sha256:ff55251f8f581f8e594cfdbf33a481840e6fb93f5daa2b593fbbc7734e608db7"
+ir_digest = "sha256:4e8ee80f9ae63ff2efe8ce49514e8a4a8614ee10475cc8c6ea99a0b8b61bf112"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-http-src-metrics-rs.md"
-digest = "sha256:a711660c36fc0359f7ef4079881d86af5b484f3b9d73bee77b39ffb6f82989cb"
-ir_digest = "sha256:e6768c983638df9ff31220ab58baa75d00a5d9f481d454cc77345fc897a19c11"
+digest = "sha256:d93cdffb7eb11254fa1b1948ad871f818cd6a5fcab43ab5e3433dc25b867f150"
+ir_digest = "sha256:0edb77b4d443705464a3698b600a5b3232a91b7edb8360c8d8d0123595fa3bd4"
 section_count = 3
 
 [[files]]
@@ -56,18 +68,24 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-http-src-readiness-rs.md"
-digest = "sha256:4e669d769e6dc5129e730581fff3d2fcbb98e87735d594fb9608d141c1f45e20"
-ir_digest = "sha256:1a2b8734ad03d99cb7122dd5c45e5c851d9efe0d34da1e756e6d05d0ffa48f21"
+digest = "sha256:d19a6570316eb3c3ede467399079f87bddc9a6b7c7646cde71b566d0153640a9"
+ir_digest = "sha256:baf5671de7a194eea382a2fa88687dbb78f24a11b9977d9e81e72c9f78a7358c"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-http-src-signal-rs.md"
-digest = "sha256:c7294ec2dbdb7e45820599047eea59c12cfca4217ae7636ad0a0f6581dcfbaf8"
-ir_digest = "sha256:f0b3783c10d32f51e1c8cac25a5a9826172d84d3bea4c9a18f199fd7f097366e"
+digest = "sha256:3a8142bb513bf3ce4c6f2c240fa6cb7bae28c4a9a7b5118d82f878b1f47bd871"
+ir_digest = "sha256:9495f26c000dd5e2b01e446cae6cb6251aa67a5569e69bbb44902ccb93389d1d"
 section_count = 3
 
 [[files]]
 path = "semantic/source/libs-service-http-src-transport-rs.md"
-digest = "sha256:db53d3f7817e43e150c0af9518c19c901bec2444e36991e4253ec8f4781a1e4e"
-ir_digest = "sha256:16b07b712ff9fcf8fe8a2b4c1559ecc7b0c229b41aa3bedff4705be60db34d27"
+digest = "sha256:58d073639b56b38921bcc9f17f897a5e34b5d39b3568f7a8debddb9902e624f7"
+ir_digest = "sha256:14a2c1b56c8d989fcb2a45171b1fb7b1fad9adb93abb247badfbf817a9d4a60f"
+section_count = 3
+
+[[files]]
+path = "semantic/source/libs-service-http-tests-otlp-tracing-rs.md"
+digest = "sha256:a6b14d1cf36942eecc44bb5a2257dd287853c582b98607bad2880ba28649389e"
+ir_digest = "sha256:c6971eae967b9d75338a2c26948eb3bc56212ac0a0b5367fc18f7073e20999b4"
 section_count = 3

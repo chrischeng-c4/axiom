@@ -63,7 +63,7 @@ semantic_domain:
           domain: "apps/lumen/ec-gates"
       - path: "apps/lumen/external-contracts/claim-closure/production-claims.md"
         language: "markdown"
-        ownership_state: "codegen"
+        ownership_state: "handwrite"
         generator_primitives: ["ec_claim_closure"]
         source_evidence_node:
           layer: "verification"
@@ -93,8 +93,8 @@ changes:
     action: modify
     section: schema
     description: |
-      Generated EC inventory and dispatch commands are covered by this semantic TD.
-    impl_mode: codegen
+      The `aw ec` producer owns the generated EC inventory block; this semantic TD tracks its contract without regenerating the mixed-ownership project file.
+    impl_mode: hand-written
   - path: "apps/lumen/vat.toml"
     action: modify
     section: schema
@@ -105,12 +105,12 @@ changes:
     action: modify
     section: schema
     description: |
-      Production claim closure mappings are covered by this semantic TD.
-    impl_mode: codegen
+      The authored production claim closure contract is covered by this semantic TD and compiled by `aw ec` into the inventory.
+    impl_mode: hand-written
   - path: "apps/lumen/external-contracts/ec.lock"
     action: modify
     section: schema
     description: |
-      EC IR lock freshness is covered by this semantic TD.
-    impl_mode: codegen
+      The `aw ec` producer owns EC IR lock freshness; this semantic TD tracks the artifact without impersonating that producer.
+    impl_mode: hand-written
 ```

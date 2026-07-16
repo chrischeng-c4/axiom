@@ -130,6 +130,7 @@ async fn search_total(engine: &Engine, field: &str, value: &str) -> Option<u64> 
                     value: FieldValue::String(value.into()),
                 }),
                 limit: 10,
+                offset: 0,
                 cursor: None,
                 routing_key: None,
                 sort: None,

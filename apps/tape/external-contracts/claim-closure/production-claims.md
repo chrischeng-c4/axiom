@@ -72,6 +72,18 @@ e2e_tests:
       - "Tape rejects stale checkpoint writes."
       - "Tape rejects checkpoints beyond the topic end offset."
 
+  - id: tape-pull-subscription-cursor
+    capability_id: subscription-delivery-resources
+    claim_id: pull-subscription-cursor-contract
+    contract_id: tape-bounded-pull-cursor-and-explicit-ack
+    category: behavior
+    test_path: tests/behavior_tape_claim_pull_subscription.rs
+    command: "cargo test -p tape tests::pull_subscription_uses_checkpoint_cursor_and_never_implicitly_acks --lib -- --exact --nocapture && cargo test -p tape tests::pull_subscription_ack_reuses_checkpoint_guards --lib -- --exact --nocapture"
+    assertions:
+      - "Bounded pull reads start from the durable topic/name checkpoint and never implicitly advance it."
+      - "Explicit pull ack reuses stale and beyond-end checkpoint rejection."
+      - "No push delivery reliability claim is made by the pull cursor contract."
+
   - id: tape-http2-api-list
     capability_id: http2-api-list
     claim_id: h2c-openapi-route-list
@@ -101,7 +113,7 @@ e2e_tests:
     test_path: tests/behavior_tape_claim_competitor_performance_claim_closure.rs
     command: "cargo test -p tape --test tape_perf_gate -- --nocapture && cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
     assertions:
-      - "The local Tape performance regression gate passes for append, replay, and checkpoint operations."
+      - "The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations."
       - "Tape's NATS JetStream local backlog replay win is backed by a real-service benchmark gate."
       - "Other replay-log peer performance wins remain unclaimed until calibrated real-service benchmark runs exist."
 ```

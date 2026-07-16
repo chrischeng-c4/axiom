@@ -7,9 +7,9 @@ summary: >
   OpenAPI/schema comments and offline LLM/spec cookbook text so agents no longer
   see the old restrictions.
 capability_refs:
-  - id: "developer-agent-experience"
+  - id: "agent-task-navigation"
     role: primary
-    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    claim: "lumen-llm-v2-task-navigation"
     coverage: partial
     rationale: >
       The requested fix is agent-facing offline documentation: OpenAPI schema,

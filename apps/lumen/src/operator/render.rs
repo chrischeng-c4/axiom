@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Pure rendering: a [`Lumen`] spec → the set of child Kubernetes objects that
 //! realize it. No cluster, no I/O — every object is a self-contained
@@ -24,6 +24,7 @@ const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
 const COMPONENT: &str = "server";
 const CLIENT_PORT: i32 = 7373;
+const RAFT_PORT: i32 = 7374;
 const BACKUP_COMPONENT: &str = "backup";
 const HEADLESS_ENV_KEY: &str = "LUMEN_HEADLESS_SERVICE";
 const TOKEN_REGISTRY_VOLUME: &str = "lumen-token-registry";
@@ -105,7 +106,7 @@ fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
 /// perform the Raft membership transition required before a replica delta.
 /// The retained handoff loop consults this function to prune HPAs emitted by
 /// older Lumen versions for every topology.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn wants_hpa(_lumen: &Lumen) -> bool {
     false
 }
@@ -116,7 +117,7 @@ pub(crate) fn wants_hpa(_lumen: &Lumen) -> bool {
 /// (#1385, R2) can confirm a live HPA found at this CR's name was actually
 /// rendered by lumen — not a user-created object with a coincidentally
 /// matching name — before deleting it.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, String> {
     let mut labels = std::collections::BTreeMap::new();
     labels.insert("app.kubernetes.io/name".to_string(), APP.to_string());
@@ -141,7 +142,7 @@ pub(crate) fn hpa_labels(lumen: &Lumen) -> std::collections::BTreeMap<String, St
 /// of `replicasPerShard`. No topology renders a direct HPA: single-member
 /// scale-out would create uncoordinated copies, while raft-HA needs a
 /// membership-aware whole-layer transition before changing pod count.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let name = instance(lumen);
     let ns = namespace(lumen);
@@ -151,7 +152,15 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
         render::service_account(&cx, COMPONENT),
         serving_configmap(lumen, &cx),
         serving_statefulset(lumen, &cx, &headless),
-        render::headless_service(&cx, &headless, COMPONENT, CLIENT_PORT),
+        render::headless_service_with_ports(
+            &cx,
+            &headless,
+            COMPONENT,
+            vec![
+                json!({ "name": "http", "port": CLIENT_PORT, "targetPort": "http", "protocol": "TCP" }),
+                json!({ "name": "raft", "port": RAFT_PORT, "targetPort": "raft", "protocol": "TCP" }),
+            ],
+        ),
         render::client_service(&cx, &name, COMPONENT, CLIENT_PORT),
     ];
     out.push(render::pdb(&cx, &name, COMPONENT, 1));
@@ -174,7 +183,7 @@ pub fn render(lumen: &Lumen) -> Vec<Value> {
 /// endpoint's bytes to a destination via `lumen backup`
 /// (`libs/service-backup`). The shared [`service_k8s::render::cron_job`] helper
 /// stays manifest-only.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-operator-render-rs.md#source
 fn backup_cron_job(lumen: &Lumen, cx: &RenderCtx<'_>) -> Option<Value> {
     let policy = lumen.spec.serving.backup.as_ref()?;
     let cron_name = format!("{}-backup", cx.name);
@@ -296,7 +305,10 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
         image_pull_policy,
         command: vec!["lumen".into(), "serve".into()],
         args: vec![],
-        ports: vec![json!({ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" })],
+        ports: vec![
+            json!({ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" }),
+            json!({ "name": "raft", "containerPort": RAFT_PORT, "protocol": "TCP" }),
+        ],
         headless_service: headless,
         shard_count: lumen.spec.shard_count,
         replicas_per_shard: lumen.spec.replicas_per_shard,
@@ -467,6 +479,7 @@ fn serving_configmap(lumen: &Lumen, cx: &RenderCtx<'_>) -> Value {
         "VIRTUAL_BUCKET_COUNT": lumen.spec.shard_map.virtual_bucket_count.to_string(),
         "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
         "LUMEN_PORT": CLIENT_PORT.to_string(),
+        "LUMEN_RAFT_PORT": RAFT_PORT.to_string(),
         "LUMEN_AUTH": lumen.spec.auth.as_env(),
     });
     if !lumen.spec.shard_map.assignments.is_empty() {

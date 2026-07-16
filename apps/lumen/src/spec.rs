@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Offline, machine-readable self-description for agent integration.
 //!
@@ -12,13 +12,13 @@ use serde_json::{json, Value};
 
 /// The full OpenAPI 3.2 document as pretty JSON (every route + schema,
 /// including the #1297 `QUERY` twins injected by `crate::api::openapi`).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn openapi_json() -> String {
     serde_json::to_string_pretty(&openapi_value()).expect("OpenApi value serializes to JSON")
 }
 
 /// The full OpenAPI 3.2 document as YAML for LLM/agent reading.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn openapi_yaml() -> String {
     serde_yaml::to_string(&openapi_value()).expect("OpenApi value serializes to YAML")
 }
@@ -43,7 +43,7 @@ fn openapi_value() -> Value {
 
 /// Just the component schemas (the request/response data types) as pretty JSON
 /// — the JSON-Schema view an agent uses to build/validate request bodies.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
     serde_json::to_string_pretty(&json!({
@@ -58,7 +58,7 @@ pub fn json_schema_json() -> String {
 /// The deployment-side token registry file schema. This is not an HTTP request
 /// body, so it lives under `operationalSchemas` in `lumen spec --format
 /// json-schema` and in `lumen llm --topic auth`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn token_registry_schema() -> Value {
     json!({
         "description": "JSON object mounted as token-registry.json; each property name is the bearer token string.",
@@ -103,7 +103,7 @@ pub fn token_registry_schema() -> Value {
 }
 
 /// Pretty JSON example for `token-registry.json`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn token_registry_example_json() -> String {
     serde_json::to_string_pretty(&json!({
         "admin-token": {
@@ -126,16 +126,19 @@ pub fn token_registry_example_json() -> String {
 /// `{name, description, request}` for `POST /collections/{id}/search` (or
 /// `/duplicates` where noted) using the exact wire form of every `QueryNode`
 /// variant plus sort / collapse.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn query_shapes() -> Value {
     json!({
         "search_endpoint": "POST /collections/{collection}/search",
+        "search_all_endpoint": "POST /collections/{collection}/search:all",
         "note": "lumen returns ranked/sorted external_id hits only — never documents.",
         "shapes": [
             { "name": "term", "description": "exact keyword/number/bool match",
               "request": { "query": { "term": { "field": "status", "value": "active" } }, "limit": 20 } },
             { "name": "terms", "description": "keyword in a set (IN)",
               "request": { "query": { "terms": { "field": "status", "values": ["active", "trial"] } }, "limit": 20 } },
+            { "name": "prefix", "description": "case-sensitive UTF-8 starts-with match on a keyword field",
+              "request": { "query": { "prefix": { "field": "path", "value": "台北市/" } }, "limit": 20 } },
             { "name": "ids", "description": "filter by a set of external_ids (row_id_in); unknown ids skipped",
               "request": { "query": { "ids": { "values": ["row-42", "row-91"] } }, "limit": 20 } },
             { "name": "range", "description": "numeric range on a `number` field (e.g. 1000 <= price < 5000)",
@@ -190,6 +193,12 @@ pub fn query_shapes() -> Value {
             { "name": "filter_then_sort", "description": "filter, then sort by a field instead of relevance",
               "request": { "query": { "range": { "field": "price", "gte": 100 } },
                            "sort": [ { "field": "price", "order": "asc" } ], "track_total": false, "limit": 20 } },
+            { "name": "native_offset", "description": "jump directly after global filtering and ordering without client over-fetch; offset and cursor are mutually exclusive",
+              "request": { "query": { "range": { "field": "price", "gte": 100 } },
+                           "sort": [ { "field": "price", "order": "asc" } ], "offset": 1000, "limit": 20 } },
+            { "name": "search_all", "description": "explicitly expensive full materialization of every matching external_id (POST /collections/{id}/search:all); local consistency is one read-lock snapshot, routed consistency is one snapshot per shard",
+              "request": { "query": { "term": { "field": "status", "value": "active" } },
+                           "sort": [ { "field": "created_at", "order": "asc" } ] } },
             { "name": "duplicates", "description": "find external_ids sharing a value (POST /collections/{id}/duplicates)",
               "request": { "field": "email", "min_group_size": 2, "limit": 100 } },
             { "name": "index", "description": "index one or more field values (POST /collections/{id}/index); the wire shape is FLAT — {items:[{external_id,field,value}]} — not the nested {id, fields:{...}} shape a caller might assume",
@@ -204,35 +213,14 @@ pub fn query_shapes() -> Value {
 /// The field-type + analyzer + vector-metric catalog — what `type`/`analyzer`/
 /// `metric` values a `PUT /collections/{id}` schema may use. Mirrors the
 /// `FieldType` / `Analyzer` / `VectorMetric` enums.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn field_catalog() -> Value {
-    json!({
-        "schema_endpoint": "PUT /collections/{collection}",
-        "field_types": [
-            { "type": "text", "purpose": "BM25 lexical ranking; tokenized at index time", "analyzers": ["whitespace_lower", "ngram", "jieba"] },
-            { "type": "keyword", "purpose": "exact term / set membership / enum path; byte/lexicographic range (e.g. ISO-8601 date/datetime strings) via `range` with string bounds; roaring postings" },
-            { "type": "number", "purpose": "numeric range (via `range` with numeric bounds) + sort (dates as epoch)" },
-            { "type": "set", "purpose": "multi-valued keyword membership" },
-            { "type": "vector", "purpose": "semantic kNN over a caller-supplied embedding (HNSW)", "metrics": ["cosine", "dot", "l2"] },
-            {
-                "type": "hash",
-                "purpose": "perceptual/structural near-dup search — caller-supplied 64-bit hex hash, queried by Hamming distance (pHash / SimHash / b-bit MinHash)",
-                "value": "16-hex-character string; optional 0x prefix accepted",
-                "queries": ["hamming"],
-                "schema": { "type": "hash" }
-            }
-        ],
-        "analyzers": [
-            { "name": "whitespace_lower", "purpose": "split on whitespace, lowercase (default lexical)" },
-            { "name": "ngram", "purpose": "character n-grams — substring and CJK matching" },
-            { "name": "jieba", "purpose": "Chinese word segmentation (requires the `jieba` build feature)" }
-        ]
-    })
+    crate::dx::field_catalog()
 }
 
 /// The agent-facing LLM topic outline (`lumen llm --topic outline`) as
 /// Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 /// @spec apps/lumen/tech-design/interfaces/cli/self-docs-teach-positional-lumen-llm-topic-but-the-cli-only-acce.md#logic
 pub fn llm_outline_md() -> String {
     r#"# lumen LLM outline
@@ -273,7 +261,7 @@ Use the smallest topic that answers the task:
 
 /// Kubernetes-native deployment topology (`lumen llm --topic deployment`) as
 /// Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_deployment_md() -> String {
     let mut out = r#"# lumen deployment
 
@@ -408,7 +396,7 @@ live replica synchronization mechanism.
 
 /// Bearer-token auth + deployment secret contract (`lumen llm --topic auth`)
 /// as Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_auth_md() -> String {
     let mut out = format!(
         r#"# lumen auth
@@ -482,7 +470,7 @@ Generated Python clients accept either `auth_token="<token>"` or
 /// model, declare→ingest→search→hydrate workflow, search-flavor decision map,
 /// connection, and non-goals. Where exact wire shape is needed it points at
 /// `lumen spec` / `lumen llm --topic recipes` so there is one source of truth.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_workflow_md() -> String {
     r#"# lumen workflow
 
@@ -726,7 +714,7 @@ adapter boundaries.
 
 /// The recommended database/pubsub integration boundary (`lumen llm --topic
 /// integration`) as Markdown.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_integration_md() -> String {
     let mut out = r#"# lumen integration
 
@@ -766,7 +754,7 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 
 /// A copy-paste end-to-end (`lumen llm --topic quickstart`) as Markdown:
 /// create → index → search against a local `lumen serve` on `:7373`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
@@ -841,7 +829,7 @@ the exact wire body (same shapes as `lumen spec --shapes`).
 /// Task → ready-to-POST body recipes (`lumen llm --topic recipes`) as Markdown,
 /// rendered from [`query_shapes`] so the bodies never drift from the canonical
 /// cookbook.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_recipes_md() -> String {
     let shapes = query_shapes();
     let endpoint = shapes["search_endpoint"].as_str().unwrap_or("");
@@ -867,7 +855,7 @@ pub fn llm_recipes_md() -> String {
 /// Operator storage/ops contract (`lumen llm --topic storage`) as Markdown: the
 /// serving fleet's workload kind and PVC durability guarantee, independent of
 /// `replicasPerShard`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-spec-rs.md#source
 pub fn llm_storage_md() -> String {
     let mut out = r#"# lumen storage
 

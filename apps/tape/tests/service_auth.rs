@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:cb847680" tracker="pending-tracker" reason="Integration tests over a real ephemeral server (tape::server::router/AppState) with a temp registry JSON file: append 200/401/403 (write grant), replay/checkpoint-get/checkpoint-put 200/403 with role hierarchy + wildcard grants, shared error bodies, tokenless probes under required auth, off-mode tokenless regression, and AuthConfig::resolve fail-fast (missing/unparseable/empty registry, unknown mode)."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:cb847680" tracker="#1641" reason="Integration tests over a real Tape server plus shared credential rotation and audited authorization."
 //! Bearer-token auth integration tests over a real ephemeral server (#1326).
 //!
 //! tape adopts the shared `libs/service-auth` role-map contract: the blanket
@@ -12,7 +12,9 @@
 
 use std::net::SocketAddr;
 
+use axum::http::{header, HeaderMap};
 use serde_json::json;
+use service_auth::{Role, Verifier};
 
 use tape::auth::AuthConfig;
 use tape::server::{router, AppState};
@@ -55,6 +57,29 @@ async fn start_server(auth: Option<AuthConfig>) -> SocketAddr {
         std::future::pending::<()>(),
     ));
     addr
+}
+
+#[test]
+fn tape_auth_adapter_rotates_the_shared_registry_without_restart() {
+    let verifier = required_auth().verifier();
+    let mut before = HeaderMap::new();
+    before.insert(
+        header::AUTHORIZATION,
+        "Bearer writer-token".parse().unwrap(),
+    );
+    let principal = verifier.authenticate(&before).unwrap();
+    assert!(principal.ensure("orders", Role::Write).is_ok());
+
+    verifier
+        .reload_json(r#"{"rotated":{"subject":"next","roles":{"orders":"admin"}}}"#)
+        .unwrap();
+    assert!(verifier.authenticate(&before).is_err());
+
+    let mut after = HeaderMap::new();
+    after.insert(header::AUTHORIZATION, "Bearer rotated".parse().unwrap());
+    let principal = verifier.authenticate(&after).unwrap();
+    assert_eq!(principal.subject(), Some("next"));
+    assert!(principal.ensure("orders", Role::Admin).is_ok());
 }
 
 fn url(addr: SocketAddr, path: &str) -> String {
@@ -241,10 +266,7 @@ async fn probes_stay_tokenless_under_required_auth() {
 async fn off_mode_keeps_tape_tokenless() {
     let addr = start_server(None).await;
     let client = reqwest::Client::new();
-    assert_eq!(
-        append(&client, addr, "orders", 1, None).await.status(),
-        200
-    );
+    assert_eq!(append(&client, addr, "orders", 1, None).await.status(), 200);
     assert_eq!(replay(&client, addr, "orders", None).await.status(), 200);
 }
 

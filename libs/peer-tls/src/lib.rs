@@ -92,9 +92,11 @@ impl PeerTlsConfig {
         } else {
             builder.with_no_client_auth()
         };
-        server
+        let mut config = server
             .with_single_cert(cert_chain, key)
-            .context("build peer rustls server config")
+            .context("build peer rustls server config")?;
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        Ok(config)
     }
 
     /// Build a rustls client config for dialing peer transports.
@@ -103,10 +105,12 @@ impl PeerTlsConfig {
         let roots = load_root_store(&self.ca)?;
         let cert_chain = load_cert_chain(&self.cert)?;
         let key = load_private_key(&self.key)?;
-        rustls::ClientConfig::builder()
+        let mut config = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_client_auth_cert(cert_chain, key)
-            .context("build peer rustls client config")
+            .context("build peer rustls client config")?;
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        Ok(config)
     }
 }
 

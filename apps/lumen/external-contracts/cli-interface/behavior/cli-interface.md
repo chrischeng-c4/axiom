@@ -20,8 +20,8 @@ e2e_tests:
     assertions:
       - "lumen spec emits valid OpenAPI JSON, OpenAPI YAML, and JSON-schema output offline."
       - "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs."
-      - "lumen llm outline, workflow, integration, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals."
-      - "lumen llm integration recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL."
+      - "lumen llm outline publishes a cclab.llm.v2 task manifest and each advertised topic preserves the task-navigation contract."
+      - "lumen llm integrate-source-db recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's internal broker WAL."
   - id: lumen-cli-interface-query-catalog
     capability_id: cli-interface
     claim_id: query-shape-cookbook-field-analyzer-catalog
@@ -53,13 +53,13 @@ e2e_tests:
       - "HTTP/1.1 and h2c clients both receive the same JSON public API response for GET /collections."
       - "the observed response protocol versions are HTTP/1.1 for an HTTP/1-only client and HTTP/2 for the h2c client."
   - id: lumen-cli-interface-llm-playbook
-    capability_id: cli-interface
-    claim_id: lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes
-    contract_id: lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes
+    capability_id: agent-task-navigation
+    claim_id: lumen-llm-v2-task-navigation
+    contract_id: lumen-llm-v2-task-navigation
     category: behavior
     command: "cargo test -p lumen --test spec_cli -- --nocapture"
     assertions:
-      - "lumen llm outline, workflow, integration, quickstart, and recipes preserve the agent-facing topic set."
-      - "lumen llm integration preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core."
+      - "lumen llm outline publishes the cclab.llm.v2 typed task manifest and every advertised topic parses through the binary."
+      - "lumen llm integrate-source-db preserves provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core."
       - "agent-facing playbook output remains deterministic and offline."
 ```

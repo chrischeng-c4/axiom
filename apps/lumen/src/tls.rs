@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! mTLS configuration for the peer (`:8082`) transport.
 //!
@@ -33,7 +33,7 @@ use anyhow::Result;
 const ENV_PREFIX: &str = "LUMEN_PEER";
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 pub struct PeerTlsConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -41,7 +41,7 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     fn from(cfg: peer_tls::PeerTlsConfig) -> Self {
         Self {
@@ -53,7 +53,7 @@ impl From<peer_tls::PeerTlsConfig> for PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     fn from(cfg: PeerTlsConfig) -> Self {
         Self {
@@ -65,7 +65,7 @@ impl From<PeerTlsConfig> for peer_tls::PeerTlsConfig {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-tls-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-tls-rs.md#source
 impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
@@ -81,6 +81,14 @@ impl PeerTlsConfig {
     /// Build a rustls client config for dialing peer transports.
     pub fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
         peer_tls::PeerTlsConfig::from(self.clone()).rustls_client_config()
+    }
+
+    /// Construct the shared reloadable Raft peer transport. Lumen owns only
+    /// env naming; TLS connection, identity, and reload semantics stay in
+    /// `raft-runtime`.
+    pub fn peer_transport(&self) -> Result<raft_runtime::PeerTransport> {
+        let config = peer_tls::PeerTlsConfig::from(self.clone());
+        raft_runtime::PeerTransport::from_config(&config)
     }
 }
 
@@ -220,6 +228,7 @@ LkjT2UdpFBDZGWHwqDRhXX8k
             .expect("server config should build");
         cfg.rustls_client_config()
             .expect("client config should build");
+        assert_eq!(cfg.peer_transport().unwrap().generation(), 1);
         std::fs::remove_dir_all(cfg.cert.parent().unwrap()).ok();
     }
 }

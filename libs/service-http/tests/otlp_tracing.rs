@@ -27,6 +27,16 @@ fn logging_only_default_requires_no_exporter() {
     );
 }
 
+#[test]
+fn compatibility_surface_delegates_to_protocol_neutral_owner() {
+    let config = config(Some("not-an-endpoint"));
+    let identity = ServiceIdentity::new("service-http-test", "0.1.0").unwrap();
+    assert_eq!(
+        tracing_mode(&config, &identity),
+        service_observability::tracing_mode(&config.observability_config(), &identity)
+    );
+}
+
 #[cfg(feature = "otlp")]
 #[test]
 fn otlp_identity_contract_is_stable() {

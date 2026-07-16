@@ -225,6 +225,17 @@ fn crd_is_openapi_compatible() {
         yaml.contains("minimum"),
         "normalized uints keep a minimum floor"
     );
+
+    let doc: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("CRD parses as YAML");
+    let backup_props = &doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
+        ["spec"]["properties"]["backup"]["properties"];
+    for field in ["schedule", "destination", "retentionSecs"] {
+        assert!(
+            backup_props.get(field).is_some(),
+            "shared backup schema must keep flat field `{field}`"
+        );
+    }
+    assert_eq!(backup_props["destination"]["type"], "string");
 }
 
 /// R5 — installing the process-level rustls crypto provider is idempotent and

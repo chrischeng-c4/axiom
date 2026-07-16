@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
 //! `llm` (offline integration contract + agent topics), and `k8s` (operator
@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+#[cfg(feature = "operator")]
 use tracing_subscriber::EnvFilter;
 
 use lumen::auth::AuthConfig;
@@ -631,23 +632,47 @@ struct SnapshotImportArgs {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
-    /// Topic map for agent context selection (default).
+    /// Typed task map for agent context selection (default).
     Outline,
-    /// Product model, declare → ingest → search → hydrate, and non-goals.
-    Workflow,
-    /// Recommended database/pubsub adapter boundary.
-    Integration,
-    /// A copy-paste create → index → search walkthrough.
-    Quickstart,
-    /// Bearer-token auth, token registry schema, and Secret projection.
-    Auth,
-    /// Kubernetes-native deployment topology, shard/replica knobs, and bootstrap.
-    Deployment,
-    /// Operator storage/ops contract: StatefulSet + durable PVC-backed WAL,
-    /// including at `replicasPerShard: 1`.
-    Storage,
-    /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
-    Recipes,
+    /// Inspect the offline search contract before issuing a request.
+    LocalSearch,
+    /// Declare or review a collection schema.
+    ModelSchema,
+    /// Select a supported search, filter, range, sort, kNN, or duplicate query.
+    SelectQuery,
+    /// Connect a source database, CDC stream, or outbox to Lumen.
+    IntegrateSourceDb,
+    /// Configure or inspect bearer-token authentication.
+    Authenticate,
+    /// Use a bounded Kubernetes port-forward connection.
+    ConnectKubernetes,
+    /// Render image, CRD, operator, or instance deployment artifacts.
+    DeployKubernetes,
+    /// Create or restore an administrative backup.
+    BackupRestore,
+    /// Generate a typed Rust, Python, or TypeScript client.
+    GenerateClient,
+    /// Inspect standard operational evidence from a running service.
+    Diagnose,
+}
+
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#source
+impl LlmTopic {
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Outline => "outline",
+            Self::LocalSearch => "local-search",
+            Self::ModelSchema => "model-schema",
+            Self::SelectQuery => "select-query",
+            Self::IntegrateSourceDb => "integrate-source-db",
+            Self::Authenticate => "authenticate",
+            Self::ConnectKubernetes => "connect-kubernetes",
+            Self::DeployKubernetes => "deploy-kubernetes",
+            Self::BackupRestore => "backup-restore",
+            Self::GenerateClient => "generate-client",
+            Self::Diagnose => "diagnose",
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -893,52 +918,19 @@ async fn main() -> Result<()> {
                     SpecFormat::JsonSchema => lumen::spec::json_schema_json(),
                 }
             };
-            println!("{out}");
+            // Raw spec bytes are a public artifact: this CLI output, the live
+            // `/openapi.json` route, `spec gen`, and the committed snapshot all
+            // consume `spec::openapi_json()` without an extra wrapper/newline.
+            print!("{out}");
             Ok(())
         }
         Command::Llm(args) => {
             // Offline: no engine, no server, no I/O beyond stdout.
-            let md = match args.topic {
-                LlmTopic::Outline => lumen::spec::llm_outline_md(),
-                LlmTopic::Workflow => lumen::spec::llm_workflow_md(),
-                LlmTopic::Integration => lumen::spec::llm_integration_md(),
-                LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
-                LlmTopic::Auth => lumen::spec::llm_auth_md(),
-                LlmTopic::Deployment => lumen::spec::llm_deployment_md(),
-                LlmTopic::Storage => lumen::spec::llm_storage_md(),
-                LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
+            let format = match args.format {
+                LlmFormat::Md => cli_std::llm::Format::Md,
+                LlmFormat::Json => cli_std::llm::Format::Json,
             };
-            let out = match args.format {
-                LlmFormat::Md => md,
-                LlmFormat::Json => match args.topic {
-                    // Recipes are inherently structured → emit the canonical
-                    // cookbook JSON (single source with `spec --shapes`).
-                    LlmTopic::Recipes => {
-                        serde_json::to_string_pretty(&lumen::spec::query_shapes())?
-                    }
-                    LlmTopic::Outline => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "outline", "markdown": md }),
-                    )?,
-                    LlmTopic::Workflow => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "workflow", "markdown": md }),
-                    )?,
-                    LlmTopic::Integration => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "integration", "markdown": md }),
-                    )?,
-                    LlmTopic::Quickstart => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "quickstart", "markdown": md }),
-                    )?,
-                    LlmTopic::Auth => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "auth", "markdown": md }),
-                    )?,
-                    LlmTopic::Deployment => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "deployment", "markdown": md }),
-                    )?,
-                    LlmTopic::Storage => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "storage", "markdown": md }),
-                    )?,
-                },
-            };
+            let out = lumen::dx::render_llm(args.topic.id(), format)?;
             println!("{out}");
             Ok(())
         }
@@ -1583,6 +1575,7 @@ fn build_search_body(args: &QuerySearchArgs) -> Result<(String, serde_json::Valu
     let request = lumen::types::SearchRequest {
         query,
         limit: args.limit,
+        offset: 0,
         cursor: None,
         routing_key: None,
         sort: None,
@@ -1898,7 +1891,7 @@ struct SegmentCheckpointSink {
     aof: Option<lumen::coordinator::SharedAof>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-bin-lumen-rs.md#source
 #[async_trait::async_trait]
 impl lumen::api::CheckpointSink for SegmentCheckpointSink {
     async fn checkpoint_now(&self) -> Result<bool> {
@@ -1942,7 +1935,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         &args.log_level,
         args.log_format,
         args.otlp_endpoint.as_deref(),
-    );
+    )?;
 
     let engine = Arc::new(Engine::new());
 
@@ -1971,6 +1964,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // merged into the serve app below (peer RPCs ride the h2c port).
     #[cfg(feature = "raft-wal")]
     let mut raft_host: Option<Arc<raft_runtime::RaftHost>> = None;
+    #[cfg(feature = "raft-wal")]
+    let mut raft_peer_transport: Option<raft_runtime::PeerTransport> = None;
     #[cfg(feature = "raft-wal")]
     let mut raft_writer: Option<Arc<dyn lumen::coordinator::WriteSink>> = None;
     // Live `ClusterState` for `AppState::with_cluster` (#1349): populated only
@@ -2008,16 +2003,27 @@ async fn serve(args: ServeArgs) -> Result<()> {
         WalBackend::Raft => {
             // Topology from the StatefulSet downward API via the shared helper
             // (node id + membership + peers — no hand-rolled ordinal/DNS math).
-            // Raft RPCs ride the client port (the host's router merges into the
-            // serve app), so the peer port is `args.port`; `LUMEN_PEERS` overrides
-            // host:port to run a multi-node group on one machine.
+            // A configured peer identity uses the dedicated authenticated Raft
+            // port. Unconfigured local/existing deployments retain the public
+            // h2c compatibility path until their TLS material is projected.
             let headless = std::env::var("LUMEN_HEADLESS_SERVICE")
                 .unwrap_or_else(|_| "lumen-headless".to_string());
-            let topo = raft_runtime::ClusterTopology::from_env(
+            let peer_transport = lumen::tls::PeerTlsConfig::from_env()
+                .context("raft: load peer TLS configuration")?
+                .map(|config| config.peer_transport())
+                .transpose()
+                .context("raft: build shared peer mTLS transport")?;
+            let (peer_port, peer_scheme) = if peer_transport.is_some() {
+                (args.raft_port, "https")
+            } else {
+                (args.port, "http")
+            };
+            let topo = raft_runtime::ClusterTopology::from_env_with_scheme(
                 "lumen",
                 &headless,
-                args.port,
+                peer_port,
                 "LUMEN_PEERS",
+                peer_scheme,
             )
             .context("raft: cluster topology from env")?;
             tracing::info!(
@@ -2038,17 +2044,30 @@ async fn serve(args: ServeArgs) -> Result<()> {
             // seam for the raft path. Cold-start (restore + replay) happens in
             // `RaftHost::spawn`; snapshot/compaction is driven externally below.
             let sm = lumen::raft_sm::EngineSm::new(engine.clone(), 0);
-            let host = Arc::new(raft_runtime::RaftHost::spawn(
-                topo.node_id,
-                topo.membership,
-                topo.peers,
-                store,
-                sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
-                raft_runtime::HostConfig {
-                    snapshot: raft_runtime::SnapshotPolicy::External,
-                    ..Default::default()
-                },
-            ));
+            let host_config = raft_runtime::HostConfig {
+                snapshot: raft_runtime::SnapshotPolicy::External,
+                ..Default::default()
+            };
+            let host = Arc::new(match peer_transport.clone() {
+                Some(transport) => raft_runtime::RaftHost::spawn_with_peer_transport(
+                    topo.node_id,
+                    topo.membership,
+                    topo.peers,
+                    store,
+                    sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+                    host_config,
+                    transport,
+                ),
+                None => raft_runtime::RaftHost::spawn(
+                    topo.node_id,
+                    topo.membership,
+                    topo.peers,
+                    store,
+                    sm.clone() as Arc<dyn raft_runtime::RaftStateMachine>,
+                    host_config,
+                ),
+            });
+            raft_peer_transport = peer_transport;
 
             // Live cluster state (#1349): the same `ClusterConfig`/`RaftGroup`
             // shape `AppState::with_cluster`'s consumer (`enforce_read_consistency`,
@@ -2317,10 +2336,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
     }
     #[cfg_attr(not(feature = "raft-wal"), allow(unused_mut))]
     let mut app = lumen::api::router(state);
-    // Peer raft RPCs (`/raft/*`, `/raftz`) share the h2c serve port.
+    // Plain local/backward-compatible Raft RPCs share the public h2c port.
+    // Configured mTLS peers are served only by the dedicated listener below.
     #[cfg(feature = "raft-wal")]
-    if let Some(host) = &raft_host {
-        app = app.merge(host.router());
+    if raft_peer_transport.is_none() {
+        if let Some(host) = &raft_host {
+            app = app.merge(host.router());
+        }
     }
 
     // Periodic snapshotter. Raft mode: the host captures the engine RDB AND
@@ -2432,6 +2454,30 @@ async fn serve(args: ServeArgs) -> Result<()> {
         .with_context(|| format!("bind {bind}"))?;
     tracing::info!(addr = %bind, shard_count = args.shard_count.unwrap_or(1), "lumen serve listening");
 
+    #[cfg(feature = "raft-wal")]
+    let peer_server = if let (Some(host), Some(transport)) =
+        (raft_host.as_ref(), raft_peer_transport.as_ref())
+    {
+        let peer_bind = format!("{}:{}", args.host, args.raft_port);
+        let peer_listener = tokio::net::TcpListener::bind(&peer_bind)
+            .await
+            .with_context(|| format!("bind authenticated raft peer listener {peer_bind}"))?;
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let peer_router = host.router();
+        let transport = transport.clone();
+        tracing::info!(addr = %peer_bind, tls_generation = transport.generation(), "lumen raft peer mTLS listening");
+        let task = tokio::spawn(async move {
+            transport
+                .serve(peer_listener, peer_router, async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+        });
+        Some((shutdown_tx, task))
+    } else {
+        None
+    };
+
     let grace = Duration::from_secs(args.grace_secs);
     // Serve HTTP/1.1 + h2c on one port through the shared service HTTP shell,
     // with the standard SIGTERM drain sequence flipping `/readyz` to 503
@@ -2442,6 +2488,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
         service_http::shutdown_with_drain(move || engine.start_drain(), grace),
     )
     .await;
+    #[cfg(feature = "raft-wal")]
+    if let Some((shutdown_tx, task)) = peer_server {
+        let _ = shutdown_tx.send(());
+        task.await.context("raft peer listener task panicked")??;
+    }
     // Flush any batched spans before exit (no-op when OTLP was never enabled).
     #[cfg(feature = "otel")]
     opentelemetry::global::shutdown_tracer_provider();
@@ -2618,75 +2669,22 @@ async fn connect_nats_with_retry(url: &str, timeout_secs: u64) -> Result<NatsWal
     }
 }
 
-fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) {
-    use tracing_subscriber::prelude::*;
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("info,lumen={level}")));
-    let fmt_layer = match format {
-        LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),
-        LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
+fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) -> Result<()> {
+    let format = match format {
+        LogFormat::Pretty => service_http::LogFormat::Pretty,
+        LogFormat::Json => service_http::LogFormat::Json,
     };
-    let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
-
-    #[cfg(feature = "otel")]
-    {
-        if let Some(endpoint) = otlp_endpoint {
-            match build_otel_tracer(endpoint) {
-                Ok(tracer) => {
-                    registry
-                        .with(tracing_opentelemetry::layer().with_tracer(tracer))
-                        .init();
-                    tracing::info!(otlp_endpoint = endpoint, "OTLP trace export enabled");
-                }
-                Err(e) => {
-                    registry.init();
-                    tracing::error!(error = %e, "OTLP init failed; continuing without trace export");
-                }
-            }
-        } else {
-            registry.init();
-        }
-        return;
-    }
-
-    #[cfg(not(feature = "otel"))]
-    {
-        if otlp_endpoint.is_some() {
-            registry.init();
-            tracing::warn!(
-                "LUMEN_OTLP_ENDPOINT is set but this binary was built without the `otel` \
-                 feature — no trace export (rebuild with --features otel)"
-            );
-        } else {
-            registry.init();
-        }
-    }
-}
-
-/// Build a batch OTLP (tonic/gRPC, plaintext) tracer exporting to `endpoint`.
-/// Runs inside the tokio runtime (`serve` is `#[tokio::main]`-driven).
-#[cfg(feature = "otel")]
-fn build_otel_tracer(
-    endpoint: &str,
-) -> std::result::Result<opentelemetry_sdk::trace::Tracer, Box<dyn std::error::Error>> {
-    use opentelemetry_otlp::WithExportConfig;
-    let exporter = opentelemetry_otlp::new_exporter()
-        .tonic()
-        .with_endpoint(endpoint.to_string());
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(exporter)
-        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
-            opentelemetry_sdk::Resource::new(vec![
-                opentelemetry::KeyValue::new("service.name", "lumen"),
-                opentelemetry::KeyValue::new(
-                    "service.version",
-                    env!("CARGO_PKG_VERSION").to_string(),
-                ),
-            ]),
-        ))
-        .install_batch(opentelemetry_sdk::runtime::Tokio)?;
-    Ok(tracer)
+    let config = service_http::HttpConfig::new(
+        "127.0.0.1",
+        0,
+        format!("info,lumen={level}"),
+        format,
+        0,
+        0,
+        otlp_endpoint.map(str::to_owned),
+    );
+    let identity = service_http::ServiceIdentity::new("lumen", env!("CARGO_PKG_VERSION"))?;
+    service_http::init_tracing_with_identity(&config, &identity)
 }
 
 /// Build + install a global OTLP (tonic) meter provider that PUSHES lumen's
@@ -2867,6 +2865,7 @@ mod tests {
                         value: FieldValue::String("seeded".into()),
                     }),
                     limit: 10,
+                    offset: 0,
                     cursor: None,
                     routing_key: None,
                     sort: None,

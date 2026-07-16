@@ -20,12 +20,12 @@ capability_refs:
     claim: "query-shape-cookbook-field-analyzer-catalog"
     coverage: full
     rationale: "Defines the query-shape, field, and analyzer catalog command flags."
-  - id: "cli-interface"
+  - id: "agent-task-navigation"
     role: primary
-    gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    gap: "lumen-llm-v2-task-navigation"
+    claim: "lumen-llm-v2-task-navigation"
     coverage: full
-    rationale: "Defines the offline `lumen llm` agent onboarding topics."
+    rationale: "Defines the offline `lumen llm` v2 task-navigation surface."
   - id: "cli-interface"
     role: primary
     gap: "deployment-operator-command-surface"
@@ -64,10 +64,16 @@ capability_refs:
     rationale: "Provides offline query-shape and field/analyzer catalog context for agents."
   - id: "developer-agent-experience"
     role: primary
-    gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    gap: "integration-contract"
+    claim: "integration-contract"
     coverage: full
-    rationale: "Provides the offline agent onboarding topic set."
+    rationale: "Defines the canonical OpenAPI, routed-mode, consistency, and administrative integration surfaces exposed by one binary."
+  - id: "agent-task-navigation"
+    role: primary
+    gap: "lumen-llm-v2-task-navigation"
+    claim: "lumen-llm-v2-task-navigation"
+    coverage: full
+    rationale: "Provides the offline v2 task manifest and runbook set."
   - id: "kubernetes-native-deployment"
     role: primary
     gap: "lumen-crd-reconcile-loop-kube-rs-operator"

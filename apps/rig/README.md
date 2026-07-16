@@ -57,6 +57,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Scenario Engine | axiom#5 | implemented | verified | smoke | ready | record contract + lint, step DSL (http/sample/assert/wait_until/measure_rss/exec/sleep), verdict bucketing, rig.report/1 |
+| Stateful Service Scenarios | axiom#1645 | implemented | verified | smoke | ready | shared warm-up/observe/fault/recover/verify/teardown runner; bounded phases, retained failure evidence, Lumen/Tape adapters |
 | Load Pins | axiom#5 | implemented | verified | smoke | ready | open-loop loadgen (coordinated-omission honest), floor/ratchet pins, per-host JSON baseline store |
 | Vat Wrapped Runs | axiom#5 | implemented | verified | smoke | ready | `--vat` shells `vat run`, parses JSONL checkpoints, lifts the inner report, removes the vat |
 
@@ -78,6 +79,24 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Record contract check and JSON report | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
 | Scenario step DSL execution | epic | axiom#5 | implemented | verified | smoke | `cargo test -p rig` |
+
+### Stateful Service Scenarios
+
+ID: stateful-service-scenarios
+Type: DeveloperTool
+Surfaces: Library: `rig::engine::stateful::{run_stateful, StatefulScenario, StatefulActions}` - Fixed warm-up, observation, fault, recovery, verification, and teardown lifecycle for long-running stateful services.
+EC Dimensions: stability: `rig.stateful.v1` - bounded phase execution, independent teardown reserve, ordered evidence retention, failed-phase attribution, and deterministic report structure
+Root WI: axiom#1645
+Status: verified
+Required Verification: smoke
+Promise:
+Rig runs the same bounded stateful-service lifecycle for every consumer while each app supplies only its fault operation and domain-specific continuity assertions. A failed or timed-out phase retains all prior evidence and never suppresses teardown.
+Gate Inventory:
+- `cargo test -p rig --test stateful_service_harness`; `cargo test -p lumen --test rig_stateful_adapter`; `cargo test -p tape --test rig_stateful_adapter`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Reusable bounded stateful lifecycle and consumer adapters | epic | axiom#1645 | implemented | verified | smoke | `cargo test -p rig --test stateful_service_harness`; `cargo test -p lumen --test rig_stateful_adapter`; `cargo test -p tape --test rig_stateful_adapter` |
 
 ### Load Pins
 

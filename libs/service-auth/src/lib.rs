@@ -67,11 +67,16 @@
 mod error;
 pub mod llm;
 mod middleware;
+pub mod reload;
 pub mod role_map;
 mod verifier;
 
 pub use error::AuthError;
 pub use middleware::{auth_middleware, bearer_token};
+pub use reload::{
+    AuditedRoleMapPrincipal, AuthEvent, AuthEventSink, AuthorizationDecision, AuthorizationReason,
+    NoopAuthEventSink, ReloadFailure, ReloadableRoleMapVerifier, TracingAuthEventSink,
+};
 pub use role_map::{
     load_registry, Role, RoleMapDenied, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims,
 };

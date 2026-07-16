@@ -203,6 +203,31 @@ semantic_domain:
   coverage_kind: semantic
   evidence:
     source_units:
+      - path: "apps/lumen/tests/admission_e2e.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["test_case"]
+        source_evidence_node: { layer: "backend", ecosystem: "rust", role: "test", section_type: "unit-test", domain: "apps/lumen/tests" }
+      - path: "apps/lumen/tests/prefix_query.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        source_evidence_node: { layer: "backend", ecosystem: "rust", role: "test", section_type: "unit-test", domain: "apps/lumen/tests" }
+      - path: "apps/lumen/tests/rig_stateful_adapter.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["test_case"]
+        source_evidence_node: { layer: "backend", ecosystem: "rust", role: "test", section_type: "unit-test", domain: "apps/lumen/tests" }
+      - path: "apps/lumen/tests/search_all_e2e.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_case"]
+        source_evidence_node: { layer: "backend", ecosystem: "rust", role: "test", section_type: "unit-test", domain: "apps/lumen/tests" }
+      - path: "apps/lumen/tests/shared_stateful_foundations.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["test_case"]
+        source_evidence_node: { layer: "backend", ecosystem: "rust", role: "test", section_type: "unit-test", domain: "apps/lumen/tests" }
       - path: "apps/lumen/tests/perf_gate_vs_db.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -1632,6 +1657,11 @@ coverage_kind: semantic
 strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
 evidence:
   source_tests:
+    - path: "apps/lumen/tests/admission_e2e.rs"
+    - path: "apps/lumen/tests/prefix_query.rs"
+    - path: "apps/lumen/tests/rig_stateful_adapter.rs"
+    - path: "apps/lumen/tests/search_all_e2e.rs"
+    - path: "apps/lumen/tests/shared_stateful_foundations.rs"
     - path: "apps/lumen/tests/perf_gate_vs_db.rs"
     - path: "apps/lumen/tests/spec_cli.rs"
     - path: "apps/lumen/tests/cli_convention.rs"
@@ -1673,6 +1703,31 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
+  - path: "apps/lumen/tests/admission_e2e.rs"
+    action: modify
+    section: unit-test
+    description: "Semantic inventory edge for shared admission-policy adoption evidence."
+    impl_mode: hand-written
+  - path: "apps/lumen/tests/prefix_query.rs"
+    action: modify
+    section: unit-test
+    description: "Semantic inventory edge; full-file replay remains owned by the feature TD."
+    impl_mode: hand-written
+  - path: "apps/lumen/tests/rig_stateful_adapter.rs"
+    action: modify
+    section: unit-test
+    description: "Semantic inventory edge for the shared Rig stateful lifecycle adapter."
+    impl_mode: hand-written
+  - path: "apps/lumen/tests/search_all_e2e.rs"
+    action: modify
+    section: unit-test
+    description: "Semantic inventory edge; full-file replay remains owned by the feature TD."
+    impl_mode: hand-written
+  - path: "apps/lumen/tests/shared_stateful_foundations.rs"
+    action: modify
+    section: unit-test
+    description: "Semantic inventory edge for shared stateful-foundation ownership tests."
+    impl_mode: hand-written
   - path: "apps/lumen/tests/perf_gate_vs_db.rs"
     action: modify
     section: unit-test
@@ -1689,14 +1744,16 @@ changes:
     action: modify
     section: unit-test
     description: |
-      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
-    impl_mode: codegen
+      Full-file replay is owned by the exact per-file rust-source-unit TD; this
+      aggregate semantic inventory only tracks the test surface.
+    impl_mode: hand-written
   - path: "apps/lumen/tests/protocol_transport_e2e.rs"
     action: modify
     section: unit-test
     description: |
-      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
-    impl_mode: codegen
+      Full-file replay is owned by the exact per-file rust-source-unit TD; this
+      aggregate semantic inventory only tracks the test surface.
+    impl_mode: hand-written
   - path: "apps/lumen/tests/cli_convention.rs"
     action: modify
     section: unit-test

@@ -95,6 +95,7 @@ struct ControllableCheckpoint {
     delay: Duration,
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl ControllableCheckpoint {
     fn instant(fail: Arc<AtomicBool>, calls: Arc<AtomicI64>) -> Self {
         Self {
@@ -105,6 +106,7 @@ impl ControllableCheckpoint {
     }
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 #[async_trait]
 impl CheckpointSink for ControllableCheckpoint {
     async fn checkpoint_now(&self) -> anyhow::Result<bool> {
@@ -292,7 +294,8 @@ fn merge_patch(base: &mut serde_json::Value, patch: &serde_json::Value) {
 struct FakeControl {
     cluster: Arc<Mutex<Lumen>>,
     shard_urls: Vec<String>,
-    restart_trigger_calls: AtomicI64,
+    cutover_restart_trigger_calls: AtomicI64,
+    remediation_restart_trigger_calls: AtomicI64,
     /// #1443 AC1: overrides [`ClusterControl::write_fence_ttl_secs`] when
     /// set, so a test can arm/re-arm with a short TTL instead of waiting out
     /// the real 120s production default.
@@ -334,12 +337,14 @@ struct FakeControl {
     fail_next_spec_patch: AtomicBool,
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl FakeControl {
     fn new(cluster: Arc<Mutex<Lumen>>, shard_urls: Vec<String>) -> Self {
         Self {
             cluster,
             shard_urls,
-            restart_trigger_calls: AtomicI64::new(0),
+            cutover_restart_trigger_calls: AtomicI64::new(0),
+            remediation_restart_trigger_calls: AtomicI64::new(0),
             fence_ttl_secs: None,
             topology_converged: None,
             convergence_check_calls: AtomicI64::new(0),
@@ -384,6 +389,7 @@ impl FakeControl {
     }
 }
 
+/// @spec apps/lumen/tech-design/semantic/lumen-tests.md#unit-test
 #[async_trait]
 impl ClusterControl for FakeControl {
     async fn patch_spec(
@@ -411,6 +417,8 @@ impl ClusterControl for FakeControl {
     }
 
     async fn trigger_rolling_restart(&self, _namespace: &str, _name: &str) -> anyhow::Result<()> {
+        self.cutover_restart_trigger_calls
+            .fetch_add(1, Ordering::SeqCst);
         // Normal cutover restart: it may race the ConfigMap update, so it
         // deliberately does not change `pods_report_map_version` in this
         // convergence-remediation harness.
@@ -422,7 +430,8 @@ impl ClusterControl for FakeControl {
         _namespace: &str,
         _name: &str,
     ) -> anyhow::Result<()> {
-        self.restart_trigger_calls.fetch_add(1, Ordering::SeqCst);
+        self.remediation_restart_trigger_calls
+            .fetch_add(1, Ordering::SeqCst);
         // #1485 R1/AC1: simulate the remediation restart actually fixing
         // the stale pod.
         if let Some(flag) = &self.restart_flips {
@@ -610,7 +619,10 @@ async fn full_split_resumes_after_restart_and_reaches_complete() {
         final_lumen.spec.shard_map.assignments.len(),
         VIRTUAL_BUCKET_COUNT as usize
     );
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control.cutover_restart_trigger_calls.load(Ordering::SeqCst),
+        1
+    );
 
     // Source shard evicted exactly the moved documents; nothing else.
     for id in &moving {
@@ -729,7 +741,10 @@ async fn cutover_blocked_until_every_touched_shard_checkpoints() {
         control.snapshot().spec.reshard_policy.workflow.phase,
         ReshardPhase::CatchingUp
     );
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        control.cutover_restart_trigger_calls.load(Ordering::SeqCst),
+        0
+    );
 
     // Force every touched shard's `/admin/checkpoint` to fail. The next tick
     // (CatchingUp -> would-be Complete) must report `Blocked`, leave the
@@ -751,7 +766,7 @@ async fn cutover_blocked_until_every_touched_shard_checkpoints() {
         "must not advance to Complete while a touched shard's checkpoint is failing"
     );
     assert_eq!(
-        control.restart_trigger_calls.load(Ordering::SeqCst),
+        control.cutover_restart_trigger_calls.load(Ordering::SeqCst),
         0,
         "must not trigger a rolling restart before every touched shard is durable"
     );
@@ -772,7 +787,10 @@ async fn cutover_blocked_until_every_touched_shard_checkpoints() {
         control.snapshot().spec.reshard_policy.workflow.phase,
         ReshardPhase::Complete
     );
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control.cutover_restart_trigger_calls.load(Ordering::SeqCst),
+        1
+    );
     assert!(
         checkpoint_calls.load(Ordering::SeqCst) >= 2,
         "expected at least one /admin/checkpoint call per touched shard across the failing \
@@ -852,7 +870,10 @@ async fn cutover_ordering_never_evicts_before_target_checkpoint_succeeds() {
         ReshardPhase::CatchingUp,
         "must not advance past CatchingUp while the target checkpoint is failing"
     );
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        control.cutover_restart_trigger_calls.load(Ordering::SeqCst),
+        0
+    );
     assert_eq!(
         control.snapshot().spec.shard_map.version,
         0,
@@ -893,7 +914,10 @@ async fn cutover_ordering_never_evicts_before_target_checkpoint_succeeds() {
         control.snapshot().spec.reshard_policy.workflow.phase,
         ReshardPhase::Complete
     );
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control.cutover_restart_trigger_calls.load(Ordering::SeqCst),
+        1
+    );
     assert!(
         source_calls.load(Ordering::SeqCst) >= 1,
         "source shard must now be checkpointed too"
@@ -1042,7 +1066,10 @@ async fn write_fence_stays_armed_immediately_after_completed_split() {
     let lumen = control.snapshot();
     let outcome = drive_tick(&control, &http, &lumen).await;
     assert_eq!(outcome, DriveOutcome::CompletedSplit { new_map_version: 1 });
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control.cutover_restart_trigger_calls.load(Ordering::SeqCst),
+        1
+    );
 
     // A write for one of the moved buckets, landing directly on the source
     // shard exactly as it would from a client reaching an old-map pod that
@@ -1653,7 +1680,12 @@ async fn convergence_stall_triggers_exactly_one_remediation_restart_then_converg
         outcome,
         DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
     );
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        control
+            .remediation_restart_trigger_calls
+            .load(Ordering::SeqCst),
+        0
+    );
     assert!(control
         .snapshot()
         .spec
@@ -1688,7 +1720,9 @@ async fn convergence_stall_triggers_exactly_one_remediation_restart_then_converg
         "a failed remediation claim must block before restarting: {outcome:?}"
     );
     assert_eq!(
-        control.restart_trigger_calls.load(Ordering::SeqCst),
+        control
+            .remediation_restart_trigger_calls
+            .load(Ordering::SeqCst),
         0,
         "a restart must never fire until its one-shot claim is durable"
     );
@@ -1715,7 +1749,9 @@ async fn convergence_stall_triggers_exactly_one_remediation_restart_then_converg
          observed the pods reporting the new map version yet"
     );
     assert_eq!(
-        control.restart_trigger_calls.load(Ordering::SeqCst),
+        control
+            .remediation_restart_trigger_calls
+            .load(Ordering::SeqCst),
         1,
         "exactly one remediation rolling-restart re-trigger must fire once the stall budget \
          is exceeded"
@@ -1806,7 +1842,12 @@ async fn convergence_stall_remediation_restart_never_fires_twice_in_the_same_epi
     // First stalled tick: fires the one bounded remediation restart.
     let lumen = control.snapshot();
     drive_tick(&control, &http, &lumen).await;
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control
+            .remediation_restart_trigger_calls
+            .load(Ordering::SeqCst),
+        1
+    );
 
     // Many further stalled ticks (the episode never resolves): the
     // persisted `convergenceRemediationRestartCount == 1` must keep blocking
@@ -1819,7 +1860,9 @@ async fn convergence_stall_remediation_restart_never_fires_twice_in_the_same_epi
             DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
         );
         assert_eq!(
-            control.restart_trigger_calls.load(Ordering::SeqCst),
+            control
+                .remediation_restart_trigger_calls
+                .load(Ordering::SeqCst),
             1,
             "a second stall in the same episode must never re-trigger a second remediation \
              restart"
@@ -1832,7 +1875,7 @@ async fn convergence_stall_remediation_restart_never_fires_twice_in_the_same_epi
 /// — proven by triggering it once, then constructing a brand-new
 /// `FakeControl` over the same `cluster` (this harness's "operator process
 /// restarted" simulation), and driving further stalled ticks against the
-/// new control: its own fresh `restart_trigger_calls` counter must stay at
+/// new control: its own fresh `remediation_restart_trigger_calls` counter must stay at
 /// `0` because the persisted CR state already blocks the re-trigger.
 #[tokio::test]
 async fn convergence_stall_remediation_restart_count_survives_a_simulated_operator_restart() {
@@ -1882,7 +1925,12 @@ async fn convergence_stall_remediation_restart_count_survives_a_simulated_operat
 
     let lumen = control.snapshot();
     drive_tick(&control, &http, &lumen).await;
-    assert_eq!(control.restart_trigger_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        control
+            .remediation_restart_trigger_calls
+            .load(Ordering::SeqCst),
+        1
+    );
     assert_eq!(
         control
             .snapshot()
@@ -1905,9 +1953,11 @@ async fn convergence_stall_remediation_restart_count_survives_a_simulated_operat
             DriveOutcome::AwaitingTopologyConvergence { map_version: 1 }
         );
         assert_eq!(
-            restarted.restart_trigger_calls.load(Ordering::SeqCst),
+            restarted
+                .remediation_restart_trigger_calls
+                .load(Ordering::SeqCst),
             0,
-            "a fresh driver process's own local restart_trigger_calls counter must stay at 0 \
+            "a fresh driver process's own local remediation_restart_trigger_calls counter must stay at 0 \
              — the persisted convergenceRemediationRestartCount, not driver memory, is what \
              blocks the re-trigger across a restart"
         );

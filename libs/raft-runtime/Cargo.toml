@@ -11,7 +11,8 @@ path = "src/lib.rs"
 [dependencies]
 raft-core = { path = "../raft-core" }
 storage-durable = { path = "../storage-durable" }
-transport-h2c = { path = "../transport-h2c" }
+transport-h2c = { path = "../transport-h2c", features = ["server"] }
+peer-tls = { path = "../peer-tls" }
 cli-std = { path = "../cli-std", default-features = false }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
@@ -21,3 +22,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+rustls = "0.23"
+tokio-rustls = "0.26"
+
+[dev-dependencies]
+rcgen = "0.13"
+tempfile = "3"

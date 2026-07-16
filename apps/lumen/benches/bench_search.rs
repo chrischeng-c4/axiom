@@ -1,5 +1,5 @@
 // SPEC-MANAGED: apps/lumen/tech-design/semantic/lumen-benches.md#schema
-// CODEGEN-BEGIN
+// HANDWRITE-BEGIN gap="missing-generator:multi-target-benchmark-source-unit-ownership" tracker="#1634" reason="AW cannot yet partition one semantic Schema section across exact benchmark source-unit targets; preserve the verified benchmark body until #1634 lands canonical ownership."
 //! Search-latency benches on a 100k-document corpus.
 //!
 //! Three scenarios from the README §9 perf-regression suite:
@@ -229,6 +229,7 @@ fn bench_search(c: &mut Criterion) {
                     op: MatchOp::And,
                 }),
                 limit: 20,
+                offset: 0,
                 cursor: None,
                 sort: None,
                 track_total: false,
@@ -251,6 +252,7 @@ fn bench_search(c: &mut Criterion) {
                     op: MatchOp::And,
                 }),
                 limit: 20,
+                offset: 0,
                 cursor: None,
                 sort: None,
                 track_total: false,
@@ -272,6 +274,7 @@ fn bench_search(c: &mut Criterion) {
                     value: FieldValue::String("alpha".into()),
                 }),
                 limit: 20,
+                offset: 0,
                 cursor: None,
                 sort: None,
                 track_total: false,
@@ -289,4 +292,4 @@ fn bench_search(c: &mut Criterion) {
 
 criterion_group!(benches, bench_search);
 criterion_main!(benches);
-// CODEGEN-END
+// HANDWRITE-END

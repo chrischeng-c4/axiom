@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Shard routing.
 //!
@@ -22,7 +22,7 @@ use rayon::prelude::*;
 use crate::api::{SearchBackend, WriteBackend};
 use crate::coordinator::WriteCoordinator;
 use crate::log_entry::RaftLogEntry;
-use crate::storage::{ApplyOutcome, DropOutcome, Engine};
+use crate::storage::{ApplyOutcome, DropOutcome, Engine, StorageError};
 use crate::types::{
     CreateCollectionRequest, CreateCollectionResponse, IndexRequest, IndexResponse, ReplaceDocItem,
     ReplaceDocResult, ReplaceDocsRequest, ReplaceDocsResponse, SearchHit, SearchRequest,
@@ -31,7 +31,7 @@ use crate::types::{
 
 pub const DEFAULT_VIRTUAL_BUCKET_COUNT: u32 = 4096;
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub fn shard_index(collection_id: &str, shard_count: u32) -> u32 {
     let map = VirtualBucketShardMap::balanced(0, DEFAULT_VIRTUAL_BUCKET_COUNT, shard_count)
         .expect("shard_count must be > 0");
@@ -42,7 +42,7 @@ pub fn shard_index(collection_id: &str, shard_count: u32) -> u32 {
 /// routing now uses the same virtual-bucket map as cluster routing, with
 /// `external_id` as the default routing key. That lets one large collection
 /// spread across shards while each document remains owned by exactly one shard.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub fn document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize {
     let physical = u32::try_from(shard_count).expect("shard_count must fit in u32");
     let map = VirtualBucketShardMap::balanced(0, DEFAULT_VIRTUAL_BUCKET_COUNT, physical)
@@ -59,7 +59,7 @@ fn route_hash(collection_id: &str, key: &str) -> u32 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub struct ShardRoute {
     pub map_version: u64,
     pub virtual_bucket_count: u32,
@@ -69,21 +69,21 @@ pub struct ShardRoute {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub enum SearchShardTarget {
     All,
     One(ShardRoute),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub struct VirtualBucketShardMap {
     version: u64,
     assignments: Arc<Vec<u32>>,
     physical_shard_count: u32,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 impl VirtualBucketShardMap {
     pub fn balanced(
         version: u64,
@@ -183,7 +183,7 @@ impl VirtualBucketShardMap {
     /// existing shards. That keeps a single split a bounded, per-source-shard
     /// migration (one batch stream per old shard into the new shard) rather
     /// than a full cluster-wide rebalance.
-    /// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+    /// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
     pub fn split_one_shard(&self, new_version: u64) -> Result<Self> {
         let new_physical_shard_count = self
             .physical_shard_count
@@ -211,19 +211,19 @@ impl VirtualBucketShardMap {
 
 /// DNS for a given shard's stable client entry (any replica will do —
 /// the server forwards writes internally).
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub fn shard_host(prefix: &str, shard: u32, headless_service: &str) -> String {
     format!("{prefix}-{shard}.{headless_service}")
 }
 
 #[derive(Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub struct EngineShardSearch {
     shards: Arc<Vec<Arc<Engine>>>,
     shard_map: VirtualBucketShardMap,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 impl EngineShardSearch {
     pub fn new(shards: Vec<Arc<Engine>>) -> Self {
         let shard_count = u32::try_from(shards.len()).expect("shard count must fit in u32");
@@ -249,7 +249,7 @@ impl EngineShardSearch {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 impl SearchBackend for EngineShardSearch {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
         let selected_shards: Vec<Arc<Engine>> = match self
@@ -282,13 +282,13 @@ impl SearchBackend for EngineShardSearch {
 }
 
 #[derive(Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub struct EngineShardWrite {
     writers: Arc<Vec<Arc<WriteCoordinator>>>,
     shard_map: VirtualBucketShardMap,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 impl EngineShardWrite {
     pub fn new(writers: Vec<Arc<WriteCoordinator>>) -> Self {
         let shard_count = u32::try_from(writers.len()).expect("shard count must fit in u32");
@@ -325,7 +325,7 @@ impl EngineShardWrite {
 }
 
 #[async_trait]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 impl WriteBackend for EngineShardWrite {
     async fn create_collection(
         &self,
@@ -581,7 +581,7 @@ impl WriteBackend for EngineShardWrite {
 /// production sharded router can resolve values from shard-local metadata, while
 /// the scale bench derives deterministic corpus values without widening the
 /// public response type.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub fn search_shards_parallel<S, F, K>(
     collection_id: &str,
     req: SearchRequest,
@@ -595,9 +595,10 @@ where
     K: Fn(&SearchHit, &str) -> Option<f64> + Sync,
 {
     let start = Instant::now();
-    let offset = req.cursor.as_deref().and_then(parse_cursor).unwrap_or(0) as usize;
+    let offset = search_request_offset(&req)?;
     let limit = req.limit as usize;
     let mut shard_req = req.clone();
+    shard_req.offset = 0;
     shard_req.cursor = None;
     shard_req.limit = offset.saturating_add(limit).min(u32::MAX as usize) as u32;
 
@@ -619,7 +620,7 @@ where
     ))
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-routing-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-routing-rs.md#source
 pub fn merge_shard_search_responses<K>(
     req: &SearchRequest,
     responses: impl IntoIterator<Item = SearchResponse>,
@@ -629,7 +630,12 @@ pub fn merge_shard_search_responses<K>(
 where
     K: Fn(&SearchHit, &str) -> Option<f64>,
 {
-    let offset = req.cursor.as_deref().and_then(parse_cursor).unwrap_or(0) as usize;
+    let offset = req
+        .cursor
+        .as_deref()
+        .and_then(parse_cursor)
+        .map(|offset| offset as usize)
+        .unwrap_or_else(|| usize::try_from(req.offset).unwrap_or(usize::MAX));
     let limit = req.limit as usize;
     let mut hits = Vec::new();
     let mut total = 0u64;
@@ -691,6 +697,25 @@ fn parse_cursor(s: &str) -> Option<u64> {
     let raw = STANDARD_NO_PAD.decode(s).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
     v.get("offset")?.as_u64()
+}
+
+pub(crate) fn search_request_offset(req: &SearchRequest) -> Result<usize> {
+    if req.offset != 0 && req.cursor.is_some() {
+        return Err(StorageError::InvalidPagination(
+            "offset and cursor cannot be combined".into(),
+        )
+        .into());
+    }
+    match req.cursor.as_deref().and_then(parse_cursor) {
+        Some(offset) => usize::try_from(offset).map_err(|_| {
+            StorageError::InvalidPagination("cursor offset does not fit this server platform".into())
+                .into()
+        }),
+        None => usize::try_from(req.offset).map_err(|_| {
+            StorageError::InvalidPagination("offset does not fit this server platform".into())
+                .into()
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -878,6 +903,53 @@ mod tests {
     }
 
     #[test]
+    fn merge_shard_search_responses_applies_native_offset_after_global_rank() {
+        let mut req = search_req(None);
+        req.offset = 2;
+        req.limit = 2;
+        let resp = merge_shard_search_responses(
+            &req,
+            [
+                search_resp([hit("a", 4.0), hit("d", 1.0)], 2),
+                search_resp([hit("b", 3.0), hit("c", 2.0)], 2),
+            ],
+            1000,
+            |_, _| None,
+        );
+
+        let ids: Vec<_> = resp.hits.iter().map(|hit| hit.external_id.as_str()).collect();
+        assert_eq!(ids, ["c", "d"]);
+        assert_eq!(resp.total, 4);
+    }
+
+    #[test]
+    fn merge_shard_search_responses_applies_native_offset_after_global_sort() {
+        let mut req = search_req(Some(vec![SortSpec {
+            field: "age".into(),
+            order: SortOrder::Asc,
+            missing: SortMissing::Exclude,
+        }]));
+        req.offset = 1;
+        req.limit = 2;
+        let resp = merge_shard_search_responses(
+            &req,
+            [
+                search_resp([hit("older", 1.0), hit("middle", 1.0)], 2),
+                search_resp([hit("young", 1.0)], 1),
+            ],
+            0,
+            |hit, field| match (hit.external_id.as_str(), field) {
+                ("young", "age") => Some(20.0),
+                ("middle", "age") => Some(35.0),
+                ("older", "age") => Some(70.0),
+                _ => None,
+            },
+        );
+        let ids: Vec<_> = resp.hits.iter().map(|hit| hit.external_id.as_str()).collect();
+        assert_eq!(ids, ["middle", "older"]);
+    }
+
+    #[test]
     fn merge_shard_search_responses_sorts_by_resolved_number_key() {
         let mut req = search_req(None);
         req.sort = Some(vec![SortSpec {
@@ -911,6 +983,7 @@ mod tests {
                 value: FieldValue::String("taipei".into()),
             }),
             limit: 3,
+            offset: 0,
             cursor: None,
             routing_key: None,
             sort,

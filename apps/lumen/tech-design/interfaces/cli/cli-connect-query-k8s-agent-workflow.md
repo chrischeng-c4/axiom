@@ -19,6 +19,7 @@ summary: >
 capability_refs:
   - id: "cli-interface"
     role: primary
+    gap: "service-process-interface"
     claim: "service-process-interface"
     coverage: partial
     rationale: >
@@ -26,6 +27,18 @@ capability_refs:
       workflow layered entirely on the existing HTTP API and token-registry
       Secret convention, closing the gap where an agent had to hand-track a
       port-forward process and hand-decode a Secret to drive a deployed node.
+  - id: "cli-interface"
+    role: primary
+    gap: "lumen-connect-query-k8s-agent-workflow"
+    claim: "lumen-connect-query-k8s-agent-workflow"
+    coverage: full
+    rationale: "Defines the bounded port-forward and typed query workflow advertised by the CLI capability."
+  - id: "developer-agent-experience"
+    role: primary
+    gap: "interactive-tooling"
+    claim: "interactive-tooling"
+    coverage: full
+    rationale: "Owns the interactive `lumen connect` and `lumen query` agent tooling contract."
 fill_sections: [logic, unit-test]
 ---
 

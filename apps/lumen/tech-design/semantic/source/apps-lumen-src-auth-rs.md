@@ -20,23 +20,23 @@ Public API manifest for `apps/lumen/src/auth.rs` generated from AST during Score
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuthConfig` | apps/lumen/src/auth.rs | struct | pub | 53 |  |
-| `AuthContext` | apps/lumen/src/auth.rs | struct | pub | 124 | AuthContext(RoleMapPrincipal) — newtype over `service_auth::RoleMapPrincipal` |
-| `AuthErr` | apps/lumen/src/auth.rs | enum | pub | 148 |  |
-| `LumenVerifier` | apps/lumen/src/auth.rs | struct | pub | 94 | LumenVerifier(service_auth::StaticRoleMapVerifier) — newtype over the shared verifier |
-| `Role` | apps/lumen/src/auth.rs | re-export | pub | 44 | pub use service_auth::Role |
-| `TokenClaims` | apps/lumen/src/auth.rs | re-export | pub | 44 | pub use service_auth::TokenClaims |
-| `auth_middleware` | apps/lumen/src/auth.rs | function | pub | 138 | auth_middleware(     State(verifier): State<Arc<LumenVerifier>>,     req: Request,     next: Next, ) -> Response |
-| `ensure` | apps/lumen/src/auth.rs | function | pub | 128 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
-| `from_env` | apps/lumen/src/auth.rs | function | pub | 67 | from_env() -> Result<Self> |
-| `new` | apps/lumen/src/auth.rs | function | pub | 98 | new(cfg: Arc<AuthConfig>) -> Self |
-| `open` | apps/lumen/src/auth.rs | function | pub | 60 | open() -> Self |
-| `subject` | apps/lumen/src/auth.rs | function | pub | 132 | subject(&self) -> Option<&str> |
+| `AuthConfig` | apps/lumen/src/auth.rs | struct | pub | 57 |  |
+| `AuthContext` | apps/lumen/src/auth.rs | struct | pub | 140 |  |
+| `AuthErr` | apps/lumen/src/auth.rs | enum | pub | 164 |  |
+| `LumenVerifier` | apps/lumen/src/auth.rs | struct | pub | 98 |  |
+| `auth_middleware` | apps/lumen/src/auth.rs | function | pub | 154 | auth_middleware(     State(verifier): State<Arc<LumenVerifier>>,     req: Request,     next: Next, ) -> Response |
+| `ensure` | apps/lumen/src/auth.rs | function | pub | 144 | ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> |
+| `from_env` | apps/lumen/src/auth.rs | function | pub | 71 | from_env() -> Result<Self> |
+| `new` | apps/lumen/src/auth.rs | function | pub | 102 | new(cfg: Arc<AuthConfig>) -> Self |
+| `open` | apps/lumen/src/auth.rs | function | pub | 64 | open() -> Self |
+| `reload_file` | apps/lumen/src/auth.rs | function | pub | 113 | reload_file(&self, path: impl AsRef<Path>) -> Result<u64> |
+| `reload_json` | apps/lumen/src/auth.rs | function | pub | 117 | reload_json(&self, json: &str) -> Result<u64> |
+| `subject` | apps/lumen/src/auth.rs | function | pub | 148 | subject(&self) -> Option<&str> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Bearer-token auth + per-collection RBAC.
 //!
@@ -68,6 +68,7 @@ Public API manifest for `apps/lumen/src/auth.rs` generated from AST during Score
 //! on the target collection meets or exceeds that bar.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
@@ -77,7 +78,10 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
-use service_auth::{AuthError as ServiceAuthError, RoleMapDenied, RoleMapPrincipal, Verifier};
+use service_auth::{
+    AuditedRoleMapPrincipal, AuthError as ServiceAuthError, ReloadableRoleMapVerifier,
+    RoleMapDenied, TracingAuthEventSink, Verifier,
+};
 
 pub use service_auth::{Role, TokenClaims};
 
@@ -87,13 +91,13 @@ const TOKEN_REGISTRY_FILE_ENV: &str = "LUMEN_TOKEN_REGISTRY_FILE";
 const LEGACY_TOKENS_ENV: &str = "LUMEN_TOKENS";
 
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub struct AuthConfig {
     pub required: bool,
     pub tokens: HashMap<String, TokenClaims>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthConfig {
     pub fn open() -> Self {
         Self {
@@ -126,18 +130,30 @@ impl AuthConfig {
 }
 
 /// Lumen's concrete verifier for the shared `service-auth` middleware: a
-/// thin newtype over `service_auth::StaticRoleMapVerifier`.
+/// thin newtype over `service_auth::ReloadableRoleMapVerifier`.
 #[derive(Debug, Clone)]
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
-pub struct LumenVerifier(service_auth::StaticRoleMapVerifier);
+pub struct LumenVerifier(ReloadableRoleMapVerifier);
 
 /// @spec apps/lumen/tech-design/logic/lumen-service-auth-convergence-delegate-middleware-to-shared-ver.md#logic
 impl LumenVerifier {
     pub fn new(cfg: Arc<AuthConfig>) -> Self {
-        Self(service_auth::StaticRoleMapVerifier::new(
+        Self(ReloadableRoleMapVerifier::with_sink(
             cfg.required,
             cfg.tokens.clone(),
+            Arc::new(TracingAuthEventSink),
         ))
+    }
+
+    /// Explicit credential-rotation boundary. Parsing/validation completes
+    /// before the shared verifier swaps its snapshot; errors preserve the
+    /// last-known-good registry.
+    pub fn reload_file(&self, path: impl AsRef<Path>) -> Result<u64> {
+        self.0.reload_file(path)
+    }
+
+    pub fn reload_json(&self, json: &str) -> Result<u64> {
+        self.0.reload_json(json)
     }
 }
 
@@ -155,13 +171,13 @@ impl Verifier for LumenVerifier {
 }
 
 /// Resolved auth state attached to every request as an axum extension. A
-/// thin newtype over the shared [`RoleMapPrincipal`] so [`ensure`](Self::ensure)
+/// thin newtype over the shared [`AuditedRoleMapPrincipal`] so [`ensure`](Self::ensure)
 /// can map its rejection into lumen's own [`AuthErr`] / `ApiError` shape.
 #[derive(Debug, Clone)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
-pub struct AuthContext(RoleMapPrincipal);
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
+pub struct AuthContext(AuditedRoleMapPrincipal);
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl AuthContext {
     pub fn ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> {
         self.0.ensure(collection_id, needed).map_err(AuthErr::from)
@@ -172,7 +188,7 @@ impl AuthContext {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub async fn auth_middleware(
     State(verifier): State<Arc<LumenVerifier>>,
     req: Request,
@@ -182,7 +198,7 @@ pub async fn auth_middleware(
 }
 
 #[derive(Debug)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 pub enum AuthErr {
     Forbidden {
         subject: String,
@@ -191,7 +207,7 @@ pub enum AuthErr {
     },
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl From<RoleMapDenied> for AuthErr {
     fn from(denied: RoleMapDenied) -> Self {
         AuthErr::Forbidden {
@@ -202,7 +218,7 @@ impl From<RoleMapDenied> for AuthErr {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-auth-rs.md#source
 impl IntoResponse for AuthErr {
     fn into_response(self) -> Response {
         match self {
@@ -275,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn lumen_verifier_delegates_to_shared_static_role_map_verifier() {
+    fn lumen_verifier_delegates_to_shared_reloadable_role_map_verifier() {
         let verifier = LumenVerifier::new(Arc::new(AuthConfig {
             required: true,
             tokens: HashMap::from([("abc".to_string(), token(&[("u", Role::Write)]))]),
@@ -299,11 +315,33 @@ mod tests {
             verifier.authenticate(&bad).unwrap_err(),
             ServiceAuthError::Unauthenticated
         ));
+
+        verifier
+            .reload_json(r#"{"rotated":{"subject":"next","roles":{"u":"admin"}}}"#)
+            .unwrap();
+        assert!(verifier.authenticate(&headers).is_err());
+        let mut rotated = HeaderMap::new();
+        rotated.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer rotated".parse().unwrap(),
+        );
+        let ctx = verifier.authenticate(&rotated).unwrap();
+        assert_eq!(ctx.subject(), Some("next"));
+        assert!(ctx.ensure("u", Role::Admin).is_ok());
     }
 
     #[test]
     fn auth_context_ensure_forbidden_maps_resource_to_collection_id() {
-        let ctx = AuthContext(RoleMapPrincipal::Token(token(&[("users", Role::Read)])));
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig {
+            required: true,
+            tokens: HashMap::from([("abc".to_string(), token(&[("users", Role::Read)]))]),
+        }));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer abc".parse().unwrap(),
+        );
+        let ctx = verifier.authenticate(&headers).unwrap();
         match ctx.ensure("users", Role::Write) {
             Err(AuthErr::Forbidden {
                 subject,
@@ -320,7 +358,8 @@ mod tests {
 
     #[test]
     fn auth_context_open_allows_everything() {
-        let ctx = AuthContext(RoleMapPrincipal::Open);
+        let verifier = LumenVerifier::new(Arc::new(AuthConfig::open()));
+        let ctx = verifier.authenticate(&HeaderMap::new()).unwrap();
         assert!(ctx.ensure("any", Role::Admin).is_ok());
         assert_eq!(ctx.subject(), None);
     }

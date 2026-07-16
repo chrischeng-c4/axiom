@@ -38,7 +38,7 @@ Public API manifest for `apps/lumen/src/vector_index.rs` generated from AST duri
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
-// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#rust-source-unit
+// SPEC-MANAGED: apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Vector index backends for `FieldType::Vector`.
 //!
@@ -73,7 +73,7 @@ use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 /// Common backend contract — every concrete index implementation
 /// (HNSW, flat CPU brute force) goes through this trait so the storage
 /// layer doesn't care which one is in use.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub trait VectorIndex: Send + Sync {
     /// Insert (or overwrite) the vector associated with `external_id`.
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()>;
@@ -175,14 +175,14 @@ pub trait VectorIndex: Send + Sync {
 /// L2-normalize embeddings before insertion, which bounds the input
 /// range tightly.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub struct ScalarCodebook {
     pub min: f32,
     pub max: f32,
     pub dim: usize,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl ScalarCodebook {
     /// Empty codebook — the next `widen` call defines the range.
     pub fn empty(dim: usize) -> Self {
@@ -218,7 +218,7 @@ impl ScalarCodebook {
 
 /// Encode a vector to one byte per dimension using `cb`. Out-of-range
 /// values saturate at `0` / `255`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
     let span = cb.range();
     vec.iter()
@@ -230,7 +230,7 @@ pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
 }
 
 /// Decode a u8-encoded vector back to f32 using `cb`.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub fn decode_sq(bytes: &[u8], cb: &ScalarCodebook) -> Vec<f32> {
     let span = cb.range();
     bytes
@@ -314,7 +314,7 @@ struct VectorStore {
     codebook: Option<ScalarCodebook>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl VectorStore {
     fn new(spec: VectorSpec) -> Self {
         let codebook = match spec.quantize {
@@ -401,7 +401,7 @@ impl VectorStore {
 /// Because `hnsw_rs::Hnsw` is parameterised by a concrete distance
 /// type, we keep three internal variants in `HnswInner` and dispatch
 /// on the field's metric at construction time.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub struct HnswCpuIndex {
     inner: RwLock<HnswCpuInner>,
 }
@@ -462,7 +462,7 @@ fn hnsw_search_ef() -> usize {
         .unwrap_or(HNSW_SEARCH_EF_DEFAULT)
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl HnswBackend {
     fn new(metric: VectorMetric, max_elements: usize) -> Self {
         match metric {
@@ -513,7 +513,7 @@ impl HnswBackend {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl HnswCpuIndex {
     /// Construct a fresh, empty CPU HNSW index for the given spec.
     pub fn new(spec: VectorSpec) -> Self {
@@ -566,7 +566,7 @@ impl HnswCpuIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl VectorIndex for HnswCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self
@@ -686,7 +686,7 @@ impl VectorIndex for HnswCpuIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl std::fmt::Debug for HnswCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HnswCpuIndex")
@@ -705,7 +705,7 @@ impl std::fmt::Debug for HnswCpuIndex {
 /// moderate N this beats both an approximate index's build cost and a
 /// single-threaded exact scan (e.g. pgvector's `seqscan`), while giving 100%
 /// recall. The flat buffer is cached and rebuilt lazily after a mutation.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub struct FlatCpuIndex {
     inner: Mutex<FlatInner>,
 }
@@ -748,7 +748,7 @@ struct FlatVecs {
     eid_to_row: HashMap<String, u32>,
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl FlatVecs {
     /// Row `i`'s `dim`-long vector slice. BASE rows (`i < n_base`) come off the
     /// segment mmap (zero-copy); TAIL rows come from the in-RAM `data` buffer at
@@ -774,7 +774,7 @@ impl FlatVecs {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl FlatCpuIndex {
     pub fn new(spec: VectorSpec) -> Self {
         Self {
@@ -982,7 +982,7 @@ impl FlatCpuIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl VectorIndex for FlatCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self
@@ -1208,7 +1208,7 @@ impl VectorIndex for FlatCpuIndex {
     }
 }
 
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 impl std::fmt::Debug for FlatCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FlatCpuIndex")
@@ -1224,7 +1224,7 @@ impl std::fmt::Debug for FlatCpuIndex {
 /// Construct the backend implied by `spec.backend`. This version ships
 /// CPU backends only (HNSW + flat brute-force); GPU-native vector search
 /// is a future chapter.
-/// @spec apps/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
+/// @spec apps/lumen/tech-design/semantic/source/apps-lumen-src-vector_index-rs.md#source
 pub fn open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> {
     match spec.backend {
         crate::types::VectorBackend::HnswCpu => Box::new(HnswCpuIndex::new(spec)),

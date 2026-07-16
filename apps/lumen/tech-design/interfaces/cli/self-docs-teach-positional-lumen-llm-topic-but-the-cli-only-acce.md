@@ -5,16 +5,16 @@ summary: >
   convention so agents copy `lumen llm --topic <topic>` commands that the
   binary actually accepts.
 capability_refs:
-  - id: "cli-interface"
+  - id: "agent-task-navigation"
     role: primary
-    gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    gap: "lumen-llm-v2-task-navigation"
+    claim: "lumen-llm-v2-task-navigation"
     coverage: partial
     rationale: "Keeps the offline llm topic surface copy-paste runnable through the standard `--topic` flag form."
-  - id: "developer-agent-experience"
+  - id: "agent-task-navigation"
     role: primary
-    gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
-    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    gap: "lumen-llm-v2-task-navigation"
+    claim: "lumen-llm-v2-task-navigation"
     coverage: partial
     rationale: "Ensures the self-onboarding path advertised to agents matches the parser and does not fail on the first copied command."
 fill_sections: [logic, unit-test, changes]
