@@ -78,27 +78,23 @@ fn owner_ref(lumen: &Lumen) -> Option<Value> {
     Some(render::owner_ref(API_VERSION, KIND, &name, &uid))
 }
 
-/// Which source (if any) supplies the token registry file. `tokensSecret`
-/// wins over `tokensSecretProviderClass` when both are set (backward
-/// compatible; documented as precedence, not schema-enforced mutual
-/// exclusion). `None` when `auth: off` or neither is set.
-enum TokenRegistrySource<'a> {
-    Secret(&'a str),
-    Csi(&'a str),
-}
-
-fn token_registry_source(lumen: &Lumen) -> Option<TokenRegistrySource<'_>> {
+/// Which shared projection source (if any) supplies the token registry file.
+/// `tokensSecret` wins over `tokensSecretProviderClass` when both are set.
+fn token_registry_source(lumen: &Lumen) -> Option<render::TokenRegistrySource<'_>> {
     if !matches!(lumen.spec.auth, super::crd::AuthMode::Required) {
         return None;
     }
     if let Some(secret) = lumen.spec.tokens_secret.as_deref() {
-        return Some(TokenRegistrySource::Secret(secret));
+        return Some(render::TokenRegistrySource::Secret {
+            name: secret,
+            key: TOKEN_REGISTRY_KEY,
+        });
     }
     lumen
         .spec
         .tokens_secret_provider_class
         .as_deref()
-        .map(TokenRegistrySource::Csi)
+        .map(|provider_class| render::TokenRegistrySource::Csi { provider_class })
 }
 
 /// Stateful data pods are never a direct HPA target. A vanilla HPA changes
@@ -252,28 +248,13 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
     if let Some(source) = token_registry_source(lumen) {
-        volume_mounts.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
-            "readOnly": true,
-        }));
-        let mut volume = json!({ "name": TOKEN_REGISTRY_VOLUME });
-        match source {
-            TokenRegistrySource::Secret(secret) => {
-                volume["secret"] = json!({
-                    "secretName": secret,
-                    "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
-                });
-            }
-            TokenRegistrySource::Csi(provider_class) => {
-                volume["csi"] = json!({
-                    "driver": "secrets-store.csi.k8s.io",
-                    "readOnly": true,
-                    "volumeAttributes": { "secretProviderClass": provider_class },
-                });
-            }
-        }
-        volumes.push(volume);
+        let projection = render::TokenRegistryProjection {
+            volume_name: TOKEN_REGISTRY_VOLUME,
+            mount_path: TOKEN_REGISTRY_MOUNT_DIR,
+            source,
+        };
+        volume_mounts.push(render::token_registry_mount(&projection));
+        volumes.push(render::token_registry_volume(&projection));
     }
     let spread = |key: &str| {
         json!({

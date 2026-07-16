@@ -72,14 +72,23 @@ fn ctx<'a>(tape: &Tape, name: &'a str, ns: &'a str) -> RenderCtx<'a> {
     }
 }
 
-/// Which Secret (if any) supplies the token registry file: only when the CR
-/// sets `auth: required` AND names a `tokensSecret` (relay/lumen's pattern —
-/// off unless the CR asks; probes stay tokenless either way).
-fn token_registry_secret(tape: &Tape) -> Option<&str> {
+/// Which shared projection source (if any) supplies the token registry file.
+/// `tokensSecret` wins over `tokensSecretProviderClass`; both are inactive
+/// unless the CR enables required bearer auth.
+fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>> {
     if tape.spec.auth != "required" {
         return None;
     }
-    tape.spec.tokens_secret.as_deref()
+    if let Some(secret) = tape.spec.tokens_secret.as_deref() {
+        return Some(render::TokenRegistrySource::Secret {
+            name: secret,
+            key: TOKEN_REGISTRY_KEY,
+        });
+    }
+    tape.spec
+        .tokens_secret_provider_class
+        .as_deref()
+        .map(|provider_class| render::TokenRegistrySource::Csi { provider_class })
 }
 
 // <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
@@ -150,7 +159,7 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
     if let Some(level) = &s.log_level {
         extra_env.push(json!({ "name": "RUST_LOG", "value": level }));
     }
-    if token_registry_secret(tape).is_some() {
+    if token_registry_source(tape).is_some() {
         extra_env.push(json!({ "name": "TAPE_AUTH", "value": "required" }));
         extra_env.push(json!({ "name": "TAPE_TOKEN_REGISTRY_FILE", "value": TOKEN_REGISTRY_FILE }));
     }
@@ -160,19 +169,14 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
 
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
-    if let Some(secret) = token_registry_secret(tape) {
-        volumes.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "secret": {
-                "secretName": secret,
-                "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
-            },
-        }));
-        volume_mounts.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
-            "readOnly": true,
-        }));
+    if let Some(source) = token_registry_source(tape) {
+        let projection = render::TokenRegistryProjection {
+            volume_name: TOKEN_REGISTRY_VOLUME,
+            mount_path: TOKEN_REGISTRY_MOUNT_DIR,
+            source,
+        };
+        volumes.push(render::token_registry_volume(&projection));
+        volume_mounts.push(render::token_registry_mount(&projection));
     }
 
     render::service_statefulset(ServiceStatefulSet {

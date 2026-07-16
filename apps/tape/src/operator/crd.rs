@@ -79,6 +79,13 @@ pub struct TapeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret: Option<String>,
 
+    /// Name of a Secrets Store CSI `SecretProviderClass` that projects the
+    /// same `token-registry.json` file as [`Self::tokens_secret`]. It is used
+    /// only with `auth: required`; when both sources are set, `tokensSecret`
+    /// wins for backward compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_secret_provider_class: Option<String>,
+
     /// Exact backup object URI used only when a replacement replica starts on
     /// a fresh PVC. The server consumes it before Raft catch-up and refuses a
     /// non-empty data directory, so this is cold recovery rather than live
