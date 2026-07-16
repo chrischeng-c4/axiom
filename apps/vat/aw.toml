@@ -91,7 +91,7 @@ td_ref = "apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-au
 test_path = "apps/vat/tests/behavior_vat_builtin_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored"
 required_for_production = true
-assertions = ['a `preset = "firebase-auth"` or `preset = "pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
+assertions = ['a `preset = "firebase-auth"` or `preset = "gcloud-pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
 
 [[aw.ec.generated.cases]]
 id = "vat-cli-convention-help-lists-all-three"
@@ -160,7 +160,7 @@ td_ref = "apps/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulat
 test_path = "apps/vat/tests/behavior_vat_cloud_builtin_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_tasks -- --nocapture --include-ignored"
 required_for_production = true
-assertions = ['a `preset = "cloud-tasks"` / `preset = "cloud-scheduler"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
+assertions = ['a `preset = "gcloud-cloud-tasks"` / `preset = "cloud-scheduler"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
 
 [[aw.ec.generated.cases]]
 id = "vat-cloud-emulator-lean-build"

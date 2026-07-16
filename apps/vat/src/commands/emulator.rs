@@ -3,7 +3,7 @@
 //! `vat emulator` — run one of vat's built-in Rust emulators.
 //!
 //! Internal: vat spawns *itself* as the service process for a built-in emulator
-//! preset (`preset = "pubsub"` / `"firebase-auth"`), so this verb is hidden.
+//! preset (`preset = "gcloud-pubsub"` / `"firebase-auth"`), so this verb is hidden.
 //! It builds a tokio runtime and serves until the process is killed (vat's
 //! `stop_services` SIGKILLs it at teardown, like any service).
 

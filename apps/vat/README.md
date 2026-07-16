@@ -340,13 +340,13 @@ preferred**:
   Docker image when it is not; `runtime = "native"` / `"docker"` force one path.
   Datastore/broker presets: `postgres`, `redis`, `nats`, `rabbitmq`, `mysql`,
   `mongo`.
-- `preset` (built-in Rust emulators) — `pubsub`, `firebase-auth`, `cloud-tasks`,
+- `preset` (built-in Rust emulators) — `gcloud-pubsub`, `firebase-auth`, `gcloud-cloud-tasks`,
   `cloud-scheduler`, and `cloud-workflows` run vat's **own** in-process emulator
   under `runtime = auto`: pure Rust, instant start, **no gcloud / Java /
   firebase-tools / Docker**. `pubsub` is a google.pubsub.v1 gRPC server
   (topics/subscriptions, Publish, Pull, StreamingPull, Acknowledge);
   `firebase-auth` is a Firebase Auth (Identity Toolkit) REST server;
-  `cloud-tasks` serves **both the Cloud Tasks v2 gRPC service and the v2 REST API
+  `gcloud-cloud-tasks` serves **both the Cloud Tasks v2 gRPC service and the v2 REST API
   on one port** and delivers each task's httpRequest to its target at scheduleTime
   (or `tasks/{t}:run`); `cloud-scheduler` likewise serves **gRPC + v1 REST** and
   fires a job's httpTarget on its cron schedule (or `jobs/{j}:run`); `cloud-workflows` is a
@@ -379,7 +379,7 @@ preferred**:
   (gcloud) / `runtime = docker` (the cloud-cli image) as a full-fidelity fallback;
   the others are built-in only (no official emulator exists). The async emulator
   stack sits behind a default-on `emulator` Cargo feature (`--no-default-features`
-  drops it). **Wiring a `cloud-tasks` / `cloud-scheduler` client:** these SDKs don't
+  drops it). **Wiring a `gcloud-cloud-tasks` / `cloud-scheduler` client:** these SDKs don't
   read `CLOUD_TASKS_EMULATOR_HOST` / `CLOUD_SCHEDULER_EMULATOR_HOST` (Google ships no
   emulator). Since the emulators now serve **both gRPC and REST**, point the stock
   gRPC client at the host var with an insecure endpoint override (Python:
@@ -391,7 +391,7 @@ preferred**:
   ```toml
   [[services]]
   id = "ps"
-  preset = "pubsub"          # built-in gRPC emulator → PUBSUB_EMULATOR_HOST
+  preset = "gcloud-pubsub"   # built-in gRPC emulator → PUBSUB_EMULATOR_HOST
   ```
 - `preset` (external emulators) — `gcloud-firestore`, `gcloud-datastore`,
   `gcloud-bigtable`, and `gcloud-spanner` wrap the GCP `gcloud beta emulators`

@@ -238,6 +238,7 @@ pub enum ServicePreset {
     Opensearch,
     #[serde(rename = "gcloud-firestore")]
     Firestore,
+    #[serde(rename = "gcloud-pubsub")]
     Pubsub,
     #[serde(rename = "gcloud-datastore")]
     Datastore,
@@ -247,6 +248,7 @@ pub enum ServicePreset {
     Spanner,
     Firebase,
     FirebaseAuth,
+    #[serde(rename = "gcloud-cloud-tasks")]
     CloudTasks,
     CloudScheduler,
     CloudWorkflows,
@@ -1471,7 +1473,7 @@ network = "hermetic"
     fn emulator_presets_round_trip() {
         for (token, preset) in [
             ("gcloud-firestore", ServicePreset::Firestore),
-            ("pubsub", ServicePreset::Pubsub),
+            ("gcloud-pubsub", ServicePreset::Pubsub),
             ("gcloud-datastore", ServicePreset::Datastore),
             ("gcloud-bigtable", ServicePreset::Bigtable),
             ("gcloud-spanner", ServicePreset::Spanner),
@@ -1487,7 +1489,7 @@ network = "hermetic"
             assert!(preset.is_emulator());
         }
 
-        for legacy in ["firestore", "datastore", "bigtable", "spanner"] {
+        for legacy in ["firestore", "pubsub", "datastore", "bigtable", "spanner"] {
             assert!(
                 serde_json::from_value::<ServicePreset>(serde_json::Value::String(
                     legacy.into()
@@ -1525,7 +1527,7 @@ network = "hermetic"
     #[test]
     fn accepts_cloud_tasks_and_scheduler_builtin_presets() {
         for (token, preset) in [
-            ("cloud-tasks", ServicePreset::CloudTasks),
+            ("gcloud-cloud-tasks", ServicePreset::CloudTasks),
             ("cloud-scheduler", ServicePreset::CloudScheduler),
             ("cloud-workflows", ServicePreset::CloudWorkflows),
             ("cloud-storage", ServicePreset::CloudStorage),
@@ -1540,6 +1542,14 @@ network = "hermetic"
             svc.preset = Some(preset);
             assert!(validate(&cfg_with_service(svc)).is_ok());
         }
+
+        assert!(
+            serde_json::from_value::<ServicePreset>(serde_json::Value::String(
+                "cloud-tasks".into()
+            ))
+            .is_err(),
+            "Cloud Tasks must use the gcloud-cloud-tasks preset name"
+        );
     }
 
     #[test]

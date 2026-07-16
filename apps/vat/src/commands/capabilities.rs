@@ -90,9 +90,9 @@ pub fn report() -> CapabilitiesReport {
         isolation: isolation_capabilities(),
         services: ServiceCapabilities {
             builtin_emulators: vec![
-                "pubsub".to_string(),
+                "gcloud-pubsub".to_string(),
                 "firebase-auth".to_string(),
-                "cloud-tasks".to_string(),
+                "gcloud-cloud-tasks".to_string(),
                 "cloud-scheduler".to_string(),
                 "cloud-workflows".to_string(),
                 "cloud-storage".to_string(),
