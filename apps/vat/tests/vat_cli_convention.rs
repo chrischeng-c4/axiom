@@ -40,6 +40,41 @@ fn cli_convention_help_lists_all_three() {
         "vat --help is missing the mandatory `issue` verb:\n{stdout}"
     );
 }
+
+#[test]
+fn documented_agent_commands_match_help() {
+    let out = Command::new(vat()).arg("--help").output().unwrap();
+    assert!(out.status.success(), "vat --help should succeed");
+    let help = String::from_utf8_lossy(&out.stdout);
+    let readme = include_str!("../README.md");
+
+    for command in ["build", "compose", "docker", "k8s"] {
+        assert!(
+            help.lines().any(|line| line.trim_start().starts_with(command)),
+            "vat --help is missing documented `{command}` command:\n{help}"
+        );
+        assert!(
+            readme.contains(&format!("`vat {command}")),
+            "README is missing the `{command}` agent command inventory"
+        );
+    }
+}
+
+#[test]
+fn dx_docs_state_supported_boundaries() {
+    let readme = include_str!("../README.md");
+    for boundary in [
+        "Apple Container",
+        "Docker Engine/API",
+        "general Compose",
+        "persistent Kubernetes",
+    ] {
+        assert!(
+            readme.contains(boundary),
+            "README must state the `{boundary}` support boundary"
+        );
+    }
+}
 // </HANDWRITE>
 
 #[test]
