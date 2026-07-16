@@ -1,3 +1,4 @@
+// SPEC-MANAGED: apps/courier/tech-design/semantic/src/http/github.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:logic:c0ur1e03" tracker="pending-tracker" reason="Outbound GitHub Issues forwarding: GithubClient holds the server-held COURIER_GITHUB_TOKEN + COURIER_ALLOWED_REPOS allow-list, and forwards search/view/create/comment to api.github.com with the exact headers libs/cli-std/src/issue.rs already uses (Accept: application/vnd.github+json, bearer_auth), so courier's wire behavior matches the direct-GitHub path it replaces."
 //! Outbound calls to `api.github.com` on courier's server-held credential.
 //!

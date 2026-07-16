@@ -1,3 +1,4 @@
+// SPEC-MANAGED: apps/courier/tech-design/semantic/src/bin/courier.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:logic:c0ur1e08" tracker="pending-tracker" reason="Single courier CLI bin (clap): bare courier (no subcommand) runs the h2c server with ServeArgs flags falling back to COURIER_* env; Command::Llm/Upgrade/Issue dispatch to cli_std::{llm,upgrade,issue} with courier's ToolInfo; mirrors apps/relay/src/bin/relay.rs."
 //! courier — stateless, GCP-hosted GitHub-issues proxy (HTTP/2 + OpenAPI).
 //!
