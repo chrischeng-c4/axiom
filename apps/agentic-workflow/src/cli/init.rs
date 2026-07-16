@@ -60,6 +60,8 @@ const AGENT_AW_TD_WRITER: &str =
     include_str!("../../templates/cli/mainthread/agents/aw-td-writer.md");
 const AGENT_AW_EC_WRITER: &str =
     include_str!("../../templates/cli/mainthread/agents/aw-ec-writer.md");
+const AGENT_AW_EC_REVIEWER: &str =
+    include_str!("../../templates/cli/mainthread/agents/aw-ec-reviewer.md");
 const AGENT_AW_HW_FILLER: &str =
     include_str!("../../templates/cli/mainthread/agents/aw-hw-filler.md");
 
@@ -1181,6 +1183,7 @@ fn aw_agent_entries() -> Vec<(&'static str, &'static str)> {
         ("aw-dev", AGENT_AW_DEV),
         ("aw-td-writer", AGENT_AW_TD_WRITER),
         ("aw-ec-writer", AGENT_AW_EC_WRITER),
+        ("aw-ec-reviewer", AGENT_AW_EC_REVIEWER),
         ("aw-hw-filler", AGENT_AW_HW_FILLER),
     ]
 }
