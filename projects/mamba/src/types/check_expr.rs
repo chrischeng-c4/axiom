@@ -5496,13 +5496,28 @@ impl TypeChecker {
         };
         let binding_symbol = self.symbols.lookup(name)?;
         let base_ty = self.get_sym_type(binding_symbol.0);
-        match self.tcx.get(base_ty) {
+        let user_symbol = match self.tcx.get(base_ty) {
             Ty::Class {
                 role: ClassRole::Object,
-                user: Some(_),
+                user: Some(user),
                 ..
-            } => {}
+            } => user.symbol,
             _ => return None,
+        };
+        // #1846: `Class[item]` in value position always dispatches to
+        // `type.__getitem__` at runtime, which succeeds whenever the class
+        // defines `__class_getitem__` -- regardless of whether it is
+        // declared generic (PEP 560). Route through that dispatch instead of
+        // the generic-alias wall below when the class isn't generic but
+        // defines its own `__class_getitem__`; annotation-position
+        // specialization (`resolve_named_class_annotation` in check.rs)
+        // never calls this function, so `x: SomeGeneric[int]` arity/bounds
+        // checking is unaffected.
+        if !self.generic_defs.contains_key(&user_symbol) {
+            if let Some(sig) = self.class_object_method(user_symbol, "__class_getitem__") {
+                self.check_expr(index);
+                return Some(sig.return_type);
+            }
         }
         let expressions = match &index.node {
             Expr::TupleLit(items) => items.as_slice(),
@@ -6254,6 +6269,38 @@ impl TypeChecker {
             }
         }
         false
+    }
+
+    /// #1846: look up a method defined directly on the class OBJECT itself
+    /// (walking `class_methods_by_symbol` + `class_base_symbols` for an MRO
+    /// override), not on instances. Needed for `__class_getitem__`, which
+    /// CPython dispatches via `type.__getitem__` on the class value
+    /// (`ClassRole::Object`) rather than on an instance -- `class_defines_dunder`
+    /// above deliberately bails out for `ClassRole::Object` since its other
+    /// callers all check instance-level operator dunders.
+    fn class_object_method(
+        &self,
+        symbol: SymbolId,
+        name: &str,
+    ) -> Option<super::protocol::MethodSig> {
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = vec![symbol];
+        while let Some(cur) = queue.pop() {
+            if !visited.insert(cur) {
+                continue;
+            }
+            if let Some(sig) = self
+                .class_methods_by_symbol
+                .get(&cur)
+                .and_then(|methods| methods.get(name))
+            {
+                return Some(sig.clone());
+            }
+            if let Some(bases) = self.class_base_symbols.get(&cur) {
+                queue.extend(bases.iter().copied());
+            }
+        }
+        None
     }
 
     /// #1031: resolve the compile-time result type of a numeric-derived-class
