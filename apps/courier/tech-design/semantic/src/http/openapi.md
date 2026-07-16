@@ -47,15 +47,16 @@ schemas:
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: semantic
 changes:
-  - action: modify
-    description: 'Pre-existing module captured by `score fillback`.
-  
-      Governance: hand-written until extended with
-  
-      Schema / Logic / Interface sections.'
-    impl_mode: hand-written
-    path: apps/courier/src/http/openapi.rs
-    section: schema
+- action: modify
+  anchor: ApiDoc
+  description: 'Pre-existing module captured by `score fillback`.
+
+    Governance: hand-written until extended with
+
+    Schema / Logic / Interface sections.'
+  impl_mode: hand-written
+  path: apps/courier/src/http/openapi.rs
+  section: schema
+coverage_kind: semantic
 ```

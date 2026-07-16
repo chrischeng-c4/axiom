@@ -304,13 +304,14 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: semantic
 changes:
-  - path: apps/courier/src/http/routes.rs
-    action: modify
-    section: schema
-    impl_mode: hand-written
-  - action: annotate
-    section: logic
-    impl_mode: hand-written
+- action: modify
+  anchor: search_issues
+  impl_mode: hand-written
+  path: apps/courier/src/http/routes.rs
+  section: schema
+- action: annotate
+  impl_mode: hand-written
+  section: logic
+coverage_kind: semantic
 ```

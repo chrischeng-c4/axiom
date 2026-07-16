@@ -22,24 +22,26 @@ schemas: []
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: semantic
 changes:
-  - path: "apps/courier/build.rs"
-    action: modify
-    section: schema
-    impl_mode: hand-written
-    description: |
-      Lossless rust-source-unit ownership created from explicit file fillback.
-  - path: "apps/courier/build.sh"
-    action: modify
-    section: schema
-    impl_mode: hand-written
-    description: |
-      Project build entrypoint.
-  - path: "apps/courier/install.sh"
-    action: modify
-    section: schema
-    impl_mode: hand-written
-    description: |
-      Project installation entrypoint.
+- action: modify
+  anchor: main
+  description: 'Lossless rust-source-unit ownership created from explicit file fillback.
+
+    '
+  impl_mode: hand-written
+  path: apps/courier/build.rs
+  section: schema
+- action: modify
+  description: 'Project build entrypoint.
+
+    '
+  impl_mode: hand-written
+  path: apps/courier/build.sh
+  section: schema
+- action: modify
+  description: Project installation entrypoint.
+  impl_mode: hand-written
+  path: apps/courier/install.sh
+  section: schema
+coverage_kind: semantic
 ```
