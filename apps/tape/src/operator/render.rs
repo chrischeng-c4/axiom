@@ -88,10 +88,7 @@ fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>>
     tape.spec
         .tokens_secret_provider_class
         .as_deref()
-        .map(|provider_class| render::TokenRegistrySource::Csi {
-            provider_class,
-            driver: tape.spec.tokens_secret_csi_driver.as_deref(),
-        })
+        .map(|provider_class| render::TokenRegistrySource::Csi { provider_class })
 }
 
 // <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
@@ -172,19 +169,14 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
 
     let mut volumes = vec![json!({ "name": "tmp", "emptyDir": {} })];
     let mut volume_mounts = vec![json!({ "name": "tmp", "mountPath": "/tmp" })];
-    if let Some(secret) = token_registry_secret(tape) {
-        volumes.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "secret": {
-                "secretName": secret,
-                "items": [{ "key": TOKEN_REGISTRY_KEY, "path": TOKEN_REGISTRY_KEY }],
-            },
-        }));
-        volume_mounts.push(json!({
-            "name": TOKEN_REGISTRY_VOLUME,
-            "mountPath": TOKEN_REGISTRY_MOUNT_DIR,
-            "readOnly": true,
-        }));
+    if let Some(source) = token_registry_source(tape) {
+        let projection = render::TokenRegistryProjection {
+            volume_name: TOKEN_REGISTRY_VOLUME,
+            mount_path: TOKEN_REGISTRY_MOUNT_DIR,
+            source,
+        };
+        volumes.push(render::token_registry_volume(&projection));
+        volume_mounts.push(render::token_registry_mount(&projection));
     }
 
     render::service_statefulset(ServiceStatefulSet {

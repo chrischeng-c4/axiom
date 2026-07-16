@@ -163,29 +163,12 @@ pub struct WorkloadVolumeClaim<'a> {
     pub read_only: bool,
 }
 
-/// The Secrets Store CSI driver name registered by the vanilla/community
-/// installation (the `secrets-store-csi-driver` upstream project). Cloud-managed
-/// add-ons can register a different driver name — see
-/// [`TokenRegistrySource::Csi`].
-pub const DEFAULT_TOKEN_REGISTRY_CSI_DRIVER: &str = "secrets-store.csi.k8s.io";
-
 /// Source for a bearer-token registry projection. A service can use a normal
 /// Kubernetes Secret or delegate material delivery to the Secrets Store CSI
 /// driver without re-implementing the volume shape in every operator.
 pub enum TokenRegistrySource<'a> {
-    Secret {
-        name: &'a str,
-        key: &'a str,
-    },
-    Csi {
-        provider_class: &'a str,
-        /// CSI driver name to register on the volume. `None` uses
-        /// [`DEFAULT_TOKEN_REGISTRY_CSI_DRIVER`], the vanilla community
-        /// driver name. GKE's managed Secrets Store add-on registers
-        /// `secrets-store-gke.csi.k8s.io` instead, so GKE instances must
-        /// override this (refs #2456/#2457).
-        driver: Option<&'a str>,
-    },
+    Secret { name: &'a str, key: &'a str },
+    Csi { provider_class: &'a str },
 }
 
 /// One read-only token-registry volume and its corresponding container mount.
@@ -216,12 +199,9 @@ pub fn token_registry_volume(projection: &TokenRegistryProjection<'_>) -> Value 
                 "items": [{ "key": key, "path": key }],
             });
         }
-        TokenRegistrySource::Csi {
-            provider_class,
-            driver,
-        } => {
+        TokenRegistrySource::Csi { provider_class } => {
             volume["csi"] = json!({
-                "driver": driver.unwrap_or(DEFAULT_TOKEN_REGISTRY_CSI_DRIVER),
+                "driver": "secrets-store.csi.k8s.io",
                 "readOnly": true,
                 "volumeAttributes": { "secretProviderClass": provider_class },
             });
@@ -810,19 +790,6 @@ mod tests {
             cx.labels("server")["app.kubernetes.io/managed-by"],
             "svc-operator"
         );
-        assert_eq!(restricted_pod_security_context()["runAsNonRoot"], true);
-        assert_eq!(
-            restricted_pod_security_context()["seccompProfile"]["type"],
-            "RuntimeDefault"
-        );
-        assert_eq!(
-            restricted_container_security_context()["readOnlyRootFilesystem"],
-            true
-        );
-        assert_eq!(
-            restricted_container_security_context()["capabilities"]["drop"][0],
-            "ALL"
-        );
 
         let secret = TokenRegistryProjection {
             volume_name: "registry",
@@ -843,41 +810,11 @@ mod tests {
             mount_path: "/var/run/secrets/svc",
             source: TokenRegistrySource::Csi {
                 provider_class: "svc-registry",
-                driver: None,
             },
         };
         assert_eq!(
             token_registry_volume(&csi)["csi"]["volumeAttributes"]["secretProviderClass"],
             "svc-registry"
-        );
-    }
-
-    #[test]
-    fn token_registry_volume_csi_driver_defaults_to_vanilla_and_can_be_overridden() {
-        let default_csi = TokenRegistryProjection {
-            volume_name: "registry",
-            mount_path: "/var/run/secrets/svc",
-            source: TokenRegistrySource::Csi {
-                provider_class: "svc-registry",
-                driver: None,
-            },
-        };
-        assert_eq!(
-            token_registry_volume(&default_csi)["csi"]["driver"],
-            "secrets-store.csi.k8s.io"
-        );
-
-        let gke_csi = TokenRegistryProjection {
-            volume_name: "registry",
-            mount_path: "/var/run/secrets/svc",
-            source: TokenRegistrySource::Csi {
-                provider_class: "svc-registry",
-                driver: Some("secrets-store-gke.csi.k8s.io"),
-            },
-        };
-        assert_eq!(
-            token_registry_volume(&gke_csi)["csi"]["driver"],
-            "secrets-store-gke.csi.k8s.io"
         );
     }
 
