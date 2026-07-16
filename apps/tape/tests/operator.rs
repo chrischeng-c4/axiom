@@ -118,7 +118,7 @@ fn crd_flattens_cluster_spec() {
     );
 }
 
-// <HANDWRITE gap="missing-generator:kubernetes-peer-port-test" tracker="pending-tracker" reason="kubernetes-peer-port-test section in operator.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:kubernetes-peer-port-test" tracker="#1805" reason="kubernetes-peer-port-test section in operator.rs is hand-written pending codegen support">
 /// R5 — the rendered StatefulSet carries exactly the downward-API env tape's
 /// serve reads, the right replica count (single group), tape's runtime env +
 /// disk tier, the probe contract, and the sibling child objects.

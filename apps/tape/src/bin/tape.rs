@@ -251,12 +251,6 @@ struct ServeArgs {
     raft_port: u16,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum LogFormat {
-    Pretty,
-    Json,
-}
-
 /// `tape spec [--format ...]` or `tape spec gen ...`. Positional slots are
 /// reserved for the `gen` subcommand; everything else is a flag (the CLI
 /// convention).
@@ -978,9 +972,9 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     }
 
     let app = if peer_transport.is_some() {
-        tape::server::router_without_raft_routes_with_admission(state.clone(), admission)
+        tape::server::router_without_raft_routes(state.clone())
     } else {
-        tape::server::router_with_admission(state.clone(), admission)
+        tape::server::router(state.clone())
     };
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
@@ -1029,7 +1023,7 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
-// <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="pending-tracker" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:serve-peer-transport" tracker="#1805" reason="serve-peer-transport section in tape.rs is hand-written pending codegen support">
 /// Resolve the local journal path for a serving process. Replica mode owns
 /// durability through Raft; only a single-node process derives a store from
 /// its mounted data directory.
@@ -1045,6 +1039,20 @@ fn resolve_journal_store(
             data_dir.map(|dir| dir.join("journal.json"))
         }
     })
+}
+
+/// Reuse the public listener's host portion for the dedicated peer port.
+/// This preserves `0.0.0.0`, hostname, and bracketed IPv6 bindings without
+/// allowing a Raft port to silently replace the public data-plane port.
+fn peer_bind_address(bind: &str, raft_port: u16) -> Result<String> {
+    let (host, _) = bind.rsplit_once(':').ok_or_else(|| {
+        anyhow::anyhow!("cannot derive authenticated raft bind address from --bind {bind}")
+    })?;
+    anyhow::ensure!(
+        !host.is_empty(),
+        "--bind must include a host before its port"
+    );
+    Ok(format!("{host}:{raft_port}"))
 }
 // </HANDWRITE>
 
