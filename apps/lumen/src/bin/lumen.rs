@@ -1111,7 +1111,7 @@ fn dockerfile_next_command(
     match variant {
         DockerfileVariant::Source => format!("docker build -f {} -t lumen:dev .", target.display()),
         DockerfileVariant::Release => {
-            let tag = normalize_lumen_tag(version);
+            let tag = cli_std::artifact::release_tag("lumen", version, env!("CARGO_PKG_VERSION"));
             let ver = tag.trim_start_matches("lumen@");
             format!(
                 "docker build -f {} -t lumen:{ver} --build-arg LUMEN_VERSION={tag} .",
@@ -1211,7 +1211,7 @@ fn crd_yaml() -> String {
 
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
-    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+    cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
 /// `lumen backup` (#808): fetch `{url}/admin/backup` and ship the bytes to
@@ -1695,13 +1695,14 @@ async fn dispatch_query(_args: QueryArgs) -> Result<()> {
 }
 
 fn render_source_dockerfile() -> String {
-    strip_ownership_markers(include_str!("../../Dockerfile"))
+    cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile"))
 }
 
 fn render_release_dockerfile(version: Option<&str>) -> String {
-    let tag = normalize_lumen_tag(version);
+    let tag = cli_std::artifact::release_tag("lumen", version, env!("CARGO_PKG_VERSION"));
     let version = tag.trim_start_matches("lumen@");
-    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let template =
+        cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile.release"));
     let mut out = String::new();
     for line in template.lines() {
         if line.starts_with("#   docker build -f apps/lumen/Dockerfile.release -t lumen:") {
@@ -1720,39 +1721,24 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-fn normalize_lumen_tag(version: Option<&str>) -> String {
-    let raw = version
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .trim();
-    if raw.starts_with("lumen@") {
-        raw.to_string()
-    } else {
-        format!("lumen@{raw}")
-    }
-}
-
 fn render_operator_yaml(namespace: &str) -> String {
     let mut out = String::new();
-    out.push_str(&replace_operator_namespace(
-        &strip_ownership_markers(include_str!("../../k8s/operator/rbac.yaml")),
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/rbac.yaml"
+        )),
+        "lumen-system",
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&replace_operator_namespace(
-        &strip_ownership_markers(include_str!("../../k8s/operator/deployment.yaml")),
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
+        &cli_std::artifact::strip_source_ownership_markers(include_str!(
+            "../../k8s/operator/deployment.yaml"
+        )),
+        "lumen-system",
         namespace,
     ));
-    ensure_trailing_newline(&out)
-}
-
-fn replace_operator_namespace(input: &str, namespace: &str) -> String {
-    input
-        .replace("name: lumen-system", &format!("name: {namespace}"))
-        .replace(
-            "namespace: lumen-system",
-            &format!("namespace: {namespace}"),
-        )
+    cli_std::artifact::ensure_trailing_newline(&out)
 }
 
 fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
@@ -1804,7 +1790,7 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
             yaml.push_str("  imagePullPolicy: IfNotPresent\n  shardCount: REPLACE_ME__SHARD_COUNT\n  replicasPerShard: REPLACE_ME__REPLICAS_PER_SHARD\n  voterCount: REPLACE_ME__VOTER_COUNT\n  logFormat: json\n  serving:\n    cpu: \"1\"\n    memory: 4Gi\n");
         }
     }
-    ensure_trailing_newline(&yaml)
+    cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
 enum InstanceBody {
@@ -1812,22 +1798,6 @@ enum InstanceBody {
     Staging,
     Prod,
     Template,
-}
-
-fn strip_ownership_markers(input: &str) -> String {
-    let mut out = String::new();
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# SPEC-MANAGED:")
-            || trimmed == "# CODEGEN-BEGIN"
-            || trimmed == "# CODEGEN-END"
-        {
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
 }
 
 /// Write `body` to `--out` (or stream it to stdout when `out` is `None`).
@@ -1841,20 +1811,8 @@ fn write_or_print(
     body: &str,
     next: impl FnOnce(&Path) -> String,
 ) -> Result<()> {
-    if let Some(path) = out {
-        let target = if path.extension().is_some() {
-            path.to_path_buf()
-        } else {
-            path.join(default_file)
-        };
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, body)?;
-        println!("wrote {}", target.display());
+    if let Some(target) = cli_std::artifact::write_or_print(out, default_file, body)? {
         println!("next: {}", next(&target));
-    } else {
-        print!("{body}");
     }
     Ok(())
 }
@@ -1863,14 +1821,6 @@ fn write_or_print(
 /// only sensible follow-up is applying it.
 fn kubectl_apply_next(target: &Path) -> String {
     format!("kubectl apply -f {}", target.display())
-}
-
-fn ensure_trailing_newline(input: &str) -> String {
-    if input.ends_with('\n') {
-        input.to_string()
-    } else {
-        format!("{input}\n")
-    }
 }
 
 /// Real [`lumen::api::CheckpointSink`] wiring for segment-persistence mode

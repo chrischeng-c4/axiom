@@ -1272,29 +1272,25 @@ fn crd_yaml() -> String {
 
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
-    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+    cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
 /// Render the operator control-plane manifests (RBAC + Deployment) with the
 /// namespace substituted, from the checked-in fixtures.
 fn render_operator_yaml(namespace: &str) -> String {
     let mut out = String::new();
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/rbac.yaml"),
+        "tape-system",
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/deployment.yaml"),
+        "tape-system",
         namespace,
     ));
-    ensure_trailing_newline(&out)
-}
-
-fn replace_operator_namespace(input: &str, namespace: &str) -> String {
-    input
-        .replace("name: tape-system", &format!("name: {namespace}"))
-        .replace("namespace: tape-system", &format!("namespace: {namespace}"))
+    cli_std::artifact::ensure_trailing_newline(&out)
 }
 
 /// Render a `kind: Tape` custom resource for the selected profile.
@@ -1355,7 +1351,7 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
             );
         }
     }
-    ensure_trailing_newline(&yaml)
+    cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
 enum InstanceBody {
@@ -1385,13 +1381,14 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
 }
 
 fn render_source_dockerfile() -> String {
-    strip_ownership_markers(include_str!("../../Dockerfile"))
+    cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile"))
 }
 
 fn render_release_dockerfile(version: Option<&str>) -> String {
-    let tag = normalize_tape_tag(version);
+    let tag = cli_std::artifact::release_tag("tape", version, env!("CARGO_PKG_VERSION"));
     let version = tag.trim_start_matches("tape@");
-    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let template =
+        cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile.release"));
     let mut out = String::new();
     for line in template.lines() {
         if line.starts_with("#   docker build -f apps/tape/Dockerfile.release -t tape:") {
@@ -1410,64 +1407,11 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-/// Normalize a version input into a `tape@<version>` release tag, defaulting
-/// to the compiled crate version.
-fn normalize_tape_tag(version: Option<&str>) -> String {
-    let raw = version
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .trim();
-    if raw.starts_with("tape@") {
-        raw.to_string()
-    } else {
-        format!("tape@{raw}")
-    }
-}
-
-/// Strip AW source-ownership markers so the rendered Dockerfile is the one
-/// users build (a no-op for tape's marker-free fixtures; kept for parity).
-fn strip_ownership_markers(input: &str) -> String {
-    let mut out = String::new();
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# SPEC-MANAGED:")
-            || trimmed == "# CODEGEN-BEGIN"
-            || trimmed == "# CODEGEN-END"
-        {
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 /// Write `body` to `out` (a file, or `default_file` inside a directory) or
 /// print it to stdout.
 fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
-    if let Some(path) = out {
-        let target = if path.extension().is_some() {
-            path.to_path_buf()
-        } else {
-            path.join(default_file)
-        };
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, body)?;
-        println!("wrote {}", target.display());
-    } else {
-        print!("{body}");
-    }
+    cli_std::artifact::write_or_print(out, default_file, body)?;
     Ok(())
-}
-
-fn ensure_trailing_newline(input: &str) -> String {
-    if input.ends_with('\n') {
-        input.to_string()
-    } else {
-        format!("{input}\n")
-    }
 }
 
 #[cfg(test)]
@@ -1665,7 +1609,7 @@ mod tests {
     }
 
     /// #1328: `tape dockerfile render` parses with variant/version/out flags,
-    /// and `normalize_tape_tag` converges bare/prefixed tags.
+    /// and the shared tag helper converges bare/prefixed tags.
     #[test]
     fn dockerfile_verbs_parse() {
         let cli = Cli::try_parse_from([
@@ -1687,10 +1631,16 @@ mod tests {
             }
             _ => panic!("expected dockerfile render"),
         }
-        assert_eq!(normalize_tape_tag(Some("1.2.3")), "tape@1.2.3");
-        assert_eq!(normalize_tape_tag(Some("tape@1.2.3")), "tape@1.2.3");
         assert_eq!(
-            normalize_tape_tag(None),
+            cli_std::artifact::release_tag("tape", Some("1.2.3"), env!("CARGO_PKG_VERSION")),
+            "tape@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("tape", Some("tape@1.2.3"), env!("CARGO_PKG_VERSION")),
+            "tape@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("tape", None, env!("CARGO_PKG_VERSION")),
             format!("tape@{}", env!("CARGO_PKG_VERSION"))
         );
     }
