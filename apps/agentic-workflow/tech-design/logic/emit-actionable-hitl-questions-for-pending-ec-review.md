@@ -26,7 +26,7 @@ edges:
   - { from: objective, to: evidence, label: "no" }
   - { from: evidence, to: generate, label: "yes" }
   - { from: evidence, to: question, label: "no" }
-  - { from: question, to: human, label: "host calls ask_user_question" }
+  - { from: question, to: human, label: "host maps user_question to its native tool" }
   - { from: human, to: persist, label: "accept with summary" }
   - { from: human, to: revise, label: "revision findings" }
   - { from: persist, to: generate }
@@ -37,7 +37,7 @@ flowchart TD
     objective -->|no| evidence{Current human review accepted?}
     evidence -->|yes| generate([Run EC generation and verification])
     evidence -->|no| question[Emit target, six checks, choices, payload, and resume]
-    question -->|host calls ask_user_question| human{Human accepts or requests revision}
+    question -->|host maps user_question to native tool| human{Human accepts or requests revision}
     human -->|accept with summary| persist[Validate digest-bound human evidence]
     human -->|revision findings| revise
     persist --> generate
@@ -47,6 +47,14 @@ flowchart TD
 
 ```yaml
 changes:
+  - path: apps/agentic-workflow/src/cli/capability.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: "HitlQuestion"
+    gap: "missing-generator:logic"
+    tracker: "#1806"
+    reason: "HITL envelopes name a host-neutral user_question interaction instead of a host-specific tool."
   - path: apps/agentic-workflow/src/cli/ec.rs
     action: modify
     section: logic
@@ -55,6 +63,14 @@ changes:
     gap: "missing-generator:logic"
     tracker: "#1806"
     reason: "EC review HITL question requires bounded integration in run_review."
+  - path: apps/agentic-workflow/templates/cli/mainthread/CLAUDE.md.tmpl
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: "requires_hitl=true"
+    gap: "missing-generator:logic"
+    tracker: "#1806"
+    reason: "Host guidance maps the semantic interaction to the native Claude Code, Codex, or AGY tool."
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->

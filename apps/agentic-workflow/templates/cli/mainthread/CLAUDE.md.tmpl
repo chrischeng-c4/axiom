@@ -50,10 +50,12 @@ not a lifecycle bypass.
 `<cap-id>` to run the whole project end to end). Follow `invoke.command` and
 `agent_prompt` from either until `completion.workflow_complete=true` or
 `requires_hitl=true`. If a HITL envelope includes
-`hitl_question.tool_hint=ask_user_question`, invoke the host's native
-user-question tool immediately with its question, choices, and freeform prompt;
-do not treat the envelope as terminal output or fabricate human approval. If the
-host has no such tool, present every field as a blocking human question. (The
+`hitl_question.interaction.kind=user_question`, invoke the host's native
+user-question tool immediately with its question, choices, and freeform prompt:
+Claude Code uses `AskUserQuestion`, Codex uses `request_user_input` when that
+tool is exposed, and AGY uses `ask_user`. Do not treat the envelope as terminal
+output or fabricate human approval. If the host has no such tool, present every
+field as a blocking human question. (The
 old top-level runner verb is retired.)
 
 `aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `show`,
