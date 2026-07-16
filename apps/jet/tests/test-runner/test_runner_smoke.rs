@@ -926,14 +926,13 @@ async fn test_worker_preserves_trailing_named_exports_from_physical_esm_packages
         r#"{
   "name": "@testing-library/react",
   "main": "dist/index.js",
-  "module": "dist/@testing-library/react.esm.js",
-  "exports": {
-    ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/@testing-library/react.esm.js"
-    }
-  }
+  "module": "dist/@testing-library/react.esm.js"
 }"#,
+    )
+    .unwrap();
+    fs::write(
+        package.join("dist/index.js"),
+        "module.exports = { legacy: true };\n",
     )
     .unwrap();
     fs::write(

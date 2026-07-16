@@ -57,6 +57,7 @@ const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
 /// Both behaviors stay test-only and leave package export resolution intact.
 const TEST_ASSET_LOADER: &str = r##"
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ASSET_EXTENSIONS = new Set([
@@ -88,6 +89,25 @@ function isUnsupportedCommonJsFacadeSpecifier(specifier) {
     || specifier.startsWith("\0")
     || specifier.startsWith("#")
     || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier) && !specifier.startsWith("file:"));
+}
+
+function inferredEsmModuleResolution(resolved) {
+  if (
+    (resolved.format && resolved.format !== "commonjs")
+    || !resolved.url?.startsWith("file:")
+  ) {
+    return null;
+  }
+
+  try {
+    const source = readFileSync(fileURLToPath(resolved.url), "utf8");
+    const hasEsmSyntax = /(?:^|[\r\n])\s*(?:import\s*(?:["']|[A-Za-z_$*{])|export\s+(?:default\b|\*|\{|(?:async\s+)?(?:const|let|var|function|class)\b))/.test(source);
+    return hasEsmSyntax
+      ? { ...resolved, format: "module", shortCircuit: true }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function namedCommonJsFacadeUrl(specifier, context, resolved) {
@@ -146,6 +166,10 @@ function isTestStylesheetUrl(url) {
 export async function resolve(specifier, context, nextResolve) {
   try {
     const resolved = await nextResolve(specifier, context);
+    const inferredEsm = inferredEsmModuleResolution(resolved);
+    if (inferredEsm) {
+      return inferredEsm;
+    }
     const facadeUrl = namedCommonJsFacadeUrl(specifier, context, resolved);
     if (facadeUrl) {
       return { url: facadeUrl, shortCircuit: true };
