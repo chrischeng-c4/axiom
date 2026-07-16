@@ -48,13 +48,13 @@ Two distinct denominators — do not conflate:
 **Self-defined fixtures (regression baseline, not a CPython compat metric).** These are fixtures we authored ourselves; passing them prevents regressions but does not prove CPython compatibility. See #1398 for the retraction.
 
 - [tests/harness/cpython/runner.rs](tests/harness/cpython/runner.rs): top-level conformance runner
-- [tests/harness/cpython/status.rs](tests/harness/cpython/status.rs): fast CPython fixture/perf/oracle readiness summary — `cargo test -p mamba --test cpython_status -- --json`; fill baseline gaps with `python3 tests/cpython/tools/perf_baseline.py record --missing-only --ready-only --limit 10 --keep-going`
+- [tests/harness/cpython/status.rs](tests/harness/cpython/status.rs): fast CPython fixture/perf/oracle readiness summary — `cargo test -p mamba --test cpython_status -- --json`; fill baseline gaps with `python3 tests/harness/cpython/tools/perf_baseline.py record --missing-only --ready-only --limit 10 --keep-going`
 - [tests/harness/cpython/tools/runtime_fast_loop.py](tests/harness/cpython/tools/runtime_fast_loop.py): runtime fix inner loop — one guarded debug build when needed, then changed-fixture/lib-cluster `sweep.py` validation in seconds
 - [tests/cpython_compat.rs](tests/cpython_compat.rs): CPython behaviour parity fixtures
 - [tests/generator_conformance_tests.rs](tests/generator_conformance_tests.rs), [iterator_conformance_tests.rs](tests/iterator_conformance_tests.rs)
 - [tests/behavioral_builtins_tests.rs](tests/behavioral_builtins_tests.rs), [behavioral_lang_tests.rs](tests/behavioral_lang_tests.rs), [behavioral_stdlib_tests.rs](tests/behavioral_stdlib_tests.rs)
 - [tests/p0_conformance_tests.rs](tests/p0_conformance_tests.rs): P0-tier core language fixtures
-- [tests/cpython/fixtures/](tests/cpython/fixtures/): `.py` / `.json` fixture inputs grouped by bucket (core / pep / builtin-libs / std-libs / 3rd-libs / type-strict)
+- [tests/cpython/](tests/cpython/): `.py` / `.json` fixture inputs, facet-first by dimension (surface / behavior / errors / bench / real_world / security), then bucket (core / pep / builtin-libs / std-libs / 3rd-libs / type-strict) / lib / case
 - [tests/cpython/cpython_ported/](tests/cpython/cpython_ported/): hand-ported CPython tests (small subset)
 
 **External denominator (real Goal 1 metric — pending).** Not yet wired:
@@ -79,7 +79,7 @@ External-fixture conformance harnesses (Phase 1) live under
 `projects/mamba/tests/cpython/` with two parallel buckets
 per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
 `<lib>/bench/<scenario>.py` for cross-runtime timing. Convention is in
-[tests/cpython/conventions/REAL-WORLD-CONVENTION.md](tests/cpython/conventions/REAL-WORLD-CONVENTION.md).
+[tests/harness/cpython/conventions/REAL-WORLD-CONVENTION.md](tests/harness/cpython/conventions/REAL-WORLD-CONVENTION.md).
 
 - [tests/harness/cpython/real_world.rs](tests/harness/cpython/real_world.rs): real-world fixture runner (Phase 1.E) — `cargo test -p mamba --test conformance_real_world -- --ignored`
 - [benches/3p/cross_runtime.rs](benches/3p/cross_runtime.rs): cross-runtime bench (Phase 1.C) — `cargo bench -p mamba --bench cross_runtime_3p`; emits `[lib/scenario] mamba/cpython = X.YYx (PASS|FAIL @ floor 1.0x)` per fixture, exits non-zero on FAIL. Today's wired ratio: `_baseline/fib_recursive` ≈ 17x.
@@ -87,7 +87,7 @@ per library: `<lib>/real_world/<scenario>.py` for R4 exit-0 gates and
   - **Unittest (Phase 1.A)** — `class X(unittest.TestCase)` + `def test_*(self)`. Picked for CPython `Lib/test/` paths.
   - **Pytest (Phase 1.B)** — module-scope `def test_*(...)`. Picked for `vendor_tests/`, `/3p/`, `site-packages/`, or any path containing a `tests/` segment (vendor PyPI layout). Recognises `@pytest.mark.{skip,xfail,parametrize}`; parametrize fans out one case per param row with label `test_name[i]`; tests requesting unsupported fixtures emit an ERROR record (never silent PASS — acceptance gate). `conftest.py` siblings are prepended to each harness so fixtures defined there are in scope (outermost-first concat order).
   Both branches spawn **one subprocess per test case** (mamba's assertion helpers panic from `extern "C"` and cannot unwind — the only reliable isolation is process boundary). Exit-classifies each child: 0 + `MAMBA_PYTEST_END` marker → PASS; non-zero stderr containing `SkipTest:` → SKIP; non-zero panic → FAIL; load-check failure → one ERROR record for the whole file. Top-level `unittest.main()` calls are rewritten to `pass` so the per-test harness owns execution. Run-level exit is non-zero iff any FAIL or ERROR.
-  Baseline pytest-layout fixture: [tests/cpython/fixtures/3rd-libs/_baseline/vendor_tests/test_smoke.py](tests/cpython/fixtures/3rd-libs/_baseline/vendor_tests/test_smoke.py) (1 PASS + 1 FAIL + exit 1).
+  Baseline pytest-layout fixture: [tests/cpython/_regression/3rd-libs/_baseline/vendor_tests/test_smoke.py](tests/cpython/_regression/3rd-libs/_baseline/vendor_tests/test_smoke.py) (1 PASS + 1 FAIL + exit 1).
 
 ## Project config
 

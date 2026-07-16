@@ -20,7 +20,7 @@
 #     (timing-based fixture).
 #   - R4: 583/583 single-async-gen conformance stays green.
 #   - R5: new fixture under
-#     `projects/mamba/tests/cpython/core/async/async_gen_concurrent/`
+#     `projects/mamba/tests/cpython/real_world/core/async_gen_concurrent/`
 #     pins the interleave behavior.
 #
 # Out of scope: rewriting MbGenerator, async I/O backends beyond
@@ -136,7 +136,7 @@ must_provide_concurrent_async_gen_fixture = true
 must_pin_concurrent_async_gen_fixture_relative_path = true
 forbid_concurrent_async_gen_fixture_being_skipped = true
 forbid_concurrent_async_gen_fixture_silently_classified_as_single_gen = true
-concurrent_fixture_relative_path = "projects/mamba/tests/cpython/core/async/async_gen_concurrent"
+concurrent_fixture_relative_path = "projects/mamba/tests/cpython/real_world/core/async_gen_concurrent"
 concurrent_fixture_relative_path_field_name = "concurrent_fixture_relative_path"
 concurrent_fixture_missing_failure_kind = "async_gen_concurrent_fixture_missing"
 concurrent_fixture_missing_exit_code = 311

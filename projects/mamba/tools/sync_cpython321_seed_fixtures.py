@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Promote CPython 3.12.1-style seed contracts into fixture manifests.
 
-The seed corpus under tests/cpython/config/seeds is an external denominator:
-small, assertion-heavy CPython contracts collected from core language,
-builtins, and stdlib behavior. This tool turns the pass/spec seed files into
-regular PEP-723 fixtures under tests/cpython/fixtures so the CPython oracle can
-prove the fixtures themselves before mamba runtime work starts.
+The seed corpus under tests/harness/cpython/config/seeds is an external
+denominator: small, assertion-heavy CPython contracts collected from core
+language, builtins, and stdlib behavior. This tool turns the pass/spec seed
+files into regular PEP-723 fixtures under tests/cpython so the CPython oracle
+can prove the fixtures themselves before mamba runtime work starts.
 
 Generated fixtures are mamba-xfail by default. They define the target contract
 now without making today's runtime gate red; runtime work promotes individual
