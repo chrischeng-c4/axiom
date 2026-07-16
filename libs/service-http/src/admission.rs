@@ -169,10 +169,11 @@ struct AdmissionInner {
     epoch: Instant,
 }
 
-// <HANDWRITE gap="missing-generator:service-http-admission-config" tracker="#1823" reason="Typed prefix-scoped admission configuration is hand-written pending codegen support.">
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in admission.rs is hand-written pending codegen support">
 /// Cloneable shared admission controller. An empty policy set is disabled.
 #[derive(Clone)]
 pub struct AdmissionController(Arc<AdmissionInner>);
+// </HANDWRITE>
 
 /// Validated, opt-in admission settings shared by service adopters.
 ///
