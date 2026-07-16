@@ -1320,6 +1320,53 @@ test("keeps Jest mock, timer, actual-module, and expect helpers meaningful", asy
 }
 
 #[tokio::test]
+async fn test_worker_hoists_jest_mocks_for_static_import_bindings() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("jest-static-mocks.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { getWorkspaceTypeAndId } from "./get-workspace-type-and-id";
+import { NumberFormat } from "@tw-tech/shared-utils";
+
+jest.mock("./get-workspace-type-and-id");
+jest.mock("@tw-tech/shared-utils", () => ({
+  NumberFormat: { baseFormat: jest.fn() },
+}));
+
+test("hoists auto and factory mocks before their static bindings", () => {
+  getWorkspaceTypeAndId.mockImplementation((id) => ({ id, kind: "workspace" }));
+  expect(getWorkspaceTypeAndId("jet")).toEqual({ id: "jet", kind: "workspace" });
+
+  const mockBaseFormat = NumberFormat.baseFormat;
+  mockBaseFormat.mockImplementation((value) => value.toFixed(2));
+  expect(mockBaseFormat(1.2)).toBe("1.20");
+  mockBaseFormat.mockImplementationOnce((value) => `once:${value}`);
+  expect(mockBaseFormat(3)).toBe("once:3");
+  expect(mockBaseFormat(3)).toBe("3.00");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "static Jest mock bindings must expose the full mock API: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
 async fn test_worker_strips_inline_type_exports_from_transitive_barrels() {
     if which::which("node").is_err() {
         eprintln!("skipping: node not on PATH");
