@@ -1404,6 +1404,17 @@ fn lru_encode_value_key(v: MbValue, out: &mut String) {
             out.push_str(&hash_val.to_string());
             out.push('}');
         }
+        DictKey::BigInt { hash_val, .. } => {
+            // Exact decimal-value encode (not identity) so two BigInts with
+            // the same value, even from separate allocations, share one
+            // cache slot — unlike Instance, the value is fully encodable and
+            // deterministic, so there is no need to lean on pointer identity.
+            out.push('I');
+            match unsafe { super::super::bigint_ops::extract_bigint(v) } {
+                Some(big) => out.push_str(&big.to_string()),
+                None => out.push_str(&hash_val.to_string()),
+            }
+        }
     }
 }
 

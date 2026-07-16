@@ -550,6 +550,15 @@ pub enum DictKey {
         hash_val: i64,
         ptr: usize,
     },
+    /// Heap-boxed BigInt key — hashed by numeric value via
+    /// `bigint_ops::mb_int_hash` (Python int hash semantics), so two
+    /// separately-allocated BigInt objects with the same value bucket
+    /// together instead of splitting by pointer identity. `ptr` retains the
+    /// object so `mb_int_eq` can break hash collisions.
+    BigInt {
+        hash_val: i64,
+        ptr: usize,
+    },
 }
 
 impl Clone for DictKey {
@@ -600,6 +609,16 @@ impl Clone for DictKey {
                     ptr: *ptr,
                 }
             }
+            DictKey::BigInt { hash_val, ptr } => {
+                let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
+                unsafe {
+                    super::rc::retain_if_ptr(val);
+                }
+                DictKey::BigInt {
+                    hash_val: *hash_val,
+                    ptr: *ptr,
+                }
+            }
         }
     }
 }
@@ -609,7 +628,8 @@ impl Drop for DictKey {
         match self {
             DictKey::Instance { ptr, .. }
             | DictKey::Tuple { ptr, .. }
-            | DictKey::FrozenSet { ptr, .. } => {
+            | DictKey::FrozenSet { ptr, .. }
+            | DictKey::BigInt { ptr, .. } => {
                 let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
                 unsafe {
                     super::rc::release_if_ptr(val);
@@ -733,6 +753,7 @@ impl std::hash::Hash for DictKey {
                     DictKey::Func(addr) => addr.hash(state),
                     DictKey::Tuple { hash_val, .. } => hash_val.hash(state),
                     DictKey::FrozenSet { hash_val, .. } => hash_val.hash(state),
+                    DictKey::BigInt { hash_val, .. } => hash_val.hash(state),
                     DictKey::Str(_) | DictKey::StrCodepoints(_) | DictKey::Instance { .. } => {
                         unreachable!()
                     }
@@ -830,6 +851,28 @@ impl PartialEq for DictKey {
                 super::builtins::mb_eq(a_val, b_val)
                     .as_bool()
                     .unwrap_or(false)
+            }
+            (
+                DictKey::BigInt {
+                    hash_val: ha,
+                    ptr: pa,
+                },
+                DictKey::BigInt {
+                    hash_val: hb,
+                    ptr: pb,
+                },
+            ) => {
+                if ha != hb {
+                    return false;
+                }
+                if pa == pb {
+                    return true;
+                }
+                // Hash collision with different allocations of the same
+                // numeric value — compare by magnitude/sign, not pointer.
+                let a_val = super::value::MbValue::from_ptr(*pa as *mut super::rc::MbObject);
+                let b_val = super::value::MbValue::from_ptr(*pb as *mut super::rc::MbObject);
+                unsafe { super::bigint_ops::mb_int_eq(a_val, b_val) }
             }
             (DictKey::Other(a), DictKey::Other(b)) => a == b,
             (DictKey::Func(a), DictKey::Func(b)) => a == b,
@@ -934,7 +977,9 @@ impl std::fmt::Display for DictKey {
             }
             DictKey::Other(s) => write!(f, "{s}"),
             DictKey::Func(addr) => write!(f, "<function at 0x{addr:x}>"),
-            DictKey::Tuple { ptr, .. } | DictKey::FrozenSet { ptr, .. } => {
+            DictKey::Tuple { ptr, .. }
+            | DictKey::FrozenSet { ptr, .. }
+            | DictKey::BigInt { ptr, .. } => {
                 let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
                 let r = super::builtins::mb_repr(val);
                 let s = r
@@ -1055,6 +1100,18 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
                     let h = super::builtins::mb_hash(val).as_int().unwrap_or(0);
                     super::rc::retain_if_ptr(val);
                     return DictKey::FrozenSet {
+                        hash_val: h,
+                        ptr: ptr as usize,
+                    };
+                }
+                ObjData::BigInt(_) => {
+                    // Value hash (not pointer identity), so two separately
+                    // allocated BigInts with the same magnitude/sign bucket
+                    // together; retain the object so mb_int_eq can break
+                    // hash collisions between different allocations.
+                    let h = super::bigint_ops::mb_int_hash(val);
+                    super::rc::retain_if_ptr(val);
+                    return DictKey::BigInt {
                         hash_val: h,
                         ptr: ptr as usize,
                     };
@@ -1377,7 +1434,9 @@ pub fn dict_key_to_mbvalue(key: &DictKey) -> MbValue {
         }
         DictKey::Other(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
         DictKey::Func(addr) => MbValue::from_func(*addr),
-        DictKey::Tuple { ptr, .. } | DictKey::FrozenSet { ptr, .. } => {
+        DictKey::Tuple { ptr, .. }
+        | DictKey::FrozenSet { ptr, .. }
+        | DictKey::BigInt { ptr, .. } => {
             let val = MbValue::from_ptr(*ptr as *mut MbObject);
             unsafe {
                 super::rc::retain_if_ptr(val);
@@ -1445,7 +1504,8 @@ pub fn dict_key_display(key: &DictKey) -> String {
         DictKey::None => "None".to_string(),
         DictKey::Instance { ptr, .. }
         | DictKey::Tuple { ptr, .. }
-        | DictKey::FrozenSet { ptr, .. } => {
+        | DictKey::FrozenSet { ptr, .. }
+        | DictKey::BigInt { ptr, .. } => {
             let val = MbValue::from_ptr(*ptr as *mut MbObject);
             super::builtins::mb_repr(val)
                 .as_ptr()
