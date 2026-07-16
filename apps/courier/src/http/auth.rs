@@ -1,3 +1,4 @@
+// SPEC-MANAGED: apps/courier/tech-design/semantic/src/http/auth.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:logic:c0ur1e02" tracker="pending-tracker" reason="courier's service-auth adapter: AuthConfig (COURIER_AUTH off|required mode parse + token-registry load via service_auth::load_registry with startup fail-fast naming COURIER_TOKEN_REGISTRY_FILE), StaticRoleMapVerifier construction (registry when required, open() when off), and the per-handler authorize(principal, resource, needed) helper mapping RoleMapDenied to the shared 403 forbidden shape."
 //! courier's adoption of the shared `libs/service-auth` bearer contract.
 //!

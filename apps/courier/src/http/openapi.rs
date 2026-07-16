@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/courier/tech-design/interfaces/rest/github-issues-proxy.md#rest-api
+// SPEC-MANAGED: apps/courier/tech-design/semantic/src/http/openapi.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:rest-api:c0ur1e05" tracker="pending-tracker" reason="utoipa OpenAPI document for the four proxy endpoints, served at /openapi.json."
 //! utoipa OpenAPI document for courier's GitHub-issues-proxy data plane.
 //!
