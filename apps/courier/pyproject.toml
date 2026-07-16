@@ -1,0 +1,17 @@
+[project]
+name = "courier"
+version = "0.4.4"
+description = "courier — stateless, GCP-hosted GitHub-issue proxy"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.139.1",
+    "uvicorn>=0.51.0",
+    "pydantic>=2.13.4",
+    "httpx>=0.28.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "anyio>=4.14.2",
+]

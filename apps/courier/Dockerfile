@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies using uv sync
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --system
 
 # Copy app code
 COPY app/ app/
