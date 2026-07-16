@@ -61,32 +61,38 @@ changes:
     action: modify
     section: serve-peer-transport
     impl_mode: hand-written
+    description: Select the existing h2c topology when peer TLS is absent, otherwise build the shared required-mTLS transport, use an https topology on TAPE_RAFT_PORT, run the dedicated peer listener, and join it to public drain.
   - path: apps/tape/src/raft.rs
     action: modify
     section: raft-transport-adapter
     impl_mode: hand-written
+    description: Add additive TapeRaft constructors that delegate secure hosts to RaftHost::spawn_with_peer_transport while preserving existing h2c constructors.
   - path: apps/tape/src/server.rs
     action: modify
     section: public-peer-route-isolation
     impl_mode: hand-written
+    description: Make public router composition explicitly choose whether Raft peer routes are merged, retaining the current default for h2c and excluding them for the secure peer listener.
   - path: apps/tape/src/operator/render.rs
     action: modify
     section: kubernetes-peer-port
     impl_mode: hand-written
+    description: Declare a named 7138 raft container port, include it in the headless service through the shared multi-port helper, and inject TAPE_RAFT_PORT without exposing it through the client service.
   - path: apps/tape/Cargo.toml
     action: modify
     section: peer-transport-integration-test-dependencies
     impl_mode: hand-written
+    description: Add the minimal test-only certificate fixture dependency for Tape's integration boundary proof.
   - path: apps/tape/tests/raft_peer_mtls.rs
     action: create
     section: peer-transport-integration-test
     impl_mode: hand-written
+    description: Exercise real TapeRaft replication over trusted shared mTLS transports and prove an untrusted certificate is rejected before the Raft router handles a request.
   - path: apps/tape/tests/operator.rs
     action: modify
     section: kubernetes-peer-port-test
     impl_mode: hand-written
+    description: Assert the StatefulSet, headless service, and runtime environment carry the Raft port while the client Service remains public-data-plane only.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
