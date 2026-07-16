@@ -2,61 +2,61 @@ version = 2
 project = "courier"
 ir_kind = "td"
 td_path = "apps/courier/tech-design"
-generated_at = "2026-07-16T05:05:07.314643+00:00"
-digest = "sha256:cfd6e88354f9c766adc271b9dba612608671a4f6e38b1adcea617be3e88d2b86"
-source_digest = "sha256:cfd6e88354f9c766adc271b9dba612608671a4f6e38b1adcea617be3e88d2b86"
-ir_digest = "sha256:c8c973f22ad45a286c1916e9ae879c8019fc36c560f24b07d84313cb4a6f9019"
+generated_at = "2026-07-16T05:05:52.020563+00:00"
+digest = "sha256:596f7145d41ab6e3c69f164c77423b679a8969811b62f1c64d3c7a3b9dfed89e"
+source_digest = "sha256:596f7145d41ab6e3c69f164c77423b679a8969811b62f1c64d3c7a3b9dfed89e"
+ir_digest = "sha256:4b72f05237037c34447fb89788db0f977b640eb3017de1585f2e1795325e7580"
 
 [[files]]
 path = "semantic/apps/courier/build.md"
-digest = "sha256:21bd420d7b8d22f917e8677fdd9a53a5781d549eee1a3663bd9caac8a3239b4a"
-ir_digest = "sha256:365702d73c60b646512a2de40e64356adeb076cb2eec70fbce9668ea1bdf47a9"
+digest = "sha256:cd5ce6da0051fe38a879697930ab9756fd70150302eda255c37097fff0174eae"
+ir_digest = "sha256:7bce3d60e3433d2f1da09e4f797752699a597b3376ee2555bcc1f5e942da9cb2"
 section_count = 2
 
 [[files]]
 path = "semantic/src/bin/courier.md"
-digest = "sha256:a70dac0a527b8e0e2156108cc2c4f8991a202b3aaaedf5ee9f9436fdd163b9f8"
-ir_digest = "sha256:764d36bf0afdbc7767d4a219833ff5897bda1237acaefd6d75ffa77f70e8ce0d"
+digest = "sha256:06ce863e0aa59891da87f857eee6ff4418b4c84dd3bfce86d47ae8d8c0844480"
+ir_digest = "sha256:1ef0934a2d23a748debf089e101284fa8eb3949a068c19aed6a1f45ada7e6561"
 section_count = 3
 
 [[files]]
 path = "semantic/src/http/auth.md"
-digest = "sha256:a704cadd6285583d377049e57955f8f7e6570d903e08911e60a1aba1ef038170"
-ir_digest = "sha256:f0961fda9199d1032af4513d002c44d4033cf10f639d6fb7ab9aa70e798c301c"
+digest = "sha256:cb705ff4e5457ee2f1afca0a2f1dfb0e4a4aa0319985ddca0f3f3c2920006b93"
+ir_digest = "sha256:0377057497d637d762de9c2f9f8eec6956b77f3d9b4e27dae1d42c3bf7ad7dee"
 section_count = 3
 
 [[files]]
 path = "semantic/src/http/github.md"
-digest = "sha256:8167a55175e1cded3c531230fd036b55fe632fb0d080d6426fcb91a6a1a7bf55"
-ir_digest = "sha256:44f529d373489ed1871de397de9f9d746ee6a37a8a915cc7c1804c6c76c6003f"
+digest = "sha256:e73c092383e3643f1f45a226719661383e4ba1d40d440dc0c20c37a2b08f7b51"
+ir_digest = "sha256:0aed5d79fc092d337700cd7e4e42605c0873592da45ff989be064fdb73e6dd75"
 section_count = 3
 
 [[files]]
 path = "semantic/src/http/mod.md"
-digest = "sha256:0b4a17093e5922d2e2f56821fb1e748804439c760c4affcb47990334dc7485da"
-ir_digest = "sha256:2118a0e0305261df27bd49ac3a1461dc297d251d6c4069a448256f470258c26f"
+digest = "sha256:a652ed4e768ad8a1fefb6168ff4952b99770d716bec2ae70762aa834fb20df9b"
+ir_digest = "sha256:68fb390cbea9e204510b4f9b75dd129fc42d8401166fcd3921fc6526d20f1c23"
 section_count = 3
 
 [[files]]
 path = "semantic/src/http/openapi.md"
-digest = "sha256:c4bb073cdd4c55a8bb5499054d470c9f4bbb5fb79fa604d1510d886ac85fbc84"
-ir_digest = "sha256:b6d0ca860e63e4bccbeec69764ac1f39cb742687cc50a3ffcf974da749abfdc8"
+digest = "sha256:12f42f99d09b390a2fa84f9e0661e1abd610d8769e0aaa9a93a283c7577acb73"
+ir_digest = "sha256:3db4011599808f318355cba895385c4413afd2317d0ef38f326935eafe52c7a7"
 section_count = 3
 
 [[files]]
 path = "semantic/src/http/routes.md"
-digest = "sha256:c1f1cb2a715ddf409ddda078c4c790e539d387cc2e365e931b647d8ed8ea6769"
-ir_digest = "sha256:e458d0fcfcb26ddff83655a3781b39a1dd55da09efc4963cab4cd66f891d26dc"
+digest = "sha256:47a73e56c1aba1e8080b6c7e041698f5557d87a766af6364885ef25b63ba5019"
+ir_digest = "sha256:19eeb42692bd7ccd63466fd8eddba2ab3f029a6afe944fbabce8e3fa01189642"
 section_count = 7
 
 [[files]]
 path = "semantic/src/lib.md"
-digest = "sha256:f7a81131e3ad3ce5c6df67bd88cc69edf3bfe0d551ddcd5edaf3780a4168f999"
-ir_digest = "sha256:be2153e029cdb4b23cb23087ccc9c181ea455f96426f1f2b9e7be7a01d91022c"
+digest = "sha256:734ba5d7b7dc95db831e3d7ec08fa9b825c49e9d3f7f499cbc8e07e2f524d334"
+ir_digest = "sha256:ffb68b28f6edfdc64dcf8cf9bcc4b836b4dc11c7bd943afa7fbd8dfcd6641b0a"
 section_count = 3
 
 [[files]]
 path = "semantic/src/llm.md"
-digest = "sha256:8b8df2b2339ce1018181f38f67c19ea90eb480950fb62af1b02541c8a5bd70ee"
-ir_digest = "sha256:49bedeea1128d524f08cefe4e743f6ec6112c17085fd41adbf0ca6ffb3375396"
+digest = "sha256:6790e0b2f7586d27e48accae7a27494769c0b03e15702d9423287f0c9d674094"
+ir_digest = "sha256:eab5c0268d8aa516e99d3039ceffb90e691d6d29e39d550f9aee6b494e3b4a5c"
 section_count = 3
