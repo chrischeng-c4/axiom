@@ -9,49 +9,45 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: tape-shared-statefulset-projection
-entry: cr
+id: tape-shared-statefulset-projection-contract
+entry: input
 nodes:
-  cr:
-    kind: start
-    label: "Tape CRD supplies image, journal PVC tier, auth secret, and Tape/Raft ports"
-  map:
-    kind: process
-    label: "Tape maps only domain and deployment-policy values"
   input:
-    kind: process
-    label: "Construct service_k8s::render::ServiceStatefulSet input"
+    kind: start
+    label: "Tape supplies ServiceStatefulSet values; no post-render JSON mutation is allowed"
   shared:
     kind: process
-    label: "service-k8s assembles StatefulSet, topology env, PVC mount, labels, and selector"
-  policy:
+    label: "service-k8s projects standard topology env, labels, selector, service account, affinity, resources, and PVC mount"
+  typed:
     kind: process
-    label: "Typed common fields carry probes, security, annotations, rollout, tmp, and Secret volumes"
-  children:
+    label: "Typed inputs project Tape-selected probes, pod/container security, annotations, rollout, tmp, and optional Secret mount"
+  tape:
     kind: process
-    label: "Tape emits StatefulSet plus its ServiceAccount, Services, and PDB"
-  invariant:
+    label: "Tape retains CRD fields, image, ports, TAPE env names, journal storage tier, and auth-secret policy"
+  render:
+    kind: process
+    label: "Render StatefulSet with existing ServiceAccount, headless/client Services, and PDB"
+  verify:
     kind: terminal
-    label: "Keep http:7137, raft:7138, one shard, /data PVC, and optional auth mount unchanged"
+    label: "Operator test proves byte-level child-shape invariants and source no longer contains harden or ShardedStatefulSet"
 edges:
-  - { from: cr, to: map }
-  - { from: map, to: input }
   - { from: input, to: shared }
-  - { from: input, to: policy }
-  - { from: shared, to: children }
-  - { from: policy, to: children }
-  - { from: children, to: invariant }
+  - { from: input, to: typed }
+  - { from: input, to: tape }
+  - { from: shared, to: render }
+  - { from: typed, to: render }
+  - { from: tape, to: render }
+  - { from: render, to: verify }
 ---
-flowchart LR
-    cr["Tape CRD supplies image, journal PVC tier, auth secret, and Tape/Raft ports"] --> map["Tape maps only domain and deployment-policy values"]
-    map --> input["Construct ServiceStatefulSet input"]
-    input --> shared["service-k8s assembles common StatefulSet"]
-    input --> policy["Typed common workload fields"]
-    shared --> children["Tape child objects"]
-    policy --> children
-    children --> invariant(["Keep ports, PVC, topology, and optional auth mount unchanged"])
+flowchart TD
+    input["Typed ServiceStatefulSet input only"] --> shared["Shared StatefulSet projection"]
+    input --> typed["Typed generic workload fields"]
+    input --> tape["Tape domain/deployment values"]
+    shared --> render["Tape children"]
+    typed --> render
+    tape --> render
+    render --> verify(["Structural and source-boundary verification"])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
