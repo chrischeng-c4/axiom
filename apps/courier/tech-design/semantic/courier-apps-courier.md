@@ -1,6 +1,23 @@
 ---
 id: semantic-courier-apps-courier
-fill_sections: [schema, unit-test, changes]
+fill_sections: [schema, changes]
+capability_refs:
+  - id: cli-interface
+    role: primary
+    claim: cli-interface-root
+    coverage: full
+  - id: cli-standard-surface
+    role: primary
+    claim: cli-standard-surface-root
+    coverage: full
+  - id: chainable-output-conformance
+    role: primary
+    claim: chainable-output-conformance-root
+    coverage: full
+  - id: kubernetes-native-deployment
+    role: primary
+    claim: kubernetes-native-deployment-root
+    coverage: full
 ---
 
 ## Schema
@@ -69,16 +86,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "apps/courier"
-```
-
-## Unit Test
-<!-- type: unit-test lang: mermaid -->
-
-```mermaid
----
-id: unit-test
----
-requirementDiagram
 ```
 
 ## Changes
