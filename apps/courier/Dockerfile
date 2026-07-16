@@ -15,8 +15,8 @@ COPY apps/ apps/
 COPY libs/ libs/
 COPY crates/ crates/
 
-# Keep only libs/, crates/, and apps/courier workspace members
-RUN python3 -c "import re; t=open('Cargo.toml').read(); keep=lambda m: m.group(0) if m.group(1).startswith(('libs/','crates/')) or m.group(1)=='apps/courier' else ''; open('Cargo.toml','w').write(re.sub(r'^\s*\"([^\"]+)\",?\n', keep, t, flags=re.MULTILINE))"
+# Keep only libs/ and apps/courier workspace members
+RUN python3 -c "import re; t=open('Cargo.toml').read(); keep=lambda m: m.group(0) if m.group(1).startswith('libs/') or m.group(1)=='apps/courier' else ''; open('Cargo.toml','w').write(re.sub(r'^\s*\"([^\"]+)\",?\n', keep, t, flags=re.MULTILINE))"
 
 # Build only the courier binary in release mode
 RUN cargo build --release -p courier
