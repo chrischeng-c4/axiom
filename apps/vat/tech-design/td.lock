@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-16T05:58:14.880989+00:00"
-digest = "sha256:8c5df27c2933f0895902b0c00ac8e6ae6467eb92b0b1a71bf46550768ed0fc96"
-source_digest = "sha256:8c5df27c2933f0895902b0c00ac8e6ae6467eb92b0b1a71bf46550768ed0fc96"
-ir_digest = "sha256:3113a0813bab004acd55d84c8d16c3bd91ce07f6802f83463925ff3ac1e797eb"
+generated_at = "2026-07-16T06:01:00.587692+00:00"
+digest = "sha256:3067830e3f3c67326c0ff6407dcbdbfd9f598b3a59d548b3b3d87ed21c111fee"
+source_digest = "sha256:3067830e3f3c67326c0ff6407dcbdbfd9f598b3a59d548b3b3d87ed21c111fee"
+ir_digest = "sha256:7863cc8e387bcd6b3e1202e7d7444330fc4c46fbdd315053abe8171c6a582e42"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -51,8 +51,8 @@ section_count = 7
 
 [[files]]
 path = "logic/add-versioned-native-lumen-service-preset.md"
-digest = "sha256:3694dbbc6b0fab1b59944cb6df6b5c24881c5ad7a7ebfc40279d5c1236aa1eb6"
-ir_digest = "sha256:6b030fdb411e2540ae12b7f17065ad6715666e0b10f25477c3c9a82fd39c55bc"
+digest = "sha256:966e0d0611f5cddbefd1b97b775b794ebddeb3bd87f52629aca8568967380cb3"
+ir_digest = "sha256:090abe3c526003b92ae4854ce6a4dade4d1704e1f4572d5046e92f6217abd7d0"
 section_count = 3
 
 [[files]]
