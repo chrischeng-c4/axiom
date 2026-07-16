@@ -68,3 +68,28 @@ changes:
     impl_mode: hand-written
     description: Extend structural render evidence for the typed common workload fields while preserving Tape port, PVC, probe, security, and token-registry behavior.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-shared-statefulset-projection-verification
+requirements:
+  optional_auth_secret_remains_tape_policy:
+    id: R2
+    text: "The shared projection retains Tape's opt-in token-registry Secret mount and never enables it for an incomplete auth configuration."
+    kind: functional
+    risk: medium
+    verify: apps/tape/tests/operator.rs::token_registry_secret_wiring_is_opt_in
+  shared_projection_preserves_tape_workload_contract:
+    id: R1
+    text: "Tape's typed ServiceStatefulSet adoption preserves the public and peer ports, durable PVC, standard probes, secure non-root/read-only pod settings, rollout policy, and shared topology environment contract."
+    kind: regression
+    risk: medium
+    verify: apps/tape/tests/operator.rs::render_emits_expected_child_objects
+---
+flowchart TD
+    r1[R1 shared projection preserves tape workload contract] --> apps_tape_tests_operator_rs_render_emits_expected_child_objects[apps/tape/tests/operator.rs::render_emits_expected_child_objects]
+    r2[R2 optional auth secret remains tape policy] --> apps_tape_tests_operator_rs_token_registry_secret_wiring_is_opt_in[apps/tape/tests/operator.rs::token_registry_secret_wiring_is_opt_in]
+```
