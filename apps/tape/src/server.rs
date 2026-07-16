@@ -1046,7 +1046,7 @@ pub async fn admin_backup(
         Some(raft) => raft.snapshot_bytes(),
         None => crate::raft::snapshot_bytes(&st.journal, applied),
     };
-    match snapshot {
+    match crate::raft::snapshot_bytes(&st.journal, applied) {
         Ok(bytes) => {
             // Audit only the low-frequency management operation. Append and
             // consumer checkpoint traffic is deliberately not duplicated into
