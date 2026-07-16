@@ -9,22 +9,21 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: vat-llm-task-topics
-entry: llm
+id: vat-llm-task-topics-contract
+entry: outline
 nodes:
-  outline: { kind: start, label: "vat llm defaults to a compact topic inventory" }
-  registry: { kind: process, label: "one registry maps stable topic IDs to concise task contracts" }
-  guide: { kind: process, label: "legacy guide remains the complete backward-compatible reference" }
-  done: { kind: terminal, label: "agents select only the documentation needed for the current task" }
+  outline: { kind: start, label: "outline is the default offline entrypoint" }
+  topics: { kind: process, label: "core services container and k8s have stable registry IDs" }
+  legacy: { kind: process, label: "guide remains an explicit complete compatibility topic" }
+  terminal: { kind: terminal, label: "unknown topics return the shared actionable error" }
 edges:
-  - { from: outline, to: registry }
-  - { from: registry, to: guide }
-  - { from: guide, to: done }
+  - { from: outline, to: topics }
+  - { from: topics, to: legacy }
+  - { from: legacy, to: terminal }
 ---
 ```
 
-`vat llm` keeps its default `outline` compact and derives it solely from the `cli_std::llm::Topic` registry. The registry adds stable `core`, `services`, `container`, and `k8s` task topics while retaining `guide` as the full compatibility document. Each concise topic names its runnable commands and explicit boundaries; it does not duplicate the complete guide. The JSON outline exposes every stable ID, so regression tests can lock the task inventory and prove each topic resolves offline.
-
+The public offline contract has five stable IDs: `core`, `services`, `container`, `k8s`, and `guide`. `outline` is the default and must list those IDs with concise summaries. `guide` retains the previous complete text; no existing caller loses access to it. Topic bodies are command-oriented: core names run/plan/doctor/state, services names vat.toml and service inspection, container names build/compose/docker and their non-Engine boundary, and k8s names ephemeral/session operations plus the non-persistent boundary.
 ## Changes
 <!-- type: changes lang: yaml -->
 
