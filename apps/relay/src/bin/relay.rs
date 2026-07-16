@@ -8,7 +8,7 @@
 //! `cli-std` lib) — sit alongside it per the CONTRIBUTING.md CLI convention.
 //! Agents start at `relay llm`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -591,32 +591,25 @@ fn crd_yaml() -> String {
 
 #[cfg(not(feature = "operator"))]
 fn crd_yaml() -> String {
-    ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
+    cli_std::artifact::ensure_trailing_newline(include_str!("../../k8s/operator/crd.yaml"))
 }
 
 /// Render the operator control-plane manifests (RBAC + Deployment) with the
 /// namespace substituted, from the checked-in fixtures.
 fn render_operator_yaml(namespace: &str) -> String {
     let mut out = String::new();
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/rbac.yaml"),
+        "relay-system",
         namespace,
     ));
     out.push_str("\n---\n");
-    out.push_str(&replace_operator_namespace(
+    out.push_str(&cli_std::artifact::replace_kubernetes_namespace(
         include_str!("../../k8s/operator/deployment.yaml"),
+        "relay-system",
         namespace,
     ));
-    ensure_trailing_newline(&out)
-}
-
-fn replace_operator_namespace(input: &str, namespace: &str) -> String {
-    input
-        .replace("name: relay-system", &format!("name: {namespace}"))
-        .replace(
-            "namespace: relay-system",
-            &format!("namespace: {namespace}"),
-        )
+    cli_std::artifact::ensure_trailing_newline(&out)
 }
 
 /// Render a `kind: Relay` custom resource for the selected profile.
@@ -677,7 +670,7 @@ fn render_instance_yaml(args: &K8sInstanceRenderArgs) -> String {
             );
         }
     }
-    ensure_trailing_newline(&yaml)
+    cli_std::artifact::ensure_trailing_newline(&yaml)
 }
 
 enum InstanceBody {
@@ -707,13 +700,14 @@ fn dockerfile(args: DockerfileArgs) -> Result<()> {
 }
 
 fn render_source_dockerfile() -> String {
-    strip_ownership_markers(include_str!("../../Dockerfile"))
+    cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile"))
 }
 
 fn render_release_dockerfile(version: Option<&str>) -> String {
-    let tag = normalize_relay_tag(version);
+    let tag = cli_std::artifact::release_tag("relay", version, env!("CARGO_PKG_VERSION"));
     let version = tag.trim_start_matches("relay@");
-    let template = strip_ownership_markers(include_str!("../../Dockerfile.release"));
+    let template =
+        cli_std::artifact::strip_source_ownership_markers(include_str!("../../Dockerfile.release"));
     let mut out = String::new();
     for line in template.lines() {
         if line.starts_with("#   docker build -f apps/relay/Dockerfile.release -t relay:") {
@@ -732,64 +726,11 @@ fn render_release_dockerfile(version: Option<&str>) -> String {
     out
 }
 
-/// Normalize a version input into a `relay@<version>` release tag, defaulting
-/// to the compiled crate version.
-fn normalize_relay_tag(version: Option<&str>) -> String {
-    let raw = version
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .trim();
-    if raw.starts_with("relay@") {
-        raw.to_string()
-    } else {
-        format!("relay@{raw}")
-    }
-}
-
-/// Strip AW source-ownership markers so the rendered Dockerfile is the one
-/// users build (a no-op for relay's marker-free fixtures; kept for parity).
-fn strip_ownership_markers(input: &str) -> String {
-    let mut out = String::new();
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# SPEC-MANAGED:")
-            || trimmed == "# CODEGEN-BEGIN"
-            || trimmed == "# CODEGEN-END"
-        {
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 /// Write `body` to `out` (a file, or `default_file` inside a directory) or
 /// print it to stdout.
-fn write_or_print(out: Option<&Path>, default_file: &str, body: &str) -> Result<()> {
-    if let Some(path) = out {
-        let target = if path.extension().is_some() {
-            path.to_path_buf()
-        } else {
-            path.join(default_file)
-        };
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, body)?;
-        println!("wrote {}", target.display());
-    } else {
-        print!("{body}");
-    }
+fn write_or_print(out: Option<&std::path::Path>, default_file: &str, body: &str) -> Result<()> {
+    cli_std::artifact::write_or_print(out, default_file, body)?;
     Ok(())
-}
-
-fn ensure_trailing_newline(input: &str) -> String {
-    if input.ends_with('\n') {
-        input.to_string()
-    } else {
-        format!("{input}\n")
-    }
 }
 
 /// `relay issue <verb>` — dispatch search/view/create to cli-std. `create`
@@ -1124,10 +1065,16 @@ mod tests {
             other => panic!("expected dockerfile render, got {other:?}"),
         }
         // Version tag normalization: bare and prefixed forms converge.
-        assert_eq!(normalize_relay_tag(Some("1.2.3")), "relay@1.2.3");
-        assert_eq!(normalize_relay_tag(Some("relay@1.2.3")), "relay@1.2.3");
         assert_eq!(
-            normalize_relay_tag(None),
+            cli_std::artifact::release_tag("relay", Some("1.2.3"), env!("CARGO_PKG_VERSION")),
+            "relay@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("relay", Some("relay@1.2.3"), env!("CARGO_PKG_VERSION")),
+            "relay@1.2.3"
+        );
+        assert_eq!(
+            cli_std::artifact::release_tag("relay", None, env!("CARGO_PKG_VERSION")),
             format!("relay@{}", env!("CARGO_PKG_VERSION"))
         );
     }
