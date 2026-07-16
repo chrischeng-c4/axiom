@@ -77,7 +77,7 @@ fn dx_docs_state_supported_boundaries() {
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in vat_cli_convention.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1818" reason="Task-scoped offline LLM topic regression is hand-written pending codegen support">
 #[test]
 fn cli_convention_llm_flags() {
     let outline = Command::new(vat())
@@ -100,6 +100,39 @@ fn cli_convention_llm_flags() {
         String::from_utf8_lossy(&guide.stdout).contains("vat LLM Guide"),
         "llm --topic guide should print the detailed vat guide"
     );
+}
+
+#[test]
+fn cli_convention_llm_topics_are_task_scoped() {
+    let outline = Command::new(vat())
+        .args(["llm", "--topic", "outline", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(outline.status.success(), "llm outline should exit 0");
+    let outline = String::from_utf8_lossy(&outline.stdout);
+    for topic in ["core", "services", "container", "k8s", "guide"] {
+        assert!(
+            outline.contains(&format!("\"id\": \"{topic}\"")),
+            "outline is missing stable `{topic}` topic:\n{outline}"
+        );
+    }
+
+    for (topic, command) in [
+        ("core", "vat run"),
+        ("services", "vat.toml"),
+        ("container", "vat compose"),
+        ("k8s", "vat k8s ephemeral"),
+    ] {
+        let out = Command::new(vat())
+            .args(["llm", "--topic", topic])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "llm topic `{topic}` should exit 0");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(command),
+            "topic `{topic}` should name `{command}`"
+        );
+    }
 }
 // </HANDWRITE>
 

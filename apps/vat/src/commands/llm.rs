@@ -1378,11 +1378,64 @@ file-length totals are needed; it walks every retained rootfs. Add
   creates/lists/deletes/reports on explicit command, like kind/k3d themselves.
 "#;
 
-const TOPICS: &[cli_std::llm::Topic] = &[cli_std::llm::Topic {
-    id: "guide",
-    summary: "complete vat agent usage contract: run modes, services, evidence, and boundaries",
-    body: GUIDE,
-}];
+const CORE: &str = r#"# VAT core workflow
+
+Use `vat run` for an ad-hoc command or a configured runner. Use `vat plan --json`
+before side effects, `vat doctor --json` for selected-topology readiness, and
+`vat state`, `vat diff`, or `vat logs` to inspect retained evidence.
+"#;
+
+const SERVICES: &str = r#"# VAT services
+
+Declare run-scoped dependencies in `vat.toml`, then inspect the resolved shape
+with `vat plan --json`. Built-in emulators include `gcloud-pubsub` and
+`gcloud-cloud-tasks`; native Lumen uses `preset = "lumen"` with an optional
+`version = "lumen@<version>"`. Use `vat doctor --json` before a service-backed
+run. Services are test dependencies, not durable production infrastructure.
+"#;
+
+const CONTAINER: &str = r#"# VAT container and compose workflow
+
+Use `vat build` for a local Dockerfile build and `vat compose` for VAT's
+documented bounded Compose subset. `vat docker install-shim` is opt-in and is
+not a Docker Engine/API, generic Compose, SDK, or daemon compatibility layer.
+"#;
+
+const K8S: &str = r#"# VAT local Kubernetes workflow
+
+Use `vat k8s ephemeral image build` followed by `vat k8s ephemeral run -- ...`
+for one command, or `vat k8s session create`, `exec`, and `delete` for a bounded
+multi-command lease. An independently installed `kubectl` is required. This is
+not persistent Kubernetes, a Desktop integration, or a general cluster manager.
+"#;
+
+const TOPICS: &[cli_std::llm::Topic] = &[
+    cli_std::llm::Topic {
+        id: "core",
+        summary: "run, plan, doctor, and inspect one local VAT workflow",
+        body: CORE,
+    },
+    cli_std::llm::Topic {
+        id: "services",
+        summary: "declare and preflight run-scoped vat.toml dependencies",
+        body: SERVICES,
+    },
+    cli_std::llm::Topic {
+        id: "container",
+        summary: "use bounded build, compose, and opt-in docker-shim commands",
+        body: CONTAINER,
+    },
+    cli_std::llm::Topic {
+        id: "k8s",
+        summary: "run one-shot or leased ephemeral Apple Container K3s work",
+        body: K8S,
+    },
+    cli_std::llm::Topic {
+        id: "guide",
+        summary: "complete backward-compatible VAT agent usage contract",
+        body: GUIDE,
+    },
+];
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#1817" reason="DX command-inventory contract and offline guide text are hand-written pending codegen support">
 /// @spec apps/vat/tech-design/logic/llm-agent-usage-guide.md#cli
