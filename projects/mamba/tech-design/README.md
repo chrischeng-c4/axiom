@@ -39,8 +39,8 @@ but unwritten (author its ARCHITECTURE.md on first substantive work there).
 
 | Domain | Owns | Key source | docs? |
 |---|---|---|---|
-| `frontend/` | lexer, parser, AST, HIR construction | `src/lexer/`, `src/parser/`, `src/hir/`, `src/source/` | todo |
-| `name-resolution/` | resolver passes, symbol tables, scoping (the resolver half of the two-pass system) | `src/resolve/` | todo |
+| `frontend/` | lexer, parser, AST, HIR construction | `src/lexer/`, `src/parser/`, `src/hir/`, `src/source/` | map |
+| `name-resolution/` | resolver passes, symbol tables, scoping (the resolver half of the two-pass system) | `src/resolve/` | map |
 | `type-system/` | checker, signatures, walls, ingress enforcement | `src/types/` | +topics |
 
 ### Backend — HIR → machine
@@ -55,11 +55,11 @@ but unwritten (author its ARCHITECTURE.md on first substantive work there).
 | Domain | Owns | Key source | docs? |
 |---|---|---|---|
 | `object-model/` | class registry, identity/keys, MRO, slots, super, attribute dispatch | `src/runtime/class/`, `dict_ops` | +topics |
-| `calling-convention/` | runtime arg binding — args/kwargs/defaults/kw-only/unpacking, frame adaptation | `runtime/builtins/` (mb_arg_bind, validate_and_adapt_declared_frame) | todo |
-| `numbers/` | the numeric tower — int/bigint, float, complex, bool, coercion; Decimal/Fraction | `runtime/bigint_ops.rs`, `integer_handle_registry.rs`, number mods | todo |
-| `strings/` | str/bytes/bytearray, unicode, codecs/encodings, formatting | `runtime/string_ops.rs`, `bytes_ops.rs`, codec mods | todo |
-| `collections/` | list/dict/set/tuple internals, views, hashing | `runtime/{list,dict,set,tuple}_ops.rs` | todo |
-| `iterators/` | iterator protocol, generators, coroutines, async iteration, state-machine lowering | `runtime/iter.rs`, `generator.rs` | todo |
+| `calling-convention/` | runtime arg binding — args/kwargs/defaults/kw-only/unpacking, frame adaptation | `runtime/builtins/` (mb_arg_bind, validate_and_adapt_declared_frame) | map |
+| `numbers/` | the numeric tower — int/bigint, float, complex, bool, coercion; Decimal/Fraction | `runtime/bigint_ops.rs`, `integer_handle_registry.rs`, number mods | map |
+| `strings/` | str/bytes/bytearray, unicode, codecs/encodings, formatting | `runtime/string_ops.rs`, `bytes_ops.rs`, codec mods | map |
+| `collections/` | list/dict/set/tuple internals, views, hashing | `runtime/{list,dict,set,tuple}_ops.rs` | map |
+| `iterators/` | iterator protocol, generators, coroutines, async iteration, state-machine lowering | `runtime/iter.rs`, `generator.rs` | map |
 | `exceptions/` | construction, fields, propagation, rendering, traceback | `src/runtime/exception.rs` | +topics |
 | `closures/` | capture cells, scoping (checker half), capture introspection | `src/runtime/closure.rs` | +topics |
 
@@ -67,8 +67,8 @@ but unwritten (author its ARCHITECTURE.md on first substantive work there).
 
 | Domain | Owns | Key source | docs? |
 |---|---|---|---|
-| `concurrency/` | no-GIL threading, asyncio event loop, multiprocessing | `runtime/async_rt.rs`, `async_task.rs`, threading mods | todo |
-| `import-system/` | finders/loaders, module cache, circular imports, vendored resolution | import machinery, `vendor_lib.rs` | todo |
+| `concurrency/` | no-GIL threading, asyncio event loop, multiprocessing | `runtime/async_rt.rs`, `async_task.rs`, threading mods | map |
+| `import-system/` | finders/loaders, module cache, circular imports, vendored resolution | import machinery, `vendor_lib.rs` | map |
 | `stdlib/` | the 206 `*_mod.rs` surfaces, vendored modules, sentinel shims | `src/runtime/stdlib/` | +topics |
 | `ffi/` | C3 native kit binding (mambalibs) | `src/ffi/` | todo |
 | `pkgmanage/` | C4 package manager | `src/pkgmanage/` | map |

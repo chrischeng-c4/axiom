@@ -44,15 +44,15 @@ Import precedence (`vendor_lib.rs:21-35` doc): **native `MODULES` cache → `SCR
 ## Known hazards
 
 - **ICF address folding (#954/#962/#1040)** — LLVM merges trivially-identical dispatcher bodies onto ONE address. Addr-keyed `NATIVE_TYPE_NAMES`/FUNC_NAMES then resolve the wrong class/`__name__` nondeterministically (HashMap order). Any new trivial dispatcher without `icf_guard!`/SHELL_POOL reintroduces it.
-- **DictKey hash-domain mismatch** — probing `IndexMap<DictKey,_>` with a Rust-str-hashed key silently returns `None` for present keys; 4+ independent stdlib hits (socket kwargs, xml `Element.keys()`…). See `object-model/dictkey-hash-domain-audit.md`.
-- **Runtime-key aliasing** — `type.__name__` (display) ≠ `CLASS_REGISTRY` key (`__mamba_user_class__:<file>:<line>:<Name>@<n>`); dispatchers reading `__name__` miss the registry (total_ordering `functools_mod.rs:2282`, singledispatch, logging). See `object-model/runtime-key-aliasing-family.md`.
+- **DictKey hash-domain mismatch** — probing `IndexMap<DictKey,_>` with a Rust-str-hashed key silently returns `None` for present keys; 4+ independent stdlib hits (socket kwargs, xml `Element.keys()`…). See `object-model/identity-and-keys.md` §Domain 2.
+- **Runtime-key aliasing** — `type.__name__` (display) ≠ `CLASS_REGISTRY` key (`__mamba_user_class__:<file>:<line>:<Name>@<n>`); dispatchers reading `__name__` miss the registry (total_ordering `functools_mod.rs:2282`, singledispatch, logging). See `object-model/identity-and-keys.md` §Domain 1.
 - **Active-module stack imbalance** — a dispatcher that runs user code (threads, exec, pickle-by-name `pickle_mod.rs:1637`) without push/pop of `ACTIVE_MODULE_NAMES` misresolves scoped symbols/globals for everything after it.
 - **TESTFN CWD droppings** — `support_mod.rs:475` sets `os_helper.TESTFN = "@mamba_test_<pid>"` (relative); fixtures create files in the harness CWD = repo root; stale droppings were git-tracked (commit `90252aa09`). New fixtures must not use TESTFN (`FIXTURE-LAYOUT.md` hard constraints).
 - **String-content/type-name collision** — a str whose CONTENT equals a registered native class name (`"arg"` vs `ast.arg`) mis-dispatches methods on that value; zero-import repro `'arg'.startswith('-')` (`vendor_lib.rs:152-161`). Every `register_native_type_name` widens the collision surface.
 - **Vendored shadowing** — registering any native stub for a vendored name pre-seeds `MODULES` and permanently shadows `py_src/*.py` (`vendor_lib.rs:229-236`).
 - **Sentinel shims lie** — the #1496-family shims return fresh empty dicts from every call; imports and surface probes pass while behavior is fake. Passing `surface/` fixtures for these modules proves nothing about `behavior/`.
 - **Vendoring flips are compiler-gated** — `vendor_lib.rs:52-224` chronicles 6 rounds of flip→revert; every regression traced to a core-compiler bug (#943/#945/#953/#976/#977/#1007/#1008/#1018…), never to the vendored source. A from-source sweep regression = file a core bug, don't patch the `.py`.
-- **`__enter__` retain** — CM dispatchers returning non-self must retain the returned value (TemporaryDirectory). See `memory/context-manager-enter-retain.md`.
+- **`__enter__` retain** — CM dispatchers returning non-self must retain the returned value (TemporaryDirectory). See `memory/object-lifetime.md` §With-protocol refcount contract.
 - **augment vs merge** — `augment_module` mutates the leaf only; use `support_mod.rs:merge_register` when the name is imported through a parent snapshot.
 
 ## Extension points

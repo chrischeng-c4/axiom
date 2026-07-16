@@ -14,8 +14,8 @@ anywhere in the 46k corpus — a UAF from a wrong refcount surfaces in unrelated
 
 Regression anchors owned by symptom (live, not xfail'd — from the fix-family TDs):
 
-- `_regression/builtin-libs/list_methods/reentrancy.py` — escape-analysis flow-sensitivity (`tech-design/memory/escape-analysis-flow-sensitivity.md`)
-- `behavior/std-libs/tempfile/temporary_directory_cleanup_on_exit.py` + `real_world/std-libs/errno/translate_oserror_errno_to_name.py` — with-exit retain contract (`tech-design/memory/context-manager-enter-retain.md`); intermittency class ⇒ single-sample runs prove nothing, run repeatedly
+- `_regression/builtin-libs/list_methods/reentrancy.py` — escape-analysis flow-sensitivity (`tech-design/memory/object-lifetime.md` §Escape analysis licenses GC-tracking elision)
+- `behavior/std-libs/tempfile/temporary_directory_cleanup_on_exit.py` + `real_world/std-libs/errno/translate_oserror_errno_to_name.py` — with-exit retain contract (`tech-design/memory/object-lifetime.md` §With-protocol refcount contract); intermittency class ⇒ single-sample runs prove nothing, run repeatedly
 
 Corpus-wide clause: zero hang / zero SIGTRAP across the full C1 gate is part of this domain's
 positive contract (wrong-`NonEscaping` and under-retain bugs are delayed-symptom classes).

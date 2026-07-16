@@ -17,18 +17,18 @@ isinstance, dict key/value model. Source: `src/runtime/class/mod.rs` (~26k lines
 
 | Structure | Where | Invariant |
 |---|---|---|
-| `MbClass` | mod.rs:69 | `.name` = REGISTRY key; `.display_name` = Python `__name__`. Never feed display names into registry lookups (see `runtime-key-aliasing-family.md`). |
+| `MbClass` | mod.rs:69 | `.name` = REGISTRY key; `.display_name` = Python `__name__`. Never feed display names into registry lookups (see `identity-and-keys.md` §Domain 1). |
 | `CLASS_REGISTRY` | mod.rs:124 (thread_local `HashMap<String, MbClass>`) | Classes flow through the runtime **as bare class-name strings**; a `type` object is an `Instance{class_name:"type"}` with `__name__` field. |
 | Runtime keys | hir_to_mir.rs:945 `__mamba_user_class__:<file>:<symId>:<Name>`; per-execution alias `<declkey>@<serial>` via `mb_class_runtime_key` (mod.rs:1366) + `CLASS_RUNTIME_KEY_ALIASES` (mod.rs:126); dynamic `type()` classes get `__mamba_dynamic_class__:<name>@<n>` (`fresh_dynamic_class_runtime_key`, mod.rs:1359, never aliased) | key ← `type_object_registry_key` (builtins/type_objects.rs:265) for type objects, raw `Instance.class_name` for instances; display ← `class_display_name` (mod.rs:1377), errors ONLY. |
 | `PendingClassRegistration` | hir_to_mir.rs:48 | One record per lowered `class` stmt; emitted at the textual `ClassDefPlaceholder` (hir_to_mir.rs:5670). |
 | `USER_CLASSES` | mod.rs:135 | Marks Python-created classes; AttributeError-on-miss only fires when the ENTIRE MRO is user-defined or `object` (mod.rs:~8717) — native ancestors keep lenient `None`. |
-| `CALLABLE_REGISTRY` | mod.rs:139 | Only registered addresses are dispatched. Populate/probe via `extract_registered_func_addr` (mod.rs:2938), NEVER `extract_func_addr` (mod.rs:2922) for method values — see `closure-handle-init-dispatch.md`. |
+| `CALLABLE_REGISTRY` | mod.rs:139 | Only registered addresses are dispatched. Populate/probe via `extract_registered_func_addr` (mod.rs:2938), NEVER `extract_func_addr` (mod.rs:2922) for method values — see `class-construction.md` §Instance construction. |
 | `SLOTS_REGISTRY` vs `OWN_SLOTS_REGISTRY` | mod.rs:146/152 | merged instance LAYOUT vs declared `__slots__` VALUE — distinct concepts (#1523); `DICT_SUPPRESSED` (mod.rs:155) when slots declared without `'__dict__'`. |
 | `METHOD_CACHE` + `METHOD_CACHE_GEN` | mod.rs:183/187 | Invalidated (cleared) on any class registration / class-attr mutation; `SIMPLE_CLASS_CACHE` (mod.rs:192) skips descriptor checks in `mb_setattr`. |
 | `creation_hooks_pending` (PEP 487) | MbClass field, mod.rs:91 | Namespace hasn't crossed `type.__new__`; hooks fire once via `dispatch_type_new_creation_hooks` (mod.rs:1631): `__set_name__` (class attrs, alpha order) THEN base `__init_subclass__` with class kwargs. |
 | `METACLASS_DEFINITION_STACK` | mod.rs:175 | While a custom metaclass `__new__` runs, the first matching `type.__new__` claims the staged class identity (`claim_staged_type_new_target` mod.rs:1393, consumed type_objects.rs:520) instead of allocating a duplicate. |
 | `MbClass.cached_init: (addr, is_registered)` | mod.rs:94 | Resolved at register/update-bases time; `is_registered=false` ⇒ construction *silently skips* `__init__` — the #1594 failure mode. |
-| `DictKey` | dict_ops.rs:506 | `Str`/`StrCodepoints`/`Instance` hash in the Python-semantic domain (`Hash` impl dict_ops.rs:714, `dict_string_hash_value` :623), NOT Rust `str` hash. Probe only via `dict_get_exact_str` (dict_ops.rs:860) — see `dictkey-hash-domain-audit.md`. `Instance`/`Tuple`/`FrozenSet` keys retain their ptr (Clone/Drop rc-managed). |
+| `DictKey` | dict_ops.rs:506 | `Str`/`StrCodepoints`/`Instance` hash in the Python-semantic domain (`Hash` impl dict_ops.rs:714, `dict_string_hash_value` :623), NOT Rust `str` hash. Probe only via `dict_get_exact_str` (dict_ops.rs:860) — see `identity-and-keys.md` §Domain 2. `Instance`/`Tuple`/`FrozenSet` keys retain their ptr (Clone/Drop rc-managed). |
 | `ThreadClassState` | mod.rs:104, snapshot/replace mod.rs:21345/21379 | All ~15 thread_locals swap atomically for thread spawn; caches reset on swap. |
 | Marker instance classes | `"__super__"`, `"__unbound_method__"` (mod.rs:5236), `"method"` (:5252), `"__bound_native_method__"` (:5444), `"__classmethod__"/"__staticmethod__"/"__property__"`, `"member_descriptor"` (descriptors.rs:81) | Synthetic `Instance`s carrying dispatch metadata in fields; every consumer must special-case these names before treating `class_name` as a real class. |
 
@@ -37,7 +37,7 @@ isinstance, dict key/value model. Source: `src/runtime/class/mod.rs` (~26k lines
 **Class statement** (lowering: hir_to_mir.rs:5670 `ClassDefPlaceholder`):
 1. `emit_pending_class_registrations` → `emit_class_registration` (hir_to_mir.rs:5813): `mb_class_runtime_key` (mint `@serial` alias) → `mb_user_type_obj` → `mb_class_define_multi[_named]` (mod.rs:1796/1814 → `mb_class_define_multi_impl` :1832 → `mb_class_register_user_named` :1504 → `mb_class_register_named_impl` :1540: register callables, `compute_mro`, insert MbClass with `creation_hooks_pending=true`, cache `__init__`, install abc mixins).
 2. `emit_runtime_class_bases_for` → `mb_class_update_bases` (mod.rs:1919): re-resolve bases, recompute MRO, re-cache `__init__`, set `__orig_bases__`/`__parameters__`.
-3. `emit_class_slots_for` (drains `pending_class_slots`, hir_to_mir.rs:1626) → `mb_register_slots` (mod.rs:11385) — AFTER base update, see `slots-registration-ordering.md`.
+3. `emit_class_slots_for` (drains `pending_class_slots`, hir_to_mir.rs:1626) → `mb_register_slots` (mod.rs:11385) — AFTER base update, see `class-construction.md` §Registration pipeline.
 4. class body stmts → `emit_class_attrs_for` → finalizers → `mb_class_finalize_definition*` (mod.rs:2651+ → `finalize_class_definition` :2589): resolve explicit/inherited metaclass; if custom, push `METACLASS_DEFINITION_STACK`, call meta `__new__` (namespace dict, mod.rs:~2530), then meta `__init__`; else dispatch PEP 487 hooks directly.
 5. dataclass field recording → class decorators (bottom-up) → bind name.
 
@@ -55,7 +55,7 @@ isinstance, dict key/value model. Source: `src/runtime/class/mod.rs` (~26k lines
 
 **Method lookup**: `lookup_method` (mod.rs:11988) = METHOD_CACHE → MRO walk over methods then class_attrs; `lookup_method_including_none` (:12026) for `__hash__ = None` sentinels. MRO: `compute_mro` (mod.rs:12208) — duplicate-base TypeError first, linear chain for ≤1 base, else `c3_merge` (:12295); inconsistent hierarchy sets catchable TypeError + trivial-MRO fallback; always appends `"object"`.
 
-**super()**: `mb_super`/`mb_super_checked`/`mb_super_no_args_error`/`mb_super_argcount_error` (mod.rs:13745-13809) build a `"__super__"` proxy → `mb_super_getattr` (:13843): resolve instance class (type-object receiver ⇒ class_context), `super_dispatch_class` metaclass hop (:13828), `lookup_method_after` (:14006, MRO after skip_class), descriptor unwrap + bind by kind, then `super_builtin_native_method` (:13940) terminal arms, then `SUPER_MISSING_INIT_METHOD` no-op for `__init__`, else AttributeError. Semantics + red lines: `super-dispatch-and-error-semantics.md`.
+**super()**: `mb_super`/`mb_super_checked`/`mb_super_no_args_error`/`mb_super_argcount_error` (mod.rs:13745-13809) build a `"__super__"` proxy → `mb_super_getattr` (:13843): resolve instance class (type-object receiver ⇒ class_context), `super_dispatch_class` metaclass hop (:13828), `lookup_method_after` (:14006, MRO after skip_class), descriptor unwrap + bind by kind, then `super_builtin_native_method` (:13940) terminal arms, then `SUPER_MISSING_INIT_METHOD` no-op for `__init__`, else AttributeError. Semantics + red lines: `class-construction.md` §Super machinery + error semantics.
 
 **isinstance** `mb_isinstance` (mod.rs:12722): Union/tuple/union-type recursion → arg-2 type check → numbers-tower rank → resolve target name (`resolve_class_name` :21244 / func-pointer class map) → ModuleType/non-runtime_checkable-Protocol TypeError → metaclass `__instancecheck__` (falls back to nominal on exception/None) → PathLike/ABC virtual+structural (`user_abc_issubclass`) → nominal MRO containment + payload/enum/protocol structural arms.
 
@@ -63,11 +63,11 @@ isinstance, dict key/value model. Source: `src/runtime/class/mod.rs` (~26k lines
 
 | WHAT | WHY dangerous |
 |---|---|
-| Display name fed to `CLASS_REGISTRY` | Silent miss for user classes (namespaced keys) — dispatch falls back / wrong cls; family + accessors: `runtime-key-aliasing-family.md`. |
-| Raw `&str` `.get()` on `IndexMap<DictKey,_>` | Wrong hash domain since #1028 ⇒ present keys read as absent, no error; may pass unit tests via accidental collisions: `dictkey-hash-domain-audit.md`. |
-| `extract_func_addr` on a method value | Closure handles (any method using `__class__`/zero-arg `super()`, unconditional since #1379) yield garbage pseudo-addresses ⇒ `is_registered=false` ⇒ `__init__`/metaclass `__call__` silently skipped: `closure-handle-init-dispatch.md`. |
-| `mb_register_slots` before `mb_class_update_bases` | Pre-update MRO has no bases ⇒ inherited slots dropped: `slots-registration-ordering.md`. |
-| Adding `__init__` to the super `__new__`-at-type/object arm | Regresses no-op `super().__init__()` idiom — explicit RED LINE in `super-dispatch-and-error-semantics.md` and comment mod.rs:13960. |
+| Display name fed to `CLASS_REGISTRY` | Silent miss for user classes (namespaced keys) — dispatch falls back / wrong cls; family + accessors: `identity-and-keys.md` §Domain 1. |
+| Raw `&str` `.get()` on `IndexMap<DictKey,_>` | Wrong hash domain since #1028 ⇒ present keys read as absent, no error; may pass unit tests via accidental collisions: `identity-and-keys.md` §Domain 2. |
+| `extract_func_addr` on a method value | Closure handles (any method using `__class__`/zero-arg `super()`, unconditional since #1379) yield garbage pseudo-addresses ⇒ `is_registered=false` ⇒ `__init__`/metaclass `__call__`/`__init_subclass__` silently skipped: `class-construction.md` §Instance construction. |
+| `mb_register_slots` before `mb_class_update_bases` | Pre-update MRO has no bases ⇒ inherited slots dropped: `class-construction.md` §Registration pipeline. |
+| Adding `__init__` to the super `__new__`-at-type/object arm | Regresses no-op `super().__init__()` idiom — explicit RED LINE in `class-construction.md` §Super machinery + error semantics and comment mod.rs:13960. |
 | `ObjData::Str` doubles as class reference AND plain str value (#1009, mod.rs:8750) | A str whose CONTENT equals a registered class name can shadow into class-attr lookup; str-method dispatch must win for genuine str methods. |
 | `SLOTS_REGISTRY` read as `cls.__slots__` value | Layout ≠ declared tuple (#1523); use `OWN_SLOTS_REGISTRY`/`class_slots_value` (mod.rs:12098). |
 | Miss `invalidate_method_cache()` after registry mutation | Stale METHOD_CACHE serves shadowed methods; every write path (register/update_bases/set_class_attr) must bump. |
@@ -93,5 +93,5 @@ Per `external-contracts/README.md` (positive contracts — must run & byte-match
 - `tests/cpython/_regression/core/mro_super/` — MRO + super dispatch and error paths.
 - `tests/cpython/_regression/core/language/` (esp. `metaclasses/{behavior,surface}.py`) — metaclass/PEP 487.
 - `tests/cpython/_regression/core/descriptors/` + `tests/cpython/behavior/core/descr/` — descriptor protocol.
-- Adjacent proof (dict-key domain regressions land in owning stdlib dims): `behavior/std-libs/{logging,xml_etree,socket}/...` per `dictkey-hash-domain-audit.md`.
+- Adjacent proof (dict-key domain regressions land in owning stdlib dims): `behavior/std-libs/{logging,xml_etree,socket}/...` per `identity-and-keys.md` §Domain 2.
 - Gate: `cargo test -p mamba --release --test conformance` (~3 min); per-fix evidence = before/after readings.
