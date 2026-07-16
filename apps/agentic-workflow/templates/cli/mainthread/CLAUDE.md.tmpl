@@ -49,7 +49,12 @@ not a lifecycle bypass.
 [<cap-id>] --project <project>` drives one capability's work-root WIs (omit
 `<cap-id>` to run the whole project end to end). Follow `invoke.command` and
 `agent_prompt` from either until `completion.workflow_complete=true` or
-`requires_hitl=true`. (The old top-level runner verb is retired.)
+`requires_hitl=true`. If a HITL envelope includes
+`hitl_question.tool_hint=ask_user_question`, invoke the host's native
+user-question tool immediately with its question, choices, and freeform prompt;
+do not treat the envelope as terminal output or fabricate human approval. If the
+host has no such tool, present every field as a blocking human question. (The
+old top-level runner verb is retired.)
 
 `aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `show`,
 `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
