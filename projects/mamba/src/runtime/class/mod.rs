@@ -14839,6 +14839,36 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                 );
                                 return MbValue::none();
                             }
+                            // #1846: a class-value's real runtime shape is this
+                            // Instance{class_name:"type"} object, not the
+                            // ObjData::Str the older R11 block below matches on
+                            // (that block is unreachable from real class values
+                            // and only exists for hand-built test MbValues) — so
+                            // the explicit-__class_getitem__ dispatch has to live
+                            // here too. Checked before the Generic-MRO arm below
+                            // so an explicit override (own or inherited from a
+                            // non-Generic base) takes priority over Generic's own
+                            // default subscript, matching CPython's MRO-ordered
+                            // type.__getitem__ lookup.
+                            _ if !lookup_method(&tn, "__class_getitem__").is_none() => {
+                                let getitem_method = lookup_method(&tn, "__class_getitem__");
+                                // Closure-handle bodies (#1379) are small tagged
+                                // ints that never coincidentally match a
+                                // registered address, so the raw extractor
+                                // silently no-ops here; resolve via the registry
+                                // instead (#1843, mirrors #1821).
+                                let addr = extract_registered_func_addr(getitem_method);
+                                if addr != 0 {
+                                    let is_registered =
+                                        CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+                                    if is_registered {
+                                        // REQ: JIT-compiled functions use SystemV/C calling convention.
+                                        let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+                                            std::mem::transmute(addr as usize);
+                                        return func(obj, key);
+                                    }
+                                }
+                            }
                             _ if class_mro_list(&tn)
                                 .iter()
                                 .any(|base| base == "typing.Generic") =>
