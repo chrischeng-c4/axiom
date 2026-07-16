@@ -48,3 +48,38 @@ flowchart TD
 ```
 
 The Tape adapter owns only configuration selection, topology scheme and listener lifecycle. `peer-tls` continues to own certificate material and `raft-runtime` continues to own mTLS handshakes, HTTPS peer RPCs and Raft routing. With no configured peer TLS, the current single-port h2c behavior remains byte-for-byte compatible. With configured peer mTLS, the public service port never exposes the Raft router; only the dedicated authenticated listener does.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/tape/src/bin/tape.rs
+    action: modify
+    section: serve-peer-transport
+    impl_mode: hand-written
+  - path: apps/tape/src/raft.rs
+    action: modify
+    section: raft-transport-adapter
+    impl_mode: hand-written
+  - path: apps/tape/src/server.rs
+    action: modify
+    section: public-peer-route-isolation
+    impl_mode: hand-written
+  - path: apps/tape/src/operator/render.rs
+    action: modify
+    section: kubernetes-peer-port
+    impl_mode: hand-written
+  - path: apps/tape/Cargo.toml
+    action: modify
+    section: peer-transport-integration-test-dependencies
+    impl_mode: hand-written
+  - path: apps/tape/tests/raft_peer_mtls.rs
+    action: create
+    section: peer-transport-integration-test
+    impl_mode: hand-written
+  - path: apps/tape/tests/operator.rs
+    action: modify
+    section: kubernetes-peer-port-test
+    impl_mode: hand-written
+```
