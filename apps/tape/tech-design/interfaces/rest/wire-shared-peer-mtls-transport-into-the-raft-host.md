@@ -61,7 +61,7 @@ changes:
     action: modify
     section: serve-peer-transport
     impl_mode: hand-written
-    anchor: ServeArgs
+    anchor: resolve_journal_store
     description: Select the existing h2c topology when peer TLS is absent, otherwise build the shared required-mTLS transport, use an https topology on TAPE_RAFT_PORT, run the dedicated peer listener, and join it to public drain.
   - path: apps/tape/src/raft.rs
     action: modify
