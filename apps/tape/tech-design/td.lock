@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T05:23:20.795709+00:00"
-digest = "sha256:73018b3d1fe820cce80631af3450ab106ed4b9f6ccdd3e7e62040ac56f248d87"
-source_digest = "sha256:73018b3d1fe820cce80631af3450ab106ed4b9f6ccdd3e7e62040ac56f248d87"
-ir_digest = "sha256:ffff1ffbdaec91db582735a86ea24c9a149b61acad48bad3c8379dacc16e9e74"
+generated_at = "2026-07-16T05:24:26.444464+00:00"
+digest = "sha256:a99b15a64fb7fb5c14e904b835131f0abb954dbc70c8b3d335b6f4823c897940"
+source_digest = "sha256:a99b15a64fb7fb5c14e904b835131f0abb954dbc70c8b3d335b6f4823c897940"
+ir_digest = "sha256:1b168baeb8b2d58911869e1ef5f605a7c8cfd894653adb98292d163df0e4affa"
 
 [[files]]
 path = "README.md"
@@ -45,8 +45,8 @@ section_count = 3
 
 [[files]]
 path = "logic/compose-shared-statefulset-workload-projection.md"
-digest = "sha256:d46f6e5b2f803b7f885399d900b1f1de4f8eb5e3f8ac68e07cb286886f052962"
-ir_digest = "sha256:429791420a1462b7ee6b7ddbcd7f0ecac7145c7ee894758e5f24cb3729f8a4eb"
+digest = "sha256:4ee8f444cad0f1d36994785987d98ec3ac2877f18372b9d257191e08b51a38b0"
+ir_digest = "sha256:f0ee10f452632ab6a9e66ffead7841d738035f54d356d87b1c61a9526c39f2ac"
 section_count = 3
 
 [[files]]
