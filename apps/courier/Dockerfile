@@ -15,8 +15,18 @@ COPY apps/ apps/
 COPY libs/ libs/
 COPY crates/ crates/
 
-# Strip projects/ workspace members — those crates aren't in this build context
-RUN sed -i '/\"projects\//d' Cargo.toml
+# Keep only libs/, crates/, and apps/courier workspace members
+RUN python3 -c "
+import re, sys
+text = open('Cargo.toml').read()
+def keep(m):
+    p = m.group(1)
+    if p.startswith('libs/') or p.startswith('crates/') or p == 'apps/courier':
+        return m.group(0)
+    return ''
+text = re.sub(r'^\s*\"([^\"]+)\",?\n', keep, text, flags=re.MULTILINE)
+open('Cargo.toml', 'w').write(text)
+"
 
 # Build only the courier binary in release mode
 RUN cargo build --release -p courier
