@@ -3313,6 +3313,30 @@ mod tests {
     }
 
     #[test]
+    fn transform_spec_elides_dayjs_type_import_beside_default_import() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("dayjs-type-default-import.test.ts");
+        std::fs::write(
+            &p,
+            r#"
+import dayjs, { Dayjs } from "dayjs";
+const formatDay = (value: Dayjs) => dayjs(value).format();
+"#,
+        )
+        .unwrap();
+
+        let out = transform_spec(&p).unwrap();
+        assert!(
+            out.contains("import dayjs from \"dayjs\";"),
+            "test-spec transform must preserve the default import: {out}"
+        );
+        assert!(
+            !out.contains("Dayjs"),
+            "test-spec transform must erase the type-only import: {out}"
+        );
+    }
+
+    #[test]
     fn normalize_jet_test_virtual_imports_only_rewrites_import_specifiers() {
         let source = r#"
 import { test } from "jet:test";
@@ -3459,6 +3483,41 @@ const quoted = 'jet:test';
         assert!(
             !code.contains("'./sum.js'"),
             "staged modules must not retain an unresolved JavaScript source import: {code}"
+        );
+    }
+
+    #[test]
+    fn emitter_elides_dayjs_type_import_beside_default_import() {
+        let tmp = TempDir::new().unwrap();
+        let dayjs = tmp.path().join("node_modules/dayjs");
+        std::fs::create_dir_all(&dayjs).unwrap();
+        std::fs::write(
+            dayjs.join("package.json"),
+            r#"{"name":"dayjs","main":"./dayjs.min.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(dayjs.join("dayjs.min.js"), "module.exports = () => ({});\n").unwrap();
+        let spec = tmp.path().join("dayjs-type-default-import.test.ts");
+        std::fs::write(
+            &spec,
+            r#"
+import dayjs, { Dayjs } from "dayjs";
+const formatDay = (value: Dayjs) => dayjs(value);
+"#,
+        )
+        .unwrap();
+
+        let out_dir = tmp.path().join("out");
+        let mut emitter = TempModuleGraphEmitter::new(&out_dir, tmp.path()).unwrap();
+        let emitted = emitter.emit(&spec, None).unwrap();
+        let code = std::fs::read_to_string(emitted).unwrap();
+        assert!(
+            code.contains("import dayjs from \"file://"),
+            "emitter must retain only the default dayjs import: {code}"
+        );
+        assert!(
+            !code.contains("Dayjs"),
+            "emitter must not restore the type-only Dayjs named import: {code}"
         );
     }
 

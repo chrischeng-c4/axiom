@@ -1005,6 +1005,30 @@ export const value = ThemeContext"#;
     }
 
     #[test]
+    fn test_dayjs_type_import_is_elided_beside_default_import() {
+        let source = r#"import dayjs, { Dayjs } from "dayjs";
+export const formatDay = (value: Dayjs) => dayjs(value).format("YYYY-MM-DD");"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            result.code.contains("import dayjs from \"dayjs\";"),
+            "must preserve the default dayjs value import: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("Dayjs"),
+            "must erase the type-only Dayjs named import: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains("dayjs(value).format"),
+            "must preserve the runtime dayjs call: {}",
+            result.code
+        );
+    }
+
+    #[test]
     fn test_export_function_multiline() {
         // Multi-line export function with complex type annotations
         let source = r#"export function createElement(

@@ -979,6 +979,53 @@ test("loads a CJS default import from a physical prebuilt ESM dist file", () => 
 }
 
 #[tokio::test]
+async fn test_worker_elides_dayjs_type_import_beside_default_import() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dayjs = tmp.path().join("node_modules/dayjs");
+    fs::create_dir_all(&dayjs).unwrap();
+    fs::write(
+        dayjs.join("package.json"),
+        r#"{"name":"dayjs","main":"./dayjs.min.js"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dayjs.join("dayjs.min.js"),
+        r#"module.exports = value => ({ format: () => `formatted:${value}` });"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("dayjs-type-default-import.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import dayjs, { Dayjs } from "dayjs";
+
+const formatDay = (value: Dayjs) => dayjs(value).format();
+
+test("elides Dayjs because it is only a TypeScript type", () => {
+  expect(formatDay("2026-07-16")).toBe("formatted:2026-07-16");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "Jet must strip the Dayjs type import while retaining dayjs's CJS default import: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
 async fn test_worker_preserves_trailing_named_exports_from_physical_esm_packages() {
     if which::which("node").is_err() {
         eprintln!("skipping: node not on PATH");
