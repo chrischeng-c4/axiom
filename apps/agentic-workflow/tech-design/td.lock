@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-16T08:17:17.982576+00:00"
-digest = "sha256:c564788aee95608e12a87a8207c32c4437d7ad3b232a61c58f1c17d99be274c9"
-source_digest = "sha256:c564788aee95608e12a87a8207c32c4437d7ad3b232a61c58f1c17d99be274c9"
-ir_digest = "sha256:0dd6fb691ded9e6c8b2140b4343a94225f2a32de21e793abf04b0600cdba22ce"
+generated_at = "2026-07-16T08:22:56.416903+00:00"
+digest = "sha256:6db7c1fa03baa840231d5e8e6d19937a97f08a4868e1638c3ff9cc1d5677017b"
+source_digest = "sha256:6db7c1fa03baa840231d5e8e6d19937a97f08a4868e1638c3ff9cc1d5677017b"
+ir_digest = "sha256:84f739df93aae34965b01b692737ec42d075d202b8ace46f7466e2972fbf5626"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4506,8 +4506,8 @@ section_count = 3
 
 [[files]]
 path = "logic/emit-actionable-hitl-questions-for-pending-ec-review.md"
-digest = "sha256:549b807c67d540bfa746226ed356ebaaa5241a0b86fe6e277975d0a50e15d54e"
-ir_digest = "sha256:5f0387989a21d322aafc5a9ca87e4a65a1b2508d86c88dfa38bfcc413c2d6f9c"
+digest = "sha256:bc6fb2affeb244065fe44eafb5a9577ab3a82777ce0a2f8078ae53ee8d9cc636"
+ir_digest = "sha256:cd0358123b3c65b8c679d9a7123d6d74b550f24cb07b0e93414447cf29c69908"
 section_count = 3
 
 [[files]]
@@ -4965,8 +4965,8 @@ section_count = 1
 
 [[files]]
 path = "surface/interfaces/src/cb.md"
-digest = "sha256:219c4800448b576836a9a51cb1f7f1bef30f9d6d2316503d9bd38064f2997921"
-ir_digest = "sha256:fe9ff94bbe137eed48274d84c54211ea3c537f2e9dc6a2569120127cd374d086"
+digest = "sha256:5d83a0e9ac7e5847ece8cdb937033a788ada9f17946ce2278123bc46ec95abb9"
+ir_digest = "sha256:1338d930cc4e4f8c0cf89f1632365383e4514bdd286b3be54b445fb4da70bb27"
 section_count = 4
 
 [[files]]
@@ -5187,7 +5187,7 @@ section_count = 5
 
 [[files]]
 path = "surface/specs/aw-capability-alignment-wi-planning.md"
-digest = "sha256:0ba3829bc8f8054a52493e2dcd72c176feed745ca2ad9a6b6c79fe2e56e6a4dc"
+digest = "sha256:f4c9c962a1b70d103b0b717f2568520fa4216019ad8d401b0a0d88fe1bb1e01d"
 parse_error = "cli:353-484: section 'cli' at lines 353..484: CLI manifest typed-payload parse error: commands[0]: missing field `name` at line 2 column 5"
 
 [[files]]
