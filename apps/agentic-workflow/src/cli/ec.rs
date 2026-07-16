@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 // generator-gap: aw-ec-cli-v1
 // reason: EC inventory/check generation is a new workflow surface not yet covered by deterministic CLI codegen primitives.
+use crate::cli::capability::{HitlChoice, HitlQuestion};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use fs2::FileExt;
@@ -415,6 +416,8 @@ pub struct EcReviewSummary {
     pub review_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hitl_question: Option<HitlQuestion>,
     pub findings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
@@ -1741,7 +1744,6 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     let manifest = build_expected_manifest(&ctx)?;
     let review_path = ec_review_path(&ctx);
     let review_path_rel = relative_to(&ctx.project_root, &review_path);
-
     if !ec_semantic_review_required(&manifest) {
         return emit_ec_review_summary_for_wi(
             &project_root,
@@ -1754,6 +1756,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 source_digest: manifest.generated_from_td_digest,
                 review_path: review_path_rel,
                 payload_path: None,
+                hitl_question: None,
                 findings: Vec::new(),
                 next: Some(command_with_wi(
                     format!("aw ec gen --project {} --verify", ctx.project),
@@ -1779,6 +1782,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 source_digest: manifest.generated_from_td_digest,
                 review_path: review_path_rel,
                 payload_path: None,
+                hitl_question: None,
                 findings: automatic_findings,
                 next,
             },
@@ -1801,6 +1805,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                         source_digest: manifest.generated_from_td_digest,
                         review_path: review_path_rel,
                         payload_path: None,
+                        hitl_question: None,
                         findings: Vec::new(),
                         next: Some(command_with_wi(
                             format!("aw ec gen --project {} --verify", ctx.project),
@@ -1831,6 +1836,12 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 source_digest: manifest.generated_from_td_digest,
                 review_path: review_path_rel,
                 payload_path: Some(payload_path.to_string_lossy().into_owned()),
+                hitl_question: Some(pending_ec_review_hitl_question(
+                    &ctx,
+                    &review_path,
+                    &payload_path,
+                    args.wi.as_deref(),
+                )),
                 findings: vec![
                     "independent EC semantic review is pending; a human must complete the review payload"
                         .to_string(),
@@ -1858,6 +1869,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 source_digest: manifest.generated_from_td_digest,
                 review_path: review_path_rel,
                 payload_path: None,
+                hitl_question: None,
                 findings: Vec::new(),
                 next: Some(command_with_wi(
                     format!("aw ec gen --project {} --verify", ctx.project),
@@ -1880,6 +1892,7 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                     source_digest: manifest.generated_from_td_digest,
                     review_path: review_path_rel,
                     payload_path: None,
+                    hitl_question: None,
                     findings: record.findings,
                     next,
                 },
@@ -1887,6 +1900,48 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
             )
         }
         EcReviewDecision::Pending => unreachable!("pending review returned above"),
+    }
+}
+
+fn pending_ec_review_hitl_question(
+    ctx: &EcProjectContext,
+    review_path: &Path,
+    payload_path: &Path,
+    wi: Option<&str>,
+) -> HitlQuestion {
+    HitlQuestion {
+        id: format!("ec-review:{}:semantic-approval", ctx.project),
+        question: format!(
+            "Should an independent human reviewer approve the current production EC inventory for {}?",
+            ctx.project
+        ),
+        target: relative_to(&ctx.project_root, review_path),
+        resume_command: command_with_wi(
+            format!(
+                "aw ec review --project {} --evidence-file '{}'",
+                ctx.project,
+                payload_path.to_string_lossy().replace('\'', "'\\''")
+            ),
+            wi,
+        ),
+        tool_hint: "ask_user_question".to_string(),
+        choices: vec![
+            HitlChoice {
+                id: "accept_after_review".to_string(),
+                label: "Approve after review".to_string(),
+                description: "Confirm all required checks pass, then provide reviewer identity and a concise semantic summary.".to_string(),
+            },
+            HitlChoice {
+                id: "request_revision".to_string(),
+                label: "Request revision".to_string(),
+                description: "Provide concrete findings and the EC target that needs revision; AW will route to bounded EC fill.".to_string(),
+            },
+        ],
+        default_choice: None,
+        freeform_prompt: Some(format!(
+            "Review payload: {}\n\nA human reviewer must inspect: capability-to-claim coverage; required EC dimensions; assertion specificity; oracle independence; loopholes; and false-green risk. Reply with your reviewer identity plus either an approval summary or concrete revision findings.",
+            payload_path.display()
+        )),
     }
 }
 // </HANDWRITE>
@@ -1900,6 +1955,20 @@ fn emit_ec_review_summary(summary: &EcReviewSummary, json: bool) -> Result<()> {
     println!("review: {}", summary.review_path);
     if let Some(payload) = &summary.payload_path {
         println!("payload: {payload}");
+    }
+    if let Some(question) = &summary.hitl_question {
+        println!("hitl_question: {}", question.question);
+        println!("target: {}", question.target);
+        for choice in &question.choices {
+            println!(
+                "choice {}: {} — {}",
+                choice.id, choice.label, choice.description
+            );
+        }
+        if let Some(prompt) = &question.freeform_prompt {
+            println!("review_brief: {prompt}");
+        }
+        println!("resume: {}", question.resume_command);
     }
     for finding in &summary.findings {
         println!("  - {finding}");
@@ -6243,6 +6312,7 @@ e2e_tests:
             source_digest: "fixture-digest".to_string(),
             review_path: "external-contracts/ec-review.yaml".to_string(),
             payload_path: None,
+            hitl_question: None,
             findings: Vec::new(),
             next: Some("aw ec gen --project demo --verify --wi ec-first-fixture".to_string()),
         };
@@ -6387,6 +6457,51 @@ e2e_tests:
             ec_review_false_green_reason("aw ec review --project demo"),
             Some("command uses AW's own EC lifecycle as its oracle")
         );
+    }
+
+    #[test]
+    fn ec_review_pending_emits_structured_hitl_question() {
+        let (_tmp, ctx) = write_demo_repo();
+        let review_path = ec_review_path(&ctx);
+        let payload_path = ec_review_payload_path(&ctx);
+        let question =
+            pending_ec_review_hitl_question(&ctx, &review_path, &payload_path, Some("1806"));
+        let summary = EcReviewSummary {
+            project: ctx.project.clone(),
+            status: "pending".to_string(),
+            clean: false,
+            requires_hitl: true,
+            source_digest: "sha256:fixture".to_string(),
+            review_path: relative_to(&ctx.project_root, &review_path),
+            payload_path: Some(payload_path.to_string_lossy().into_owned()),
+            hitl_question: Some(question),
+            findings: vec!["independent review pending".to_string()],
+            next: None,
+        };
+
+        let output = serde_json::to_value(summary).unwrap();
+        let hitl = &output["hitl_question"];
+        assert_eq!(hitl["tool_hint"], "ask_user_question");
+        assert_eq!(
+            hitl["target"], "projects/demo/external-contracts/ec-review.json",
+            "the reviewer must see the durable review record"
+        );
+        assert_eq!(hitl["choices"].as_array().unwrap().len(), 2);
+        assert_eq!(hitl["choices"][0]["id"], "accept_after_review");
+        assert_eq!(hitl["choices"][1]["id"], "request_revision");
+        assert_eq!(hitl["default_choice"], serde_json::Value::Null);
+        assert!(hitl["freeform_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("capability-to-claim coverage"));
+        assert!(hitl["freeform_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("false-green risk"));
+        assert!(hitl["resume_command"]
+            .as_str()
+            .unwrap()
+            .contains("--wi 1806"));
     }
 
     #[test]
