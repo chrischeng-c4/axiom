@@ -26,7 +26,7 @@ coverage_kind: semantic
 changes:
   - path: "apps/courier/build.rs"
     action: modify
-    section: rust-source-unit
+    section: schema
     impl_mode: hand-written
     description: |
       Lossless rust-source-unit ownership created from explicit file fillback.
