@@ -113,3 +113,49 @@ changes:
     impl_mode: hand-written
     reason: Document version pinning, latest selection, native-only execution, LUMEN_URL, and the no-persistent-data boundary.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-versioned-native-lumen-preset-verification
+requirements:
+  lumen_fail_closed:
+    id: R4
+    text: "Docker and MicroVM runtime requests, bad cache/download/checksum states, and absent native resolution emit actionable failures without Docker/image fallback."
+    kind: negative
+    risk: high
+    verify: lumen_preset_failure_tests
+  lumen_preset_config:
+    id: R1
+    text: "ServicePreset deserializes lumen and validation accepts only an omitted version or a lumen@X.Y.Z release selector with auto/native runtime."
+    kind: functional
+    risk: medium
+    verify: config_lumen_preset_validation
+  lumen_real_binary:
+    id: R5
+    text: "An opt-in real Lumen gate starts a cached or installed release binary, observes readyz and LUMEN_URL from the runner, and confirms VAT teardown."
+    kind: integration
+    risk: high
+    verify: lumen_preset_real_binary_e2e
+  lumen_release_cache:
+    id: R2
+    text: "The resolver selects the latest lumen tag or exact pinned tag, rejects malformed selectors, validates supplied SHA-256, and atomically reuses VAT-owned cached binaries without calling global upgrade."
+    kind: regression
+    risk: high
+    verify: lumen_release_cache_tests
+  lumen_runtime_contract:
+    id: R3
+    text: "A prepared Lumen service runs cached lumen serve on loopback, waits on readyz by default, and exports LUMEN_URL plus generic service endpoint variables."
+    kind: functional
+    risk: high
+    verify: lumen_preset_plan_tests
+---
+flowchart TD
+    r1[R1 lumen preset config] --> config_lumen_preset_validation[config_lumen_preset_validation]
+    r2[R2 lumen release cache] --> lumen_release_cache_tests[lumen_release_cache_tests]
+    r3[R3 lumen runtime contract] --> lumen_preset_plan_tests[lumen_preset_plan_tests]
+    r4[R4 lumen fail closed] --> lumen_preset_failure_tests[lumen_preset_failure_tests]
+    r5[R5 lumen real binary] --> lumen_preset_real_binary_e2e[lumen_preset_real_binary_e2e]
+```
