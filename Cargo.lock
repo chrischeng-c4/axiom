@@ -12180,14 +12180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "service-executor"
-version = "0.4.9"
-dependencies = [
- "futures",
- "tokio",
-]
-
-[[package]]
 name = "service-http"
 version = "0.1.0"
 dependencies = [

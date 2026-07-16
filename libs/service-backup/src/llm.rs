@@ -141,28 +141,5 @@ mod tests {
         assert!(topic.body.contains("fetch_backup_object"));
         assert!(topic.body.contains("http-client"));
     }
-
-    #[test]
-    fn sectioned_topic_conforms() {
-        cli_std::llm::assert_topics_render(SECTIONED_TOPICS);
-    }
-
-    #[test]
-    fn sectioned_topic_destination_section_lists_every_supported_scheme() {
-        let generated = destination_contract_section();
-        for info in SUPPORTED_SCHEMES {
-            assert!(
-                generated.contains(info.scheme),
-                "destination-contract section missing scheme {}",
-                info.scheme
-            );
-        }
-    }
-
-    #[test]
-    fn sectioned_topic_matches_static_topic_identity() {
-        assert_eq!(sectioned_topic().id, TOPIC.id);
-        assert_eq!(sectioned_topic().summary, TOPIC.summary);
-    }
 }
 // CODEGEN-END

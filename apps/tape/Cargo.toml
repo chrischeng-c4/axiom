@@ -73,10 +73,6 @@ service-backup = { path = "../../libs/service-backup" }
 # Shared durable file replacement for Tape's Raft marker and journal snapshot
 # bytes. Tape retains the domain serialization and recovery ordering.
 storage-durable = { path = "../../libs/storage-durable" }
-# HTTP client for `tape backup`'s snapshot fetch (feature `backup` only; the
-# serving image stays reqwest-free by default). Also a dev-dependency for the
-# transport tests either way.
-reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-nats = { workspace = true }
