@@ -4,11 +4,14 @@ FROM python:3.11-slim
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# Use system Python environment for uv
+ENV UV_SYSTEM_PYTHON=1
+
 WORKDIR /app
 
 # Install dependencies using uv sync
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --system
+RUN uv sync --frozen --no-install-project
 
 # Copy app code
 COPY app/ app/
