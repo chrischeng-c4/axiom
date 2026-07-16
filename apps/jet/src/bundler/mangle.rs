@@ -1389,7 +1389,15 @@ fn tokenize(source: &str) -> Vec<Tok> {
             continue;
         }
         let s = i;
-        i += 1;
+        // Identifiers and punctuation are ASCII-only in this lightweight
+        // tokenizer, but source text is not.  Keep the fallback token's byte
+        // range on UTF-8 character boundaries so later `txt()` calls can
+        // safely slice it (for example, JSX text containing `⌘` or CJK).
+        i += source[i..]
+            .chars()
+            .next()
+            .expect("tokenizer index is within source")
+            .len_utf8();
         toks.push(Tok {
             kind: TK::Punct,
             start: s,
@@ -5019,11 +5027,10 @@ function module(ReactSharedInternals, ReactDOMSharedInternals) {
     // UTF-8 multi-byte safety tests (issue #904)
     //
     // The tokenizer operates on raw bytes (`source.as_bytes()`) and only
-    // matches ASCII identifier characters, so multi-byte UTF-8 sequences
-    // pass through as opaque Punct tokens.  `apply_renames` reconstructs
-    // the output via `result.splice(byte_start..byte_end, ...)` where
-    // offsets come from the byte-level scan — no char-index-as-byte-offset
-    // bug is possible.  These tests verify that.
+    // matches ASCII identifier characters. Multi-byte UTF-8 sequences pass
+    // through as opaque Punct tokens, whose ranges must still be valid string
+    // boundaries for `txt()` and replacement collection. These tests verify
+    // that contract.
     // ──────────────────────────────────────────────────────────────────
 
     #[test]
@@ -5094,6 +5101,33 @@ function module(ReactSharedInternals, ReactDOMSharedInternals) {
             "other should be mangled, got: {}",
             out
         );
+    }
+
+    #[test]
+    fn test_utf8_punct_tokens_stay_on_character_boundaries() {
+        // Raw JSX text is neither a string literal nor an identifier, so it
+        // exercises the tokenizer fallback that previously split `⌘` after
+        // its first byte and panicked in `txt()` (GH #1784).
+        let src = "const collidingHelper = render(<span>⌘重</span>); collidingHelper;";
+        let tokens = tokenize(src);
+        let unicode_tokens: Vec<&Tok> = tokens
+            .iter()
+            .filter(|token| token.kind == TK::Punct)
+            .filter(|token| {
+                let text = txt(src, token);
+                text == "⌘" || text == "重"
+            })
+            .collect();
+
+        assert_eq!(
+            unicode_tokens.len(),
+            2,
+            "token ranges must retain each UTF-8 character"
+        );
+        assert!(src.is_char_boundary(unicode_tokens[0].start));
+        assert!(src.is_char_boundary(unicode_tokens[0].end));
+        assert!(src.is_char_boundary(unicode_tokens[1].start));
+        assert!(src.is_char_boundary(unicode_tokens[1].end));
     }
 }
 // CODEGEN-END
