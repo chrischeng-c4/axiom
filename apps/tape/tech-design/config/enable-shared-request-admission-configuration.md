@@ -53,3 +53,28 @@ changes:
     anchor: tape_default_router_keeps_admission_disabled
     description: "Prove configured write admission returns shared 429 without limiting probes. generator gap: missing-generator:tape-admission-adoption (#1827)."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: tape-shared-admission-adoption-verification
+requirements:
+  configured_write_limit:
+    id: R1
+    text: "A configured Tape write policy rejects excess append requests with the shared rate_limited 429 and Retry-After while /healthz bypasses admission."
+    kind: security
+    risk: high
+    verify: apps/tape/tests/service_admission.rs::configured_write_admission_rejects_excess_without_limiting_probes
+  disabled_default:
+    id: R2
+    text: "Absent Tape admission configuration preserves the existing unlimited router behavior."
+    kind: regression
+    risk: medium
+    verify: apps/tape/tests/service_admission.rs::tape_default_router_keeps_admission_disabled
+---
+flowchart TD
+    r1[R1 configured write limit] --> apps_tape_tests_service_admission_rs_configured_write_admission_rejects_excess_without_limiting_probes[apps/tape/tests/service_admission.rs::configured_write_admission_rejects_excess_without_limiting_probes]
+    r2[R2 disabled default] --> apps_tape_tests_service_admission_rs_tape_default_router_keeps_admission_disabled[apps/tape/tests/service_admission.rs::tape_default_router_keeps_admission_disabled]
+```
