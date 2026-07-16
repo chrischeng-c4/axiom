@@ -921,7 +921,17 @@ async fn test_worker_preserves_trailing_named_exports_from_physical_esm_packages
     fs::create_dir_all(package.join("dist/@testing-library")).unwrap();
     fs::write(
         package.join("package.json"),
-        r#"{"name":"@testing-library/react","type":"module","exports":{".":"./dist/@testing-library/react.esm.js"}}"#,
+        r#"{
+  "name": "@testing-library/react",
+  "main": "dist/index.js",
+  "module": "dist/@testing-library/react.esm.js",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/@testing-library/react.esm.js"
+    }
+  }
+}"#,
     )
     .unwrap();
     fs::write(
@@ -935,7 +945,7 @@ export { act, render, renderHook };
     )
     .unwrap();
     fs::write(
-        tmp.path().join("physical-esm-named-exports.test.ts"),
+        tmp.path().join("physical-esm-named-exports.test.tsx"),
         r#"
 import { test, expect } from "@jet/test";
 import { act, render, renderHook } from "@testing-library/react";
