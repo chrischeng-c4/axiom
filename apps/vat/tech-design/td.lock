@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-13T09:44:37.300040+00:00"
-digest = "sha256:587c1f986e9dbb29aaf4c9553907b10d12575e1903c1c1e50c79a6e60bae532d"
-source_digest = "sha256:587c1f986e9dbb29aaf4c9553907b10d12575e1903c1c1e50c79a6e60bae532d"
-ir_digest = "sha256:14601875996cefb0d60fcc19dfe9401e10e30973bae432f1ba49130935674500"
+generated_at = "2026-07-16T05:58:14.880989+00:00"
+digest = "sha256:8c5df27c2933f0895902b0c00ac8e6ae6467eb92b0b1a71bf46550768ed0fc96"
+source_digest = "sha256:8c5df27c2933f0895902b0c00ac8e6ae6467eb92b0b1a71bf46550768ed0fc96"
+ir_digest = "sha256:3113a0813bab004acd55d84c8d16c3bd91ce07f6802f83463925ff3ac1e797eb"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -48,6 +48,12 @@ path = "interfaces/rest/openapi-driven-mock-http-service.md"
 digest = "sha256:2927cf4007697183457d25637175f58d050a054756770174ffbec53835953967"
 ir_digest = "sha256:267a55065fced5fbf5589655a15fbc86fd631d2d6845084ed8f5b9ad2ff47a01"
 section_count = 7
+
+[[files]]
+path = "logic/add-versioned-native-lumen-service-preset.md"
+digest = "sha256:3694dbbc6b0fab1b59944cb6df6b5c24881c5ad7a7ebfc40279d5c1236aa1eb6"
+ir_digest = "sha256:6b030fdb411e2540ae12b7f17065ad6715666e0b10f25477c3c9a82fd39c55bc"
+section_count = 3
 
 [[files]]
 path = "logic/apply-the-sandbox-seatbelt-isolation-egress-to-runner-mode-comma.md"
