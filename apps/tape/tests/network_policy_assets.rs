@@ -44,10 +44,30 @@ fn policy_selects_only_tape_servers_and_has_no_unrestricted_peer() {
         .expect("ingress rules are a sequence");
     assert_eq!(
         ingress.len(),
-        2,
-        "only client and Prometheus peers are allowed"
+        3,
+        "only sibling Tape peers, labeled clients, and Prometheus are allowed"
     );
-    for rule in ingress {
+
+    let raft = &ingress[0];
+    let raft_ports = raft["ports"].as_sequence().expect("raft rule has ports");
+    assert_eq!(raft_ports.len(), 2);
+    assert_eq!(raft_ports[0]["protocol"], "TCP");
+    assert_eq!(raft_ports[0]["port"], 7137);
+    assert_eq!(raft_ports[1]["protocol"], "TCP");
+    assert_eq!(raft_ports[1]["port"], 7138);
+    let raft_peers = raft["from"].as_sequence().expect("raft rule has peers");
+    assert_eq!(raft_peers.len(), 1);
+    assert_eq!(raft_peers[0]["podSelector"]["matchLabels"]["app"], "tape");
+    assert_eq!(
+        raft_peers[0]["podSelector"]["matchLabels"]["role"],
+        "server"
+    );
+    assert!(
+        raft_peers[0]["namespaceSelector"].is_null(),
+        "the sibling-pod selector is intentionally limited to Tape's own namespace"
+    );
+
+    for rule in &ingress[1..] {
         let ports = rule["ports"].as_sequence().expect("rule has ports");
         assert_eq!(ports.len(), 1, "each peer has exactly one allowed port");
         assert_eq!(ports[0]["protocol"], "TCP");
@@ -62,20 +82,20 @@ fn policy_selects_only_tape_servers_and_has_no_unrestricted_peer() {
     }
 
     assert_eq!(
-        ingress[0]["from"][0]["namespaceSelector"]["matchLabels"]["tape.cclab.dev/client-access"],
+        ingress[1]["from"][0]["namespaceSelector"]["matchLabels"]["tape.cclab.dev/client-access"],
         "true"
     );
     assert!(
-        ingress[0]["from"][0]["podSelector"].is_null(),
+        ingress[1]["from"][0]["podSelector"].is_null(),
         "client access is bounded by the explicit namespace label"
     );
     assert_eq!(
-        ingress[1]["from"][0]["namespaceSelector"]["matchLabels"]
+        ingress[2]["from"][0]["namespaceSelector"]["matchLabels"]
             ["tape.cclab.dev/monitoring-access"],
         "true"
     );
     assert_eq!(
-        ingress[1]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"],
+        ingress[2]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"],
         "prometheus"
     );
 }
