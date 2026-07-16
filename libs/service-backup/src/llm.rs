@@ -12,8 +12,9 @@ pub const TOPIC: cli_std::llm::Topic = cli_std::llm::Topic {
 The service owns snapshot consistency, snapshot bytes, restore semantics, and
 the admin or CLI endpoint that produces the snapshot. `service-backup` owns the
 transport contract around those bytes: `BackupDestination`, `RetentionPolicy`,
-`BackupSink`, `LocalFsSink`, optional S3 support, `run_backup_once`, and
-`fetch_backup_object`.
+`BackupSink`, `LocalFsSink`, optional S3 support, `run_backup_once`,
+`fetch_backup_object`, and (with `http-client`) the authenticated standard
+`GET /admin/backup` fetch/upload path.
 
 Operator code or a CronJob should schedule and transport backups; it should not
 serialize service state itself.
@@ -52,6 +53,7 @@ mod tests {
         assert_eq!(topic.id, "service-backup");
         assert!(topic.body.contains("BackupDestination"));
         assert!(topic.body.contains("fetch_backup_object"));
+        assert!(topic.body.contains("http-client"));
     }
 }
 // CODEGEN-END

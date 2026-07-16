@@ -13,10 +13,13 @@
 //! returned bytes through a [`BackupSink`]. Local and GCS are always available;
 //! S3 is feature-gated. GCS uses workload identity in production and Vat's
 //! `STORAGE_EMULATOR_HOST` locally. Bootstrap/restore reads exact object URIs
-//! through [`fetch_backup_object`].
+//! through [`fetch_backup_object`]. The optional `http-client` feature adds the
+//! standard authenticated admin-snapshot transport used by service backup CLIs.
 
 mod destination;
 mod gcs;
+#[cfg(feature = "http-client")]
+mod http;
 pub mod llm;
 mod policy;
 mod runner;
@@ -26,6 +29,8 @@ mod sink;
 mod source;
 
 pub use destination::BackupDestination;
+#[cfg(feature = "http-client")]
+pub use http::{fetch_admin_snapshot, run_admin_snapshot_backup};
 pub use policy::{BackupPolicy, RetentionPolicy, ScheduledBackupPolicy};
 pub use gcs::GcsSink;
 pub use runner::{run_backup_once, BackupObject, BackupRunResult};
