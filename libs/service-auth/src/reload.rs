@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use axum::http::HeaderMap;
@@ -19,6 +20,72 @@ use serde::Serialize;
 use crate::middleware::bearer_token;
 use crate::role_map::{Role, RoleMapDenied, RoleMapPrincipal, TokenClaims};
 use crate::{AuthError, Verifier};
+
+/// Production poll cadence for a Secret/CSI-projected token registry. The
+/// source file is tiny, and reading it only occurs on this background cadence;
+/// requests continue against the last validated in-memory snapshot.
+pub const DEFAULT_REGISTRY_FILE_WATCH_INTERVAL: Duration = Duration::from_secs(15);
+
+#[derive(Debug, PartialEq, Eq)]
+enum RegistryFileState {
+    Bytes(Vec<u8>),
+    Unavailable,
+}
+
+fn read_registry_file_state(path: &Path) -> RegistryFileState {
+    std::fs::read(path)
+        .map(RegistryFileState::Bytes)
+        .unwrap_or(RegistryFileState::Unavailable)
+}
+
+/// Spawn a background watcher for a Secret/CSI-projected registry file using
+/// the production cadence. A changed file is fully parsed and validated
+/// before [`ReloadableRoleMapVerifier`] adopts it, so invalid rotations retain
+/// the previous known-good snapshot. The watcher never logs credential bytes.
+pub fn spawn_registry_file_watcher(
+    verifier: Arc<ReloadableRoleMapVerifier>,
+    path: impl AsRef<Path>,
+) -> tokio::task::JoinHandle<()> {
+    spawn_registry_file_watcher_with_interval(verifier, path, DEFAULT_REGISTRY_FILE_WATCH_INTERVAL)
+}
+
+/// Spawn a registry watcher with an explicit polling cadence. This is public
+/// for services with an intentional cadence and for deterministic tests; most
+/// services should use [`spawn_registry_file_watcher`].
+pub fn spawn_registry_file_watcher_with_interval(
+    verifier: Arc<ReloadableRoleMapVerifier>,
+    path: impl AsRef<Path>,
+    poll_interval: Duration,
+) -> tokio::task::JoinHandle<()> {
+    let path = path.as_ref().to_owned();
+    let poll_interval = if poll_interval.is_zero() {
+        Duration::from_secs(1)
+    } else {
+        poll_interval
+    };
+    let initial = read_registry_file_state(&path);
+
+    tokio::spawn(async move {
+        let mut observed = initial;
+        let mut ticker = tokio::time::interval(poll_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let current = read_registry_file_state(&path);
+            if current == observed {
+                continue;
+            }
+            observed = current;
+            if verifier.reload_file(&path).is_err() {
+                tracing::warn!(
+                    target: "service_auth.audit",
+                    path = %path.display(),
+                    "credential registry update rejected; retaining last known-good snapshot"
+                );
+            }
+        }
+    })
+}
 
 /// Stable authorization outcomes exposed to audit/metrics adapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -503,6 +570,51 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[tokio::test]
+    async fn file_watcher_adopts_a_valid_replacement_without_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "service-auth-registry-watch-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"old":{"subject":"alice","roles":{"resource":"read"}}}"#,
+        )
+        .unwrap();
+        let verifier = Arc::new(ReloadableRoleMapVerifier::new(
+            true,
+            HashMap::from([("old".to_owned(), claims("alice", Role::Read))]),
+        ));
+        let task = spawn_registry_file_watcher_with_interval(
+            Arc::clone(&verifier),
+            &path,
+            Duration::from_millis(5),
+        );
+
+        // Let the task capture the initial file before replacing the mounted
+        // content, then wait until the shared verifier publishes the change.
+        tokio::task::yield_now().await;
+        std::fs::write(
+            &path,
+            r#"{"new":{"subject":"bob","roles":{"resource":"admin"}}}"#,
+        )
+        .unwrap();
+        for _ in 0..20 {
+            if verifier.authenticate(&headers("new")).is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        assert!(verifier.authenticate(&headers("old")).is_err());
+        assert_eq!(
+            verifier.authenticate(&headers("new")).unwrap().subject(),
+            Some("bob")
+        );
+        task.abort();
+        std::fs::remove_file(path).ok();
     }
 }
 // HANDWRITE-END

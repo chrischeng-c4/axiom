@@ -16,9 +16,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [dev-dependencies]
 # tokio drives the `#[tokio::test]` oneshot middleware tests.
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros"] }
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"

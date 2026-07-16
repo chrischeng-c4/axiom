@@ -75,14 +75,16 @@ pub struct TapeSpec {
     /// `token-registry.json`). When set with `auth: required`, the render
     /// mounts it read-only at `/var/run/secrets/tape` and injects
     /// `TAPE_AUTH=required` + `TAPE_TOKEN_REGISTRY_FILE` (relay/lumen's
-    /// pattern; off unless the CR asks).
+    /// pattern; off unless the CR asks). Tape watches a changed projection
+    /// and atomically applies only a valid replacement without a pod restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret: Option<String>,
 
     /// Name of a Secrets Store CSI `SecretProviderClass` that projects the
-    /// same `token-registry.json` file as [`Self::tokens_secret`]. It is used
-    /// only with `auth: required`; when both sources are set, `tokensSecret`
-    /// wins for backward compatibility.
+    /// same `token-registry.json` file as [`Self::tokens_secret`]. When the
+    /// CSI driver refreshes that file, Tape's watcher applies valid rotations
+    /// without a pod restart. It is used only with `auth: required`; when both
+    /// sources are set, `tokensSecret` wins for backward compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_secret_provider_class: Option<String>,
 
