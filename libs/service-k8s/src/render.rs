@@ -127,6 +127,33 @@ pub fn dedicated_node_affinity(selector: Value) -> Value {
     })
 }
 
+/// Pod-level Kubernetes restricted-profile baseline for long-running service
+/// workloads. The matching container-level restrictions come from
+/// [`restricted_container_security_context`].
+pub fn restricted_pod_security_context() -> Value {
+    json!({
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "runAsGroup": 65532,
+        "fsGroup": 65532,
+        "seccompProfile": { "type": "RuntimeDefault" },
+    })
+}
+
+/// Container-level Kubernetes restricted-profile baseline for a service
+/// workload. Services still add explicit writable `emptyDir` mounts for paths
+/// such as `/tmp` when their process needs them.
+pub fn restricted_container_security_context() -> Value {
+    json!({
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "runAsGroup": 65532,
+        "allowPrivilegeEscalation": false,
+        "readOnlyRootFilesystem": true,
+        "capabilities": { "drop": ["ALL"] },
+    })
+}
+
 /// A rendered PVC template plus the container mount path it should back.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct WorkloadVolumeClaim<'a> {
@@ -762,6 +789,19 @@ mod tests {
         assert_eq!(
             cx.labels("server")["app.kubernetes.io/managed-by"],
             "svc-operator"
+        );
+        assert_eq!(restricted_pod_security_context()["runAsNonRoot"], true);
+        assert_eq!(
+            restricted_pod_security_context()["seccompProfile"]["type"],
+            "RuntimeDefault"
+        );
+        assert_eq!(
+            restricted_container_security_context()["readOnlyRootFilesystem"],
+            true
+        );
+        assert_eq!(
+            restricted_container_security_context()["capabilities"]["drop"][0],
+            "ALL"
         );
 
         let secret = TokenRegistryProjection {

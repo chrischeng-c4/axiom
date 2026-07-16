@@ -304,17 +304,8 @@ fn serving_statefulset(lumen: &Lumen, cx: &RenderCtx<'_>, headless: &str) -> Val
             "prometheus.io/port": CLIENT_PORT.to_string(),
             "prometheus.io/path": "/metrics",
         })),
-        pod_security_context: Some(json!({
-            "runAsNonRoot": true,
-            "runAsUser": 65532, "runAsGroup": 65532, "fsGroup": 65532,
-            "seccompProfile": { "type": "RuntimeDefault" },
-        })),
-        container_security_context: Some(json!({
-            "runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532,
-            "allowPrivilegeEscalation": false,
-            "readOnlyRootFilesystem": true,
-            "capabilities": { "drop": ["ALL"] },
-        })),
+        pod_security_context: Some(render::restricted_pod_security_context()),
+        container_security_context: Some(render::restricted_container_security_context()),
         termination_grace_period_seconds: Some(s.grace_secs),
         readiness_probe: Some(json!({
             "httpGet": { "path": "/readyz", "port": "http" },
