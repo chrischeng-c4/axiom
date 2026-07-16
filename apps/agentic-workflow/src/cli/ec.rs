@@ -27,6 +27,11 @@ const EC_SOURCE_REL: &str = "external-contracts";
 const EC_LOCK_FILE: &str = "ec.lock";
 const EC_REVIEW_FILE: &str = "ec-review.json";
 const EC_REVIEW_VERSION: u8 = 1;
+/// #1829: records who authored the current EC digest, so `aw ec review`
+/// can reject an agent review whose identity matches the author (same-agent
+/// self-review is never independent evidence, policy notwithstanding).
+const EC_AUTHOR_FILE: &str = "ec-author.json";
+const EC_AUTHOR_VERSION: u8 = 1;
 const PROJECT_AW_REL: &str = "aw.toml";
 const LEGACY_EC_MANIFEST_FILE: &str = "aw-ec.toml";
 const EC_AW_BEGIN_MARKER: &str = "AW-EC-BEGIN";
@@ -195,8 +200,10 @@ pub struct EcLockArgs {
 /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#schema
 #[derive(Debug, Args)]
 pub struct EcReviewArgs {
-    /// Human-backed semantic review payload. Defaults to the initialized
-    /// project-scoped payload under /tmp/aw/workspaces/<workspace>/payloads/ec/.
+    /// Human- or agent-backed semantic review payload (reviewer_kind:
+    /// human|agent; agent requires the project's ec_review_backing policy
+    /// to allow it). Defaults to the initialized project-scoped payload
+    /// under /tmp/aw/workspaces/<workspace>/payloads/ec/.
     #[arg(long)]
     pub evidence_file: Option<PathBuf>,
     /// Emit JSON instead of human-readable output.
@@ -404,7 +411,8 @@ pub struct EcCheckSummary {
     pub ec_binding_warnings: Vec<String>,
 }
 
-/// Human-backed semantic approval state for the current EC inventory digest.
+/// Human- or agent-backed semantic approval state for the current EC
+/// inventory digest (#1829 generalizes this from human-only evidence).
 /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EcReviewSummary {
@@ -421,6 +429,17 @@ pub struct EcReviewSummary {
     pub findings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+    /// #1829: which reviewer_kind produced `status` (`human` | `agent`),
+    /// once a review is accepted/needs_revision; absent for not_required/
+    /// pending states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backing: Option<String>,
+    /// #1829: when the project's `review_backing` policy allows agent
+    /// evidence and no accepted/needs_revision record exists yet, the
+    /// structured inspection-checklist prompt for a host-dispatched agent
+    /// reviewer (aw emits the protocol; the host owns dispatch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_review_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -485,6 +504,21 @@ struct EcReviewRecord {
     findings: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     target_path: String,
+}
+
+/// #1829: durable record of who authored the EC content for a given digest,
+/// written at `aw ec gen` time. Used to enforce reviewer independence: an
+/// agent review whose identity matches this record's `author` for the same
+/// `source_digest` is rejected as same-agent self-review, regardless of
+/// `review_backing` policy.
+/// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-agent-review-protocol.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EcAuthorRecord {
+    version: u8,
+    project: String,
+    source_digest: String,
+    author: String,
+    recorded_at: String,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -733,6 +767,10 @@ pub struct EcProjectContext {
     /// (`aw.toml`), for static validation against the vat.toml
     /// runner registries they target.
     pub ec_bindings: BTreeMap<String, crate::models::project::EcBinding>,
+    /// #1829: this project's EC review-backing policy (`human` | `agent` |
+    /// `either`), resolved from `Project::ec_review_backing` and defaulting
+    /// to `human` when absent or unrecognized.
+    pub review_backing: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1053,6 +1091,17 @@ pub fn load_project_ec_manifest(project: &str) -> Result<Option<(PathBuf, EcMani
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     load_ec_manifest(&ctx)
+}
+
+/// #1829 R7: this project's resolved EC review-backing policy (`human` |
+/// `agent` | `either`), for `aw health`/reporting surfaces that need to
+/// distinguish which backing kind a production EC gate will accept without
+/// duplicating the resolution logic in `resolve_ec_project_context`.
+/// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub fn project_ec_review_backing(project: &str) -> Result<String> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    Ok(ctx.review_backing)
 }
 
 fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
@@ -1595,6 +1644,10 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
         }
     } else {
         write_ec_manifest(&ctx, &manifest)?;
+        // #1829: record author identity for the finalized digest so
+        // `aw ec review` can enforce reviewer independence. Best-effort —
+        // never blocks `ec gen` on a write failure.
+        let _ = write_ec_author_record(&ctx, &manifest);
         for (path, content) in generated_files {
             write_generated_ec_test(&path, &content)?;
         }
@@ -1762,6 +1815,8 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                     format!("aw ec gen --project {} --verify", ctx.project),
                     args.wi.as_deref(),
                 )),
+                backing: None,
+                agent_review_prompt: None,
             },
             args.json,
         );
@@ -1785,6 +1840,8 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                 hitl_question: None,
                 findings: automatic_findings,
                 next,
+                backing: None,
+                agent_review_prompt: None,
             },
             args.json,
         );
@@ -1811,6 +1868,8 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                             format!("aw ec gen --project {} --verify", ctx.project),
                             args.wi.as_deref(),
                         )),
+                        backing: Some(record.reviewer_kind.clone()),
+                        agent_review_prompt: None,
                     },
                     args.json,
                 );
@@ -1825,6 +1884,43 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
     let mut record = read_ec_review_record(&payload_path)?;
 
     if record.decision == EcReviewDecision::Pending {
+        // #1829: when project policy accepts agent-backed evidence, emit a
+        // non-blocking structured agent envelope instead of a blocking
+        // human HITL question — aw emits the review protocol, the host
+        // owns dispatching an independent reviewer subagent. A human can
+        // still resume with `--evidence-file` at any time (composes with
+        // the optional post-completion human audit).
+        if ec_review_backing_allows(&ctx.review_backing, "agent") {
+            return emit_ec_review_summary_for_wi(
+                &project_root,
+                args.wi.as_deref(),
+                &EcReviewSummary {
+                    project: ctx.project.clone(),
+                    status: "pending_agent_review".to_string(),
+                    clean: false,
+                    requires_hitl: false,
+                    source_digest: manifest.generated_from_td_digest,
+                    review_path: review_path_rel,
+                    payload_path: Some(payload_path.to_string_lossy().into_owned()),
+                    hitl_question: None,
+                    findings: vec![
+                        "independent EC semantic review is pending; dispatch an independent agent reviewer or a human"
+                            .to_string(),
+                    ],
+                    next: Some(command_with_wi(
+                        format!(
+                            "aw ec review --project {} --evidence-file '{}'",
+                            ctx.project,
+                            payload_path.to_string_lossy().replace('\'', "'\\''")
+                        ),
+                        args.wi.as_deref(),
+                    )),
+                    backing: None,
+                    agent_review_prompt: Some(agent_ec_review_prompt(&ctx, &payload_path)),
+                },
+                args.json,
+            );
+        }
         return emit_ec_review_summary_for_wi(
             &project_root,
             args.wi.as_deref(),
@@ -1847,6 +1943,8 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                         .to_string(),
                 ],
                 next: None,
+                backing: None,
+                agent_review_prompt: None,
             },
             args.json,
         );
@@ -1875,6 +1973,8 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                     format!("aw ec gen --project {} --verify", ctx.project),
                     args.wi.as_deref(),
                 )),
+                backing: Some(record.reviewer_kind.clone()),
+                agent_review_prompt: None,
             },
             args.json,
         ),
@@ -1895,6 +1995,8 @@ fn run_review(project: &str, args: EcReviewArgs) -> Result<()> {
                     hitl_question: None,
                     findings: record.findings,
                     next,
+                    backing: Some(record.reviewer_kind.clone()),
+                    agent_review_prompt: None,
                 },
                 args.json,
             )
@@ -1943,6 +2045,29 @@ fn pending_ec_review_hitl_question(
             payload_path.display()
         )),
     }
+}
+
+/// #1829: structured agent review envelope prompt — the R3 inspection
+/// checklist (#1504) rendered for a host-dispatched independent reviewer
+/// subagent. `aw` emits this protocol only; the host owns dispatching the
+/// actual reviewer and must not reuse the EC content author's identity
+/// (enforced independently by `ec_reviewer_is_independent` at submission
+/// time regardless of what this prompt says).
+fn agent_ec_review_prompt(ctx: &EcProjectContext, payload_path: &Path) -> String {
+    format!(
+        "Independent agent EC semantic review for project `{project}`.\n\n\
+Inspect the current EC inventory (external-contracts/**, aw.toml EC section) against these six required dimensions:\n\
+1. capability_claim_coverage — every capability claim the EC exists to prove has a covering case.\n\
+2. required_dimensions — behavior/efficiency/security/stability coverage is present where required.\n\
+3. assertions_specific — assertions are concrete and falsifiable, not vague/tautological.\n\
+4. oracle_independent — pass/fail oracles are independent of the implementation under test.\n\
+5. loopholes_checked — no trivially-satisfiable or gameable case exists.\n\
+6. false_green_risk_checked — a broken implementation would plausibly fail at least one case.\n\n\
+You must NOT be the same identity that authored this EC content (independence is enforced at submission and will reject a same-identity review even if attempted).\n\n\
+Submit your verdict by writing the review payload JSON at {payload} with `reviewer_kind: \"agent\"`, `reviewed_by: \"<your agent identity>\"`, a `decision` of `accepted` (with every checklist item true and no findings) or `needs_revision` (with concrete `findings` and a `target_path` under external-contracts/**), then resume with `aw ec review --project {project} --evidence-file '{payload}'`.",
+        project = ctx.project,
+        payload = payload_path.display()
+    )
 }
 // </HANDWRITE>
 
@@ -2048,6 +2173,71 @@ fn write_ec_review_record(path: &Path, record: &EcReviewRecord) -> Result<()> {
     fs::write(path, content).with_context(|| format!("write {}", path.display()))
 }
 
+/// #1829: identity of the current actor (human or agent) for author/review
+/// recording. `AW_ACTOR_ID` takes precedence for explicit host-provided
+/// identity; `AW_AGENT_ID` is a fallback for agent-hosted runs that only
+/// set an agent id; otherwise `unknown-actor`.
+fn current_actor_identity() -> String {
+    std::env::var("AW_ACTOR_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("AW_AGENT_ID")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "unknown-actor".to_string())
+}
+
+fn ec_author_path(ctx: &EcProjectContext) -> PathBuf {
+    ctx.ec_root.join(EC_AUTHOR_FILE)
+}
+
+/// #1829: record the current actor as the author of `manifest`'s digest.
+/// Called from `aw ec gen` (the point at which EC content for a digest is
+/// finalized). Best-effort: a write failure here must not block `ec gen`
+/// (it only weakens independence enforcement, not the digest/gate itself).
+fn write_ec_author_record(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
+    let record = EcAuthorRecord {
+        version: EC_AUTHOR_VERSION,
+        project: ctx.project.clone(),
+        source_digest: manifest.generated_from_td_digest.clone(),
+        author: current_actor_identity(),
+        recorded_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let path = ec_author_path(ctx);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let content = format!("{}\n", serde_json::to_string_pretty(&record)?);
+    fs::write(&path, content).with_context(|| format!("write {}", path.display()))
+}
+
+fn load_ec_author_record(ctx: &EcProjectContext) -> Option<EcAuthorRecord> {
+    let content = fs::read_to_string(ec_author_path(ctx)).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// #1829: is `reviewed_by` independent of the recorded author for
+/// `source_digest`? No author record (e.g. legacy EC content generated
+/// before #1829, or human-authored content that never called `ec gen`
+/// through this actor-identity path) is treated as independent — this
+/// mirrors the pre-#1829 behavior where only human review evidence with a
+/// non-empty `reviewed_by` was required, with no author-identity check.
+fn ec_reviewer_is_independent(
+    ctx: &EcProjectContext,
+    source_digest: &str,
+    reviewed_by: &str,
+) -> bool {
+    match load_ec_author_record(ctx) {
+        Some(author) if author.source_digest == source_digest => !author
+            .author
+            .trim()
+            .eq_ignore_ascii_case(reviewed_by.trim()),
+        _ => true,
+    }
+}
+
 fn load_ec_review_record(ctx: &EcProjectContext) -> Result<Option<EcReviewRecord>> {
     let path = ec_review_path(ctx);
     if !path.is_file() {
@@ -2089,13 +2279,29 @@ fn validate_ec_review_payload(
             ctx.project
         );
     }
-    if record.reviewer_kind != "human" {
-        bail!(
-            "production EC review currently requires reviewer_kind `human`; same-agent self-review is not accepted evidence"
-        );
+    match record.reviewer_kind.as_str() {
+        "human" => {}
+        "agent" => {
+            if !ec_review_backing_allows(&ctx.review_backing, "agent") {
+                bail!(
+                    "project `{}` review_backing policy `{}` does not accept agent-backed EC review evidence; set `ec_review_backing = \"agent\"` or `\"either\"` in aw.toml, or submit reviewer_kind `human`",
+                    ctx.project,
+                    ctx.review_backing
+                );
+            }
+            if !ec_reviewer_is_independent(ctx, &record.source_digest, &record.reviewed_by) {
+                bail!(
+                    "agent EC review is not independent: reviewed_by `{}` matches the recorded author of this EC digest; same-agent self-review is not accepted evidence",
+                    record.reviewed_by
+                );
+            }
+        }
+        other => bail!(
+            "EC review payload reviewer_kind `{other}` is unsupported; expected `human` or `agent`"
+        ),
     }
     if record.reviewed_by.trim().is_empty() {
-        bail!("EC review payload requires a non-empty reviewed_by human identity");
+        bail!("EC review payload requires a non-empty reviewed_by identity");
     }
     if record.summary.trim().is_empty() {
         bail!("EC review payload requires a non-empty semantic review summary");
@@ -2151,8 +2357,27 @@ fn ec_review_record_findings(
     if record.decision != EcReviewDecision::Accepted {
         findings.push("EC semantic review is not accepted".to_string());
     }
-    if record.reviewer_kind != "human" || record.reviewed_by.trim().is_empty() {
-        findings.push("accepted EC review lacks independent human evidence".to_string());
+    if record.reviewed_by.trim().is_empty() {
+        findings.push("accepted EC review lacks a reviewer identity".to_string());
+    }
+    match record.reviewer_kind.as_str() {
+        "human" => {}
+        "agent" => {
+            if !ec_review_backing_allows(&ctx.review_backing, "agent") {
+                findings.push(format!(
+                    "accepted EC review is agent-backed but project `{}` review_backing policy `{}` does not accept agent evidence",
+                    ctx.project, ctx.review_backing
+                ));
+            }
+            if !ec_reviewer_is_independent(ctx, &record.source_digest, &record.reviewed_by) {
+                findings.push(
+                    "accepted EC review is not independent of the EC content author".to_string(),
+                );
+            }
+        }
+        _ => {
+            findings.push("accepted EC review lacks independent evidence".to_string());
+        }
     }
     if record.reviewed_at.trim().is_empty() || record.summary.trim().is_empty() {
         findings.push("accepted EC review lacks timestamp or semantic summary".to_string());
@@ -2856,6 +3081,11 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         .as_ref()
         .map(|project| project.ec.clone())
         .unwrap_or_default();
+    let review_backing = project_model
+        .as_ref()
+        .and_then(|project| project.ec_review_backing.as_deref())
+        .map(normalize_review_backing)
+        .unwrap_or_else(|| EC_REVIEW_BACKING_HUMAN.to_string());
 
     Ok(EcProjectContext {
         project_root: project_root.to_path_buf(),
@@ -2871,7 +3101,32 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         target,
         package_name,
         ec_bindings,
+        review_backing,
     })
+}
+
+/// #1829: `human` (default), `agent`, and `either` are recognized
+/// review-backing policies; any other value falls back to `human` so
+/// production behavior stays unchanged for projects that mistype the key.
+const EC_REVIEW_BACKING_HUMAN: &str = "human";
+const EC_REVIEW_BACKING_AGENT: &str = "agent";
+const EC_REVIEW_BACKING_EITHER: &str = "either";
+
+fn normalize_review_backing(value: &str) -> String {
+    match value.trim() {
+        EC_REVIEW_BACKING_AGENT => EC_REVIEW_BACKING_AGENT.to_string(),
+        EC_REVIEW_BACKING_EITHER => EC_REVIEW_BACKING_EITHER.to_string(),
+        _ => EC_REVIEW_BACKING_HUMAN.to_string(),
+    }
+}
+
+/// #1829: does `policy` accept review evidence recorded with `reviewer_kind`?
+fn ec_review_backing_allows(policy: &str, reviewer_kind: &str) -> bool {
+    match reviewer_kind {
+        "human" => true,
+        "agent" => policy == EC_REVIEW_BACKING_AGENT || policy == EC_REVIEW_BACKING_EITHER,
+        _ => false,
+    }
 }
 
 fn package_name_for(source_root: &Path) -> Option<String> {
@@ -6194,6 +6449,7 @@ e2e_tests:
             target: "rust".to_string(),
             package_name: "demo-crate".to_string(),
             ec_bindings: BTreeMap::new(),
+            review_backing: "human".to_string(),
         }
     }
 
@@ -6315,6 +6571,8 @@ e2e_tests:
             hitl_question: None,
             findings: Vec::new(),
             next: Some("aw ec gen --project demo --verify --wi ec-first-fixture".to_string()),
+            backing: Some("human".to_string()),
+            agent_review_prompt: None,
         };
         emit_ec_review_summary_for_wi(tmp.path(), Some("ec-first-fixture"), &review_summary, true)
             .unwrap();
@@ -6376,6 +6634,7 @@ e2e_tests:
             target: "rust".to_string(),
             package_name: "tape".to_string(),
             ec_bindings: BTreeMap::new(),
+            review_backing: "human".to_string(),
         };
 
         assert_eq!(
@@ -6477,6 +6736,8 @@ e2e_tests:
             hitl_question: Some(question),
             findings: vec!["independent review pending".to_string()],
             next: None,
+            backing: None,
+            agent_review_prompt: None,
         };
 
         let output = serde_json::to_value(summary).unwrap();
@@ -6505,15 +6766,13 @@ e2e_tests:
             .contains("--wi 1806"));
     }
 
-    #[test]
-    fn ec_review_requires_current_independent_human_evidence() {
-        let (_tmp, ctx) = write_demo_repo();
-        let manifest = build_expected_manifest(&ctx).unwrap();
-        let mut record = ec_review_payload_template(&ctx, &manifest);
+    fn accepted_agent_record(ctx: &EcProjectContext, manifest: &EcManifest) -> EcReviewRecord {
+        let mut record = ec_review_payload_template(ctx, manifest);
         record.decision = EcReviewDecision::Accepted;
         record.reviewer_kind = "agent".to_string();
-        record.reviewed_by = "same-agent".to_string();
-        record.summary = "self review".to_string();
+        record.reviewed_by = "independent-reviewer-agent".to_string();
+        record.reviewed_at = "2026-07-16T00:00:00Z".to_string();
+        record.summary = "Independent agent semantic review accepted the fixture.".to_string();
         record.checklist = EcReviewChecklist {
             capability_claim_coverage: true,
             required_dimensions: true,
@@ -6522,15 +6781,138 @@ e2e_tests:
             loopholes_checked: true,
             false_green_risk_checked: true,
         };
-        let error = validate_ec_review_payload(&ctx, &manifest, &record)
-            .expect_err("same-agent review must not be production evidence");
-        assert!(error.to_string().contains("reviewer_kind `human`"));
+        record
+    }
 
+    #[test]
+    fn ec_review_requires_current_evidence() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let mut record = accepted_agent_record(&ctx, &manifest);
         record.reviewer_kind = "human".to_string();
+        record.reviewed_by = "human-reviewer".to_string();
         record.source_digest = "sha256:stale".to_string();
         let error = validate_ec_review_payload(&ctx, &manifest, &record)
             .expect_err("stale review evidence must be rejected");
         assert!(error.to_string().contains("stale"));
+    }
+
+    // AC4: default `review_backing` policy (absent = `human`) rejects
+    // agent-backed evidence outright, regardless of independence, so
+    // pre-#1829 production behavior is unchanged by default.
+    #[test]
+    fn ec_review_default_policy_rejects_agent_evidence() {
+        let (_tmp, ctx) = write_demo_repo();
+        assert_eq!(ctx.review_backing, "human");
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let record = accepted_agent_record(&ctx, &manifest);
+        let error = validate_ec_review_payload(&ctx, &manifest, &record)
+            .expect_err("agent evidence must be rejected under the default human-only policy");
+        assert!(error.to_string().contains("review_backing"));
+    }
+
+    // AC2: independence is enforced by author identity, not merely by
+    // `reviewer_kind` — an agent review sharing the recorded EC author's
+    // identity is rejected as same-agent self-review even when policy
+    // allows agent backing.
+    #[test]
+    fn ec_review_agent_backing_rejects_same_author_review() {
+        let (_tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_backing = "agent".to_string();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_author_record(&ctx, &manifest).unwrap();
+        let author = load_ec_author_record(&ctx).unwrap().author;
+
+        let mut record = accepted_agent_record(&ctx, &manifest);
+        record.reviewed_by = author;
+        let error = validate_ec_review_payload(&ctx, &manifest, &record)
+            .expect_err("same-identity agent review must not be independent evidence");
+        assert!(error.to_string().contains("not independent"));
+    }
+
+    // AC1: an agent-accepted verdict from an identity distinct from the
+    // recorded EC author satisfies validation end-to-end when policy
+    // allows agent backing.
+    #[test]
+    fn ec_review_agent_backing_accepts_independent_review() {
+        let (_tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_backing = "agent".to_string();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_author_record(&ctx, &manifest).unwrap();
+
+        let record = accepted_agent_record(&ctx, &manifest);
+        assert_ne!(
+            record.reviewed_by,
+            load_ec_author_record(&ctx).unwrap().author
+        );
+        validate_ec_review_payload(&ctx, &manifest, &record)
+            .expect("independent agent-backed evidence must satisfy validation under agent policy");
+
+        let findings = ec_review_record_findings(&ctx, &manifest, &record);
+        assert!(
+            findings.is_empty(),
+            "accepted independent agent review must clear the terminal gate: {findings:?}"
+        );
+    }
+
+    // R5: an agent `needs_revision` verdict routes back to bounded `aw ec
+    // fill`, identical to the human path.
+    #[test]
+    fn ec_review_agent_needs_revision_routes_to_bounded_fill() {
+        let (tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_backing = "agent".to_string();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let mut record = ec_review_payload_template(&ctx, &manifest);
+        record.decision = EcReviewDecision::NeedsRevision;
+        record.reviewer_kind = "agent".to_string();
+        record.reviewed_by = "independent-reviewer-agent".to_string();
+        record.summary = "Coverage gap found by independent agent review.".to_string();
+        record.findings = vec!["missing oracle-independence evidence".to_string()];
+        record.target_path = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/search.md")
+            .to_string_lossy()
+            .into_owned();
+        validate_ec_review_payload(&ctx, &manifest, &record)
+            .expect("agent needs_revision follows the same validation path as human");
+        assert_eq!(
+            ec_fill_command_for_target(&ctx, &record.target_path),
+            Some(
+                "aw ec fill --project demo projects/demo/external-contracts/behavior/search.md --section e2e-test"
+                    .to_string()
+            )
+        );
+    }
+
+    // R7/AC5: `project_ec_review_backing` reports the resolved policy, and
+    // a human `--evidence-file` submission can still reopen (needs_revision)
+    // an EC whose current accepted record is agent-backed — the optional
+    // post-completion human audit composes with agent-backed acceptance.
+    #[test]
+    fn ec_review_human_audit_can_reopen_agent_accepted_review() {
+        let (_tmp, ctx) = write_demo_repo();
+        let mut ctx = ctx;
+        ctx.review_backing = "agent".to_string();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_author_record(&ctx, &manifest).unwrap();
+
+        let agent_record = accepted_agent_record(&ctx, &manifest);
+        validate_ec_review_payload(&ctx, &manifest, &agent_record).unwrap();
+        write_ec_review_record(&ec_review_path(&ctx), &agent_record).unwrap();
+        assert!(ec_review_record_findings(&ctx, &manifest, &agent_record).is_empty());
+
+        let mut human_audit = ec_review_payload_template(&ctx, &manifest);
+        human_audit.decision = EcReviewDecision::NeedsRevision;
+        human_audit.reviewer_kind = "human".to_string();
+        human_audit.reviewed_by = "human-auditor".to_string();
+        human_audit.summary = "Post-completion human audit found a gap.".to_string();
+        human_audit.findings = vec!["oracle independence claim is unverifiable".to_string()];
+        human_audit.target_path = "projects/demo/external-contracts/behavior/search.md".to_string();
+        validate_ec_review_payload(&ctx, &manifest, &human_audit)
+            .expect("human audit reopening an agent-accepted EC must remain valid evidence");
     }
 
     #[test]

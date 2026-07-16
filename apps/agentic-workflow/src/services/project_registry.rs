@@ -210,6 +210,9 @@ struct ProjectAwToml {
     workspaces: Vec<Workspace>,
     #[serde(default)]
     ec: BTreeMap<String, EcBinding>,
+    /// EC review-backing policy (`human` | `agent` | `either`); #1829.
+    #[serde(default)]
+    ec_review_backing: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -295,6 +298,9 @@ fn merge_project(mut existing: Project, incoming: Project) -> Project {
     }
     if !incoming.ec.is_empty() {
         existing.ec = incoming.ec;
+    }
+    if incoming.ec_review_backing.is_some() {
+        existing.ec_review_backing = incoming.ec_review_backing;
     }
     if !incoming.workspaces.is_empty() {
         existing.workspaces = incoming.workspaces;
@@ -441,6 +447,7 @@ fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
         path: PathBuf::from(source_path),
         tech_design_dir,
         ec: manifest.ec,
+        ec_review_backing: manifest.ec_review_backing,
         workspaces,
     })
 }
@@ -689,6 +696,7 @@ mod tests {
             path: PathBuf::from(format!("crates/{}", name)),
             tech_design_dir: None,
             ec: Default::default(),
+            ec_review_backing: None,
             workspaces: vec![Workspace {
                 name: Some(name.to_string()),
                 paths: vec![format!("crates/{}/**", name)],

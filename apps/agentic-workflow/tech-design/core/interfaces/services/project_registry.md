@@ -41,16 +41,16 @@ payload.
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `ProjectConfigRow` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 104 |  |
-| `TdResolveError` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1065 |  |
-| `TdRootInput` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1036 |  |
-| `TdRootResult` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1053 |  |
+| `TdResolveError` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1071 |  |
+| `TdRootInput` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1042 |  |
+| `TdRootResult` | apps/agentic-workflow/src/services/project_registry.rs | struct | pub | 1059 |  |
 | `check_drift` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 177 | check_drift(root: &Path) -> Result<Option<String>> |
 | `label_or_default` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 118 | label_or_default(&self) -> String |
 | `load_project_config_rows` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 141 | load_project_config_rows(root: &Path) -> Result<Vec<ProjectConfigRow>> |
 | `load_projects` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 71 | load_projects(root: &Path) -> Result<Vec<Project>> |
 | `resolve_project_config_row` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 164 | resolve_project_config_row(root: &Path, requested: &str) -> Result<ProjectConfigRow> |
-| `resolve_td_root` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 1125 | resolve_td_root(input: &TdRootInput, global_base: Option<&str>, repo_root: &Path) -> Result<TdRootResult, TdResolveError> |
-| `resolve_td_root_from_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 1174 | resolve_td_root_from_config(repo_root: &Path, project_name: &str) -> Result<TdRootResult, TdResolveError> |
+| `resolve_td_root` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 1131 | resolve_td_root(input: &TdRootInput, global_base: Option<&str>, repo_root: &Path) -> Result<TdRootResult, TdResolveError> |
+| `resolve_td_root_from_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 1180 | resolve_td_root_from_config(repo_root: &Path, project_name: &str) -> Result<TdRootResult, TdResolveError> |
 | `write_projects_config` | apps/agentic-workflow/src/services/project_registry.rs | function | pub | 34 | write_projects_config(root: &Path, projects: &[Project]) -> Result<()> |
 ## Source
 <!-- type: source lang: rust -->
@@ -270,6 +270,9 @@ struct ProjectAwToml {
     workspaces: Vec<Workspace>,
     #[serde(default)]
     ec: BTreeMap<String, EcBinding>,
+    /// EC review-backing policy (`human` | `agent` | `either`); #1829.
+    #[serde(default)]
+    ec_review_backing: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -355,6 +358,9 @@ fn merge_project(mut existing: Project, incoming: Project) -> Project {
     }
     if !incoming.ec.is_empty() {
         existing.ec = incoming.ec;
+    }
+    if incoming.ec_review_backing.is_some() {
+        existing.ec_review_backing = incoming.ec_review_backing;
     }
     if !incoming.workspaces.is_empty() {
         existing.workspaces = incoming.workspaces;
@@ -501,6 +507,7 @@ fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
         path: PathBuf::from(source_path),
         tech_design_dir,
         ec: manifest.ec,
+        ec_review_backing: manifest.ec_review_backing,
         workspaces,
     })
 }
@@ -749,6 +756,7 @@ mod tests {
             path: PathBuf::from(format!("crates/{}", name)),
             tech_design_dir: None,
             ec: Default::default(),
+            ec_review_backing: None,
             workspaces: vec![Workspace {
                 name: Some(name.to_string()),
                 paths: vec![format!("crates/{}/**", name)],

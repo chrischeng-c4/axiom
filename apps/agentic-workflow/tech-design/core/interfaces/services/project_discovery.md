@@ -90,6 +90,7 @@ pub fn discover_projects(root: &Path) -> Result<Vec<Project>> {
                 // Discovery never invents EC bindings; they are declared by
                 // hand in `.aw/config.toml` (wi-13).
                 ec: Default::default(),
+                ec_review_backing: None,
                 workspaces,
             });
         }

@@ -64,12 +64,14 @@ scenarios:
       - "next is aw ec gen --verify"
       - "any later digest change makes the evidence stale"
   - id: S5
-    title: same-agent evidence is rejected
+    title: non-independent or policy-disallowed agent evidence is rejected
     given:
-      - "reviewer_kind is not human"
+      - "reviewer_kind is agent"
+      - "either the project's ec_review_backing policy does not allow agent evidence (default: human-only), or reviewed_by matches the identity recorded as this EC digest's author (ec-author.json, written at aw ec gen time)"
     then:
-      - "production acceptance fails"
-      - "the review remains a human-backed HITL boundary until subagents are designed"
+      - "production acceptance fails with an explicit independence or policy error"
+      - "a human reviewer_kind is always accepted regardless of policy, so a human audit can still reopen (needs_revision) an EC whose current accepted record is agent-backed"
+      - "see aw-ec-agent-review-protocol.md for the independent agent reviewer envelope, dispatch contract, and verdict schema"
 ```
 
 ## Schema
@@ -95,7 +97,7 @@ properties:
   project: { type: string, minLength: 1 }
   source_digest: { type: string, minLength: 1 }
   decision: { type: string, enum: [pending, accepted, needs_revision] }
-  reviewer_kind: { type: string, const: human }
+  reviewer_kind: { type: string, enum: [human, agent] }
   reviewed_by: { type: string }
   reviewed_at: { type: string }
   summary: { type: string }
@@ -133,11 +135,11 @@ nodes:
   inspect: { kind: start, label: "Inspect required EC cases" }
   objective: { kind: decision, label: "Objective omission or false-green risk?" }
   revise: { kind: terminal, label: "needs_revision -> aw ec fill" }
-  evidence: { kind: decision, label: "Current human evidence exists?" }
-  hitl: { kind: terminal, label: "requires_hitl -> human review payload" }
-  decision: { kind: decision, label: "Human decision" }
+  evidence: { kind: decision, label: "Current accepted/needs_revision evidence exists?" }
+  hitl: { kind: terminal, label: "review_backing allows agent: pending_agent_review (non-blocking, agent_review_prompt); else requires_hitl human review payload" }
+  decision: { kind: decision, label: "Reviewer decision (human always valid; agent only if policy-allowed and independent)" }
   accepted: { kind: terminal, label: "accepted -> aw ec gen --verify" }
-  stale: { kind: terminal, label: "reject stale, same-agent, or incomplete evidence" }
+  stale: { kind: terminal, label: "reject stale, non-independent, policy-disallowed, or incomplete evidence" }
 edges:
   - { from: inspect, to: objective }
   - { from: objective, to: revise, label: "yes" }
@@ -145,15 +147,15 @@ edges:
   - { from: evidence, to: hitl, label: "no" }
   - { from: evidence, to: decision, label: "yes" }
   - { from: decision, to: accepted, label: "accepted and digest-bound" }
-  - { from: decision, to: revise, label: "needs_revision" }
+  - { from: decision, to: revise, label: "needs_revision (human or independent agent)" }
   - { from: decision, to: stale, label: "invalid" }
 ---
 flowchart TD
     inspect([Inspect required EC cases]) --> objective{Objective omission or false-green risk?}
     objective -->|yes| revise([needs_revision to aw ec fill])
-    objective -->|no| evidence{Current human evidence exists?}
-    evidence -->|no| hitl([requires_hitl human review payload])
-    evidence -->|yes| decision{Human decision}
+    objective -->|no| evidence{Current accepted/needs_revision evidence exists?}
+    evidence -->|no| hitl([review_backing allows agent: pending_agent_review non-blocking; else requires_hitl human review payload])
+    evidence -->|yes| decision{Reviewer decision human or independent agent}
     decision -->|accepted and digest-bound| accepted([aw ec gen --verify])
     decision -->|needs_revision| revise
     decision -->|invalid| stale([Reject evidence])
@@ -184,7 +186,7 @@ requirementDiagram
   }
   requirement evidence_independent {
     id: UT3
-    text: "same-agent, stale, or incomplete review evidence is rejected"
+    text: "same-agent (author-matching), policy-disallowed agent, stale, or incomplete review evidence is rejected; independent agent-backed evidence is accepted when review_backing allows it, and a human audit can still reopen an agent-accepted EC"
     risk: high
     verifymethod: test
   }
@@ -211,7 +213,19 @@ changes:
     action: modify
     section: logic
     impl_mode: codegen
-    description: Implement deterministic semantic findings, human evidence validation, digest binding, and gen/verify gates.
+    description: |
+      Implement deterministic semantic findings, human evidence validation,
+      digest binding, and gen/verify gates. #1829: generalize evidence
+      validation to admit independent agent-backed evidence per project
+      `ec_review_backing` policy, enforced via a digest-bound
+      `ec-author.json` identity record; see
+      aw-ec-agent-review-protocol.md for the agent envelope/dispatch
+      contract.
+  - path: apps/agentic-workflow/tech-design/surface/specs/aw-ec-agent-review-protocol.md
+    action: create
+    section: scenarios
+    impl_mode: hand-written
+    description: Define the independent agent EC review envelope, verdict schema, host dispatch contract, and its composition with deferred review and human audit reopen.
   - path: apps/agentic-workflow/src/cli/cb.rs
     action: modify
     section: logic

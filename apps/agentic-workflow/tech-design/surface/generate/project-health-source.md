@@ -447,6 +447,11 @@ pub struct ProjectEcGateReport {
     pub failed_count: usize,
     pub findings: Vec<String>,
     pub commands: Vec<ProjectEcCommandReport>,
+    /// #1829 R7: this project's resolved EC review-backing policy
+    /// (`human` | `agent` | `either`), best-effort via
+    /// `crate::cli::ec::project_ec_review_backing`. `None` when
+    /// unevaluated or unresolvable.
+    pub review_backing: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -576,6 +581,7 @@ impl ProjectEcGateReport {
             failed_count: 0,
             findings: Vec::new(),
             commands: Vec::new(),
+            review_backing: crate::cli::ec::project_ec_review_backing(project).ok(),
         }
     }
 
@@ -620,6 +626,7 @@ impl ProjectEcGateReport {
             failed_count: 0,
             findings: summary.findings,
             commands: Vec::new(),
+            review_backing: crate::cli::ec::project_ec_review_backing(&summary.project).ok(),
         }
     }
 }
@@ -2320,6 +2327,10 @@ fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
             "lock_clean": report.ec.lock_clean,
             "passed_commands": report.ec.passed_count,
             "command_count": report.ec.command_count,
+            // #1829 R7: distinguish which review-backing policy this
+            // project's terminal EC gate accepts (`human` | `agent` |
+            // `either`), independent of the axis's own advisory/hard status.
+            "review_backing": report.ec.review_backing,
         });
     }
     serde_json::json!({
@@ -2329,6 +2340,7 @@ fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
         "lock_clean": report.ec.lock_clean,
         "passed_commands": report.ec.passed_count,
         "command_count": report.ec.command_count,
+        "review_backing": report.ec.review_backing,
     })
 }
 
@@ -2500,6 +2512,9 @@ fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
         "verify_evaluated": report.verify_evaluated,
         "status": &report.status,
         "note": &report.note,
+        // #1829 R7: which review-backing policy (`human` | `agent` |
+        // `either`) this project's terminal EC gate will accept.
+        "review_backing": &report.review_backing,
         "lock_status": report.lock_status,
         "lock_clean": report.lock_clean,
         "lock_path": &report.lock_path,
@@ -4634,6 +4649,7 @@ mod tests {
             failed_count: 0,
             findings: vec!["EC generated content drifted".to_string()],
             commands: Vec::new(),
+            review_backing: None,
         };
 
         assert_eq!(
@@ -4796,6 +4812,7 @@ mod tests {
                 stdout_tail: String::new(),
                 stderr_tail: String::new(),
             }],
+            review_backing: None,
         }
     }
 
@@ -4983,6 +5000,7 @@ mod tests {
             failed_count: 0,
             findings: Vec::new(),
             commands: Vec::new(),
+            review_backing: None,
         }
     }
 
@@ -5091,6 +5109,7 @@ mod tests {
             path: "projects/demo".into(),
             tech_design_dir: None,
             ec,
+            ec_review_backing: None,
             workspaces: vec![],
         }
     }
