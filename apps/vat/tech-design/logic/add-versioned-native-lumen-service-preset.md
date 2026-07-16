@@ -9,59 +9,61 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: vat-versioned-native-lumen-preset-logic
-entry: start
+id: vat-versioned-native-lumen-preset-contract
+entry: input
 nodes:
-  start: { kind: start, label: "prepare lumen preset" }
-  selector: { kind: decision, label: "version omitted or lumen tag" }
-  invalid: { kind: terminal, label: "reject malformed non-lumen selector" }
-  cache: { kind: decision, label: "verified cached binary exists" }
-  latest: { kind: process, label: "discover newest lumen release tag" }
-  fetch: { kind: process, label: "download target archive into VAT cache" }
-  checksum: { kind: decision, label: "published sha256 matches when supplied" }
-  unavailable: { kind: terminal, label: "emit native lumen unavailable remediation" }
+  input: { kind: start, label: "read lumen preset service" }
+  version: { kind: decision, label: "version absent or exact lumen tag" }
+  reject_version: { kind: terminal, label: "validation error names accepted selector" }
   runtime: { kind: decision, label: "runtime auto or native" }
-  reject_runtime: { kind: terminal, label: "reject docker and microvm no fallback" }
-  start_lumen: { kind: process, label: "run cached lumen serve on loopback port" }
-  ready: { kind: process, label: "wait for GET readyz unless overridden" }
-  export: { kind: process, label: "export LUMEN_URL and generic endpoint vars" }
-  runner: { kind: process, label: "run VAT runner then teardown child" }
-  done: { kind: terminal, label: "record evidence and return exit code" }
+  reject_runtime: { kind: terminal, label: "runtime error no container fallback" }
+  resolve: { kind: process, label: "resolve tag then target cache key" }
+  hit: { kind: decision, label: "verified executable cache hit" }
+  release: { kind: process, label: "fetch release archive and optional sha256" }
+  verify: { kind: decision, label: "archive checksum valid" }
+  reject_fetch: { kind: terminal, label: "download or integrity remediation" }
+  materialize: { kind: process, label: "atomically extract executable into VAT cache" }
+  serve: { kind: process, label: "spawn cached lumen serve host loopback port" }
+  ready: { kind: process, label: "probe http readyz or declared override" }
+  env: { kind: process, label: "set LUMEN URL and VAT endpoint env" }
+  execute: { kind: process, label: "execute runner, capture service evidence, terminate child" }
+  output: { kind: terminal, label: "return runner status" }
 edges:
-  - { from: start, to: selector }
-  - { from: selector, to: invalid, label: "invalid" }
-  - { from: selector, to: cache, label: "pinned or latest" }
-  - { from: cache, to: runtime, label: "hit" }
-  - { from: cache, to: latest, label: "latest missing" }
-  - { from: latest, to: fetch }
-  - { from: fetch, to: checksum }
-  - { from: checksum, to: unavailable, label: "missing or mismatch" }
-  - { from: checksum, to: runtime, label: "verified" }
+  - { from: input, to: version }
+  - { from: version, to: reject_version, label: "invalid" }
+  - { from: version, to: runtime, label: "valid" }
   - { from: runtime, to: reject_runtime, label: "docker or microvm" }
-  - { from: runtime, to: start_lumen, label: "auto or native" }
-  - { from: start_lumen, to: ready }
-  - { from: ready, to: export }
-  - { from: export, to: runner }
-  - { from: runner, to: done }
+  - { from: runtime, to: resolve, label: "auto or native" }
+  - { from: resolve, to: hit }
+  - { from: hit, to: serve, label: "yes" }
+  - { from: hit, to: release, label: "no" }
+  - { from: release, to: verify }
+  - { from: verify, to: reject_fetch, label: "no" }
+  - { from: verify, to: materialize, label: "yes" }
+  - { from: materialize, to: serve }
+  - { from: serve, to: ready }
+  - { from: ready, to: env }
+  - { from: env, to: execute }
+  - { from: execute, to: output }
 ---
 flowchart TD
-    start([prepare lumen preset]) --> selector{version omitted or lumen tag}
-    selector -- invalid --> invalid([reject malformed non-lumen selector])
-    selector -- pinned or latest --> cache{verified cached binary exists}
-    cache -- hit --> runtime{runtime auto or native}
-    cache -- latest missing --> latest[discover newest lumen release tag]
-    latest --> fetch[download target archive into VAT cache]
-    fetch --> checksum{published sha256 matches when supplied}
-    checksum -- missing or mismatch --> unavailable([emit native lumen unavailable remediation])
-    checksum -- verified --> runtime
-    runtime -- docker or microvm --> reject_runtime([reject docker and microvm no fallback])
-    runtime -- auto or native --> start_lumen[run cached lumen serve on loopback port]
-    start_lumen --> ready[wait for GET readyz unless overridden]
-    ready --> export[export LUMEN URL and generic endpoint vars]
-    export --> runner[run VAT runner then teardown child]
-    runner --> done([record evidence and return exit code])
+    input([read lumen preset service]) --> version{version absent or exact lumen tag}
+    version -- invalid --> reject_version([validation error names accepted selector])
+    version -- valid --> runtime{runtime auto or native}
+    runtime -- docker or microvm --> reject_runtime([runtime error no container fallback])
+    runtime -- auto or native --> resolve[resolve tag then target cache key]
+    resolve --> hit{verified executable cache hit}
+    hit -- yes --> serve[spawn cached lumen serve host loopback port]
+    hit -- no --> release[fetch release archive and optional sha256]
+    release --> verify{archive checksum valid}
+    verify -- no --> reject_fetch([download or integrity remediation])
+    verify -- yes --> materialize[atomically extract executable into VAT cache]
+    materialize --> serve
+    serve --> ready[probe http readyz or declared override]
+    ready --> env[set LUMEN URL and VAT endpoint env]
+    env --> execute[execute runner capture service evidence terminate child]
+    execute --> output([return runner status])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
