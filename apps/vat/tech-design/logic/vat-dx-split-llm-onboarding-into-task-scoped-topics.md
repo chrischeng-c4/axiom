@@ -40,7 +40,6 @@ changes:
     impl_mode: hand-written
     anchor: cli_convention_llm_flags
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
