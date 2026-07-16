@@ -34,8 +34,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use axum::Router;
 use raft_runtime::{
-    ClusterTopology, FsyncPolicy, HostConfig, Index, Membership, NodeId, OutcomeWindow, RaftHost,
-    RaftStateMachine, RaftStore, SnapshotPolicy,
+    ClusterTopology, FsyncPolicy, HostConfig, Index, Membership, NodeId, OutcomeWindow,
+    PeerTransport, RaftHost, RaftStateMachine, RaftStore, SnapshotPolicy,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -378,7 +378,7 @@ pub struct TapeRaft {
     sm: Arc<TapeStateMachine>,
 }
 
-// <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="pending-tracker" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="#1805" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
 impl TapeRaft {
     /// Spawn the group for node `node_id`, persisting raft hard state + the
     /// applied marker under `raft_dir` (created if needed). `peers` maps the
@@ -391,6 +391,41 @@ impl TapeRaft {
         peers: HashMap<NodeId, String>,
         cfg: HostConfig,
     ) -> Result<TapeRaft> {
+        Self::spawn_inner(journal, raft_dir, node_id, membership, peers, cfg, None)
+    }
+
+    /// Spawn a group whose outgoing peer RPCs and incoming Raft listener use
+    /// the shared mutually authenticated transport. The caller serves
+    /// [`Self::router`] through the same transport on its dedicated port.
+    pub fn spawn_with_peer_transport(
+        journal: Arc<Mutex<TapeJournal>>,
+        raft_dir: &Path,
+        node_id: NodeId,
+        membership: Membership,
+        peers: HashMap<NodeId, String>,
+        cfg: HostConfig,
+        peer_transport: PeerTransport,
+    ) -> Result<TapeRaft> {
+        Self::spawn_inner(
+            journal,
+            raft_dir,
+            node_id,
+            membership,
+            peers,
+            cfg,
+            Some(peer_transport),
+        )
+    }
+
+    fn spawn_inner(
+        journal: Arc<Mutex<TapeJournal>>,
+        raft_dir: &Path,
+        node_id: NodeId,
+        membership: Membership,
+        peers: HashMap<NodeId, String>,
+        cfg: HostConfig,
+        peer_transport: Option<PeerTransport>,
+    ) -> Result<TapeRaft> {
         std::fs::create_dir_all(raft_dir)?;
         let dir = raft_dir
             .to_str()
@@ -400,14 +435,25 @@ impl TapeRaft {
             journal,
             Some(raft_dir.join(format!("applied-{node_id}.idx"))),
         )?;
-        let host = RaftHost::spawn(
-            node_id,
-            membership,
-            peers,
-            store,
-            Arc::clone(&sm) as Arc<dyn RaftStateMachine>,
-            cfg,
-        );
+        let host = match peer_transport {
+            Some(transport) => RaftHost::spawn_with_peer_transport(
+                node_id,
+                membership,
+                peers,
+                store,
+                Arc::clone(&sm) as Arc<dyn RaftStateMachine>,
+                cfg,
+                transport,
+            ),
+            None => RaftHost::spawn(
+                node_id,
+                membership,
+                peers,
+                store,
+                Arc::clone(&sm) as Arc<dyn RaftStateMachine>,
+                cfg,
+            ),
+        };
         Ok(TapeRaft { host, sm })
     }
 
@@ -429,6 +475,26 @@ impl TapeRaft {
         )
     }
 
+    /// TLS-aware topology constructor. The topology must carry `https` peer
+    /// URLs for the same dedicated listener the caller serves below.
+    pub fn from_topology_with_peer_transport(
+        journal: Arc<Mutex<TapeJournal>>,
+        data_dir: &Path,
+        topo: &ClusterTopology,
+        cfg: HostConfig,
+        peer_transport: PeerTransport,
+    ) -> Result<TapeRaft> {
+        Self::spawn_with_peer_transport(
+            journal,
+            &data_dir.join("raft"),
+            topo.node_id,
+            topo.membership.clone(),
+            topo.peers.clone(),
+            cfg,
+            peer_transport,
+        )
+    }
+
     /// The standard host tuning for tape: default timing + compaction every
     /// `snapshot_every` applied entries (tests pass a small threshold to arm
     /// InstallSnapshot quickly).
@@ -439,8 +505,8 @@ impl TapeRaft {
         }
     }
 
-    /// Peer raft RPCs + leader forward + `/raftz` -- merge onto the serve port
-    /// OUTSIDE the bearer-auth data plane (cluster traffic, like probes).
+    /// Peer raft RPCs + leader forwarding + `/raftz`. The h2c compatibility
+    /// path merges this onto the public app; mTLS serves it independently.
     pub fn router(&self) -> Router {
         self.host.router()
     }
