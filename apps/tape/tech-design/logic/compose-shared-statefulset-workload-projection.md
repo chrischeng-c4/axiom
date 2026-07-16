@@ -57,14 +57,13 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Replace the ShardedStatefulSet-plus-harden JSON mutation path with one ServiceStatefulSet input that declares Tape-owned values and shared workload fields.
+    description: Compose render::ServiceStatefulSet directly with typed Tape ports, environment, PVC, security, probe, annotation, rollout, volume, and affinity values; delete harden and ShardedStatefulSet usage. generator gap: missing-generator:kubernetes-statefulset-adoption (#1809).
   - path: apps/tape/tests/operator.rs
     action: modify
-    section: logic
+    section: unit-test
     impl_mode: hand-written
-    description: Extend structural render evidence for the typed common workload fields while preserving Tape port, PVC, probe, security, and token-registry behavior.
+    description: Assert the shared typed projection preserves Tape's StatefulSet fields, including rollout metadata, pod security, tmp volume, and existing auth-secret behavior. generator gap: missing-generator:kubernetes-statefulset-adoption-test (#1809).
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
