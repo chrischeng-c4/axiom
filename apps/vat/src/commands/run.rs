@@ -1674,6 +1674,7 @@ fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
     })
 }
 
+// <HANDWRITE gap="vat-versioned-native-lumen-preset-runtime" tracker="#1813" reason="Build native Lumen service plans and fail closed for container runtimes.">
 fn prepare_preset_service(
     vat: &store::Vat,
     cfg: &VatConfig,
@@ -1761,6 +1762,7 @@ fn prepare_preset_service(
         owned_by_vat: true,
     })
 }
+// </HANDWRITE>
 
 /// Which way a `preset` service is actually provided on this host.
 enum ResolvedRuntime {

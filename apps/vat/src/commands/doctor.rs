@@ -195,6 +195,7 @@ fn check_service_host(
     }
 }
 
+// <HANDWRITE gap="vat-versioned-native-lumen-preset-doctor" tracker="#1813" reason="Surface cache/download readiness and remediation.">
 fn check_preset(
     checks: &mut Vec<DoctorCheck>,
     service: &ServiceConfig,
@@ -262,6 +263,7 @@ fn check_preset(
         }
     }
 }
+// </HANDWRITE>
 
 fn check_binary(checks: &mut Vec<DoctorCheck>, component: &str, id: &str, binary: &str) {
     push_check(

@@ -215,6 +215,7 @@ pub struct ExternalServiceConfig {
     pub port: u16,
 }
 
+// <HANDWRITE gap="vat-versioned-native-lumen-preset-config" tracker="#1813" reason="Extend the preset and validation schema.">
 /// Built-in local service presets.
 ///
 /// The datastore/broker presets (postgres … mongo) prefer a native Homebrew
@@ -248,6 +249,7 @@ pub enum ServicePreset {
     HttpMock,
     Openapi,
 }
+// </HANDWRITE>
 
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 impl ServicePreset {
