@@ -9869,13 +9869,19 @@ fn invoke_descriptor_set(desc: MbValue, instance: MbValue, value: MbValue) {
         // Closure-handle __set__ bodies (e.g. #1379's zero-arg super()/
         // __class__ compilation) are small tagged ints, not real function
         // addresses; extract_registered_func_addr resolves them via the
-        // closure registry instead of transmuting garbage (#1821).
+        // closure registry instead of transmuting garbage. This is the
+        // highest-risk wild-call site, so it additionally requires the
+        // resolved address to be a CALLABLE_REGISTRY member before any
+        // transmute — mirroring mb_property_set's dual-path dispatch (#1821).
         let addr = extract_registered_func_addr(method);
         if addr != 0 {
-            // REQ: JIT-compiled functions use SystemV/C calling convention.
-            let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                unsafe { std::mem::transmute(addr as usize) };
-            func(desc, instance, value);
+            let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
+            if is_reg {
+                // REQ: JIT-compiled functions use SystemV/C calling convention.
+                let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+                    unsafe { std::mem::transmute(addr as usize) };
+                func(desc, instance, value);
+            }
         }
     }
 }
@@ -9937,13 +9943,17 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
     // General __delete__ protocol: call desc.__delete__(instance)
     if let Some(method) = try_get_dunder(desc, "__delete__") {
         // See invoke_descriptor_set above: closure-handle bodies need the
-        // registry-resolving extractor, not the raw one (#1821).
+        // registry-resolving extractor plus a CALLABLE_REGISTRY membership
+        // check before any transmute — this is a wild-call site (#1821).
         let addr = extract_registered_func_addr(method);
         if addr != 0 {
-            // REQ: JIT-compiled functions use SystemV/C calling convention.
-            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                unsafe { std::mem::transmute(addr as usize) };
-            func(desc, instance);
+            let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
+            if is_reg {
+                // REQ: JIT-compiled functions use SystemV/C calling convention.
+                let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+                    unsafe { std::mem::transmute(addr as usize) };
+                func(desc, instance);
+            }
         }
     }
 }
