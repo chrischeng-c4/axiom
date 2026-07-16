@@ -36,3 +36,17 @@ Gate Inventory: `cargo test -p courier`; apps/courier/src/http
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | github-issues-proxy-service | epic | #1332 | partial | planned | none | apps/courier/src/http |
+
+<!-- aw:meta:project-readme:start -->
+## Brief
+
+Describe the agent-readable purpose of Courier.
+
+## Contributing
+
+Project-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Capability Contract
+
+Product promises and work roots live in [CAPABILITIES.md](CAPABILITIES.md).
+<!-- aw:meta:project-readme:end -->

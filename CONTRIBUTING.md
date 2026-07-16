@@ -1160,3 +1160,15 @@ the others. A few crates still inherit `[workspace.package].version`; until they
 are migrated, their `build.sh` must explicitly name the version source and every
 manifest it edits. Do not silently bump the workspace version for an unrelated
 project release.
+
+<!-- aw:meta-doc-matrix:start -->
+| Layer | Doc | Fact owner | Required headings | Inherits |
+|---|---|---|---|---|
+| repo | `/AGENTS.md` | Codex checkout operations; CLAUDE projection plus the fixed Codex whitelist | `## Agentic Workflow CLI Surface` | none |
+| repo | `/CLAUDE.md` | Claude checkout operations and shared agent workflow guidance | `## Agentic Workflow CLI Surface` | none |
+| repo | `/README.md` | repository identity, inventory, install, and discovery entrypoints | `## Contributing` | none |
+| repo | `/CONTRIBUTING.md` | repo-wide authoring contracts, CLI conventions, and META-doc taxonomy | `## Meta-doc content contract` | none |
+| project | `<project>/README.md` | project identity and brief projections linking local contribution and goal contracts | `## Brief`<br>`## Contributing`<br>`## Capability Contract` | repo README + CONTRIBUTING |
+| project | `<project>/CONTRIBUTING.md` | project-local authoring, verification, migration, and contribution rules | `## Brief`<br>`## Authoritative Inputs`<br>`## Local Workflow`<br>`## Verification` | repo CONTRIBUTING |
+| project | `<project>/CAPABILITIES.md` | project product promises, work roots, and required verification | `## Brief`<br>`## Capabilities`<br>`### Capability Index` | repo capability schema policy |
+<!-- aw:meta-doc-matrix:end -->

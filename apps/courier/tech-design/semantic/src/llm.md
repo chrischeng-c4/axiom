@@ -42,4 +42,9 @@ changes:
     impl_mode: hand-written
     path: apps/courier/src/llm.rs
     section: schema
+  - action: modify
+    description: 'Generated LLM documentation root artifact.'
+    impl_mode: codegen
+    path: apps/courier/llms.txt
+    section: schema
 ```
