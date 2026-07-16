@@ -72,10 +72,7 @@ changes:
   - path: apps/vat/src/lib.rs
     action: modify
     section: changes
-    impl_mode: hand-written
-    anchor: VERSION
-    gap: vat-versioned-native-lumen-preset
-    tracker: "#1813"
+    impl_mode: codegen
     reason: Register the dedicated Lumen release resolver module.
   - path: apps/vat/src/lumen_release.rs
     action: create
