@@ -1,0 +1,8 @@
+.git
+target/
+pkg/
+node_modules/
+*.tar.gz
+*.log
+.gemini/
+# Keep: Cargo.toml, Cargo.lock, apps/, libs/, crates/
