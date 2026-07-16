@@ -30,4 +30,16 @@ changes:
     impl_mode: hand-written
     description: |
       Lossless rust-source-unit ownership created from explicit file fillback.
+  - path: "apps/courier/build.sh"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: |
+      Project build entrypoint.
+  - path: "apps/courier/install.sh"
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    description: |
+      Project installation entrypoint.
 ```
