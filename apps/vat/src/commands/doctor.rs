@@ -14,6 +14,12 @@ use crate::cluster;
 use crate::commands::capabilities::{self, CapabilitiesReport};
 use crate::commands::plan::{self, PlanTarget, RunPlan};
 use crate::config::{self, ServiceConfig, ServicePreset, ServiceRuntime};
+use crate::lumen_release;
+
+const APPLE_CONTAINER_ONLY_DOCKER_PROBE_SKIP: &str =
+    "Docker daemon probe skipped for Apple-Container-only selected plan";
+const DOCKER_FREE_DOCKER_PROBE_SKIP: &str =
+    "Docker daemon probe skipped because selected plan has no Docker runtime";
 
 #[derive(Debug, Serialize)]
 struct DoctorReport {
@@ -32,10 +38,34 @@ struct DoctorCheck {
     message: String,
 }
 
+/// A configuration-free host report. Unlike `vat doctor`, this never looks for
+/// vat.toml, resolves a runner, opens a workspace, or starts a service.
+#[derive(Debug, Serialize)]
+struct HostOnlyDoctorReport {
+    ok: bool,
+    mode: &'static str,
+    capabilities: CapabilitiesReport,
+    gpu: crate::gpu::GpuInfo,
+    checks: Vec<DoctorCheck>,
+    next: &'static str,
+}
+
+/// One doctor invocation probes Apple's runtime once, then projects that
+/// read-only result onto each selected MicroVM service. This keeps a hung
+/// runtime bounded to one probe rather than one timeout per service.
+#[derive(Debug, Clone)]
+struct AppleContainerRuntimeProbe {
+    ok: bool,
+    message: String,
+}
+
 pub fn exec(target: PlanTarget, json: bool) -> Result<ExitCode> {
     let plan = plan::build(target)?;
-    let capabilities = capabilities::report();
     let cfg = config::load_file(Path::new(&plan.config.path))?;
+    let capabilities = match selected_plan_docker_probe_skip_reason(&cfg, &plan) {
+        Some(reason) => capabilities::report_without_docker_daemon_probe(reason),
+        None => capabilities::report(),
+    };
     let checks = checks_for(&cfg, &plan, &capabilities);
     let ok = checks.iter().all(|check| check.ok);
     let report = DoctorReport {
@@ -56,6 +86,95 @@ pub fn exec(target: PlanTarget, json: bool) -> Result<ExitCode> {
     })
 }
 
+pub fn host_only_exec(json: bool) -> Result<ExitCode> {
+    let capabilities = capabilities::report();
+    let gpu = crate::gpu::detect();
+    let mut checks = Vec::new();
+    push_check(
+        &mut checks,
+        "workspace",
+        "copy_on_write",
+        capabilities.workspace.cow_clone,
+        "cow_clone",
+        format!(
+            "copy-on-write primary method: {}",
+            capabilities.workspace.primary_clone_method
+        ),
+    );
+    for isolation in &capabilities.isolation {
+        push_check(
+            &mut checks,
+            "isolation",
+            &isolation.id,
+            isolation.available,
+            "isolation_availability",
+            isolation.reason.clone(),
+        );
+    }
+    push_check(
+        &mut checks,
+        "gpu",
+        "host",
+        gpu.accessible,
+        "gpu_accessible",
+        gpu.note.clone(),
+    );
+    push_check(
+        &mut checks,
+        "apple_container",
+        "cli",
+        capabilities.apple_container.cli,
+        "apple_container_cli",
+        "Apple Container CLI available on PATH".to_string(),
+    );
+    push_check(
+        &mut checks,
+        "docker",
+        "daemon",
+        capabilities.docker.daemon,
+        "docker_daemon",
+        capabilities
+            .docker
+            .error
+            .clone()
+            .unwrap_or_else(|| "Docker daemon reachable".to_string()),
+    );
+    push_check(
+        &mut checks,
+        "kubernetes",
+        "kubectl",
+        crate::commands::k8s::independent_kubectl_available(),
+        "independent_kubectl",
+        "independent kubectl available (OrbStack compatibility binary is rejected)".to_string(),
+    );
+    let report = HostOnlyDoctorReport {
+        // This is an observation-only command: an unavailable optional host
+        // substrate is reported in checks, not treated as a malformed config.
+        ok: true,
+        mode: "host_only",
+        capabilities,
+        gpu,
+        checks,
+        next: "vat capabilities --json",
+    };
+    if json {
+        crate::commands::print_json(&report, false)?;
+    } else {
+        println!("vat doctor --host-only: complete");
+        for check in &report.checks {
+            println!(
+                "{} {} {}: {}",
+                if check.ok { "ok" } else { "unavailable" },
+                check.component,
+                check.id,
+                check.message
+            );
+        }
+        println!("next: {}", report.next);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn checks_for(
     cfg: &config::VatConfig,
     plan: &RunPlan,
@@ -71,6 +190,11 @@ fn checks_for(
         format!("workspace base exists: {}", plan.workspace.base),
     );
     check_network_isolation(&mut checks, plan, capabilities);
+    let needs_apple_container_runtime = plan.services.iter().any(|planned| {
+        cfg.service(&planned.id)
+            .is_ok_and(service_uses_apple_container_runtime)
+    });
+    let apple_container_runtime = needs_apple_container_runtime.then(apple_container_runtime_probe);
     for service in &plan.services {
         let Ok(cfg_service) = cfg.service(&service.id) else {
             push_check(
@@ -84,9 +208,70 @@ fn checks_for(
             continue;
         };
         check_service_files(&mut checks, cfg, cfg_service);
-        check_service_host(&mut checks, cfg_service, capabilities);
+        check_service_host(
+            &mut checks,
+            cfg_service,
+            capabilities,
+            apple_container_runtime.as_ref(),
+        );
     }
     checks
+}
+
+/// Docker is probed only when the selected plan can use it. Looking at
+/// `plan.services` rather than every service in vat.toml keeps an unrelated
+/// Docker service from breaking a deliberate Apple-Container-only invocation.
+/// A cluster is intentionally conservative: `cluster::resolve_backend` itself
+/// executes `docker info`, so selected clusters must take the normal path.
+fn selected_plan_docker_probe_skip_reason(
+    cfg: &config::VatConfig,
+    plan: &RunPlan,
+) -> Option<&'static str> {
+    if selected_plan_requires_docker_probe(cfg, plan) {
+        return None;
+    }
+    if !plan.services.is_empty()
+        && plan.services.iter().all(|planned| {
+            cfg.service(&planned.id).is_ok_and(|service| {
+                matches!(service.runtime, ServiceRuntime::MicroVm)
+                    && (service.image.is_some() || service.preset.is_some())
+            })
+        })
+    {
+        Some(APPLE_CONTAINER_ONLY_DOCKER_PROBE_SKIP)
+    } else {
+        Some(DOCKER_FREE_DOCKER_PROBE_SKIP)
+    }
+}
+
+fn selected_plan_requires_docker_probe(cfg: &config::VatConfig, plan: &RunPlan) -> bool {
+    plan.services.iter().any(|planned| {
+        cfg.service(&planned.id)
+            .map(service_requires_docker_probe)
+            // A malformed plan/config relationship must never cause a false
+            // no-Docker claim.
+            .unwrap_or(true)
+    })
+}
+
+fn service_requires_docker_probe(service: &ServiceConfig) -> bool {
+    if service.cluster.is_some() {
+        return true;
+    }
+    if service.image.is_some() {
+        return service.runtime != ServiceRuntime::MicroVm;
+    }
+    let Some(preset) = service.preset else {
+        return matches!(service.runtime, ServiceRuntime::Docker);
+    };
+    match service.runtime {
+        ServiceRuntime::Docker => true,
+        // Auto may select Docker as its fallback except for VAT's built-in
+        // emulators and Firebase-family presets, which deliberately do not
+        // offer a Docker fallback.
+        ServiceRuntime::Auto => !preset.is_builtin() && !firebase_family(preset),
+        ServiceRuntime::Native | ServiceRuntime::MicroVm => false,
+    }
 }
 
 fn check_network_isolation(
@@ -98,7 +283,8 @@ fn check_network_isolation(
         return;
     }
     let enforceable = capabilities::isolation_available(capabilities, "macos-seatbelt")
-        || capabilities::isolation_available(capabilities, "linux-netns");
+        || capabilities::isolation_available(capabilities, "linux-netns")
+        || capabilities::isolation_available(capabilities, "vm");
     push_check(
         checks,
         "isolation",
@@ -145,6 +331,7 @@ fn check_service_host(
     checks: &mut Vec<DoctorCheck>,
     service: &ServiceConfig,
     capabilities: &CapabilitiesReport,
+    apple_container_runtime: Option<&AppleContainerRuntimeProbe>,
 ) {
     if let Some(external) = &service.external {
         push_check(
@@ -157,6 +344,16 @@ fn check_service_host(
                 "external endpoint reachable: {}:{}",
                 external.host, external.port
             ),
+        );
+    } else if service_uses_apple_container_runtime(service) {
+        let runtime = apple_container_runtime.expect(
+            "selected MicroVM service must have one precomputed Apple Container runtime probe",
+        );
+        check_apple_container_runtime(checks, service, runtime);
+        check_apple_container_builder_advisory(
+            checks,
+            service,
+            &capabilities.apple_container.builder,
         );
     } else if service.image.is_some() || matches!(service.runtime, ServiceRuntime::Docker) {
         push_check(
@@ -194,12 +391,31 @@ fn check_service_host(
     }
 }
 
+// <HANDWRITE gap="vat-versioned-native-lumen-preset-doctor" tracker="#1813" reason="Surface cache/download readiness and remediation.">
 fn check_preset(
     checks: &mut Vec<DoctorCheck>,
     service: &ServiceConfig,
     preset: ServicePreset,
     capabilities: &CapabilitiesReport,
 ) {
+    if preset == ServicePreset::Lumen {
+        let selector = lumen_release::normalize_selector(service.version.as_deref());
+        let tools_ok = ["curl", "tar", "shasum"].iter().all(|tool| which(tool));
+        let detail = match selector {
+            Ok(Some(ref tag)) => format!("native Lumen release `{tag}` will use VAT-owned cache"),
+            Ok(None) => "native latest Lumen release will use VAT-owned cache".to_string(),
+            Err(ref error) => error.to_string(),
+        };
+        push_check(
+            checks,
+            "preset",
+            &service.id,
+            selector.is_ok() && tools_ok,
+            "lumen_native_release",
+            if tools_ok { detail } else { format!("{detail}; install curl, tar, and shasum for native release resolution") },
+        );
+        return;
+    }
     if preset.is_builtin() && service.runtime == ServiceRuntime::Auto {
         push_check(
             checks,
@@ -217,6 +433,33 @@ fn check_preset(
 
     match service.runtime {
         ServiceRuntime::Docker => {}
+        ServiceRuntime::MicroVm => {
+            if !crate::commands::run::preset_has_microvm_image_route(preset) {
+                push_check(
+                    checks,
+                    "preset",
+                    &service.id,
+                    false,
+                    "microvm_preset_unsupported",
+                    format!(
+                        "preset `{}` has no declared Apple Container OCI image route for runtime `micro_vm`; VAT will not fall back to Docker",
+                        service_preset_name(preset)
+                    ),
+                );
+            } else if !service.volumes.is_empty() {
+                push_check(
+                    checks,
+                    "preset",
+                    &service.id,
+                    false,
+                    "microvm_preset_volumes_unsupported",
+                    format!(
+                        "preset `{}` with runtime `micro_vm` and named volumes is unsupported until VAT proves its Apple Container volume ownership/cleanup contract; VAT will not fall back to Docker",
+                        service_preset_name(preset)
+                    ),
+                );
+            }
+        }
         ServiceRuntime::Native => {
             for binary in required_binaries(preset) {
                 check_binary(checks, "preset", &service.id, binary);
@@ -259,6 +502,93 @@ fn check_preset(
             );
         }
     }
+}
+// </HANDWRITE>
+
+fn service_uses_apple_container_runtime(service: &ServiceConfig) -> bool {
+    service.external.is_none()
+        && matches!(service.runtime, ServiceRuntime::MicroVm)
+        && (service.image.is_some() || service.preset.is_some())
+}
+
+/// Read-only preflight for an explicit Apple Container (MicroVM) service.
+/// Never starts the system or falls back to Docker: `vat doctor` only reports
+/// whether `container system status` is already usable once per invocation.
+fn apple_container_runtime_probe() -> AppleContainerRuntimeProbe {
+    let (ok, message) = if !crate::sandbox::microvm::available() {
+        (
+            false,
+            "Apple Container CLI `container` is not on PATH; install it, then run `container system status`."
+                .to_string(),
+        )
+    } else if !crate::sandbox::microvm::system_up() {
+        (
+            false,
+            "Apple Container `container system status` did not succeed; start or repair Apple Container, then retry `container system status`."
+                .to_string(),
+        )
+    } else {
+        (
+            true,
+            "Apple Container `container system status` succeeded.".to_string(),
+        )
+    };
+    AppleContainerRuntimeProbe { ok, message }
+}
+
+fn check_apple_container_runtime(
+    checks: &mut Vec<DoctorCheck>,
+    service: &ServiceConfig,
+    runtime: &AppleContainerRuntimeProbe,
+) {
+    push_check(
+        checks,
+        "apple_container",
+        &service.id,
+        runtime.ok,
+        "apple_container_system",
+        runtime.message.clone(),
+    );
+}
+
+/// A shared builder is useful host evidence but never a readiness gate. Apple
+/// Container does not expose VAT/project ownership, and the bounded capability
+/// probes may time out independently of a healthy MicroVM runtime.
+fn check_apple_container_builder_advisory(
+    checks: &mut Vec<DoctorCheck>,
+    service: &ServiceConfig,
+    advisory: &crate::sandbox::microvm::AppleContainerBuilderAdvisory,
+) {
+    let mut message = format!(
+        "Apple Container shared builder advisory: state={} ownership={} automatic_cleanup={}",
+        advisory.state, advisory.ownership, advisory.automatic_cleanup
+    );
+    if let Some(configuration) = &advisory.configuration {
+        message.push_str(&format!(" configuration.id={}", configuration.id));
+    }
+    if let Some(stats) = &advisory.observed_stats {
+        if let Some(memory_usage_bytes) = stats.memory_usage_bytes {
+            message.push_str(&format!(" observed_memory_bytes={memory_usage_bytes}"));
+        }
+    }
+    if !advisory.probe_errors.is_empty() {
+        let probes = advisory
+            .probe_errors
+            .iter()
+            .map(|error| error.probe.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        message.push_str(&format!(" unavailable_probes={probes}"));
+    }
+    message.push_str("; VAT does not start, stop, delete, or prune shared builder resources.");
+    push_check(
+        checks,
+        "apple_container",
+        &service.id,
+        true,
+        "apple_container_builder_shared",
+        message,
+    );
 }
 
 fn check_binary(checks: &mut Vec<DoctorCheck>, component: &str, id: &str, binary: &str) {
@@ -328,6 +658,7 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => &["firebase", "java"],
+        ServicePreset::Lumen => &[],
     }
 }
 
@@ -362,19 +693,20 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::Mysql => "mysql",
         ServicePreset::Mongo => "mongo",
         ServicePreset::Opensearch => "opensearch",
-        ServicePreset::Firestore => "firestore",
-        ServicePreset::Pubsub => "pubsub",
-        ServicePreset::Datastore => "datastore",
-        ServicePreset::Bigtable => "bigtable",
-        ServicePreset::Spanner => "spanner",
+        ServicePreset::Firestore => "gcloud-firestore",
+        ServicePreset::Pubsub => "gcloud-pubsub",
+        ServicePreset::Datastore => "gcloud-datastore",
+        ServicePreset::Bigtable => "gcloud-bigtable",
+        ServicePreset::Spanner => "gcloud-spanner",
         ServicePreset::Firebase => "firebase",
         ServicePreset::FirebaseAuth => "firebase-auth",
-        ServicePreset::CloudTasks => "cloud-tasks",
+        ServicePreset::CloudTasks => "gcloud-cloud-tasks",
         ServicePreset::CloudScheduler => "cloud-scheduler",
         ServicePreset::CloudWorkflows => "cloud-workflows",
         ServicePreset::CloudStorage => "cloud-storage",
         ServicePreset::HttpMock => "http-mock",
         ServicePreset::Openapi => "openapi",
+        ServicePreset::Lumen => "lumen",
     }
 }
 

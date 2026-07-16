@@ -47,8 +47,10 @@ Public API manifest for `apps/vat/src/commands/mod.rs` generated from AST during
 
 pub mod cluster;
 pub mod diff;
+pub mod docker_shim;
 pub mod emulator;
 pub mod gpu;
+pub mod k8s;
 pub mod llm;
 pub mod logs;
 pub mod ls;
@@ -78,6 +80,12 @@ pub fn print_json<T: serde::Serialize>(value: &T, compact: bool) -> Result<()> {
 
 ```yaml
 changes:
+  - path: apps/vat/src/commands/mod.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: hand-written
+    description: |
+      #1693 registers the bounded headless K3s command module.
   - path: apps/vat/src/commands/mod.rs
     action: modify
     section: rust-source-unit

@@ -18,6 +18,11 @@
 //! device is simply present — the GPU was never taken away, so there is
 //! nothing to "bridge".
 //!
+//! For workloads that need VM isolation for other reasons (e.g., full
+//! Dockerfile compatibility), vat offers an opt-in `--isolation micro_vm`
+//! backend (see [`crate::sandbox::microvm`]); note that GPU access is
+//! categorically impossible in that mode (Virtualization.framework constraint).
+//!
 //! This module reports what the host (and therefore every vat) can see, so an
 //! agent can answer "do I have a GPU, and can my vat use it?" from
 //! [`crate::state::VatState`] without guessing.

@@ -42,7 +42,7 @@ Public API manifest for `apps/vat/src/commands/run.rs` generated from AST during
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
@@ -55,7 +55,7 @@ use walkdir::WalkDir;
 use crate::cluster::{self, ClusterSpec, ResolvedBackend};
 use crate::config::{
     self, ClusterBackend, PortSpec, RetentionPolicy, RunnerConfig, ScenarioConfig,
-    ScenarioNetworkMode, ServiceConfig, ServicePreset, ServiceRuntime, VatConfig,
+    ScenarioNetworkMode, ServiceConfig, ServicePreset, ServiceRuntime, VatConfig, VolumeMount,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -84,6 +84,10 @@ pub struct Args {
     pub json: bool,
     /// Per-invocation retention override for configured vat.toml runs.
     pub keep: Option<RetentionPolicy>,
+    /// Internal compose-startup ownership proof. This is deliberately not a
+    /// CLI flag: compose creates it before launching a runner, and only a
+    /// matching token may publish the newly-created VAT id into its registry.
+    pub(crate) compose_handoff: Option<crate::commands::compose::ComposeHandoff>,
 }
 
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#cli
@@ -113,21 +117,41 @@ pub fn exec(args: Args) -> Result<ExitCode> {
         gpu,
         json,
         keep,
+        compose_handoff,
     } = args;
+    let compose_handoff =
+        compose_handoff.or(crate::commands::compose::compose_handoff_from_env()?);
+    // A stale explicit foreground handoff and detached re-exec child share
+    // this fail-closed ownership check before configuration parsing or cloning,
+    // so neither can create an untracked VAT.
+    if let Some(handoff) = compose_handoff.as_ref() {
+        if !crate::commands::compose::register_compose_handoff(handoff)
+            .context("register compose launcher handoff")?
+        {
+            bail!(
+                "compose launcher no longer owns its project registry; refusing to create an untracked VAT"
+            );
+        }
+    }
     match target {
         Target::Direct {
             program,
             program_args,
-        } => exec_direct(DirectArgs {
-            program,
-            program_args,
-            base,
-            from,
-            name,
-            isolation,
-            gpu,
-            json,
-        }),
+        } => {
+            if compose_handoff.is_some() {
+                bail!("compose handoff may only launch a configured runner");
+            }
+            exec_direct(DirectArgs {
+                program,
+                program_args,
+                base,
+                from,
+                name,
+                isolation,
+                gpu,
+                json,
+            })
+        }
         Target::Runner { runner_ids } => exec_runner(RunnerArgs {
             base,
             from,
@@ -136,16 +160,22 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             gpu,
             runner_ids,
             keep,
+            compose_handoff,
         }),
-        Target::Scenario { scenario_id } => exec_scenario(ScenarioArgs {
-            base,
-            from,
-            name,
-            isolation,
-            gpu,
-            scenario_id,
-            keep,
-        }),
+        Target::Scenario { scenario_id } => {
+            if compose_handoff.is_some() {
+                bail!("compose handoff may only launch a configured runner");
+            }
+            exec_scenario(ScenarioArgs {
+                base,
+                from,
+                name,
+                isolation,
+                gpu,
+                scenario_id,
+                keep,
+            })
+        }
     }
 }
 
@@ -157,6 +187,7 @@ struct RunnerArgs {
     gpu: GpuRequest,
     runner_ids: Vec<String>,
     keep: Option<RetentionPolicy>,
+    compose_handoff: Option<crate::commands::compose::ComposeHandoff>,
 }
 
 struct DirectArgs {
@@ -406,13 +437,27 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         artifacts: Vec::new(),
     });
     vat.save()?;
+    // Compose binding is published synchronously and token-authoritatively
+    // before any service can start. A failed lock/I/O/ownership check must not
+    // be logged and ignored: it would leave a live service set with no
+    // registry owner able to stop it later.
+    if let Some(handoff) = args.compose_handoff.as_ref() {
+        if let Err(err) =
+            crate::commands::compose::publish_compose_handoff(handoff, &vat.meta.id)
+        {
+            vat.meta.status = Status::Exited { code: -1 };
+            vat.save()
+                .context("persist terminal VAT state after compose handoff failure")?;
+            return Err(err).context("publish compose VAT handoff before starting services");
+        }
+    }
     vat.log(Event::new(
         EventKind::RunStarted,
         format!("runner: {joined_ids}"),
     ))?;
 
     let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false, retention);
-    let code = match result {
+    let mut code = match result {
         Ok(code) => code,
         Err(err) => {
             emit_jsonl(serde_json::json!({
@@ -425,14 +470,22 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         }
     };
 
+    let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
+    if let Some(message) = cleanup_unconfirmed.as_deref() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "microvm_cleanup_unconfirmed",
+            "message": message,
+        }))?;
+        // Any unremoved Docker or MicroVM resource must remain inspectable
+        // and retryable, even when the configured runner itself passed.
+        code = -1;
+    }
+
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match retention {
-        RetentionPolicy::Always => false,
-        RetentionPolicy::Never => true,
-        RetentionPolicy::Failed => code == 0,
-    };
+    let should_remove = should_remove_vat(&retention, code, cleanup_unconfirmed.is_some());
 
     if should_remove {
         let _ = store::remove(&state.id);
@@ -615,7 +668,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         scenario.network == ScenarioNetworkMode::Hermetic,
         retention,
     );
-    let code = match result {
+    let mut code = match result {
         Ok(code) => code,
         Err(err) => {
             emit_jsonl(serde_json::json!({
@@ -628,14 +681,20 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         }
     };
 
+    let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
+    if let Some(message) = cleanup_unconfirmed.as_deref() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "microvm_cleanup_unconfirmed",
+            "message": message,
+        }))?;
+        code = -1;
+    }
+
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match retention {
-        RetentionPolicy::Always => false,
-        RetentionPolicy::Never => true,
-        RetentionPolicy::Failed => code == 0,
-    };
+    let should_remove = should_remove_vat(&retention, code, cleanup_unconfirmed.is_some());
     if should_remove {
         let _ = store::remove(&state.id);
     }
@@ -669,6 +728,37 @@ fn process_exit_code(code: i32) -> ExitCode {
     } else {
         ExitCode::from(code.clamp(0, 255) as u8)
     }
+}
+
+const DETACHED_COMPOSE_STOP_REQUEST: &str = ".compose-stop-request";
+
+fn detached_compose_stop_request_path(vat: &store::Vat) -> PathBuf {
+    vat.dir.join(DETACHED_COMPOSE_STOP_REQUEST)
+}
+
+/// Request that a live detached compose run stop its own runner and service
+/// tree. This avoids treating a persisted child PID as an authority boundary:
+/// the VAT parent owns its children, cleanup, and terminal state persistence.
+pub(crate) fn request_detached_compose_stop(vat: &store::Vat) -> Result<()> {
+    let path = detached_compose_stop_request_path(vat);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .with_context(|| format!("write detached compose stop request {}", path.display()))?;
+    writeln!(file, "requested_at={}", Utc::now().to_rfc3339())
+        .with_context(|| format!("write detached compose stop request {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("flush detached compose stop request {}", path.display()))
+}
+
+fn take_detached_compose_stop_request(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let _ = std::fs::remove_file(path);
+    true
 }
 
 fn run_configured(
@@ -763,6 +853,18 @@ fn run_configured(
             }
         };
         services.push(handle);
+        // Persist ownership before the blocking readiness loop. If VAT itself
+        // is interrupted while a MicroVM endpoint is still being verified,
+        // `vat state` must retain the generated container name for diagnosis
+        // and cleanup rather than leaving an untracked runtime resource.
+        if let Err(err) = persist_services(vat, &services) {
+            // A failed metadata write is itself terminal, but the service has
+            // already launched. Tear it down before returning so this early
+            // persistence checkpoint cannot create an untracked MicroVM.
+            stop_services(&mut services, should_delete_clusters(&retention, -1));
+            let _ = persist_services(vat, &services);
+            return Err(err);
+        }
         let last = services.len() - 1;
         if let Err(err) = wait_for_services(vat, &mut services[last..]) {
             stop_services(&mut services, should_delete_clusters(&retention, -1));
@@ -801,7 +903,30 @@ fn run_configured(
             }
         }
     }
-    let records = wait_runner_processes(procs)?;
+    // Persist interim runner liveness before the blocking wait, mirroring the
+    // early-write pattern for services. Compose uses this for readiness
+    // projection only; down never treats a persisted PID as signal authority.
+    let interim_records: Vec<RunnerRunRecord> = procs
+        .iter()
+        .map(|proc| RunnerRunRecord {
+            id: proc.runner.id.clone(),
+            command: proc.runner.cmd.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            duration_ms: None,
+            pid: Some(proc.child.id()),
+            stdout_log: proc.stdout_log.clone(),
+            stderr_log: proc.stderr_log.clone(),
+        })
+        .collect();
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        test_run.runner = interim_records.first().cloned();
+        test_run.runners = interim_records.clone();
+    }
+    vat.save()?;
+
+    let stop_request = detached_compose_stop_request_path(vat);
+    let records = wait_runner_processes(procs, &stop_request)?;
 
     // Worst-wins exit: any negative (timeout/kill) is worst, else max code.
     let code = records
@@ -1027,9 +1152,18 @@ fn spawn_runner_process(
 
 /// Poll every child to completion, enforcing each runner's own timeout
 /// (an elapsed budget kills that child; the others keep running).
-fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunRecord>> {
+fn wait_runner_processes(
+    mut procs: Vec<RunnerProc>,
+    stop_request_path: &Path,
+) -> Result<Vec<RunnerRunRecord>> {
     let mut records: Vec<Option<RunnerRunRecord>> = procs.iter().map(|_| None).collect();
     loop {
+        if take_detached_compose_stop_request(stop_request_path) {
+            // The parent is the sole authority allowed to kill this runner
+            // tree. Compose merely writes the request and waits for the
+            // resulting terminal VAT state before releasing its registry.
+            kill_runner_processes(&mut procs);
+        }
         let mut all_done = true;
         for (i, proc) in procs.iter_mut().enumerate() {
             if records[i].is_some() {
@@ -1042,6 +1176,7 @@ fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunReco
                     status: ProcessStatus::Exited,
                     exit_code: Some(status.code().unwrap_or(-1)),
                     duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                    pid: None,
                     stdout_log: proc.stdout_log.clone(),
                     stderr_log: proc.stderr_log.clone(),
                 });
@@ -1057,6 +1192,7 @@ fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunReco
                         status: ProcessStatus::Exited,
                         exit_code: Some(-1),
                         duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                        pid: None,
                         stdout_log: proc.stdout_log.clone(),
                         stderr_log: proc.stderr_log.clone(),
                     });
@@ -1115,6 +1251,10 @@ struct ServicePlan {
     /// Set when the service runs as a Docker container; carries the
     /// `--name` so teardown can force-remove the container with no orphans.
     docker_name: Option<String>,
+    /// Set when the service runs via Apple's `container` CLI (MicroVM
+    /// isolation); carries the `--name` so teardown can force-remove it,
+    /// parallel to `docker_name`.
+    microvm_name: Option<String>,
     /// The Docker image, when this service runs as a container.
     image: Option<String>,
     /// Set when the service is a local Kubernetes cluster; carries the cluster
@@ -1130,7 +1270,26 @@ enum ReadyProbe {
     None,
     Http(String),
     Tcp { host: String, port: u16 },
+    /// A MicroVM-specific HTTP contract. Unlike Docker/native HTTP probes,
+    /// terminal endpoint errors are preserved as MicroVM host-port evidence.
+    MicroVmHttp(String),
+    /// A MicroVM-specific TCP contract. A completed handshake is not enough:
+    /// an immediate EOF or reset proves the published host endpoint unusable.
+    MicroVmTcp {
+        host: String,
+        port: u16,
+    },
     Cmd(Vec<String>),
+}
+
+/// A MicroVM readiness observation distinguishes a retryable published-port
+/// state from a terminal endpoint failure. The pending message is persisted on
+/// timeout so VAT reports the last concrete observation rather than a generic
+/// readiness deadline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EndpointReadiness {
+    Ready,
+    Pending(String),
 }
 
 struct ServiceHandle {
@@ -1140,6 +1299,9 @@ struct ServiceHandle {
     ready_probe: ReadyProbe,
     /// `docker --name` when the service is a container; force-removed on stop.
     docker_name: Option<String>,
+    /// `container --name` when the service runs via Apple's `container` CLI
+    /// (MicroVM isolation); force-removed on stop, parallel to `docker_name`.
+    microvm_name: Option<String>,
     /// Cluster evidence when the service is a local Kubernetes cluster; the
     /// cluster is deleted on stop subject to the `keep` policy.
     cluster: Option<ClusterRunRecord>,
@@ -1157,9 +1319,13 @@ fn prepare_service(
         // Created here in the prepare phase; the runner reaches it via KUBECONFIG.
         prepare_cluster_service(vat, service, backend)?
     } else if let Some(image) = &service.image {
-        // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
-        // equivalent. Always a container.
-        prepare_image_service(vat, service, image)?
+        // Explicit image: a container-backed service (e.g. AlloyDB) with no
+        // native equivalent. `runtime: microvm` routes to Apple's `container`
+        // CLI; every other runtime keeps today's `docker run` path unchanged.
+        match service.runtime {
+            ServiceRuntime::MicroVm => prepare_microvm_service(vat, service, image)?,
+            _ => prepare_image_service(vat, service, image)?,
+        }
     } else if service.external.is_some() {
         prepare_external_service(service)?
     } else if service.preset == Some(ServicePreset::Firebase) {
@@ -1216,6 +1382,7 @@ fn prepare_service(
             exported_env: sorted_keys(&env),
             env,
             docker_name: None,
+            microvm_name: None,
             image: None,
             cluster: None,
             owned_by_vat: true,
@@ -1227,10 +1394,13 @@ fn prepare_service(
     // `prepare_cluster_service`; the container/preset note below does not apply.
     if plan.prepare_mode != "direct_start" && plan.cluster.is_none() {
         let is_docker = plan.docker_name.is_some();
+        let is_microvm = plan.microvm_name.is_some();
         let runtime = if !plan.owned_by_vat {
             "external"
         } else if is_docker {
             "docker"
+        } else if is_microvm {
+            "microvm"
         } else {
             "native"
         };
@@ -1238,6 +1408,8 @@ fn prepare_service(
             "using external service endpoint (not started or stopped by vat)"
         } else if is_docker {
             "running service via `docker run` (ephemeral, --rm)"
+        } else if is_microvm {
+            "running service via `container run` (ephemeral, --rm, MicroVM isolation)"
         } else if plan.prepare_mode == "cold_build" {
             "first run slower; cached for future runs"
         } else {
@@ -1372,6 +1544,7 @@ fn prepare_cluster_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: Some(record),
         owned_by_vat: true,
@@ -1418,6 +1591,10 @@ fn start_service(
         pid: child.as_ref().map(Child::id),
         exit_code: None,
         ready_http: plan.ready_http.clone(),
+        docker_name: plan.docker_name.clone(),
+        microvm_name: plan.microvm_name.clone(),
+        readiness_error: None,
+        cleanup_error: None,
         cluster: plan.cluster.clone(),
         stdout_log: stdout.to_string_lossy().into_owned(),
         stderr_log: stderr.to_string_lossy().into_owned(),
@@ -1436,6 +1613,7 @@ fn start_service(
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
         docker_name: plan.docker_name.clone(),
+        microvm_name: plan.microvm_name.clone(),
         cluster: plan.cluster.clone(),
     })
 }
@@ -1493,6 +1671,7 @@ fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: false,
@@ -1580,6 +1759,7 @@ fn prepare_preset_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -1690,6 +1870,7 @@ fn prepare_preset_docker_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: Some(name),
+        microvm_name: None,
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
@@ -1785,6 +1966,7 @@ fn prepare_firebase_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -1993,6 +2175,7 @@ fn prepare_builtin_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -2063,6 +2246,57 @@ fn prepare_image_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: Some(name),
+        microvm_name: None,
+        image: Some(image.to_string()),
+        cluster: None,
+        owned_by_vat: true,
+    })
+}
+
+/// Run an image-backed service via Apple's `container` CLI (MicroVM
+/// isolation) instead of Docker. Its host endpoint is probed through the
+/// MicroVM-specific readiness contract, and the generated name is persisted
+/// for bounded ownership cleanup.
+fn prepare_microvm_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    image: &str,
+) -> Result<ServicePlan> {
+    ensure_microvm_available()?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .context("image service missing container_port (validated earlier)")?;
+    let name = container_name(&vat.meta.id, &service.id);
+    let command = container_run_command(
+        &name,
+        image,
+        host_port,
+        container_port,
+        &service.image_env,
+        &service.volumes,
+    );
+    let env = image_exports(service, host_port);
+    let ready_http = service
+        .ready_http
+        .as_ref()
+        .map(|value| substitute_endpoint(value, "127.0.0.1", host_port));
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        host: Some("127.0.0.1".to_string()),
+        ready_http: ready_http.clone(),
+        ready_probe: microvm_ready_probe(service.ready_http.as_deref(), host_port),
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: Some(host_port),
+        prepare_mode: "container_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        microvm_name: Some(name),
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
@@ -2097,12 +2331,58 @@ fn docker_run_command(
     cmd
 }
 
+/// Build a foreground `container run` argv for Apple's MicroVM runtime.
+/// Like `docker_run_command`, the name and host port are deterministic and
+/// loopback-bound; named volumes and environment entries preserve deterministic
+/// input ordering.
+fn container_run_command(
+    name: &str,
+    image: &str,
+    host_port: u16,
+    container_port: u16,
+    container_env: &BTreeMap<String, String>,
+    volumes: &[VolumeMount],
+) -> Vec<String> {
+    let mut cmd = vec![
+        "container".to_string(),
+        "run".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "-p".to_string(),
+        format!("127.0.0.1:{host_port}:{container_port}"),
+    ];
+    for volume in volumes {
+        cmd.push("-v".to_string());
+        cmd.push(format!("{}:{}", volume.name, volume.path));
+    }
+    for (key, value) in container_env {
+        cmd.push("-e".to_string());
+        cmd.push(format!("{key}={value}"));
+    }
+    cmd.push(image.to_string());
+    cmd
+}
+
 /// Readiness for a container: an explicit `ready_http` wins, otherwise a TCP
 /// connect to the mapped host port — which needs no native client binary.
 fn docker_ready_probe(service: &ServiceConfig, host_port: u16) -> ReadyProbe {
     match &service.ready_http {
         Some(url) => ReadyProbe::Http(url.clone()),
         None => ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: host_port,
+        },
+    }
+}
+
+/// Readiness for an Apple `container` service. It deliberately does not reuse
+/// Docker's TCP-connect-only fallback: a healthy guest with a broken host
+/// port-forward must never be recorded as Ready.
+fn microvm_ready_probe(ready_http: Option<&str>, host_port: u16) -> ReadyProbe {
+    match ready_http {
+        Some(url) => ReadyProbe::MicroVmHttp(substitute_endpoint(url, "127.0.0.1", host_port)),
+        None => ReadyProbe::MicroVmTcp {
             host: "127.0.0.1".to_string(),
             port: host_port,
         },
@@ -2307,6 +2587,30 @@ fn ensure_docker_available(service: &ServiceConfig) -> Result<()> {
             "service `{}` needs Docker but the daemon is not reachable (`docker info` failed)",
             service.id
         );
+    }
+    Ok(())
+}
+
+/// Gate a `container`-backed service on the Apple CLI and its running
+/// container system, emitting a structured, fail-closed error when unavailable.
+fn ensure_microvm_available() -> Result<()> {
+    if !sandbox::microvm::available() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "container_unavailable",
+            "reason": "container binary not found on PATH",
+        }))?;
+        bail!("service needs Apple's `container` CLI but the `container` binary was not found on PATH");
+    }
+    if !sandbox::microvm::system_up() {
+        if let Err(err) = sandbox::microvm::ensure_system_started(Duration::from_secs(30)) {
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "container_unavailable",
+                "reason": err.as_str(),
+            }))?;
+            bail!("service needs the `container` system running but it did not start in time: {err}");
+        }
     }
     Ok(())
 }
@@ -3132,11 +3436,20 @@ fn which(binary: &str) -> Option<PathBuf> {
     None
 }
 
+// <HANDWRITE gap="vat-microvm-published-endpoint-readiness" tracker="#1526" reason="Route MicroVM service probes through an endpoint-usability check that distinguishes an immediate EOF or reset from an idle but open protocol connection, while retaining explicit HTTP round trips.">
 fn readiness_ready(probe: &ReadyProbe) -> Result<bool> {
     match probe {
         ReadyProbe::None => Ok(true),
         ReadyProbe::Http(url) => http_ready(url),
         ReadyProbe::Tcp { host, port } => tcp_ready(host, *port),
+        ReadyProbe::MicroVmHttp(url) => Ok(matches!(
+            http_readiness(url)?,
+            EndpointReadiness::Ready
+        )),
+        ReadyProbe::MicroVmTcp { host, port } => Ok(matches!(
+            tcp_usable_readiness(host, *port)?,
+            EndpointReadiness::Ready
+        )),
         ReadyProbe::Cmd(cmd) => {
             if cmd.is_empty() {
                 return Ok(true);
@@ -3151,6 +3464,7 @@ fn readiness_ready(probe: &ReadyProbe) -> Result<bool> {
         }
     }
 }
+// </HANDWRITE>
 
 fn tcp_ready(host: &str, port: u16) -> Result<bool> {
     let addr = (host, port)
@@ -3160,10 +3474,231 @@ fn tcp_ready(host: &str, port: u16) -> Result<bool> {
     Ok(TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok())
 }
 
+/// Verify that a MicroVM's loopback-published TCP endpoint stays usable after
+/// the three-way handshake. A service can accept then immediately close/reset
+/// a connection when Apple's host forwarding is broken; Docker's historic
+/// connect-only check cannot distinguish that state.
+// <HANDWRITE gap="vat-microvm-published-endpoint-failure-evidence" tracker="#1526" reason="Persist terminal MicroVM readiness evidence, collect best-effort runtime and inspect diagnostics, and leave no VAT-owned MicroVM after an unusable published endpoint.">
+fn tcp_usable_readiness(host: &str, port: u16) -> Result<EndpointReadiness> {
+    let endpoint = format!("{host}:{port}");
+    let addr = (host, port)
+        .to_socket_addrs()?
+        .next()
+        .context("MicroVM TCP readiness did not resolve")?;
+    let stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+        Ok(stream) => stream,
+        Err(err) if readiness_io_pending(&err) => {
+            return Ok(EndpointReadiness::Pending(format!(
+                "MicroVM published endpoint {endpoint} is not accepting TCP yet: {err}"
+            )));
+        }
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("connect MicroVM published endpoint {endpoint}"));
+        }
+    };
+    stream.set_read_timeout(Some(Duration::from_millis(150)))?;
+    let mut byte = [0u8; 1];
+    match stream.peek(&mut byte) {
+        Ok(0) => {
+            bail!("MicroVM published endpoint {endpoint} closed immediately after accepting TCP")
+        }
+        Ok(_) => Ok(EndpointReadiness::Ready),
+        Err(err) if matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+            Ok(EndpointReadiness::Ready)
+        }
+        Err(err)
+            if matches!(
+                err.kind(),
+                ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::NotConnected
+                    | ErrorKind::BrokenPipe
+            ) =>
+        {
+            bail!("MicroVM published endpoint {endpoint} reset immediately after accepting TCP: {err}")
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("probe MicroVM published endpoint {endpoint}"))
+        }
+    }
+}
+
+fn microvm_readiness(probe: &ReadyProbe) -> Result<EndpointReadiness> {
+    match probe {
+        ReadyProbe::MicroVmHttp(url) => http_readiness(url),
+        ReadyProbe::MicroVmTcp { host, port } => tcp_usable_readiness(host, *port),
+        _ => unreachable!("microvm readiness requested for non-MicroVM probe"),
+    }
+}
+
+fn readiness_io_pending(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::ConnectionRefused
+            | ErrorKind::TimedOut
+            | ErrorKind::WouldBlock
+            | ErrorKind::Interrupted
+    )
+}
+
+fn is_microvm_probe(probe: &ReadyProbe) -> bool {
+    matches!(
+        probe,
+        ReadyProbe::MicroVmHttp(_) | ReadyProbe::MicroVmTcp { .. }
+    )
+}
+
+fn microvm_endpoint(service: &ServiceHandle) -> String {
+    let host = service.record.host.as_deref().unwrap_or("127.0.0.1");
+    service
+        .record
+        .port
+        .map(|port| format!("{host}:{port}"))
+        .unwrap_or_else(|| host.to_string())
+}
+
+fn compact_container_diagnostic(value: String) -> String {
+    const MAX_CHARS: usize = 600;
+    let value = value.trim().replace('\n', " ");
+    let mut chars = value.chars();
+    let compact: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{compact}…")
+    } else {
+        compact
+    }
+}
+
+/// Capture a diagnostic pipe without allowing a misbehaving descendant that
+/// inherited stdout/stderr to block the failure path after its parent exits.
+fn bounded_pipe_output<R>(pipe: Option<R>, timeout: Duration) -> String
+where
+    R: Read + Send + 'static,
+{
+    let Some(mut pipe) = pipe else {
+        return String::new();
+    };
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = pipe.read_to_end(&mut bytes).map(|_| bytes);
+        let _ = sender.send(result);
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok(Ok(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
+        Ok(Err(err)) => format!("output read failed ({err})"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            format!("output capture timed out after {}ms", timeout.as_millis())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            "output capture disconnected".to_string()
+        }
+    }
+}
+
+fn container_diagnostic(args: &[&str]) -> String {
+    let command = format!("container {}", args.join(" "));
+    let mut child = match Command::new("container")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => return format!("{command}: unavailable ({err})"),
+    };
+    let timeout = Duration::from_secs(1);
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let capture_timeout = Duration::from_millis(100);
+                let stdout = compact_container_diagnostic(bounded_pipe_output(
+                    child.stdout.take(),
+                    capture_timeout,
+                ));
+                let stderr = compact_container_diagnostic(bounded_pipe_output(
+                    child.stderr.take(),
+                    capture_timeout,
+                ));
+                let details = [stdout, stderr]
+                    .into_iter()
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                if details.is_empty() {
+                    return format!("{command}: {status}");
+                } else {
+                    return format!("{command}: {status}; {details}");
+                }
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return format!("{command}: timed out after {}ms", timeout.as_millis());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(err) => return format!("{command}: wait failed ({err})"),
+        }
+    }
+}
+
+fn report_microvm_endpoint_failure(
+    vat: &store::Vat,
+    service: &ServiceHandle,
+    reason: &str,
+) -> Result<()> {
+    let endpoint = microvm_endpoint(service);
+    let name = service
+        .record
+        .microvm_name
+        .as_deref()
+        .unwrap_or("unavailable");
+    let runtime_evidence = container_diagnostic(&["--version"]);
+    let inspect_evidence = if service.record.microvm_name.is_some() {
+        container_diagnostic(&["inspect", name])
+    } else {
+        "container inspect unavailable because VAT did not record a MicroVM name".to_string()
+    };
+    let inspect_command = format!("container inspect {name}");
+    let logs_command = format!("vat logs {} {}", vat.meta.id, service.record.id);
+    let state_command = format!("vat state {}", vat.meta.id);
+
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "microvm_published_endpoint_unusable",
+        "service": service.record.id.as_str(),
+        "host_endpoint": endpoint,
+        "microvm_name": name,
+        "reason": reason,
+        "runtime_evidence": runtime_evidence,
+        "inspect_evidence": inspect_evidence,
+        "inspect": inspect_command,
+        "logs": logs_command,
+        "state": state_command,
+        "next": state_command,
+    }))?;
+
+    bail!(
+        "microvm_published_endpoint_unusable: service `{}` host endpoint `{}` failed readiness: {}; runtime: {}; inspect: {}; remediation: `{}` then `{}`",
+        service.record.id,
+        endpoint,
+        reason,
+        runtime_evidence,
+        inspect_evidence,
+        inspect_command,
+        logs_command,
+    )
+}
+
 fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Result<()> {
     for service in services {
         let started = Instant::now();
         let ready_probe = service.ready_probe.clone();
+        let microvm_probe = is_microvm_probe(&ready_probe);
+        let mut last_microvm_readiness_error = None;
         if matches!(ready_probe, ReadyProbe::None) {
             service.record.status = ProcessStatus::Ready;
             service.record.ready_duration_ms = Some(started.elapsed().as_millis() as u64);
@@ -3176,17 +3711,65 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
         }
         let deadline = Instant::now() + Duration::from_secs(service.timeout_s);
         loop {
-            if readiness_ready(&ready_probe).unwrap_or(false) {
-                service.record.status = ProcessStatus::Ready;
-                let ms = started.elapsed().as_millis() as u64;
-                service.record.ready_duration_ms = Some(ms);
-                if let Some(cluster) = service.record.cluster.as_mut() {
-                    cluster.ready_ms = Some(ms);
+            // A published host port can already be occupied by an unrelated
+            // listener. Check the MicroVM launch before probing it so that an
+            // exited `container run` cannot borrow that listener's readiness.
+            if microvm_probe {
+                if let Some(status) = service_child_exit_status(service)? {
+                    return report_microvm_child_exit(
+                        vat,
+                        service,
+                        status,
+                        last_microvm_readiness_error.as_deref(),
+                    );
                 }
-                break;
             }
-            if let Some(child) = service.child.as_mut() {
-                if let Some(status) = child.try_wait()? {
+            let readiness = if microvm_probe {
+                match microvm_readiness(&ready_probe) {
+                    Ok(EndpointReadiness::Ready) => Ok(true),
+                    Ok(EndpointReadiness::Pending(reason)) => {
+                        last_microvm_readiness_error = Some(reason);
+                        Ok(false)
+                    }
+                    Err(err) => Err(err),
+                }
+            } else {
+                readiness_ready(&ready_probe)
+            };
+            match readiness {
+                Ok(true) => {
+                    // Recheck the launcher after the bounded TCP/HTTP probe:
+                    // a MicroVM that dies during the probe must not be
+                    // recorded Ready because a stale host listener answered.
+                    if microvm_probe {
+                        if let Some(status) = service_child_exit_status(service)? {
+                            return report_microvm_child_exit(
+                                vat,
+                                service,
+                                status,
+                                last_microvm_readiness_error.as_deref(),
+                            );
+                        }
+                    }
+                    service.record.status = ProcessStatus::Ready;
+                    let ms = started.elapsed().as_millis() as u64;
+                    service.record.ready_duration_ms = Some(ms);
+                    if let Some(cluster) = service.record.cluster.as_mut() {
+                        cluster.ready_ms = Some(ms);
+                    }
+                    break;
+                }
+                Ok(false) => {}
+                Err(err) if microvm_probe => {
+                    let reason = err.to_string();
+                    service.record.status = ProcessStatus::Failed;
+                    service.record.readiness_error = Some(reason.clone());
+                    return report_microvm_endpoint_failure(vat, service, &reason);
+                }
+                Err(_) => {}
+            }
+            if !microvm_probe {
+                if let Some(status) = service_child_exit_status(service)? {
                     service.record.status = ProcessStatus::Failed;
                     service.record.exit_code = status.code();
                     bail!("service `{}` exited before readiness", service.record.id);
@@ -3194,6 +3777,17 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
             }
             if Instant::now() >= deadline {
                 service.record.status = ProcessStatus::Timeout;
+                if microvm_probe {
+                    let reason = last_microvm_readiness_error.take().unwrap_or_else(|| {
+                        format!(
+                            "MicroVM published endpoint {} did not become usable before the {}s readiness deadline",
+                            microvm_endpoint(service),
+                            service.timeout_s
+                        )
+                    });
+                    service.record.readiness_error = Some(reason.clone());
+                    return report_microvm_endpoint_failure(vat, service, &reason);
+                }
                 bail!("service `{}` readiness timed out", service.record.id);
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -3211,6 +3805,40 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
     }
     Ok(())
 }
+
+/// Observe an owned service process without consuming its handle. MicroVM
+/// readiness uses this both before and after its host-endpoint probe.
+fn service_child_exit_status(
+    service: &mut ServiceHandle,
+) -> Result<Option<std::process::ExitStatus>> {
+    match service.child.as_mut() {
+        Some(child) => child.try_wait().context("observe service process"),
+        None => Ok(None),
+    }
+}
+
+/// Turn an exited MicroVM launcher into the same terminal, structured
+/// published-endpoint failure path as an unusable host endpoint.
+fn report_microvm_child_exit(
+    vat: &mut store::Vat,
+    service: &mut ServiceHandle,
+    status: std::process::ExitStatus,
+    last_readiness_observation: Option<&str>,
+) -> Result<()> {
+    service.record.status = ProcessStatus::Failed;
+    service.record.exit_code = status.code();
+    let last_observation = last_readiness_observation
+        .map(|detail| format!("; last endpoint observation: {detail}"))
+        .unwrap_or_default();
+    let reason = format!(
+        "MicroVM service process exited {:?} before published endpoint {} became usable{last_observation}",
+        status.code(),
+        microvm_endpoint(service),
+    );
+    service.record.readiness_error = Some(reason.clone());
+    report_microvm_endpoint_failure(vat, service, &reason)
+}
+// </HANDWRITE>
 
 fn emit_service_runtime_hints(service: &ServiceHandle) -> Result<()> {
     let stdout = std::fs::read_to_string(&service.record.stdout_log).unwrap_or_default();
@@ -3252,6 +3880,7 @@ fn record_runner_failure(
             status: ProcessStatus::Failed,
             exit_code: Some(-1),
             duration_ms: None,
+            pid: None,
             stdout_log: logs_dir
                 .join("runner.stdout.log")
                 .to_string_lossy()
@@ -3270,27 +3899,336 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
     vat.save()
 }
 
+/// A persisted cleanup error is an active resource-ownership obligation, not
+/// merely diagnostic text. Retention must never erase the only Docker/MicroVM
+/// runtime name and retry path while this remains nonempty. Cluster deletion
+/// is deliberately outside this retry contract until the Kubernetes phase.
+fn unconfirmed_runtime_cleanup_message(vat: &store::Vat) -> Option<String> {
+    let test_run = vat.meta.test_run.as_ref()?;
+    let failures: Vec<_> = test_run
+        .services
+        .iter()
+        .filter_map(|service| {
+            service
+                .cleanup_error
+                .as_deref()
+                .map(|error| format!("service `{}`: {error}", service.id))
+        })
+        .collect();
+    (!failures.is_empty()).then(|| failures.join("; "))
+}
+
+fn should_remove_vat(
+    retention: &RetentionPolicy,
+    code: i32,
+    cleanup_unconfirmed: bool,
+) -> bool {
+    if cleanup_unconfirmed {
+        return false;
+    }
+    match retention {
+        RetentionPolicy::Always => false,
+        RetentionPolicy::Never => true,
+        RetentionPolicy::Failed => code == 0,
+    }
+}
+
+// <HANDWRITE gap="vat-microvm-published-endpoint-failure-evidence" tracker="#1526" reason="Bound teardown of VAT-owned Docker and MicroVM resources so a degraded runtime cannot prevent terminal evidence from being persisted.">
+/// Run a teardown command without allowing a degraded runtime to
+/// wedge VAT's terminal-state persistence. stdout/stderr are intentionally
+/// closed so descendants cannot retain a diagnostic pipe after their parent
+/// exits.
+fn run_quiet_bounded(program: &str, args: &[&str], timeout: Duration) -> Result<()> {
+    let command = format!("{program} {}", args.join(" "));
+    let status = bounded_command_status(program, args, timeout)?;
+    if status.success() {
+        Ok(())
+    } else {
+        bail!(
+            "teardown command `{command}` exited unsuccessfully ({:?})",
+            status.code()
+        );
+    }
+}
+
+/// Preserve a bounded command's nonzero status for a teardown caller.
+fn bounded_command_status(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let command = format!("{program} {}", args.join(" "));
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("spawn teardown command `{command}`"))?;
+    wait_for_bounded_command(&mut child, &command, timeout)
+}
+
+fn wait_for_bounded_command(
+    child: &mut Child,
+    command: &str,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err).with_context(|| format!("wait teardown command `{command}`"));
+            }
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(
+                "teardown command `{command}` timed out after {}ms",
+                timeout.as_millis()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Run a bounded list query through a temporary file rather than a pipe, cap
+/// the returned bytes, and reject any query failure or malformed output as an
+/// absence proof.
+fn bounded_command_output(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, String)> {
+    const MAX_QUERY_BYTES: u64 = 1024 * 1024;
+    let command = format!("{program} {}", args.join(" "));
+    let path = std::env::temp_dir().join(format!("vat-runtime-query-{}", id::fresh()));
+    let result = (|| -> Result<(std::process::ExitStatus, String)> {
+        let output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("create runtime query output {}", path.display()))?;
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(output))
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("spawn teardown query `{command}`"))?;
+        let status = wait_for_bounded_command(&mut child, &command, timeout)?;
+        let size = std::fs::metadata(&path)
+            .with_context(|| format!("read runtime query metadata {}", path.display()))?
+            .len();
+        if size > MAX_QUERY_BYTES {
+            bail!(
+                "teardown query `{command}` produced {size} bytes, exceeding the {}-byte safety limit",
+                MAX_QUERY_BYTES
+            );
+        }
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read runtime query output {}", path.display()))?;
+        Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RuntimeCleanupKind {
+    Docker,
+    MicroVm,
+}
+
+impl RuntimeCleanupKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Docker => "Docker",
+            Self::MicroVm => "MicroVM",
+        }
+    }
+
+    fn program(self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+            Self::MicroVm => "container",
+        }
+    }
+}
+
+/// A failed rm -f is benign only if a successful exact-name list query proves
+/// that deterministic name is absent. Docker uses an anchored name filter and
+/// exact output-line comparison; MicroVM parses JSON and requires no matching
+/// id. Query error, timeout, oversized/malformed output, or a match retains
+/// the binding.
+fn runtime_object_confirmed_absent(kind: RuntimeCleanupKind, name: &str) -> bool {
+    match kind {
+        RuntimeCleanupKind::Docker => {
+            let filter = format!("name=^/{name}$");
+            let Ok((status, output)) = bounded_command_output(
+                "docker",
+                &[
+                    "container",
+                    "ls",
+                    "--all",
+                    "--filter",
+                    &filter,
+                    "--format",
+                    "{{.Names}}",
+                ],
+                Duration::from_secs(1),
+            ) else {
+                return false;
+            };
+            status.success() && output.lines().all(|line| line.trim() != name)
+        }
+        RuntimeCleanupKind::MicroVm => {
+            let Ok((status, output)) = bounded_command_output(
+                "container",
+                &["list", "--all", "--format", "json"],
+                Duration::from_secs(1),
+            ) else {
+                return false;
+            };
+            status.success()
+                && serde_json::from_str::<Vec<serde_json::Value>>(&output)
+                    .map(|containers| {
+                        !containers.iter().any(|container| {
+                            container.get("id").and_then(serde_json::Value::as_str) == Some(name)
+                        })
+                    })
+                    .unwrap_or(false)
+        }
+    }
+}
+
+fn record_runtime_cleanup_failure(
+    service: &mut ServiceHandle,
+    runtime: &str,
+    program: &str,
+    name: &str,
+    error: &anyhow::Error,
+) {
+    let detail = format!("{runtime} cleanup `{program} rm -f {name}` did not finish: {error}");
+    service.record.cleanup_error = Some(match service.record.cleanup_error.take() {
+        Some(existing) => format!("{existing}; {detail}"),
+        None => detail,
+    });
+}
+// </HANDWRITE>
+
+// <HANDWRITE gap="vat-compose-cleanup-confirmation" tracker="#1526" reason="Retry persisted runtime cleanup from a retained compose binding before allowing port reuse.">
+/// Retry only persisted, previously-unconfirmed runtime teardown. Compose
+/// calls this before it can release a retained binding: a successful retry
+/// clears the explicit cleanup evidence, while another failure remains
+/// durable and fail-closed for both Docker and MicroVM service owners.
+pub(crate) fn retry_unconfirmed_service_cleanup(vat: &mut store::Vat) -> Result<()> {
+    let Some(test_run) = vat.meta.test_run.as_mut() else {
+        return Ok(());
+    };
+
+    let mut failures = Vec::new();
+    for service in &mut test_run.services {
+        if service.cleanup_error.is_none() {
+            continue;
+        }
+        let (kind, name) = match (
+            service.microvm_name.as_deref(),
+            service.docker_name.as_deref(),
+        ) {
+            (Some(_), Some(_)) => {
+                failures.push(format!(
+                    "service `{}` has unconfirmed cleanup with both MicroVM and Docker names",
+                    service.id
+                ));
+                continue;
+            }
+            (Some(name), None) => (RuntimeCleanupKind::MicroVm, name),
+            (None, Some(name)) => (RuntimeCleanupKind::Docker, name),
+            (None, None) => {
+                failures.push(format!(
+                    "service `{}` has unconfirmed cleanup but no persisted runtime name",
+                    service.id
+                ));
+                continue;
+            }
+        };
+        let runtime = kind.label();
+        let program = kind.program();
+        let command = format!("{program} rm -f {name}");
+        match run_quiet_bounded(program, &["rm", "-f", name], Duration::from_secs(1)) {
+            Ok(()) => service.cleanup_error = None,
+            Err(_) if runtime_object_confirmed_absent(kind, name) => {
+                service.cleanup_error = None;
+            }
+            Err(error) => {
+                let detail = format!("{runtime} cleanup `{command}` did not finish: {error}");
+                service.cleanup_error = Some(detail.clone());
+                failures.push(format!("service `{}`: {detail}", service.id));
+            }
+        }
+    }
+    vat.save()?;
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!("unconfirmed runtime cleanup remains: {}", failures.join("; "))
+    }
+}
+// </HANDWRITE>
+
 fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
     for service in services.iter_mut().rev() {
-        if let Some(child) = service.child.as_mut() {
-            if child.try_wait().ok().flatten().is_none() {
-                kill_child(child);
-                let _ = child.wait();
-                if service.record.status == ProcessStatus::Running
-                    || service.record.status == ProcessStatus::Ready
-                {
-                    service.record.status = ProcessStatus::Exited;
+        let child_exit = match service.child.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => Some(status),
+                Ok(None) | Err(_) => {
+                    kill_child(child);
+                    child.wait().ok()
                 }
+            },
+            None => None,
+        };
+        if service.child.is_some() {
+            service.record.pid = None;
+            if let Some(status) = child_exit {
+                service.record.exit_code = status.code();
+            }
+            if !matches!(
+                service.record.status,
+                ProcessStatus::Failed | ProcessStatus::Timeout
+            ) {
+                // A service which had been Ready can exit naturally before a
+                // compose stop request. It is still terminal; retaining Ready
+                // here would make compose wait forever after VAT itself exits.
+                service.record.status = ProcessStatus::Exited;
             }
         }
         // Force-remove the container regardless of how the `docker run` child
         // fared — a detached or wedged container must never outlive the run.
-        if let Some(name) = &service.docker_name {
-            let _ = Command::new("docker")
-                .args(["rm", "-f", name])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+        if let Some(name) = service.docker_name.clone() {
+            match run_quiet_bounded("docker", &["rm", "-f", &name], Duration::from_secs(1)) {
+                Ok(()) => {}
+                Err(_) if runtime_object_confirmed_absent(RuntimeCleanupKind::Docker, &name) => {}
+                Err(error) => {
+                    record_runtime_cleanup_failure(service, "Docker", "docker", &name, &error);
+                }
+            }
+        }
+        // Same force-removal guarantee for a `container run` (MicroVM) child,
+        // parallel to the docker_name branch above.
+        if let Some(name) = service.microvm_name.clone() {
+            match run_quiet_bounded("container", &["rm", "-f", &name], Duration::from_secs(1)) {
+                Ok(()) => {}
+                Err(_) if runtime_object_confirmed_absent(RuntimeCleanupKind::MicroVm, &name) => {}
+                Err(error) => {
+                    record_runtime_cleanup_failure(service, "MicroVM", "container", &name, &error);
+                }
+            }
         }
         // A cluster is an external object, so removing the vat dir does NOT
         // remove it. Delete it explicitly when the run policy says to; keep it
@@ -3499,6 +4437,7 @@ mod tests {
             env: BTreeMap::new(),
             exported_env: Vec::new(),
             docker_name: None,
+            microvm_name: None,
             image: None,
             cluster: None,
             owned_by_vat: true,
@@ -4266,6 +5205,10 @@ mod tests {
                 pid: Some(child.id()),
                 exit_code: None,
                 ready_http: None,
+                docker_name: None,
+                microvm_name: None,
+                readiness_error: None,
+                cleanup_error: None,
                 cluster: None,
                 stdout_log: stdout.to_string_lossy().into_owned(),
                 stderr_log: stderr.to_string_lossy().into_owned(),
@@ -4274,6 +5217,7 @@ mod tests {
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
             docker_name: None,
+            microvm_name: None,
             cluster: None,
         }
     }
@@ -4337,7 +5281,7 @@ fn kill_child(child: &mut Child) {
     let _ = child.kill();
 }
 
-fn http_ready(raw_url: &str) -> Result<bool> {
+fn http_readiness(raw_url: &str) -> Result<EndpointReadiness> {
     let url = url::Url::parse(raw_url).with_context(|| format!("parse ready_http {raw_url}"))?;
     let host = url.host_str().context("ready_http missing host")?;
     let port = url
@@ -4347,24 +5291,67 @@ fn http_ready(raw_url: &str) -> Result<bool> {
         .to_socket_addrs()?
         .next()
         .context("ready_http did not resolve")?;
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300))?;
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+        Ok(stream) => stream,
+        Err(err) if readiness_io_pending(&err) => {
+            return Ok(EndpointReadiness::Pending(format!(
+                "ready_http endpoint {raw_url} is not accepting TCP yet: {err}"
+            )));
+        }
+        Err(err) => return Err(err).with_context(|| format!("connect ready_http {raw_url}")),
+    };
     stream.set_read_timeout(Some(Duration::from_millis(300)))?;
     let path = if url.path().is_empty() {
         "/"
     } else {
         url.path()
     };
-    write!(
+    if let Err(err) = write!(
         stream,
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-    )?;
+    ) {
+        if readiness_io_pending(&err) {
+            return Ok(EndpointReadiness::Pending(format!(
+                "ready_http endpoint {raw_url} did not accept the HTTP request yet: {err}"
+            )));
+        }
+        return Err(err).with_context(|| format!("write ready_http request to {raw_url}"));
+    }
     let mut buf = [0u8; 64];
-    let n = stream.read(&mut buf)?;
+    let n = match stream.read(&mut buf) {
+        Ok(n) => n,
+        Err(err) if readiness_io_pending(&err) => {
+            return Ok(EndpointReadiness::Pending(format!(
+                "ready_http endpoint {raw_url} did not return a response yet: {err}"
+            )));
+        }
+        Err(err) => {
+            return Err(err).with_context(|| format!("read ready_http response from {raw_url}"))
+        }
+    };
+    if n == 0 {
+        bail!("ready_http endpoint {raw_url} closed before responding");
+    }
     let head = String::from_utf8_lossy(&buf[..n]);
-    Ok(head.starts_with("HTTP/1.0 2")
+    if head.starts_with("HTTP/1.0 2")
         || head.starts_with("HTTP/1.1 2")
         || head.starts_with("HTTP/1.0 3")
-        || head.starts_with("HTTP/1.1 3"))
+        || head.starts_with("HTTP/1.1 3")
+    {
+        Ok(EndpointReadiness::Ready)
+    } else {
+        let status = head.lines().next().unwrap_or("non-HTTP response");
+        Ok(EndpointReadiness::Pending(format!(
+            "ready_http endpoint {raw_url} returned non-ready response `{status}`"
+        )))
+    }
+}
+
+fn http_ready(raw_url: &str) -> Result<bool> {
+    Ok(matches!(
+        http_readiness(raw_url)?,
+        EndpointReadiness::Ready
+    ))
 }
 
 fn collect_artifacts(rootfs: &Path, patterns: &[String]) -> Result<Vec<ArtifactRecord>> {
@@ -4435,5 +5422,5 @@ changes:
     section: rust-source-unit
     impl_mode: codegen
     description: |
-      rust-source-unit (td_ast) source for `apps/vat/src/commands/run.rs` captured during #39 vat standardization.
+      rust-source-unit (td_ast) source for `apps/vat/src/commands/run.rs` captured during #39 vat standardization, manually aligned for #1526 with one foreground/detached ComposeHandoff, token-owner synchronous publication, stopping-safe parent acknowledgement, and bounded Docker/MicroVM teardown evidence that forces nonzero retention until retry.
 ```

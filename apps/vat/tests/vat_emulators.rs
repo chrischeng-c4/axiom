@@ -74,7 +74,7 @@ version = 1
 
 [[services]]
 id = "fs"
-preset = "firestore"
+preset = "gcloud-firestore"
 
 [[runners]]
 id = "test"
@@ -98,7 +98,7 @@ cmd = ["sh", "-c", "true"]
         events.iter().any(|event| {
             event["type"] == "error"
                 && event["code"] == "service_runtime_unavailable"
-                && event["preset"] == "firestore"
+                && event["preset"] == "gcloud-firestore"
                 && event["service"] == "fs"
         }),
         "missing service_runtime_unavailable event: {}",
@@ -160,7 +160,7 @@ keep = "always"
 
 [[services]]
 id = "fs"
-preset = "firestore"
+preset = "gcloud-firestore"
 runtime = "native"
 timeout_s = 120
 

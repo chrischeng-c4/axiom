@@ -24,7 +24,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs"
 test_path = "apps/vat/tests/behavior_scenario_failure_keeps_topology_and_logs.rs"
-command = "cargo test -p vat --lib scenario_failure_keeps_topology_and_logs -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_failure_keeps_topology_and_logs -- --nocapture"
 required_for_production = true
 assertions = [
     "failing runner forwards its exit code",
@@ -41,7 +41,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service"
 test_path = "apps/vat/tests/behavior_scenario_hermetic_requires_http_mock_service.rs"
-command = "cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_hermetic_requires_http_mock_service -- --nocapture"
 required_for_production = true
 assertions = [
     "hermetic scenario without http-mock exits non-zero",
@@ -57,7 +57,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner"
 test_path = "apps/vat/tests/behavior_scenario_run_starts_app_dependency_and_runner.rs"
-command = "cargo test -p vat --lib scenario_run_starts_app_dependency_and_runner -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture"
 required_for_production = true
 assertions = [
     "vat run --scenario prod-like succeeds",
@@ -91,7 +91,7 @@ td_ref = "apps/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-au
 test_path = "apps/vat/tests/behavior_vat_builtin_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored"
 required_for_production = true
-assertions = ['a `preset = "firebase-auth"` or `preset = "pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
+assertions = ['a `preset = "firebase-auth"` or `preset = "gcloud-pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
 
 [[aw.ec.generated.cases]]
 id = "vat-cli-convention-help-lists-all-three"
@@ -160,7 +160,7 @@ td_ref = "apps/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulat
 test_path = "apps/vat/tests/behavior_vat_cloud_builtin_preset_run_smoke.rs"
 command = "cargo test -p vat --test vat_emulator_tasks -- --nocapture --include-ignored"
 required_for_production = true
-assertions = ['a `preset = "cloud-tasks"` / `preset = "cloud-scheduler"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
+assertions = ['a `preset = "gcloud-cloud-tasks"` / `preset = "cloud-scheduler"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.']
 
 [[aw.ec.generated.cases]]
 id = "vat-cloud-emulator-lean-build"

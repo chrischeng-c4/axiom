@@ -118,6 +118,15 @@ pub struct SetupStep {
     pub when: Option<String>,
 }
 
+/// Named volume mount from a compose service's volumes list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeMount {
+    /// Volume name (from compose service volumes list).
+    pub name: String,
+    /// Container path where the volume is mounted.
+    pub path: String,
+}
+
 /// Run-scoped service required by a runner.
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +202,9 @@ pub struct ServiceConfig {
     pub ready_cmd: Vec<String>,
     #[serde(default = "default_service_timeout")]
     pub timeout_s: u64,
+    /// Named volumes mounted into this service (from compose).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<VolumeMount>,
 }
 
 /// Endpoint for an externally managed service.
@@ -203,11 +215,13 @@ pub struct ExternalServiceConfig {
     pub port: u16,
 }
 
+// <HANDWRITE gap="vat-versioned-native-lumen-preset-config" tracker="#1813" reason="Extend the preset and validation schema.">
 /// Built-in local service presets.
 ///
 /// The datastore/broker presets (postgres … mongo) prefer a native Homebrew
 /// binary with a Docker image fallback. The emulator presets
-/// (firestore … spanner) wrap the GCP `gcloud beta emulators` family — native
+/// (`gcloud-firestore` … `gcloud-spanner`) wrap the GCP `gcloud beta emulators`
+/// family — native
 /// when the gcloud component is installed, Docker otherwise — and `firebase` is
 /// the Firebase Emulator Suite bundle driven by a workspace `firebase.json`.
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
@@ -222,20 +236,28 @@ pub enum ServicePreset {
     Mysql,
     Mongo,
     Opensearch,
+    #[serde(rename = "gcloud-firestore")]
     Firestore,
+    #[serde(rename = "gcloud-pubsub")]
     Pubsub,
+    #[serde(rename = "gcloud-datastore")]
     Datastore,
+    #[serde(rename = "gcloud-bigtable")]
     Bigtable,
+    #[serde(rename = "gcloud-spanner")]
     Spanner,
     Firebase,
     FirebaseAuth,
+    #[serde(rename = "gcloud-cloud-tasks")]
     CloudTasks,
     CloudScheduler,
     CloudWorkflows,
     CloudStorage,
     HttpMock,
     Openapi,
+    Lumen,
 }
+// </HANDWRITE>
 
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-config-rs.md#source
 impl ServicePreset {
@@ -325,6 +347,8 @@ pub enum ServiceRuntime {
     Native,
     /// Always run the preset's official Docker image.
     Docker,
+    /// Run via Apple's `container` CLI (MicroVM isolation).
+    MicroVm,
 }
 
 /// Local Kubernetes cluster backend for a `cluster` service. `auto` (the
@@ -507,14 +531,20 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                 service.id
             ),
         }
-        if service.runtime != ServiceRuntime::Auto && !has_preset {
+        if service.runtime != ServiceRuntime::Auto && !has_preset && !has_image {
             bail!(
-                "service `{}` sets `runtime` but only preset services accept it; \
-                 image services are always Docker and cmd services are always native",
+                "service `{}` sets `runtime` but only preset and image services accept it; \
+                 cmd services are always native",
                 service.id
             );
         }
         if let Some(preset) = service.preset {
+            if preset == ServicePreset::Lumen {
+                if !matches!(service.runtime, ServiceRuntime::Auto | ServiceRuntime::Native) {
+                    bail!("service `{}` preset `lumen` is native-only; use runtime `auto` or `native`", service.id);
+                }
+                crate::lumen_release::normalize_selector(service.version.as_deref())?;
+            }
             if preset.is_builtin_only() && service.runtime != ServiceRuntime::Auto {
                 bail!(
                     "service `{}` preset `{preset:?}` only has vat's built-in emulator; \
@@ -1062,6 +1092,7 @@ network = "hermetic"
                 ready_http: None,
                 ready_cmd: Vec::new(),
                 timeout_s: default_service_timeout(),
+                volumes: Vec::new(),
             }],
             runners: vec![RunnerConfig {
                 id: "e2e".into(),
@@ -1110,6 +1141,7 @@ network = "hermetic"
                     ready_http: None,
                     ready_cmd: Vec::new(),
                     timeout_s: default_service_timeout(),
+                    volumes: Vec::new(),
                 },
                 ServiceConfig {
                     id: "api".into(),
@@ -1132,6 +1164,7 @@ network = "hermetic"
                     ready_http: None,
                     ready_cmd: Vec::new(),
                     timeout_s: default_service_timeout(),
+                    volumes: Vec::new(),
                 },
             ],
             runners: vec![RunnerConfig {
@@ -1195,6 +1228,7 @@ network = "hermetic"
             ready_http: None,
             ready_cmd: Vec::new(),
             timeout_s: default_service_timeout(),
+            volumes: Vec::new(),
         }
     }
 
@@ -1239,12 +1273,23 @@ network = "hermetic"
 
     #[test]
     fn rejects_runtime_on_non_preset_service() {
-        // `runtime` only applies to preset services.
+        // `runtime` only applies to preset and image services; cmd services
+        // are always native (compose imports need image services to accept
+        // an explicit runtime, e.g. `runtime = "docker"` -- see
+        // accepts_image_backed_service_with_explicit_runtime).
+        let mut svc = bare_service("svc");
+        svc.cmd = vec!["true".to_string()];
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn accepts_image_backed_service_with_explicit_runtime() {
         let mut svc = bare_service("svc");
         svc.image = Some("postgres:16".into());
         svc.container_port = Some(5432);
         svc.runtime = ServiceRuntime::Docker;
-        assert!(validate(&cfg_with_service(svc)).is_err());
+        assert!(validate(&cfg_with_service(svc)).is_ok());
     }
 
     #[test]
@@ -1427,11 +1472,11 @@ network = "hermetic"
     #[test]
     fn emulator_presets_round_trip() {
         for (token, preset) in [
-            ("firestore", ServicePreset::Firestore),
-            ("pubsub", ServicePreset::Pubsub),
-            ("datastore", ServicePreset::Datastore),
-            ("bigtable", ServicePreset::Bigtable),
-            ("spanner", ServicePreset::Spanner),
+            ("gcloud-firestore", ServicePreset::Firestore),
+            ("gcloud-pubsub", ServicePreset::Pubsub),
+            ("gcloud-datastore", ServicePreset::Datastore),
+            ("gcloud-bigtable", ServicePreset::Bigtable),
+            ("gcloud-spanner", ServicePreset::Spanner),
             ("firebase", ServicePreset::Firebase),
         ] {
             let parsed: ServicePreset =
@@ -1442,6 +1487,16 @@ network = "hermetic"
                 serde_json::Value::String(token.into())
             );
             assert!(preset.is_emulator());
+        }
+
+        for legacy in ["firestore", "pubsub", "datastore", "bigtable", "spanner"] {
+            assert!(
+                serde_json::from_value::<ServicePreset>(serde_json::Value::String(
+                    legacy.into()
+                ))
+                .is_err(),
+                "GCP gcloud presets must use the gcloud- prefix: {legacy}"
+            );
         }
     }
 
@@ -1472,7 +1527,7 @@ network = "hermetic"
     #[test]
     fn accepts_cloud_tasks_and_scheduler_builtin_presets() {
         for (token, preset) in [
-            ("cloud-tasks", ServicePreset::CloudTasks),
+            ("gcloud-cloud-tasks", ServicePreset::CloudTasks),
             ("cloud-scheduler", ServicePreset::CloudScheduler),
             ("cloud-workflows", ServicePreset::CloudWorkflows),
             ("cloud-storage", ServicePreset::CloudStorage),
@@ -1487,6 +1542,14 @@ network = "hermetic"
             svc.preset = Some(preset);
             assert!(validate(&cfg_with_service(svc)).is_ok());
         }
+
+        assert!(
+            serde_json::from_value::<ServicePreset>(serde_json::Value::String(
+                "cloud-tasks".into()
+            ))
+            .is_err(),
+            "Cloud Tasks must use the gcloud-cloud-tasks preset name"
+        );
     }
 
     #[test]
@@ -1554,4 +1617,9 @@ network = "hermetic"
         assert_eq!(ServicePreset::HttpMock.preset_gcp_host(), None);
     }
 }
+// CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#schema
+// CODEGEN-BEGIN
+// Real schema additions have been applied: ServiceRuntime::MicroVm variant,
+// VolumeMount struct, ServiceConfig.volumes field, and validate() gate relaxation.
 // CODEGEN-END

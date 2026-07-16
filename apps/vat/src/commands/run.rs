@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
@@ -23,10 +23,11 @@ use walkdir::WalkDir;
 use crate::cluster::{self, ClusterSpec, ResolvedBackend};
 use crate::config::{
     self, ClusterBackend, PortSpec, RetentionPolicy, RunnerConfig, ScenarioConfig,
-    ScenarioNetworkMode, ServiceConfig, ServicePreset, ServiceRuntime, VatConfig,
+    ScenarioNetworkMode, ServiceConfig, ServicePreset, ServiceRuntime, VatConfig, VolumeMount,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
+use crate::lumen_release;
 use crate::overlay;
 use crate::sandbox;
 use crate::spec::{Base, EnvSpec, GpuRequest, Isolation};
@@ -49,12 +50,17 @@ pub struct Args {
     pub name: Option<String>,
     pub isolation: Isolation,
     pub gpu: GpuRequest,
+    pub microvm_image: Option<String>,
     /// Direct mode prints full VatState JSON instead of a human summary.
     pub json: bool,
     /// Opaque upstream execution plan to copy into the vat and expose to the runner.
     pub plan: Option<PathBuf>,
     /// Per-invocation retention override for configured vat.toml runs.
     pub keep: Option<RetentionPolicy>,
+    /// Internal compose-startup ownership proof. This is deliberately not a
+    /// CLI flag: compose creates it before launching a runner, and only a
+    /// matching token may publish the newly-created VAT id into its registry.
+    pub(crate) compose_handoff: Option<crate::commands::compose::ComposeHandoff>,
 }
 
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#cli
@@ -74,6 +80,15 @@ pub enum Target {
 
 /// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn gpu_satisfied(_gpu: GpuRequest, isolation: Isolation, info: &gpu::GpuInfo) -> bool {
+    // GPU is only accessible in None and Seatbelt isolation modes.
+    // MicroVm categorically cannot reach the host GPU.
+    // _gpu is present for documentation (caller has already checked GpuRequest::Required).
+    info.accessible && isolation != Isolation::MicroVm
+}
+
+/// @spec apps/vat/tech-design/semantic/source/projects-vat-src-commands-run-rs.md#source
+/// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 pub fn exec(args: Args) -> Result<ExitCode> {
     let Args {
         target,
@@ -82,45 +97,74 @@ pub fn exec(args: Args) -> Result<ExitCode> {
         name,
         isolation,
         gpu,
+        microvm_image,
         json,
         plan,
         keep,
+        compose_handoff,
     } = args;
+    let compose_handoff = compose_handoff.or(crate::commands::compose::compose_handoff_from_env()?);
+    // Register token ownership before parsing configuration or cloning a
+    // workspace. A stale foreground handoff and a detached re-exec child share
+    // this fail-closed path, so neither can create an untracked VAT.
+    if let Some(handoff) = compose_handoff.as_ref() {
+        if !crate::commands::compose::register_compose_handoff(handoff)
+            .context("register compose launcher handoff")?
+        {
+            bail!(
+                "compose launcher no longer owns its project registry; refusing to create an untracked VAT"
+            );
+        }
+    }
     match target {
         Target::Direct {
             program,
             program_args,
-        } => exec_direct(DirectArgs {
-            program,
-            program_args,
-            base,
-            from,
-            name,
-            isolation,
-            gpu,
-            json,
-            plan,
-        }),
+        } => {
+            if compose_handoff.is_some() {
+                bail!("compose handoff may only launch a configured runner");
+            }
+            exec_direct(DirectArgs {
+                program,
+                program_args,
+                base,
+                from,
+                name,
+                isolation,
+                gpu,
+                microvm_image,
+                json,
+                plan,
+            })
+        }
         Target::Runner { runner_ids } => exec_runner(RunnerArgs {
             base,
             from,
             name,
             isolation,
             gpu,
+            microvm_image,
             runner_ids,
             plan,
             keep,
+            compose_handoff,
         }),
-        Target::Scenario { scenario_id } => exec_scenario(ScenarioArgs {
-            base,
-            from,
-            name,
-            isolation,
-            gpu,
-            scenario_id,
-            plan,
-            keep,
-        }),
+        Target::Scenario { scenario_id } => {
+            if compose_handoff.is_some() {
+                bail!("compose handoff may only launch a configured runner");
+            }
+            exec_scenario(ScenarioArgs {
+                base,
+                from,
+                name,
+                isolation,
+                gpu,
+                microvm_image,
+                scenario_id,
+                plan,
+                keep,
+            })
+        }
     }
 }
 
@@ -130,9 +174,11 @@ struct RunnerArgs {
     name: Option<String>,
     isolation: Isolation,
     gpu: GpuRequest,
+    microvm_image: Option<String>,
     runner_ids: Vec<String>,
     plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
+    compose_handoff: Option<crate::commands::compose::ComposeHandoff>,
 }
 
 struct DirectArgs {
@@ -143,6 +189,7 @@ struct DirectArgs {
     name: Option<String>,
     isolation: Isolation,
     gpu: GpuRequest,
+    microvm_image: Option<String>,
     json: bool,
     plan: Option<PathBuf>,
 }
@@ -153,6 +200,7 @@ struct ScenarioArgs {
     name: Option<String>,
     isolation: Isolation,
     gpu: GpuRequest,
+    microvm_image: Option<String>,
     scenario_id: String,
     plan: Option<PathBuf>,
     keep: Option<RetentionPolicy>,
@@ -160,10 +208,14 @@ struct ScenarioArgs {
 
 fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
     let gpu_info = gpu::detect();
-    if args.gpu == GpuRequest::Required && !gpu_info.accessible {
+    if args.gpu == GpuRequest::Required && !gpu_satisfied(args.gpu, args.isolation, &gpu_info) {
         bail!(
-            "spec requires a GPU but none is accessible on this host ({})",
-            gpu_info.note
+            "spec requires a GPU but {}",
+            if args.isolation == Isolation::MicroVm {
+                "GPU is categorically unreachable in an Apple Silicon microVM (Virtualization.framework constraint)".to_string()
+            } else {
+                format!("none is accessible on this host ({})", gpu_info.note)
+            }
         );
     }
 
@@ -199,6 +251,7 @@ fn exec_direct(args: DirectArgs) -> Result<ExitCode> {
         isolation: args.isolation,
         egress,
         gpu: args.gpu,
+        microvm_image: args.microvm_image.clone(),
         ..EnvSpec::default()
     };
 
@@ -331,15 +384,24 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         "reason": selection_reason,
     }))?;
     let gpu_info = gpu::detect();
-    if args.gpu == GpuRequest::Required && !gpu_info.accessible {
+    if args.gpu == GpuRequest::Required && !gpu_satisfied(args.gpu, args.isolation, &gpu_info) {
+        let error_msg = if args.isolation == Isolation::MicroVm {
+            "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+        } else {
+            gpu_info.note.clone()
+        };
         emit_jsonl(serde_json::json!({
             "type": "error",
             "code": "gpu_required",
-            "message": gpu_info.note.as_str(),
+            "message": error_msg.as_str(),
         }))?;
         bail!(
-            "spec requires a GPU but none is accessible on this host ({})",
-            gpu_info.note
+            "spec requires a GPU but {}",
+            if args.isolation == Isolation::MicroVm {
+                "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+            } else {
+                format!("none is accessible on this host ({})", gpu_info.note)
+            }
         );
     }
 
@@ -358,6 +420,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         isolation: args.isolation,
         egress: cfg.network.as_ref().map(|n| n.egress).unwrap_or_default(),
         gpu: args.gpu,
+        microvm_image: args.microvm_image.clone(),
         ..EnvSpec::default()
     };
 
@@ -394,6 +457,18 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         }),
     });
     vat.save()?;
+    // Compose binding is published synchronously and token-authoritatively
+    // before any service can start. A failed lock/I/O/ownership check must not
+    // be logged and ignored: doing so would leave a live service set with no
+    // registry owner able to stop it later.
+    if let Some(handoff) = args.compose_handoff.as_ref() {
+        if let Err(err) = crate::commands::compose::publish_compose_handoff(handoff, &vat.meta.id) {
+            vat.meta.status = Status::Exited { code: -1 };
+            vat.save()
+                .context("persist terminal VAT state after compose handoff failure")?;
+            return Err(err).context("publish compose VAT handoff before starting services");
+        }
+    }
     attach_plan_file(&mut vat, args.plan.as_deref())?;
     vat.log(Event::new(
         EventKind::RunStarted,
@@ -401,7 +476,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     ))?;
 
     let result = run_configured(&mut vat, &cfg, &runners, &logs_dir, &[], false, retention);
-    let code = match result {
+    let mut code = match result {
         Ok(code) => code,
         Err(err) => {
             emit_jsonl(serde_json::json!({
@@ -413,15 +488,23 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
             -1
         }
     };
+    let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
+    if let Some(message) = cleanup_unconfirmed.as_deref() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "microvm_cleanup_unconfirmed",
+            "message": message,
+        }))?;
+        // A runner that passed cannot make an unremoved MicroVM safe to
+        // forget. Surface the lifecycle failure and retain its durable name
+        // and cleanup evidence for a later retry.
+        code = -1;
+    }
 
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match retention {
-        RetentionPolicy::Always => false,
-        RetentionPolicy::Never => true,
-        RetentionPolicy::Failed => code == 0,
-    };
+    let should_remove = should_remove_vat(&retention, code, cleanup_unconfirmed.is_some());
 
     if should_remove {
         let _ = store::remove(&state.id);
@@ -515,15 +598,25 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
     }))?;
 
     let gpu_info = gpu::detect();
-    if args.gpu == GpuRequest::Required && !gpu_info.accessible {
+    // Note: The isolation override below happens AFTER this check, so we need to use args.isolation here.
+    if args.gpu == GpuRequest::Required && !gpu_satisfied(args.gpu, args.isolation, &gpu_info) {
+        let error_msg = if args.isolation == Isolation::MicroVm {
+            "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+        } else {
+            gpu_info.note.clone()
+        };
         emit_jsonl(serde_json::json!({
             "type": "error",
             "code": "gpu_required",
-            "message": gpu_info.note.as_str(),
+            "message": error_msg.as_str(),
         }))?;
         bail!(
-            "spec requires a GPU but none is accessible on this host ({})",
-            gpu_info.note
+            "spec requires a GPU but {}",
+            if args.isolation == Isolation::MicroVm {
+                "GPU is categorically unreachable in an Apple Silicon microVM".to_string()
+            } else {
+                format!("none is accessible on this host ({})", gpu_info.note)
+            }
         );
     }
 
@@ -553,6 +646,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         isolation,
         egress,
         gpu: args.gpu,
+        microvm_image: args.microvm_image.clone(),
         ..EnvSpec::default()
     };
 
@@ -612,7 +706,7 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
         scenario.network == ScenarioNetworkMode::Hermetic,
         retention,
     );
-    let code = match result {
+    let mut code = match result {
         Ok(code) => code,
         Err(err) => {
             emit_jsonl(serde_json::json!({
@@ -624,15 +718,20 @@ fn exec_scenario(args: ScenarioArgs) -> Result<ExitCode> {
             -1
         }
     };
+    let cleanup_unconfirmed = unconfirmed_runtime_cleanup_message(&vat);
+    if let Some(message) = cleanup_unconfirmed.as_deref() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "microvm_cleanup_unconfirmed",
+            "message": message,
+        }))?;
+        code = -1;
+    }
 
     vat.meta.status = Status::Exited { code };
     vat.save()?;
     let state = vat.project()?;
-    let should_remove = match retention {
-        RetentionPolicy::Always => false,
-        RetentionPolicy::Never => true,
-        RetentionPolicy::Failed => code == 0,
-    };
+    let should_remove = should_remove_vat(&retention, code, cleanup_unconfirmed.is_some());
     if should_remove {
         let _ = store::remove(&state.id);
     }
@@ -705,6 +804,37 @@ fn attach_plan_file(vat: &mut store::Vat, plan_path: Option<&Path>) -> Result<()
         test_run.plan = Some(evidence);
     }
     vat.save()
+}
+
+const DETACHED_COMPOSE_STOP_REQUEST: &str = ".compose-stop-request";
+
+fn detached_compose_stop_request_path(vat: &store::Vat) -> PathBuf {
+    vat.dir.join(DETACHED_COMPOSE_STOP_REQUEST)
+}
+
+/// Request that a live detached compose run stop its own runner and service
+/// tree. This avoids treating a persisted child PID as an authority boundary:
+/// the VAT parent owns its children, cleanup, and terminal state persistence.
+pub(crate) fn request_detached_compose_stop(vat: &store::Vat) -> Result<()> {
+    let path = detached_compose_stop_request_path(vat);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .with_context(|| format!("write detached compose stop request {}", path.display()))?;
+    writeln!(file, "requested_at={}", Utc::now().to_rfc3339())
+        .with_context(|| format!("write detached compose stop request {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("flush detached compose stop request {}", path.display()))
+}
+
+fn take_detached_compose_stop_request(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let _ = std::fs::remove_file(path);
+    true
 }
 
 fn run_configured(
@@ -796,6 +926,18 @@ fn run_configured(
             }
         };
         services.push(handle);
+        // Persist ownership before the blocking readiness loop. If VAT itself
+        // is interrupted while a MicroVM endpoint is still being verified,
+        // `vat state` must retain the generated container name for diagnosis
+        // and cleanup rather than leaving an untracked runtime resource.
+        if let Err(err) = persist_services(vat, &services) {
+            // A failed metadata write is itself terminal, but the service has
+            // already launched. Tear it down before returning so this early
+            // persistence checkpoint cannot create an untracked MicroVM.
+            stop_services(&mut services, should_delete_clusters(&retention, -1));
+            let _ = persist_services(vat, &services);
+            return Err(err);
+        }
         let last = services.len() - 1;
         if let Err(err) = wait_for_services(vat, &mut services[last..]) {
             stop_services(&mut services, should_delete_clusters(&retention, -1));
@@ -834,7 +976,34 @@ fn run_configured(
             }
         }
     }
-    let records = wait_runner_processes(procs)?;
+    // Persist an interim RunnerRunRecord carrying each spawned runner's live
+    // pid BEFORE the blocking wait below — mirrors persist_services()'s
+    // early-write pattern for services. Required so a concurrent reader
+    // (`vat compose down`) can observe a live pid while the runner is still
+    // executing; without this, test_run.runner.pid is only ever populated
+    // after wait_runner_processes returns, i.e. after the runner has already
+    // exited (R9).
+    let interim_records: Vec<RunnerRunRecord> = procs
+        .iter()
+        .map(|proc| RunnerRunRecord {
+            id: proc.runner.id.clone(),
+            command: proc.runner.cmd.clone(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            duration_ms: None,
+            pid: Some(proc.child.id()),
+            stdout_log: proc.stdout_log.clone(),
+            stderr_log: proc.stderr_log.clone(),
+        })
+        .collect();
+    if let Some(test_run) = vat.meta.test_run.as_mut() {
+        test_run.runner = interim_records.first().cloned();
+        test_run.runners = interim_records.clone();
+    }
+    vat.save()?;
+
+    let stop_request = detached_compose_stop_request_path(vat);
+    let records = wait_runner_processes(procs, &stop_request)?;
 
     // Worst-wins exit: any negative (timeout/kill) is worst, else max code.
     let code = records
@@ -1090,9 +1259,18 @@ fn spawn_runner_process(
 
 /// Poll every child to completion, enforcing each runner's own timeout
 /// (an elapsed budget kills that child; the others keep running).
-fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunRecord>> {
+fn wait_runner_processes(
+    mut procs: Vec<RunnerProc>,
+    stop_request_path: &Path,
+) -> Result<Vec<RunnerRunRecord>> {
     let mut records: Vec<Option<RunnerRunRecord>> = procs.iter().map(|_| None).collect();
     loop {
+        if take_detached_compose_stop_request(stop_request_path) {
+            // The parent is the sole authority allowed to kill this runner
+            // tree. Compose merely writes the request and waits for the
+            // resulting terminal VAT state before releasing its registry.
+            kill_runner_processes(&mut procs);
+        }
         let mut all_done = true;
         for (i, proc) in procs.iter_mut().enumerate() {
             if records[i].is_some() {
@@ -1105,6 +1283,7 @@ fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunReco
                     status: ProcessStatus::Exited,
                     exit_code: Some(status.code().unwrap_or(-1)),
                     duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                    pid: None,
                     stdout_log: proc.stdout_log.clone(),
                     stderr_log: proc.stderr_log.clone(),
                 });
@@ -1120,6 +1299,7 @@ fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunReco
                         status: ProcessStatus::Exited,
                         exit_code: Some(-1),
                         duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                        pid: None,
                         stdout_log: proc.stdout_log.clone(),
                         stderr_log: proc.stderr_log.clone(),
                     });
@@ -1178,6 +1358,10 @@ struct ServicePlan {
     /// Set when the service runs as a Docker container; carries the
     /// `--name` so teardown can force-remove the container with no orphans.
     docker_name: Option<String>,
+    /// Set when the service runs via Apple's `container` CLI (MicroVM
+    /// isolation); carries the `--name` so teardown can force-remove it,
+    /// parallel to `docker_name`.
+    microvm_name: Option<String>,
     /// The Docker image, when this service runs as a container.
     image: Option<String>,
     /// Set when the service is a local Kubernetes cluster; carries the cluster
@@ -1192,8 +1376,30 @@ struct ServicePlan {
 enum ReadyProbe {
     None,
     Http(String),
-    Tcp { host: String, port: u16 },
+    Tcp {
+        host: String,
+        port: u16,
+    },
+    /// A MicroVM-specific HTTP contract. Unlike Docker/native HTTP probes,
+    /// terminal endpoint errors are preserved as MicroVM host-port evidence.
+    MicroVmHttp(String),
+    /// A MicroVM-specific TCP contract. A completed handshake is not enough:
+    /// an immediate EOF or reset proves the published host endpoint unusable.
+    MicroVmTcp {
+        host: String,
+        port: u16,
+    },
     Cmd(Vec<String>),
+}
+
+/// A MicroVM readiness observation distinguishes a retryable published-port
+/// state from a terminal endpoint failure. The pending message is persisted on
+/// timeout so VAT reports the last concrete observation rather than a generic
+/// readiness deadline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EndpointReadiness {
+    Ready,
+    Pending(String),
 }
 
 struct ServiceHandle {
@@ -1203,6 +1409,9 @@ struct ServiceHandle {
     ready_probe: ReadyProbe,
     /// `docker --name` when the service is a container; force-removed on stop.
     docker_name: Option<String>,
+    /// `container --name` when the service runs via Apple's `container` CLI
+    /// (MicroVM isolation); force-removed on stop, parallel to `docker_name`.
+    microvm_name: Option<String>,
     /// Cluster evidence when the service is a local Kubernetes cluster; the
     /// cluster is deleted on stop subject to the `keep` policy.
     cluster: Option<ClusterRunRecord>,
@@ -1220,21 +1429,32 @@ fn prepare_service(
         // Created here in the prepare phase; the runner reaches it via KUBECONFIG.
         prepare_cluster_service(vat, service, backend)?
     } else if let Some(image) = &service.image {
-        // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
-        // equivalent. Always a container.
-        prepare_image_service(vat, service, image)?
+        // Explicit image: a container-backed service (e.g. AlloyDB) with no
+        // native equivalent. `runtime: microvm` routes to Apple's `container`
+        // CLI; every other runtime (Auto, Docker, Native) keeps today's
+        // `docker run` path unchanged (R4/R5).
+        match service.runtime {
+            ServiceRuntime::MicroVm => prepare_microvm_service(vat, service, image)?,
+            _ => prepare_image_service(vat, service, image)?,
+        }
     } else if service.external.is_some() {
         prepare_external_service(service)?
     } else if service.preset == Some(ServicePreset::Firebase) {
         // Firebase: a multi-emulator bundle driven by firebase.json — its own
         // prepare path because it is one process exposing many ports.
+        if matches!(service.runtime, ServiceRuntime::MicroVm) {
+            reject_unsupported_microvm_preset(service, ServicePreset::Firebase)?;
+        }
         prepare_firebase_service(vat, cfg, service)?
     } else if let Some(preset) = service.preset {
         // Preset: prefer the native Homebrew binary, fall back to the preset's
-        // official Docker image when the binary is missing (or as forced).
+        // official container image when the binary is missing (or as forced).
+        // An explicit MicroVM runtime must remain entirely on Apple's
+        // `container` CLI; it may never silently route through Docker.
         match resolve_preset_runtime(service, preset)? {
             ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
             ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
+            ResolvedRuntime::MicroVm => prepare_preset_microvm_service(vat, service, preset)?,
             ResolvedRuntime::Builtin => {
                 // Hermetic when the run confines egress (localhost-only/deny):
                 // the http-mock proxy then blocks unmatched requests too.
@@ -1279,6 +1499,7 @@ fn prepare_service(
             exported_env: sorted_keys(&env),
             env,
             docker_name: None,
+            microvm_name: None,
             image: None,
             cluster: None,
             owned_by_vat: true,
@@ -1290,10 +1511,13 @@ fn prepare_service(
     // `prepare_cluster_service`; the container/preset note below does not apply.
     if plan.prepare_mode != "direct_start" && plan.cluster.is_none() {
         let is_docker = plan.docker_name.is_some();
+        let is_microvm = plan.microvm_name.is_some();
         let runtime = if !plan.owned_by_vat {
             "external"
         } else if is_docker {
             "docker"
+        } else if is_microvm {
+            "microvm"
         } else {
             "native"
         };
@@ -1301,6 +1525,8 @@ fn prepare_service(
             "using external service endpoint (not started or stopped by vat)"
         } else if is_docker {
             "running service via `docker run` (ephemeral, --rm)"
+        } else if is_microvm {
+            "running service via `container run` (ephemeral, --rm, MicroVM isolation)"
         } else if plan.prepare_mode == "cold_build" {
             "first run slower; cached for future runs"
         } else {
@@ -1435,6 +1661,7 @@ fn prepare_cluster_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: Some(record),
         owned_by_vat: true,
@@ -1501,6 +1728,10 @@ fn start_service(
         pid: child.as_ref().map(Child::id),
         exit_code: None,
         ready_http: plan.ready_http.clone(),
+        docker_name: plan.docker_name.clone(),
+        microvm_name: plan.microvm_name.clone(),
+        readiness_error: None,
+        cleanup_error: None,
         cluster: plan.cluster.clone(),
         stdout_log: stdout.to_string_lossy().into_owned(),
         stderr_log: stderr.to_string_lossy().into_owned(),
@@ -1519,6 +1750,7 @@ fn start_service(
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
         docker_name: plan.docker_name.clone(),
+        microvm_name: plan.microvm_name.clone(),
         cluster: plan.cluster.clone(),
     })
 }
@@ -1576,18 +1808,33 @@ fn prepare_external_service(service: &ServiceConfig) -> Result<ServicePlan> {
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: false,
     })
 }
 
+// <HANDWRITE gap="vat-versioned-native-lumen-preset-runtime" tracker="#1813" reason="Build native Lumen service plans and fail closed for container runtimes.">
 fn prepare_preset_service(
     vat: &store::Vat,
     cfg: &VatConfig,
     service: &ServiceConfig,
     preset: ServicePreset,
 ) -> Result<ServicePlan> {
+    if preset == ServicePreset::Lumen {
+        let port = resolve_service_port(&service.port)?;
+        let lumen = lumen_release::resolve(service.version.as_deref())?;
+        let env = preset_exports(service, preset, port);
+        let command = vec![lumen.executable.to_string_lossy().into_owned(), "serve".into(), "--host".into(), "127.0.0.1".into(), "--port".into(), port.to_string()];
+        let ready_probe = resolve_ready_probe(service, Some(ReadyProbe::Http(format!("http://127.0.0.1:{port}/readyz"))));
+        return Ok(ServicePlan {
+            id: service.id.clone(), command, host: Some("127.0.0.1".into()), ready_http: service.ready_http.clone(), ready_probe,
+            timeout_s: service.timeout_s, preset: Some(preset), port: Some(port), prepare_mode: "lumen_native_cache".into(),
+            cache_key: Some(lumen.tag), prepare_duration_ms: 0, exported_env: sorted_keys(&env), env,
+            docker_name: None, microvm_name: None, image: None, cluster: None, owned_by_vat: true,
+        });
+    }
     ensure_preset_binaries(service, preset)?;
     let port = resolve_service_port(&service.port)?;
     let cache_key = service_cache_key(cfg, service, preset)?;
@@ -1663,31 +1910,51 @@ fn prepare_preset_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
     })
 }
+// </HANDWRITE>
 
 /// Which way a `preset` service is actually provided on this host.
+#[derive(Debug)]
 enum ResolvedRuntime {
     Native,
     Docker,
+    MicroVm,
     /// vat's own in-process Rust emulator (the `vat emulator` subcommand).
     Builtin,
 }
 
 /// Resolve a preset service's `runtime` against the host. `auto` prefers the
-/// native binary and falls back to Docker; `native`/`docker` force one path.
-/// On `auto` with neither available, emit a structured error and bail.
+/// native binary and falls back to Docker; `native`/`docker`/`microvm` force
+/// their named path. On `auto` with neither available, emit a structured error
+/// and bail. An explicit MicroVM path never falls back to Docker.
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
 fn resolve_preset_runtime(
     service: &ServiceConfig,
     preset: ServicePreset,
 ) -> Result<ResolvedRuntime> {
+    if preset == ServicePreset::Lumen {
+        if matches!(service.runtime, ServiceRuntime::Auto | ServiceRuntime::Native) {
+            return Ok(ResolvedRuntime::Native);
+        }
+        bail!("service `{}` preset `lumen` is native-only; Docker and MicroVM are unsupported", service.id);
+    }
     match service.runtime {
         ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
         ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
+        ServiceRuntime::MicroVm => {
+            if !preset_has_microvm_image_route(preset) {
+                reject_unsupported_microvm_preset(service, preset)?;
+            }
+            if !service.volumes.is_empty() {
+                reject_microvm_preset_volumes(service, preset)?;
+            }
+            Ok(ResolvedRuntime::MicroVm)
+        }
         // A preset with a built-in Rust emulator runs vat's own server under
         // `auto` — always available, no external tooling.
         ServiceRuntime::Auto if preset.is_builtin() => Ok(ResolvedRuntime::Builtin),
@@ -1732,6 +1999,69 @@ fn resolve_preset_runtime(
     }
 }
 
+/// Whether a preset has an explicit OCI image route that VAT can ask Apple's
+/// `container` CLI to start. Built-in Rust emulators and the Firebase bundle
+/// have their own local-process implementations; pretending that a generic
+/// Node image provides parity would create a successful-looking but
+/// non-functional MicroVM run. Apple Container compatibility is still proven
+/// by the runtime readiness gate, not assumed from this route declaration.
+pub(crate) fn preset_has_microvm_image_route(preset: ServicePreset) -> bool {
+    matches!(
+        preset,
+        ServicePreset::Postgres
+            | ServicePreset::Redis
+            | ServicePreset::Nats
+            | ServicePreset::Rabbitmq
+            | ServicePreset::Mysql
+            | ServicePreset::Mongo
+            | ServicePreset::Opensearch
+            | ServicePreset::Firestore
+            | ServicePreset::Pubsub
+            | ServicePreset::Datastore
+            | ServicePreset::Bigtable
+            | ServicePreset::Spanner
+    )
+}
+
+/// Reject an explicit MicroVM request that has no declared OCI image route.
+/// This is intentionally not a native or Docker fallback: the runtime flag is
+/// an isolation/backend contract.
+fn reject_unsupported_microvm_preset(service: &ServiceConfig, preset: ServicePreset) -> Result<()> {
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "container_preset_unsupported",
+        "service": service.id.as_str(),
+        "preset": service_preset_name(preset),
+        "reason": "this preset has no declared Apple Container OCI image route",
+        "next": "use runtime = \"auto\" for VAT's native/built-in implementation, or select a preset with an official container image",
+    }))?;
+    bail!(
+        "service `{}` preset `{}` cannot run with runtime `microvm`: VAT has no declared Apple Container OCI image route for it; use runtime `auto` for the native/built-in implementation",
+        service.id,
+        service_preset_name(preset),
+    );
+}
+
+/// Avoid declaring named-volume retention parity for preset images before VAT
+/// owns their full lifetime. Explicit image services retain the existing
+/// volume-aware MicroVM path; the new preset route stays bounded until its
+/// ownership/cleanup contract has equivalent proof.
+fn reject_microvm_preset_volumes(service: &ServiceConfig, preset: ServicePreset) -> Result<()> {
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "container_preset_volumes_unsupported",
+        "service": service.id.as_str(),
+        "preset": service_preset_name(preset),
+        "reason": "named-volume retention is not yet a supported MicroVM preset contract",
+        "next": "use an explicit image service for the existing volume-aware MicroVM path, or remove volumes from this preset service",
+    }))?;
+    bail!(
+        "service `{}` preset `{}` cannot run with runtime `microvm` and named volumes: VAT has not established the preset-volume ownership/cleanup contract",
+        service.id,
+        service_preset_name(preset),
+    );
+}
+
 /// Run a preset service from its official Docker image instead of the native
 /// binary. The exported connection env is identical to the native path — only
 /// the process behind the mapped host port differs.
@@ -1773,6 +2103,66 @@ fn prepare_preset_docker_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: Some(name),
+        microvm_name: None,
+        image: Some(image),
+        cluster: None,
+        owned_by_vat: true,
+    })
+}
+
+/// Run a preset service from its official image through Apple's `container`
+/// CLI. This preserves the same image, environment, port, command, and
+/// connection exports as the Docker preset path while retaining the explicit
+/// MicroVM backend and its stricter published-port readiness evidence. Named
+/// volumes are rejected by `resolve_preset_runtime` until their ownership and
+/// cleanup contract is proven for this path.
+fn prepare_preset_microvm_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    preset: ServicePreset,
+) -> Result<ServicePlan> {
+    ensure_microvm_available()?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .unwrap_or_else(|| preset_container_port(preset));
+    let image = preset_image(preset, service.version.as_deref());
+    ensure_microvm_image_available(&image)?;
+    let name = container_name(&vat.meta.id, &service.id);
+    let mut container_env = preset_container_env(preset);
+    for (key, value) in &service.image_env {
+        container_env.insert(key.clone(), value.clone());
+    }
+    let mut command = container_run_command(
+        &name,
+        &image,
+        host_port,
+        container_port,
+        &container_env,
+        &service.volumes,
+    );
+    command.extend(preset_docker_command(preset, container_port));
+    let env = preset_exports(service, preset, host_port);
+    let ready_http = service
+        .ready_http
+        .as_ref()
+        .map(|value| substitute_endpoint(value, "127.0.0.1", host_port));
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        host: Some("127.0.0.1".to_string()),
+        ready_http: ready_http.clone(),
+        ready_probe: microvm_ready_probe(service.ready_http.as_deref(), host_port),
+        timeout_s: service.timeout_s,
+        preset: Some(preset),
+        port: Some(host_port),
+        prepare_mode: "container_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        microvm_name: Some(name),
         image: Some(image),
         cluster: None,
         owned_by_vat: true,
@@ -1868,6 +2258,7 @@ fn prepare_firebase_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -2076,6 +2467,7 @@ fn prepare_builtin_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: None,
+        microvm_name: None,
         image: None,
         cluster: None,
         owned_by_vat: true,
@@ -2146,6 +2538,60 @@ fn prepare_image_service(
         exported_env: sorted_keys(&env),
         env,
         docker_name: Some(name),
+        microvm_name: None,
+        image: Some(image.to_string()),
+        cluster: None,
+        owned_by_vat: true,
+    })
+}
+
+/// Run an image-backed service via Apple's `container` CLI (MicroVM
+/// isolation) instead of Docker. Structurally mirrors `prepare_image_service`
+/// line for line: `ensure_microvm_available` replaces `ensure_docker_available`,
+/// `container_run_command` replaces `docker_run_command`, and the returned
+/// plan carries `microvm_name: Some(name)` (`docker_name` stays `None`) so
+/// teardown force-removes the right container kind (R4/R5).
+fn prepare_microvm_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    image: &str,
+) -> Result<ServicePlan> {
+    ensure_microvm_available()?;
+    ensure_microvm_image_available(image)?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .context("image service missing container_port (validated earlier)")?;
+    let name = container_name(&vat.meta.id, &service.id);
+    let command = container_run_command(
+        &name,
+        image,
+        host_port,
+        container_port,
+        &service.image_env,
+        &service.volumes,
+    );
+    let env = image_exports(service, host_port);
+    let ready_http = service
+        .ready_http
+        .as_ref()
+        .map(|value| substitute_endpoint(value, "127.0.0.1", host_port));
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        host: Some("127.0.0.1".to_string()),
+        ready_http: ready_http.clone(),
+        ready_probe: microvm_ready_probe(service.ready_http.as_deref(), host_port),
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: Some(host_port),
+        prepare_mode: "container_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        microvm_name: Some(name),
         image: Some(image.to_string()),
         cluster: None,
         owned_by_vat: true,
@@ -2180,12 +2626,61 @@ fn docker_run_command(
     cmd
 }
 
+/// Build a foreground `container run` argv (Apple's `container` CLI, MicroVM
+/// isolation). Structurally mirrors `docker_run_command`: `--rm` makes the
+/// container ephemeral, `--name` is deterministic so teardown can
+/// force-remove it, the port is bound to loopback only, then one `-v
+/// name:path` per named-volume entry (compose `volumes:`, R2/R4), then one
+/// `-e key=value` per sorted env entry — both volumes and env iterate in
+/// deterministic order, matching `docker_run_command`'s guarantee (R5).
+fn container_run_command(
+    name: &str,
+    image: &str,
+    host_port: u16,
+    container_port: u16,
+    container_env: &BTreeMap<String, String>,
+    volumes: &[VolumeMount],
+) -> Vec<String> {
+    let mut cmd = vec![
+        "container".to_string(),
+        "run".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "-p".to_string(),
+        format!("127.0.0.1:{host_port}:{container_port}"),
+    ];
+    for volume in volumes {
+        cmd.push("-v".to_string());
+        cmd.push(format!("{}:{}", volume.name, volume.path));
+    }
+    for (key, value) in container_env {
+        cmd.push("-e".to_string());
+        cmd.push(format!("{key}={value}"));
+    }
+    cmd.push(image.to_string());
+    cmd
+}
+
 /// Readiness for a container: an explicit `ready_http` wins, otherwise a TCP
 /// connect to the mapped host port — which needs no native client binary.
 fn docker_ready_probe(service: &ServiceConfig, host_port: u16) -> ReadyProbe {
     match &service.ready_http {
         Some(url) => ReadyProbe::Http(url.clone()),
         None => ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: host_port,
+        },
+    }
+}
+
+/// Readiness for an Apple `container` service. It deliberately does not reuse
+/// Docker's TCP-connect-only fallback: a healthy guest with a broken host
+/// port-forward must never be recorded as Ready.
+fn microvm_ready_probe(ready_http: Option<&str>, host_port: u16) -> ReadyProbe {
+    match ready_http {
+        Some(url) => ReadyProbe::MicroVmHttp(substitute_endpoint(url, "127.0.0.1", host_port)),
+        None => ReadyProbe::MicroVmTcp {
             host: "127.0.0.1".to_string(),
             port: host_port,
         },
@@ -2236,6 +2731,7 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => ("node", "20-slim"),
+        ServicePreset::Lumen => ("lumen", "latest"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -2263,6 +2759,7 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => 4400,
+        ServicePreset::Lumen => 7373,
     }
 }
 
@@ -2321,7 +2818,8 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
-        | ServicePreset::Openapi => {}
+        | ServicePreset::Openapi
+        | ServicePreset::Lumen => {}
         ServicePreset::Opensearch => {
             env.insert("discovery.type".to_string(), "single-node".to_string());
             env.insert("plugins.security.disabled".to_string(), "true".to_string());
@@ -2394,6 +2892,121 @@ fn ensure_docker_available(service: &ServiceConfig) -> Result<()> {
     Ok(())
 }
 
+/// Gate a `container`-backed (MicroVM) service on the `container` CLI plus a
+/// running container system, emitting the structured `container_unavailable`
+/// error (never a panic) when it is not, mirroring `ensure_docker_available`'s
+/// `docker_unavailable` shape (R5).
+fn ensure_microvm_available() -> Result<()> {
+    if !sandbox::microvm::available() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "container_unavailable",
+            "reason": "container binary not found on PATH",
+        }))?;
+        bail!(
+            "service needs Apple's `container` CLI but the `container` binary was not found on PATH"
+        );
+    }
+    if let Err(err) = sandbox::microvm::ensure_system_started(Duration::from_secs(30)) {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "container_unavailable",
+            "reason": err.as_str(),
+        }))?;
+        bail!("service needs the `container` system running but it did not start in time: {err}");
+    }
+    Ok(())
+}
+
+/// Ensure an image service has a local Apple Container image before the
+/// service child is spawned. Unlike Docker, Apple's `container run` does not
+/// reliably pull a missing reference itself, so a preflight pull is required
+/// to make `runtime = "micro_vm"` a usable agent-facing path rather than a
+/// late, portless child exit. All probes and pulls are bounded and produce
+/// JSONL evidence without leaking CLI progress into VAT's structured stdout.
+fn ensure_microvm_image_available(image: &str) -> Result<()> {
+    const INSPECT_TIMEOUT: Duration = Duration::from_secs(5);
+    const PULL_TIMEOUT: Duration = Duration::from_secs(300);
+
+    let pull_command = format!("container image pull {}", shell_single_quote(image));
+    let inspect =
+        match bounded_command_status("container", &["image", "inspect", image], INSPECT_TIMEOUT) {
+            Ok(status) => status,
+            Err(error) => {
+                emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "container_image_inspect_unavailable",
+                    "image": image,
+                    "next": pull_command.as_str(),
+                }))?;
+                return Err(error).context("inspect Apple Container image availability");
+            }
+        };
+    if inspect.success() {
+        return Ok(());
+    }
+
+    emit_jsonl(serde_json::json!({
+        "type": "image_pull",
+        "runtime": "microvm",
+        "image": image,
+        "reason": "missing from the local Apple Container image store",
+    }))?;
+    let pull = match bounded_command_status("container", &["image", "pull", image], PULL_TIMEOUT) {
+        Ok(status) => status,
+        Err(error) => {
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "container_image_pull_failed",
+                "image": image,
+                "reason": error.to_string(),
+                "next": pull_command.as_str(),
+            }))?;
+            return Err(error).context("pull missing Apple Container image");
+        }
+    };
+    if !pull.success() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "container_image_pull_failed",
+            "image": image,
+            "exit_code": pull.code(),
+            "next": pull_command.as_str(),
+        }))?;
+        bail!(
+            "Apple Container image pull for `{image}` failed with status {:?}; retry `{pull_command}`",
+            pull.code()
+        );
+    }
+
+    let verified =
+        match bounded_command_status("container", &["image", "inspect", image], INSPECT_TIMEOUT) {
+            Ok(status) => status,
+            Err(error) => {
+                emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "container_image_inspect_unavailable",
+                    "image": image,
+                    "next": pull_command.as_str(),
+                }))?;
+                return Err(error).context("verify pulled Apple Container image");
+            }
+        };
+    if verified.success() {
+        return Ok(());
+    }
+
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "container_image_pull_unverified",
+        "image": image,
+        "next": pull_command.as_str(),
+    }))?;
+    bail!(
+        "Apple Container reported a successful pull for `{image}`, but the image is still not inspectable; retry `{pull_command}`"
+    );
+}
+
 fn cold_prepare_service_image(
     cfg: &VatConfig,
     service: &ServiceConfig,
@@ -2433,7 +3046,7 @@ fn cold_prepare_service_image(
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock | ServicePreset::Openapi => {}
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock | ServicePreset::Openapi | ServicePreset::Lumen => {}
     }
     Ok(())
 }
@@ -2704,6 +3317,7 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => &["firebase", "java"],
+        ServicePreset::Lumen => &[],
     }
 }
 
@@ -2912,6 +3526,7 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
         | ServicePreset::Openapi => {
             vec!["firebase".to_string(), "emulators:start".to_string()]
         }
+        ServicePreset::Lumen => Vec::new(),
     }
 }
 
@@ -2965,6 +3580,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
             host: "127.0.0.1".to_string(),
             port,
         },
+        ServicePreset::Lumen => ReadyProbe::Http(format!("http://127.0.0.1:{port}/readyz")),
     }
 }
 
@@ -3017,6 +3633,7 @@ fn preset_exports(
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
+        ServicePreset::Lumen => ("LUMEN_URL", format!("http://127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -3174,19 +3791,20 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::Mysql => "mysql",
         ServicePreset::Mongo => "mongo",
         ServicePreset::Opensearch => "opensearch",
-        ServicePreset::Firestore => "firestore",
-        ServicePreset::Pubsub => "pubsub",
-        ServicePreset::Datastore => "datastore",
-        ServicePreset::Bigtable => "bigtable",
-        ServicePreset::Spanner => "spanner",
+        ServicePreset::Firestore => "gcloud-firestore",
+        ServicePreset::Pubsub => "gcloud-pubsub",
+        ServicePreset::Datastore => "gcloud-datastore",
+        ServicePreset::Bigtable => "gcloud-bigtable",
+        ServicePreset::Spanner => "gcloud-spanner",
         ServicePreset::Firebase => "firebase",
         ServicePreset::FirebaseAuth => "firebase-auth",
-        ServicePreset::CloudTasks => "cloud-tasks",
+        ServicePreset::CloudTasks => "gcloud-cloud-tasks",
         ServicePreset::CloudScheduler => "cloud-scheduler",
         ServicePreset::CloudWorkflows => "cloud-workflows",
         ServicePreset::CloudStorage => "cloud-storage",
         ServicePreset::HttpMock => "http-mock",
         ServicePreset::Openapi => "openapi",
+        ServicePreset::Lumen => "lumen",
     }
 }
 
@@ -3215,11 +3833,19 @@ fn which(binary: &str) -> Option<PathBuf> {
     None
 }
 
+// <HANDWRITE gap="vat-microvm-published-endpoint-readiness" tracker="#1526" reason="Route MicroVM service probes through an endpoint-usability check that distinguishes an immediate EOF or reset from an idle but open protocol connection, while retaining explicit HTTP round trips.">
 fn readiness_ready(probe: &ReadyProbe) -> Result<bool> {
     match probe {
         ReadyProbe::None => Ok(true),
         ReadyProbe::Http(url) => http_ready(url),
         ReadyProbe::Tcp { host, port } => tcp_ready(host, *port),
+        ReadyProbe::MicroVmHttp(url) => {
+            Ok(matches!(http_readiness(url)?, EndpointReadiness::Ready))
+        }
+        ReadyProbe::MicroVmTcp { host, port } => Ok(matches!(
+            tcp_usable_readiness(host, *port)?,
+            EndpointReadiness::Ready
+        )),
         ReadyProbe::Cmd(cmd) => {
             if cmd.is_empty() {
                 return Ok(true);
@@ -3234,6 +3860,7 @@ fn readiness_ready(probe: &ReadyProbe) -> Result<bool> {
         }
     }
 }
+// </HANDWRITE>
 
 fn tcp_ready(host: &str, port: u16) -> Result<bool> {
     let addr = (host, port)
@@ -3243,10 +3870,269 @@ fn tcp_ready(host: &str, port: u16) -> Result<bool> {
     Ok(TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok())
 }
 
+/// Verify that a MicroVM's loopback-published TCP endpoint stays usable after
+/// the three-way handshake. A service can accept then immediately close/reset
+/// a connection when Apple's host forwarding is broken; Docker's historic
+/// connect-only check cannot distinguish that state.
+// <HANDWRITE gap="vat-microvm-published-endpoint-failure-evidence" tracker="#1526" reason="Persist terminal MicroVM readiness evidence, collect best-effort runtime and inspect diagnostics, and leave no VAT-owned MicroVM after an unusable published endpoint.">
+fn tcp_usable_readiness(host: &str, port: u16) -> Result<EndpointReadiness> {
+    let endpoint = format!("{host}:{port}");
+    let addr = (host, port)
+        .to_socket_addrs()?
+        .next()
+        .context("MicroVM TCP readiness did not resolve")?;
+    let stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+        Ok(stream) => stream,
+        Err(err) if readiness_io_pending(&err) => {
+            return Ok(EndpointReadiness::Pending(format!(
+                "MicroVM published endpoint {endpoint} is not accepting TCP yet: {err}"
+            )));
+        }
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("connect MicroVM published endpoint {endpoint}"));
+        }
+    };
+    stream.set_read_timeout(Some(Duration::from_millis(150)))?;
+    let mut byte = [0u8; 1];
+    match stream.peek(&mut byte) {
+        Ok(0) => {
+            bail!("MicroVM published endpoint {endpoint} closed immediately after accepting TCP")
+        }
+        Ok(_) => Ok(EndpointReadiness::Ready),
+        Err(err) if matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+            Ok(EndpointReadiness::Ready)
+        }
+        Err(err)
+            if matches!(
+                err.kind(),
+                ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::NotConnected
+                    | ErrorKind::BrokenPipe
+            ) =>
+        {
+            bail!(
+                "MicroVM published endpoint {endpoint} reset immediately after accepting TCP: {err}"
+            )
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("probe MicroVM published endpoint {endpoint}"))
+        }
+    }
+}
+
+fn microvm_readiness(probe: &ReadyProbe) -> Result<EndpointReadiness> {
+    match probe {
+        ReadyProbe::MicroVmHttp(url) => http_readiness(url),
+        ReadyProbe::MicroVmTcp { host, port } => tcp_usable_readiness(host, *port),
+        _ => unreachable!("microvm readiness requested for non-MicroVM probe"),
+    }
+}
+
+fn readiness_io_pending(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::ConnectionRefused
+            | ErrorKind::TimedOut
+            | ErrorKind::WouldBlock
+            | ErrorKind::Interrupted
+    )
+}
+
+fn is_microvm_probe(probe: &ReadyProbe) -> bool {
+    matches!(
+        probe,
+        ReadyProbe::MicroVmHttp(_) | ReadyProbe::MicroVmTcp { .. }
+    )
+}
+
+fn microvm_endpoint(service: &ServiceHandle) -> String {
+    let host = service.record.host.as_deref().unwrap_or("127.0.0.1");
+    service
+        .record
+        .port
+        .map(|port| format!("{host}:{port}"))
+        .unwrap_or_else(|| host.to_string())
+}
+
+fn compact_container_diagnostic(value: String) -> String {
+    const MAX_CHARS: usize = 600;
+    let value = value.trim().replace('\n', " ");
+    let mut chars = value.chars();
+    let compact: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{compact}…")
+    } else {
+        compact
+    }
+}
+
+/// Capture a diagnostic pipe without allowing a misbehaving descendant that
+/// inherited stdout/stderr to block the failure path after its parent exits.
+///
+/// The byte cap is applied while reading, rather than after an unbounded
+/// `read_to_end`, because diagnostics can run precisely when a runtime is
+/// producing pathological output.
+fn bounded_pipe_output<R>(pipe: Option<R>, deadline: Instant) -> String
+where
+    R: Read + Send + 'static,
+{
+    const MAX_DIAGNOSTIC_PIPE_BYTES: u64 = 8 * 1024;
+
+    let Some(mut pipe) = pipe else {
+        return String::new();
+    };
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = pipe
+            .by_ref()
+            .take(MAX_DIAGNOSTIC_PIPE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| {
+                let truncated = bytes.len() as u64 > MAX_DIAGNOSTIC_PIPE_BYTES;
+                if truncated {
+                    bytes.truncate(MAX_DIAGNOSTIC_PIPE_BYTES as usize);
+                }
+                (bytes, truncated)
+            });
+        let _ = sender.send(result);
+    });
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return "output capture skipped: diagnostic deadline exhausted".to_string();
+    }
+    match receiver.recv_timeout(remaining) {
+        Ok(Ok((bytes, truncated))) => {
+            let mut output = String::from_utf8_lossy(&bytes).into_owned();
+            if truncated {
+                output.push_str("\n[output truncated at 8192 bytes]");
+            }
+            output
+        }
+        Ok(Err(err)) => format!("output read failed ({err})"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            "output capture timed out before diagnostic deadline".to_string()
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            "output capture disconnected".to_string()
+        }
+    }
+}
+
+fn container_diagnostic(args: &[&str]) -> String {
+    container_diagnostic_until(args, Instant::now() + Duration::from_secs(1))
+}
+
+/// Run one read-only Apple Container diagnostic under a caller-owned hard
+/// deadline. The command's output is bounded before it reaches memory and the
+/// caller never waits on a descendant that inherited its pipes.
+pub(crate) fn container_diagnostic_until(args: &[&str], deadline: Instant) -> String {
+    let command = format!("container {}", args.join(" "));
+    if deadline <= Instant::now() {
+        return format!("{command}: skipped because diagnostic deadline expired");
+    }
+    let mut child = match Command::new("container")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => return format!("{command}: unavailable ({err})"),
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = compact_container_diagnostic(bounded_pipe_output(
+                    child.stdout.take(),
+                    deadline,
+                ));
+                let stderr = compact_container_diagnostic(bounded_pipe_output(
+                    child.stderr.take(),
+                    deadline,
+                ));
+                let details = [stdout, stderr]
+                    .into_iter()
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                if details.is_empty() {
+                    return format!("{command}: {status}");
+                } else {
+                    return format!("{command}: {status}; {details}");
+                }
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return format!("{command}: timed out before diagnostic deadline");
+            }
+            Ok(None) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(Duration::from_millis(20).min(remaining));
+            }
+            Err(err) => return format!("{command}: wait failed ({err})"),
+        }
+    }
+}
+
+fn report_microvm_endpoint_failure(
+    vat: &store::Vat,
+    service: &ServiceHandle,
+    reason: &str,
+) -> Result<()> {
+    let endpoint = microvm_endpoint(service);
+    let name = service
+        .record
+        .microvm_name
+        .as_deref()
+        .unwrap_or("unavailable");
+    let runtime_evidence = container_diagnostic(&["--version"]);
+    let inspect_evidence = if service.record.microvm_name.is_some() {
+        container_diagnostic(&["inspect", name])
+    } else {
+        "container inspect unavailable because VAT did not record a MicroVM name".to_string()
+    };
+    let inspect_command = format!("container inspect {name}");
+    let logs_command = format!("vat logs {} {}", vat.meta.id, service.record.id);
+    let state_command = format!("vat state {}", vat.meta.id);
+
+    emit_jsonl(serde_json::json!({
+        "type": "error",
+        "code": "microvm_published_endpoint_unusable",
+        "service": service.record.id.as_str(),
+        "host_endpoint": endpoint,
+        "microvm_name": name,
+        "reason": reason,
+        "runtime_evidence": runtime_evidence,
+        "inspect_evidence": inspect_evidence,
+        "inspect": inspect_command,
+        "logs": logs_command,
+        "state": state_command,
+        "next": state_command,
+    }))?;
+
+    bail!(
+        "microvm_published_endpoint_unusable: service `{}` host endpoint `{}` failed readiness: {}; runtime: {}; inspect: {}; remediation: `{}` then `{}`",
+        service.record.id,
+        endpoint,
+        reason,
+        runtime_evidence,
+        inspect_evidence,
+        inspect_command,
+        logs_command,
+    )
+}
+
 fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Result<()> {
     for service in services {
         let started = Instant::now();
         let ready_probe = service.ready_probe.clone();
+        let microvm_probe = is_microvm_probe(&ready_probe);
+        let mut last_microvm_readiness_error = None;
         if matches!(ready_probe, ReadyProbe::None) {
             service.record.status = ProcessStatus::Ready;
             service.record.ready_duration_ms = Some(started.elapsed().as_millis() as u64);
@@ -3259,17 +4145,66 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
         }
         let deadline = Instant::now() + Duration::from_secs(service.timeout_s);
         loop {
-            if readiness_ready(&ready_probe).unwrap_or(false) {
-                service.record.status = ProcessStatus::Ready;
-                let ms = started.elapsed().as_millis() as u64;
-                service.record.ready_duration_ms = Some(ms);
-                if let Some(cluster) = service.record.cluster.as_mut() {
-                    cluster.ready_ms = Some(ms);
+            // A published host port can already be occupied by an unrelated
+            // listener. Check the MicroVM launch before probing it so that an
+            // exited `container run` cannot borrow that listener's readiness.
+            if microvm_probe {
+                if let Some(status) = service_child_exit_status(service)? {
+                    return report_microvm_child_exit(
+                        vat,
+                        service,
+                        status,
+                        last_microvm_readiness_error.as_deref(),
+                    );
                 }
-                break;
             }
-            if let Some(child) = service.child.as_mut() {
-                if let Some(status) = child.try_wait()? {
+            let readiness = if microvm_probe {
+                match microvm_readiness(&ready_probe) {
+                    Ok(EndpointReadiness::Ready) => Ok(true),
+                    Ok(EndpointReadiness::Pending(reason)) => {
+                        last_microvm_readiness_error = Some(reason);
+                        Ok(false)
+                    }
+                    Err(err) => Err(err),
+                }
+            } else {
+                readiness_ready(&ready_probe)
+            };
+            match readiness {
+                Ok(true) => {
+                    // A TCP usability probe can take up to its bounded read
+                    // timeout. Recheck the launch after that probe as well:
+                    // otherwise a MicroVM that dies during the probe can be
+                    // recorded Ready because a stale host listener answered.
+                    if microvm_probe {
+                        if let Some(status) = service_child_exit_status(service)? {
+                            return report_microvm_child_exit(
+                                vat,
+                                service,
+                                status,
+                                last_microvm_readiness_error.as_deref(),
+                            );
+                        }
+                    }
+                    service.record.status = ProcessStatus::Ready;
+                    let ms = started.elapsed().as_millis() as u64;
+                    service.record.ready_duration_ms = Some(ms);
+                    if let Some(cluster) = service.record.cluster.as_mut() {
+                        cluster.ready_ms = Some(ms);
+                    }
+                    break;
+                }
+                Ok(false) => {}
+                Err(err) if microvm_probe => {
+                    let reason = err.to_string();
+                    service.record.status = ProcessStatus::Failed;
+                    service.record.readiness_error = Some(reason.clone());
+                    return report_microvm_endpoint_failure(vat, service, &reason);
+                }
+                Err(_) => {}
+            }
+            if !microvm_probe {
+                if let Some(status) = service_child_exit_status(service)? {
                     service.record.status = ProcessStatus::Failed;
                     service.record.exit_code = status.code();
                     bail!("service `{}` exited before readiness", service.record.id);
@@ -3277,6 +4212,17 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
             }
             if Instant::now() >= deadline {
                 service.record.status = ProcessStatus::Timeout;
+                if microvm_probe {
+                    let reason = last_microvm_readiness_error.take().unwrap_or_else(|| {
+                        format!(
+                            "MicroVM published endpoint {} did not become usable before the {}s readiness deadline",
+                            microvm_endpoint(service),
+                            service.timeout_s
+                        )
+                    });
+                    service.record.readiness_error = Some(reason.clone());
+                    return report_microvm_endpoint_failure(vat, service, &reason);
+                }
                 bail!("service `{}` readiness timed out", service.record.id);
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -3294,6 +4240,40 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
     }
     Ok(())
 }
+
+/// Observe an owned service process without consuming its handle. MicroVM
+/// readiness uses this both before and after its host-endpoint probe.
+fn service_child_exit_status(
+    service: &mut ServiceHandle,
+) -> Result<Option<std::process::ExitStatus>> {
+    match service.child.as_mut() {
+        Some(child) => child.try_wait().context("observe service process"),
+        None => Ok(None),
+    }
+}
+
+/// Turn an exited MicroVM launcher into the same terminal, structured
+/// published-endpoint failure path as an unusable host endpoint.
+fn report_microvm_child_exit(
+    vat: &mut store::Vat,
+    service: &mut ServiceHandle,
+    status: std::process::ExitStatus,
+    last_readiness_observation: Option<&str>,
+) -> Result<()> {
+    service.record.status = ProcessStatus::Failed;
+    service.record.exit_code = status.code();
+    let last_observation = last_readiness_observation
+        .map(|detail| format!("; last endpoint observation: {detail}"))
+        .unwrap_or_default();
+    let reason = format!(
+        "MicroVM service process exited {:?} before published endpoint {} became usable{last_observation}",
+        status.code(),
+        microvm_endpoint(service),
+    );
+    service.record.readiness_error = Some(reason.clone());
+    report_microvm_endpoint_failure(vat, service, &reason)
+}
+// </HANDWRITE>
 
 fn emit_service_runtime_hints(service: &ServiceHandle) -> Result<()> {
     let stdout = std::fs::read_to_string(&service.record.stdout_log).unwrap_or_default();
@@ -3335,6 +4315,7 @@ fn record_runner_failure(
             status: ProcessStatus::Failed,
             exit_code: Some(-1),
             duration_ms: None,
+            pid: None,
             stdout_log: logs_dir
                 .join("runner.stdout.log")
                 .to_string_lossy()
@@ -3353,27 +4334,369 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
     vat.save()
 }
 
+/// A persisted cleanup error is an active resource-ownership obligation, not
+/// merely diagnostic text. Retention policies must never erase the only
+/// runtime name and retry path while this remains nonempty.
+fn unconfirmed_runtime_cleanup_message(vat: &store::Vat) -> Option<String> {
+    let test_run = vat.meta.test_run.as_ref()?;
+    let failures: Vec<_> = test_run
+        .services
+        .iter()
+        .filter_map(|service| {
+            service
+                .cleanup_error
+                .as_deref()
+                .map(|error| format!("service `{}`: {error}", service.id))
+        })
+        .collect();
+    (!failures.is_empty()).then(|| failures.join("; "))
+}
+
+fn should_remove_vat(retention: &RetentionPolicy, code: i32, cleanup_unconfirmed: bool) -> bool {
+    if cleanup_unconfirmed {
+        return false;
+    }
+    match retention {
+        RetentionPolicy::Always => false,
+        RetentionPolicy::Never => true,
+        RetentionPolicy::Failed => code == 0,
+    }
+}
+
+// <HANDWRITE gap="vat-microvm-published-endpoint-failure-evidence" tracker="#1526" reason="Bound teardown of VAT-owned MicroVM resources so a degraded Apple Container runtime cannot prevent terminal readiness evidence from being persisted.">
+/// Run a teardown command without allowing a degraded container runtime to
+/// wedge VAT's terminal-state persistence. stdout/stderr are intentionally
+/// closed so descendants cannot retain a diagnostic pipe after their parent
+/// exits.
+fn run_quiet_bounded(program: &str, args: &[&str], timeout: Duration) -> Result<()> {
+    let command = format!("{program} {}", args.join(" "));
+    let status = bounded_command_status(program, args, timeout)?;
+    if status.success() {
+        Ok(())
+    } else {
+        bail!(
+            "teardown command `{command}` exited unsuccessfully ({:?})",
+            status.code()
+        );
+    }
+}
+
+/// Run a teardown-adjacent command with the same no-pipe timeout discipline,
+/// preserving a nonzero exit status for callers that need it.
+fn bounded_command_status(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let command = format!("{program} {}", args.join(" "));
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("spawn teardown command `{command}`"))?;
+    wait_for_bounded_command(&mut child, &command, timeout)
+}
+
+fn wait_for_bounded_command(
+    child: &mut Child,
+    command: &str,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err).with_context(|| format!("wait teardown command `{command}`"));
+            }
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(
+                "teardown command `{command}` timed out after {}ms",
+                timeout.as_millis()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Run a bounded query while sending stdout to a temporary file. A list may be
+/// larger than a pipe buffer, so waiting before reading a pipe could itself
+/// deadlock the cleanup path. Query output is capped; an oversized or malformed
+/// response is deliberately not accepted as an absence proof.
+fn bounded_command_output(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, String)> {
+    const MAX_QUERY_BYTES: u64 = 1024 * 1024;
+    let command = format!("{program} {}", args.join(" "));
+    let path = std::env::temp_dir().join(format!("vat-runtime-query-{}", id::fresh()));
+    let result = (|| -> Result<(std::process::ExitStatus, String)> {
+        let output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("create runtime query output {}", path.display()))?;
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(output))
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("spawn teardown query `{command}`"))?;
+        let status = wait_for_bounded_command(&mut child, &command, timeout)?;
+        let size = std::fs::metadata(&path)
+            .with_context(|| format!("read runtime query metadata {}", path.display()))?
+            .len();
+        if size > MAX_QUERY_BYTES {
+            bail!(
+                "teardown query `{command}` produced {size} bytes, exceeding the {}-byte safety limit",
+                MAX_QUERY_BYTES
+            );
+        }
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read runtime query output {}", path.display()))?;
+        Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RuntimeCleanupKind {
+    Docker,
+    MicroVm,
+}
+
+impl RuntimeCleanupKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Docker => "Docker",
+            Self::MicroVm => "MicroVM",
+        }
+    }
+
+    fn program(self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+            Self::MicroVm => "container",
+        }
+    }
+
+    /// Apple Container's force-delete acknowledgement routinely outlives the
+    /// old one-second Docker-oriented bound even after the service process has
+    /// exited. Keep teardown bounded, but give the public MicroVM client time
+    /// to complete before retaining a false cleanup failure in a compose
+    /// registry.
+    fn remove_timeout(self) -> Duration {
+        match self {
+            Self::Docker => Duration::from_secs(1),
+            Self::MicroVm => Duration::from_secs(10),
+        }
+    }
+
+    fn absence_probe_timeout(self) -> Duration {
+        match self {
+            Self::Docker => Duration::from_secs(1),
+            Self::MicroVm => Duration::from_secs(5),
+        }
+    }
+}
+
+/// A failed `rm -f` is benign only if a *successful exact-name list query*
+/// proves that deterministic name is absent. This accepts normal `--rm`
+/// auto-removal without letting an object-specific inspect failure, an
+/// unavailable daemon, a timeout, or malformed query output release a live
+/// compose binding.
+fn runtime_object_confirmed_absent(kind: RuntimeCleanupKind, name: &str) -> bool {
+    match kind {
+        RuntimeCleanupKind::Docker => {
+            let filter = format!("name=^/{name}$");
+            let Ok((status, output)) = bounded_command_output(
+                "docker",
+                &[
+                    "container",
+                    "ls",
+                    "--all",
+                    "--filter",
+                    &filter,
+                    "--format",
+                    "{{.Names}}",
+                ],
+                kind.absence_probe_timeout(),
+            ) else {
+                return false;
+            };
+            // The anchored name filter must yield no rows at all. Treat any
+            // unexpected output as non-authoritative rather than assuming an
+            // unrelated row proves this exact name absent.
+            status.success() && output.trim().is_empty()
+        }
+        RuntimeCleanupKind::MicroVm => {
+            let Ok((status, output)) = bounded_command_output(
+                "container",
+                &["list", "--all", "--format", "json"],
+                kind.absence_probe_timeout(),
+            ) else {
+                return false;
+            };
+            if !status.success() {
+                return false;
+            }
+            serde_json::from_str::<Vec<serde_json::Value>>(&output)
+                .map(|containers| {
+                    !containers.iter().any(|container| {
+                        container.get("id").and_then(serde_json::Value::as_str) == Some(name)
+                    })
+                })
+                .unwrap_or(false)
+        }
+    }
+}
+
+fn record_runtime_cleanup_failure(
+    service: &mut ServiceHandle,
+    runtime: &str,
+    program: &str,
+    name: &str,
+    error: &anyhow::Error,
+) {
+    let detail = format!("{runtime} cleanup `{program} rm -f {name}` did not finish: {error}");
+    service.record.cleanup_error = Some(match service.record.cleanup_error.take() {
+        Some(existing) => format!("{existing}; {detail}"),
+        None => detail,
+    });
+}
+// </HANDWRITE>
+
+// <HANDWRITE gap="vat-compose-cleanup-confirmation" tracker="#1526" reason="Retry persisted MicroVM cleanup from a retained compose binding before allowing port reuse.">
+/// Retry only persisted, previously-unconfirmed runtime teardown. Compose
+/// calls this before it can release a retained binding: a successful retry
+/// clears the explicit cleanup evidence, while another failure remains
+/// durable and fail-closed for both Docker and MicroVM service owners.
+pub(crate) fn retry_unconfirmed_service_cleanup(vat: &mut store::Vat) -> Result<()> {
+    let Some(test_run) = vat.meta.test_run.as_mut() else {
+        return Ok(());
+    };
+
+    let mut failures = Vec::new();
+    for service in &mut test_run.services {
+        if service.cleanup_error.is_none() {
+            continue;
+        }
+        let (kind, name) = match (
+            service.microvm_name.as_deref(),
+            service.docker_name.as_deref(),
+        ) {
+            (Some(_), Some(_)) => {
+                failures.push(format!(
+                    "service `{}` has unconfirmed cleanup with both MicroVM and Docker names",
+                    service.id
+                ));
+                continue;
+            }
+            (Some(name), None) => (RuntimeCleanupKind::MicroVm, name),
+            (None, Some(name)) => (RuntimeCleanupKind::Docker, name),
+            (None, None) => {
+                failures.push(format!(
+                    "service `{}` has unconfirmed cleanup but no persisted runtime name",
+                    service.id
+                ));
+                continue;
+            }
+        };
+        let runtime = kind.label();
+        let program = kind.program();
+        let command = format!("{program} rm -f {name}");
+        match run_quiet_bounded(program, &["rm", "-f", name], kind.remove_timeout()) {
+            Ok(()) => service.cleanup_error = None,
+            Err(_) if runtime_object_confirmed_absent(kind, name) => {
+                service.cleanup_error = None;
+            }
+            Err(error) => {
+                let detail = format!("{runtime} cleanup `{command}` did not finish: {error}");
+                service.cleanup_error = Some(detail.clone());
+                failures.push(format!("service `{}`: {detail}", service.id));
+            }
+        }
+    }
+    vat.save()?;
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "unconfirmed runtime cleanup remains: {}",
+            failures.join("; ")
+        )
+    }
+}
+
+// </HANDWRITE>
+
 fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
     for service in services.iter_mut().rev() {
-        if let Some(child) = service.child.as_mut() {
-            if child.try_wait().ok().flatten().is_none() {
-                kill_child(child);
-                let _ = child.wait();
-                if service.record.status == ProcessStatus::Running
-                    || service.record.status == ProcessStatus::Ready
-                {
-                    service.record.status = ProcessStatus::Exited;
+        let child_exit = match service.child.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => Some(status),
+                Ok(None) | Err(_) => {
+                    kill_child(child);
+                    child.wait().ok()
                 }
+            },
+            None => None,
+        };
+        if service.child.is_some() {
+            service.record.pid = None;
+            if let Some(status) = child_exit {
+                service.record.exit_code = status.code();
+            }
+            if !matches!(
+                service.record.status,
+                ProcessStatus::Failed | ProcessStatus::Timeout
+            ) {
+                // A service which had been Ready can exit naturally before a
+                // compose stop request. It is still terminal; retaining Ready
+                // here would make compose wait forever after VAT itself exits.
+                service.record.status = ProcessStatus::Exited;
             }
         }
         // Force-remove the container regardless of how the `docker run` child
         // fared — a detached or wedged container must never outlive the run.
-        if let Some(name) = &service.docker_name {
-            let _ = Command::new("docker")
-                .args(["rm", "-f", name])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+        if let Some(name) = service.docker_name.clone() {
+            match run_quiet_bounded(
+                "docker",
+                &["rm", "-f", &name],
+                RuntimeCleanupKind::Docker.remove_timeout(),
+            ) {
+                Ok(()) => {}
+                Err(_) if runtime_object_confirmed_absent(RuntimeCleanupKind::Docker, &name) => {}
+                Err(error) => {
+                    record_runtime_cleanup_failure(service, "Docker", "docker", &name, &error);
+                }
+            }
+        }
+        // Same force-removal guarantee for a `container run` (MicroVM) child,
+        // parallel to the docker_name branch above (R5).
+        if let Some(name) = service.microvm_name.clone() {
+            match run_quiet_bounded(
+                "container",
+                &["rm", "-f", &name],
+                RuntimeCleanupKind::MicroVm.remove_timeout(),
+            ) {
+                Ok(()) => {}
+                Err(_) if runtime_object_confirmed_absent(RuntimeCleanupKind::MicroVm, &name) => {}
+                Err(error) => {
+                    record_runtime_cleanup_failure(service, "MicroVM", "container", &name, &error);
+                }
+            }
         }
         // A cluster is an external object, so removing the vat dir does NOT
         // remove it. Delete it explicitly when the run policy says to; keep it
@@ -3404,6 +4727,62 @@ mod tests {
     use super::*;
 
     use crate::config::ExternalServiceConfig;
+
+    /// R10/AC4: the run.rs `gpu_satisfied()` preflight helper — the second,
+    /// independent fail-closed layer alongside `sandbox::pick()` — must
+    /// reject `--isolation micro_vm --gpu required` even when the host GPU
+    /// is genuinely accessible. Before this helper existed, the three
+    /// preflight call sites in `exec_direct`/`exec_runner`/`exec_scenario`
+    /// checked only `gpu_info.accessible`, so on a real Apple Silicon host
+    /// (accessible=true) `--isolation micro_vm --gpu required` would
+    /// silently pass preflight and only fail later inside `pick()` — after
+    /// EnvSpec construction, i.e. much closer to (and per the TD, "before
+    /// any workspace clone begins" is the guarantee this test pins down).
+    #[test]
+    fn gpu_satisfied_rejects_microvm_required_before_workspace_clone() {
+        let accessible_info = gpu::GpuInfo {
+            vendor: "apple".to_string(),
+            chip: Some("Apple M-series".to_string()),
+            backends: vec!["metal".to_string()],
+            accessible: true,
+            note: "GPU is accessible".to_string(),
+        };
+
+        // Host genuinely has a GPU, but MicroVm isolation can never reach it:
+        // gpu_satisfied() must say "not satisfied" independent of pick().
+        assert!(
+            !gpu_satisfied(GpuRequest::Required, Isolation::MicroVm, &accessible_info),
+            "gpu_satisfied() must reject MicroVm even when the host GPU is accessible"
+        );
+
+        // Sanity: the same accessible info still satisfies non-MicroVm
+        // isolation modes (no regression on the existing None/Seatbelt path).
+        assert!(gpu_satisfied(
+            GpuRequest::Required,
+            Isolation::None,
+            &accessible_info
+        ));
+        assert!(gpu_satisfied(
+            GpuRequest::Required,
+            Isolation::Seatbelt,
+            &accessible_info
+        ));
+
+        // And when the host genuinely has no GPU, MicroVm is still rejected
+        // (not a special case — just categorically never satisfied).
+        let inaccessible_info = gpu::GpuInfo {
+            vendor: "none".to_string(),
+            chip: None,
+            backends: vec![],
+            accessible: false,
+            note: "no GPU".to_string(),
+        };
+        assert!(!gpu_satisfied(
+            GpuRequest::Required,
+            Isolation::MicroVm,
+            &inaccessible_info
+        ));
+    }
 
     #[test]
     fn sandbox_wrap_wraps_runner_under_seatbelt_passthrough_under_none() {
@@ -3589,6 +4968,7 @@ mod tests {
             env: BTreeMap::new(),
             exported_env: Vec::new(),
             docker_name: None,
+            microvm_name: None,
             image: None,
             cluster: None,
             owned_by_vat: true,
@@ -3928,6 +5308,7 @@ mod tests {
             ready_http: None,
             ready_cmd: Vec::new(),
             timeout_s: 60,
+            volumes: Vec::new(),
         }
     }
 
@@ -3953,6 +5334,7 @@ mod tests {
             ready_http: None,
             ready_cmd: Vec::new(),
             timeout_s: 60,
+            volumes: Vec::new(),
         }
     }
 
@@ -3980,6 +5362,90 @@ mod tests {
                 "postgres:16",
             ]
         );
+    }
+
+    #[test]
+    fn microvm_ready_probe_substitutes_allocated_http_port() {
+        match microvm_ready_probe(Some("http://{host}:{port}/ready"), 43123) {
+            ReadyProbe::MicroVmHttp(url) => {
+                assert_eq!(url, "http://127.0.0.1:43123/ready");
+            }
+            other => panic!("expected MicroVmHttp probe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn microvm_tcp_probe_rejects_immediate_close_after_handshake() {
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => {
+                eprintln!("skip: loopback sockets are unavailable ({err})");
+                return;
+            }
+            Err(err) => panic!("bind listener: {err}"),
+        };
+        let port = listener.local_addr().expect("listener address").port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept client");
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        });
+
+        let err = tcp_usable_readiness("127.0.0.1", port).expect_err("EOF must not be ready");
+        server.join().expect("server thread");
+        let message = err.to_string();
+        assert!(
+            message.contains("closed immediately") || message.contains("reset immediately"),
+            "unexpected endpoint error: {message}"
+        );
+    }
+
+    #[test]
+    fn microvm_http_probe_retains_non_ready_response() {
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => {
+                eprintln!("skip: loopback sockets are unavailable ({err})");
+                return;
+            }
+            Err(err) => panic!("bind listener: {err}"),
+        };
+        let port = listener.local_addr().expect("listener address").port();
+        let server = std::thread::spawn(move || -> Result<(), String> {
+            listener
+                .set_nonblocking(true)
+                .map_err(|err| err.to_string())?;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .write_all(
+                                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+                            )
+                            .map_err(|err| err.to_string())?;
+                        return Ok(());
+                    }
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return Err("HTTP readiness client did not connect".to_string());
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(err) => return Err(err.to_string()),
+                }
+            }
+        });
+
+        let observation = http_readiness(&format!("http://127.0.0.1:{port}/ready"))
+            .expect("HTTP readiness observation");
+        server
+            .join()
+            .expect("HTTP readiness server thread")
+            .expect("HTTP readiness server");
+        assert!(matches!(
+            observation,
+            EndpointReadiness::Pending(reason) if reason.contains("HTTP/1.1 503")
+        ));
     }
 
     #[test]
@@ -4127,6 +5593,45 @@ mod tests {
             env.get("CACHE_URL").map(String::as_str),
             Some("redis://127.0.0.1:60738/")
         );
+    }
+
+    #[test]
+    fn lumen_preset_is_native_and_exports_loopback_ready_endpoint() {
+        let mut svc = test_service("lumen", &[]);
+        svc.runtime = ServiceRuntime::Auto;
+
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Lumen).unwrap(),
+            ResolvedRuntime::Native
+        ));
+        assert!(matches!(
+            preset_ready_probe(ServicePreset::Lumen, 7373),
+            ReadyProbe::Http(url) if url == "http://127.0.0.1:7373/readyz"
+        ));
+
+        let env = preset_exports(&svc, ServicePreset::Lumen, 7373);
+        assert_eq!(
+            env.get("LUMEN_URL").map(String::as_str),
+            Some("http://127.0.0.1:7373")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_LUMEN_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_LUMEN_PORT").map(String::as_str),
+            Some("7373")
+        );
+    }
+
+    #[test]
+    fn lumen_preset_rejects_docker_runtime_without_a_fallback() {
+        let mut svc = test_service("lumen", &[]);
+        svc.runtime = ServiceRuntime::Docker;
+        match resolve_preset_runtime(&svc, ServicePreset::Lumen) {
+            Err(error) => assert!(error.to_string().contains("native-only")),
+            Ok(_) => panic!("lumen must not fall back to Docker"),
+        }
     }
 
     #[test]
@@ -4317,6 +5822,41 @@ mod tests {
             resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
             ResolvedRuntime::Docker
         ));
+        svc.runtime = ServiceRuntime::MicroVm;
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
+            ResolvedRuntime::MicroVm
+        ));
+    }
+
+    #[test]
+    fn microvm_preset_runtime_rejects_unmapped_builtin_images() {
+        let mut svc = test_service("auth", &[]);
+        svc.cmd = Vec::new();
+        svc.preset = Some(ServicePreset::FirebaseAuth);
+        svc.runtime = ServiceRuntime::MicroVm;
+        let error = resolve_preset_runtime(&svc, ServicePreset::FirebaseAuth)
+            .expect_err("builtin-only preset must not pretend a generic image is equivalent");
+        assert!(error
+            .to_string()
+            .contains("no declared Apple Container OCI image route"));
+    }
+
+    #[test]
+    fn microvm_preset_runtime_rejects_unproven_named_volume_lifecycle() {
+        let mut svc = test_service("cache", &[]);
+        svc.cmd = Vec::new();
+        svc.preset = Some(ServicePreset::Redis);
+        svc.runtime = ServiceRuntime::MicroVm;
+        svc.volumes.push(VolumeMount {
+            name: "cache-data".to_string(),
+            path: "/data".to_string(),
+        });
+        let error = resolve_preset_runtime(&svc, ServicePreset::Redis)
+            .expect_err("MicroVM preset volume route must fail until lifetime proof exists");
+        assert!(error
+            .to_string()
+            .contains("preset-volume ownership/cleanup contract"));
     }
 
     #[test]
@@ -4374,6 +5914,10 @@ mod tests {
                 pid: Some(child.id()),
                 exit_code: None,
                 ready_http: None,
+                docker_name: None,
+                microvm_name: None,
+                readiness_error: None,
+                cleanup_error: None,
                 cluster: None,
                 stdout_log: stdout.to_string_lossy().into_owned(),
                 stderr_log: stderr.to_string_lossy().into_owned(),
@@ -4382,6 +5926,7 @@ mod tests {
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
             docker_name: None,
+            microvm_name: None,
             cluster: None,
         }
     }
@@ -4445,7 +5990,7 @@ fn kill_child(child: &mut Child) {
     let _ = child.kill();
 }
 
-fn http_ready(raw_url: &str) -> Result<bool> {
+fn http_readiness(raw_url: &str) -> Result<EndpointReadiness> {
     let url = url::Url::parse(raw_url).with_context(|| format!("parse ready_http {raw_url}"))?;
     let host = url.host_str().context("ready_http missing host")?;
     let port = url
@@ -4455,24 +6000,64 @@ fn http_ready(raw_url: &str) -> Result<bool> {
         .to_socket_addrs()?
         .next()
         .context("ready_http did not resolve")?;
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300))?;
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+        Ok(stream) => stream,
+        Err(err) if readiness_io_pending(&err) => {
+            return Ok(EndpointReadiness::Pending(format!(
+                "ready_http endpoint {raw_url} is not accepting TCP yet: {err}"
+            )));
+        }
+        Err(err) => return Err(err).with_context(|| format!("connect ready_http {raw_url}")),
+    };
     stream.set_read_timeout(Some(Duration::from_millis(300)))?;
     let path = if url.path().is_empty() {
         "/"
     } else {
         url.path()
     };
-    write!(
+    if let Err(err) = write!(
         stream,
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-    )?;
+    ) {
+        if readiness_io_pending(&err) {
+            return Ok(EndpointReadiness::Pending(format!(
+                "ready_http endpoint {raw_url} did not accept the HTTP request yet: {err}"
+            )));
+        }
+        return Err(err).with_context(|| format!("write ready_http request to {raw_url}"));
+    }
     let mut buf = [0u8; 64];
-    let n = stream.read(&mut buf)?;
+    let n = match stream.read(&mut buf) {
+        Ok(n) => n,
+        Err(err) if readiness_io_pending(&err) => {
+            return Ok(EndpointReadiness::Pending(format!(
+                "ready_http endpoint {raw_url} did not return a response yet: {err}"
+            )));
+        }
+        Err(err) => {
+            return Err(err).with_context(|| format!("read ready_http response from {raw_url}"));
+        }
+    };
+    if n == 0 {
+        bail!("ready_http endpoint {raw_url} closed before responding");
+    }
     let head = String::from_utf8_lossy(&buf[..n]);
-    Ok(head.starts_with("HTTP/1.0 2")
+    if head.starts_with("HTTP/1.0 2")
         || head.starts_with("HTTP/1.1 2")
         || head.starts_with("HTTP/1.0 3")
-        || head.starts_with("HTTP/1.1 3"))
+        || head.starts_with("HTTP/1.1 3")
+    {
+        Ok(EndpointReadiness::Ready)
+    } else {
+        let status = head.lines().next().unwrap_or("non-HTTP response");
+        Ok(EndpointReadiness::Pending(format!(
+            "ready_http endpoint {raw_url} returned non-ready response `{status}`"
+        )))
+    }
+}
+
+fn http_ready(raw_url: &str) -> Result<bool> {
+    Ok(matches!(http_readiness(raw_url)?, EndpointReadiness::Ready))
 }
 
 fn collect_artifacts(rootfs: &Path, patterns: &[String]) -> Result<Vec<ArtifactRecord>> {

@@ -4,9 +4,10 @@
 //!
 //! ## What vat is
 //!
-//! A container runtime for the one user who never gets a say in Docker's
-//! design: a coding/ML **agent**. Two things make it different from "Docker
-//! minus the GUI":
+//! A headless runtime for the one user who never gets a say in Docker's design:
+//! a coding/ML **agent**. vat never ships a GUI or Desktop surface; agents use
+//! its CLI and structured output. Two things make it different from
+//! developer-oriented Docker tooling:
 //!
 //! 1. **Agent-legible state.** Every vat projects its full current state as
 //!    one compact, structured [`state::VatState`] JSON value — what's
@@ -33,12 +34,15 @@
 
 pub mod cluster;
 pub mod commands;
+pub mod compose;
 pub mod config;
+pub mod docker_shim;
 #[cfg(feature = "emulator")]
 pub mod emulator;
 pub mod event;
 pub mod gpu;
 pub mod id;
+pub mod lumen_release;
 pub mod overlay;
 pub mod paths;
 pub mod sandbox;
@@ -50,4 +54,9 @@ pub mod cli;
 
 /// Crate version, surfaced by `vat --version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+// CODEGEN-END
+// SPEC-MANAGED: apps/vat/tech-design/logic/add-versioned-native-lumen-service-preset.md#changes
+// CODEGEN-BEGIN
+// SPEC-REF: apps/vat/tech-design/logic/add-versioned-native-lumen-service-preset.md#changes
+// TODO: Implement apps/vat/src/lib.rs
 // CODEGEN-END
