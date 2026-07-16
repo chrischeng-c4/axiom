@@ -5431,6 +5431,14 @@ async fn run_check_lifecycle_terminal(
                     .iter()
                     .map(|result| if result.status == "skipped" {
                         format!("{} (skipped (advisory))", result.case_id)
+                    } else if result.status == "deferred" {
+                        // #1828: a `deferred` status means this project's
+                        // `review_mode = "deferred"` and a pending human EC
+                        // review was recorded non-blocking rather than
+                        // stopping this terminal gate; it stays queued for
+                        // post-completion batch review (`aw ec verify` /
+                        // `aw health`).
+                        format!("{} (deferred (pending human review))", result.case_id)
                     } else {
                         result.case_id.clone()
                     })
@@ -8768,6 +8776,14 @@ async fn run_check_lifecycle_terminal(
                     .iter()
                     .map(|result| if result.status == "skipped" {
                         format!("{} (skipped (advisory))", result.case_id)
+                    } else if result.status == "deferred" {
+                        // #1828: a `deferred` status means this project's
+                        // `review_mode = "deferred"` and a pending human EC
+                        // review was recorded non-blocking rather than
+                        // stopping this terminal gate; it stays queued for
+                        // post-completion batch review (`aw ec verify` /
+                        // `aw health`).
+                        format!("{} (deferred (pending human review))", result.case_id)
                     } else {
                         result.case_id.clone()
                     })

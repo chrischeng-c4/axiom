@@ -273,6 +273,9 @@ struct ProjectAwToml {
     /// EC review-backing policy (`human` | `agent` | `either`); #1829.
     #[serde(default)]
     ec_review_backing: Option<String>,
+    /// EC review-timing policy (`blocking` | `deferred`); #1828.
+    #[serde(default)]
+    ec_review_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -361,6 +364,9 @@ fn merge_project(mut existing: Project, incoming: Project) -> Project {
     }
     if incoming.ec_review_backing.is_some() {
         existing.ec_review_backing = incoming.ec_review_backing;
+    }
+    if incoming.ec_review_mode.is_some() {
+        existing.ec_review_mode = incoming.ec_review_mode;
     }
     if !incoming.workspaces.is_empty() {
         existing.workspaces = incoming.workspaces;
@@ -508,6 +514,7 @@ fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
         tech_design_dir,
         ec: manifest.ec,
         ec_review_backing: manifest.ec_review_backing,
+        ec_review_mode: manifest.ec_review_mode,
         workspaces,
     })
 }
@@ -757,6 +764,7 @@ mod tests {
             tech_design_dir: None,
             ec: Default::default(),
             ec_review_backing: None,
+            ec_review_mode: None,
             workspaces: vec![Workspace {
                 name: Some(name.to_string()),
                 paths: vec![format!("crates/{}/**", name)],

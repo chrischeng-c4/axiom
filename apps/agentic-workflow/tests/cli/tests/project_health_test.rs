@@ -613,6 +613,8 @@ fn project_health_summary_with_payload_path_is_bounded_result() {
             stderr_tail: "very long ec stderr".to_string(),
         }],
         review_backing: None,
+        review_mode: None,
+        pending_review: None,
     };
 
     let summary =
@@ -731,6 +733,8 @@ fn project_health_ec_gen_axis_is_not_configured_for_zero_expected_units() {
         findings: Vec::new(),
         commands: Vec::new(),
         review_backing: None,
+        review_mode: None,
+        pending_review: None,
     };
 
     let summary = project_health_summary(&report);
@@ -1047,6 +1051,8 @@ fn project_health_next_reason_matches_managed_route_when_ec_has_no_expected_unit
         findings: Vec::new(),
         commands: Vec::new(),
         review_backing: None,
+        review_mode: None,
+        pending_review: None,
     };
 
     let summary = project_health_summary(&report);
@@ -1106,6 +1112,8 @@ fn project_health_next_command_stays_off_verify_ec_for_self_health_without_confi
         findings: Vec::new(),
         commands: Vec::new(),
         review_backing: None,
+        review_mode: None,
+        pending_review: None,
     };
 
     let summary = project_health_summary(&report);
@@ -1163,6 +1171,8 @@ fn project_health_next_command_still_targets_verify_ec_for_self_health_with_conf
         findings: Vec::new(),
         commands: Vec::new(),
         review_backing: None,
+        review_mode: None,
+        pending_review: None,
     };
 
     let summary = project_health_summary(&report);
@@ -1215,6 +1225,8 @@ fn project_health_next_command_still_targets_verify_ec_for_non_self_health_proje
         findings: Vec::new(),
         commands: Vec::new(),
         review_backing: None,
+        review_mode: None,
+        pending_review: None,
     };
 
     let summary = project_health_summary(&report);

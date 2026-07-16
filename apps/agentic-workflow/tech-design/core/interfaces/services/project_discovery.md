@@ -91,6 +91,7 @@ pub fn discover_projects(root: &Path) -> Result<Vec<Project>> {
                 // hand in `.aw/config.toml` (wi-13).
                 ec: Default::default(),
                 ec_review_backing: None,
+                ec_review_mode: None,
                 workspaces,
             });
         }

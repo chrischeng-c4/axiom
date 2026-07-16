@@ -3514,6 +3514,50 @@ changes:
       absent from `aw.toml`) is unchanged: `review_backing` normalizes to
       `"human"`, so `reviewer_kind: "agent"` evidence is rejected exactly as
       before #1829.
+      #1828: EC review can now be deferred to a post-completion batch
+      review instead of blocking the loop, gated by the project's
+      `ec_review_mode` policy (`blocking` default | `deferred`, resolved
+      from `Project::ec_review_mode` via `resolve_ec_project_context` into
+      a new `EcProjectContext.review_mode` field, normalized by
+      `normalize_review_mode`/checked by `ec_review_mode_is_deferred`).
+      `ec_review_gate_findings` (the original single-purpose gate-findings
+      function) is now composed from `ec_review_outstanding_findings`
+      (all missing/stale/rejected-review findings, unchanged from
+      pre-#1828), `ec_review_outstanding_is_deferrable` (true only when the
+      outstanding set is exactly the "review hasn't happened yet" case —
+      never an explicit `needs_revision` decision or a structural EC
+      content finding from `ec_semantic_review_findings`, per R6), and
+      `ec_review_deferred_pending_findings` (the deferrable subset,
+      surfaced as a queue entry rather than a gate finding). In `deferred`
+      mode with a deferrable outstanding review, `ec_review_gate_findings`
+      returns empty — so `run_verify`/`verify_ec_context` and the terminal
+      gate no longer block — while `verify_ec_context` inserts a pseudo
+      `EcVerifyCommandResult` with `status: "deferred"` for the review case
+      (excluded from `executed_count`/`passed_count`/`failed_count`, so it
+      never flips `clean` to `false`) so the pending review stays visible
+      in verify output. `run_review` gains a matching `deferred_pending_human`
+      branch: when no explicit decision exists and the outstanding findings
+      are deferrable under `deferred` mode, it returns an `EcReviewSummary`
+      with `status: "deferred_pending_human"`, `requires_hitl: false`, and
+      a `next: Option<String>` command string identical in form to the
+      blocking-mode HITL resume command (`aw ec review --project <p>
+      --evidence-file <path>`), so a human can finalize post-hoc with the
+      same digest-bound `--evidence-file` submission — `run_review`'s
+      acceptance/`needs_revision` paths are otherwise unchanged (R4). An
+      explicit `needs_revision` decision, or any structural
+      `ec_semantic_review_findings` content finding, still blocks in
+      `deferred` mode exactly as in `blocking` mode (R6: deferred mode
+      changes *when* review must happen, never *what* content is
+      acceptable, nor *who* may review — same-agent self-review stays
+      unaccepted). New pub helpers `project_ec_review_mode(project) ->
+      Result<String>` and `project_pending_ec_review(project) ->
+      Result<Option<String>>` resolve a project's policy and its current
+      deferred-pending queue entry (if any) for `aw health`/reporting (see
+      this file's `project.rs`/`cb.rs` entries) without duplicating
+      `resolve_ec_project_context`. Default behavior (`ec_review_mode`
+      absent from `aw.toml`) is unchanged: `review_mode` normalizes to
+      `"blocking"`, so a missing/stale review still blocks exactly as
+      before #1828.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -3574,6 +3618,15 @@ changes:
       lifecycle commit; a real Git fixture proves the output is one canonical
       CODEGEN document with no generic TODO and preserves a HANDWRITE sibling
       byte-for-byte.
+      #1828: the terminal EC-gate success envelope's `ec_gate.cases`
+      rendering gains a third label form alongside the bare case id and
+      `"(skipped (advisory))"`: a result whose `status` is `"deferred"`
+      (this project's `ec_review_mode = "deferred"` and a pending human
+      review, from `ec.rs`'s `verify_ec_context` pseudo-result) renders as
+      `"<case_id> (deferred (pending human review))"`, so the terminal gate
+      commits/closes without blocking while keeping the pending review
+      visible in the same envelope. See `ec.rs` above for the deferred-mode
+      gate/queue implementation.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/capability_type.rs"
     action: modify
@@ -3821,6 +3874,18 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      #1828: `ProjectEcGateReport` gains `review_mode: Option<String>` and
+      `pending_review: Option<String>` fields (populated by
+      `project_health_ec_axis` from `ec.rs`'s `project_ec_review_mode`/
+      `project_pending_ec_review`, and echoed in `project_ec_gate_summary`'s
+      JSON), surfacing the deferred-mode pending-review queue in `aw health`
+      reporting (AC3). `apply_ec_to_report` now delegates the
+      advisory-vs-blocker classification of an outstanding pending review to
+      a new `apply_pending_ec_review_classification` helper: when
+      `review_mode == "deferred"`, a pending review is always surfaced as a
+      finding but never added to `report.blockers` (advisory, R5); in
+      `blocking` mode (default) it stays a hard blocker under
+      `--verify-ec`, byte-for-byte the pre-#1828 behavior.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/td_lock.rs"
     action: modify

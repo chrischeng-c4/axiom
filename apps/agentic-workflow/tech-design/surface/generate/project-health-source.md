@@ -452,6 +452,18 @@ pub struct ProjectEcGateReport {
     /// `crate::cli::ec::project_ec_review_backing`. `None` when
     /// unevaluated or unresolvable.
     pub review_backing: Option<String>,
+    /// #1828: this project's resolved EC review-timing policy (`blocking` |
+    /// `deferred`), best-effort via `crate::cli::ec::project_ec_review_mode`.
+    /// `None` when unevaluated or unresolvable.
+    pub review_mode: Option<String>,
+    /// #1828: outstanding EC review findings, if any (missing/stale/
+    /// incomplete evidence, or an explicit needs_revision decision), summary
+    /// text best-effort via `crate::cli::ec::project_pending_ec_review`.
+    /// `None` when there is no outstanding review. Whether an outstanding
+    /// entry is a hard blocker or an advisory queue entry is determined by
+    /// `review_mode` (`blocking` blocks; `deferred` is advisory-only, #1828
+    /// R5).
+    pub pending_review: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -582,6 +594,10 @@ impl ProjectEcGateReport {
             findings: Vec::new(),
             commands: Vec::new(),
             review_backing: crate::cli::ec::project_ec_review_backing(project).ok(),
+            review_mode: crate::cli::ec::project_ec_review_mode(project).ok(),
+            pending_review: crate::cli::ec::project_pending_ec_review(project)
+                .ok()
+                .flatten(),
         }
     }
 
@@ -627,6 +643,10 @@ impl ProjectEcGateReport {
             findings: summary.findings,
             commands: Vec::new(),
             review_backing: crate::cli::ec::project_ec_review_backing(&summary.project).ok(),
+            review_mode: crate::cli::ec::project_ec_review_mode(&summary.project).ok(),
+            pending_review: crate::cli::ec::project_pending_ec_review(&summary.project)
+                .ok()
+                .flatten(),
         }
     }
 }
@@ -2331,6 +2351,8 @@ fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
             // project's terminal EC gate accepts (`human` | `agent` |
             // `either`), independent of the axis's own advisory/hard status.
             "review_backing": report.ec.review_backing,
+            "review_mode": report.ec.review_mode,
+            "pending_review": report.ec.pending_review,
         });
     }
     serde_json::json!({
@@ -2341,6 +2363,8 @@ fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
         "passed_commands": report.ec.passed_count,
         "command_count": report.ec.command_count,
         "review_backing": report.ec.review_backing,
+        "review_mode": report.ec.review_mode,
+        "pending_review": report.ec.pending_review,
     })
 }
 
@@ -2515,6 +2539,10 @@ fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
         // #1829 R7: which review-backing policy (`human` | `agent` |
         // `either`) this project's terminal EC gate will accept.
         "review_backing": &report.review_backing,
+        // #1828: review-timing policy (`blocking` | `deferred`) and any
+        // outstanding pending-review queue entry.
+        "review_mode": &report.review_mode,
+        "pending_review": &report.pending_review,
         "lock_status": report.lock_status,
         "lock_clean": report.lock_clean,
         "lock_path": &report.lock_path,
@@ -3385,6 +3413,8 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
         }
     }
 
+    apply_pending_ec_review_classification(report, &mut ec_report, verify_ec);
+
     // Self-AW (#934): EC becomes a hard axis only once a real command
     // surface has actually been configured and evaluated
     // (`ec_report.command_count > 0`). Until then, downgrade a
@@ -3411,6 +3441,40 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
     report.ec = ec_report;
     report.refresh_takeover_readiness();
     Ok(())
+}
+
+/// #1828: an outstanding EC review (missing/stale/incomplete evidence, or an
+/// explicit needs_revision decision) is always surfaced as a finding, but
+/// only becomes a hard production blocker under `--verify-ec` when the
+/// project's `ec_review_mode` is `blocking` (the default, R5). In `deferred`
+/// mode it stays advisory — the human batch-reviews the pending-review
+/// queue after the loop reaches terminal instead of the loop stopping for
+/// it. Extracted from `apply_ec_to_report` so the advisory-vs-blocker
+/// classification has direct, isolated unit coverage (AC3).
+/// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn apply_pending_ec_review_classification(
+    report: &mut ProjectHealthReport,
+    ec_report: &mut ProjectEcGateReport,
+    verify_ec: bool,
+) {
+    let Some(pending) = ec_report.pending_review.clone() else {
+        return;
+    };
+    let deferred = ec_report
+        .review_mode
+        .as_deref()
+        .map(|mode| mode == "deferred")
+        .unwrap_or(false);
+    if deferred {
+        ec_report.findings.push(format!(
+            "ec review: deferred_pending_human (advisory, review_mode=deferred): {pending}"
+        ));
+    } else if verify_ec {
+        ec_report
+            .findings
+            .push(format!("ec review: pending: {pending}"));
+        block_health_report(report, format!("ec review pending: {pending}"));
+    }
 }
 
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -4650,6 +4714,8 @@ mod tests {
             findings: vec!["EC generated content drifted".to_string()],
             commands: Vec::new(),
             review_backing: None,
+            review_mode: None,
+            pending_review: None,
         };
 
         assert_eq!(
@@ -4679,6 +4745,76 @@ mod tests {
         assert_eq!(project_health_next_command(&report), None);
         assert_eq!(project_health_next_kind(&report, false), "hitl");
         assert!(project_health_next_reason(&report).contains("migration required"));
+    }
+
+    // #1828 AC3/R5: `review_mode = "deferred"` classifies an outstanding
+    // pending review as advisory — it is surfaced as a finding, but does
+    // not add a production blocker, even under `--verify-ec`.
+    #[test]
+    fn pending_ec_review_is_advisory_only_in_deferred_mode() {
+        let mut report = ready_project_health_report("demo");
+        let mut ec_report = ProjectEcGateReport::not_evaluated("demo");
+        ec_report.review_mode = Some("deferred".to_string());
+        ec_report.pending_review =
+            Some("independent EC semantic review evidence is missing".to_string());
+
+        apply_pending_ec_review_classification(&mut report, &mut ec_report, true);
+
+        assert!(
+            ec_report
+                .findings
+                .iter()
+                .any(|finding| finding.contains("deferred_pending_human")),
+            "deferred mode must still surface a finding: {:?}",
+            ec_report.findings
+        );
+        assert!(
+            report.blockers.is_empty(),
+            "deferred mode must not add a production blocker: {:?}",
+            report.blockers
+        );
+        assert_ne!(report.status, ProjectHealthStatus::Blocked);
+    }
+
+    // #1828 AC3: without the config key (the default `blocking` mode), an
+    // outstanding pending review under `--verify-ec` is a hard blocker,
+    // byte-for-byte the pre-#1828 classification.
+    #[test]
+    fn pending_ec_review_is_a_hard_blocker_in_blocking_mode_under_verify_ec() {
+        let mut report = ready_project_health_report("demo");
+        let mut ec_report = ProjectEcGateReport::not_evaluated("demo");
+        ec_report.review_mode = Some("blocking".to_string());
+        ec_report.pending_review =
+            Some("independent EC semantic review evidence is missing".to_string());
+
+        apply_pending_ec_review_classification(&mut report, &mut ec_report, true);
+
+        assert!(
+            report
+                .blockers
+                .iter()
+                .any(|blocker| blocker.contains("ec review pending")),
+            "blocking mode under --verify-ec must add a production blocker: {:?}",
+            report.blockers
+        );
+        assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    }
+
+    // #1828 AC3: without `--verify-ec`, a pending review in blocking mode is
+    // still surfaced as a finding but does not itself force a blocker (EC
+    // hard-blocking stays opt-in via `--verify-ec`, unrelated to #1828).
+    #[test]
+    fn pending_ec_review_in_blocking_mode_without_verify_ec_does_not_block() {
+        let mut report = ready_project_health_report("demo");
+        let mut ec_report = ProjectEcGateReport::not_evaluated("demo");
+        ec_report.review_mode = Some("blocking".to_string());
+        ec_report.pending_review =
+            Some("independent EC semantic review evidence is missing".to_string());
+
+        apply_pending_ec_review_classification(&mut report, &mut ec_report, false);
+
+        assert!(ec_report.findings.is_empty());
+        assert!(report.blockers.is_empty());
     }
 
     #[test]
@@ -4813,6 +4949,8 @@ mod tests {
                 stderr_tail: String::new(),
             }],
             review_backing: None,
+            review_mode: None,
+            pending_review: None,
         }
     }
 
@@ -5001,6 +5139,8 @@ mod tests {
             findings: Vec::new(),
             commands: Vec::new(),
             review_backing: None,
+            review_mode: None,
+            pending_review: None,
         }
     }
 
@@ -5110,6 +5250,7 @@ mod tests {
             tech_design_dir: None,
             ec,
             ec_review_backing: None,
+            ec_review_mode: None,
             workspaces: vec![],
         }
     }

@@ -21,11 +21,12 @@ registry types shared between `project_discovery` (writes) and `project_registry
 Seven structs declared in this spec:
 
 - `Project` — a discovered or manually declared project entry in `.aw/projects.toml`.
-  Six fields: `name`, `path` (PathBuf), optional `tech_design_dir`,
+  Seven fields: `name`, `path` (PathBuf), optional `tech_design_dir`,
   `ec: BTreeMap<String, EcBinding>` (EC tool bindings by category, declared
   before `workspaces` so the contract reads before the implementation),
   optional `ec_review_backing` (`human` | `agent` | `either` EC review policy,
-  #1829), and `workspaces: Vec<Workspace>`.
+  #1829), optional `ec_review_mode` (`blocking` | `deferred` EC review-timing
+  policy, #1828), and `workspaces: Vec<Workspace>`.
 - `EcBinding` — binds one EC category to an external measurement tool.
   Four fields: `tool` (`arena` | `rig` | `meter` | `vat`, validated by the command
   builder rather than serde), and the per-tool argument carriers: optional
@@ -80,6 +81,10 @@ definitions:
       ec_review_backing:
         type: string
         description: "Per-project EC review-backing policy: `human` (default when absent), `agent`, or `either`. Controls which reviewer_kind values in the durable EC review record satisfy the production-required EC review gate (#1829)."
+        x-serde-skip-if: "Option::is_none"
+      ec_review_mode:
+        type: string
+        description: "Per-project EC review-timing policy: `blocking` (default when absent) or `deferred`. In `deferred` mode a pending human EC review is recorded as `deferred_pending_human` and does not block `aw ec gen --verify`/the terminal code-check gate or the `aw wi run`/`aw capability run` runner; the pending review is instead surfaced as an advisory queue entry in `aw ec` and `aw health` until a post-hoc `aw ec review` finalizes it (#1828)."
         x-serde-skip-if: "Option::is_none"
       workspaces:
         type: array
