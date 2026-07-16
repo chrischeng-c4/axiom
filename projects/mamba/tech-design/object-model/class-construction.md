@@ -20,6 +20,15 @@ Invariant: a class with runtime bases follows define → update_bases →
 register_slots; the queue-and-drain pattern (`pending_class_*` vecs +
 `class_runtime_key_value` cached vreg) exists to enforce it.
 
+Step 4's `__init_subclass__` dispatch (`dispatch_type_new_creation_hooks`,
+mod.rs:1631) carries the same closure-handle hazard as `__init__` (Instance
+construction, below): the hook's dispatch address MUST come from
+`extract_registered_func_addr`, never `extract_func_addr`. A hook body
+referencing bare `__class__` or zero-arg `super()` compiles as a closure;
+the raw extractor's int fallback is never in `CALLABLE_REGISTRY`, so
+`is_registered` reads false and the whole hook silently no-ops — no error,
+no dispatch.
+
 Known gap: `cls.__slots__` reports the merged effective layout instead of the
 declared tuple (layout itself is correct) — tracked: #1523.
 
@@ -67,7 +76,8 @@ None for unbound/direct access where bound access resolves produces the
 `'NoneType' object is not callable` family: `type(None)()` singletons,
 `dict.__or__(a,b)` explicit dunder calls, multi-class composite construction.
 Diagnose these together — likely one resolution gap (tracked: #1550, #1582;
-exception-subclass variant in exceptions/exc-construction.md).
+exception-subclass variant in exceptions/construction-and-rendering.md
+§Known gaps).
 
 Per-builtin kwargs facts are real API contracts: `dict(**kw)` constructs;
 `list/set/frozenset` reject kwargs. Never share the accept/reject arm

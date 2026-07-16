@@ -27,7 +27,7 @@ Adjacent dispatch/datamodel dirs also owned here:
 Totals: 427 fixtures, 168 xfail (259 live). Runtime rejects (ABC/Protocol instantiation, duplicate-base /
 inconsistent-MRO TypeError) are proven POSITIVELY — `errors.py` fixtures byte-matching oracle error output, not walls.
 Adjacent proof: dict-key hash-domain regressions land in `behavior/std-libs/{logging,xml_etree,socket}` per
-`tech-design/object-model/dictkey-hash-domain-audit.md`.
+`tech-design/object-model/identity-and-keys.md` §Domain 2.
 
 ## Negative contract — what must be REJECTED
 
@@ -53,7 +53,7 @@ positive by definition (README.md dimension rule).
 - `subclassinit/test__test_init_subclass_wrong.py` verified passing but permanently skipped by a stale xfail; only
   `*_wrong.py` outside `type/` (wall-suffix name collision); tracked: #1768/#1772.
 - `operator_dispatch/` xfail (unary `-` on user classes compile-rejected) is an ingress-overwalling defect wearing
-  an xfail — type-system lane, `tech-design/type-system/ingress-overwalling-shapes.md`; tracked: #1769.
+  an xfail — type-system lane, `tech-design/type-system/walls-and-widening.md` §Fire/defer semantics; tracked: #1769.
 
 ## Verification
 
