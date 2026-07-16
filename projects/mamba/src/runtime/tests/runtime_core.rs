@@ -480,10 +480,12 @@ fn test_call_method_dict_keys() {
     let d = mb_dict_new();
     mb_dict_setitem(d, s("a"), MbValue::from_int(1));
     let result = mb_call_method(d, s("keys"), MbValue::none());
-    unsafe {
-        let items = extract_list(result);
-        assert_eq!(items.len(), 1);
-    }
+    // `.keys()` returns a `dict_keys` VIEW instance (CPython semantics), not
+    // a plain list — extract_list only unwraps ObjData::List and silently
+    // returns empty for anything else, so route through dict_view_elements
+    // (the same accessor dict_ops's own dispatch_dict_method tests rely on).
+    let items = crate::runtime::dict_ops::dict_view_elements(result).unwrap();
+    assert_eq!(items.len(), 1);
 }
 
 #[test]

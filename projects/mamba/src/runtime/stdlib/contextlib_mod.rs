@@ -1154,13 +1154,18 @@ mod tests {
             let ptr = result.as_ptr().expect("expected pointer");
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                let type_val = map.get("_type").expect("missing _type");
+                // `DictKey::Str` hashes in the Python-semantic domain, which
+                // does not match a bare `&str`'s native `Hash` impl — route
+                // through `dict_get_exact_str` (module-hazards.md).
+                let type_val = super::super::super::dict_ops::dict_get_exact_str(&map, "_type")
+                    .expect("missing _type");
                 if let ObjData::Str(ref s) = (*type_val.as_ptr().unwrap()).data {
                     assert_eq!(s, "suppress");
                 } else {
                     panic!("expected string for _type");
                 }
-                assert!(map.contains_key("_exceptions"));
+                assert!(super::super::super::dict_ops::dict_get_exact_str(&map, "_exceptions")
+                    .is_some());
             } else {
                 panic!("expected dict");
             }

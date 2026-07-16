@@ -3034,12 +3034,21 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*today.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
+                // `DictKey::Str` hashes in the Python-semantic domain, which
+                // does not match a bare `&str`'s native `Hash` impl — route
+                // through `dict_get_exact_str` (module-hazards.md).
                 // Year must be a reasonable value (>= 2020)
-                let year = map.get("year").and_then(|v| v.as_int()).unwrap();
+                let year = super::super::super::dict_ops::dict_get_exact_str(&map, "year")
+                    .and_then(|v| v.as_int())
+                    .unwrap();
                 assert!(year >= 2020, "year should be >= 2020, got {year}");
-                let month = map.get("month").and_then(|v| v.as_int()).unwrap();
+                let month = super::super::super::dict_ops::dict_get_exact_str(&map, "month")
+                    .and_then(|v| v.as_int())
+                    .unwrap();
                 assert!((1..=12).contains(&month), "month out of range: {month}");
-                let day = map.get("day").and_then(|v| v.as_int()).unwrap();
+                let day = super::super::super::dict_ops::dict_get_exact_str(&map, "day")
+                    .and_then(|v| v.as_int())
+                    .unwrap();
                 assert!((1..=31).contains(&day), "day out of range: {day}");
             }
         }

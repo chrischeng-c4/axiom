@@ -11371,10 +11371,16 @@ mod tests {
     fn hir_expr_contains_deferred_name_read(expr: &HirExpr, name: &str) -> bool {
         match expr {
             HirExpr::Call { func, args, .. } => {
-                matches!(
-                    func.as_ref(),
-                    HirExpr::StrLit(func_name, _) if func_name == "mb_deferred_name_read"
-                ) && matches!(args.as_slice(), [HirExpr::StrLit(arg_name, _)] if arg_name == name)
+                let is_direct_deferred_read = match func.as_ref() {
+                    HirExpr::StrLit(func_name, _) if func_name == "mb_deferred_name_read" => {
+                        matches!(args.as_slice(), [HirExpr::StrLit(arg_name, _)] if arg_name == name)
+                    }
+                    HirExpr::StrLit(func_name, _) if func_name == "mb_deferred_class_name_read" => {
+                        matches!(args.as_slice(), [_, HirExpr::StrLit(arg_name, _)] if arg_name == name)
+                    }
+                    _ => false,
+                };
+                is_direct_deferred_read
                     || hir_expr_contains_deferred_name_read(func, name)
                     || args
                         .iter()

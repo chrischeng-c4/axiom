@@ -2581,8 +2581,12 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*result.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
+                // `DictKey::Str` hashes in the Python-semantic domain, which
+                // does not match a bare `&str`'s native `Hash` impl — a raw
+                // `map.contains_key("__name__")` silently misses the entry.
+                // Route through `dict_get_exact_str` (module-hazards.md).
                 assert!(
-                    map.contains_key("__name__"),
+                    super::super::dict_ops::dict_get_exact_str(&map, "__name__").is_some(),
                     "module value must have __name__"
                 );
             } else {
@@ -2924,7 +2928,11 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*result.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                let val = map.get("count").copied().unwrap_or(MbValue::none());
+                // `DictKey::Str` hashes in the Python-semantic domain, which
+                // does not match a bare `&str`'s native `Hash` impl — route
+                // through `dict_get_exact_str` (module-hazards.md).
+                let val = super::super::dict_ops::dict_get_exact_str(&map, "count")
+                    .unwrap_or(MbValue::none());
                 assert_eq!(val.as_int(), Some(55));
             } else {
                 panic!("expected Dict");
@@ -3340,7 +3348,10 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*result.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
-                let pkg = map.get("__package__").copied().unwrap_or(MbValue::none());
+                // `dict_get_exact_str` is required here — see the
+                // module-hazards.md DictKey hash-domain note above.
+                let pkg = super::super::dict_ops::dict_get_exact_str(&map, "__package__")
+                    .unwrap_or(MbValue::none());
                 assert!(pkg.is_ptr(), "__package__ should be a string");
                 if let ObjData::Str(ref ss) = (*pkg.as_ptr().unwrap()).data {
                     assert_eq!(
@@ -3717,14 +3728,24 @@ mod tests {
                     2,
                     "dict should have exactly 2 entries from __all__"
                 );
-                assert!(map.contains_key("foo"), "foo should be exported");
-                assert!(map.contains_key("bar"), "bar should be exported");
+                // `DictKey::Str` hashes in the Python-semantic domain, which
+                // does not match a bare `&str`'s native `Hash` impl — a raw
+                // `map.contains_key(...)` silently misses present entries.
+                // Route through `dict_get_exact_str` (module-hazards.md).
                 assert!(
-                    !map.contains_key("_private"),
+                    super::super::dict_ops::dict_get_exact_str(&map, "foo").is_some(),
+                    "foo should be exported"
+                );
+                assert!(
+                    super::super::dict_ops::dict_get_exact_str(&map, "bar").is_some(),
+                    "bar should be exported"
+                );
+                assert!(
+                    super::super::dict_ops::dict_get_exact_str(&map, "_private").is_none(),
                     "_private should NOT be exported"
                 );
                 assert!(
-                    !map.contains_key("baz"),
+                    super::super::dict_ops::dict_get_exact_str(&map, "baz").is_none(),
                     "baz should NOT be exported (not in __all__)"
                 );
             } else {
@@ -3749,10 +3770,18 @@ mod tests {
             if let ObjData::Dict(ref lock) = (*result.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
                 // alpha and beta are public, _secret starts with _
-                assert!(map.contains_key("alpha"), "alpha should be exported");
-                assert!(map.contains_key("beta"), "beta should be exported");
+                // `dict_get_exact_str` is required here — see the
+                // module-hazards.md DictKey hash-domain note above.
                 assert!(
-                    !map.contains_key("_secret"),
+                    super::super::dict_ops::dict_get_exact_str(&map, "alpha").is_some(),
+                    "alpha should be exported"
+                );
+                assert!(
+                    super::super::dict_ops::dict_get_exact_str(&map, "beta").is_some(),
+                    "beta should be exported"
+                );
+                assert!(
+                    super::super::dict_ops::dict_get_exact_str(&map, "_secret").is_none(),
                     "_secret should NOT be exported"
                 );
             } else {

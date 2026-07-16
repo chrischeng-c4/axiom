@@ -1838,10 +1838,23 @@ mod tests {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    let class = map.get("__class__").copied().and_then(|v| extract_str(v));
+                    // `DictKey::Str` hashes in the Python-semantic domain, which
+                    // does not match a bare `&str`'s native `Hash` impl — route
+                    // through `dict_get_exact_str` (module-hazards.md).
+                    let class =
+                        super::super::super::dict_ops::dict_get_exact_str(&map, "__class__")
+                            .and_then(extract_str);
                     assert_eq!(class, Some("TestCase".to_string()));
-                    assert_eq!(map.get("_failures").and_then(|v| v.as_int()), Some(0));
-                    assert_eq!(map.get("_successes").and_then(|v| v.as_int()), Some(0));
+                    assert_eq!(
+                        super::super::super::dict_ops::dict_get_exact_str(&map, "_failures")
+                            .and_then(|v| v.as_int()),
+                        Some(0)
+                    );
+                    assert_eq!(
+                        super::super::super::dict_ops::dict_get_exact_str(&map, "_successes")
+                            .and_then(|v| v.as_int()),
+                        Some(0)
+                    );
                 }
             }
         }
@@ -1998,23 +2011,25 @@ mod tests {
     #[test]
     fn test_register_support_submodules_installs_type_params_invalid_test_methods() {
         register_support_submodules();
-        let test_name_collisions = module::MODULES.with(|mods| {
-            mods.borrow()
-                .get("TypeParamsInvalidTest")
-                .and_then(|m| m.attrs.get("test_name_collisions").copied())
-        });
-        let test_disallowed_expressions = module::MODULES.with(|mods| {
-            mods.borrow()
-                .get("TypeParamsInvalidTest")
-                .and_then(|m| m.attrs.get("test_disallowed_expressions").copied())
-        });
+        // "TypeParamsInvalidTest" is registered as a CLASS via mb_class_register,
+        // not a module — module::MODULES only holds a placeholder string attr
+        // under this name (see register_type_params_wrapper_submodule). Look the
+        // methods up through the class registry instead.
+        let test_name_collisions = super::super::super::class::lookup_method(
+            "TypeParamsInvalidTest",
+            "test_name_collisions",
+        );
+        let test_disallowed_expressions = super::super::super::class::lookup_method(
+            "TypeParamsInvalidTest",
+            "test_disallowed_expressions",
+        );
 
         assert_eq!(
-            test_name_collisions.and_then(|v| v.as_func()),
+            test_name_collisions.as_func(),
             Some(type_params_invalid_test_name_collisions as usize)
         );
         assert_eq!(
-            test_disallowed_expressions.and_then(|v| v.as_func()),
+            test_disallowed_expressions.as_func(),
             Some(type_params_invalid_test_disallowed_expressions as usize)
         );
     }

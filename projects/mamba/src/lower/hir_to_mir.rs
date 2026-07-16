@@ -1571,6 +1571,13 @@ struct HirToMir<'a> {
     blocks: Vec<BasicBlock>,
     current_stmts: Vec<MirInst>,
     sym_to_vreg: HashMap<SymbolId, VReg>,
+    /// SymbolId.0 of module-scope Vars whose `sym_to_vreg` entry is
+    /// synced with a paired boxed StoreGlobal (the plain-assignment write
+    /// path). Reads of these that expect Any can safely re-load from
+    /// global storage instead of the (possibly stale-raw) local cache
+    /// (#1794). Loop/comprehension-internal bindings that share
+    /// `sym_to_vreg` but never pair with StoreGlobal are NOT in this set.
+    global_synced_syms: HashSet<u32>,
     /// Block IDs for break/continue targets
     loop_exit: Option<BlockId>,
     loop_header: Option<BlockId>,
@@ -1857,6 +1864,7 @@ impl<'a> HirToMir<'a> {
             blocks: Vec::new(),
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
+            global_synced_syms: HashSet::new(),
             loop_exit: None,
             loop_header: None,
             current_block_id: None,
@@ -2170,6 +2178,7 @@ impl<'a> HirToMir<'a> {
             blocks: Vec::new(),
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
+            global_synced_syms: HashSet::new(),
             loop_exit: None,
             loop_header: None,
             current_block_id: None,
@@ -2265,6 +2274,7 @@ impl<'a> HirToMir<'a> {
         self.blocks.clear();
         self.current_stmts.clear();
         self.sym_to_vreg.clear();
+        self.global_synced_syms.clear();
         self.class_method_callable_values.clear();
         self.loop_exit = None;
         self.loop_header = None;
@@ -3891,6 +3901,7 @@ impl<'a> HirToMir<'a> {
                                         name: *sym,
                                         value: boxed,
                                     });
+                                    self.global_synced_syms.insert(sym.0);
                                 }
                             } else {
                                 // First assignment — treat as definition.
@@ -3905,6 +3916,7 @@ impl<'a> HirToMir<'a> {
                                         name: *sym,
                                         value: boxed,
                                     });
+                                    self.global_synced_syms.insert(sym.0);
                                 }
                             }
                         } // close cell_override else branch
@@ -8886,6 +8898,32 @@ impl<'a> HirToMir<'a> {
                     return dest;
                 }
                 if let Some(&vreg) = self.sym_to_vreg.get(sym) {
+                    // #1794: a plain module-scope Var's local cache can hold
+                    // the raw pre-box vreg from an earlier concretely-typed
+                    // write (e.g. `total = 0`, cached raw for the fast native
+                    // path) while a *later* occurrence of the same symbol
+                    // (e.g. `total += <Any-typed value>`) is tagged Any
+                    // because the checker widened the symbol after seeing
+                    // that write. Returning the stale raw vreg here hands its
+                    // bits to a callsite expecting an already-boxed MbValue —
+                    // box_operand treats Any as "already boxed" and skips
+                    // boxing, so a raw int's bit pattern gets reinterpreted
+                    // as a float (e.g. `0i64` misreads as `0.0`).
+                    // `global_synced_syms` covers only the plain-assignment
+                    // write path that pairs every Copy with a boxed
+                    // StoreGlobal, so it's safe to re-load from there instead
+                    // of trusting the local cache. Loop/comprehension-internal
+                    // bindings also live in `sym_to_vreg` but never join that
+                    // set, so they keep using the raw cached vreg unchanged.
+                    if *ty == self.tcx.any() && self.global_synced_syms.contains(&sym.0) {
+                        let dest = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadGlobal {
+                            dest,
+                            name: *sym,
+                            ty: *ty,
+                        });
+                        return dest;
+                    }
                     return vreg;
                 }
                 if self.runtime_bound_class_syms.contains(&sym.0) {

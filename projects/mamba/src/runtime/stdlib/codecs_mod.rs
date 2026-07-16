@@ -3180,9 +3180,16 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_str_passthrough() {
+    fn test_decode_str_raises_type_error() {
+        // CPython: `codecs.decode("x", "utf-8")` raises TypeError — str is
+        // not a bytes-like object (verified against CPython 3.12: "a
+        // bytes-like object is required, not 'str'"). It does not pass
+        // through unchanged.
+        clear_exc();
         let result = mb_codecs_decode(s("x"), s("utf-8"));
-        assert_eq!(get_str(result), Some("x".to_string()));
+        assert!(result.is_none());
+        assert_eq!(raised_type().as_deref(), Some("TypeError"));
+        clear_exc();
     }
 
     #[test]
