@@ -1000,6 +1000,50 @@ test("imports TypeScript class fields without raw TS syntax", () => {
 }
 
 #[tokio::test]
+async fn test_worker_strips_typescript_this_parameters_in_imported_modules() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        src.join("reader.ts"),
+        r#"
+export const formatWithReader = function (this: { prefix: string }, value: string) {
+  return `${this.prefix}:${value}`;
+};
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("this-parameter.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { formatWithReader } from "./src/reader";
+
+test("imports a TypeScript this pseudo-parameter without raw TS syntax", () => {
+  expect(formatWithReader.call({ prefix: "jet" }, "test")).toBe("jet:test");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "imported TypeScript this pseudo-parameters must be stripped: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
 async fn test_worker_rewrites_dynamic_directory_imports_to_index_modules() {
     if which::which("node").is_err() {
         eprintln!("skipping: node not on PATH");
