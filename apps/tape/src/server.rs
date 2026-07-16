@@ -546,12 +546,26 @@ pub async fn admin_backup(
         None => 0,
     };
     match crate::raft::snapshot_bytes(&st.journal, applied) {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/json")],
-            bytes,
-        )
-            .into_response(),
+        Ok(bytes) => {
+            // Audit only the low-frequency management operation. Append and
+            // consumer checkpoint traffic is deliberately not duplicated into
+            // logs: its durable, payload-free audit trail is the Tape journal
+            // itself, while credentials/denials are already emitted through
+            // the shared service-auth redacted audit sink.
+            tracing::info!(
+                target: "tape.audit",
+                event = "backup_snapshot_served",
+                subject = principal.subject().unwrap_or("anonymous"),
+                applied_index = applied,
+                bytes = bytes.len(),
+            );
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                bytes,
+            )
+                .into_response()
+        }
         Err(e) => ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
             .into_response(),
     }
