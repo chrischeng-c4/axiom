@@ -28,6 +28,7 @@
 //! k8s-native service CLI's `<cli> connect` wants (extracted from `lumen
 //! connect`, #1321/#1376 — see `CONTRIBUTING.md` § "Deploy artifacts").
 
+pub mod artifact;
 pub mod chainable;
 #[cfg(feature = "k8s")]
 pub mod connect;
