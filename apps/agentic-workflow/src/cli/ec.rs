@@ -2,7 +2,7 @@
 // CODEGEN-BEGIN
 // generator-gap: aw-ec-cli-v1
 // reason: EC inventory/check generation is a new workflow surface not yet covered by deterministic CLI codegen primitives.
-use crate::cli::capability::{HitlChoice, HitlQuestion};
+use crate::cli::capability::{HitlChoice, HitlInteraction, HitlQuestion};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use fs2::FileExt;
@@ -1924,7 +1924,7 @@ fn pending_ec_review_hitl_question(
             ),
             wi,
         ),
-        tool_hint: "ask_user_question".to_string(),
+        interaction: HitlInteraction::user_question(),
         choices: vec![
             HitlChoice {
                 id: "accept_after_review".to_string(),
@@ -6481,7 +6481,8 @@ e2e_tests:
 
         let output = serde_json::to_value(summary).unwrap();
         let hitl = &output["hitl_question"];
-        assert_eq!(hitl["tool_hint"], "ask_user_question");
+        assert_eq!(hitl["interaction"]["kind"], "user_question");
+        assert!(hitl.get("tool_hint").is_none());
         assert_eq!(
             hitl["target"], "projects/demo/external-contracts/ec-review.json",
             "the reviewer must see the durable review record"

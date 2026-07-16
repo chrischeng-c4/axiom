@@ -200,7 +200,7 @@ scenarios:
     then:
       - "aw capability run emits action=blocked instead of invoking epicize again"
       - "next.kind is review_planning_artifact and next.payload_path points at the pending artifact"
-      - "hitl_question.tool_hint is ask_user_question so the decision is captured before tracker mutation"
+      - "hitl_question.interaction.kind is user_question so the host captures the decision before tracker mutation"
 ```
 
 ## State Machine

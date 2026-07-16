@@ -6743,7 +6743,7 @@ fn fillback_hitl_question(target: &str, reason: &str, resume_command: &str) -> s
         "question": "How should AW resolve the unsafe or ambiguous whole-file source ownership?",
         "target": target,
         "resume_command": resume_command,
-        "tool_hint": "ask_user_question",
+        "interaction": { "kind": "user_question" },
         "choices": [
             {
                 "id": "repair-owner",

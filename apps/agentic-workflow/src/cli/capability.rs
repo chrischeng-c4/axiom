@@ -1003,13 +1003,37 @@ pub struct HitlQuestion {
     pub question: String,
     pub target: String,
     pub resume_command: String,
-    pub tool_hint: String,
+    pub interaction: HitlInteraction,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<HitlChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub freeform_prompt: Option<String>,
+}
+
+/// Host-neutral interaction requested by a HITL envelope.
+///
+/// The host adapter owns the mapping to its callable tool: Claude Code uses
+/// `AskUserQuestion`, Codex uses `request_user_input` when exposed, and AGY
+/// uses `ask_user`. AW therefore never emits a host-specific tool name.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct HitlInteraction {
+    pub kind: HitlInteractionKind,
+}
+
+impl HitlInteraction {
+    pub fn user_question() -> Self {
+        Self {
+            kind: HitlInteractionKind::UserQuestion,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HitlInteractionKind {
+    UserQuestion,
 }
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -7010,7 +7034,7 @@ fn capability_hitl_question(
         resume_command: format!(
             "aw capability run --project {project} --non-interactive --max-ticks 1"
         ),
-        tool_hint: "ask_user_question".to_string(),
+        interaction: HitlInteraction::user_question(),
         choices,
         default_choice: Some(default_choice.to_string()),
         freeform_prompt: Some(reason.to_string()),
@@ -17836,7 +17860,7 @@ capability_refs:
         );
         assert!(action.requires_hitl);
         let question = action.hitl_question.expect("epic rollup asks human");
-        assert_eq!(question.tool_hint, "ask_user_question");
+        assert_eq!(question.interaction.kind, HitlInteractionKind::UserQuestion);
         assert_eq!(question.default_choice.as_deref(), Some("approve_rollup"));
     }
 

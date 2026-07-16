@@ -2,8 +2,11 @@
 // CODEGEN-BEGIN
 //! `aw wi run` / `aw capability run` -- root-driven workflow runner envelope.
 
+#[cfg(test)]
+use crate::cli::capability::HitlInteractionKind;
 use crate::cli::capability::{
-    self, CapabilityAction, CapabilityActionKind, CapabilityStatus, HitlChoice, HitlQuestion,
+    self, CapabilityAction, CapabilityActionKind, CapabilityStatus, HitlChoice, HitlInteraction,
+    HitlQuestion,
 };
 #[cfg(test)]
 use crate::cli::issues as wi_cli;
@@ -1811,7 +1814,7 @@ fn planning_artifact_hitl_question(project: &str, path: &Path, reason: &str) -> 
         ),
         target: path.display().to_string(),
         resume_command: project_capability_rollup_command(project),
-        tool_hint: "ask_user_question".to_string(),
+        interaction: HitlInteraction::user_question(),
         choices: vec![
             HitlChoice {
                 id: "approve_epic_plan".to_string(),
@@ -2421,7 +2424,7 @@ fn generic_hitl_question(envelope: &WorkflowEnvelope, root_command: &str) -> Hit
         },
         target: format!("{}:{}", envelope.current.kind, envelope.current.id),
         resume_command: root_command.to_string(),
-        tool_hint: "ask_user_question".to_string(),
+        interaction: HitlInteraction::user_question(),
         choices: vec![
             HitlChoice {
                 id: "run_next_command".to_string(),
@@ -3106,7 +3109,7 @@ cap_path = "apps/jet/README.md"
         ensure_hitl_question(&mut envelope, "aw run --project agentic-workflow");
 
         let question = envelope.hitl_question.as_ref().expect("hitl question");
-        assert_eq!(question.tool_hint, "ask_user_question");
+        assert_eq!(question.interaction.kind, HitlInteractionKind::UserQuestion);
         assert_eq!(question.resume_command, "aw run --project agentic-workflow");
         assert_eq!(question.default_choice.as_deref(), Some("run_next_command"));
 
@@ -3674,8 +3677,8 @@ review_status: pending
             envelope
                 .hitl_question
                 .as_ref()
-                .map(|question| question.tool_hint.as_str()),
-            Some("ask_user_question")
+                .map(|question| question.interaction.kind),
+            Some(HitlInteractionKind::UserQuestion)
         );
     }
 
@@ -3783,7 +3786,7 @@ review_status: pending
             target: "Package Manager".to_string(),
             resume_command: "aw capability run --project jet --non-interactive --max-ticks 1"
                 .to_string(),
-            tool_hint: "ask_user_question".to_string(),
+            interaction: HitlInteraction::user_question(),
             choices: Vec::new(),
             default_choice: None,
             freeform_prompt: None,
