@@ -912,6 +912,73 @@ test("facades an emitted test module's rewritten CommonJS file URL", () => {
 }
 
 #[tokio::test]
+async fn test_worker_facades_cjs_default_from_physical_prebuilt_esm_dist() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let node_modules = tmp.path().join("node_modules");
+    let prebuilt_package = node_modules.join("prebuilt-workspace-package");
+    let legacy_cjs = node_modules.join("legacy-editor");
+    fs::create_dir_all(prebuilt_package.join("dist")).unwrap();
+    fs::create_dir_all(&legacy_cjs).unwrap();
+
+    fs::write(
+        prebuilt_package.join("package.json"),
+        r#"{"name":"prebuilt-workspace-package","type":"module","exports":{".":"./dist/index.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        prebuilt_package.join("dist/index.js"),
+        r#"
+import Editor from "legacy-editor";
+export const editorLabel = Editor.label;
+"#,
+    )
+    .unwrap();
+    fs::write(
+        legacy_cjs.join("package.json"),
+        r#"{"name":"legacy-editor","main":"./index.js"}"#,
+    )
+    .unwrap();
+    fs::write(
+        legacy_cjs.join("index.js"),
+        r#"
+const bundledTemplate = `
+export default "not module syntax";
+`;
+module.exports = { label: "braft-compatible" };
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("prebuilt-cjs-default-interop.test.ts"),
+        r#"
+import { test, expect } from "@jet/test";
+import { editorLabel } from "prebuilt-workspace-package";
+
+test("loads a CJS default import from a physical prebuilt ESM dist file", () => {
+  expect(editorLabel).toBe("braft-compatible");
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    cfg.workers = 1;
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "Jet's Node loader must preserve CJS default-import interop for a physical prebuilt ESM dist file: {:#?}",
+        summary.reports
+    );
+    assert_eq!(summary.passed, 1);
+}
+
+#[tokio::test]
 async fn test_worker_preserves_trailing_named_exports_from_physical_esm_packages() {
     if which::which("node").is_err() {
         eprintln!("skipping: node not on PATH");

@@ -91,6 +91,73 @@ function isUnsupportedCommonJsFacadeSpecifier(specifier) {
     || (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier) && !specifier.startsWith("file:"));
 }
 
+function skipJavaScriptQuotedLiteral(source, index, quote) {
+  for (index += 1; index < source.length; index += 1) {
+    if (source[index] === "\\") {
+      index += 1;
+    } else if (source[index] === quote) {
+      return index + 1;
+    }
+  }
+  return source.length;
+}
+
+function hasTopLevelStaticEsmSyntax(source) {
+  // `nextResolve` reports legacy `.js` packages as CommonJS. Some packages
+  // nevertheless ship static ESM through that path, so preserve the existing
+  // compatibility upgrade. This must be lexical rather than a line regex:
+  // bundled CommonJS can contain an ESM-looking line inside a template literal,
+  // which is data rather than module syntax.
+  let braceDepth = 0;
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "/" && source[index + 1] === "/") {
+      const newline = source.indexOf("\n", index + 2);
+      index = newline === -1 ? source.length : newline + 1;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      index = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      index = skipJavaScriptQuotedLiteral(source, index, char);
+      continue;
+    }
+    if (char === "{") {
+      braceDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      index += 1;
+      continue;
+    }
+    if (braceDepth === 0 && /[A-Za-z_$]/.test(char)) {
+      const start = index;
+      index += 1;
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index])) {
+        index += 1;
+      }
+      const word = source.slice(start, index);
+      const next = source.slice(index).trimStart();
+      const propertyAccess = start > 0 && source[start - 1] === ".";
+      if (!propertyAccess && word === "export") {
+        return true;
+      }
+      if (word === "import" && !next.startsWith("(")) {
+        return true;
+      }
+      continue;
+    }
+    index += 1;
+  }
+  return false;
+}
+
 function inferredEsmModuleResolution(resolved) {
   if (
     (resolved.format && resolved.format !== "commonjs")
@@ -101,7 +168,7 @@ function inferredEsmModuleResolution(resolved) {
 
   try {
     const source = readFileSync(fileURLToPath(resolved.url), "utf8");
-    const hasEsmSyntax = /(?:^|[\r\n])\s*(?:import\s*(?:["']|[A-Za-z_$*{])|export\s+(?:default\b|\*|\{|(?:async\s+)?(?:const|let|var|function|class)\b))/.test(source);
+    const hasEsmSyntax = hasTopLevelStaticEsmSyntax(source);
     return hasEsmSyntax
       ? { ...resolved, format: "module", shortCircuit: true }
       : null;
@@ -3482,6 +3549,23 @@ const quoted = 'jet:test';
         assert!(
             !tree.root_node().has_error(),
             "embedded runtime has JavaScript syntax errors"
+        );
+    }
+
+    #[test]
+    fn test_asset_loader_is_valid_javascript() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(TEST_ASSET_LOADER, None).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "embedded asset loader has JavaScript syntax errors"
+        );
+        assert!(
+            TEST_ASSET_LOADER.contains("hasTopLevelStaticEsmSyntax"),
+            "asset loader must classify static ESM syntax lexically"
         );
     }
 
