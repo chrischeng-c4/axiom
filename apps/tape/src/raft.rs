@@ -95,6 +95,7 @@ pub fn snapshot_bytes(journal: &Arc<Mutex<TapeJournal>>, up_to: Index) -> Result
     Ok(serde_json::to_vec(&JournalSnapshot { up_to, journal })?)
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in raft.rs is hand-written pending codegen support">
 /// Prepare an empty replica PVC to recover from one exact backup object.
 ///
 /// This is deliberately a cold-start-only operation: it refuses any existing
@@ -137,6 +138,7 @@ pub fn prepare_bootstrap_seed(data_dir: &Path, node_id: NodeId, bytes: &[u8]) ->
     write_atomic(&marker, snapshot.up_to.to_string().as_bytes())?;
     Ok(())
 }
+// </HANDWRITE>
 
 /// Atomic file replacement shared by cold seed preparation. The files live
 /// on the PVC and have no parent creation race because the empty-directory
