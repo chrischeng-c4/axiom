@@ -35,7 +35,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: GUIDE
+    anchor: exec
   - path: apps/vat/tests/vat_cli_convention.rs
     action: modify
     section: unit-test
