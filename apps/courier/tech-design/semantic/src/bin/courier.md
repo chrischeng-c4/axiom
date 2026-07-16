@@ -54,15 +54,16 @@ schemas: []
 <!-- type: changes lang: yaml -->
 
 ```yaml
-coverage_kind: semantic
 changes:
-  - action: modify
-    description: 'Pre-existing module captured by `score fillback`.
-  
-      Governance: hand-written until extended with
-  
-      Schema / Logic / Interface sections.'
-    impl_mode: hand-written
-    path: apps/courier/src/bin/courier.rs
-    section: schema
+- action: modify
+  anchor: main
+  description: 'Pre-existing module captured by `score fillback`.
+
+    Governance: hand-written until extended with
+
+    Schema / Logic / Interface sections.'
+  impl_mode: hand-written
+  path: apps/courier/src/bin/courier.rs
+  section: schema
+coverage_kind: semantic
 ```
