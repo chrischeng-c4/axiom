@@ -698,6 +698,26 @@ pub fn mb_coroutine_awaited(coro_handle: MbValue) -> MbValue {
     MbValue::from_bool(awaited)
 }
 
+/// Whether `rt_await`'s own internal poll just suspended this coroutine
+/// (`mb_coroutine_suspend_current`). Callers that drive a single `rt_await`
+/// call synchronously (e.g. `to_thread_future_body`) must branch on this
+/// flag rather than re-polling the awaitable's live state afterward: the
+/// awaitable can transition pending -> ready on another thread between
+/// `rt_await`'s poll and a later re-check, which desyncs the re-check from
+/// the suspend that already happened (issue #1841).
+pub(crate) fn mb_coroutine_is_suspended(coro_handle: MbValue) -> bool {
+    coro_handle
+        .as_int()
+        .and_then(|id| {
+            COROUTINES
+                .read()
+                .unwrap()
+                .get(&(id as u64))
+                .map(|c| c.suspend_requested)
+        })
+        .unwrap_or(false)
+}
+
 pub fn mb_coroutine_await_wrapper(coro_handle: MbValue) -> MbValue {
     let wrapper = MbObject::new_instance("coroutine_wrapper".to_string());
     unsafe {

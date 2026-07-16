@@ -955,12 +955,9 @@ unsafe extern "C" fn to_thread_future_body(coro_bits: i64) -> i64 {
             MbValue::from_bool(true),
         );
         let awaited = rt_await(future);
-        if future_state(future) == "PENDING" {
+        if super::super::async_rt::mb_coroutine_is_suspended(coro) {
             super::super::async_rt::mb_coroutine_set_state(coro, 2);
-        }
-        if future_state(future) != "PENDING"
-            && super::super::exception::current_exception_type().is_none()
-        {
+        } else if super::super::exception::current_exception_type().is_none() {
             super::super::async_rt::mb_coroutine_complete(coro, awaited);
         }
         awaited
