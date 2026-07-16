@@ -3014,6 +3014,15 @@ semantic_domain:
           - name: "CLAUDE_MATCHER"
             kind: "constant"
             public: false
+          - name: "AGY_CONFIG_KEY"
+            kind: "constant"
+            public: false
+          - name: "AGY_MATCHER"
+            kind: "constant"
+            public: false
+          - name: "LOCAL_BYPASS_GIT_REL"
+            kind: "constant"
+            public: false
           - name: "GuardArgs"
             kind: "struct"
             public: true
@@ -3026,6 +3035,9 @@ semantic_domain:
           - name: "GuardPretoolArgs"
             kind: "struct"
             public: true
+          - name: "GuardBypassArgs"
+            kind: "struct"
+            public: true
           - name: "GuardAgent"
             kind: "enum"
             public: true
@@ -3033,6 +3045,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "includes_claude"
+            kind: "function"
+            public: false
+          - name: "includes_agy"
             kind: "function"
             public: false
           - name: "GuardHookChange"
@@ -3050,6 +3065,12 @@ semantic_domain:
           - name: "run_off"
             kind: "function"
             public: false
+          - name: "run_bypass"
+            kind: "function"
+            public: false
+          - name: "run_resume"
+            kind: "function"
+            public: false
           - name: "run_pretool"
             kind: "function"
             public: false
@@ -3063,6 +3084,24 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "guard_command"
+            kind: "function"
+            public: false
+          - name: "agy_guard_command"
+            kind: "function"
+            public: false
+          - name: "agy_hooks_path"
+            kind: "function"
+            public: false
+          - name: "install_agy_guard_hook"
+            kind: "function"
+            public: false
+          - name: "remove_agy_guard_hook"
+            kind: "function"
+            public: false
+          - name: "upsert_agy_guard_hook_at"
+            kind: "function"
+            public: false
+          - name: "remove_agy_guard_hook_at"
             kind: "function"
             public: false
           - name: "upsert_hook_file"
@@ -3104,10 +3143,34 @@ semantic_domain:
           - name: "is_aw_guard_handler"
             kind: "function"
             public: false
+          - name: "agy_allow_output"
+            kind: "function"
+            public: false
+          - name: "agy_deny_output"
+            kind: "function"
+            public: false
+          - name: "tracked_guard_paths"
+            kind: "function"
+            public: false
+          - name: "ensure_tracked_guard_paths_clean"
+            kind: "function"
+            public: false
+          - name: "commit_guard_policy"
+            kind: "function"
+            public: false
+          - name: "local_bypass_path"
+            kind: "function"
+            public: false
+          - name: "local_bypass_is_active"
+            kind: "function"
+            public: false
           - name: "guard_handler_is_active"
             kind: "function"
             public: false
           - name: "hook_file_has_guard_handler"
+            kind: "function"
+            public: false
+          - name: "agy_hook_has_guard_handler"
             kind: "function"
             public: false
           - name: "decide_active_pretool_payload"
@@ -3120,6 +3183,15 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "extract_target_paths"
+            kind: "function"
+            public: false
+          - name: "agy_command_line"
+            kind: "function"
+            public: false
+          - name: "parse_agy_direct_mutation_targets"
+            kind: "function"
+            public: false
+          - name: "shell_path_operands"
             kind: "function"
             public: false
           - name: "parse_apply_patch_targets"
@@ -3963,5 +4035,18 @@ changes:
       gained a `strip_project_prefix` method to translate repo-root-relative
       targets into the project-root-relative keys the resolver uses. Symbol
       list updated for both new functions.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/guard.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1802: persistent `aw guard on/off` toggles now commit only their
+      changed tracked Codex/Claude policy files and reject pre-existing policy
+      drift. `aw guard bypass`/`resume` provide an expiring worktree-local
+      exception instead of disabling policy. Added the AGY adapter, preserving
+      its user-global hooks, returning its required explicit allow/deny JSON,
+      and recognizing only direct target-bearing shell mutations so CAP remains
+      responsible for broad destructive-command control. Symbol inventory and
+      focused guard coverage now include the new policy, bypass, and AGY paths.
     impl_mode: hand-written
 ```

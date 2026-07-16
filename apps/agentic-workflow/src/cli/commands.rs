@@ -34,7 +34,7 @@ pub enum Commands {
     /// Generator gap request surface after takeover readiness.
     Generator(generator::GeneratorArgs),
 
-    /// Agent-runtime direct edit/create guard for Codex and Claude Code.
+    /// Agent-runtime direct edit/create guard for Codex, Claude Code, and AGY.
     Guard(guard::GuardArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
