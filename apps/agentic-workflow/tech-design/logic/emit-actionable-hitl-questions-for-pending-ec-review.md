@@ -50,12 +50,8 @@ changes:
   - path: apps/agentic-workflow/src/cli/ec.rs
     action: modify
     section: logic
-    impl_mode: codegen
-  - path: apps/agentic-workflow/src/cli/llm.rs
-    action: modify
-    section: logic
     impl_mode: hand-written
-    anchor: "const WI_MD: &str"
+    anchor: "run_review"
   - path: apps/agentic-workflow/tech-design/logic/emit-actionable-hitl-questions-for-pending-ec-review.md
     action: modify
     section: logic
@@ -68,12 +64,6 @@ changes:
 ---
 id: emit-actionable-hitl-questions-for-pending-ec-review-verification
 requirements:
-  agent_orientation_mapping:
-    id: R4
-    text: "Agent orientation maps a typed HITL question to the host ask_user_question facility before resuming."
-    kind: regression
-    risk: medium
-    verify: llm_wi_topic_teaches_host_hitl_handoff
   human_independence_preserved:
     id: R3
     text: "The structured handoff cannot turn same-agent evidence into production approval."
@@ -97,5 +87,4 @@ flowchart TD
     r1[R1 pending question contract] --> ec_review_pending_emits_structured_hitl_question[ec_review_pending_emits_structured_hitl_question]
     r2[R2 semantic checklist visible] --> ec_review_pending_emits_structured_hitl_question
     r3[R3 human independence preserved] --> ec_review_requires_current_independent_human_evidence[ec_review_requires_current_independent_human_evidence]
-    r4[R4 agent orientation mapping] --> llm_wi_topic_teaches_host_hitl_handoff[llm_wi_topic_teaches_host_hitl_handoff]
 ```
