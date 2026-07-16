@@ -12,6 +12,7 @@ fn vat() -> &'static str {
     env!("CARGO_BIN_EXE_vat")
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in vat_cli_convention.rs is hand-written pending codegen support">
 #[test]
 fn cli_convention_help_lists_all_three() {
     let out = Command::new(vat()).arg("--help").output().unwrap();
@@ -39,6 +40,7 @@ fn cli_convention_help_lists_all_three() {
         "vat --help is missing the mandatory `issue` verb:\n{stdout}"
     );
 }
+// </HANDWRITE>
 
 #[test]
 fn cli_convention_llm_flags() {
