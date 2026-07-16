@@ -32,18 +32,20 @@ changes:
   path: apps/courier/build.rs
   section: schema
 - action: modify
-  anchor: trap
   description: |
     Project build entrypoint.
   impl_mode: hand-written
   path: apps/courier/build.sh
+  replaces:
+  - "<handwrite-tracker:#4158>"
   section: schema
 - action: modify
-  anchor: say
   description: |
     Project installation entrypoint.
   impl_mode: hand-written
   path: apps/courier/install.sh
+  replaces:
+  - "<handwrite-tracker:#4158>"
   section: schema
 coverage_kind: semantic
 ```
