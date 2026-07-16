@@ -94,7 +94,7 @@ fn token_registry_source(tape: &Tape) -> Option<render::TokenRegistrySource<'_>>
         })
 }
 
-// <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="pending-tracker" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="#1805" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
 /// Render every child object for `tape`, in dependency order (identity first,
 /// then the workload + its Services + PDB).
 pub fn render(tape: &Tape) -> Vec<Value> {
@@ -123,7 +123,7 @@ pub fn render(tape: &Tape) -> Vec<Value> {
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:kubernetes-peer-workload" tracker="pending-tracker" reason="kubernetes-peer-workload section in render.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:kubernetes-peer-workload" tracker="#1805" reason="kubernetes-peer-workload section in render.rs is hand-written pending codegen support">
 /// The durable serving StatefulSet: the toolkit's downward-API base
 /// (`replicas = replicasPerShard` — `shard_count` PINNED to 1, tape is a
 /// single raft group; the raft-runtime env quartet + `TAPE_PEER_SERVICE`; the
@@ -193,11 +193,7 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
             .as_deref()
             .unwrap_or("IfNotPresent"),
         command: vec!["tape".into(), "serve".into()],
-        args: vec![],
-        ports: vec![
-            json!({ "name": "http", "containerPort": CLIENT_PORT, "protocol": "TCP" }),
-            json!({ "name": "raft", "containerPort": RAFT_PORT, "protocol": "TCP" }),
-        ],
+        ports: vec![("http", CLIENT_PORT), ("raft", RAFT_PORT)],
         headless_service: headless,
         // tape is a single raft group: shardCount is part of the shared CRD
         // shape but the render pins it to 1 (replicasPerShard is the scale

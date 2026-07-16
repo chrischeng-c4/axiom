@@ -30,7 +30,7 @@ use anyhow::{Context, Result};
 use axum::Router;
 use raft_runtime::{
     ClusterTopology, FsyncPolicy, HostConfig, Index, Membership, NodeId, OutcomeWindow,
-    PeerTransport, ProposalCache, RaftHost, RaftStateMachine, RaftStore, SnapshotPolicy,
+    PeerTransport, RaftHost, RaftStateMachine, RaftStore, SnapshotPolicy,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -446,7 +446,7 @@ pub struct TapeRaft {
     proposal_sequence: AtomicU64,
 }
 
-// <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="pending-tracker" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="#1805" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
 impl TapeRaft {
     /// Spawn the group for node `node_id`, persisting shared Raft hard state,
     /// commit watermark, log, and snapshots under `raft_dir`. `peers` maps the
@@ -522,21 +522,7 @@ impl TapeRaft {
                 cfg,
             ),
         };
-        static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
-        let wall = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-        let session = wall
-            ^ ((std::process::id() as u64) << 32)
-            ^ NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
-        Ok(TapeRaft {
-            host,
-            sm,
-            node_id,
-            session,
-            proposal_sequence: AtomicU64::new(1),
-        })
+        Ok(TapeRaft { host, sm })
     }
 
     /// Spawn from a k8s-derived [`ClusterTopology`] (the auto-mode serve
@@ -585,12 +571,6 @@ impl TapeRaft {
             snapshot: SnapshotPolicy::EveryEntries(snapshot_every),
             ..HostConfig::default()
         }
-    }
-
-    /// Drain the shared Raft host's in-flight peer RPCs before its h2 client
-    /// and peer listener are torn down.
-    pub async fn shutdown(&self) -> Result<()> {
-        self.host.shutdown().await
     }
 
     /// Peer raft RPCs + leader forwarding + `/raftz`. The h2c compatibility

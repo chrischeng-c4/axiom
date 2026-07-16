@@ -155,11 +155,29 @@ impl service_http::MetricsProvider for AppState {
     }
 }
 
-// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="pending-tracker" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:public-peer-route-isolation" tracker="#1805" reason="public-peer-route-isolation section in server.rs is hand-written pending codegen support">
 /// Build the HTTP router for the tape transport: the `/topics` data plane
 /// merged onto the shared service shell's standard probe routes.
 pub fn router(state: AppState) -> Router {
     router_with_admission(state, None)
+}
+
+/// Build the public router for a deployment whose Raft peer routes are owned
+/// by the dedicated mTLS listener. The underlying application composition is
+/// deliberately unchanged so data, probes, auth, admission, and metrics stay
+/// identical; a first middleware rejects the two peer route families before
+/// route dispatch can expose them on the public h2c listener.
+pub fn router_without_raft_routes(state: AppState) -> Router {
+    router_with_admission(state, None).layer(from_fn(reject_public_raft_routes))
+}
+
+async fn reject_public_raft_routes(request: axum::extract::Request, next: Next) -> Response {
+    let path = request.uri().path();
+    if path == "/raftz" || path.starts_with("/raft/") {
+        StatusCode::NOT_FOUND.into_response()
+    } else {
+        next.run(request).await
+    }
 }
 // </HANDWRITE>
 
