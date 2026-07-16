@@ -83,3 +83,49 @@ changes:
     section: kubernetes-peer-port-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 1805-verification
+requirements:
+  compatibility:
+    id: R3
+    text: "With no peer TLS configuration, Tape keeps the existing public-port h2c Raft topology and peer route behavior."
+    kind: regression
+    risk: medium
+    verify: raft_cluster::three_node_group_elects_replicates_forwards_and_fails_over
+  kubernetes_port:
+    id: R5
+    text: "The Tape operator exposes a dedicated Raft container and headless-service port and injects TAPE_RAFT_PORT while preserving the client service on 7137."
+    kind: integration
+    risk: medium
+    verify: operator::render_emits_expected_child_objects
+  peer_rejection:
+    id: R2
+    text: "A client whose certificate is not trusted by the Tape peer CA cannot dispatch a Raft request to the authenticated listener."
+    kind: security
+    risk: high
+    verify: raft_peer_mtls::untrusted_peer_is_rejected_before_tape_raft_router
+  public_isolation:
+    id: R4
+    text: "When peer TLS is active, Tape's public application router excludes Raft peer routes while the dedicated peer listener owns them."
+    kind: security
+    risk: high
+    verify: server::secure_peer_mode_does_not_expose_raft_routes_on_public_router
+  secure_replication:
+    id: R1
+    text: "When complete Tape peer TLS material is configured, Tape constructs the shared PeerTransport, projects Raft peers as https URLs, and spawns the Raft host with that transport."
+    kind: functional
+    risk: high
+    verify: raft_peer_mtls::trusted_tape_raft_peers_replicate_over_mtls
+---
+flowchart TD
+    r1[R1 secure replication] --> raft_peer_mtls_trusted_tape_raft_peers_replicate_over_mtls[raft_peer_mtls::trusted_tape_raft_peers_replicate_over_mtls]
+    r2[R2 peer rejection] --> raft_peer_mtls_untrusted_peer_is_rejected_before_tape_raft_router[raft_peer_mtls::untrusted_peer_is_rejected_before_tape_raft_router]
+    r3[R3 compatibility] --> raft_cluster_three_node_group_elects_replicates_forwards_and_fails_over[raft_cluster::three_node_group_elects_replicates_forwards_and_fails_over]
+    r4[R4 public isolation] --> server_secure_peer_mode_does_not_expose_raft_routes_on_public_router[server::secure_peer_mode_does_not_expose_raft_routes_on_public_router]
+    r5[R5 kubernetes port] --> operator_render_emits_expected_child_objects[operator::render_emits_expected_child_objects]
+```
