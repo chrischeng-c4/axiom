@@ -31,3 +31,22 @@ edges:
 ```
 
 The canonical agent-facing command inventory is the executable VAT clap surface. README and `vat llm` explain that `vat build` and bounded `vat compose` use Apple Container, `vat docker` is an opt-in limited command shim, and `vat k8s` supports bounded ephemeral Apple-Container-backed local Kubernetes flows. They explicitly exclude Docker Engine/API compatibility, unbounded generic Compose support, and persistent Kubernetes lifecycle claims. A built-binary regression test reads `vat --help` and asserts that every documented agent-facing command is present, so a future CLI or documentation edit cannot silently create an obsolete onboarding path.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/vat/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/vat/src/commands/llm.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/vat/tests/vat_cli_convention.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+```
