@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/courier/tech-design/semantic/src/llm.md#schema
+// SPEC-MANAGED: apps/courier/tech-design/semantic/courier-apps-courier.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:logic:c0ur1e07" tracker="pending-tracker" reason="courier's cli_std::llm::Topic list (http-api, operations) + the stamped ToolInfo constructor shared by llm/upgrade/issue."
 //! courier's agent-facing CLI identity: the build-stamped [`TOOL`] info and
 //! the `courier llm` topic list — the single in-code source of truth shared

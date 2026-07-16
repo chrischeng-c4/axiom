@@ -1,4 +1,4 @@
-// SPEC-MANAGED: apps/courier/tech-design/semantic/apps/courier/build.md#schema
+// SPEC-MANAGED: apps/courier/tech-design/semantic/courier-apps-courier.md#schema
 // HANDWRITE-BEGIN gap="missing-generator:logic:c0ur1e00" tracker="pending-tracker" reason="Delegate to build_stamp::stamp('COURIER') so COURIER_GIT_SHA/COURIER_BUILT_AT/COURIER_TARGET feed ToolInfo — no hand-rolled git/timestamp logic."
 //! Build script: stamp `COURIER_GIT_SHA`, `COURIER_BUILT_AT`, and
 //! `COURIER_TARGET` into the binary so the standard CLI ops (`upgrade` picks
