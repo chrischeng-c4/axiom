@@ -820,6 +820,31 @@ cmd = ["sh", "-c", "true"]
 }
 
 #[test]
+fn vat_doctor_host_only_needs_no_vat_toml() {
+    let empty_project = tempfile::tempdir().unwrap();
+    let output = Command::new(vat_bin())
+        .current_dir(empty_project.path())
+        .args(["doctor", "--host-only", "--json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    let json: Value = serde_json::from_slice(&output.stdout).expect("host-only doctor JSON");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["mode"], "host_only");
+    assert_eq!(json["next"], "vat capabilities --json");
+    assert!(json["capabilities"]["workspace"]["primary_clone_method"].is_string());
+    assert!(json["gpu"]["accessible"].is_boolean());
+    let checks = json["checks"].as_array().expect("host-only checks");
+    for id in ["copy_on_write", "host", "cli", "daemon", "kubectl"] {
+        assert!(
+            checks.iter().any(|check| check["id"] == id),
+            "host-only doctor is missing `{id}` evidence: {checks:?}"
+        );
+    }
+}
+
+#[test]
 fn vat_doctor_json_includes_capabilities_and_egress_check() {
     let project = tempfile::tempdir().unwrap();
     std::fs::write(

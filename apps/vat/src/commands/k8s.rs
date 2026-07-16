@@ -28,6 +28,13 @@ mod port_forward;
 mod port_forward_json;
 mod session_exec;
 
+/// Report whether the host has a standalone kubectl suitable for VAT's
+/// Apple-Container K3s commands. This is read-only and rejects OrbStack's
+/// compatibility binary by using the same resolver as the runtime path.
+pub(crate) fn independent_kubectl_available() -> bool {
+    port_forward::resolve_kubectl().is_ok()
+}
+
 const MACHINE_ASSET: &str = include_str!("../../assets/k8s/ephemeral-machine/Dockerfile");
 const K3S_VERSION: &str = "v1.36.2+k3s1";
 const K3S_KUBECONFIG: &str = "/etc/rancher/k3s/k3s.yaml";

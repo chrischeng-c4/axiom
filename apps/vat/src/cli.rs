@@ -85,6 +85,9 @@ enum Cmd {
     },
     /// Cheap host preflight for the configured run topology.
     Doctor {
+        /// Inspect host capabilities without reading vat.toml or selecting a runner.
+        #[arg(long)]
+        host_only: bool,
         /// Check a named production-like integration scenario from vat.toml.
         #[arg(long)]
         scenario: Option<String>,
@@ -658,10 +661,20 @@ pub fn run() -> Result<ExitCode> {
             json,
         } => commands::plan::exec(configured_target(scenario, runners)?, json),
         Cmd::Doctor {
+            host_only,
             scenario,
             runners,
             json,
-        } => commands::doctor::exec(configured_target(scenario, runners)?, json),
+        } => {
+            if host_only {
+                if scenario.is_some() || !runners.is_empty() {
+                    anyhow::bail!("`vat doctor --host-only` cannot select a scenario or runner");
+                }
+                commands::doctor::host_only_exec(json)
+            } else {
+                commands::doctor::exec(configured_target(scenario, runners)?, json)
+            }
+        }
         Cmd::Capabilities { json } => commands::capabilities::exec(json),
         Cmd::Ls { json } => commands::ls::exec(json),
         Cmd::State { id, compact } => commands::state::exec(id, compact),

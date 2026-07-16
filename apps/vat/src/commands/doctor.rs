@@ -38,6 +38,18 @@ struct DoctorCheck {
     message: String,
 }
 
+/// A configuration-free host report. Unlike `vat doctor`, this never looks for
+/// vat.toml, resolves a runner, opens a workspace, or starts a service.
+#[derive(Debug, Serialize)]
+struct HostOnlyDoctorReport {
+    ok: bool,
+    mode: &'static str,
+    capabilities: CapabilitiesReport,
+    gpu: crate::gpu::GpuInfo,
+    checks: Vec<DoctorCheck>,
+    next: &'static str,
+}
+
 /// One doctor invocation probes Apple's runtime once, then projects that
 /// read-only result onto each selected MicroVM service. This keeps a hung
 /// runtime bounded to one probe rather than one timeout per service.
@@ -72,6 +84,95 @@ pub fn exec(target: PlanTarget, json: bool) -> Result<ExitCode> {
     } else {
         ExitCode::from(1)
     })
+}
+
+pub fn host_only_exec(json: bool) -> Result<ExitCode> {
+    let capabilities = capabilities::report();
+    let gpu = crate::gpu::detect();
+    let mut checks = Vec::new();
+    push_check(
+        &mut checks,
+        "workspace",
+        "copy_on_write",
+        capabilities.workspace.cow_clone,
+        "cow_clone",
+        format!(
+            "copy-on-write primary method: {}",
+            capabilities.workspace.primary_clone_method
+        ),
+    );
+    for isolation in &capabilities.isolation {
+        push_check(
+            &mut checks,
+            "isolation",
+            &isolation.id,
+            isolation.available,
+            "isolation_availability",
+            isolation.reason.clone(),
+        );
+    }
+    push_check(
+        &mut checks,
+        "gpu",
+        "host",
+        gpu.accessible,
+        "gpu_accessible",
+        gpu.note.clone(),
+    );
+    push_check(
+        &mut checks,
+        "apple_container",
+        "cli",
+        capabilities.apple_container.cli,
+        "apple_container_cli",
+        "Apple Container CLI available on PATH".to_string(),
+    );
+    push_check(
+        &mut checks,
+        "docker",
+        "daemon",
+        capabilities.docker.daemon,
+        "docker_daemon",
+        capabilities
+            .docker
+            .error
+            .clone()
+            .unwrap_or_else(|| "Docker daemon reachable".to_string()),
+    );
+    push_check(
+        &mut checks,
+        "kubernetes",
+        "kubectl",
+        crate::commands::k8s::independent_kubectl_available(),
+        "independent_kubectl",
+        "independent kubectl available (OrbStack compatibility binary is rejected)".to_string(),
+    );
+    let report = HostOnlyDoctorReport {
+        // This is an observation-only command: an unavailable optional host
+        // substrate is reported in checks, not treated as a malformed config.
+        ok: true,
+        mode: "host_only",
+        capabilities,
+        gpu,
+        checks,
+        next: "vat capabilities --json",
+    };
+    if json {
+        crate::commands::print_json(&report, false)?;
+    } else {
+        println!("vat doctor --host-only: complete");
+        for check in &report.checks {
+            println!(
+                "{} {} {}: {}",
+                if check.ok { "ok" } else { "unavailable" },
+                check.component,
+                check.id,
+                check.message
+            );
+        }
+        println!("next: {}", report.next);
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn checks_for(

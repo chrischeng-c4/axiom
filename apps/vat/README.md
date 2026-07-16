@@ -35,6 +35,7 @@ Canonical field-style capability contracts below are machine-readable input for 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Agent-Native GPU-Native Dev Containers | #4152 | implemented | verified | smoke | ready | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, Docker-backed local Kubernetes clusters (kind/k3d/minikube), and a separately bounded one-boot Apple Container K3s session, plus GCP/Firebase emulators and host GPU access without a VM. |
+| Developer & Agent Experience | #1819 | in_progress | partial | smoke | blocked | Offline command contracts, task-scoped onboarding, and host preflight evidence for local agents. |
 
 ### Agent-Native GPU-Native Dev Containers
 
@@ -83,6 +84,28 @@ Gate Inventory:
 | Apple Container k3s local Kubernetes | epic | #1537 | partial | verified | conformance | one-shot, leased, local-image, and Service-forward independent-kubectl real-host E2Es passed; each remains bounded. Phase 0 is a bounded Docker-free path: `vat k8s ephemeral` runs one foreground host command and cleans up, while `vat k8s session create/exec/port-forward/image/status/delete` keeps one running guest and private credentials across explicit agent calls until its bounded lease is deleted or reclaimed. Every K3s command requires an independently installed `kubectl` first on PATH and rejects an OrbStack-provided binary. Persistent/reboot-safe kubeconfig, storage/PVC, ingress/LB, multi-node networking, and `microvm-k3s` remain blocked. |
 | Copy-on-write fork and snapshot lifecycle | epic | - | implemented | verified | smoke | `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS apps/vat/README.md` |
 | Resource isolation boundary | epic | - | implemented | verified | smoke | `rg -n -e sandbox -e isolation -e seatbelt apps/vat/README.md apps/vat/src/sandbox` |
+
+### Developer & Agent Experience
+
+ID: developer-agent-experience
+Type: AgentFirst
+Surfaces: CLI: `vat llm`, `vat --help`, `vat doctor --host-only`, and machine-readable command output.
+EC Dimensions: behavior: `cargo test -p vat --test vat_cli_convention --test vat_toml_runner` - offline onboarding, documented command inventory, and configuration-free host preflight.
+Root WI: #1819
+Status: in_progress
+Required Verification: smoke
+Promise:
+An agent can discover VAT's supported command surface and boundaries offline, select concise task-specific guidance, and inspect the host substrate before a project has a `vat.toml`.
+Gate Inventory:
+- `cargo test -p vat --test vat_cli_convention -- --nocapture`; `cargo test -p vat --test vat_toml_runner vat_doctor_host_only_needs_no_vat_toml -- --nocapture`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Offline command contract | change | #1817 | implemented | verified | smoke | `cargo test -p vat --test vat_cli_convention documented_agent_commands_match_help -- --nocapture` |
+| Agent onboarding topics | change | #1818 | implemented | verified | smoke | `cargo test -p vat --test vat_cli_convention cli_convention_llm_topics_are_task_scoped -- --nocapture` |
+| Interactive tooling | n/a | - | n/a — no remote surface | verified | smoke | VAT is a local CLI and intentionally has no GUI, daemon dashboard, or remote control plane. |
+| Integration contract | change | #701 | implemented | verified | smoke | `cargo test -p vat --test vat_toml_runner scenario_ -- --nocapture` |
+| Configuration-free host preflight | change | #1820 | implemented | verified | smoke | `cargo test -p vat --test vat_toml_runner vat_doctor_host_only_needs_no_vat_toml -- --nocapture` |
 
 
 ## AW Verification Snapshot
@@ -533,6 +556,7 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat capabilities --json` | Full host capability discovery: report COW clone method, isolation backends, Docker provider/daemon state, service-provider capabilities, and an Apple Container shared-builder advisory. It retains the normal Docker daemon probe regardless of a later selected plan. `services.docker_services` is an explicit availability string: a full Docker probe yields `available` or `unavailable`. The advisory is bounded and read-only: `builder status` yields `ownership=shared_unknown` and `automatic_cleanup=false`; parseable configuration is distinct from optional live `observed_stats`, and optional `system df` is `global_apple_container` host evidence rather than VAT-owned disk. Unsupported, malformed, or timed-out status/stats/df appear as advisory unknown/probe errors without failing capability discovery; VAT never starts, stops, deletes, or prunes the builder/cache. A live builder state is reported only when the installed Apple Container CLI supports and returns it. |
 | `vat plan [runner-id...] --json` | Print the selected configured run topology without creating a vat, starting services, or running tests. |
 | `vat doctor [runner-id...] --json` | Run cheap read-only preflight checks with capability discovery scoped to the selected topology. A selected explicit MicroVm/Apple-Container-only plan performs exactly one read-only `container system status` probe per doctor invocation and projects that result to its selected MicroVm services; it never executes Docker even when it is on `PATH`. In that deliberate no-probe state, `services.docker_services` is `not_probed`, while `docker.daemon_probe.state=skipped` with `Docker daemon probe skipped for Apple-Container-only selected plan` supplies provenance. `docker.daemon=false` is not Docker-unavailable evidence because no Docker command ran. An unselected Docker service cannot poison that runner. The selected plan also reports the shared-builder advisory, but its unknown/timeout/probe errors never change runtime success. Doctor neither autostarts Apple Container nor falls back to Docker: unsupported MicroVm presets with no declared OCI route and MicroVm preset named volumes fail closed. Docker-runtime services, Auto image services, eligible Auto preset Docker fallbacks, and selected clusters retain the normal Docker daemon probe, yielding `services.docker_services=available|unavailable`; a cluster requires its Docker backend. |
+| `vat doctor --host-only [--json]` | Configuration-free read-only host preflight. It does not read `vat.toml`, select a runner, create a workspace, or start services. It reports copy-on-write, requested isolation availability, host GPU visibility, Apple Container, Docker daemon, and independent (non-OrbStack) `kubectl` evidence. Missing optional substrates are reported as `unavailable` observations; the command itself completes successfully with `next: vat capabilities --json`. |
 | `vat llm [--topic <t>] [--format md\|json]` | Print offline agent-facing docs. Default `outline`; use `--topic guide` for the detailed vat.toml/service/evidence/boundary guide. |
 | `vat upgrade` | Self-update to the latest `vat@*` GitHub release (`--check` to report only, `--version <tag>` to pin). One of the three mandatory CLI-convention verbs (`llm`/`upgrade`/`issue`), via the shared `cli-std` crate. |
 | `vat issue search\|view\|create` | Search, read, and file diagnostics-rich GitHub issues under `app:vat`; `issue create --dry-run --title <t>` previews version + target + OS/arch diagnostics without submitting. |
