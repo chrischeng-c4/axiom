@@ -83,9 +83,9 @@ pub mod signal;
 pub mod transport;
 
 pub use admission::{
-    admission_middleware, AdmissionController, AdmissionDecision, AdmissionEvent, AdmissionInput,
-    AdmissionMiddleware, AdmissionObserver, AdmissionOutcome, AdmissionPolicy,
-    AdmissionPolicyError, NoopAdmissionObserver,
+    admission_middleware, AdmissionConfig, AdmissionConfigError, AdmissionController,
+    AdmissionDecision, AdmissionEvent, AdmissionInput, AdmissionMiddleware, AdmissionObserver,
+    AdmissionOutcome, AdmissionPolicy, AdmissionPolicyError, NoopAdmissionObserver,
 };
 pub use config::{HttpConfig, LogFormat, ServiceIdentity};
 pub use error::{ApiErr, ErrorEnvelope};

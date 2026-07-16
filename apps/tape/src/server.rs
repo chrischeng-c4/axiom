@@ -165,7 +165,17 @@ pub fn router(state: AppState) -> Router {
 /// identical; a first middleware rejects the two peer route families before
 /// route dispatch can expose them on the public h2c listener.
 pub fn router_without_raft_routes(state: AppState) -> Router {
-    router_with_admission(state, None).layer(from_fn(reject_public_raft_routes))
+    router_without_raft_routes_with_admission(state, None)
+}
+
+/// Build the secure-peer public router with optional shared request admission.
+/// Peer route isolation stays outermost, so the public listener rejects Raft
+/// routes before admission can account for them.
+pub fn router_without_raft_routes_with_admission(
+    state: AppState,
+    admission: Option<service_http::AdmissionController>,
+) -> Router {
+    router_with_admission(state, admission).layer(from_fn(reject_public_raft_routes))
 }
 
 async fn reject_public_raft_routes(request: axum::extract::Request, next: Next) -> Response {

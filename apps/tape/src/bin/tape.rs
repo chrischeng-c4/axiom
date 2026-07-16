@@ -845,6 +845,16 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
         required = auth.required,
         "request auth resolved (TAPE_AUTH; probes stay tokenless)"
     );
+    let admission = service_http::AdmissionConfig::from_env("TAPE")?.controller(
+        "tape.read",
+        "tape.write",
+        "tape.admin",
+    );
+    if admission.is_some() {
+        tracing::info!(
+            "request admission enabled (TAPE_ADMISSION_*; probes and peer routes stay exempt)"
+        );
+    }
 
     // The operator mounts `/data` for every StatefulSet member. In its
     // single-node topology there is no Raft state machine to own durability,
@@ -952,9 +962,9 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     }
 
     let app = if peer_transport.is_some() {
-        tape::server::router_without_raft_routes(state.clone())
+        tape::server::router_without_raft_routes_with_admission(state.clone(), admission)
     } else {
-        tape::server::router(state.clone())
+        tape::server::router_with_admission(state.clone(), admission)
     };
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
