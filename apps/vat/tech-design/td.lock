@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-16T07:53:14.435005+00:00"
-digest = "sha256:e5c9ea5263ac8b09d1c94e5a943af5661aaeee3f7ab5f7ef887207f0a2297ad2"
-source_digest = "sha256:e5c9ea5263ac8b09d1c94e5a943af5661aaeee3f7ab5f7ef887207f0a2297ad2"
-ir_digest = "sha256:7af05202333d3da2fc04954293cb2203a4dc29cf1ed5ce4c95b610815b1dfc35"
+generated_at = "2026-07-16T08:19:35.061935+00:00"
+digest = "sha256:9a0a697f3aa51d5d7ba327cf2554e894ba38483ea974298cedc901da51831a48"
+source_digest = "sha256:9a0a697f3aa51d5d7ba327cf2554e894ba38483ea974298cedc901da51831a48"
+ir_digest = "sha256:2fb32a64d7ad66192286eccfc74c93dc60859cec82fa0ad617d50a523e3cf49e"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -21,8 +21,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/cli/vat-microvm-phase-2-vat-build-dockerfile-build-via-container-cli.md"
-digest = "sha256:9aa8b004fed2789e0f6f87c108878ab49a195f9bc8a09acfe8f7085c806027f3"
-ir_digest = "sha256:88c4cca905c28e6cbc25ddaa2c7f6302130baf0edbccb58809c4d44e70659189"
+digest = "sha256:f3f2ba60e7467a67e81f78de55556cf7fa5e581810fbe8d9b84a1cc1de40ca6b"
+ir_digest = "sha256:3c815b15f78dd3b7c09506bf3cfaf34f0327168a2a6828ab0290879bde1a4624"
 section_count = 7
 
 [[files]]
@@ -117,21 +117,38 @@ section_count = 7
 
 [[files]]
 path = "logic/llm-agent-usage-guide.md"
-digest = "sha256:7bd382ee37b74c33898e310432a47154d38761dd666f3c5c1b3589dc71cdbb0b"
-ir_digest = "sha256:2219bab468cdcc409fc568a83790e521af46cc3fc5d42c2935f366d6900ab92d"
+digest = "sha256:268f6f8fffc30a0d4eb52e5e6afeb5994cb262d5ac7f01e48b13c51babc57bd7"
+ir_digest = "sha256:9687f1733c03c39e31bd65a51d8732cf4769f326271ed39cba2ef746d05c48b0"
 section_count = 4
 
 [[files]]
 path = "logic/local-agent-test-runner-protocol.md"
-digest = "sha256:5a858121f5abba62f5313b758220f4d7687188b809d3a9e59ba14ff054d0dc7e"
-ir_digest = "sha256:e1f2af53c330a8c0fe8a50c1a5ea682000b5b5362c1beec31f8d895c58a2aa0a"
-section_count = 22
+digest = "sha256:77746fb49553b8451876115b356457054974e5976a72276e654709fd63bf6cbb"
+parse_error = "schema:320-391: section 'schema' at lines 320..391: JSON Schema typed-payload parse error: mapping values are not allowed in this context at line 37 column 167"
 
 [[files]]
 path = "logic/production-like-integration-scenarios.md"
 digest = "sha256:71926e5d9d9665b6e948d7140f9e90754f4ebeb0d5ea41d301880275fcf2dfaf"
 ir_digest = "sha256:4cacf1beac44466f5f0800654e9568585d4df022945c0aff3790114a6aba7df0"
 section_count = 6
+
+[[files]]
+path = "logic/vat-dx-split-llm-onboarding-into-task-scoped-topics.md"
+digest = "sha256:ba1ae15ef93b8973ef815ccb3a7b30590f2459b9bf204cc007ff0b42f18a4afa"
+ir_digest = "sha256:28eebfa4021952695a7a31d1b58cfafa4f19cabfbc60325899efa3cb5e498292"
+section_count = 3
+
+[[files]]
+path = "logic/vat-headless-docker-command-shim.md"
+digest = "sha256:325c3aaeb0775b2c6993145c25e50628728d8b4e31f09c5367c775c8838a713e"
+ir_digest = "sha256:7452fd489ad42b11bf0cff4125edfb53c877b2278c7b6e49d11e5784c8d45eeb"
+section_count = 5
+
+[[files]]
+path = "logic/vat-headless-ephemeral-local-k8s.md"
+digest = "sha256:f7adc488dd4b80dc4e81bb0e2c08b3b770145122bb5cb63806f6dc7e1e98f202"
+ir_digest = "sha256:cd924ad69cf9b40df6fcaeb3a8f9fa2f576112cc5948442952660c85e3fd5fd2"
+section_count = 5
 
 [[files]]
 path = "logic/vat-llm-guide-cloud-tasks-cloud-scheduler-emulator-usage.md"
@@ -141,26 +158,25 @@ section_count = 7
 
 [[files]]
 path = "logic/vat-local-k8s-phase-0-prove-k3s-on-apple-container-machine.md"
-digest = "sha256:d1f1301f918876e3eed8fe5e13bfe2e770661c49d2979de4684acfb4efe1b0a9"
-ir_digest = "sha256:a50186cf5d49330942362a0b12c8bcb2ba61fb1bdd92e1d379db2628a2d39509"
+digest = "sha256:40f7e0c4a7b42348d6c56f790263d7ad71cbb0d8711b1ed35346d3eed9f72d0b"
+ir_digest = "sha256:82f44e715e0e2281b87601d2f919fd74440734ce4f260bda40bae45245a85454"
 section_count = 3
 
 [[files]]
 path = "logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md"
-digest = "sha256:878218a307bcad9da573402cb66f2756f16adc8678f3cb9c6a9671618cf421bc"
-ir_digest = "sha256:1dc0730220cc235a0c5475076a6658c8a042a924af611ab8bd2c687c493aca9f"
-section_count = 4
+digest = "sha256:5e386e189457f91bd3ed52c13ba9bd26e8e2a4660f59aea308befd0fd822dc3c"
+parse_error = "overview:1-12: frontmatter YAML parse error: mapping values are not allowed in this context at line 2 column 192"
 
 [[files]]
 path = "logic/vat-microvm-phase-1-isolation-microvm-sandbox-backend-for-vat-ru.md"
-digest = "sha256:d1869b597dde7354e17dd36bfa06ab5fd22b234d4f6c5b8b09e0cbcb081f98ff"
-ir_digest = "sha256:46837d2b484eab665f0231b86ce22767fac853f226e4a327eb951bb0c2c9c0ef"
+digest = "sha256:f1b752dce502b2a5d790f49e568df68e2dd6d7cab89bf809e0bf7e745855f162"
+ir_digest = "sha256:8bef964f82cbd85d85b468c819f816b9600de77c0524167751844067dd1543fa"
 section_count = 7
 
 [[files]]
 path = "logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md"
-digest = "sha256:44ad9120b45db72eceb00a23d40ca7147390135a31c243a0812a27839f45d9bd"
-ir_digest = "sha256:154ef16e434e469b778f616bb18c65e7cce7f5c5abae3622dba0c4c260cac4e1"
+digest = "sha256:692dd0c62a441f0acaea17da4520f1a101eb3ccd34770ab0d41348e81037ff53"
+ir_digest = "sha256:56bcfa3dc89f6d5a59521a934de0f76a2fbbb1d5c29dac745dd51f8900c5200d"
 section_count = 7
 
 [[files]]
@@ -207,14 +223,20 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-cli-rs.md"
-digest = "sha256:2ed39e7c192a19683228682ddc77f68545d0f647b3c814c4e14c5e19a285f706"
-ir_digest = "sha256:4f7b0fe3c07c8c7889849498bcafc7fa24915a16f0702edc37521abedb39244e"
+digest = "sha256:6c7d96a8315d2167625687ce1b354c927e0fab7de49046903e6275f7fc66277d"
+ir_digest = "sha256:d0fa3a4a3cdc4ee01738fc55628bf56465ec8972bf32f3147a5b78d3e16ebc07"
 section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-cluster-rs.md"
 digest = "sha256:1f4551ffc526ae3de25cab3fa0050be290e6e136074eef44826311345ce14dc0"
 ir_digest = "sha256:ae1e1638926ea3aa0e643b37130af9179c1a49af233fd336441f0be112f341ec"
+section_count = 3
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-build-rs.md"
+digest = "sha256:a86b46bba7936b797724eb1ed0e5884ed673bd7569cd012696616c3158599366"
+ir_digest = "sha256:081e14309720c420f6be92b38408fcc7cf00519aa973778ff1441ae5d54d80ae"
 section_count = 3
 
 [[files]]
@@ -242,9 +264,15 @@ ir_digest = "sha256:851d0e56bef7911be17bdbb138b1d7ef6eb703f0826bc46aee046927142e
 section_count = 3
 
 [[files]]
+path = "semantic/source/projects-vat-src-commands-k8s-rs.md"
+digest = "sha256:aa24d35363e4ff27508fdb477e61cd09300f6e67698d171fb358ce60bb7b4479"
+ir_digest = "sha256:80e63f4fe0c8c1705204a96f704ce224838a2f318d175149740f2ef39f70fb11"
+section_count = 3
+
+[[files]]
 path = "semantic/source/projects-vat-src-commands-llm-rs.md"
-digest = "sha256:9de015ddec773b61cf58f85f7eda89c4c1e50133a28cd8094691fac8f9c7cbc4"
-ir_digest = "sha256:9526eb1ba26f7bca809aae956fa99acb51f8ca4bcce4cb1f92f642e16d0b0889"
+digest = "sha256:e5a47b29b54ea540fc68cfc001a696745f15b6d16e4b726fa5208f3d8e90d614"
+ir_digest = "sha256:d5ef60867db7a87d77b98d2828ba8cca63b2755da59f7f78e2ef4bda8f78bcf4"
 section_count = 3
 
 [[files]]
@@ -261,8 +289,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-commands-mod-rs.md"
-digest = "sha256:2010f80b3d68e670dad54495e60c39d6aa67989be03aa23ef8684b3d49b4a9f2"
-ir_digest = "sha256:661202eadb7f512b14973759e862f0ef4847b4da807edad4bf5b0344a57b5d7d"
+digest = "sha256:0d651c0edd27eb0bddc01f1f0de412c28d0b8d6e1ad9a6d460c680c4f7894c8f"
+ir_digest = "sha256:97fe37f9da69f6c680fbd1f366c886953b3c0fa132b1da0bfc98afe83ddbe64f"
 section_count = 3
 
 [[files]]
@@ -273,8 +301,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-commands-run-rs.md"
-digest = "sha256:763ff4752eef00cffc91381d4294008e6640b4006ff6c9391b3d9cd6ec874755"
-ir_digest = "sha256:36d2004814dacf131a0d542228d29b24ff278e8344640c7d6cf06021b3c9d7a2"
+digest = "sha256:bc762a06b917d1828f09ce63d9b88a1a418731d50a34da76cb12b453562fe9ce"
+ir_digest = "sha256:fa70b909f25b87ba59a5697e8e9872f5ff82e1cd14805ca2822d0f833db1b28c"
 section_count = 3
 
 [[files]]
@@ -287,6 +315,12 @@ section_count = 3
 path = "semantic/source/projects-vat-src-commands-state-rs.md"
 digest = "sha256:c7dde1411164d1ac0d05645250ddc17c961762d56748e5070be1024e5d1bf59e"
 ir_digest = "sha256:482bc0120897a119eeda14c8d5413b25cf2bf5bcfcb3fc917c8e35bbc3cc2f7c"
+section_count = 3
+
+[[files]]
+path = "semantic/source/projects-vat-src-compose-rs.md"
+digest = "sha256:6798eaa4f44009403265539ca6acb2d629561c0e9e1838ac98e3e97f3eed3316"
+ir_digest = "sha256:386d925b7c1bc59165f6c20e6a9a19f6bec8edc11003d4b25ca810b1982a55ab"
 section_count = 3
 
 [[files]]
@@ -411,14 +445,14 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-lib-rs.md"
-digest = "sha256:fae47b95b2207808c82547513bca141f4feb8255edc96958915344206122d453"
-ir_digest = "sha256:85d1e458c73990660f3477f4ed99d9716a6814c10e088cfec1e278bcd8eee604"
+digest = "sha256:d9e97a1f0ec16579c0dee8d7ab2425d28d44958b602218aa1e97484521f723e9"
+ir_digest = "sha256:3a105a9194d142f4e30ac7ef668b70347cf69dd66e5b432fb1ea14b798c04b4a"
 section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-main-rs.md"
-digest = "sha256:28959ad67a2a61396250245f454aa0141bbcf5df32a6b7cfaa80eb08b792be56"
-ir_digest = "sha256:d80fc3722cfa23e98b2a4a9de6357ef853034124659cc90566e4d5276a456088"
+digest = "sha256:eddd4222d32b455406025859747f10aa0482152ba677dc0518ed6f6d0ef02b2b"
+ir_digest = "sha256:653dd096a1c3199702e0fc1cf5bec118c44f101f944912a2cf8c76c17d33234c"
 section_count = 3
 
 [[files]]
@@ -459,14 +493,20 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-state-rs.md"
-digest = "sha256:e28774206854be617085fc7ec4668dc0b59e9c0cd52b692171ba91e075d007ea"
-ir_digest = "sha256:cbfe3ab7c745e2abc5121f37622038681e93133ccf5e9893358df95bafce8752"
+digest = "sha256:f5dd505e134a3dbd1b082a2853bfe9d986608db11ff0e81da8f9596e95e19f52"
+ir_digest = "sha256:a5c43481bf25f26cb40c438b2075b5679a882433002d703f801cf7e88bcb97bb"
 section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-src-store-rs.md"
-digest = "sha256:e6237bb75bd273ebd709fafb49fc7ed1898f027367e1cf4624f7949a56312722"
-ir_digest = "sha256:72b272a43e8f358ca2b5c77cdfd4915fb3ccd4e0f6255f87a8a2aead6fe82609"
+digest = "sha256:4aabab0985898b0e2ecf7833a6f21ff4aad6425a8e1bdaf22c00b68f2a109c14"
+ir_digest = "sha256:64789de5716d3cbb98a932bf59d0753b1c1900ba409ae40d06068ff489552eab"
+section_count = 3
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat-k8s-ephemeral-rs.md"
+digest = "sha256:d2b69f165d122ba3112fb0e87944f0e02e5447e9234dbb32571c4257b1b36633"
+ir_digest = "sha256:99cba641031417e63015a21cc5b0cf1d2904dfe6e5e6d4e2fd82d8a7306c1c13"
 section_count = 3
 
 [[files]]
@@ -585,8 +625,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_toml_runner-rs.md"
-digest = "sha256:972b043c104021fc0df030b04451795a7d03c1d63c81e1dc03b9d8da553c775a"
-ir_digest = "sha256:f7f04af7844b7d626c2604da2709b1d293f7bd3a745b97579353b4bfa7f006ba"
+digest = "sha256:82d19eaace371c4c20782bf45a0d589e931ecadb7f11f1ffe7ba92b8ec974d74"
+ir_digest = "sha256:7c961d2323c7359263441bcec4c8acb9eb237a15efd39ef91cf7edaca088da4b"
 section_count = 3
 
 [[files]]
@@ -597,8 +637,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/vat-commands.md"
-digest = "sha256:571f74dfad85db9b0c45181becbfd6c9338314c5646a81ce7674ed44df986262"
-ir_digest = "sha256:c775dcff2c1e691d340de3acee0a5e00dabd1ba8d5e6d62a4514546a23d8bd77"
+digest = "sha256:c0fdc39531aa44109fbb818a0816441c9217aaa4ffae99169155c0b113c64e10"
+ir_digest = "sha256:c897c128a157ef22a1eb4d61734e4aacd5be84bab37231eac41d816ddf3dd8db"
 section_count = 2
 
 [[files]]
@@ -627,12 +667,12 @@ section_count = 2
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:10b251ddeb78f7d733d6bb0690b39358240f183dede55e60be4a920d65593799"
-ir_digest = "sha256:aff0ef257f0103b84e0d7ed788d7bca63609948a5e2d99071a2733283e362e41"
+digest = "sha256:2308151844875fca61ca103b73276657488b5f3675628b6c4b485c926c101400"
+ir_digest = "sha256:2d5c141fe99ea86da94844a1b542d7137722e9f7b0f12ee3cc054e694563465b"
 section_count = 2
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:2bcdd14ec8530af64e20633f6d66c860ab56d697e98e1dd54bb9bcbb1dc81768"
-ir_digest = "sha256:4732789b46f2b590c15ee5b4aeecfb2f6e17cec0e7e811566cb20d885fcdc24c"
+digest = "sha256:d6c29cdea678b22fd515452069300db870b4d64851dc5a46b406e75f9b878319"
+ir_digest = "sha256:a0be58d50dc1995d050d6e1079ef8222d449c1b440d71cb840ed498ee6678e45"
 section_count = 3
