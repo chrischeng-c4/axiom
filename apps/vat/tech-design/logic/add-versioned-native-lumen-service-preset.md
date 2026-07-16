@@ -69,51 +69,52 @@ flowchart TD
 
 ```yaml
 changes:
-  - path: apps/vat/tech-design/logic/add-versioned-native-lumen-service-preset.md
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: Contract the versioned native Lumen preset lifecycle.
-  - path: apps/vat/Cargo.toml
-    action: modify
-    section: changes
-    impl_mode: codegen
-    reason: Add deterministic archive and checksum dependencies.
   - path: apps/vat/src/lib.rs
     action: modify
     section: changes
-    impl_mode: codegen
-    reason: Register the Lumen release resolver.
+    impl_mode: hand-written
+    anchor: VERSION
+    gap: vat-versioned-native-lumen-preset
+    tracker: "#1813"
+    reason: Register the dedicated Lumen release resolver module.
   - path: apps/vat/src/lumen_release.rs
     action: create
     section: changes
-    impl_mode: codegen
+    impl_mode: hand-written
+    gap: vat-versioned-native-lumen-release-cache
+    tracker: "#1813"
     reason: Own target release discovery, verified caching, and executable resolution.
   - path: apps/vat/src/config.rs
     action: modify
     section: changes
-    impl_mode: codegen
+    impl_mode: hand-written
+    anchor: ServicePreset
+    gap: vat-versioned-native-lumen-preset-config
+    tracker: "#1813"
     reason: Extend the preset and validation schema.
   - path: apps/vat/src/commands/run.rs
     action: modify
     section: changes
-    impl_mode: codegen
+    impl_mode: hand-written
+    anchor: prepare_preset_service
+    gap: vat-versioned-native-lumen-preset-runtime
+    tracker: "#1813"
     reason: Build native Lumen service plans and fail closed for container runtimes.
   - path: apps/vat/src/commands/doctor.rs
     action: modify
     section: changes
-    impl_mode: codegen
+    impl_mode: hand-written
+    anchor: check_preset
+    gap: vat-versioned-native-lumen-preset-doctor
+    tracker: "#1813"
     reason: Surface cache/download readiness and remediation.
   - path: apps/vat/tests/vat_lumen_preset.rs
     action: create
     section: unit-test
-    impl_mode: codegen
-    reason: Verify selector, cache, process, environment, and failure contracts.
-  - path: apps/vat/README.md
-    action: modify
-    section: changes
     impl_mode: hand-written
-    reason: Publish the configuration and lifecycle boundary to agents.
+    gap: vat-versioned-native-lumen-preset-tests
+    tracker: "#1813"
+    reason: Verify selector, cache, process, environment, and failure contracts.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
