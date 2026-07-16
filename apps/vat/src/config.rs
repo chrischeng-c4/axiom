@@ -248,6 +248,7 @@ pub enum ServicePreset {
     CloudStorage,
     HttpMock,
     Openapi,
+    Lumen,
 }
 // </HANDWRITE>
 
@@ -531,6 +532,12 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
             );
         }
         if let Some(preset) = service.preset {
+            if preset == ServicePreset::Lumen {
+                if !matches!(service.runtime, ServiceRuntime::Auto | ServiceRuntime::Native) {
+                    bail!("service `{}` preset `lumen` is native-only; use runtime `auto` or `native`", service.id);
+                }
+                crate::lumen_release::normalize_selector(service.version.as_deref())?;
+            }
             if preset.is_builtin_only() && service.runtime != ServiceRuntime::Auto {
                 bail!(
                     "service `{}` preset `{preset:?}` only has vat's built-in emulator; \

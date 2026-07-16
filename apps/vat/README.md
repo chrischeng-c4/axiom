@@ -401,6 +401,13 @@ preferred**:
   `preset = "firebase"` is the Firebase Emulator Suite bundle: it requires a
   `firebase.json`, runs `firebase emulators:start`, and exports each configured
   emulator's `*_EMULATOR_HOST` (native-only — no Docker fallback).
+- `preset = "lumen"` — a versioned native Lumen service. Set
+  `version = "lumen@X.Y.Z"` to pin a release; omit it to resolve the newest
+  `lumen@*` release. VAT downloads the target-native archive into its own cache,
+  verifies a published checksum when present, starts `lumen serve` on loopback,
+  waits for `/readyz`, and exports `LUMEN_URL`. It never replaces a global
+  `lumen` installation and rejects Docker/MicroVM runtimes. Lumen state is
+  ephemeral for the VAT run: no source build, import, seed, or persistence is implied.
 - `image` — a Docker-only dependency that has no native equivalent (e.g.
   AlloyDB). Requires `container_port`; `image_env` is passed into the container;
   in `export`, `{host}`/`{port}` resolve to the mapped host endpoint and
@@ -428,6 +435,7 @@ Env export contract:
 |---|---|---|---|
 | `preset` datastore/broker | postgres/mysql → `DATABASE_URL`; redis → `REDIS_URL`; nats → `NATS_URL`; rabbitmq → `AMQP_URL`; mongo → `MONGODB_URI`; opensearch → `OPENSEARCH_URL` | Value containing `{host}`/`{port}` uses the map key as the env var name; otherwise the value is a legacy alias name receiving the default URL. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
 | `preset` built-in emulator | `PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`, `CLOUD_TASKS_EMULATOR_HOST`, `CLOUD_SCHEDULER_EMULATOR_HOST`, `CLOUD_WORKFLOWS_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST`, `VAT_HTTP_MOCK_HOST`, or `OPENAPI_MOCK_HOST` | Same template/alias rule as other presets. `STORAGE_EMULATOR_HOST` includes `http://`; the others are host:port unless documented by the service. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
+| `preset` Lumen | `LUMEN_URL=http://127.0.0.1:<port>` | Same template/alias rule as other presets. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
 | `image` | none | Key is always the env var name; value may use `{host}`/`{port}`. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` |
 | `external` | none | Key is always the env var name; value may use `{host}`/`{port}` from the attached endpoint. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT`; state records `owned_by_vat = false` |
 | `cmd` | `VAT_SERVICE_<ID>_URL` when `ready_http` exists and no custom export is set | Value containing `{host}`/`{port}` uses the map key as the env var name; otherwise the value aliases `ready_http`. | `VAT_SERVICE_<ID>_HOST`, `VAT_SERVICE_<ID>_PORT` only when the command needs/allocates a port |

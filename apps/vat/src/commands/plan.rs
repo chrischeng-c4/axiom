@@ -473,6 +473,7 @@ fn default_preset_env(preset: ServicePreset) -> Option<&'static str> {
         ServicePreset::CloudStorage => "STORAGE_EMULATOR_HOST",
         ServicePreset::HttpMock => "VAT_HTTP_MOCK_HOST",
         ServicePreset::Openapi => "OPENAPI_MOCK_HOST",
+        ServicePreset::Lumen => "LUMEN_URL",
         ServicePreset::Firebase => return None,
     })
 }
@@ -551,6 +552,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::CloudStorage => "cloud-storage",
         ServicePreset::HttpMock => "http-mock",
         ServicePreset::Openapi => "openapi",
+        ServicePreset::Lumen => "lumen",
     }
 }
 

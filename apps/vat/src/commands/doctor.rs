@@ -14,6 +14,7 @@ use crate::cluster;
 use crate::commands::capabilities::{self, CapabilitiesReport};
 use crate::commands::plan::{self, PlanTarget, RunPlan};
 use crate::config::{self, ServiceConfig, ServicePreset, ServiceRuntime};
+use crate::lumen_release;
 
 #[derive(Debug, Serialize)]
 struct DoctorReport {
@@ -202,6 +203,24 @@ fn check_preset(
     preset: ServicePreset,
     capabilities: &CapabilitiesReport,
 ) {
+    if preset == ServicePreset::Lumen {
+        let selector = lumen_release::normalize_selector(service.version.as_deref());
+        let tools_ok = ["curl", "tar", "shasum"].iter().all(|tool| which(tool));
+        let detail = match selector {
+            Ok(Some(ref tag)) => format!("native Lumen release `{tag}` will use VAT-owned cache"),
+            Ok(None) => "native latest Lumen release will use VAT-owned cache".to_string(),
+            Err(ref error) => error.to_string(),
+        };
+        push_check(
+            checks,
+            "preset",
+            &service.id,
+            selector.is_ok() && tools_ok,
+            "lumen_native_release",
+            if tools_ok { detail } else { format!("{detail}; install curl, tar, and shasum for native release resolution") },
+        );
+        return;
+    }
     if preset.is_builtin() && service.runtime == ServiceRuntime::Auto {
         push_check(
             checks,
@@ -332,6 +351,7 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => &["firebase", "java"],
+        ServicePreset::Lumen => &[],
     }
 }
 
@@ -379,6 +399,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::CloudStorage => "cloud-storage",
         ServicePreset::HttpMock => "http-mock",
         ServicePreset::Openapi => "openapi",
+        ServicePreset::Lumen => "lumen",
     }
 }
 

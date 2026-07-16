@@ -40,6 +40,7 @@ pub mod emulator;
 pub mod event;
 pub mod gpu;
 pub mod id;
+pub mod lumen_release;
 pub mod overlay;
 pub mod paths;
 pub mod sandbox;

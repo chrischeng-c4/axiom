@@ -27,6 +27,7 @@ use crate::config::{
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
+use crate::lumen_release;
 use crate::overlay;
 use crate::sandbox;
 use crate::spec::{Base, EnvSpec, GpuRequest, Isolation};
@@ -1681,6 +1682,19 @@ fn prepare_preset_service(
     service: &ServiceConfig,
     preset: ServicePreset,
 ) -> Result<ServicePlan> {
+    if preset == ServicePreset::Lumen {
+        let port = resolve_service_port(&service.port)?;
+        let lumen = lumen_release::resolve(service.version.as_deref())?;
+        let env = preset_exports(service, preset, port);
+        let command = vec![lumen.executable.to_string_lossy().into_owned(), "serve".into(), "--host".into(), "127.0.0.1".into(), "--port".into(), port.to_string()];
+        let ready_probe = resolve_ready_probe(service, Some(ReadyProbe::Http(format!("http://127.0.0.1:{port}/readyz"))));
+        return Ok(ServicePlan {
+            id: service.id.clone(), command, host: Some("127.0.0.1".into()), ready_http: service.ready_http.clone(), ready_probe,
+            timeout_s: service.timeout_s, preset: Some(preset), port: Some(port), prepare_mode: "lumen_native_cache".into(),
+            cache_key: Some(lumen.tag), prepare_duration_ms: 0, exported_env: sorted_keys(&env), env,
+            docker_name: None, microvm_name: None, image: None, cluster: None, owned_by_vat: true,
+        });
+    }
     ensure_preset_binaries(service, preset)?;
     let port = resolve_service_port(&service.port)?;
     let cache_key = service_cache_key(cfg, service, preset)?;
@@ -1780,6 +1794,12 @@ fn resolve_preset_runtime(
     service: &ServiceConfig,
     preset: ServicePreset,
 ) -> Result<ResolvedRuntime> {
+    if preset == ServicePreset::Lumen {
+        if matches!(service.runtime, ServiceRuntime::Auto | ServiceRuntime::Native) {
+            return Ok(ResolvedRuntime::Native);
+        }
+        bail!("service `{}` preset `lumen` is native-only; Docker and MicroVM are unsupported", service.id);
+    }
     match service.runtime {
         ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
         ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
@@ -2423,6 +2443,7 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => ("node", "20-slim"),
+        ServicePreset::Lumen => ("lumen", "latest"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -2450,6 +2471,7 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => 4400,
+        ServicePreset::Lumen => 7373,
     }
 }
 
@@ -2508,7 +2530,8 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
-        | ServicePreset::Openapi => {}
+        | ServicePreset::Openapi
+        | ServicePreset::Lumen => {}
         ServicePreset::Opensearch => {
             env.insert("discovery.type".to_string(), "single-node".to_string());
             env.insert("plugins.security.disabled".to_string(), "true".to_string());
@@ -2646,7 +2669,7 @@ fn cold_prepare_service_image(
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock | ServicePreset::Openapi => {}
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock | ServicePreset::Openapi | ServicePreset::Lumen => {}
     }
     Ok(())
 }
@@ -2917,6 +2940,7 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => &["firebase", "java"],
+        ServicePreset::Lumen => &[],
     }
 }
 
@@ -3125,6 +3149,7 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
         | ServicePreset::Openapi => {
             vec!["firebase".to_string(), "emulators:start".to_string()]
         }
+        ServicePreset::Lumen => Vec::new(),
     }
 }
 
@@ -3178,6 +3203,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
             host: "127.0.0.1".to_string(),
             port,
         },
+        ServicePreset::Lumen => ReadyProbe::Http(format!("http://127.0.0.1:{port}/readyz")),
     }
 }
 
@@ -3230,6 +3256,7 @@ fn preset_exports(
         | ServicePreset::CloudStorage
         | ServicePreset::HttpMock
         | ServicePreset::Openapi => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
+        ServicePreset::Lumen => ("LUMEN_URL", format!("http://127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -3400,6 +3427,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::CloudStorage => "cloud-storage",
         ServicePreset::HttpMock => "http-mock",
         ServicePreset::Openapi => "openapi",
+        ServicePreset::Lumen => "lumen",
     }
 }
 
@@ -4405,6 +4433,45 @@ mod tests {
             env.get("CACHE_URL").map(String::as_str),
             Some("redis://127.0.0.1:60738/")
         );
+    }
+
+    #[test]
+    fn lumen_preset_is_native_and_exports_loopback_ready_endpoint() {
+        let mut svc = test_service("lumen", &[]);
+        svc.runtime = ServiceRuntime::Auto;
+
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Lumen).unwrap(),
+            ResolvedRuntime::Native
+        ));
+        assert!(matches!(
+            preset_ready_probe(ServicePreset::Lumen, 7373),
+            ReadyProbe::Http(url) if url == "http://127.0.0.1:7373/readyz"
+        ));
+
+        let env = preset_exports(&svc, ServicePreset::Lumen, 7373);
+        assert_eq!(
+            env.get("LUMEN_URL").map(String::as_str),
+            Some("http://127.0.0.1:7373")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_LUMEN_HOST").map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            env.get("VAT_SERVICE_LUMEN_PORT").map(String::as_str),
+            Some("7373")
+        );
+    }
+
+    #[test]
+    fn lumen_preset_rejects_docker_runtime_without_a_fallback() {
+        let mut svc = test_service("lumen", &[]);
+        svc.runtime = ServiceRuntime::Docker;
+        match resolve_preset_runtime(&svc, ServicePreset::Lumen) {
+            Err(error) => assert!(error.to_string().contains("native-only")),
+            Ok(_) => panic!("lumen must not fall back to Docker"),
+        }
     }
 
     #[test]

@@ -59,19 +59,16 @@ pub fn cached_binary(tag: &str, target: &str) -> Result<PathBuf> {
 
 pub fn resolve(version: Option<&str>) -> Result<ResolvedLumen> {
     let target = target()?;
-    let tag = normalize_selector(version)?.unwrap_or_else(latest_tag);
+    let tag = match normalize_selector(version)? {
+        Some(tag) => tag,
+        None => discover_latest()?,
+    };
     let binary = cached_binary(&tag, target)?;
     if executable(&binary) {
         return Ok(ResolvedLumen { tag, executable: binary, cache_hit: true });
     }
     materialize(&tag, target, &binary)?;
     Ok(ResolvedLumen { tag, executable: binary, cache_hit: false })
-}
-
-fn latest_tag() -> String {
-    // The real lookup happens in materialize so an existing explicit cache can
-    // remain fully offline. This sentinel cannot be mistaken for a release tag.
-    "latest".to_string()
 }
 
 fn release_base() -> String {
@@ -82,8 +79,8 @@ fn release_base() -> String {
 }
 
 fn materialize(requested_tag: &str, target: &str, binary: &Path) -> Result<()> {
-    let tag = if requested_tag == "latest" { discover_latest()? } else { requested_tag.to_string() };
-    let binary = if requested_tag == "latest" { cached_binary(&tag, target)? } else { binary.to_path_buf() };
+    let tag = requested_tag.to_string();
+    let binary = binary.to_path_buf();
     if executable(&binary) {
         return Ok(());
     }
