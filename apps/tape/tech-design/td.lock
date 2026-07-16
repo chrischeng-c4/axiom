@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T05:24:26.444464+00:00"
-digest = "sha256:a99b15a64fb7fb5c14e904b835131f0abb954dbc70c8b3d335b6f4823c897940"
-source_digest = "sha256:a99b15a64fb7fb5c14e904b835131f0abb954dbc70c8b3d335b6f4823c897940"
-ir_digest = "sha256:1b168baeb8b2d58911869e1ef5f605a7c8cfd894653adb98292d163df0e4affa"
+generated_at = "2026-07-16T05:34:26.722074+00:00"
+digest = "sha256:446b1560e6acb9bb438f632d9354d7c4790566bc0e1585b9ac6d60f6629a46aa"
+source_digest = "sha256:446b1560e6acb9bb438f632d9354d7c4790566bc0e1585b9ac6d60f6629a46aa"
+ir_digest = "sha256:abfd349bed6086631ddf493d9d311fa7b3fac1cf43f33128ddc3f99c958a007a"
 
 [[files]]
 path = "README.md"
@@ -47,6 +47,12 @@ section_count = 3
 path = "logic/compose-shared-statefulset-workload-projection.md"
 digest = "sha256:4ee8f444cad0f1d36994785987d98ec3ac2877f18372b9d257191e08b51a38b0"
 ir_digest = "sha256:f0ee10f452632ab6a9e66ffead7841d738035f54d356d87b1c61a9526c39f2ac"
+section_count = 3
+
+[[files]]
+path = "logic/delegate-raft-snapshot-persistence-to-storage-durable.md"
+digest = "sha256:5590a7e9b0a0b0d24d341874f7060cec80f494e550591b08295efaa8e6556530"
+ir_digest = "sha256:7fcb6e2b24861e4b6bd40ba188fd4c87c0a55aea0ad96c498fda5317fe71f210"
 section_count = 3
 
 [[files]]
