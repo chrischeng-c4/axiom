@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T05:16:29.268903+00:00"
-digest = "sha256:a3fdd4b2340885834594ae337ea920a59cc5f4c54fe21873deadf03e9be52d9b"
-source_digest = "sha256:a3fdd4b2340885834594ae337ea920a59cc5f4c54fe21873deadf03e9be52d9b"
-ir_digest = "sha256:e852d71cc6e3dd6971ee74987c6e3856ec38bbd955c7be64466c3ab2bb097cdc"
+generated_at = "2026-07-16T05:21:27.410367+00:00"
+digest = "sha256:cb380dd1863bf5d452b990ce5f4f3b6181a032bbaccb59b59f490e90d3f9a689"
+source_digest = "sha256:cb380dd1863bf5d452b990ce5f4f3b6181a032bbaccb59b59f490e90d3f9a689"
+ir_digest = "sha256:a0f2440584884431e8d1dafffb71864de8ad02f71d5a3c12846c4c608b4fcb61"
 
 [[files]]
 path = "README.md"
@@ -45,8 +45,9 @@ section_count = 3
 
 [[files]]
 path = "logic/compose-shared-statefulset-workload-projection.md"
-digest = "sha256:daf1c02f37e74190673623f94db46211e2ad2797087cd077a26ce84301d80385"
-parse_error = "changes:51-66: section 'changes' at lines 51..66: Changes typed-payload parse error: mapping values are not allowed in this context at line 6 column 227"
+digest = "sha256:d8a2bea3d0a69b2dad6cd10f197bf47d65cc2cddf874eea405cfe9212baf87f5"
+ir_digest = "sha256:c9ac06ef8bedb7e2124f1705bef1b5810541dece8fbb55c7d096a6dcb869f2fb"
+section_count = 3
 
 [[files]]
 path = "logic/expose-subscriptions-as-topic-delivery-resources.md"
