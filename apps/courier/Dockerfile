@@ -4,7 +4,7 @@ FROM rust:1.87-slim AS builder
 
 # Build deps for OpenSSL / native-tls (reqwest uses rustls, but keep for flexibility)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev musl-tools ca-certificates \
+    pkg-config libssl-dev musl-tools ca-certificates python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
