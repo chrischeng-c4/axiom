@@ -16,7 +16,7 @@ of its own.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GitHub Issues Proxy | #1332 | partial | pending | none | not ready | forwards search/view/create/comment to GitHub with a server-held credential |
+| GitHub Issues Proxy | #1332 | partial | planned | none | not ready | forwards search/view/create/comment to GitHub with a server-held credential |
 
 ### GitHub Issues Proxy
 
@@ -35,4 +35,4 @@ Gate Inventory: `cargo test -p courier`; apps/courier/src/http
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| github-issues-proxy-service | epic | #1332 | partial | pending | none | apps/courier/src/http |
+| github-issues-proxy-service | epic | #1332 | partial | planned | none | apps/courier/src/http |

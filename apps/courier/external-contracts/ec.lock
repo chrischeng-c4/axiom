@@ -1,0 +1,11 @@
+version = 1
+project = "courier"
+ir_kind = "ec"
+ec_path = "apps/courier/external-contracts"
+inventory_path = "apps/courier/aw.toml"
+generated_at = "2026-07-16T04:47:36.140160+00:00"
+ir_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+source_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+sources = []
+cases = []
+tool_contracts = []
