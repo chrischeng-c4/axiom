@@ -300,7 +300,8 @@ fn build_request_report(
                     shell_quote(&format!("Strengthen generator for {gap_id}")),
                     shell_quote(&payload)
                 ),
-                reason: "create a WI draft, then continue the normal WI/EC/TD-codegen lifecycle".to_string(),
+                reason: "create a WI draft, then continue the normal WI/EC/TD-codegen lifecycle"
+                    .to_string(),
             },
         },
         false,
