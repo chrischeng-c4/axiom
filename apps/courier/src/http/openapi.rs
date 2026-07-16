@@ -24,7 +24,9 @@ use utoipa::OpenApi;
         crate::http::routes::comment_issue,
     )
 )]
+// <HANDWRITE gap="missing-generator:schema" tracker="pending-tracker" reason="schema section in openapi.rs is hand-written pending codegen support">
 pub struct ApiDoc;
+// </HANDWRITE>
 
 /// The courier OpenAPI document — the accessor the shared `service_http`
 /// `/openapi.json` and `/docs` probe routes serve (a
