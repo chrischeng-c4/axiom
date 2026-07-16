@@ -968,9 +968,9 @@ async fn serve_main(args: ServeArgs) -> Result<()> {
     }
 
     let app = if peer_transport.is_some() {
-        tape::server::router_without_raft_routes(state.clone())
+        tape::server::router_without_raft_routes_with_admission(state.clone(), admission)
     } else {
-        tape::server::router(state.clone())
+        tape::server::router_with_admission(state.clone(), admission)
     };
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
