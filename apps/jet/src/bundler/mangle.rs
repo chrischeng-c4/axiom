@@ -7,6 +7,44 @@
 
 use std::collections::{HashMap, HashSet};
 
+/// Scoped module source after identifier rewrites, with a translation from the
+/// original parser byte offsets to the rewritten source byte offsets.
+///
+/// Library-mode inlining parses the original module once, then walks its
+/// top-level statement ranges after scope isolation has lengthened identifiers.
+/// Keeping this translation alongside the rewritten source prevents an original
+/// AST range from slicing into a different location in the rewritten string.
+pub(crate) struct ScopedModuleRename {
+    source: String,
+    replacements: Vec<(usize, usize, String)>,
+}
+
+impl ScopedModuleRename {
+    pub(crate) fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Translate an original-source byte boundary into the rewritten source.
+    /// Callers pass tree-sitter statement boundaries, which cannot fall inside
+    /// an identifier replacement. The interior fallback keeps the mapping safe
+    /// if a future caller does so accidentally.
+    pub(crate) fn output_offset_for_input_offset(&self, input_offset: usize) -> usize {
+        let mut input_cursor = 0usize;
+        let mut output_cursor = 0usize;
+        for (start, end, replacement) in &self.replacements {
+            if input_offset <= *start {
+                break;
+            }
+            if input_offset < *end {
+                return output_cursor + replacement.len();
+            }
+            output_cursor += start - input_cursor + replacement.len();
+            input_cursor = *end;
+        }
+        output_cursor + input_offset - input_cursor
+    }
+}
+
 /// Mangle local variable names to short identifiers.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn mangle_variables(source: &str) -> String {
@@ -35,9 +73,22 @@ pub(crate) fn apply_scoped_module_renames(
     root_renames: &HashMap<String, String>,
     global_renames: &HashMap<String, String>,
 ) -> String {
+    apply_scoped_module_renames_with_offsets(source, root_renames, global_renames).source
+}
+
+/// Apply scoped module renames and retain an original-to-output offset map for
+/// callers that still need to walk AST ranges parsed from the original module.
+pub(crate) fn apply_scoped_module_renames_with_offsets(
+    source: &str,
+    root_renames: &HashMap<String, String>,
+    global_renames: &HashMap<String, String>,
+) -> ScopedModuleRename {
     let tokens = tokenize(source);
     if tokens.is_empty() || (root_renames.is_empty() && global_renames.is_empty()) {
-        return source.to_string();
+        return ScopedModuleRename {
+            source: source.to_string(),
+            replacements: Vec::new(),
+        };
     }
 
     let si = build_scopes(source, &tokens);
@@ -68,7 +119,12 @@ pub(crate) fn apply_scoped_module_renames(
         }
     }
 
-    apply_replacements(source, repls)
+    repls.sort_by(|a, b| a.0.cmp(&b.0));
+    let rewritten = apply_replacements(source, repls.clone());
+    ScopedModuleRename {
+        source: rewritten,
+        replacements: repls,
+    }
 }
 
 fn mangle_variables_inner(source: &str, mangle_root: bool) -> String {
@@ -1598,16 +1654,19 @@ fn is_array_pattern_binding_identifier(source: &str, tokens: &[Tok], ti: usize) 
 }
 
 fn is_function_declaration_context(source: &str, tokens: &[Tok], ti: usize) -> bool {
-    if ti == 0 {
-        return true;
+    // Declarations may be prefixed with module modifiers: `export function`,
+    // `export default function`, and `export async function`. Walk past those
+    // modifiers before checking the enclosing statement boundary.
+    let mut prev_idx = ti;
+    while prev_idx > 0 {
+        prev_idx -= 1;
+        let prev = &tokens[prev_idx];
+        if prev.kind == TK::Ident && matches!(txt(source, prev), "export" | "default" | "async") {
+            continue;
+        }
+        return prev.kind == TK::Punct && matches!(txt(source, prev), "{" | "}" | ";");
     }
-
-    let prev = &tokens[ti - 1];
-    if prev.kind == TK::Punct {
-        return matches!(txt(source, prev), "{" | "}" | ";");
-    }
-
-    false
+    true
 }
 
 fn is_after_param_default_operator(source: &str, tokens: &[Tok], ti: usize) -> bool {

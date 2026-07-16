@@ -8,8 +8,8 @@
 
 use anyhow::Result;
 use regex::Regex;
-use std::sync::OnceLock;
-use tree_sitter::Node;
+use std::{collections::HashSet, sync::OnceLock};
+use tree_sitter::{Node, Parser};
 
 use super::transform_tsx::transform_node;
 use super::TransformOptions;
@@ -94,13 +94,14 @@ pub fn strip_unused_named_imports(code: &str) -> String {
         cursor = *end;
     }
     usage.push_str(&code[cursor..]);
+    let runtime_identifiers = collect_runtime_identifier_names(&usage);
 
     let mut result = String::with_capacity(code.len());
     let mut cursor = 0usize;
     for (start, end) in import_ranges {
         result.push_str(&code[cursor..start]);
         let statement = &code[start..end];
-        if let Some(rewritten) = rewrite_named_import(statement, &usage) {
+        if let Some(rewritten) = rewrite_named_import(statement, &usage, &runtime_identifiers) {
             result.push_str(&rewritten);
         }
         cursor = end;
@@ -145,7 +146,11 @@ fn collect_named_import_ranges(code: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-fn rewrite_named_import(statement: &str, usage: &str) -> Option<String> {
+fn rewrite_named_import(
+    statement: &str,
+    usage: &str,
+    runtime_identifiers: &Option<HashSet<String>>,
+) -> Option<String> {
     static NAMED_IMPORT_RE: OnceLock<Regex> = OnceLock::new();
     let re = NAMED_IMPORT_RE.get_or_init(|| {
         Regex::new(
@@ -192,7 +197,7 @@ fn rewrite_named_import(statement: &str, usage: &str) -> Option<String> {
                 return None;
             }
             let local = import_specifier_local_name(spec)?;
-            if identifier_is_used(usage, local)
+            if identifier_is_used(usage, local, runtime_identifiers)
                 || (default_import.is_none() && !looks_like_type_import_name(local))
             {
                 Some(spec.to_string())
@@ -220,7 +225,7 @@ fn rewrite_named_import(statement: &str, usage: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_unused_named_imports;
+    use super::{collect_runtime_identifier_names, identifier_is_used, strip_unused_named_imports};
 
     #[test]
     fn rewritten_named_imports_preserve_physical_line_endings() {
@@ -247,6 +252,22 @@ mod tests {
             "rewriting must retain CRLF boundaries: {rewritten}"
         );
     }
+
+    #[test]
+    fn identifier_usage_ignores_strings_but_keeps_runtime_references() {
+        let quoted_source = r#"test("Dayjs is only a type", () => {});"#;
+        let quoted_identifiers = collect_runtime_identifier_names(quoted_source);
+        assert!(
+            !identifier_is_used(quoted_source, "Dayjs", &quoted_identifiers),
+            "quoted text must not retain a type-only import"
+        );
+        let runtime_source = "const value = Dayjs.now();";
+        let runtime_identifiers = collect_runtime_identifier_names(runtime_source);
+        assert!(
+            identifier_is_used(runtime_source, "Dayjs", &runtime_identifiers),
+            "a runtime identifier must retain its import"
+        );
+    }
 }
 
 fn import_specifier_local_name(spec: &str) -> Option<&str> {
@@ -256,10 +277,50 @@ fn import_specifier_local_name(spec: &str) -> Option<&str> {
     spec.split_whitespace().next().map(str::trim)
 }
 
-fn identifier_is_used(haystack: &str, ident: &str) -> bool {
+fn collect_runtime_identifier_names(source: &str) -> Option<HashSet<String>> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .ok()?;
+    let tree = parser.parse(source, None)?;
+    let mut identifiers = HashSet::new();
+    collect_runtime_identifier_names_from_node(tree.root_node(), source, &mut identifiers);
+    Some(identifiers)
+}
+
+fn collect_runtime_identifier_names_from_node(
+    node: Node<'_>,
+    source: &str,
+    identifiers: &mut HashSet<String>,
+) {
+    if matches!(node.kind(), "identifier" | "shorthand_property_identifier") {
+        identifiers.insert(source[node.byte_range()].to_string());
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_runtime_identifier_names_from_node(child, source, identifiers);
+    }
+}
+
+fn identifier_is_used(
+    haystack: &str,
+    ident: &str,
+    runtime_identifiers: &Option<HashSet<String>>,
+) -> bool {
     if ident.is_empty() {
         return false;
     }
+
+    if let Some(runtime_identifiers) = runtime_identifiers {
+        return runtime_identifiers.contains(ident);
+    }
+
+    identifier_is_used_textually(haystack, ident)
+}
+
+fn identifier_is_used_textually(haystack: &str, ident: &str) -> bool {
     let mut start = 0usize;
     while let Some(pos) = haystack[start..].find(ident) {
         let absolute = start + pos;

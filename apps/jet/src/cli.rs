@@ -888,11 +888,10 @@ pub fn command() -> Command {
                         .long("env")
                         .value_name("KIND")
                         .help(
-                            "Test environment: node (default), dom, component. \
-                             `node` covers unit and pure-logic frontend tests. \
-                             `dom` and `component` are reserved for browser-like \
-                             environments and currently fail with a clear error \
-                             pointing at `jet e2e` for product-flow cases.",
+                            "Test environment: node (default/fallback), dom, component. \
+                             A root Jest `testEnvironment: \"jsdom\"` selects `dom` \
+                             even with `--env node`; `dom` loads the project's jsdom package. \
+                             `component` remains unavailable; use `jet e2e` for product-flow cases.",
                         ),
                 )
                 .arg(
@@ -2981,7 +2980,9 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // @spec #2709
             let want_list_resolved = m.get_flag("list-resolved");
             if let Some(env_str) = m.get_one::<String>("env") {
-                let env = crate::test_runner::config::TestEnvironment::parse(env_str)
+                let env = cfg
+                    .environment
+                    .with_cli_request(env_str)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
                 if !want_list_resolved {
                     env.ensure_supported()
