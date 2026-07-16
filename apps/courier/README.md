@@ -16,16 +16,16 @@ of its own.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GitHub Issues Proxy | #1332 | full | passing | smoke | ready | forwards search/view/create/comment to GitHub with a server-held credential |
-| Chainable Output Conformance | - | full | passing | smoke | ready | outputs conform to standard agent-chainable command envelope protocol |
-| CLI Interface | - | full | passing | smoke | ready | exposes a CLI binary interface to run and control the courier proxy |
-| CLI Standard Surface | - | full | passing | smoke | ready | exposes standard offline documentation, self-updater, and issue-tracking CLI |
-| EC Gates Configured | - | full | passing | smoke | ready | verifies capability contracts via external-contract gate tests |
-| HTTP/2 API List | - | full | passing | smoke | ready | exposes a standardized HTTP/2-compatible OpenAPI endpoints list |
-| Kubernetes-Native Deployment | - | full | passing | smoke | ready | exposes Kubernetes operator, CRD, and instance manifests |
-| Long-Running Stability | - | full | passing | smoke | ready | runs reliably as a stateless daemon proxy service under high request volumes |
-| Security Hardening | - | full | passing | smoke | ready | denies unauthorized access by verifying credentials using service-auth role mapping |
-| Standard Operational Endpoints | - | full | passing | smoke | ready | exposes standard operational health, Prometheus metrics, and OpenAPI endpoints |
+| GitHub Issues Proxy | #1332 | implemented | passing | smoke | ready | forwards search/view/create/comment to GitHub with a server-held credential |
+| Chainable Output Conformance | - | implemented | passing | smoke | ready | outputs conform to standard agent-chainable command envelope protocol |
+| CLI Interface | - | implemented | passing | smoke | ready | exposes a CLI binary interface to run and control the courier proxy |
+| CLI Standard Surface | - | implemented | passing | smoke | ready | exposes standard offline documentation, self-updater, and issue-tracking CLI |
+| EC Gates Configured | - | implemented | passing | smoke | ready | verifies capability contracts via external-contract gate tests |
+| HTTP/2 API List | - | implemented | passing | smoke | ready | exposes a standardized HTTP/2-compatible OpenAPI endpoints list |
+| Kubernetes-Native Deployment | - | implemented | passing | smoke | ready | exposes Kubernetes operator, CRD, and instance manifests |
+| Long-Running Stability | - | implemented | passing | smoke | ready | runs reliably as a stateless daemon proxy service under high request volumes |
+| Security Hardening | - | implemented | passing | smoke | ready | denies unauthorized access by verifying credentials using service-auth role mapping |
+| Standard Operational Endpoints | - | implemented | passing | smoke | ready | exposes standard operational health, Prometheus metrics, and OpenAPI endpoints |
 
 ### GitHub Issues Proxy
 
@@ -44,7 +44,7 @@ Gate Inventory: `cargo test -p courier`; apps/courier/src/http
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| github-issues-proxy-service | epic | #1332 | full | passing | smoke | apps/courier/src/http |
+| github-issues-proxy-service | epic | #1332 | implemented | passing | smoke | apps/courier/src/http |
 
 ### Chainable Output Conformance
 
@@ -61,7 +61,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| chainable-output-conformance-root | epic | - | full | passing | smoke | apps/courier/src/bin/courier.rs |
+| chainable-output-conformance-root | epic | - | implemented | passing | smoke | apps/courier/src/bin/courier.rs |
 
 ### CLI Interface
 
@@ -78,7 +78,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| cli-interface-root | epic | - | full | passing | smoke | apps/courier/src/bin/courier.rs |
+| cli-interface-root | epic | - | implemented | passing | smoke | apps/courier/src/bin/courier.rs |
 
 ### CLI Standard Surface
 
@@ -95,7 +95,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| cli-standard-surface-root | epic | - | full | passing | smoke | apps/courier/src/llm.rs |
+| cli-standard-surface-root | epic | - | implemented | passing | smoke | apps/courier/src/llm.rs |
 
 ### EC Gates Configured
 
@@ -112,7 +112,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| ec-gates-configured-root | epic | - | full | passing | smoke | apps/courier/Cargo.toml |
+| ec-gates-configured-root | epic | - | implemented | passing | smoke | apps/courier/Cargo.toml |
 
 ### HTTP/2 API List
 
@@ -129,7 +129,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| http2-api-list-root | epic | - | full | passing | smoke | apps/courier/src/http/openapi.rs |
+| http2-api-list-root | epic | - | implemented | passing | smoke | apps/courier/src/http/openapi.rs |
 
 ### Kubernetes-Native Deployment
 
@@ -146,7 +146,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| kubernetes-native-deployment-root | epic | - | full | passing | smoke | apps/courier/Cargo.toml |
+| kubernetes-native-deployment-root | epic | - | implemented | passing | smoke | apps/courier/Cargo.toml |
 
 ### Long-Running Stability
 
@@ -163,7 +163,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| long-running-stability-root | epic | - | full | passing | smoke | apps/courier/src/http/mod.rs |
+| long-running-stability-root | epic | - | implemented | passing | smoke | apps/courier/src/http/mod.rs |
 
 ### Security Hardening
 
@@ -180,7 +180,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| security-hardening-root | epic | - | full | passing | smoke | apps/courier/src/http/auth.rs |
+| security-hardening-root | epic | - | implemented | passing | smoke | apps/courier/src/http/auth.rs |
 
 ### Standard Operational Endpoints
 
@@ -197,7 +197,7 @@ Gate Inventory: `cargo test -p courier`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| standard-operational-endpoints-root | epic | - | full | passing | smoke | apps/courier/src/http/mod.rs |
+| standard-operational-endpoints-root | epic | - | implemented | passing | smoke | apps/courier/src/http/mod.rs |
 
 <!-- aw:meta:project-readme:start -->
 ## Brief
