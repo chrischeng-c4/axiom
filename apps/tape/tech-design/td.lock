@@ -2,16 +2,22 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T05:37:52.394130+00:00"
-digest = "sha256:71f62fcc858d73edb997624007a0682a75dad01f5e00fad7d161202100048f40"
-source_digest = "sha256:71f62fcc858d73edb997624007a0682a75dad01f5e00fad7d161202100048f40"
-ir_digest = "sha256:9ca1e23bc7bfe19dc384b349f701d7dbe5ea9304152d1294e993707b1e56fc47"
+generated_at = "2026-07-16T06:08:05.971421+00:00"
+digest = "sha256:5409695ebb0c14696cb735e8db4a86452e3ecc00ed08694f5e3479588f3d1bd6"
+source_digest = "sha256:5409695ebb0c14696cb735e8db4a86452e3ecc00ed08694f5e3479588f3d1bd6"
+ir_digest = "sha256:66fd4f13bf6285a7118e3e931c88dd1cda5a994a1886c3771c71cab74098cf81"
 
 [[files]]
 path = "README.md"
 digest = "sha256:dc7fb8fe7a4210bf50824fc477078de4b62f30208e3c506f7756e1ab5c787104"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "interfaces/rest/align-external-contract-inventory-with-lumen-service-baseline.md"
+digest = "sha256:b206ee28de86d6aa0247c1e0d92e9379a505bfa7cbb9d2a347ed02b50ac5352e"
+ir_digest = "sha256:43bb25e460d02df9a906835b080cac55f7769afa5c5d8413339bb8295e45d63a"
+section_count = 3
 
 [[files]]
 path = "interfaces/rest/service-http-shell-h2c-serve-standard-endpoints.md"
