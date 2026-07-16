@@ -32,14 +32,16 @@ changes:
   path: apps/courier/build.rs
   section: schema
 - action: modify
-  description: 'Project build entrypoint.
-
-    '
+  anchor: trap
+  description: |
+    Project build entrypoint.
   impl_mode: hand-written
   path: apps/courier/build.sh
   section: schema
 - action: modify
-  description: Project installation entrypoint.
+  anchor: say
+  description: |
+    Project installation entrypoint.
   impl_mode: hand-written
   path: apps/courier/install.sh
   section: schema
