@@ -54,22 +54,22 @@ changes:
 
 ```mermaid
 ---
-id: tape-storage-durable-adoption-verification
+id: tape-storage-durable-adoption-contract
 requirements:
-  failover_keeps_committed_events:
+  shared_atomic_write_preserves_failover:
     id: R2
-    text: "Shared marker and snapshot writes preserve committed Tape events through leader loss and restart."
+    text: "Leader loss and restart must retain all committed events after durable-write delegation."
     kind: regression
     risk: high
     verify: apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss
-  snapshot_recovery_remains_durable:
+  shared_atomic_write_preserves_snapshot_recovery:
     id: R1
-    text: "Shared atomic persistence preserves Tape Raft snapshot install and recovery semantics."
+    text: "Tape must recover the same replicated journal state when every marker and snapshot replace delegates to storage-durable."
     kind: regression
     risk: high
     verify: apps/tape/tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot
 ---
 flowchart TD
-    r1[R1 snapshot recovery remains durable] --> apps_tape_tests_raft_cluster_rs_fresh_node_catches_up_via_install_snapshot[apps/tape/tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot]
-    r2[R2 failover keeps committed events] --> apps_tape_tests_raft_failover_rs_kill_9_leader_survivors_reelect_with_no_committed_event_loss[apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss]
+    r1[R1 shared atomic write preserves snapshot recovery] --> apps_tape_tests_raft_cluster_rs_fresh_node_catches_up_via_install_snapshot[apps/tape/tests/raft_cluster.rs::fresh_node_catches_up_via_install_snapshot]
+    r2[R2 shared atomic write preserves failover] --> apps_tape_tests_raft_failover_rs_kill_9_leader_survivors_reelect_with_no_committed_event_loss[apps/tape/tests/raft_failover.rs::kill_9_leader_survivors_reelect_with_no_committed_event_loss]
 ```
