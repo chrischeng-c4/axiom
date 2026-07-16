@@ -378,6 +378,7 @@ pub struct TapeRaft {
     sm: Arc<TapeStateMachine>,
 }
 
+// <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="pending-tracker" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
 impl TapeRaft {
     /// Spawn the group for node `node_id`, persisting raft hard state + the
     /// applied marker under `raft_dir` (created if needed). `peers` maps the
@@ -501,6 +502,7 @@ impl TapeRaft {
         self.sm.journal()
     }
 }
+// </HANDWRITE>
 
 #[cfg(test)]
 mod tests {

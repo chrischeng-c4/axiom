@@ -80,6 +80,7 @@ fn token_registry_secret(tape: &Tape) -> Option<&str> {
     tape.spec.tokens_secret.as_deref()
 }
 
+// <HANDWRITE gap="missing-generator:kubernetes-peer-service" tracker="pending-tracker" reason="kubernetes-peer-service section in render.rs is hand-written pending codegen support">
 /// Render every child object for `tape`, in dependency order (identity first,
 /// then the workload + its Services + PDB).
 pub fn render(tape: &Tape) -> Vec<Value> {
@@ -98,7 +99,9 @@ pub fn render(tape: &Tape) -> Vec<Value> {
         render::pdb(&cx, &name, COMPONENT, 1),
     ]
 }
+// </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:kubernetes-peer-workload" tracker="pending-tracker" reason="kubernetes-peer-workload section in render.rs is hand-written pending codegen support">
 /// The durable serving StatefulSet: the toolkit's downward-API base
 /// (`replicas = replicasPerShard` — `shard_count` PINNED to 1, tape is a
 /// single raft group; the raft-runtime env quartet + `TAPE_PEER_SERVICE`; the
@@ -172,6 +175,7 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
     harden(tape, &mut sts);
     sts
 }
+// </HANDWRITE>
 
 /// Layer tape's production hardening onto the toolkit's base StatefulSet:
 /// rolling-update policy, prometheus scrape annotations, non-root
