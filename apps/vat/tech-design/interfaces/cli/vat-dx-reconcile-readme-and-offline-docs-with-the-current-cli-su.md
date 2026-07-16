@@ -31,18 +31,16 @@ The public contract is documentation-only: no command behavior changes. The READ
 
 ```yaml
 changes:
-  - path: apps/vat/README.md
-    action: modify
-    section: logic
-    impl_mode: hand-written
   - path: apps/vat/src/commands/llm.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: GUIDE
   - path: apps/vat/tests/vat_cli_convention.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
+    anchor: cli_convention_help_lists_all_three
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
