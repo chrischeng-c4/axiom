@@ -220,7 +220,8 @@ pub struct ExternalServiceConfig {
 ///
 /// The datastore/broker presets (postgres … mongo) prefer a native Homebrew
 /// binary with a Docker image fallback. The emulator presets
-/// (firestore … spanner) wrap the GCP `gcloud beta emulators` family — native
+/// (`gcloud-firestore` … `gcloud-spanner`) wrap the GCP `gcloud beta emulators`
+/// family — native
 /// when the gcloud component is installed, Docker otherwise — and `firebase` is
 /// the Firebase Emulator Suite bundle driven by a workspace `firebase.json`.
 /// @spec apps/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
@@ -235,10 +236,14 @@ pub enum ServicePreset {
     Mysql,
     Mongo,
     Opensearch,
+    #[serde(rename = "gcloud-firestore")]
     Firestore,
     Pubsub,
+    #[serde(rename = "gcloud-datastore")]
     Datastore,
+    #[serde(rename = "gcloud-bigtable")]
     Bigtable,
+    #[serde(rename = "gcloud-spanner")]
     Spanner,
     Firebase,
     FirebaseAuth,
@@ -1465,11 +1470,11 @@ network = "hermetic"
     #[test]
     fn emulator_presets_round_trip() {
         for (token, preset) in [
-            ("firestore", ServicePreset::Firestore),
+            ("gcloud-firestore", ServicePreset::Firestore),
             ("pubsub", ServicePreset::Pubsub),
-            ("datastore", ServicePreset::Datastore),
-            ("bigtable", ServicePreset::Bigtable),
-            ("spanner", ServicePreset::Spanner),
+            ("gcloud-datastore", ServicePreset::Datastore),
+            ("gcloud-bigtable", ServicePreset::Bigtable),
+            ("gcloud-spanner", ServicePreset::Spanner),
             ("firebase", ServicePreset::Firebase),
         ] {
             let parsed: ServicePreset =
@@ -1480,6 +1485,16 @@ network = "hermetic"
                 serde_json::Value::String(token.into())
             );
             assert!(preset.is_emulator());
+        }
+
+        for legacy in ["firestore", "datastore", "bigtable", "spanner"] {
+            assert!(
+                serde_json::from_value::<ServicePreset>(serde_json::Value::String(
+                    legacy.into()
+                ))
+                .is_err(),
+                "GCP gcloud presets must use the gcloud- prefix: {legacy}"
+            );
         }
     }
 

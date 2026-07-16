@@ -82,8 +82,8 @@ cluster = "auto"           # auto (kind→k3d→minikube) | kind | k3d | minikub
 export = { KUBECONFIG = "{kubeconfig}" }
 
 [[services]]
-id = "fs"                  # GCP Firestore emulator (exports FIRESTORE_EMULATOR_HOST)
-preset = "firestore"       # firestore | pubsub | datastore | bigtable | spanner | firebase
+id = "fs"                  # gcloud Firestore emulator (exports FIRESTORE_EMULATOR_HOST)
+preset = "gcloud-firestore" # gcloud-firestore | gcloud-datastore | gcloud-bigtable | gcloud-spanner
 
 [[services]]
 id = "web"                 # app under test; {port} is auto-allocated

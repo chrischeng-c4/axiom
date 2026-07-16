@@ -393,8 +393,9 @@ preferred**:
   id = "ps"
   preset = "pubsub"          # built-in gRPC emulator → PUBSUB_EMULATOR_HOST
   ```
-- `preset` (external emulators) — `firestore`, `datastore`, `bigtable`,
-  `spanner` wrap the GCP `gcloud beta emulators` family. Native needs gcloud +
+- `preset` (external emulators) — `gcloud-firestore`, `gcloud-datastore`,
+  `gcloud-bigtable`, and `gcloud-spanner` wrap the GCP `gcloud beta emulators`
+  family. Native needs gcloud +
   Java + the gcloud component; `runtime = auto` falls back to the cloud-cli
   Docker image (Spanner uses its own image) when the component is missing.
   Each exports the well-known host var (e.g. `FIRESTORE_EMULATOR_HOST`).
