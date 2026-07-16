@@ -51,9 +51,8 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    description: "Add a typed, service-prefix admission configuration parser that produces an optional shared AdmissionController. generator gap: missing-generator:service-http-admission-config (#1823)."
+    description: "Expose a typed optional controller configuration parser for all service adopters. generator gap: missing-generator:service-http-admission-config (#1823)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
