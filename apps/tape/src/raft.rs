@@ -446,7 +446,7 @@ pub struct TapeRaft {
     proposal_sequence: AtomicU64,
 }
 
-// <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="#1805" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:raft-transport-adapter" tracker="pending-tracker" reason="raft-transport-adapter section in raft.rs is hand-written pending codegen support">
 impl TapeRaft {
     /// Spawn the group for node `node_id`, persisting shared Raft hard state,
     /// commit watermark, log, and snapshots under `raft_dir`. `peers` maps the
