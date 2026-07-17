@@ -53,7 +53,6 @@ changes:
     anchor: PgpoolControlPlane::admit_scale
     reason: Pass outstanding reserve-grant units into static scale admission, reject instead of implicitly reclaiming grants, and cover admit/grant/release sequences.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
