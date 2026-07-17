@@ -128,6 +128,7 @@ dirs = "5"
 # Sass features (nesting, variables, `@use`/`@import` partials, mixins)
 # flow through the existing CSS pipeline and the lib `style.css`.
 grass = "0.13"
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

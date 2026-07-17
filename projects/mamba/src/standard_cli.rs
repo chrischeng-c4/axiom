@@ -224,7 +224,9 @@ pub fn run_report_issue(matches: &ArgMatches) -> Result<()> {
         .map(|values| values.cloned().collect::<Vec<_>>())
         .unwrap_or_default();
 
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
     block_on(cli_std::report_issue::run(
+        &client,
         &TOOL,
         cli_std::report_issue::Options {
             title,

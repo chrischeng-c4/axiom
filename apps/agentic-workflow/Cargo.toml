@@ -112,6 +112,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Temp files
 tempfile = "3"
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [features]
 default = ["self-update", "report-issue"]

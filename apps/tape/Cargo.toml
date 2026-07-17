@@ -74,6 +74,7 @@ service-backup = { path = "../../libs/service-backup" }
 # serving image stays reqwest-free by default). Also a dev-dependency for the
 # transport tests either way.
 reqwest = { workspace = true, optional = true }
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [dev-dependencies]
 async-nats = { workspace = true }

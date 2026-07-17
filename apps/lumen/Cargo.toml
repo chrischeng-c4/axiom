@@ -122,6 +122,7 @@ opentelemetry = { version = "0.21", optional = true }
 opentelemetry-otlp = { version = "0.14", features = ["tonic", "metrics"], optional = true }
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true }
 utoipa = { workspace = true, features = ["axum_extras"] }
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [build-dependencies]
 build-stamp = { path = "../../libs/build-stamp" }

@@ -195,6 +195,7 @@ unicode-xid = "0.2"
 # Real NFC/NFD/NFKC/NFKD engine for the unicodedata module (already in the
 # workspace lockfile via other deps).
 unicode-normalization = "0.1"
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [dev-dependencies]
 datatest-stable = "0.2"

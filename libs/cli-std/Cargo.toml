@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 serde_json = { workspace = true }
 semver = { workspace = true }
 # Pure decode/verify (no openssl); always available so the offline paths build.

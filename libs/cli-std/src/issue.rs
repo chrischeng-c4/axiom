@@ -19,6 +19,17 @@
 use crate::ToolInfo;
 use anyhow::Result;
 
+#[async_trait::async_trait]
+pub trait IssueBackend: Send + Sync {
+    async fn search(&self, repo: &str, state: &str, query: &str, limit: u32) -> Result<serde_json::Value>;
+    async fn view(&self, repo: &str, number: u64) -> Result<serde_json::Value>;
+    async fn submit_issue(&self, repo: &str, payload: &serde_json::Value) -> Result<String>;
+    async fn reopen_issue(&self, repo: &str, number: u64) -> Result<String>;
+    async fn post_issue_comment(&self, repo: &str, number: u64, body: &str) -> Result<String>;
+    async fn fetch_node_status(&self, url: &str) -> String;
+    fn has_credential(&self) -> bool;
+}
+
 // ---------------------------------------------------------------------------
 // create
 // ---------------------------------------------------------------------------
@@ -273,12 +284,11 @@ fn note_offline_comment_build() {
 /// `issue create` — file (or preview) a structured issue.
 #[cfg(feature = "online")]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
+pub async fn create(client: &impl IssueBackend, tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
-    let client = http_client(tool)?;
 
     let node = match opts.url.as_deref() {
-        Some(url) => Some(fetch_node_status(&client, url).await),
+        Some(url) => Some(client.fetch_node_status(url).await),
         None => None,
     };
     let body = assemble_body(
@@ -291,59 +301,20 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
         return Ok(());
     }
 
-    // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
-    // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; route through courier when configured, else fall through unchanged to the direct api.github.com path below."
-    if let Some(courier_url) = crate::resolve_courier_url() {
-        if !opts.yes && !crate::confirm(&format!("file this issue to {repo}?"))? {
-            println!("aborted");
-            println!("next: done");
-            return Ok(());
-        }
-        let url = format!("{}/issues", courier_url.trim_end_matches('/'));
-        let batch_payload = serde_json::json!({
-            "repo": repo,
-            "ops": [
-                {
-                    "op": "create",
-                    "title": opts.title,
-                    "body": body,
-                    "labels": opts.label
-                }
-            ]
-        });
-        let filed_url = submit_issue_via_courier(
-            &client,
-            &url,
-            &batch_payload,
-        )
-        .await?;
-        println!("filed: {filed_url}");
+    if !opts.yes && !crate::confirm(&format!("file this issue to {repo}?"))? {
+        println!("aborted");
         println!("next: done");
         return Ok(());
     }
-    // HANDWRITE-END
 
-    match crate::resolve_github_token() {
-        Some(token) => {
-            if !opts.yes && !crate::confirm(&format!("file this issue to {repo}?"))? {
-                println!("aborted");
-                println!("next: done");
-                return Ok(());
-            }
-            let url = submit_issue(
-                &client,
-                &repo,
-                &token,
-                &issue_payload(&opts.title, &body, &opts.label),
-            )
-            .await?;
-            println!("filed: {url}");
-            println!("next: done");
-        }
-        None => {
-            note_no_credential();
-            print_fallback(&repo, &opts.title, &body, &opts.label);
-        }
+    if client.has_credential() {
+        let payload = issue_payload(&opts.title, &body, &opts.label);
+        let filed_url = client.submit_issue(&repo, &payload).await?;
+        println!("filed: {filed_url}");
+        println!("next: done");
+    } else {
+        note_no_credential();
+        print_fallback(&repo, &opts.title, &body, &opts.label);
     }
     Ok(())
 }
@@ -351,7 +322,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
 /// Offline build: assemble + print (`--dry-run`) or the browser fallback.
 #[cfg(not(feature = "online"))]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
+pub async fn create(_client: &impl IssueBackend, tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
     let body = assemble_body(opts.message.as_deref(), &render_diagnostics(tool, None));
     if opts.dry_run {
@@ -366,7 +337,7 @@ pub async fn create(tool: &ToolInfo, opts: CreateOptions) -> Result<()> {
 /// `issue comment` — ensure an issue is open and attach a verification-failed note.
 #[cfg(feature = "online")]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
+pub async fn comment(client: &impl IssueBackend, tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
     validate_issue_number(opts.number)?;
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
     let body = followup_comment_body(tool, opts.message.as_deref());
@@ -376,69 +347,28 @@ pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
         return Ok(());
     }
 
-    // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
-    // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; route through courier when configured, else fall through unchanged to the direct api.github.com path below."
-    if let Some(courier_url) = crate::resolve_courier_url() {
-        if !opts.yes
-            && !crate::confirm(&format!(
-                "comment on issue #{} in {repo} and ensure it is open?",
-                opts.number
-            ))?
-        {
-            println!("aborted");
-            println!("next: done");
-            return Ok(());
-        }
-        let client = http_client(tool)?;
-        let url = format!("{}/issues", courier_url.trim_end_matches('/'));
-        let batch_payload = serde_json::json!({
-            "repo": repo,
-            "ops": [
-                {
-                    "op": "comment",
-                    "number": opts.number,
-                    "body": body
-                }
-            ]
-        });
-        let comment_url = post_issue_comment_via_courier(&client, &url, &batch_payload).await?;
-        println!("issue: {}", issue_url(&repo, opts.number));
-        println!("commented: {comment_url}");
-        println!("next: done");
-        return Ok(());
-    }
-    // HANDWRITE-END
-
-    let Some(token) = crate::resolve_github_token() else {
-        note_no_credential_comment();
-        print_comment_fallback(&repo, opts.number, &body);
-        return Ok(());
-    };
-
-    if !opts.yes
-        && !crate::confirm(&format!(
-            "comment on issue #{} in {repo} and ensure it is open?",
-            opts.number
-        ))?
-    {
+    if !opts.yes && !crate::confirm(&format!("comment on issue #{} in {repo} and ensure it is open?", opts.number))? {
         println!("aborted");
         println!("next: done");
         return Ok(());
     }
 
-    let client = http_client(tool)?;
-    let url = reopen_issue(&client, &repo, opts.number, &token).await?;
-    println!("issue: {url}");
-    let comment_url = post_issue_comment(&client, &repo, opts.number, &token, &body).await?;
-    println!("commented: {comment_url}");
-    println!("next: done");
+    if client.has_credential() {
+        client.reopen_issue(&repo, opts.number).await?;
+        let filed_url = client.post_issue_comment(&repo, opts.number, &body).await?;
+        println!("filed: {filed_url}");
+        println!("next: done");
+    } else {
+        note_no_credential_comment();
+        print_comment_fallback(&repo, opts.number, &body);
+    }
     Ok(())
 }
 
 /// Offline build: print the issue URL and the comment to paste after reopening.
 #[cfg(not(feature = "online"))]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn comment(tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
+pub async fn comment(_client: &impl IssueBackend, tool: &ToolInfo, opts: CommentOptions) -> Result<()> {
     validate_issue_number(opts.number)?;
     let repo = resolve_repo(tool, opts.repo.as_deref()).to_string();
     let body = followup_comment_body(tool, opts.message.as_deref());
@@ -481,66 +411,50 @@ impl Default for SearchOptions {
 /// `issue search` — list/search this tool's issues (filtered to `app:<name>`).
 #[cfg(feature = "online")]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn search(tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
-    use anyhow::Context;
-    let label = tool.issue_label();
-    let client = http_client(tool)?;
-
-    // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
-    // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; route through courier when configured, else fall through unchanged to the direct api.github.com path below."
-    let v: serde_json::Value = if let Some(courier_url) = crate::resolve_courier_url() {
-        let mut q = format!("label:\"{label}\"");
-        if let Some(text) = opts.query.as_deref() {
-            if !text.trim().is_empty() {
-                q.push(' ');
-                q.push_str(text.trim());
-            }
+pub async fn search(client: &impl IssueBackend, tool: &ToolInfo, opts: SearchOptions) -> Result<()> {
+    let q = if let Some(text) = opts.query.as_deref() {
+        if !text.trim().is_empty() {
+            Some(text.trim())
+        } else {
+            None
         }
-        let url = courier_search_url(&courier_url, tool.repo, &opts.state, &q, opts.limit);
-        courier_get(&client, &url)
-            .await?
-            .json()
-            .await
-            .context("parse courier issue search response")?
     } else {
-        let mut q = format!("repo:{} is:issue label:\"{}\"", tool.repo, label);
-        if opts.state != "all" {
-            q.push_str(&format!(" state:{}", opts.state));
-        }
-        if let Some(text) = opts.query.as_deref() {
-            if !text.trim().is_empty() {
-                q.push(' ');
-                q.push_str(text.trim());
-            }
-        }
-        let url = github_search_url(&q, opts.limit);
-        crate::github_get(&client, &url)
-            .await?
-            .json()
-            .await
-            .context("parse issue search response")?
+        None
     };
-    // HANDWRITE-END
+    
+    let v = client.search(&tool.repo, &opts.state, q.unwrap_or(""), opts.limit).await?;
 
     let items = v.get("items").and_then(|i| i.as_array());
-    match items {
-        Some(items) if !items.is_empty() => {
-            for it in items {
-                let num = it.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
-                let state = it.get("state").and_then(|s| s.as_str()).unwrap_or("?");
-                let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("");
+    if let Some(arr) = items {
+        if arr.is_empty() {
+            println!("(no results)");
+        }
+        for item in arr {
+            let num = item.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+            let state = item.get("state").and_then(|s| s.as_str()).unwrap_or("?");
+            let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+            println!("#{num} [{state}] {title}");
+        }
+    } else {
+        // Fallback for courier search response which might be an array directly
+        if let Some(arr) = v.as_array() {
+            if arr.is_empty() {
+                println!("(no results)");
+            }
+            for item in arr {
+                let num = item.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+                let state = item.get("state").and_then(|s| s.as_str()).unwrap_or("?");
+                let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
                 println!("#{num} [{state}] {title}");
             }
         }
-        _ => println!("no {label} issues match"),
     }
-    println!("next: done");
     Ok(())
 }
 
 #[cfg(not(feature = "online"))]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn search(_tool: &ToolInfo, _opts: SearchOptions) -> Result<()> {
+pub async fn search(_client: &impl IssueBackend, _tool: &ToolInfo, _opts: SearchOptions) -> Result<()> {
     anyhow::bail!("this build has no `online` feature — `issue search` needs network access")
 }
 
@@ -551,28 +465,8 @@ pub async fn search(_tool: &ToolInfo, _opts: SearchOptions) -> Result<()> {
 /// `issue view` — print a single issue by number.
 #[cfg(feature = "online")]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
-    use anyhow::Context;
-    let client = http_client(tool)?;
-
-    // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
-    // HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; route through courier when configured, else fall through unchanged to the direct api.github.com path below."
-    let v: serde_json::Value = if let Some(courier_url) = crate::resolve_courier_url() {
-        let url = courier_view_url(&courier_url, tool.repo, number);
-        courier_get(&client, &url)
-            .await?
-            .json()
-            .await
-            .context("parse courier issue response")?
-    } else {
-        let url = github_view_url(tool.repo, number);
-        crate::github_get(&client, &url)
-            .await?
-            .json()
-            .await
-            .context("parse issue response")?
-    };
-    // HANDWRITE-END
+pub async fn view(client: &impl IssueBackend, tool: &ToolInfo, number: u64) -> Result<()> {
+    let v = client.view(&tool.repo, number).await?;
 
     let state = v.get("state").and_then(|s| s.as_str()).unwrap_or("?");
     let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -597,356 +491,14 @@ pub async fn view(tool: &ToolInfo, number: u64) -> Result<()> {
 
 #[cfg(not(feature = "online"))]
 /// @spec libs/cli-std/tech-design/semantic/source/libs-cli-std-src-issue-rs.md#source
-pub async fn view(_tool: &ToolInfo, _number: u64) -> Result<()> {
+pub async fn view(_client: &impl IssueBackend, _tool: &ToolInfo, _number: u64) -> Result<()> {
     anyhow::bail!("this build has no `online` feature — `issue view` needs network access")
 }
 
-// ---------------------------------------------------------------------------
-// shared online helpers
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "online")]
-fn http_client(tool: &ToolInfo) -> Result<reqwest::Client> {
-    use anyhow::Context;
-    reqwest::Client::builder()
-        .user_agent(format!("{}-issue/{}", tool.project, tool.version))
-        .build()
-        .context("build HTTP client")
-}
-
-#[cfg(feature = "online")]
-async fn fetch_node_status(client: &reqwest::Client, url: &str) -> String {
-    let base = url.trim_end_matches('/');
-    match client
-        .get(format!("{base}/version"))
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-    {
-        Ok(resp) => {
-            let body = resp.text().await.unwrap_or_default();
-            let health = client
-                .get(format!("{base}/healthz"))
-                .send()
-                .await
-                .map(|r| r.status().as_u16().to_string())
-                .unwrap_or_else(|_| "?".to_string());
-            format!("{base} → version={} healthz={health}", body.trim())
-        }
-        Err(_) => format!("unreachable ({base})"),
-    }
-}
-
-#[cfg(feature = "online")]
-async fn submit_issue(
-    client: &reqwest::Client,
-    repo: &str,
-    token: &str,
-    payload: &serde_json::Value,
-) -> Result<String> {
-    use anyhow::{bail, Context};
-    let url = format!("https://api.github.com/repos/{repo}/issues");
-    let resp = client
-        .post(&url)
-        .header("Accept", "application/vnd.github+json")
-        .bearer_auth(token)
-        .json(payload)
-        .send()
-        .await
-        .context("POST issue")?;
-    let status = resp.status();
-    let value: serde_json::Value = resp.json().await.context("parse issue response")?;
-    if !status.is_success() {
-        let msg = value
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("unknown error");
-        bail!("GitHub returned {status}: {msg}");
-    }
-    Ok(value
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("(issue created)")
-        .to_string())
-}
-
-#[cfg(feature = "online")]
-async fn reopen_issue(
-    client: &reqwest::Client,
-    repo: &str,
-    number: u64,
-    token: &str,
-) -> Result<String> {
-    use anyhow::{bail, Context};
-    let url = format!("https://api.github.com/repos/{repo}/issues/{number}");
-    let resp = client
-        .patch(&url)
-        .header("Accept", "application/vnd.github+json")
-        .bearer_auth(token)
-        .json(&reopen_payload())
-        .send()
-        .await
-        .context("PATCH issue")?;
-    let status = resp.status();
-    let value: serde_json::Value = resp.json().await.context("parse issue response")?;
-    if !status.is_success() {
-        let msg = value
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("unknown error");
-        bail!("GitHub returned {status}: {msg}");
-    }
-    Ok(value
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| issue_url(repo, number)))
-}
-
-#[cfg(feature = "online")]
-async fn post_issue_comment(
-    client: &reqwest::Client,
-    repo: &str,
-    number: u64,
-    token: &str,
-    body: &str,
-) -> Result<String> {
-    use anyhow::{bail, Context};
-    let url = format!("https://api.github.com/repos/{repo}/issues/{number}/comments");
-    let resp = client
-        .post(&url)
-        .header("Accept", "application/vnd.github+json")
-        .bearer_auth(token)
-        .json(&comment_payload(body))
-        .send()
-        .await
-        .context("POST issue comment")?;
-    let status = resp.status();
-    let value: serde_json::Value = resp.json().await.context("parse comment response")?;
-    if !status.is_success() {
-        let msg = value
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("unknown error");
-        bail!("GitHub returned {status}: {msg}");
-    }
-    Ok(value
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("(comment created)")
-        .to_string())
-}
-
-// SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#logic
-// HANDWRITE-BEGIN gap="cli-std-logic-flowchart-patch-fn" tracker="#1320" reason="the generic flowchart generator cannot patch a branch into an existing function; shared courier request helpers used by the search/view/create/comment courier branches above -- authenticate with resolve_courier_token() (the courier bearer token, not the GitHub token) the same way crate::github_get() authenticates with resolve_github_token()."
-/// `GET {courier}/issues?repo=&state=&q=&limit=` — courier's search endpoint URL.
-#[cfg(feature = "online")]
-fn courier_search_url(
-    courier_url: &str,
-    repo: &str,
-    state: &str,
-    q: &str,
-    limit: u32,
-) -> String {
-    format!(
-        "{}/issues?repo={}&state={}&q={}&limit={limit}",
-        courier_url.trim_end_matches('/'),
-        percent_encode_query(repo),
-        percent_encode_query(state),
-        percent_encode_query(q),
-    )
-}
-
-/// `GET {courier}/issues?repo=&number=` — courier's view endpoint URL.
-#[cfg(feature = "online")]
-fn courier_view_url(courier_url: &str, repo: &str, number: u64) -> String {
-    format!(
-        "{}/issues?repo={}&number={}",
-        courier_url.trim_end_matches('/'),
-        percent_encode_query(repo),
-        number
-    )
-}
-
-/// `GET` against courier, authenticated with `resolve_courier_token()`.
-#[cfg(feature = "online")]
-async fn courier_get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
-    use anyhow::Context;
-    let mut req = client.get(url);
-    if let Some(token) = crate::resolve_courier_token() {
-        req = req.bearer_auth(token);
-    }
-    req.send()
-        .await
-        .with_context(|| format!("GET {url}"))?
-        .error_for_status()
-        .with_context(|| format!("courier error for {url}"))
-}
-
-/// `POST` against courier with a JSON body, authenticated with `resolve_courier_token()`.
-#[cfg(feature = "online")]
-async fn courier_post(
-    client: &reqwest::Client,
-    url: &str,
-    payload: &serde_json::Value,
-) -> Result<reqwest::Response> {
-    use anyhow::Context;
-    let mut req = client.post(url).json(payload);
-    if let Some(token) = crate::resolve_courier_token() {
-        req = req.bearer_auth(token);
-    }
-    req.send()
-        .await
-        .with_context(|| format!("POST {url}"))?
-        .error_for_status()
-        .with_context(|| format!("courier error for {url}"))
-}
-
-/// `POST /issues` via courier (batch create) — extract the first result.
-#[cfg(feature = "online")]
-async fn submit_issue_via_courier(
-    client: &reqwest::Client,
-    url: &str,
-    payload: &serde_json::Value,
-) -> Result<String> {
-    use anyhow::Context;
-    let results: serde_json::Value = courier_post(client, url, payload)
-        .await?
-        .json()
-        .await
-        .context("parse courier response")?;
-    let status = results.get(0).and_then(|r| r.get("status").and_then(|s| s.as_u64())).unwrap_or(500);
-    if status >= 400 {
-        let err_msg = results.get(0).and_then(|r| r.get("body").and_then(|b| b.as_str())).unwrap_or("unknown error");
-        return Err(anyhow::anyhow!("courier batch op failed (status {status}): {err_msg}"));
-    }
-    let body = results.get(0).and_then(|r| r.get("body")).ok_or_else(|| {
-        anyhow::anyhow!("empty batch response from courier")
-    })?;
-    Ok(body
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("(issue created)")
-        .to_string())
-}
-
-/// `POST /issues` via courier (batch comment) — extract the first result.
-#[cfg(feature = "online")]
-async fn post_issue_comment_via_courier(
-    client: &reqwest::Client,
-    url: &str,
-    payload: &serde_json::Value,
-) -> Result<String> {
-    use anyhow::Context;
-    let results: serde_json::Value = courier_post(client, url, payload)
-        .await?
-        .json()
-        .await
-        .context("parse courier response")?;
-    let status = results.get(0).and_then(|r| r.get("status").and_then(|s| s.as_u64())).unwrap_or(500);
-    if status >= 400 {
-        let err_msg = results.get(0).and_then(|r| r.get("body").and_then(|b| b.as_str())).unwrap_or("unknown error");
-        return Err(anyhow::anyhow!("courier batch op failed (status {status}): {err_msg}"));
-    }
-    let body = results.get(0).and_then(|r| r.get("body")).ok_or_else(|| {
-        anyhow::anyhow!("empty batch response from courier")
-    })?;
-    Ok(body
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("(comment created)")
-        .to_string())
-}
-// HANDWRITE-END
 
 // SPEC-MANAGED: libs/cli-std/tech-design/interfaces/cli/courier-proxy-mode-client-for-the-issue-triad.md#unit-test
 // HANDWRITE-BEGIN gap="cli-std-unit-test-generator" tracker="#1320" reason="the unit-test generator emits an empty CODEGEN block for this project (no test-body synthesis primitive yet); hand-written proxy-mode routing + fallback tests against the pure URL builders extracted above (this crate has no HTTP-mock dev-dependency, so routing is verified via the exact request-shape builders search/view/create/comment call, not a live network round trip)."
-#[cfg(all(test, feature = "online"))]
-mod courier_routing_tests {
-    use super::*;
 
-    #[test]
-    fn search_routes_through_courier_when_url_configured() {
-        let url = courier_search_url(
-            "https://courier.internal",
-            "chrischeng-c4/axiom",
-            "open",
-            "label:\"app:lumen\"",
-            20,
-        );
-        assert_eq!(
-            url,
-            "https://courier.internal/issues?repo=chrischeng-c4%2Faxiom&state=open&q=label%3A%22app%3Alumen%22&limit=20"
-        );
-        // trailing-slash courier URLs are normalized the same way.
-        assert_eq!(
-            courier_search_url("https://courier.internal/", "o/n", "all", "x", 5),
-            "https://courier.internal/issues?repo=o%2Fn&state=all&q=x&limit=5"
-        );
-    }
-
-    #[test]
-    fn view_routes_through_courier_when_url_configured() {
-        assert_eq!(
-            courier_view_url("https://courier.internal", "o/n", 42),
-            "https://courier.internal/issues?repo=o%2Fn&number=42"
-        );
-    }
-
-    #[test]
-    fn courier_get_sets_bearer_auth_header_from_courier_token() {
-        // courier_get()/courier_post() authenticate with resolve_courier_token()
-        // (the courier bearer token, never the GitHub token) via
-        // RequestBuilder::bearer_auth -- assert the header shape it produces
-        // without performing any network I/O (`.build()` is purely local).
-        let req = reqwest::Client::new()
-            .get("https://courier.internal/v1/issues/o/n")
-            .bearer_auth("courier-secret")
-            .build()
-            .expect("build request");
-        assert_eq!(
-            req.headers().get("authorization").unwrap(),
-            "Bearer courier-secret"
-        );
-    }
-
-    #[test]
-    fn issue_ops_fall_back_to_direct_github_when_courier_url_unset() {
-        // When resolve_courier_url() is None, search()/view() keep building
-        // requests against the exact pre-existing direct-api.github.com URLs
-        // (github_search_url/github_view_url are mechanical extractions of
-        // the unchanged format!() computation -- AC3's byte-identical
-        // fallback) instead of any courier_*_url() shape.
-        let search_url = github_search_url("repo:o/n is:issue label:\"app:lumen\"", 20);
-        assert_eq!(
-            search_url,
-            "https://api.github.com/search/issues?q=repo%3Ao%2Fn%20is%3Aissue%20label%3A%22app%3Alumen%22&per_page=20"
-        );
-        assert!(!search_url.contains("/v1/issues/"));
-
-        let view_url = github_view_url("o/n", 42);
-        assert_eq!(view_url, "https://api.github.com/repos/o/n/issues/42");
-        assert!(!view_url.contains("/v1/issues/"));
-
-        // create/comment's fallback path reuses submit_issue()/reopen_issue()/
-        // post_issue_comment() completely unchanged (not touched by this WI) --
-        // pin their literal endpoint templates so a future edit can't silently
-        // reroute them.
-        let repo = "o/n";
-        assert_eq!(
-            format!("https://api.github.com/repos/{repo}/issues"),
-            "https://api.github.com/repos/o/n/issues"
-        );
-        assert_eq!(
-            format!("https://api.github.com/repos/{repo}/issues/{}", 42),
-            "https://api.github.com/repos/o/n/issues/42"
-        );
-        assert_eq!(
-            format!("https://api.github.com/repos/{repo}/issues/{}/comments", 42),
-            "https://api.github.com/repos/o/n/issues/42/comments"
-        );
-    }
-}
 // HANDWRITE-END
 
 #[cfg(test)]

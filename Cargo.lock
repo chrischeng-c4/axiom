@@ -123,6 +123,7 @@ dependencies = [
  "heck",
  "ignore",
  "indexmap 2.14.0",
+ "issue-client",
  "jsonschema 0.29.1",
  "libc",
  "pulldown-cmark",
@@ -2058,6 +2059,7 @@ dependencies = [
  "clap",
  "cli-std",
  "dirs",
+ "issue-client",
  "libc",
  "meter",
  "serde",
@@ -2729,6 +2731,7 @@ name = "cli-std"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "flate2",
  "reqwest 0.12.28",
@@ -3068,32 +3071,6 @@ name = "countme"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7704b5fdd17b18ae31c4c1da5a2e0305a2bf17b5249300a9ee9ed7b72114c636"
-
-[[package]]
-name = "courier"
-version = "0.4.7"
-dependencies = [
- "anyhow",
- "axum 0.8.9",
- "build-stamp",
- "clap",
- "cli-std",
- "peer-tls",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "service-auth",
- "service-http",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-test",
- "tower 0.5.3",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "utoipa",
-]
 
 [[package]]
 name = "cow-utils"
@@ -6250,6 +6227,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
+name = "issue-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cli-std",
+ "percent-encoding",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6301,6 +6291,7 @@ dependencies = [
  "grass",
  "httpdate",
  "image",
+ "issue-client",
  "jet-parity-oracle",
  "lightningcss",
  "node-resolve",
@@ -6730,6 +6721,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "futures",
+ "issue-client",
  "k8s-openapi",
  "kube",
  "parking_lot",
@@ -7250,6 +7242,7 @@ dependencies = [
  "futures",
  "hyper 1.9.0",
  "hyper-util",
+ "issue-client",
  "raft-core",
  "reqwest 0.12.28",
  "serde",
@@ -7317,6 +7310,7 @@ dependencies = [
  "criterion",
  "futures",
  "hnsw_rs",
+ "issue-client",
  "jieba-rs",
  "k8s-openapi",
  "kube",
@@ -7520,6 +7514,7 @@ dependencies = [
  "hmac 0.12.1",
  "idna",
  "indexmap 2.14.0",
+ "issue-client",
  "libc",
  "logos",
  "mambalibs-di-binding",
@@ -9330,6 +9325,7 @@ dependencies = [
  "clap",
  "cli-std",
  "http-body-util",
+ "issue-client",
  "metrics-prometheus",
  "reqwest 0.12.28",
  "serde",
@@ -10875,6 +10871,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "futures",
+ "issue-client",
  "k8s-openapi",
  "kube",
  "lapin",
@@ -12989,6 +12986,7 @@ dependencies = [
  "cli-std",
  "futures",
  "http-body-util",
+ "issue-client",
  "k8s-openapi",
  "kube",
  "metrics-prometheus",
@@ -14464,6 +14462,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.9.0",
  "hyper-util",
+ "issue-client",
  "jsonwebtoken",
  "libc",
  "md-5 0.10.6",

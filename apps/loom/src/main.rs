@@ -201,18 +201,23 @@ fn main() -> anyhow::Result<()> {
                 yes: args.yes,
             },
         )),
-        Command::ReportIssue(args) => block_on(cli_std::report_issue::run(
-            &TOOL,
-            cli_std::report_issue::Options {
-                title: args.title,
-                message: args.message,
-                url: args.url,
-                repo: args.repo,
-                label: args.label,
-                dry_run: args.dry_run,
-                yes: args.yes,
-            },
-        )),
+        Command::ReportIssue(args) => block_on(async {
+            let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
+            cli_std::report_issue::run(
+                &client,
+                &TOOL,
+                cli_std::report_issue::Options {
+                    title: args.title,
+                    message: args.message,
+                    url: args.url,
+                    repo: args.repo,
+                    label: args.label,
+                    dry_run: args.dry_run,
+                    yes: args.yes,
+                },
+            )
+            .await
+        }),
     }
 }
 

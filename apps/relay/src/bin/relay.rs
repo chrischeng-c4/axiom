@@ -795,11 +795,14 @@ fn ensure_trailing_newline(input: &str) -> String {
 /// `relay issue <verb>` — dispatch search/view/create to cli-std. `create`
 /// always tags `app:relay`; `search` is filtered to relay's own issues.
 async fn dispatch_issue(args: IssueArgs) -> Result<()> {
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
+
     match args.cmd {
         IssueCommand::Search(m) => {
             let joined = m.query.join(" ");
             let query = (!joined.trim().is_empty()).then_some(joined);
             cli_std::issue::search(
+                &client,
                 &TOOL,
                 cli_std::issue::SearchOptions {
                     query,
@@ -809,7 +812,7 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
             )
             .await
         }
-        IssueCommand::View(m) => cli_std::issue::view(&TOOL, m.number).await,
+        IssueCommand::View(m) => cli_std::issue::view(&client, &TOOL, m.number).await,
         IssueCommand::Create(m) => {
             let msg = m.message.join(" ");
             let title = m.title.unwrap_or_else(|| {
@@ -822,6 +825,7 @@ async fn dispatch_issue(args: IssueArgs) -> Result<()> {
             });
             let message = (!msg.trim().is_empty()).then_some(msg);
             cli_std::issue::create(
+                &client,
                 &TOOL,
                 cli_std::issue::CreateOptions {
                     title,

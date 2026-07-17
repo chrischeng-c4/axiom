@@ -96,6 +96,7 @@ rustls = { version = "0.23", optional = true }
 
 # Config
 clap = { workspace = true, features = ["env"] }
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [features]
 default = []

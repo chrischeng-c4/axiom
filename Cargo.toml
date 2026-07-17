@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "sdks/*",
     "apps/relay",
     "apps/defer",
     "apps/loom",

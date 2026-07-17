@@ -43,6 +43,7 @@ claim-token = { path = "../../libs/claim-token" }
 # Standard agent-facing CLI ops — llm/upgrade/report-issue (#475). Offline paths
 # always build; the network paths are gated behind loom's online features below.
 cli-std = { path = "../../libs/cli-std", default-features = false }
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [features]
 default = []

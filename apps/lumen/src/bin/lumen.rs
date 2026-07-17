@@ -971,10 +971,12 @@ const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
 };
 
 async fn issue(args: IssueArgs) -> Result<()> {
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
     match args.command {
         IssueCommand::Search(args) => {
             let query = (!args.query.is_empty()).then(|| args.query.join(" "));
             cli_std::issue::search(
+                &client,
                 &TOOL,
                 cli_std::issue::SearchOptions {
                     query,
@@ -984,7 +986,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
             )
             .await
         }
-        IssueCommand::View(args) => cli_std::issue::view(&TOOL, args.number).await,
+        IssueCommand::View(args) => cli_std::issue::view(&client, &TOOL, args.number).await,
         IssueCommand::Create(args) => {
             let message = (!args.message.is_empty()).then(|| args.message.join(" "));
             let title = args.title.unwrap_or_else(|| {
@@ -1002,6 +1004,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
                 }
             });
             cli_std::issue::create(
+                &client,
                 &TOOL,
                 cli_std::issue::CreateOptions {
                     title,
@@ -1022,6 +1025,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
         IssueCommand::Comment(args) => {
             let message = (!args.message.is_empty()).then(|| args.message.join(" "));
             cli_std::issue::comment(
+                &client,
                 &TOOL,
                 cli_std::issue::CommentOptions {
                     number: args.number,

@@ -32,6 +32,7 @@ server-tcp = { path = "../../libs/server-tcp" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [dev-dependencies]
 transport-h2c = { path = "../../libs/transport-h2c" }

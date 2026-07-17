@@ -170,7 +170,9 @@ pub async fn run_upgrade(args: UpgradeArgs) -> Result<()> {
 
 pub async fn run_report_issue(args: ReportIssueArgs) -> Result<()> {
     let message = (!args.message.is_empty()).then(|| args.message.join(" "));
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
     cli_std::report_issue::run(
+        &client,
         &TOOL,
         cli_std::report_issue::Options {
             title: args.title.unwrap_or_else(|| "aw issue report".to_string()),
@@ -186,9 +188,12 @@ pub async fn run_report_issue(args: ReportIssueArgs) -> Result<()> {
 }
 
 pub async fn run_issue(args: IssueArgs) -> Result<()> {
+    let client = issue_client::Client::new(ISSUE_TOOL.project, ISSUE_TOOL.version)?;
+
     match args.command {
         IssueCommand::Search(args) => {
             cli_std::issue::search(
+                &client,
                 &ISSUE_TOOL,
                 cli_std::issue::SearchOptions {
                     query: args.query,
@@ -198,10 +203,11 @@ pub async fn run_issue(args: IssueArgs) -> Result<()> {
             )
             .await
         }
-        IssueCommand::View(args) => cli_std::issue::view(&ISSUE_TOOL, args.number).await,
+        IssueCommand::View(args) => cli_std::issue::view(&client, &ISSUE_TOOL, args.number).await,
         IssueCommand::Create(args) => {
             let message = (!args.message.is_empty()).then(|| args.message.join(" "));
             cli_std::issue::create(
+                &client,
                 &ISSUE_TOOL,
                 cli_std::issue::CreateOptions {
                     title: args.title.unwrap_or_else(|| "aw issue report".to_string()),
@@ -218,6 +224,7 @@ pub async fn run_issue(args: IssueArgs) -> Result<()> {
         IssueCommand::Comment(args) => {
             let message = (!args.message.is_empty()).then(|| args.message.join(" "));
             cli_std::issue::comment(
+                &client,
                 &ISSUE_TOOL,
                 cli_std::issue::CommentOptions {
                     number: args.number,

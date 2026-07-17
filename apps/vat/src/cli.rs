@@ -896,6 +896,8 @@ fn upgrade_cmd(
 /// always scoped to the `app:vat` tracker label.
 #[cfg(feature = "issue")]
 fn issue_cmd(cmd: IssueCmd) -> Result<ExitCode> {
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -907,8 +909,7 @@ fn issue_cmd(cmd: IssueCmd) -> Result<ExitCode> {
                 limit,
             } => {
                 let query = (!query.is_empty()).then(|| query.join(" "));
-                cli_std::issue::search(
-                    &TOOL,
+                cli_std::issue::search(&client, &TOOL,
                     cli_std::issue::SearchOptions {
                         query,
                         state,
@@ -917,7 +918,7 @@ fn issue_cmd(cmd: IssueCmd) -> Result<ExitCode> {
                 )
                 .await
             }
-            IssueCmd::View { number } => cli_std::issue::view(&TOOL, number).await,
+            IssueCmd::View { number } => cli_std::issue::view(&client, &TOOL, number).await,
             IssueCmd::Create {
                 title,
                 dry_run,
@@ -938,8 +939,7 @@ fn issue_cmd(cmd: IssueCmd) -> Result<ExitCode> {
                         "vat: issue report".to_string()
                     }
                 });
-                cli_std::issue::create(
-                    &TOOL,
+                cli_std::issue::create(&client, &TOOL,
                     cli_std::issue::CreateOptions {
                         title,
                         message,

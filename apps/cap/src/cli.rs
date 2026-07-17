@@ -428,9 +428,14 @@ async fn handle_upgrade(args: UpgradeArgs) -> Result<ExitCode> {
 }
 
 async fn handle_issue(action: IssueCmd) -> Result<ExitCode> {
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
+
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
+
     match action {
         IssueCmd::Search(args) => {
             cli_std::issue::search(
+                &client,
                 &TOOL,
                 cli_std::issue::SearchOptions {
                     query: join_words(args.query),
@@ -441,17 +446,18 @@ async fn handle_issue(action: IssueCmd) -> Result<ExitCode> {
             .await?;
         }
         IssueCmd::View(args) => {
-            cli_std::issue::view(&TOOL, args.number).await?;
+            cli_std::issue::view(&client, &TOOL, args.number).await?;
         }
         IssueCmd::Create(args) => {
-            cli_std::issue::create(&TOOL, issue_create_options(args)).await?;
+            cli_std::issue::create(&client, &TOOL, issue_create_options(args)).await?;
         }
     }
     Ok(ExitCode::SUCCESS)
 }
 
 async fn handle_report_issue(args: ReportIssueArgs) -> Result<ExitCode> {
-    cli_std::report_issue::run(&TOOL, report_issue_options(args)).await?;
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
+    cli_std::report_issue::run(&client, &TOOL, report_issue_options(args)).await?;
     Ok(ExitCode::SUCCESS)
 }
 

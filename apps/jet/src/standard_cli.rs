@@ -405,6 +405,8 @@ pub async fn run_upgrade(matches: &ArgMatches) -> Result<()> {
 /// `jet issue <verb>` — dispatch search/view/create/comment to cli-std.
 /// `create` always tags `app:jet`; `search` defaults to jet's own issues.
 pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
+    let client = issue_client::Client::new(TOOL.project, TOOL.version)?;
+
     match matches.subcommand() {
         Some(("search", m)) => {
             let query = m
@@ -412,6 +414,7 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
                 .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
                 .filter(|s| !s.trim().is_empty());
             cli_std::issue::search(
+                &client,
                 &TOOL,
                 cli_std::issue::SearchOptions {
                     query,
@@ -426,7 +429,7 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
         }
         Some(("view", m)) => {
             let number = *m.get_one::<u64>("number").expect("number is required");
-            cli_std::issue::view(&TOOL, number).await
+            cli_std::issue::view(&client, &TOOL, number).await
         }
         Some(("create", m)) => {
             let msg = m
@@ -443,6 +446,7 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
             });
             let message = (!msg.trim().is_empty()).then_some(msg);
             cli_std::issue::create(
+                &client,
                 &TOOL,
                 cli_std::issue::CreateOptions {
                     title,
@@ -463,6 +467,7 @@ pub async fn run_issue(matches: &ArgMatches) -> Result<()> {
                 .map(|v| v.cloned().collect::<Vec<_>>().join(" "))
                 .filter(|s| !s.trim().is_empty());
             cli_std::issue::comment(
+                &client,
                 &TOOL,
                 cli_std::issue::CommentOptions {
                     number,

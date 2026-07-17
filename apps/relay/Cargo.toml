@@ -100,6 +100,7 @@ cclab-openapi-codegen = { path = "../../libs/openapi-codegen" }
 # serving image stays reqwest-free by default). Also a dev-dependency for the
 # transport tests either way.
 reqwest = { workspace = true, optional = true }
+issue-client = { version = "0.1.0", path = "../../sdks/issue-client" }
 
 [build-dependencies]
 # Stamp RELAY_GIT_SHA / RELAY_BUILT_AT / RELAY_TARGET for cli-std's ToolInfo.
