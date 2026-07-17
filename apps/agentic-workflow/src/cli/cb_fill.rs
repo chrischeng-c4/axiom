@@ -19,7 +19,7 @@ use crate::issues::{IssueBackend, IssuePatch, LocalBackend};
 use anyhow::{Context, Result};
 use globset::{Glob, GlobSetBuilder};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::cli::cb::CbFillArgs;
@@ -72,7 +72,9 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
     let path_str = path.to_string_lossy().to_string();
     if let Ok(markers) = parse_handwrite_markers(&content, &path_str) {
         for m in markers {
-            if !marker_body_is_unfilled(&content, m.line_start, m.line_end) {
+            if m.tracker != crate::generate::handwrite_scaffold::PENDING_TRACKER
+                && !marker_body_is_unfilled(&content, m.line_start, m.line_end)
+            {
                 continue;
             }
             let rel = path
@@ -632,7 +634,42 @@ fn markers_for_active_td(
         }
         None => (markers_for_td_changes(worktree_abs, None), None),
     };
-    Ok((markers_and_changes.0, markers_and_changes.1, spec_path))
+    Ok((
+        disambiguate_marker_ids(markers_and_changes.0),
+        markers_and_changes.1,
+        spec_path,
+    ))
+}
+
+/// Fill payload paths are keyed by marker id, while the gap remains the shared
+/// generator-taxonomy value. Scope-local duplicate gaps therefore need a
+/// deterministic location suffix before the queue can route them one at a
+/// time.
+fn disambiguate_marker_ids(mut markers: Vec<HandwriteMarkerEntry>) -> Vec<HandwriteMarkerEntry> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for marker in &markers {
+        *counts.entry(marker.id.clone()).or_default() += 1;
+    }
+    for marker in &mut markers {
+        if counts.get(&marker.id).copied().unwrap_or_default() > 1 {
+            marker.id = format!("{}--{}", marker.id, marker_location_hash(marker));
+        }
+    }
+    markers
+}
+
+fn marker_location_hash(marker: &HandwriteMarkerEntry) -> String {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in marker
+        .source_path
+        .bytes()
+        .chain(b":".iter().copied())
+        .chain(marker.start_line.to_string().bytes())
+    {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    format!("{hash:08x}")
 }
 
 // Extract repo-relative path entries from a TD `## Changes` YAML block.
@@ -876,6 +913,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             source_abs.display()
         )
     })?;
+    let new_content = mark_pending_xml_marker_filled(&new_content, target.start_line, &slug);
     std::fs::write(&source_abs, &new_content)
         .with_context(|| format!("writing source {}", source_abs.display()))?;
     // Re-enumerate against the same active TD scope. A foreign marker must
@@ -1032,6 +1070,38 @@ fn replace_block_body_for_path(
         return replace_block_body(src, start_line, end_line, payload);
     }
     replace_block_and_markers(src, start_line, end_line, payload)
+}
+
+/// XML-form markers scaffolded around existing source carry the pending
+/// sentinel until their first fill. Promote that sentinel to the work-item
+/// reference after a successful body replacement so the marker leaves the
+/// pending queue and becomes valid managed-source ownership.
+fn mark_pending_xml_marker_filled(src: &str, start_line: usize, slug: &str) -> String {
+    let mut lines: Vec<String> = src.lines().map(str::to_string).collect();
+    let Some(line) = lines.get_mut(start_line.saturating_sub(1)) else {
+        return src.to_string();
+    };
+    if line.contains("<HANDWRITE")
+        && line.contains(&format!(
+            "tracker=\"{}\"",
+            crate::generate::handwrite_scaffold::PENDING_TRACKER
+        ))
+    {
+        *line = line.replacen(
+            &format!(
+                "tracker=\"{}\"",
+                crate::generate::handwrite_scaffold::PENDING_TRACKER
+            ),
+            &format!("tracker=\"#{slug}\""),
+            1,
+        );
+        let mut normalized = lines.join("\n");
+        if src.ends_with('\n') {
+            normalized.push('\n');
+        }
+        return normalized;
+    }
+    src.to_string()
 }
 
 fn should_preserve_handwrite_markers(source_path: &str) -> bool {
@@ -1498,6 +1568,57 @@ mod tests {
     }
 
     #[test]
+    fn pending_xml_handwrite_marker_is_queued_despite_existing_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let source = "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn existing() {}\n\
+// </HANDWRITE>\n";
+        let source_path = src_dir.join("demo.rs");
+        std::fs::write(&source_path, source).unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].id, "missing-generator:logic");
+
+        let filled = mark_pending_xml_marker_filled(source, 1, "1882");
+        std::fs::write(&source_path, filled).unwrap();
+        assert!(enumerate_worktree_markers(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn xml_handwrite_marker_ids_are_disambiguated_within_one_queue() {
+        let markers = vec![
+            HandwriteMarkerEntry {
+                id: "missing-generator:logic".to_string(),
+                source_path: "apps/pgpool/src/a.rs".to_string(),
+                start_line: 10,
+                end_line: 12,
+                reason: "a".to_string(),
+                spec_ref: None,
+            },
+            HandwriteMarkerEntry {
+                id: "missing-generator:logic".to_string(),
+                source_path: "apps/pgpool/src/b.rs".to_string(),
+                start_line: 20,
+                end_line: 22,
+                reason: "b".to_string(),
+                spec_ref: None,
+            },
+        ];
+
+        let ids = disambiguate_marker_ids(markers)
+            .into_iter()
+            .map(|marker| marker.id)
+            .collect::<Vec<_>>();
+        assert_ne!(ids[0], ids[1]);
+        assert!(ids
+            .iter()
+            .all(|id| id.starts_with("missing-generator:logic--")));
+    }
+
+    #[test]
     fn enumerate_worktree_markers_includes_config_artifact_files() {
         let tmp = tempfile::tempdir().unwrap();
         let files = [
@@ -1686,6 +1807,20 @@ mod tests {
         assert!(!out.contains("stub"));
         assert!(out.contains("fn before"));
         assert!(out.contains("fn after"));
+    }
+
+    #[test]
+    fn xml_handwrite_marker_fill_preserves_pair_and_binds_tracker() {
+        let src = "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn before() {}\n\
+// </HANDWRITE>\n";
+        let replaced = replace_block_body(src, 1, 3, "pub fn after() {}").unwrap();
+        let filled = mark_pending_xml_marker_filled(&replaced, 1, "1882");
+        assert!(filled.contains("<HANDWRITE"));
+        assert!(filled.contains("</HANDWRITE>"));
+        assert!(filled.contains("tracker=\"#1882\""));
+        assert!(filled.contains("pub fn after() {}"));
+        assert!(!filled.contains("pub fn before() {}"));
     }
 
     #[test]
