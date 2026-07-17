@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:ca755a11" tracker="pending-tracker" reason="Own CollectorConfig, SourceSpec, CollectorSummary, validation defaults, module exports, and run_collector."
+// HANDWRITE-BEGIN gap="missing-generator:logic:ca755a11" tracker="1873" reason="Own CollectorConfig, SourceSpec, CollectorSummary, validation defaults, module exports, and run_collector."
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -54,6 +54,9 @@ impl CollectorConfig {
         ] {
             if value.trim().is_empty() {
                 bail!("collector {name} must not be empty");
+            }
+            if value.len() > 512 {
+                bail!("collector {name} must not exceed 512 bytes");
             }
         }
         if self.batch_size == 0 || self.batch_size > MAX_BATCH_SIZE {

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d8653acc" tracker="pending-tracker" reason="POST canonical batches with x-sift-project and optional bearer, classify retryable failures, reject partial terminal outcomes, and count accepted versus duplicate."
+// HANDWRITE-BEGIN gap="missing-generator:logic:d8653acc" tracker="1873" reason="POST canonical batches with x-sift-project and optional bearer, classify retryable failures, reject partial terminal outcomes, and count accepted versus duplicate."
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -112,12 +112,11 @@ impl CollectorClient {
                 Ok(response) => {
                     let status = response.status();
                     let body = response.text().await.unwrap_or_default();
-                    last_error = format!(
-                        "Sift ingest HTTP {status}: {}",
-                        truncate(&body, 512)
-                    );
+                    last_error = format!("Sift ingest HTTP {status}: {}", truncate(&body, 512));
                     if !retryable_status(status) {
-                        bail!("{last_error}; verify SIFT_URL, project authorization, and SIFT_TOKEN");
+                        bail!(
+                            "{last_error}; verify SIFT_URL, project authorization, and SIFT_TOKEN"
+                        );
                     }
                 }
                 Err(error) => {
@@ -144,7 +143,9 @@ fn retryable_status(status: StatusCode) -> bool {
 
 fn backoff(initial: Duration, attempt: usize) -> Duration {
     let multiplier = 1_u32.checked_shl(attempt.min(6) as u32).unwrap_or(64);
-    initial.saturating_mul(multiplier).min(Duration::from_secs(5))
+    initial
+        .saturating_mul(multiplier)
+        .min(Duration::from_secs(5))
 }
 
 fn truncate(value: &str, max_bytes: usize) -> String {

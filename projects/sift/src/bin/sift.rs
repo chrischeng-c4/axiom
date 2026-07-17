@@ -8,6 +8,10 @@ use serde::Serialize;
 use serde_json::Value;
 use sift::{
     auth::SiftVerifier,
+    collector::{
+        CollectorConfig, SourceSpec, DEFAULT_BATCH_SIZE, DEFAULT_MAX_LINE_BYTES,
+        DEFAULT_MAX_RETRIES,
+    },
     decode_event_json,
     deploy::{DockerfileVariant, InstanceProfile},
     DurableJournal, EventQuery, ServiceState, SignalKind,
@@ -28,6 +32,8 @@ struct Cli {
 enum Command {
     /// Run the unified h2c/HTTP1 operational-event service.
     Serve(ServeArgs),
+    /// Collect axiom.service.log.v1 JSONL from a file or stdin into Sift.
+    Collect(CollectArgs),
     /// Write or import versioned events into the local raw journal.
     Event(EventArgs),
     /// Query durable raw events without starting a server.
@@ -74,6 +80,45 @@ struct ServeArgs {
     max_body_bytes: usize,
     #[arg(long, env = "SIFT_OTLP_ENDPOINT")]
     otlp_endpoint: Option<String>,
+}
+
+#[derive(Args)]
+struct CollectArgs {
+    /// JSONL source path, or `-` for stdin.
+    #[arg(long)]
+    source: String,
+    /// Stable identity used with byte offsets to derive idempotency keys.
+    #[arg(long)]
+    source_id: Option<String>,
+    /// Sift service base URL.
+    #[arg(long, env = "SIFT_URL", default_value = "http://127.0.0.1:7380")]
+    endpoint: String,
+    /// Optional Sift bearer token.
+    #[arg(long, env = "SIFT_TOKEN")]
+    token: Option<String>,
+    #[arg(long, default_value = "default")]
+    project: String,
+    #[arg(long, default_value = "local")]
+    environment: String,
+    /// Durable source offset checkpoint; defaults beside the source file.
+    #[arg(long)]
+    checkpoint: Option<PathBuf>,
+    /// Invalid-line JSONL sink; defaults beside the checkpoint.
+    #[arg(long)]
+    quarantine: Option<PathBuf>,
+    #[arg(long, default_value_t = DEFAULT_BATCH_SIZE)]
+    batch_size: usize,
+    #[arg(long, default_value_t = DEFAULT_MAX_LINE_BYTES)]
+    max_line_bytes: usize,
+    #[arg(long, default_value_t = DEFAULT_MAX_RETRIES)]
+    max_retries: usize,
+    #[arg(long, default_value_t = 10)]
+    request_timeout_secs: u64,
+    /// Continue watching a regular file after reaching its current end.
+    #[arg(long)]
+    follow: bool,
+    #[arg(long, default_value_t = 250)]
+    follow_poll_ms: u64,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -453,7 +498,7 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
     cli_std::llm::Topic {
         id: "ingest",
         summary: "versioned six-signal ingest and the fsync acknowledgement boundary",
-        body: "# Sift ingest\n\nUse `sift event write <file>` for one canonical envelope or `sift event import <file>` for a bounded batch. HTTP collectors use `/v1/events:write` or OTLP `/v1/logs`, `/v1/traces`, `/v1/metrics`, and `/v1/profiles`; accepted items have completed the shared durable append path.",
+        body: "# Sift ingest\n\nUse `sift collect --source <service.stdout.jsonl>` for the Sift-owned, checkpointed `axiom.service.log.v1` collector. Use `--source -` for stdin and `--follow` only with a regular file. Canonical event clients use `sift event write <file>` or `sift event import <file>`; HTTP collectors use `/v1/events:write` or OTLP `/v1/logs`, `/v1/traces`, `/v1/metrics`, and `/v1/profiles`. Accepted items have completed the shared durable append path.",
     },
     cli_std::llm::Topic {
         id: "operations",
@@ -466,6 +511,7 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
 async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Serve(args) => serve(args).await,
+        Command::Collect(args) => collect(args).await,
         Command::Event(args) => append_event(args),
         Command::Query(args) => query(args),
         Command::Replay(args) => replay(args),
@@ -516,6 +562,48 @@ async fn main() -> Result<()> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="1873" reason="Implement the Sift-owned local structured-stdout collector CLI seam.">
+async fn collect(args: CollectArgs) -> Result<()> {
+    let (source, default_source_id, default_checkpoint) = if args.source == "-" {
+        (
+            SourceSpec::Stdin,
+            "stdin".to_string(),
+            PathBuf::from("sift-stdin.checkpoint.json"),
+        )
+    } else {
+        let path = PathBuf::from(&args.source);
+        let canonical = std::fs::canonicalize(&path)
+            .with_context(|| format!("resolve collector source {}", path.display()))?;
+        let source_id = format!("file:{}", canonical.display());
+        let checkpoint = PathBuf::from(format!("{}.sift-checkpoint.json", path.display()));
+        (SourceSpec::File(path), source_id, checkpoint)
+    };
+    let checkpoint_path = args.checkpoint.unwrap_or(default_checkpoint);
+    let quarantine_path = args
+        .quarantine
+        .unwrap_or_else(|| PathBuf::from(format!("{}.rejected.jsonl", checkpoint_path.display())));
+    let summary = sift::collector::run_collector(CollectorConfig {
+        source,
+        source_id: args.source_id.unwrap_or(default_source_id),
+        endpoint: args.endpoint,
+        token: args.token,
+        project: args.project,
+        environment: args.environment,
+        checkpoint_path,
+        quarantine_path,
+        batch_size: args.batch_size,
+        max_line_bytes: args.max_line_bytes,
+        max_retries: args.max_retries,
+        request_timeout: Duration::from_secs(args.request_timeout_secs),
+        initial_backoff: Duration::from_millis(50),
+        follow: args.follow,
+        follow_poll_interval: Duration::from_millis(args.follow_poll_ms),
+    })
+    .await?;
+    print_json_terminal(summary)
+}
+// </HANDWRITE>
+
 async fn serve(args: ServeArgs) -> Result<()> {
     let format = match args.log_format {
         LogFormat::Pretty => service_http::LogFormat::Pretty,
@@ -560,7 +648,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in sift.rs is hand-written pending codegen support">
 fn append_event(args: EventArgs) -> Result<()> {
     match args.command {
         EventCommand::Write(args) => {
@@ -574,7 +661,6 @@ fn append_event(args: EventArgs) -> Result<()> {
         EventCommand::Import(args) => import_events(args),
     }
 }
-// </HANDWRITE>
 
 fn import_events(args: EventImportArgs) -> Result<()> {
     let source = std::fs::read(&args.file)

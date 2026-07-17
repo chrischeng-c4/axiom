@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:27bf4b0e" tracker="pending-tracker" reason="Start real Sift, collect a Lumen JSONL file containing an invalid line and valid correlated events, query logs, and prove checkpoint replay idempotency."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:27bf4b0e" tracker="1873" reason="Start real Sift, collect a Lumen JSONL file containing an invalid line and valid correlated events, query logs, and prove checkpoint replay idempotency."
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::Path;
@@ -122,12 +122,7 @@ fn service_event(event: &str, message: &str, trace_id: Option<&str>, span_id: &s
     value
 }
 
-fn run_collector(
-    source: &Path,
-    checkpoint: &Path,
-    quarantine: &Path,
-    endpoint: &str,
-) -> Value {
+fn run_collector(source: &Path, checkpoint: &Path, quarantine: &Path, endpoint: &str) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_sift"))
         .args([
             "collect",

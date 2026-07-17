@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod backup;
+pub mod collector;
 pub mod deploy;
 pub mod durability;
 pub mod event;

@@ -31,6 +31,7 @@ kube = { version = "0.98", features = ["runtime", "derive", "client"] }
 lumen = { path = "../../apps/lumen", default-features = false }
 prost = "0.13"
 regex.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 service-auth = { path = "../../libs/service-auth" }
@@ -38,6 +39,7 @@ service-backup = { path = "../../libs/service-backup" }
 service-durability = { package = "storage-durable", path = "../../libs/storage-durable" }
 service-http = { path = "../../libs/service-http" }
 service-metrics = { package = "metrics-prometheus", path = "../../libs/metrics-prometheus" }
+service-observability = { path = "../../libs/service-observability" }
 raft-core = { path = "../../libs/raft-core" }
 raft-host = { package = "raft-runtime", path = "../../libs/raft-runtime" }
 schemars = "0.8"

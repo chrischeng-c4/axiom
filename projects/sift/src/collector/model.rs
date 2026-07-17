@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:4b472642" tracker="pending-tracker" reason="Decode and strictly validate ServiceLogEventV1, convert bounded primitive attributes, preserve payload, validate correlation, and derive stable ids."
+// HANDWRITE-BEGIN gap="missing-generator:logic:4b472642" tracker="1873" reason="Decode and strictly validate ServiceLogEventV1, convert bounded primitive attributes, preserve payload, validate correlation, and derive stable ids."
 use std::collections::BTreeMap;
 
 use anyhow::{bail, Context, Result};
@@ -10,9 +10,7 @@ use service_observability::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::{
-    AttributeValue, InstrumentationScope, OperationalEventV2, SignalKind,
-};
+use crate::{AttributeValue, InstrumentationScope, OperationalEventV2, SignalKind};
 
 pub fn decode_service_log(
     raw_line: &[u8],
@@ -28,27 +26,19 @@ pub fn decode_service_log(
 
     let event_id = deterministic_event_id(source_id, offset, raw_line);
     let payload = serde_json::to_value(&log)?;
-    let mut event = OperationalEventV2::for_project(
-        project,
-        environment,
-        event_id,
-        SignalKind::Log,
-        payload,
-    );
+    let mut event =
+        OperationalEventV2::for_project(project, environment, event_id, SignalKind::Log, payload);
     event.occurred_at = log.timestamp.clone();
     event.observed_at = Utc::now().to_rfc3339();
-    event.resource.insert(
-        "service.name".to_string(),
-        log.service.name.clone(),
-    );
-    event.resource.insert(
-        "service.version".to_string(),
-        log.service.version.clone(),
-    );
-    event.resource.insert(
-        "collector.source_id".to_string(),
-        source_id.to_string(),
-    );
+    event
+        .resource
+        .insert("service.name".to_string(), log.service.name.clone());
+    event
+        .resource
+        .insert("service.version".to_string(), log.service.version.clone());
+    event
+        .resource
+        .insert("collector.source_id".to_string(), source_id.to_string());
     event.instrumentation_scope = Some(InstrumentationScope {
         name: log.service.name.clone(),
         version: Some(log.service.version.clone()),
@@ -111,11 +101,7 @@ fn validate(log: &ServiceLogEventV1) -> Result<()> {
         bail!("unsupported service log severity {}", log.severity);
     }
     bounded_nonempty("service.name", &log.service.name, MAX_EVENT_BYTES)?;
-    bounded_nonempty(
-        "service.version",
-        &log.service.version,
-        MAX_EVENT_BYTES,
-    )?;
+    bounded_nonempty("service.version", &log.service.version, MAX_EVENT_BYTES)?;
     bounded_nonempty("event", &log.event, MAX_EVENT_BYTES)?;
     if log.message.len() > MAX_ATTRIBUTE_VALUE_BYTES {
         bail!("service log message exceeds {MAX_ATTRIBUTE_VALUE_BYTES} bytes");
@@ -130,12 +116,7 @@ fn validate(log: &ServiceLogEventV1) -> Result<()> {
     }
     validate_optional_hex("trace_id", log.trace_id.as_deref(), 32, true)?;
     validate_optional_hex("span_id", log.span_id.as_deref(), 16, true)?;
-    validate_optional_hex(
-        "parent_span_id",
-        log.parent_span_id.as_deref(),
-        16,
-        true,
-    )?;
+    validate_optional_hex("parent_span_id", log.parent_span_id.as_deref(), 16, true)?;
     validate_optional_hex("trace_flags", log.trace_flags.as_deref(), 2, false)?;
     if let Some(request_id) = log.request_id.as_deref() {
         if request_id.is_empty()
@@ -254,7 +235,10 @@ mod tests {
             trace_flags: Some("01".to_string()),
             request_id: Some("request-42".to_string()),
             attributes: BTreeMap::from([
-                ("collection_id".to_string(), Value::String("docs".to_string())),
+                (
+                    "collection_id".to_string(),
+                    Value::String("docs".to_string()),
+                ),
                 ("fields".to_string(), Value::Number(2.into())),
             ]),
         }

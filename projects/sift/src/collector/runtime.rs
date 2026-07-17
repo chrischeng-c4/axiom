@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d9e63ee1" tracker="pending-tracker" reason="Open/seek/discard file or stdin sources and run the bounded window, quarantine, delivery, checkpoint, one-shot, and follow loop."
+// HANDWRITE-BEGIN gap="missing-generator:logic:d9e63ee1" tracker="1873" reason="Open/seek/discard file or stdin sources and run the bounded window, quarantine, delivery, checkpoint, one-shot, and follow loop."
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
@@ -222,9 +222,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::collector::{
-        DEFAULT_BATCH_SIZE, DEFAULT_MAX_LINE_BYTES, DEFAULT_MAX_RETRIES,
-    };
+    use crate::collector::{DEFAULT_BATCH_SIZE, DEFAULT_MAX_LINE_BYTES, DEFAULT_MAX_RETRIES};
 
     #[test]
     fn bounded_reader_discards_oversized_line_and_continues() {
