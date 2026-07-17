@@ -623,6 +623,17 @@ struct VarAlloc {
     /// pointer in the entry prologue, `mb_recursion_leave` can reuse the same
     /// SSA value instead of re-emitting `mb_recursion_depth_ptr`.
     recursion_depth_ptr: Option<Value>,
+    /// #1440: this function's caller-supplied bundled thread-state pointer,
+    /// present when the body was compiled as the hidden tstate-taking
+    /// variant (see `CraneliftJitBackend::declare_internal` /
+    /// `compile_function_body` in jit.rs). `None` for the entry body and
+    /// for any body compiled without the hidden split (e.g. the bundled
+    /// state extern was not registered). `emit_internal_call` and the
+    /// `mb_recursion_enter` fast path both consult this so a frame that
+    /// already holds the pointer can reuse it — or hand it straight to a
+    /// callee — instead of every stack frame independently re-fetching it
+    /// via FFI.
+    hidden_tstate_ptr: Option<Value>,
 }
 
 impl VarAlloc {
@@ -635,6 +646,7 @@ impl VarAlloc {
             raw_ints: HashSet::new(),
             live_filter: None,
             recursion_depth_ptr: None,
+            hidden_tstate_ptr: None,
         }
     }
 
