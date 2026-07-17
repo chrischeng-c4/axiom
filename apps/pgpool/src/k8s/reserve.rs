@@ -205,7 +205,7 @@ impl ReserveLeaseLedger {
             .collect()
     }
 
-    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Add endpoint-ledger per-Pod reserve grant reaping after physical drain completion.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Add endpoint-ledger per-Pod reserve grant reaping after physical drain completion.">
     pub fn release_after_close(
         &mut self,
         key: &ReserveLeaseKey,
