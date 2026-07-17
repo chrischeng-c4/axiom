@@ -51,7 +51,6 @@ changes:
     impl_mode: hand-written
     anchor: disconnected_waiters_do_not_consume_a_clean_backend
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
