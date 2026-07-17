@@ -792,7 +792,7 @@ impl ReactorRuntime {
         }
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1878" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn read_client(&mut self, token: Token) {
         let close = match self.clients.get_mut(&token) {
             Some(client) => drain_socket(&mut client.stream, &mut client.reader),
@@ -802,6 +802,24 @@ impl ReactorRuntime {
             self.close_client(token);
             return;
         }
+        self.drain_buffered_client_frames(token);
+    }
+
+    /// Re-drives complete frames that were already read from the socket before
+    /// a transition made this client readable again. The caller must have
+    /// changed the mode first; this helper never reads the socket itself, so it
+    /// cannot bypass the wait/pending backpressure boundary.
+    fn resume_buffered_client_frames(&mut self, token: Token) {
+        if self
+            .clients
+            .get(&token)
+            .is_some_and(|client| client_can_read(&client.mode))
+        {
+            self.drain_buffered_client_frames(token);
+        }
+    }
+
+    fn drain_buffered_client_frames(&mut self, token: Token) {
         let id = ClientId(token.0 as u64);
 
         loop {
@@ -860,7 +878,7 @@ impl ReactorRuntime {
         }
         self.update_client_interest(token);
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     fn read_backend(&mut self, _token: Token) {
         let token = _token;
@@ -1073,7 +1091,7 @@ impl ReactorRuntime {
                     awaiting_auth: true,
                 };
             }
-            self.update_client_interest(client_token);
+            self.resume_buffered_client_frames(client_token);
             return;
         }
         if !is_ready {
@@ -1124,7 +1142,7 @@ impl ReactorRuntime {
         self.state.add_resetting_backend(BackendId(token.0 as u64));
         self.queue_backend(token, DISCARD_ALL_QUERY_FRAME);
         self.serve_startup_waiters();
-        self.update_client_interest(client_token);
+        self.resume_buffered_client_frames(client_token);
     }
 
     fn handle_bootstrap_backend_frame(&mut self, token: Token, client: ClientId, frame: WireFrame) {
@@ -1216,7 +1234,11 @@ impl ReactorRuntime {
                 .state
                 .transaction_ready_idle(client, backend, has_pending);
             self.drive_action(action);
-            self.update_client_interest(client_token);
+            if has_pending {
+                self.update_client_interest(client_token);
+            } else {
+                self.resume_buffered_client_frames(client_token);
+            }
         } else if let Some(next) = self.clients.get_mut(&client_token).and_then(|entry| {
             if let ClientMode::Active { pending_next, .. } = &mut entry.mode {
                 pending_next.take()
@@ -1267,11 +1289,12 @@ impl ReactorRuntime {
                 Some(ClientMode::StartupWaiting)
             ) {
                 self.admit_startup(client);
+                self.resume_buffered_client_frames(token);
             }
         }
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in runtime.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn handle_startup_frame(&mut self, id: ClientId, token: Token, frame: WireFrame) {
         match frame.message {
             WireMessage::Frontend(FrontendMessage::Ssl(_)) => self.queue_client(token, b"N"),
@@ -1285,7 +1308,7 @@ impl ReactorRuntime {
             _ => self.close_client(token),
         }
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     fn handle_client_relay_frame(&mut self, id: ClientId, token: Token, frame: RelayFrame) {
         if matches!(frame.kind, RelayFrameKind::FrontendTerminate) {
@@ -1507,6 +1530,7 @@ impl ReactorRuntime {
                 }
                 self.queue_backend_owned(backend_token, first.bytes);
                 self.update_client_interest(client_token);
+                self.resume_buffered_client_frames(client_token);
                 self.publish_stats();
             }
             TransactionAction::Reset { backend } => {
