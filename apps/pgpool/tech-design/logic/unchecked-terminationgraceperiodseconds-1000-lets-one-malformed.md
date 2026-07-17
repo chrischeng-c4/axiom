@@ -27,3 +27,15 @@ flowchart TD
   headroom --> floor["floor drain at minimum one second"]
   floor --> saturate["saturating * 1000"] --> env["PGPOOL_DRAIN_TIMEOUT_MS"]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: render_manifests
+```
