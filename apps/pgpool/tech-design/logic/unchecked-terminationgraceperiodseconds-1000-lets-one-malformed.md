@@ -53,3 +53,15 @@ requirements:
 flowchart TD
     r1[R1 overflow saturates and preserves headroom] --> cargo_test_p_pgpool_k8s_instance_tests_drain_timeout_saturates_and_reserves_sigkill_headroom[cargo test -p pgpool k8s::instance::tests::drain_timeout_saturates_and_reserves_sigkill_headroom]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: render_manifests
+```
