@@ -143,7 +143,7 @@ struct ReactorRuntime {
 }
 
 impl ReactorRuntime {
-    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Use the Duration queue policy directly in reactor wait deadlines.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1891" reason="Use the Duration queue policy directly in reactor wait deadlines.">
     /// The reactor owns FIFO deadlines. When reserve leasing is configured,
     /// its queueWaitTimeout replaces the historical local acquire timeout;
     /// reserve grants are still consumed only from the background-updated
