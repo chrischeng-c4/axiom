@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-17T08:00:44.806478+00:00"
-digest = "sha256:921b88fc67268964255075f2e792273f1ebc41eabb2bfc8e1a54bf331421ecd8"
-source_digest = "sha256:921b88fc67268964255075f2e792273f1ebc41eabb2bfc8e1a54bf331421ecd8"
-ir_digest = "sha256:cec1ba82e4980fc828f5fdc9616292f8676a4ca32ac3917661c5271184e99d35"
+generated_at = "2026-07-17T08:07:40.857533+00:00"
+digest = "sha256:7992d4a5c788cd16fcfe311afed0aa7de71e299014cde5e741c84657ee42be64"
+source_digest = "sha256:7992d4a5c788cd16fcfe311afed0aa7de71e299014cde5e741c84657ee42be64"
+ir_digest = "sha256:c02d3443e4225f811633e9f6a0928ed80fe7d12fcb78c79e1fb99bd6c9c910b3"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5233,8 +5233,8 @@ section_count = 4
 
 [[files]]
 path = "surface/specs/aw-ec-agent-review-protocol.md"
-digest = "sha256:a0543b2491b48b9c696789fbec16a62cecbbbfa3da1182e020d2b3342e568d8d"
-ir_digest = "sha256:c42a036b8209f4d403aef5d9cf7c346fc3e6824f9d32f052cc7863ee52c1b885"
+digest = "sha256:f07e2c4c6314f96eaa96eb7c158b4ff9489cdae3844239898b6f233f7ec91787"
+ir_digest = "sha256:b474e078b19b1a680396bac425fcdb3c53d09b53adfffddbca843e950c245fb5"
 section_count = 5
 
 [[files]]
@@ -5245,8 +5245,8 @@ section_count = 5
 
 [[files]]
 path = "surface/specs/aw-ec-only-semantic-approval.md"
-digest = "sha256:3043e4038c64fd0d373ce81a0907594ac54a79b9c4293dec31e45b2f06440752"
-ir_digest = "sha256:eee8114006e69f7f6afb5033e6d1b9a6fc815c1d176031f8b55d7b5dadc963d7"
+digest = "sha256:b554c560186572555c2fdb72587e2d84818e280ad9ded8dee6aa1d0d31046e82"
+ir_digest = "sha256:68bab93314fe77e00079a3aa7f204853595832be08441f7160868c0a34abd5a0"
 section_count = 5
 
 [[files]]
