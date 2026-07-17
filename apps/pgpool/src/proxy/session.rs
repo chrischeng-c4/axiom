@@ -28,7 +28,7 @@ use crate::proxy::error::{ProxyError, RejectionReason, SessionOutcome};
 use crate::proxy::relay::{forward_frontend, read_startup, relay_until_ready, HandshakeOutcome};
 use crate::wire::{FrameReader, FrontendMessage, Role};
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in session.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in session.rs is hand-written pending codegen support">
 /// Runs one accepted frontend connection through the full session-mode
 /// proxy pipeline to a terminal [`SessionOutcome`]. Never panics: every
 /// error path is turned into an outcome, the admission permit (if any was
@@ -98,6 +98,7 @@ async fn drive_session(
                 Ok(startup) => startup,
                 Err(_) => break 'pipeline SessionOutcome::EstablishedClosedError,
             };
+        let startup = config.backend_pool.normalize_backend_startup(startup);
         if forward_frontend(&mut backend_write, &FrontendMessage::Startup(startup))
             .await
             .is_err()
