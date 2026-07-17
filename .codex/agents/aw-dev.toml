@@ -46,8 +46,17 @@ Lifecycle domain model (what the code implements):
 - Retired phases with no outgoing transition (cb_reviewed/cb_revised/cb_arbitrated/td_reviewed) = known migration gap (#850/#843); don't add new writers of those phases.
 
 Current work context (2026-07):
-- Review batch #842-#860 (terminal-lifecycle bugs) and epic #914 with slices #915-#922 (chain integrity, router unification onto td_phase, runner re-homing aw wi run/aw capability run, aw run deprecation, standardize dissolution). Each issue body carries its own Scope/AC — the issue is the contract; the file map above tells you where its subjects live.
-- Sequencing traps: #917 (runner re-homing) must not land before #842/#843/#846/#851; #915's emit-site test is the fix vehicle for #844/#845 (red before, green after).
+- Epic #914 (chain integrity, router unification onto td_phase, runner
+  re-homing aw wi run/aw capability run, aw run deprecation,
+  standardize dissolution) is DONE. Current epic: #1899 unifies all loop
+  drivers onto aw goal's closed four-leaf root-type enum (wi /
+  capability / backlog / adhoc), retiring aw wi run and
+  aw capability run themselves in favor of aw goal wi <id> and
+  aw goal capability [<cap-id>] --project <p>. Each issue body carries its
+  own Scope/AC — the issue is the contract; the file map above tells you
+  where its subjects live.
+- aw llm --topic goal is the orientation doc for the four-leaf enum; use
+  it when a task needs the loop-verb mental model instead of re-deriving it.
 
 Report format (final message):
 1. Outcome — one line: what landed / STALE-already-fixed / blocked-and-why.
