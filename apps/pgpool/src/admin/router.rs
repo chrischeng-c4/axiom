@@ -3,9 +3,10 @@
 //! Builds the admin `axum::Router` against `AdminState` (TD Logic section
 //! `build_admin_router` node): `/healthz`, `/readyz`, `/metrics`,
 //! `/openapi.json`, `/docs`, `GET /pools`, `GET /pools/{pool}/stats`,
-//! `POST /drain` (R1, R3).
+//! `GET`/`POST /drain` (R1, R3). Kubernetes lifecycle `httpGet` is always a
+//! GET request, so the GET form is the preStop-compatible drain entrypoint.
 
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 
 use crate::admin::handlers;
@@ -167,6 +168,21 @@ mod tests {
 
         // The SAME controller instance observes the flip, not a copy.
         assert!(drain.is_draining());
+        let (status, _) = call(&router, "GET", "/readyz").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// verify: admin::prestop_get_drain_flips_shared_drain_controller (R2)
+    #[tokio::test]
+    async fn prestop_get_drain_flips_shared_drain_controller() {
+        let drain = DrainController::new();
+        let router = build_router(test_state(drain.clone()));
+
+        let (status, body) = call(&router, "GET", "/drain").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("\"draining\":true"));
+        assert!(drain.is_draining());
+
         let (status, _) = call(&router, "GET", "/readyz").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     }

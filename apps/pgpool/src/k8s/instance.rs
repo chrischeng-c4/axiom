@@ -262,11 +262,12 @@ mod tests {
             manifests[1]["spec"]["strategy"]["rollingUpdate"]["maxSurge"],
             0
         );
-        assert_eq!(
-            manifests[1]["spec"]["template"]["spec"]["containers"][0]["lifecycle"]["preStop"]
-                ["httpGet"]["path"],
-            "/drain"
-        );
+        let pre_stop =
+            &manifests[1]["spec"]["template"]["spec"]["containers"][0]["lifecycle"]["preStop"];
+        assert_eq!(pre_stop["httpGet"]["path"], "/drain");
+        assert_eq!(pre_stop["httpGet"]["port"], "admin");
+        assert_eq!(pre_stop["httpGet"]["scheme"], "HTTP");
+        assert!(pre_stop["exec"].is_null());
     }
 
     #[test]

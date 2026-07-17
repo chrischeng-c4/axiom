@@ -37,6 +37,14 @@ flowchart TD
   reject_stateful --> done([deterministic stateless instance artifacts])
 ```
 
+### preStop drain compatibility
+
+The Deployment uses Kubernetes `lifecycle.preStop.httpGet` for `/drain` on the
+admin port. Kubernetes lifecycle HTTP hooks always issue GET requests, so the
+admin contract exposes `GET /drain` as the same idempotent transition as the
+operator-facing `POST /drain`. Both forms start the shared drain controller
+before SIGTERM, allowing readiness to withdraw before process termination.
+
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 

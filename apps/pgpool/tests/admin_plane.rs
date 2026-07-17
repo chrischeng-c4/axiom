@@ -481,7 +481,10 @@ async fn served_contract_matches_offline_spec() {
         .await
         .expect("GET /drain");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    assert_eq!(response.json::<serde_json::Value>().await.unwrap()["draining"], true);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["draining"],
+        true
+    );
 
     let _ = serve.child.start_kill();
     let _ = serve.child.wait().await;
