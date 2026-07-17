@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-17T10:08:54.947588+00:00"
-digest = "sha256:49b9677cf6a6bfceb6a9ad3b186bdfde799d98231fcfab8f9ee838993e9d2fe0"
-source_digest = "sha256:49b9677cf6a6bfceb6a9ad3b186bdfde799d98231fcfab8f9ee838993e9d2fe0"
-ir_digest = "sha256:6d946e0f8fa24a735754579c0f212b12b458d0c899db024b9256272d26fbdea3"
+generated_at = "2026-07-17T10:35:52.653734+00:00"
+digest = "sha256:4cc14059b9a06e0bcaa79c465a0b089754be676ab59cedf1c8c13a518bd9dde6"
+source_digest = "sha256:4cc14059b9a06e0bcaa79c465a0b089754be676ab59cedf1c8c13a518bd9dde6"
+ir_digest = "sha256:933271f9628639e083aa19f11fc91e1ea401a20ff14fe16237763d8e779bb316"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -54,6 +54,12 @@ path = "logic/add-genai-observations-sessions-cost-and-evaluations.md"
 digest = "sha256:1df6dbdfcaa269edf5b258313fffbcee384243936267d9bf46ecac13e46f2ea4"
 ir_digest = "sha256:5f66f1b8f30c972a89034206b8632b6b6ddd15128c08ee90edbf017e331f98db"
 section_count = 1
+
+[[files]]
+path = "logic/add-gke-structured-log-collector.md"
+digest = "sha256:37fafcc2b2ed547f936025fc9c74e9d931d58f33a5bc082923b019f92b04d869"
+ir_digest = "sha256:b037c2cff173a8a23ac5ea332e6351b2a75dc1f78bec0fff25370678c684ae32"
+section_count = 3
 
 [[files]]
 path = "logic/add-immutable-audit-and-change-store.md"
