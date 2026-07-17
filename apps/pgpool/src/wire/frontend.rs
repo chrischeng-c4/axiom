@@ -139,7 +139,7 @@ fn decode_untagged(
     }))
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in frontend.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in frontend.rs is hand-written pending codegen support">
 /// Untagged startup packet (no leading tag byte): 4-byte length, 4-byte
 /// protocol version, then a null-terminated key/value parameter list
 /// terminated by an empty string.
@@ -159,6 +159,18 @@ pub struct StartupMessage {
 // </HANDWRITE>
 
 impl StartupMessage {
+    /// Replace all client-supplied application-name parameters with the
+    /// pgpool-controlled identity for a physical backend connection. Other
+    /// parameters retain their original order, while the resulting value is
+    /// also the exact startup identity used by transaction replay caches.
+    pub fn with_application_name(mut self, application_name: impl Into<String>) -> Self {
+        self.parameters
+            .retain(|(key, _)| key != "application_name");
+        self.parameters
+            .push(("application_name".to_string(), application_name.into()));
+        self
+    }
+
     pub fn encode(&self, buf: &mut BytesMut) {
         use bytes::BufMut;
         write_untagged(buf, |buf| {
@@ -538,3 +550,32 @@ fn read_bounded_count(
     Ok(count)
 }
 // </HANDWRITE>
+
+#[cfg(test)]
+mod tests {
+    use super::StartupMessage;
+
+    #[test]
+    fn backend_startup_identity_overrides_client_application_name() {
+        let startup = StartupMessage {
+            protocol_major: 3,
+            protocol_minor: 0,
+            parameters: vec![
+                ("user".into(), "app".into()),
+                ("application_name".into(), "client-one".into()),
+                ("database".into(), "inventory".into()),
+                ("application_name".into(), "client-two".into()),
+            ],
+        }
+        .with_application_name("pgpool-pool-7d9f");
+
+        assert_eq!(
+            startup.parameters,
+            vec![
+                ("user".into(), "app".into()),
+                ("database".into(), "inventory".into()),
+                ("application_name".into(), "pgpool-pool-7d9f".into()),
+            ]
+        );
+    }
+}
