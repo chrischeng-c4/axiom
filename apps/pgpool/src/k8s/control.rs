@@ -168,6 +168,7 @@ impl PgpoolControlPlane {
         }
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Pass outstanding reserve-grant units into static scale admission, reject instead of implicitly reclaiming grants, and cover admit/grant/release sequences.">
     /// Reserve desired and rollout-surge Pods in one transaction. The caller
     /// passes an empty surge set for the default no-surge Deployment policy.
     pub fn admit_scale<I, J, S, T>(
@@ -214,6 +215,7 @@ impl PgpoolControlPlane {
         }
         Ok(())
     }
+// </HANDWRITE>
 
     pub fn mark_ready(&mut self, pod: &str) -> Result<(), ControlPlaneError> {
         let endpoint = self.pod(pod)?.endpoint.clone();

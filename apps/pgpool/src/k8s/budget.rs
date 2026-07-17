@@ -111,6 +111,7 @@ impl EndpointAllocator {
         self.blocked_reason.as_deref()
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Admit static Pod quota against the allocator quota plus externally-held reserve capacity, preserving the allocator's atomic error and blocked-scale status behavior.">
     pub fn reserve_many<I, S>(&mut self, pods: I, quota_per_pod: u32) -> Result<(), AllocationError>
     where
         I: IntoIterator<Item = S>,
@@ -152,6 +153,7 @@ impl EndpointAllocator {
         debug_assert!(self.held_quota() <= self.capacity.usable());
         Ok(())
     }
+// </HANDWRITE>
 
     pub fn mark_ready(&mut self, pod: &str) -> Result<(), AllocationError> {
         self.allocation_mut(pod)?.state = AllocationState::Ready;
