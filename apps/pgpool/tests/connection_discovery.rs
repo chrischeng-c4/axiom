@@ -57,7 +57,7 @@ async fn discovers_runtime_limit_from_real_postgres_when_available() {
     );
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Drive the held pgpool backend to query-ready state before observing it through runtime discovery.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1925" reason="Drive the held pgpool backend to query-ready state before observing it through runtime discovery.">
 #[tokio::test]
 async fn pgpool_backend_connections_are_not_foreign_usage() {
     let _local_postgres = local_postgres_test_lock().lock().await;
