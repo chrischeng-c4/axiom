@@ -2,61 +2,19 @@ version = 2
 project = "courier"
 ir_kind = "td"
 td_path = "apps/courier/tech-design"
-generated_at = "2026-07-17T08:04:46.929016+00:00"
-digest = "sha256:908717e0c7deebf333baa335839a767771914f744aac28cfcc5c9dd494c4f543"
-source_digest = "sha256:908717e0c7deebf333baa335839a767771914f744aac28cfcc5c9dd494c4f543"
-ir_digest = "sha256:698c970165eff6fc9edea299e93f653b3d9bbd43861afa469a8652824aa12c44"
-
-[[files]]
-path = "semantic/courier-apps-courier.md"
-digest = "sha256:d7b27f6f91203aa2ad4793823c554202fdb5ff35a4093ae36385cde604ec705c"
-ir_digest = "sha256:3293eab948e3e18157bb9071aefff7a21992cfdf0ebd71ed19c9f701bf31ddbc"
-section_count = 2
-
-[[files]]
-path = "semantic/src/bin/courier.md"
-digest = "sha256:06ce863e0aa59891da87f857eee6ff4418b4c84dd3bfce86d47ae8d8c0844480"
-ir_digest = "sha256:1ef0934a2d23a748debf089e101284fa8eb3949a068c19aed6a1f45ada7e6561"
-section_count = 3
-
-[[files]]
-path = "semantic/src/http/auth.md"
-digest = "sha256:cb705ff4e5457ee2f1afca0a2f1dfb0e4a4aa0319985ddca0f3f3c2920006b93"
-ir_digest = "sha256:0377057497d637d762de9c2f9f8eec6956b77f3d9b4e27dae1d42c3bf7ad7dee"
-section_count = 3
-
-[[files]]
-path = "semantic/src/http/github.md"
-digest = "sha256:e73c092383e3643f1f45a226719661383e4ba1d40d440dc0c20c37a2b08f7b51"
-ir_digest = "sha256:0aed5d79fc092d337700cd7e4e42605c0873592da45ff989be064fdb73e6dd75"
-section_count = 3
-
-[[files]]
-path = "semantic/src/http/mod.md"
-digest = "sha256:a652ed4e768ad8a1fefb6168ff4952b99770d716bec2ae70762aa834fb20df9b"
-ir_digest = "sha256:68fb390cbea9e204510b4f9b75dd129fc42d8401166fcd3921fc6526d20f1c23"
-section_count = 3
-
-[[files]]
-path = "semantic/src/http/openapi.md"
-digest = "sha256:12f42f99d09b390a2fa84f9e0661e1abd610d8769e0aaa9a93a283c7577acb73"
-ir_digest = "sha256:3db4011599808f318355cba895385c4413afd2317d0ef38f326935eafe52c7a7"
-section_count = 3
-
-[[files]]
-path = "semantic/src/http/routes.md"
-digest = "sha256:47a73e56c1aba1e8080b6c7e041698f5557d87a766af6364885ef25b63ba5019"
-ir_digest = "sha256:19eeb42692bd7ccd63466fd8eddba2ab3f029a6afe944fbabce8e3fa01189642"
-section_count = 7
-
-[[files]]
-path = "semantic/src/lib.md"
-digest = "sha256:734ba5d7b7dc95db831e3d7ec08fa9b825c49e9d3f7f499cbc8e07e2f524d334"
-ir_digest = "sha256:ffb68b28f6edfdc64dcf8cf9bcc4b836b4dc11c7bd943afa7fbd8dfcd6641b0a"
-section_count = 3
+generated_at = "2026-07-17T08:06:26.513674+00:00"
+digest = "sha256:174856dfa4cc918f44732a2ee0c953487dc2b665c19292889f2f2cbe8ff97507"
+source_digest = "sha256:174856dfa4cc918f44732a2ee0c953487dc2b665c19292889f2f2cbe8ff97507"
+ir_digest = "sha256:9aba6624dda0029bd155a3fd572901d58a9308a2eb3a389598ff2182e06f3a40"
 
 [[files]]
 path = "specs/apps/courier/app/main.md"
-digest = "sha256:8b15f3cb796e6ac72832bd37308215ae2b1be06477641fdaa1bc4720d8eff13c"
-ir_digest = "sha256:fb60c85cee3b9660bcedfc98295d9d1d3cbb595515f228e32c1f08e16c13782c"
+digest = "sha256:170e4f59edbed20bf5eba1cddb5692ef9229cf197353312ab21bf7f5081f0275"
+ir_digest = "sha256:09cf019754041716240530637cd2f4de71a7d135211506ec5ec0f9bae3361ee7"
+section_count = 2
+
+[[files]]
+path = "specs/apps/courier/app/test_main.md"
+digest = "sha256:a37e360b1d92c01c5fb0f4f1a39789c178fd3bf1f8b77d3c3621acb36248293e"
+ir_digest = "sha256:441f3ed7135cf4f6a9119c9fb9ce8cdf3b69fc65585452926d91ccbfe45188d3"
 section_count = 2
