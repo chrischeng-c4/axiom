@@ -222,7 +222,7 @@ impl BackendPool {
     /// identity from what PostgreSQL observes.
     pub fn normalize_backend_startup(&self, startup: StartupMessage) -> StartupMessage {
         match &self.backend_application_name {
-            Some(application_name) => startup.with_application_name(application_name),
+            Some(application_name) => startup.with_application_name(application_name.as_ref()),
             None => startup,
         }
     }

@@ -26,5 +26,62 @@ async fn discovers_runtime_limit_from_real_postgres_when_available() {
     assert!(facts.runtime.total_connections >= 1);
     assert!(facts.runtime.pgpool_connections >= 1);
     assert!(facts.effective_max_connections <= facts.runtime.max_connections);
+    assert!(
+        facts.effective_max_connections + facts.runtime.superuser_reserved_connections
+            <= facts.runtime.max_connections
+    );
+}
+
+#[tokio::test]
+async fn pgpool_backend_connections_are_not_foreign_usage() {
+    let user = std::env::var("USER").unwrap_or_else(|_| "postgres".into());
+    let discovery_config = format!(
+        "host=127.0.0.1 port=5432 user={user} dbname=postgres connect_timeout=2 application_name=pgpool-discovery-self-test"
+    )
+    .parse::<tokio_postgres::Config>()
+    .expect("valid postgres config");
+    let endpoint = RemoteEndpoint {
+        name: "local".into(),
+        provider: EndpointProvider::PlainPostgres,
+        role: EndpointRole::Primary,
+        configured_ceiling: None,
+    };
+    let Ok(baseline) = discover_connection_facts(
+        endpoint.clone(),
+        discovery_config.clone(),
+        ProviderAdvisory::default(),
+    )
+    .await
+    else {
+        return;
+    };
+
+    let backend_config = format!(
+        "host=127.0.0.1 port=5432 user={user} dbname=postgres connect_timeout=2 application_name=pgpool-held-backend-test"
+    )
+    .parse::<tokio_postgres::Config>()
+    .expect("valid postgres config");
+    let Ok((_held_backend, connection)) = backend_config.connect(tokio_postgres::NoTls).await
+    else {
+        return;
+    };
+    let _connection = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let facts = discover_connection_facts(endpoint, discovery_config, ProviderAdvisory::default())
+        .await
+        .expect("discovery remains available while a pgpool backend is held");
+    assert!(
+        facts.runtime.pgpool_connections >= baseline.runtime.pgpool_connections + 1,
+        "held pgpool backend must be classified as pgpool usage: baseline={baseline:?}, after={facts:?}"
+    );
+    assert_eq!(
+        facts.non_pgpool_connections,
+        facts
+            .runtime
+            .total_connections
+            .saturating_sub(facts.runtime.pgpool_connections)
+    );
 }
 // </HANDWRITE>

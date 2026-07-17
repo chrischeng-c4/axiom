@@ -14,6 +14,16 @@ capability_refs:
 ## Logic
 <!-- type: logic lang: mermaid -->
 
+### Runtime accounting invariants
+
+Discovery counts only `pg_stat_activity` rows whose `backend_type` is
+`client backend`. A data-plane pgpool process replaces every client-provided
+startup `application_name` with `pgpool-<pod>`, so its held remote sessions
+are attributed to pgpool rather than foreign usage. The effective capacity is
+the lowest runtime/configured/advisory ceiling minus
+`superuser_reserved_connections`; PostgreSQL background workers are neither
+allocatable capacity nor client demand.
+
 ```mermaid
 ---
 id: pgpool-runtime-connection-limit-discovery
