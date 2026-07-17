@@ -332,6 +332,7 @@ mod tests {
         assert_eq!(state.clean_idle_len(), 0);
     }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in state.rs is hand-written pending codegen support">
     #[test]
     fn disconnected_waiters_do_not_consume_a_clean_backend() {
         let client = ClientId(1);
@@ -350,6 +351,7 @@ mod tests {
         assert_eq!(state.clean_idle_len(), 1);
         assert_eq!(state.waiting_len(), 0);
     }
+// </HANDWRITE>
 
     #[test]
     fn initial_reset_counts_as_recoverable_capacity() {

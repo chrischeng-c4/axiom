@@ -553,6 +553,7 @@ impl ReactorRuntime {
             .map(|(deadline, _, _)| deadline.saturating_duration_since(now))
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn expire_waiters(&mut self) {
         let now = Instant::now();
         loop {
@@ -579,6 +580,7 @@ impl ReactorRuntime {
             self.queue_client_owned(token, error.freeze());
         }
     }
+// </HANDWRITE>
 
     fn queue_client(&mut self, token: Token, bytes: impl AsRef<[u8]>) {
         self.queue_client_owned(token, Bytes::copy_from_slice(bytes.as_ref()));
