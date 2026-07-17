@@ -39,9 +39,8 @@ changes:
     section: unit-test
     impl_mode: hand-written
     anchor: pgpool_backend_connections_are_not_foreign_usage
-    reason: Make the held backend query-ready before verifying pgpool-owned connection accounting.
+    reason: Drive the held pgpool backend to query-ready state before observing it through runtime discovery.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
