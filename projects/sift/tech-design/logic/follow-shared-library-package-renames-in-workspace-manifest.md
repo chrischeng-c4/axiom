@@ -57,7 +57,6 @@ changes:
 ```
 
 The bounded implementation also corrects the four corresponding dependency entries in `projects/sift/Cargo.toml`. Cargo manifests are declarative build inputs rather than Rust codegen targets; the generated regression test is the executable drift gate for that hand-authored manifest change.
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
