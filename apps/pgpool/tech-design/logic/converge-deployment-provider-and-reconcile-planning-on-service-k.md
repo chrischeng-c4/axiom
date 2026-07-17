@@ -145,7 +145,6 @@ changes:
     impl_mode: hand-written
     reason: Verify default and context-aware provider contracts plus Pgpool safe-hold behavior and Deployment-only output.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
