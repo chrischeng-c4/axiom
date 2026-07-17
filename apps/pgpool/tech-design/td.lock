@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T14:37:51.633985+00:00"
-digest = "sha256:57bee3abcccae3da1095030c43273d89a610aaea83e2a262ff78dca7f81254b9"
-source_digest = "sha256:57bee3abcccae3da1095030c43273d89a610aaea83e2a262ff78dca7f81254b9"
-ir_digest = "sha256:517fc0eaa6822773f3b9f7ddbaf3460176278f15877a4cca6e43eb4c2b2dbb65"
+generated_at = "2026-07-17T14:47:11.780395+00:00"
+digest = "sha256:890c89c3af677ae88c9c76e962c42254d7966031e2fc01a54bf81d3aa8144e86"
+source_digest = "sha256:890c89c3af677ae88c9c76e962c42254d7966031e2fc01a54bf81d3aa8144e86"
+ir_digest = "sha256:42690613548c97e12097ca705174fa9120d6308be68267964c6177a3d6fe2dc3"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -53,6 +53,12 @@ section_count = 3
 path = "logic/discovery-counts-pgpool-s-own-backends-as-non-pgpool-usage-busy.md"
 digest = "sha256:a94ba4a126ff599009276ba1fb343ec1a804c0a16585e61ffd307f454a2acc19"
 ir_digest = "sha256:ff4830e0468eebbc85ddbc81e113528999f7abfccda839455f4057e472d661a0"
+section_count = 3
+
+[[files]]
+path = "logic/discovery-hardcodes-notls-cloudsql-alloydb-provider-crs-are-perm.md"
+digest = "sha256:0845a26fb663bd88544c3e061260637f268edbe79b8a70f9d5aaed818ad3dbd7"
+ir_digest = "sha256:b7451406db5b1a53965c272396178608d33504d1a7ea121cf1a538e1e8f0f55d"
 section_count = 3
 
 [[files]]
