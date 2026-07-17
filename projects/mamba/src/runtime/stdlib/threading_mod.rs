@@ -51,7 +51,7 @@ use rustc_hash::FxHashMap;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 // -- Variadic dispatchers --
@@ -872,8 +872,37 @@ pub fn mb_threading_lock() -> MbValue {
     make_instance("Lock", f)
 }
 
+/// Real per-lock mutual-exclusion state, keyed by the `Lock` instance's heap
+/// address. `ObjData::Instance` fields are plain `MbValue`s and cannot hold a
+/// `Condvar` directly, so the actual blocking primitive lives in this
+/// side-table instead; the `"locked"` field on the instance remains a
+/// best-effort Python-visible mirror only (#1772: `acquire` previously
+/// force-set `locked=true` unconditionally and never blocked, so two threads
+/// could both believe they held the same lock — the compound `counter[0] +=
+/// 1` critical section then raced for real under genuinely parallel
+/// `Thread.start()` workers).
+static LOCK_STATES: OnceLock<Mutex<HashMap<usize, Arc<(Mutex<bool>, Condvar)>>>> = OnceLock::new();
+
+fn lock_state_for(ptr: usize) -> Arc<(Mutex<bool>, Condvar)> {
+    LOCK_STATES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .entry(ptr)
+        .or_insert_with(|| Arc::new((Mutex::new(false), Condvar::new())))
+        .clone()
+}
+
 pub fn mb_threading_lock_acquire(lock: MbValue) -> MbValue {
     if let Some(ptr) = lock.as_ptr() {
+        let state = lock_state_for(ptr as usize);
+        let (mutex, condvar) = &*state;
+        let mut held = mutex.lock().unwrap();
+        while *held {
+            held = condvar.wait(held).unwrap();
+        }
+        *held = true;
+        drop(held);
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
@@ -886,23 +915,21 @@ pub fn mb_threading_lock_acquire(lock: MbValue) -> MbValue {
 
 pub fn mb_threading_lock_release(lock: MbValue) -> MbValue {
     if let Some(ptr) = lock.as_ptr() {
+        let state = lock_state_for(ptr as usize);
+        let (mutex, condvar) = &*state;
+        // CPython raises RuntimeError when releasing a lock that is not held.
+        // The real Mutex-backed `held` flag (not the `"locked"` field mirror)
+        // is the source of truth so this check stays race-free under
+        // concurrent acquire/release.
+        let mut held = mutex.lock().unwrap();
+        if !*held {
+            return raise_runtime_error("release unlocked lock");
+        }
+        *held = false;
+        drop(held);
+        condvar.notify_one();
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                // CPython raises RuntimeError when releasing a lock/RLock that is
-                // not held. A held lock has locked=true (set by acquire /
-                // __enter__); a fresh or already-released one has locked=false.
-                // Condition.release() also routes here and is acquired first, so
-                // valid acquire/release roundtrips (incl. `with lock:`) never hit
-                // this guard.
-                let held = fields
-                    .read()
-                    .unwrap()
-                    .get("locked")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if !held {
-                    return raise_runtime_error("release unlocked lock");
-                }
                 let mut f = fields.write().unwrap();
                 f.insert("locked".into(), MbValue::from_bool(false));
             }
