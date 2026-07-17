@@ -3,3 +3,28 @@ id: '1925'
 summary: (fill)
 fill_sections: [logic, changes, unit-test]
 ---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-held-backend-query-ready
+entry: connect
+nodes:
+  connect: { kind: start, label: "Open pgpool-named backend and spawn its connection driver." }
+  query: { kind: process, label: "Execute SELECT 1 to prove the backend is query-ready." }
+  poll: { kind: process, label: "Poll runtime discovery until pgpool connection count includes the held backend." }
+  classify: { kind: terminal, label: "Assert owned backend is excluded from foreign usage." }
+edges:
+  - { from: connect, to: query }
+  - { from: query, to: poll }
+  - { from: poll, to: classify }
+---
+flowchart LR
+    connect([Connect held pgpool backend]) --> query[Run SELECT 1]
+    query --> poll[Poll discovery]
+    poll --> classify([Owned backend is not foreign usage])
+```
+
+The test driver must run before the readiness query. A successful query creates an observable client-backend session while retaining the `Client` for the polling interval; discovery then measures a real held connection rather than an asynchronous connection attempt.
