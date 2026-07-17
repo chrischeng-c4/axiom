@@ -2,10 +2,10 @@ version = 2
 project = "vat"
 ir_kind = "td"
 td_path = "apps/vat/tech-design"
-generated_at = "2026-07-16T08:21:35.115103+00:00"
-digest = "sha256:645c85b236ce4eb33724703993ec264eb4d73ffa9f36185c604c738c6e4e2a29"
-source_digest = "sha256:645c85b236ce4eb33724703993ec264eb4d73ffa9f36185c604c738c6e4e2a29"
-ir_digest = "sha256:191d52f8fac326c08f877ab48f39bf2bd79b284ae263fef68c5ea6a0ca628fc7"
+generated_at = "2026-07-17T09:51:11.375162+00:00"
+digest = "sha256:c455a82ecd8736e57e9d86d2591fa2e40eeca06167e33d56e99f80480dcc057f"
+source_digest = "sha256:c455a82ecd8736e57e9d86d2591fa2e40eeca06167e33d56e99f80480dcc057f"
+ir_digest = "sha256:6de6327cb4878a52d24030a7b78560bab33811c7da5718ad2907f015ce1c07dc"
 
 [[files]]
 path = "interfaces/cli/migrate-upgrade-and-report-issue-to-the-shared-cli-std-crate.md"
@@ -96,6 +96,12 @@ path = "logic/built-in-rust-emulators-pub-sub-firebase-auth.md"
 digest = "sha256:6321d0709bcdb5758fc529a2e59f099f454a5d8e80d69a6fcade06ab7ef52ff1"
 ir_digest = "sha256:64b85400e4a0bbd4afb194f195c4516b4950120ce4681968ab805ad17b93b839"
 section_count = 7
+
+[[files]]
+path = "logic/expose-captured-service-log-paths-to-collector-scenarios.md"
+digest = "sha256:2f74ac4364f49b959148436e522a3df3a2bf09f1b5bb3e1d46e5c9b0f8c3b7f9"
+ir_digest = "sha256:7f792fa4acce7955f4f8583c860a6935b367e3b9e1bb3d227cae28ae3b48476f"
+section_count = 3
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -640,6 +646,12 @@ path = "semantic/vat-commands.md"
 digest = "sha256:c0fdc39531aa44109fbb818a0816441c9217aaa4ffae99169155c0b113c64e10"
 ir_digest = "sha256:c897c128a157ef22a1eb4d61734e4aacd5be84bab37231eac41d816ddf3dd8db"
 section_count = 2
+
+[[files]]
+path = "semantic/vat-dx-establish-a-verifiable-developer-and-agent-experience-cap.md"
+digest = "sha256:b81a4859eaf4e9d367c0829df78e4c6c4b65f860a20c7b58d79f42fe4378030e"
+ir_digest = "sha256:1f538e6ee918c0af91397d2b97820b3a64917ac9130b5ede67c33ddb9531c8aa"
+section_count = 1
 
 [[files]]
 path = "semantic/vat-emulator.md"
