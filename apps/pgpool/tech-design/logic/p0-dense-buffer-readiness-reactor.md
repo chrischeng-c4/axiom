@@ -150,6 +150,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
+    anchor: ReactorState
     reason: Own dense client/backend phases, clean-idle and waiter FIFO queues, and reset-before-reuse transitions.
   - path: apps/pgpool/src/pool/reactor/runtime.rs
     action: create
