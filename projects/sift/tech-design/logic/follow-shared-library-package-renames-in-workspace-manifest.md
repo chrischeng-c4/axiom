@@ -26,7 +26,7 @@ nodes:
     label: "map existing Rust aliases to service-k8s, storage-durable, metrics-prometheus, and raft-runtime"
   metadata:
     kind: process
-    label: "run root cargo metadata without changing runtime code"
+    label: "run root cargo metadata and the alias drift test without changing runtime code"
   buildable:
     kind: terminal
     label: "workspace manifest is valid and focused package checks can run"
@@ -40,11 +40,10 @@ edges:
 flowchart TD
     load[load Sift workspace manifest] --> current{shared package paths current?}
     current -->|no| aliases[preserve crate aliases; update package/path]
-    current -->|yes| metadata[cargo metadata]
+    current -->|yes| metadata[cargo metadata plus drift test]
     aliases --> metadata
     metadata --> ready([workspace can build])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
