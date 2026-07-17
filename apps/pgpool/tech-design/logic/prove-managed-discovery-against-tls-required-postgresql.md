@@ -43,14 +43,13 @@ changes:
     section: unit-test
     impl_mode: hand-written
     anchor: cloudsql_discovery_succeeds_against_tls_required_postgres
-    reason: Exercise configured-CA Rustls discovery against the endpoint supplied by the TLS-required container proof.
+    reason: Prove configured-CA CloudSql Rustls discovery against an externally supplied TLS-only PostgreSQL endpoint.
   - path: apps/pgpool/tests/tls_required_discovery.sh
     action: create
     section: unit-test
     impl_mode: hand-written
-    reason: Start and clean up a disposable hostssl-only PostgreSQL 15 container and run the targeted Rust test.
+    reason: Build a disposable hostssl-only PostgreSQL fixture, assert plaintext rejection, and invoke the targeted Rust proof.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
