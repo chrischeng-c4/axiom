@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://axiom.local/contracts/axiom.service.log.v1.schema.json",
+  "aw_ownership": "HANDWRITE-BEGIN gap=json-schema tracker=1868 reason: versioned service log schema",
   "title": "Axiom service structured stdout event v1",
   "type": "object",
   "additionalProperties": false,
@@ -98,5 +99,3 @@
     }
   }
 }
-
-<!-- marker: missing-generator:logic:01a501b9 path: libs/service-observability/contracts/axiom.service.log.v1.schema.json reason: Define the machine-readable required, optional, nested service, correlation-pattern, attribute-bound, and additional-property rules. -->

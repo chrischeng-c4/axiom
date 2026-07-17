@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:d8834b62" tracker="pending-tracker" reason="Define ServiceLogEventV1, stable schema constants, correlation validation, sensitive-key exclusion, bounded attributes, and the tracing-subscriber JSONL formatter."
+// HANDWRITE-BEGIN gap="missing-generator:logic:d8834b62" tracker="1868" reason="Define ServiceLogEventV1, stable schema constants, correlation validation, sensitive-key exclusion, bounded attributes, and the tracing-subscriber JSONL formatter."
 //! Versioned collector-compatible structured stdout.
 
 use std::collections::BTreeMap;
@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
-use tracing_subscriber::fmt::format::{
-    FormatEvent, FormatFields, FormatTime, JsonFields, Writer,
-};
+use tracing_subscriber::fmt::format::{FormatEvent, JsonFields, Writer};
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt::{FmtContext, FormattedFields};
 use tracing_subscriber::registry::LookupSpan;
 
@@ -97,8 +96,7 @@ where
                 let Some(fields) = extensions.get::<FormattedFields<JsonFields>>() else {
                     continue;
                 };
-                let Ok(values) =
-                    serde_json::from_str::<BTreeMap<String, Value>>(&fields.fields)
+                let Ok(values) = serde_json::from_str::<BTreeMap<String, Value>>(&fields.fields)
                 else {
                     continue;
                 };
@@ -126,10 +124,8 @@ where
 
         let trace_id = preferred_hex(&event_fields, &span_fields, "trace_id", 32, true);
         let span_id = preferred_hex(&event_fields, &span_fields, "span_id", 16, true);
-        let parent_span_id =
-            preferred_hex(&event_fields, &span_fields, "parent_span_id", 16, true);
-        let trace_flags =
-            preferred_hex(&event_fields, &span_fields, "trace_flags", 2, false);
+        let parent_span_id = preferred_hex(&event_fields, &span_fields, "parent_span_id", 16, true);
+        let trace_flags = preferred_hex(&event_fields, &span_fields, "trace_flags", 2, false);
         let request_id = preferred_request_id(&event_fields, &span_fields);
 
         let mut merged = span_fields;
@@ -222,11 +218,7 @@ impl Visit for JsonFieldVisitor {
         self.insert(field, Value::String(encoded));
     }
 
-    fn record_error(
-        &mut self,
-        field: &Field,
-        value: &(dyn std::error::Error + 'static),
-    ) {
+    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
         self.insert(field, Value::String(value.to_string()));
     }
 
@@ -253,7 +245,7 @@ fn preferred_hex(
     [event_fields.get(key), span_fields.get(key)]
         .into_iter()
         .flatten()
-        .filter_map(field_string)
+        .filter_map(|value| field_string(Some(value)))
         .find(|value| valid_lower_hex(value, expected_len, reject_zero))
 }
 
@@ -264,8 +256,8 @@ fn preferred_request_id(
     const KEYS: [&str; 3] = ["request_id", "request.id", "http.request.id"];
     for fields in [event_fields, span_fields] {
         for key in KEYS {
-            if let Some(value) = field_string(fields.get(key))
-                .filter(|value| valid_request_id(value))
+            if let Some(value) =
+                field_string(fields.get(key)).filter(|value| valid_request_id(value))
             {
                 return Some(value);
             }
@@ -290,9 +282,7 @@ fn valid_lower_hex(value: &str, expected_len: usize, reject_zero: bool) -> bool 
 }
 
 fn valid_request_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_REQUEST_ID_BYTES
-        && !value.chars().any(char::is_control)
+    !value.is_empty() && value.len() <= MAX_REQUEST_ID_BYTES && !value.chars().any(char::is_control)
 }
 
 fn bounded_attributes(values: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
@@ -315,14 +305,9 @@ fn bounded_attributes(values: BTreeMap<String, Value>) -> BTreeMap<String, Value
 
 fn bounded_value(value: Value) -> Value {
     match value {
-        Value::String(value) => {
-            Value::String(truncate_utf8(&value, MAX_ATTRIBUTE_VALUE_BYTES))
-        }
+        Value::String(value) => Value::String(truncate_utf8(&value, MAX_ATTRIBUTE_VALUE_BYTES)),
         Value::Number(_) | Value::Bool(_) | Value::Null => value,
-        other => Value::String(truncate_utf8(
-            &other.to_string(),
-            MAX_ATTRIBUTE_VALUE_BYTES,
-        )),
+        other => Value::String(truncate_utf8(&other.to_string(), MAX_ATTRIBUTE_VALUE_BYTES)),
     }
 }
 
@@ -376,5 +361,4 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     value[..end].to_string()
 }
 
-<!-- marker: missing-generator:logic:d8834b62 path: libs/service-observability/src/jsonl.rs reason: Define ServiceLogEventV1, stable schema constants, correlation validation, sensitive-key exclusion, bounded attributes, and the tracing-subscriber JSONL formatter. -->
 // HANDWRITE-END

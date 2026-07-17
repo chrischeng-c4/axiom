@@ -12193,6 +12193,8 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "serde",
+ "serde_json",
  "server-lifecycle",
  "tracing",
  "tracing-opentelemetry",

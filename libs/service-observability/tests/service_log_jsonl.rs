@@ -1,11 +1,11 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:91f7cd40" tracker="pending-tracker" reason="Capture real tracing output and verify per-line framing, stable schema, inherited correlation, validation, redaction, bounds, static-schema drift, and exporter independence."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:91f7cd40" tracker="1868" reason="Capture real tracing output and verify per-line framing, stable schema, inherited correlation, validation, redaction, bounds, static-schema drift, and exporter independence."
 use std::io;
 use std::sync::{Arc, Mutex};
 
 use service_observability::{
-    collector_compatible, service_log_schema_v1, LogFormat, ServiceIdentity,
-    ServiceJsonFormatter, ServiceLogEventV1, ServiceLogIdentityV1,
-    MAX_ATTRIBUTE_VALUE_BYTES, MAX_ATTRIBUTES, SERVICE_LOG_SCHEMA_V1,
+    collector_compatible, service_log_schema_v1, LogFormat, ServiceIdentity, ServiceJsonFormatter,
+    ServiceLogEventV1, ServiceLogIdentityV1, MAX_ATTRIBUTES, MAX_ATTRIBUTE_VALUE_BYTES,
+    SERVICE_LOG_SCHEMA_V1,
 };
 use tracing_subscriber::fmt::format::JsonFields;
 use tracing_subscriber::fmt::MakeWriter;
@@ -245,7 +245,10 @@ fn sensitive_and_oversized_attributes_are_safe() {
 #[test]
 fn schema_contract_matches_rust_event() {
     let schema = service_log_schema_v1();
-    assert_eq!(schema["properties"]["schema"]["const"], SERVICE_LOG_SCHEMA_V1);
+    assert_eq!(
+        schema["properties"]["schema"]["const"],
+        SERVICE_LOG_SCHEMA_V1
+    );
     assert_eq!(
         schema["properties"]["attributes"]["maxProperties"],
         MAX_ATTRIBUTES
@@ -287,5 +290,4 @@ fn schema_contract_matches_rust_event() {
     assert!(!collector_compatible(LogFormat::Pretty));
 }
 
-<!-- marker: missing-generator:unit-test:91f7cd40 path: libs/service-observability/tests/service_log_jsonl.rs reason: Capture real tracing output and verify per-line framing, stable schema, inherited correlation, validation, redaction, bounds, static-schema drift, and exporter independence. -->
 // HANDWRITE-END

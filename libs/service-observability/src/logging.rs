@@ -4,6 +4,7 @@
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
+use crate::jsonl::ServiceJsonFormatter;
 use crate::{LogFormat, ObservabilityConfig, ServiceIdentity};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,7 +66,7 @@ pub fn init_tracing(config: &ObservabilityConfig) -> anyhow::Result<()> {
     init_tracing_with_identity(config, &identity)
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in logging.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="1868" reason="logic section in logging.rs is hand-written pending codegen support">
 pub fn init_tracing_with_identity(
     config: &ObservabilityConfig,
     identity: &ServiceIdentity,
@@ -74,7 +75,10 @@ pub fn init_tracing_with_identity(
         .unwrap_or_else(|_| EnvFilter::new(config.log_level.clone()));
     let fmt_layer = match config.log_format {
         LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),
-        LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
+        LogFormat::Json => tracing_subscriber::fmt::layer()
+            .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new())
+            .event_format(ServiceJsonFormatter::new(identity.clone()))
+            .boxed(),
     };
 
     match tracing_mode(config, identity) {
