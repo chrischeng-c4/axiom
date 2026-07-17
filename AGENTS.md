@@ -43,8 +43,8 @@ as the live prompt for the current binary and repository state. Prefer the
 shortest agent-facing invocation; do not add compatibility/no-op flags such as
 `--json` when stdout already is the protocol. If stdout contains a JSON
 envelope, payload path, `invoke.command`, validation error, or next command,
-follow it exactly. For runner output (`aw wi run` / `aw capability run`), do
-not declare the workflow complete
+follow it exactly. For goal lifecycle root output (`aw goal wi` / `aw goal
+capability` / `aw goal backlog`), do not declare the workflow complete
 unless `completion.workflow_complete=true`; `action=done` can mean only the
 current child root is complete and the envelope is asking you to inspect the
 parent.
@@ -84,26 +84,33 @@ explicitly asks for Claude-specific behavior.
 | `aw conf` | Manage `aw.toml` and Agentic Workflow configuration producers |
 <!-- aw:cli-table:workflow:end -->
 
-`aw wi run <id>` drives one work item to terminal, and `aw capability run
-[<cap-id>] --project <project>` drives one capability's work-root WIs (omit
-`<cap-id>` to run the whole project end to end). Follow `invoke.command` and
-`agent_prompt` from either until `completion.workflow_complete=true` or
-`requires_hitl=true`. If a HITL envelope includes
-`hitl_question.interaction.kind=user_question`, invoke the host's native
-user-question tool immediately with its question, choices, and freeform prompt:
-Claude Code uses `AskUserQuestion`, Codex uses `request_user_input` when that
-tool is exposed, and AGY uses `ask_user`. Do not treat the envelope as terminal
-output or fabricate human approval. If the host has no such tool, present every
-field as a blocking human question. (The
-old top-level runner verb is retired.)
+`aw goal` is aw's single loop verb: every invocation names a root and a
+verifier. `aw goal wi <id>` drives one work item to terminal, `aw goal
+capability [<cap-id>] --project <project>` drives one capability's work-root
+WIs (omit `<cap-id>` to run the whole project end to end), and `aw goal
+backlog --project <project>` drains every open work item for a project one
+at a time, parking (not blocking) on HITL/hard blockers so the drain
+continues. Follow `invoke.command` and `agent_prompt` from any of the three
+until `completion.workflow_complete=true` or `requires_hitl=true`. If a HITL
+envelope includes `hitl_question.interaction.kind=user_question`, invoke the
+host's native user-question tool immediately with its question, choices, and
+freeform prompt: Claude Code uses `AskUserQuestion`, Codex uses
+`request_user_input` when that tool is exposed, and AGY uses `ask_user`. Do
+not treat the envelope as terminal output or fabricate human approval. If
+the host has no such tool, present every field as a blocking human question.
+(The old top-level `aw run` verb and the retired `aw wi run`/`aw capability
+run` verbs are gone — `wi`/`capability`/`backlog` are `aw goal` root types
+now.)
 
 `aw wi` is work-item inventory, planning, and bounded linear authoring: `draft`, `list`, `show`,
 `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`,
-`enrich`, `validate`, `fill-section`, plus the `run`
-driver above. Planning commands write local artifacts under
+`enrich`, `validate`, `fill-section`; drive one WI to terminal with `aw goal
+wi <id>` (see above). Planning commands write local artifacts under
 `/tmp/aw/workspaces/<workspace>/workitems/{project}/...` and do not publish tracker changes. There is no
-`estimate`/`sprintize`; use `aw capability run --project <name>` as the
-run-to-end driver instead of cron-style sprint batches.
+`estimate`/`sprintize`; use `aw goal backlog --project <name>` to drain every
+open issue for a project, or `aw goal capability --project <name>` as the
+run-to-end driver for one capability/the whole project, instead of
+cron-style sprint batches.
 
 `aw td` is the tech-design + generated-code lifecycle (LINEAR — no
 review/revise; the gate is EC via `code-check`): `create`, `gen`, `fill`,
@@ -170,7 +177,7 @@ picture, or pass a focused `[SECTION]` (e.g. `regenerable`, `gates`,
 `--verify-traceability --verify-cb --verify-cold --verify-tests` when
 production readiness must be evaluated. `aw health` never mutates; its
 `next.command` field already names the exact remediation command to run
-next (`aw capability run`, `aw td promote <path>`, `aw ec gen --verify`,
+next (`aw goal capability`, `aw td promote <path>`, `aw ec gen --verify`,
 ...), so there is no `aw health fix` — diagnosis and remediation are
 deliberately separate commands.
 
@@ -183,6 +190,7 @@ deliberately separate commands.
 | `aw llm` | Offline agent orientation: outline + capability/td/ec pillars + loop |
 | `aw upgrade` | Self-update this binary from a published GitHub release |
 | `aw issue` | Search, view, or create Agentic Workflow issues |
+| `aw goal` | Unified loop verb: lifecycle root types (`wi`, `capability`, `backlog`) plus the ad-hoc CLI-owned verifiable-condition loop for bounded work outside the WI lifecycle (`set`/`check`/`show`/`list`/`clear`) |
 <!-- aw:cli-table:support:end -->
 
 `aw conf check` verifies `aw.toml`'s generated project registry block
@@ -199,15 +207,18 @@ ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 `aw guard` is the agent-runtime direct edit/create guard for Codex and
 Claude Code (live-denies out-of-lifecycle writes).
 
-`aw goal` is a CLI-owned verifiable-condition loop for bounded work
-OUTSIDE the WI/TD/EC lifecycle — test-pass gates, migration sweeps, backlog
-drains, and other ad-hoc tasks a human hands an agent directly. `aw goal
-set --gate "<command>" <intent>` records the prose intent plus one or more
-required machine-runnable gate commands as workspace-scoped state (never a
-repo-root file); `aw goal check [<id>]` runs the gates and reports
-deterministically (`done`, `blocked` with `next.command`, or `gave_up` on
-budget/24h expiry). aw-managed work keeps using `aw wi run`/`aw capability
-run`; do not use `aw goal` as a substitute runner for those.
+`aw goal` has a closed four-leaf root-type enum: `wi` and `capability`
+(the lifecycle roots described above), `backlog` (drain every open WI for a
+project — `aw goal backlog --project <project>`), and `adhoc` for bounded
+work OUTSIDE the WI/TD/EC lifecycle — test-pass gates, migration sweeps, and
+other ad-hoc tasks a human hands an agent directly. `aw goal set --gate
+"<command>" <intent>` records the prose intent plus one or more required
+machine-runnable gate commands as workspace-scoped state (never a repo-root
+file); `aw goal check [<id>]` runs the gates and reports deterministically
+(`done`, `blocked` with `next.command`, or `gave_up` on budget/24h expiry).
+aw-managed roots use the `wi`/`capability`/`backlog` goal leaves; `adhoc` is
+for everything outside that lifecycle — never a substitute for the
+lifecycle root types.
 
 When the user asks for `aw wi`, `sdd issues`, `sdd gh issue`, or similar
 wording after the merge, inspect Agentic Workflow-managed GitHub issues for the
