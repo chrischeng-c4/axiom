@@ -63,6 +63,7 @@ impl std::fmt::Debug for TransactionReactor {
 }
 
 impl TransactionReactor {
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.">
     /// Starts the dedicated readiness owner. Backend pool configuration and
     /// admin-stat publication are captured here; no transaction socket has
     /// crossed the boundary yet.
@@ -80,6 +81,7 @@ impl TransactionReactor {
             .spawn(move || ReactorRuntime::new(poll, thread_ingress, pool).run())?;
         Ok(Self { ingress })
     }
+// </HANDWRITE>
 
     /// Transfers the accepted socket and its frontend budget permit to the
     /// readiness owner. `TcpStream::into_std` preserves nonblocking mode; the
