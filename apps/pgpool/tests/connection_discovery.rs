@@ -114,6 +114,7 @@ async fn pgpool_backend_connections_are_not_foreign_usage() {
     );
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Prove configured-CA CloudSql Rustls discovery against an externally supplied TLS-only PostgreSQL endpoint.">
 /// Proves the managed-provider Rustls path against the TLS-required endpoint
 /// started by `tls_required_discovery.sh`. Keeping its environment opt-in lets
 /// the ordinary integration suite remain usable without Docker.
@@ -156,4 +157,5 @@ async fn cloudsql_discovery_succeeds_against_tls_required_postgres() {
     assert!(facts.runtime.pgpool_connections >= 1);
     assert_eq!(facts.endpoint.provider, EndpointProvider::CloudSql);
 }
+// </HANDWRITE>
 // </HANDWRITE>
