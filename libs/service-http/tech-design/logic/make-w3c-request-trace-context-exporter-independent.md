@@ -105,3 +105,49 @@ changes:
     impl_mode: hand-written
     description: Prove valid parent preservation, local id generation, malformed and zero-id fallback, request routing, and no-OTLP behavior.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: exporter-independent-w3c-server-context-verification
+requirements:
+  invalid_or_missing_context_is_safe:
+    id: R2
+    text: "Missing, malformed, unsupported-version, wrong-length, invalid-hex, or all-zero traceparent values create a fresh valid root trace/span and do not reject the HTTP request."
+    kind: negative
+    risk: high
+    verify: cargo test -p service-http --test request_trace_context invalid_or_missing_traceparent_creates_safe_root -- --exact
+  otlp_is_additive:
+    id: R4
+    text: "Enabling the OTLP feature attaches valid propagated context but preserves the same upstream trace identity and the structured request correlation contract."
+    kind: regression
+    risk: high
+    verify: cargo test -p service-http --features otlp --test request_trace_context otlp_feature_preserves_request_trace_identity -- --exact
+  request_span_exposes_correlation:
+    id: R3
+    text: "The shared trace layer records canonical trace_id, span_id, optional parent_span_id, and trace flags on the request span while preserving normal routing in a logging-only build."
+    kind: contract
+    risk: high
+    verify: cargo test -p service-http --test request_trace_context trace_layer_records_context_and_routes_without_otlp -- --exact
+  shared_scaffold_remains_green:
+    id: R5
+    text: "The existing shared HTTP scaffold and prior optional OTLP behavior remain compatible after context parsing moves outside the exporter feature."
+    kind: regression
+    risk: medium
+    verify: cargo test -p service-http
+  valid_parent_creates_local_child:
+    id: R1
+    text: "A valid W3C version 00 traceparent preserves the upstream trace id, records its parent span id, and creates a distinct nonzero local server span id without compiling OTLP."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-http --test request_trace_context valid_traceparent_preserves_trace_and_creates_child_span -- --exact
+---
+flowchart TD
+    r1[R1 valid parent creates local child] --> cargo_test_p_service_http_test_request_trace_context_valid_traceparent_preserves_trace_and_creates_child_span_exact[cargo test -p service-http --test request_trace_context valid_traceparent_preserves_trace_and_creates_child_span -- --exact]
+    r2[R2 invalid or missing context is safe] --> cargo_test_p_service_http_test_request_trace_context_invalid_or_missing_traceparent_creates_safe_root_exact[cargo test -p service-http --test request_trace_context invalid_or_missing_traceparent_creates_safe_root -- --exact]
+    r3[R3 request span exposes correlation] --> cargo_test_p_service_http_test_request_trace_context_trace_layer_records_context_and_routes_without_otlp_exact[cargo test -p service-http --test request_trace_context trace_layer_records_context_and_routes_without_otlp -- --exact]
+    r4[R4 otlp is additive] --> cargo_test_p_service_http_features_otlp_test_request_trace_context_otlp_feature_preserves_request_trace_identity_exact[cargo test -p service-http --features otlp --test request_trace_context otlp_feature_preserves_request_trace_identity -- --exact]
+    r5[R5 shared scaffold remains green] --> cargo_test_p_service_http[cargo test -p service-http]
+```
