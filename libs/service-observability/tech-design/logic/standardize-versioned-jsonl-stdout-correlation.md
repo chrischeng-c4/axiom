@@ -103,3 +103,49 @@ changes:
 ```
 
 The bounded hand-authored implementation also adds direct `serde` and `serde_json` dependencies to `libs/service-observability/Cargo.toml`; the contract test makes the static schema and Rust event surface drift together.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: versioned-service-jsonl-stdout-verification
+requirements:
+  adopter_and_schema_surface:
+    id: R5
+    text: "The public Rust event model and static schema stay aligned, JSON remains collector-compatible, and pretty remains an explicit development-only choice."
+    kind: contract
+    risk: medium
+    verify: cargo test -p service-observability
+  inherited_correlation:
+    id: R3
+    text: "Active valid trace, span, parent, flags, and request fields are inherited without requiring an OTLP exporter."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-observability --test service_log_jsonl active_span_fields_become_valid_correlation -- --exact
+  jsonl_contract:
+    id: R1
+    text: "Collector-compatible output uses the axiom.service.log.v1 event contract and every stdout line parses independently."
+    kind: functional
+    risk: high
+    verify: cargo test -p service-observability --test service_log_jsonl jsonl_lines_parse_independently_with_identity -- --exact
+  safe_untrusted_fields:
+    id: R4
+    text: "Sensitive propagation fields are excluded, correlation values are validated, and attribute count and size are bounded without breaking JSONL framing."
+    kind: security
+    risk: high
+    verify: cargo test -p service-observability --test service_log_jsonl sensitive_and_oversized_attributes_are_safe -- --exact
+  stable_fields:
+    id: R2
+    text: "Each structured event contains timestamp, severity, service identity, event, message, and bounded attributes."
+    kind: regression
+    risk: high
+    verify: cargo test -p service-observability --test service_log_jsonl jsonl_lines_parse_independently_with_identity -- --exact
+---
+flowchart TD
+    r1[R1 jsonl contract] --> cargo_test_p_service_observability_test_service_log_jsonl_jsonl_lines_parse_independently_with_identity_exact[cargo test -p service-observability --test service_log_jsonl jsonl_lines_parse_independently_with_identity -- --exact]
+    r2[R2 stable fields] --> cargo_test_p_service_observability_test_service_log_jsonl_jsonl_lines_parse_independently_with_identity_exact
+    r3[R3 inherited correlation] --> cargo_test_p_service_observability_test_service_log_jsonl_active_span_fields_become_valid_correlation_exact[cargo test -p service-observability --test service_log_jsonl active_span_fields_become_valid_correlation -- --exact]
+    r4[R4 safe untrusted fields] --> cargo_test_p_service_observability_test_service_log_jsonl_sensitive_and_oversized_attributes_are_safe_exact[cargo test -p service-observability --test service_log_jsonl sensitive_and_oversized_attributes_are_safe -- --exact]
+    r5[R5 adopter and schema surface] --> cargo_test_p_service_observability[cargo test -p service-observability]
+```
