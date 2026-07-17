@@ -1688,17 +1688,21 @@ impl Bundler {
             .find(|m| m.id == 0)
             .ok_or_else(|| anyhow::anyhow!("code splitting: no entry module (id 0) in bundle"))?;
 
+        let id_to_path: HashMap<usize, PathBuf> =
+            modules.iter().map(|m| (m.id, m.path.clone())).collect();
+        let all_module_ids: Vec<usize> = modules.iter().map(|m| m.id).collect();
+
         let edges = {
             let graph = self.graph.read();
-            split_edges_from_graph(&graph)
+            split_edges_from_graph(&graph, modules)
         };
-        let all_modules: Vec<PathBuf> = modules.iter().map(|m| m.path.clone()).collect();
 
         let split_result = splitting::split_chunks_with_config(
-            &entry.path,
+            entry.id,
             &edges,
-            &all_modules,
+            &all_module_ids,
             &splitting::ManualChunkConfig::default(),
+            &id_to_path,
         );
 
         // Nothing to split (no dynamic-import boundaries in this graph):
@@ -1714,13 +1718,10 @@ impl Bundler {
             return Ok(None);
         }
 
-        let by_path: HashMap<&PathBuf, &CompiledModule> =
-            modules.iter().map(|m| (&m.path, m)).collect();
-        let modules_for = |paths: &[PathBuf]| -> Vec<&CompiledModule> {
-            let mut found: Vec<&CompiledModule> = paths
-                .iter()
-                .filter_map(|p| by_path.get(p).copied())
-                .collect();
+        let by_id: HashMap<usize, &CompiledModule> = modules.iter().map(|m| (m.id, m)).collect();
+        let modules_for = |ids: &[usize]| -> Vec<&CompiledModule> {
+            let mut found: Vec<&CompiledModule> =
+                ids.iter().filter_map(|id| by_id.get(id).copied()).collect();
             found.sort_by_key(|m| m.id);
             found
         };
@@ -1770,24 +1771,45 @@ impl Bundler {
     }
 }
 
-/// Build code-splitting edges from the module graph: one `SplitEdge` per
+/// Build code-splitting edges from the module graph: one `SplitEdgeId` per
 /// graph dependency edge, `is_dynamic` set from `EdgeKind::DynamicImport`.
 /// Free function (not a `Bundler` method) so it's unit-testable directly
 /// against a hand-built `ModuleGraph`.
+///
+/// Edges are translated from the graph's own path-keyed nodes into
+/// `CompiledModule::id` — the bundler's stable numeric identity — via
+/// `modules`. An edge endpoint with no corresponding `CompiledModule` (e.g.
+/// a graph node for a filtered-out asset/JSON module that never made it
+/// into the compiled set) is skipped rather than guessed at: it cannot
+/// affect chunk membership either way, and skipping it keeps the
+/// translation exact instead of falling back to path-string matching —
+/// which is the entire bug this keys away from. See `splitting.rs`'s module
+/// doc comment for why chunk partitioning must not be keyed on `PathBuf`.
 /// @issue #1930
-fn split_edges_from_graph(graph: &ModuleGraph) -> Vec<splitting::SplitEdge> {
+/// @issue #1941
+fn split_edges_from_graph(
+    graph: &ModuleGraph,
+    modules: &[CompiledModule],
+) -> Vec<splitting::SplitEdgeId> {
+    let path_to_id: HashMap<&PathBuf, usize> = modules.iter().map(|m| (&m.path, m.id)).collect();
     let mut edges = Vec::new();
     for id in graph.all_node_ids() {
         let Some(node) = graph.get_node(id) else {
+            continue;
+        };
+        let Some(&from) = path_to_id.get(&node.path) else {
             continue;
         };
         for (dep_id, kind) in graph.dependencies(id) {
             let Some(dep_node) = graph.get_node(dep_id) else {
                 continue;
             };
-            edges.push(splitting::SplitEdge {
-                from: node.path.clone(),
-                to: dep_node.path.clone(),
+            let Some(&to) = path_to_id.get(&dep_node.path) else {
+                continue;
+            };
+            edges.push(splitting::SplitEdgeId {
+                from,
+                to,
                 is_dynamic: kind == graph::EdgeKind::DynamicImport,
             });
         }
@@ -3043,7 +3065,7 @@ mod gh3821_bundler_edge_kind_extension_warn_tests {
 
 /// WI #1930 — `jet build --splitting` chunk codegen core + runtime loader.
 ///
-/// Covers `SplitEdge` extraction from a hand-built `ModuleGraph` and
+/// Covers `SplitEdgeId` extraction from a hand-built `ModuleGraph` and
 /// structural assertions on `Bundler::generate_split_bundle`'s entry/chunk
 /// output (the `dynamicImport`/`chunkManifest`/`registerChunk` runtime
 /// wiring). Transform-level dynamic-import lowering on/off is covered in
@@ -3078,8 +3100,18 @@ mod code_splitting_tests {
         graph.add_dependency(entry, shared, EdgeKind::Import);
         graph.add_dependency(entry, lazy, EdgeKind::DynamicImport);
 
-        let mut edges = split_edges_from_graph(&graph);
-        edges.sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
+        // Ids are assigned by this `modules` list, not by the graph's own
+        // `NodeIndex` — the translation in `split_edges_from_graph` goes
+        // through path lookup, so these ids need not (and in general will
+        // not) match petgraph's internal node indices.
+        let modules = vec![
+            compiled(0, "entry.js", ""),
+            compiled(1, "shared.js", ""),
+            compiled(2, "lazy.js", ""),
+        ];
+
+        let mut edges = split_edges_from_graph(&graph, &modules);
+        edges.sort_by_key(|e| (e.from, e.to));
 
         assert_eq!(
             edges.len(),
@@ -3088,9 +3120,9 @@ mod code_splitting_tests {
         );
         let static_edge = edges
             .iter()
-            .find(|e| e.to == PathBuf::from("shared.js"))
-            .expect("static edge to shared.js missing");
-        assert_eq!(static_edge.from, PathBuf::from("entry.js"));
+            .find(|e| e.to == 1)
+            .expect("static edge to shared.js (id 1) missing");
+        assert_eq!(static_edge.from, 0);
         assert!(
             !static_edge.is_dynamic,
             "Import edge must not be marked dynamic"
@@ -3098,9 +3130,9 @@ mod code_splitting_tests {
 
         let dynamic_edge = edges
             .iter()
-            .find(|e| e.to == PathBuf::from("lazy.js"))
-            .expect("dynamic edge to lazy.js missing");
-        assert_eq!(dynamic_edge.from, PathBuf::from("entry.js"));
+            .find(|e| e.to == 2)
+            .expect("dynamic edge to lazy.js (id 2) missing");
+        assert_eq!(dynamic_edge.from, 0);
         assert!(
             dynamic_edge.is_dynamic,
             "DynamicImport edge must be marked dynamic"
@@ -3110,7 +3142,7 @@ mod code_splitting_tests {
     #[test]
     fn split_edges_from_graph_empty_graph_yields_no_edges() {
         let graph = ModuleGraph::new();
-        assert!(split_edges_from_graph(&graph).is_empty());
+        assert!(split_edges_from_graph(&graph, &[]).is_empty());
     }
 
     // ── generate_split_bundle structural assertions ─────────────────────

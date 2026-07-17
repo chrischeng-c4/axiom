@@ -1417,4 +1417,203 @@ fn large_corpus_default_split_stays_within_chunk_count_size_and_wall_time_budget
 
     Ok(())
 }
+
+/// Writes a fixture combining the two real-world path-spelling sources named
+/// in #1941: a pnpm-style `node_modules` symlink (the real package directory
+/// lives under a content-addressed `.pnpm/<name>@<version>/node_modules/<name>/`
+/// path, and `node_modules/<name>` is a *symlink* into it) and a jet.toml
+/// `[alias]` rewrite. The entry statically imports the symlinked package
+/// (single reference — stays inlined into the entry) and dynamically
+/// `import()`s `lazy.js`, which statically imports its own private dep
+/// through the alias (also single reference — stays inlined into the async
+/// chunk it's split into, not promoted to a separate shared chunk).
+#[cfg(unix)]
+fn write_symlink_and_alias_fixture(dir: &Path) {
+    // pnpm-style dependency layout: the real package directory is nested
+    // under `.pnpm/<name>@<version>/node_modules/<name>/`, and
+    // `node_modules/<name>` is a relative symlink into it. The resolved
+    // import path for `shared-dep` therefore never spells the same as any
+    // path a naive equality-based BFS would already have visited.
+    let real_pkg = dir.join("node_modules/.pnpm/shared-dep@1.0.0/node_modules/shared-dep");
+    fs::create_dir_all(&real_pkg).expect("create real pnpm store dir");
+    fs::write(
+        real_pkg.join("package.json"),
+        r#"{"name":"shared-dep","version":"1.0.0","main":"index.js"}"#,
+    )
+    .expect("write shared-dep package.json");
+    fs::write(
+        real_pkg.join("index.js"),
+        "export function shared() { return 'STORE_SHARED_MARKER'; }\n",
+    )
+    .expect("write shared-dep index.js");
+    std::os::unix::fs::symlink(
+        ".pnpm/shared-dep@1.0.0/node_modules/shared-dep",
+        dir.join("node_modules/shared-dep"),
+    )
+    .expect("create pnpm-style node_modules symlink");
+
+    // jet.toml `[alias]`: a second real-world path-spelling source —
+    // `@lib/private.js` resolves through config-driven rewriting, not a
+    // plain relative import or node_modules walk-up.
+    fs::write(
+        dir.join("jet.toml"),
+        "[alias]\n\"@lib/\" = \"./aliased/\"\n",
+    )
+    .expect("write jet.toml");
+    fs::create_dir_all(dir.join("aliased")).expect("create aliased dir");
+    fs::write(
+        dir.join("aliased/private.js"),
+        "export function privateHelper() { return 'PRIVATE_DEP_MARKER'; }\n",
+    )
+    .expect("write aliased/private.js");
+
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { shared } from 'shared-dep';
+
+console.log('ENTRY_MARKER', shared());
+
+import('./lazy.js').then((mod) => mod.default());
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/lazy.js"),
+        r#"import { privateHelper } from '@lib/private.js';
+
+export default function lazy() {
+    return 'LAZY_MARKER:' + privateHelper();
+}
+"#,
+    )
+    .expect("write lazy");
+}
+
+/// Regression coverage for #1941: chunk partitioning used to key module
+/// identity by `PathBuf` equality, which collapses on real-world graphs
+/// where the same logical module is reachable through more than one path
+/// spelling — a pnpm-style `node_modules` symlink, a jet.toml `[alias]`
+/// rewrite. Production evidence showed ~5 duplicate `__jet__.define(`
+/// emissions plus hundreds of orphaned modules silently flooding into the
+/// entry chunk with zero shared-chunk extraction. Partitioning is now keyed
+/// by `CompiledModule::id: usize` end-to-end, so this fixture exercises both
+/// real-world path-spelling sources at once and asserts the failure
+/// signature is gone: no module's `__jet__.define(` is emitted more than
+/// once across entry+chunks, and every module lands in exactly the chunk
+/// its reachability says it should.
+#[cfg(unix)]
+#[test]
+fn splitting_survives_pnpm_symlink_and_alias_without_duplicating_or_orphaning_modules() -> Result<()>
+{
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_symlink_and_alias_fixture(fixture);
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting", "--no-minify"])?,
+        "build --splitting --no-minify (pnpm-symlink + alias fixture)",
+    )?;
+
+    let dist = fixture.join("dist");
+    let entry_path = list_files_recursive(&dist)
+        .into_iter()
+        .find(|p| {
+            p.parent() == Some(dist.as_path())
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("main.") && n.ends_with(".js"))
+        })
+        .expect("no top-level main.<hash>.js entry file");
+    let entry_code = fs::read_to_string(&entry_path).expect("read entry file");
+
+    // Entry must contain its own source plus the symlinked static dep
+    // (single-reference — stays inlined, not promoted to a shared chunk).
+    assert!(
+        entry_code.contains("ENTRY_MARKER") && entry_code.contains("STORE_SHARED_MARKER"),
+        "entry chunk must contain its own source plus the symlinked static dep"
+    );
+    // Entry must exclude the entire lazy subtree: the split-point module
+    // and its alias-resolved private dep.
+    assert!(
+        !entry_code.contains("LAZY_MARKER") && !entry_code.contains("PRIVATE_DEP_MARKER"),
+        "entry chunk must exclude the lazy module and its alias-resolved private dep; entry={}",
+        entry_path.display()
+    );
+
+    let manifest = extract_json_assignment(&entry_code, "__jet__.chunkManifest")
+        .expect("entry must carry a parseable __jet__.chunkManifest assignment");
+    let chunks_obj = manifest
+        .get("chunks")
+        .and_then(Value::as_object)
+        .expect("manifest.chunks must be an object");
+    let module_chunks_obj = manifest
+        .get("moduleChunks")
+        .and_then(Value::as_object)
+        .expect("manifest.moduleChunks must be an object");
+
+    assert_eq!(
+        chunks_obj.len(),
+        1,
+        "expected exactly one async chunk (\"chunk-lazy\"), got {chunks_obj:?}"
+    );
+    let lazy_chunk_meta = chunks_obj
+        .get("chunk-lazy")
+        .unwrap_or_else(|| panic!("manifest.chunks missing \"chunk-lazy\": {chunks_obj:?}"));
+    let lazy_chunk_file = lazy_chunk_meta
+        .get("file")
+        .and_then(Value::as_str)
+        .expect("manifest.chunks[\"chunk-lazy\"].file missing/non-string");
+    let lazy_chunk_path = dist.join(lazy_chunk_file);
+    assert!(
+        lazy_chunk_path.exists(),
+        "manifest names {lazy_chunk_file:?} for chunk-lazy but no such file was written"
+    );
+    let lazy_chunk_code = fs::read_to_string(&lazy_chunk_path).expect("read chunk-lazy file");
+
+    // The async chunk must carry its full subtree together: the split-point
+    // module plus its private single-reference static dep (resolved through
+    // the jet.toml alias) — not split apart, not orphaned back into the
+    // entry.
+    assert!(
+        lazy_chunk_code.contains("LAZY_MARKER") && lazy_chunk_code.contains("PRIVATE_DEP_MARKER"),
+        "chunk-lazy must carry the lazy module and its alias-resolved private dep together; code={lazy_chunk_code}"
+    );
+
+    // moduleChunks only records modules assigned to a *named* (non-entry)
+    // chunk (see `build_chunk_manifest_js`), so exactly the 2 chunk-lazy
+    // members (lazy.js + its private dep) are expected here — the 2
+    // entry-inlined modules (index.js + the symlinked shared-dep) are not.
+    assert_eq!(
+        module_chunks_obj.len(),
+        2,
+        "expected exactly 2 moduleChunks entries (lazy.js + its alias-resolved private dep), \
+         got {module_chunks_obj:?}"
+    );
+    for chunk_name in module_chunks_obj.values() {
+        assert_eq!(
+            chunk_name.as_str(),
+            Some("chunk-lazy"),
+            "every moduleChunks entry must point at chunk-lazy, got {module_chunks_obj:?}"
+        );
+    }
+
+    // Zero-duplication assertion (#1941's core regression signature): exactly
+    // one `__jet__.define(` per unique compiled module — entry index.js, the
+    // symlinked shared-dep, lazy.js, and the alias-resolved private.js (4
+    // total) — counted across every emitted file. Pre-#1941 `PathBuf`-keyed
+    // BFS could double-count a module whose id was reachable under more than
+    // one path spelling; it is now structurally impossible under id-keying.
+    const EXPECTED_UNIQUE_MODULES: usize = 4;
+    let total_defines = entry_code.matches("__jet__.define(").count()
+        + lazy_chunk_code.matches("__jet__.define(").count();
+    assert_eq!(
+        total_defines, EXPECTED_UNIQUE_MODULES,
+        "expected exactly {EXPECTED_UNIQUE_MODULES} __jet__.define( calls across entry+chunks \
+         (one per unique module: entry, symlinked shared-dep, lazy, alias-resolved private), \
+         got {total_defines}"
+    );
+
+    Ok(())
+}
 // HANDWRITE-END
