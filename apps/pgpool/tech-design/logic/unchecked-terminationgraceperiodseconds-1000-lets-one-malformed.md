@@ -12,22 +12,19 @@ fill_sections: [logic, changes, unit-test]
 id: drain-timeout-headroom
 entry: termination_grace_period_seconds
 nodes:
-  reserve: { kind: process, label: "reserve fixed SIGKILL headroom" }
-  floor: { kind: process, label: "floor usable drain duration at one second" }
-  saturate: { kind: process, label: "saturating seconds-to-milliseconds conversion" }
-  env: { kind: terminal, label: "render PGPOOL_DRAIN_TIMEOUT_MS" }
+  headroom: { kind: process, label: "reserve five seconds for SIGKILL boundary" }
+  minimum: { kind: process, label: "floor drain to one second" }
+  saturating_ms: { kind: process, label: "saturating conversion to milliseconds" }
+  render: { kind: terminal, label: "deployment environment value" }
 edges:
-  - { from: termination_grace_period_seconds, to: reserve }
-  - { from: reserve, to: floor }
-  - { from: floor, to: saturate }
-  - { from: saturate, to: env }
+  - { from: termination_grace_period_seconds, to: headroom }
+  - { from: headroom, to: minimum }
+  - { from: minimum, to: saturating_ms }
+  - { from: saturating_ms, to: render }
 ---
 flowchart TD
-  grace["CR grace period seconds"] --> headroom["subtract fixed SIGKILL headroom"]
-  headroom --> floor["floor drain at minimum one second"]
-  floor --> saturate["saturating * 1000"] --> env["PGPOOL_DRAIN_TIMEOUT_MS"]
+  grace["grace seconds"] --> reserve["minus 5 seconds headroom"] --> floor["minimum 1 second"] --> ms["saturating milliseconds"] --> env["drain timeout env"]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
