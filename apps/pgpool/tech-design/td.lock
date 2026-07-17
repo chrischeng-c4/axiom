@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T16:10:43.631893+00:00"
-digest = "sha256:10e4da28e667209b2b517c63745ed6c12324f4caa841dbae3fdaae912cce9a8a"
-source_digest = "sha256:10e4da28e667209b2b517c63745ed6c12324f4caa841dbae3fdaae912cce9a8a"
-ir_digest = "sha256:89043d74a8bfdf1298119fb4c94c757ad430b27c4a672803bb6a95876aa75869"
+generated_at = "2026-07-17T16:19:33.080836+00:00"
+digest = "sha256:c4fb61ee83d8c9f6f7da3a8b2916df75c3b2d8fdf5e383b5196b0536290ff1d3"
+source_digest = "sha256:c4fb61ee83d8c9f6f7da3a8b2916df75c3b2d8fdf5e383b5196b0536290ff1d3"
+ir_digest = "sha256:c30b96cb29b52254a05610ff398e6791f22fc51b648cf78439c857fdc264ad86"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -251,6 +251,12 @@ section_count = 3
 path = "logic/prestop-hook-uses-httpget-against-post-only-drain-drain-before-s.md"
 digest = "sha256:a7b9ddce6cab92b63641d1524ca3d3fc60bd98f62b5a2d85f93f6c59e033386b"
 ir_digest = "sha256:497b507db36cee472a7bd81285bf2dafcdfb0ba4fc37071a82a1de7dce1800ed"
+section_count = 3
+
+[[files]]
+path = "logic/prove-managed-discovery-against-tls-required-postgresql.md"
+digest = "sha256:178d5518679f7ff23710ad630d5d01fc062e37a1c2784e74af133e89477efb0f"
+ir_digest = "sha256:2ce6d5e13aabe7d78026383398b2bc5855a4680a26cf5b7e546160338358148d"
 section_count = 3
 
 [[files]]
