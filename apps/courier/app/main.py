@@ -1,3 +1,4 @@
+# HANDWRITE-BEGIN
 import os
 from contextlib import asynccontextmanager
 from enum import Enum
@@ -183,3 +184,4 @@ async def mutate_issues(request: BatchMutationRequest):
                 results.append({"status": 500, "error": "internal_error", "message": str(e)})
 
     return results
+# HANDWRITE-END

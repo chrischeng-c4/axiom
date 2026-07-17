@@ -1,3 +1,4 @@
+# HANDWRITE-BEGIN
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -141,3 +142,4 @@ class TestCourierApp(unittest.TestCase):
                 self.assertEqual(p_op.labels, e_op.get("labels"))
                 self.assertEqual(p_op.number, e_op.get("number"))
                 self.assertEqual(p_op.state, e_op.get("state"))
+# HANDWRITE-END
