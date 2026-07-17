@@ -35,6 +35,7 @@ pub struct ProviderAdvisory {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConnectionFacts {
     pub max_connections: u32,
+    pub superuser_reserved_connections: u32,
     pub total_connections: u32,
     pub pgpool_connections: u32,
 }
@@ -63,6 +64,8 @@ pub enum ConnectionDiscoveryError {
     Query(#[source] tokio_postgres::Error),
     #[error("remote max_connections value is not a positive integer: {0}")]
     InvalidMaxConnections(String),
+    #[error("remote superuser_reserved_connections value is not a non-negative integer: {0}")]
+    InvalidSuperuserReservedConnections(String),
     #[error("remote connection count is outside the supported u32 range: {0}")]
     InvalidConnectionCount(i64),
 }
@@ -79,7 +82,17 @@ pub fn effective_connection_limit(
         .unwrap_or(runtime_max)
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in discovery.rs is hand-written pending codegen support">
+fn allocatable_connection_limit(
+    runtime_max: u32,
+    configured_ceiling: Option<u32>,
+    advisory_max: Option<u32>,
+    superuser_reserved_connections: u32,
+) -> u32 {
+    effective_connection_limit(runtime_max, configured_ceiling, advisory_max)
+        .saturating_sub(superuser_reserved_connections)
+}
+
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in discovery.rs is hand-written pending codegen support">
 /// Query the live endpoint. Provider SDK metadata is accepted only as an
 /// advisory cap and never substitutes for this runtime result.
 pub async fn discover_connection_facts(
@@ -100,8 +113,10 @@ pub async fn discover_connection_facts(
     let row = client
         .query_one(
             "SELECT current_setting('max_connections') AS max_connections, \
-                    count(*)::bigint AS total_connections, \
-                    count(*) FILTER (WHERE application_name LIKE 'pgpool%')::bigint \
+                    current_setting('superuser_reserved_connections') AS superuser_reserved_connections, \
+                    count(*) FILTER (WHERE backend_type = 'client backend')::bigint AS total_connections, \
+                    count(*) FILTER (WHERE backend_type = 'client backend' \
+                        AND application_name LIKE 'pgpool-%')::bigint \
                         AS pgpool_connections \
              FROM pg_stat_activity",
             &[],
@@ -115,17 +130,23 @@ pub async fn discover_connection_facts(
         .ok()
         .filter(|value| *value > 0)
         .ok_or_else(|| ConnectionDiscoveryError::InvalidMaxConnections(runtime_max_raw))?;
+    let superuser_reserved_raw: String = row.get("superuser_reserved_connections");
+    let superuser_reserved_connections = superuser_reserved_raw
+        .parse::<u32>()
+        .map_err(|_| ConnectionDiscoveryError::InvalidSuperuserReservedConnections(superuser_reserved_raw))?;
     let total_connections = count_to_u32(row.get("total_connections"))?;
     let pgpool_connections = count_to_u32(row.get("pgpool_connections"))?;
     let runtime = RuntimeConnectionFacts {
         max_connections: runtime_max,
+        superuser_reserved_connections,
         total_connections,
         pgpool_connections,
     };
-    let effective_max_connections = effective_connection_limit(
+    let effective_max_connections = allocatable_connection_limit(
         runtime.max_connections,
         endpoint.configured_ceiling,
         advisory.max_connections,
+        runtime.superuser_reserved_connections,
     );
 
     Ok(ConnectionFacts {
@@ -178,6 +199,7 @@ mod tests {
     fn non_pgpool_usage_is_saturating() {
         let facts = RuntimeConnectionFacts {
             max_connections: 100,
+            superuser_reserved_connections: 3,
             total_connections: 12,
             pgpool_connections: 5,
         };
@@ -190,6 +212,13 @@ mod tests {
             .non_pgpool_connections(),
             0
         );
+    }
+
+    #[test]
+    fn effective_capacity_excludes_superuser_reserved_slots() {
+        assert_eq!(allocatable_connection_limit(100, None, None, 3), 97);
+        assert_eq!(allocatable_connection_limit(100, Some(90), Some(95), 3), 87);
+        assert_eq!(allocatable_connection_limit(2, None, None, 3), 0);
     }
 }
 // </HANDWRITE>
