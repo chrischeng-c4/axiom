@@ -10512,6 +10512,15 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                     // None) and `sorted([].__dir__()) == dir([])` holds —
                     // dispatch_list_method already handles the call.
                     "__dir__",
+                    // Protocol dunders callable directly (`[1].__add__(2)`),
+                    // not just via operator form — dispatch_list_method
+                    // already implements all of these (#1582).
+                    "__add__",
+                    "__radd__",
+                    "__mul__",
+                    "__rmul__",
+                    "__eq__",
+                    "__ne__",
                 ],
                 ObjData::Dict(_) => vec![
                     "keys",
@@ -10530,6 +10539,14 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                     "__getitem__",
                     "__setitem__",
                     "__delitem__",
+                    // Protocol dunders callable directly (`d.__or__(other)`),
+                    // not just via operator form — dispatch_dict_method
+                    // already implements all of these (#1582).
+                    "__or__",
+                    "__ror__",
+                    "__ior__",
+                    "__eq__",
+                    "__ne__",
                 ],
                 ObjData::Str(_) => builtin_type_method_names_by_name("str"),
                 ObjData::Set(_) => vec![
