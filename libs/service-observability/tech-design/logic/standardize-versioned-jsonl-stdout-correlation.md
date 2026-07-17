@@ -103,11 +103,6 @@ changes:
     section: logic
     impl_mode: hand-written
     description: Define the machine-readable required, optional, nested service, correlation-pattern, attribute-bound, and additional-property rules.
-  - path: libs/service-observability/README.md
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    description: Document JSON as the stdout collector contract and pretty as development-only output for all service adopters.
   - path: libs/service-observability/tests/service_log_jsonl.rs
     action: create
     section: unit-test
