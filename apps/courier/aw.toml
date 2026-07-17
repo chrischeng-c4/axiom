@@ -10,4 +10,4 @@ traits = ["network_exposed", "long_running"]
 name = "courier"
 paths = ["**"]
 target = "python"
-test_cmd = "python -m pytest"
+test_cmd = "uv run pytest"
