@@ -95,77 +95,76 @@ changes:
     anchor: SourceSpec
     section: logic
     impl_mode: hand-written
-    description: Add the typed CRI source configuration, GKE metadata, loss-aware terminal summary, validation, and module exports while keeping one public run_collector entrypoint.
+    description: Add typed CRI config/metadata, loss-aware summary, validation, and exports behind the existing run_collector API.
   - path: projects/sift/src/collector/source.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: Define source-neutral RawRecord, enrichment, durable cursor, read outcome, and CollectorSource traits plus the file/stdin adapter over collector.checkpoint.v1.
+    description: Own source-neutral records, enrichment, opaque commit cursors, outcomes, CollectorSource, and linear file/stdin framing.
   - path: projects/sift/src/collector/cri.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: Discover node CRI files safely, parse envelopes and partial records, track device/inode rotation with collector.cri.checkpoint.v1, enrich workload metadata, and account source loss.
+    description: Own safe CRI discovery, envelope/partial framing, device-inode rotation, multi-source checkpoint, metadata, and loss accounting.
   - path: projects/sift/src/collector/runtime.rs
     action: modify
     anchor: run
     section: logic
     impl_mode: hand-written
-    description: Make the existing bounded decode/map/deliver/quarantine/ack loop consume CollectorSource so file, stdin, and CRI share one batching and checkpoint progression core.
+    description: Drive every CollectorSource through one bounded decode/map/deliver/quarantine/ack/commit loop.
   - path: projects/sift/src/collector/model.rs
     action: modify
     anchor: decode_service_log
     section: logic
     impl_mode: hand-written
-    description: Apply source-provided resource and primitive attribute enrichment after the shared schema decoder and permit a CRI coexistence identity override without changing application payloads.
+    description: Merge bounded source enrichment and optional CRI coexistence identity after the shared service log decode.
   - path: projects/sift/src/ingest/gcp.rs
     action: modify
     anchor: stable_id
     section: logic
     impl_mode: hand-written
-    description: Expose the existing Cloud Logging fallback identity inside Sift so CRI and GCP normalization share exactly one dedupe algorithm.
+    description: Share the existing insertId-free Cloud Logging identity with the CRI mapper.
   - path: projects/sift/src/bin/sift.rs
     action: modify
     anchor: CollectArgs
     section: logic
     impl_mode: hand-written
-    description: Add mutually exclusive --source/--cri-root collection, GKE metadata flags, durable state defaults, and sift k8s collector render while retaining machine-readable summaries.
+    description: Expose --cri-root with GKE metadata/state flags and the layered k8s collector renderer.
   - path: projects/sift/src/deploy.rs
     action: modify
     anchor: operator_yaml
     section: logic
     impl_mode: hand-written
-    description: Render the Sift-owned collector DaemonSet artifact with validated namespace and image substitutions.
+    description: Render validated Sift collector DaemonSet assets.
   - path: projects/sift/k8s/collector/daemonset.yaml
     action: create
     section: logic
     impl_mode: hand-written
-    description: Define ServiceAccount, zero-API-RBAC DaemonSet, read-only pod-log and dedicated state mounts, external token/config, non-root hardening, and bounded resources.
+    description: Define the zero-API-permission ServiceAccount and hardened node collector DaemonSet.
   - path: projects/sift/tests/collector_cri.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Start real Sift processes and use CRI fixtures to prove partial stdout/stderr assembly, trace query, metadata, rotation/restart/inode replacement, coexistence dedupe, outage checkpoint retention, and explicit loss accounting.
+    description: Prove framing, correlation, metadata, rotation/restart, dedupe, outage recovery, and loss against real Sift.
   - path: projects/sift/tests/deployment_cli.rs
     action: modify
     anchor: layered_deployment_cli_renders_all_artifact_planes
     section: unit-test
     impl_mode: hand-written
-    description: Verify collector renderer output, node-log/state mount permissions, external credential/config wiring, no API token, security context, and resource bounds.
+    description: Prove the rendered collector least-privilege and resource contract.
   - path: projects/sift/README.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Mark the GKE collection work roots and fixture inventory with implemented evidence.
+    description: Link implemented GKE collection work roots to their verification evidence.
   - path: projects/sift/observability/structured-stdout.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Replace the future CRI adapter note with the delivered local fixture and Kubernetes collector commands, ownership, coexistence, and loss semantics.
+    description: Document delivered CRI commands, ownership, coexistence, checkpoint, and loss semantics.
 ```
 
-No application service or shared log schema target changes: Lumen and every other producer continue to write only `axiom.service.log.v1` JSONL to stdout.
-
+The target list intentionally excludes Lumen and the shared stdout schema: applications continue to emit only `axiom.service.log.v1` JSONL.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
