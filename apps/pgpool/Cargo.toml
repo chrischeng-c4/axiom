@@ -22,8 +22,13 @@ axum = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 cli-std = { path = "../../libs/cli-std", default-features = false }
+k8s-openapi = { version = "0.24", features = ["v1_32"] }
+kube = { version = "0.98", features = ["runtime", "derive", "client"] }
 metrics-prometheus = { path = "../../libs/metrics-prometheus" }
+mio = { version = "0.8", features = ["net", "os-poll"] }
+schemars = "0.8"
 server-http = { path = "../../libs/server-http" }
+service-k8s = { path = "../../libs/service-k8s" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -31,13 +36,13 @@ server-lifecycle = { path = "../../libs/server-lifecycle" }
 server-tcp = { path = "../../libs/server-tcp" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-postgres = "0.7"
 tracing = { workspace = true }
 
 [dev-dependencies]
 transport-h2c = { path = "../../libs/transport-h2c" }
 http-body-util = "0.1"
 reqwest = { workspace = true }
-tokio-postgres = "0.7"
 tower = { workspace = true }
 
 [build-dependencies]

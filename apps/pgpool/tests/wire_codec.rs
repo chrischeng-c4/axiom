@@ -9,10 +9,11 @@ use pgpool::wire::{
     AuthenticationSasl, AuthenticationSaslContinue, AuthenticationSaslFinal, BackendKeyData,
     BackendMessage, Bind, CommandComplete, DataRow, Describe, DescribeTarget, ErrorResponse,
     Execute, FieldDescription, Frame, FrameError, FrameReader, FrontendMessage, NoticeResponse,
-    ParameterStatus, Parse, PasswordMessage, Query, ReadyForQuery, Role, RowDescription,
-    SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
+    ParameterStatus, Parse, PasswordMessage, Query, ReadyForQuery, RelayFrameKind, Role,
+    RowDescription, SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
     TransactionStatus, WireCodecConfig, WireMessage,
 };
+use tokio::io::{duplex, AsyncWriteExt};
 
 /// Test-local helper: parses a fully-encoded tagged frame's bytes back into
 /// its raw `Frame` (tag + payload), mirroring what `FrameReader` does
@@ -47,6 +48,68 @@ fn encode_backend(message: &BackendMessage) -> BytesMut {
     let mut buf = BytesMut::new();
     message.encode(&mut buf);
     buf
+}
+
+fn relay_startup(reader: &mut FrameReader) {
+    let startup = encode(&FrontendMessage::Startup(StartupMessage {
+        protocol_major: 3,
+        protocol_minor: 0,
+        parameters: vec![("user".to_string(), "app".to_string())],
+    }));
+    reader.feed(&startup);
+    assert_eq!(
+        reader
+            .next_relay_frame_with_raw()
+            .expect("startup validation succeeds")
+            .expect("startup frame is fully buffered")
+            .kind,
+        RelayFrameKind::Other
+    );
+}
+
+#[tokio::test]
+async fn direct_reader_buffer_reads_preserve_split_backend_frame_bytes() {
+    let config = WireCodecConfig::default();
+    let message = BackendMessage::ReadyForQuery(ReadyForQuery {
+        status: TransactionStatus::Idle,
+    });
+    let encoded = encode_backend(&message);
+    let (mut writer, mut stream) = duplex(64);
+    let mut reader = FrameReader::new(Role::Backend, &config);
+
+    writer
+        .write_all(&encoded[..3])
+        .await
+        .expect("write first split");
+    assert_eq!(
+        reader
+            .read_from(&mut stream)
+            .await
+            .expect("read first split"),
+        3
+    );
+    assert!(reader
+        .next_frame_with_raw()
+        .expect("partial frame remains valid")
+        .is_none());
+
+    writer
+        .write_all(&encoded[3..])
+        .await
+        .expect("write final split");
+    assert_eq!(
+        reader
+            .read_from(&mut stream)
+            .await
+            .expect("read final split"),
+        encoded.len() - 3
+    );
+    let frame = reader
+        .next_frame_with_raw()
+        .expect("complete frame decodes")
+        .expect("complete frame present");
+    assert_eq!(frame.bytes.as_ref(), encoded.as_ref());
+    assert_eq!(frame.message, WireMessage::Backend(message));
 }
 
 /// Round-trips a frontend message through a fresh `FrameReader`, asserting
@@ -226,6 +289,243 @@ fn frontend_query_round_trip() {
         sql: "SELECT * FROM widgets WHERE id = 1".to_string(),
     });
     round_trip_frontend(query, &config);
+}
+
+/// Raw relay reads keep the original validated bytes, so the transaction
+/// proxy can avoid encoding a second DataRow envelope on its hot path.
+#[test]
+fn validated_frame_retains_exact_wire_bytes_for_relay() {
+    let config = WireCodecConfig::default();
+    let original = encode_backend(&BackendMessage::DataRow(DataRow {
+        columns: vec![Some(Bytes::from_static(b"42")), None],
+    }));
+    let mut reader = FrameReader::new(Role::Backend, &config);
+    reader.feed(&original);
+
+    let frame = reader
+        .next_frame_with_raw()
+        .expect("raw frame validation succeeds")
+        .expect("raw frame is fully buffered");
+    assert_eq!(frame.bytes.as_ref(), original.as_ref());
+    assert!(matches!(
+        frame.message,
+        WireMessage::Backend(BackendMessage::DataRow(_))
+    ));
+
+    let mut malformed_reader = FrameReader::new(Role::Backend, &config);
+    malformed_reader.feed(&[b'Z', 0, 0, 0, 5, b'Q']);
+    assert!(matches!(
+        malformed_reader.next_frame_with_raw(),
+        Err(FrameError::Malformed { .. })
+    ));
+}
+
+/// Transaction pooling retains the normal structural validation and exact
+/// wire bytes for simple-query frames while keeping only its ownership facts.
+#[test]
+fn transaction_relay_validates_hot_frames_and_tracks_ownership() {
+    let config = WireCodecConfig::default();
+    let cases = vec![
+        (
+            BackendMessage::DataRow(DataRow {
+                columns: vec![Some(Bytes::from_static(b"42")), None],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::RowDescription(RowDescription {
+                fields: vec![FieldDescription {
+                    name: "answer".to_string(),
+                    table_oid: 0,
+                    column_attr: 0,
+                    type_oid: 23,
+                    type_size: 4,
+                    type_modifier: -1,
+                    format: 0,
+                }],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::CommandComplete(CommandComplete {
+                tag: "SELECT 1".to_string(),
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::ErrorResponse(ErrorResponse {
+                fields: vec![(b'M', "bad query".to_string())],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::NoticeResponse(NoticeResponse {
+                fields: vec![(b'M', "notice".to_string())],
+            }),
+            RelayFrameKind::Other,
+        ),
+        (
+            BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+            RelayFrameKind::BackendReady(TransactionStatus::Idle),
+        ),
+    ];
+
+    for (message, expected_kind) in cases {
+        let encoded = encode_backend(&message);
+        let mut reader = FrameReader::new(Role::Backend, &config);
+        reader.feed(&encoded);
+        let frame = reader
+            .next_relay_frame_with_raw()
+            .expect("relay validation succeeds")
+            .expect("relay frame is fully buffered");
+        assert_eq!(frame.kind, expected_kind);
+        assert_eq!(frame.bytes.as_ref(), encoded.as_ref());
+    }
+
+    let query = encode(&FrontendMessage::Query(Query {
+        sql: "SELECT 1".to_string(),
+    }));
+    let mut frontend_reader = FrameReader::new(Role::Frontend, &config);
+    relay_startup(&mut frontend_reader);
+    frontend_reader.feed(&query);
+    let query_frame = frontend_reader
+        .next_relay_frame_with_raw()
+        .expect("query validation succeeds")
+        .expect("query frame is fully buffered");
+    assert_eq!(query_frame.kind, RelayFrameKind::Other);
+    assert_eq!(query_frame.bytes.as_ref(), query.as_ref());
+
+    let terminate = encode(&FrontendMessage::Terminate(Terminate));
+    frontend_reader.feed(&terminate);
+    let terminate_frame = frontend_reader
+        .next_relay_frame_with_raw()
+        .expect("terminate validation succeeds")
+        .expect("terminate frame is fully buffered");
+    assert_eq!(terminate_frame.kind, RelayFrameKind::FrontendTerminate);
+    assert_eq!(terminate_frame.bytes.as_ref(), terminate.as_ref());
+}
+
+/// After consuming a terminal idle frame, the same backend reader must decode
+/// the next backend frame cleanly. This preserves the parser boundary that a
+/// future reset optimization would need, without requiring reader reuse in
+/// production after P0 #1695 lost its peer comparison.
+///
+/// verify: wire_codec::transaction_reset_reader_consumes_idle_before_next_backend_frame (P0 #1695 no-go guard)
+#[test]
+fn transaction_reset_reader_consumes_idle_before_next_backend_frame() {
+    let config = WireCodecConfig::default();
+    let mut reader = FrameReader::new(Role::Backend, &config);
+    let ready = encode_backend(&BackendMessage::ReadyForQuery(ReadyForQuery {
+        status: TransactionStatus::Idle,
+    }));
+    reader.feed(&ready);
+    assert!(matches!(
+        reader
+            .next_relay_frame_with_raw()
+            .expect("valid ReadyForQuery decodes"),
+        Some(frame) if frame.kind == RelayFrameKind::BackendReady(TransactionStatus::Idle)
+    ));
+
+    let reset_response = encode_backend(&BackendMessage::CommandComplete(CommandComplete {
+        tag: "DISCARD ALL".to_string(),
+    }));
+    reader.feed(&reset_response);
+    assert!(matches!(
+        reader.next_frame().expect("next backend frame decodes"),
+        Some(WireMessage::Backend(BackendMessage::CommandComplete(command)))
+            if command.tag == "DISCARD ALL"
+    ));
+}
+
+/// The allocation-free relay validators must reject malformed hot frames in
+/// exactly the same way as the established full typed decoder.
+#[test]
+fn transaction_relay_hot_frame_errors_match_typed_decode() {
+    let config = WireCodecConfig::default();
+
+    for bytes in [
+        &[b'D', 0, 0, 0, 10, 0, 1, 0xff, 0xff, 0xff, 0xfe][..],
+        &[b'T', 0, 0, 0, 6, 0, 1][..],
+        &[b'C', 0, 0, 0, 6, b'a', b'b'][..],
+        &[b'N', 0, 0, 0, 7, b'M', 0xff, 0][..],
+        &[b'Z', 0, 0, 0, 5, b'Q'][..],
+    ] {
+        let mut typed = FrameReader::new(Role::Backend, &config);
+        typed.feed(bytes);
+        let typed_error = typed
+            .next_frame_with_raw()
+            .expect_err("typed decode rejects input");
+
+        let mut relay = FrameReader::new(Role::Backend, &config);
+        relay.feed(bytes);
+        let relay_error = relay
+            .next_relay_frame_with_raw()
+            .expect_err("relay decode rejects input");
+        assert_eq!(relay_error, typed_error);
+    }
+
+    for bytes in [
+        &[b'Q', 0, 0, 0, 6, 0xff, 0][..],
+        &[b'X', 0, 0, 0, 5, b'a'][..],
+    ] {
+        let mut typed = FrameReader::new(Role::Frontend, &config);
+        let typed_startup = encode(&FrontendMessage::Startup(StartupMessage {
+            protocol_major: 3,
+            protocol_minor: 0,
+            parameters: vec![("user".to_string(), "app".to_string())],
+        }));
+        typed.feed(&typed_startup);
+        typed
+            .next_frame_with_raw()
+            .expect("typed startup succeeds")
+            .expect("typed startup is buffered");
+        typed.feed(bytes);
+        let typed_error = typed
+            .next_frame_with_raw()
+            .expect_err("typed decode rejects input");
+
+        let mut relay = FrameReader::new(Role::Frontend, &config);
+        relay_startup(&mut relay);
+        relay.feed(bytes);
+        let relay_error = relay
+            .next_relay_frame_with_raw()
+            .expect_err("relay decode rejects input");
+        assert_eq!(relay_error, typed_error);
+    }
+}
+
+/// A malformed `ReadyForQuery` is never allowed to replace the reader's prior
+/// transaction status. This keeps the reset/reuse boundary fail-closed after
+/// the opaque-relay P0 was rejected on its first valid benchmark comparison.
+#[test]
+fn transaction_relay_rejects_malformed_ready_for_query_before_lease_state_change() {
+    let config = WireCodecConfig {
+        initial_transaction_status: TransactionStatus::InTransaction,
+        ..WireCodecConfig::default()
+    };
+
+    for bytes in [
+        &[b'Z', 0, 0, 0, 4][..],
+        &[b'Z', 0, 0, 0, 5, b'Q'][..],
+        &[b'Z', 0, 0, 0, 6, b'I', b'x'][..],
+    ] {
+        let mut reader = FrameReader::new(Role::Backend, &config);
+        reader.feed(bytes);
+        assert!(matches!(
+            reader.next_relay_frame_with_raw(),
+            Err(FrameError::Malformed {
+                tag: Some(b'Z'),
+                ..
+            })
+        ));
+        assert_eq!(
+            reader.transaction_status(),
+            TransactionStatus::InTransaction,
+            "a malformed ReadyForQuery cannot make the lease reusable"
+        );
+    }
 }
 
 // R4: Parse/Bind/Describe/Execute/Sync extended-query round trip.

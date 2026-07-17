@@ -7,7 +7,10 @@
 //! `pgpool_frontend_active`, `pgpool_backend_active`, `pgpool_backend_idle`,
 //! each labeled `pool="<name>"`.
 
+use std::fmt::Write;
+
 use crate::admin::state::{AdminState, NamedPool};
+use crate::pool::{RESERVE_GRANTED_METRIC, RESERVE_QUEUED_METRIC, RESERVE_SPENT_METRIC};
 use metrics_prometheus::{render_labeled, Label, LabeledSample, SampleGroup};
 
 /// Content-type header value the TD's e2e test asserts verbatim.
@@ -18,8 +21,11 @@ pub fn render(state: &AdminState) -> String {
     let frontend_active = pool_samples(state, |pool| pool.budget.active());
     let backend_active = pool_samples(state, |pool| pool.pool.stats().backend_active);
     let backend_idle = pool_samples(state, |pool| pool.pool.stats().backend_idle);
+    let reserve_queued = pool_samples(state, |pool| pool.pool.stats().reserve_queued);
+    let reserve_granted = pool_samples(state, |pool| pool.pool.stats().reserve_granted);
+    let reserve_spent = pool_samples(state, |pool| pool.pool.stats().reserve_spent);
 
-    render_labeled(&[
+    let mut out = render_labeled(&[
         SampleGroup::new(
             "pgpool_frontend_active",
             "gauge",
@@ -38,7 +44,62 @@ pub fn render(state: &AdminState) -> String {
             "Backend connections currently sitting idle in the pool.",
             &backend_idle,
         ),
-    ])
+        SampleGroup::new(
+            RESERVE_QUEUED_METRIC,
+            "gauge",
+            "Reserve backend units waiting for asynchronous allocator admission.",
+            &reserve_queued,
+        ),
+        SampleGroup::new(
+            RESERVE_GRANTED_METRIC,
+            "gauge",
+            "Reserve backend units granted in the local lease cache.",
+            &reserve_granted,
+        ),
+        SampleGroup::new(
+            RESERVE_SPENT_METRIC,
+            "gauge",
+            "Reserve backend units currently spent by a physical backend lifecycle.",
+            &reserve_spent,
+        ),
+    ]);
+    out.push_str(&render_transaction_phase_metrics(state));
+    out
+}
+
+fn render_transaction_phase_metrics(state: &AdminState) -> String {
+    let mut out = String::new();
+    let mut wrote_help = false;
+    for pool in state.pools.iter() {
+        let Some(snapshot) = pool.pool.transaction_phase_telemetry() else {
+            continue;
+        };
+        if !wrote_help {
+            let _ = writeln!(
+                out,
+                "# HELP pgpool_transaction_phase_seconds Aggregate duration of explicitly enabled transaction-pool phases."
+            );
+            let _ = writeln!(out, "# TYPE pgpool_transaction_phase_seconds summary");
+            wrote_help = true;
+        }
+        for metric in snapshot.metrics {
+            let labels = format!(
+                "pool=\"{}\",phase=\"{}\",outcome=\"{}\"",
+                pool.name, metric.phase, metric.outcome
+            );
+            let _ = writeln!(
+                out,
+                "pgpool_transaction_phase_seconds_count{{{labels}}} {}",
+                metric.count
+            );
+            let _ = writeln!(
+                out,
+                "pgpool_transaction_phase_seconds_sum{{{labels}}} {:.9}",
+                metric.total_seconds
+            );
+        }
+    }
+    out
 }
 
 fn pool_samples<'a>(
@@ -120,6 +181,42 @@ mod tests {
         let state = one_pool_state("west\"\\edge\nblue");
         let body = render(&state);
         assert!(body.contains("pgpool_frontend_active{pool=\"west\\\"\\\\edge\\nblue\"} 0"));
+    }
+
+    #[test]
+    fn phase_metrics_are_absent_until_explicitly_enabled_and_stay_aggregate() {
+        let disabled = one_pool_state("default");
+        assert!(!render(&disabled).contains("pgpool_transaction_phase_seconds"));
+
+        let pool = BackendPool::new_with_transaction_phase_telemetry(PoolConfig {
+            endpoint: BackendEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 5432,
+            },
+            max_backend_connections: 4,
+            acquire_timeout: Duration::from_millis(50),
+            backend_connect_timeout: Duration::from_millis(50),
+            wire: WireCodecConfig::default(),
+        });
+        pool.record_transaction_phase(
+            crate::pool::telemetry::TransactionPhase::Acquire,
+            crate::pool::telemetry::TransactionPhaseOutcome::Success,
+            Duration::from_nanos(7),
+        );
+        let enabled = AdminState::new(
+            server_lifecycle::DrainController::new(),
+            vec![NamedPool {
+                name: "default".to_string(),
+                mode: PoolMode::Transaction,
+                budget: ConnectionBudget::new(10),
+                pool,
+            }],
+        );
+        let body = render(&enabled);
+        assert!(body.contains("phase=\"acquire\",outcome=\"success\"} 1"));
+        assert!(body.contains("phase=\"relay\",outcome=\"failure\"} 0"));
+        assert!(!body.contains("client="));
+        assert!(!body.contains("query="));
     }
 }
 // </HANDWRITE>

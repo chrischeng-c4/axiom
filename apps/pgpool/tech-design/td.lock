@@ -2,10 +2,16 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-15T09:49:44.734261+00:00"
-digest = "sha256:af5e694f405b9ea165b8ab8df3a9094c8082feb3bbde0d5741b10909477267c5"
-source_digest = "sha256:af5e694f405b9ea165b8ab8df3a9094c8082feb3bbde0d5741b10909477267c5"
-ir_digest = "sha256:6153a53c18b2524684e287d9c97f0e33ebd46d851ea077c445f5daea05ebb5c0"
+generated_at = "2026-07-17T07:02:51.942773+00:00"
+digest = "sha256:607b9aa1e09d6875c9ce3b8ac5bc8c8dd2578a8be4f856bd721d2099736d8483"
+source_digest = "sha256:607b9aa1e09d6875c9ce3b8ac5bc8c8dd2578a8be4f856bd721d2099736d8483"
+ir_digest = "sha256:afa7b044cb69361bf31b810e75a5d32aeaed75b1ccc5b01bc4c61d1a0827a1c5"
+
+[[files]]
+path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
+digest = "sha256:e278b719cb602c42fad54ba035e31e814ba05fcea4b551c3ccb3a3836e47df55"
+ir_digest = "sha256:5b003795efc2650be3eb0fcd03f2aee9353c41ea5bacfb17a19d3fd02aef9279"
+section_count = 3
 
 [[files]]
 path = "logic/adopt-shared-labeled-prometheus-metrics-encoder.md"
@@ -20,10 +26,172 @@ ir_digest = "sha256:f2556fdaf924fc7be335d64f0c2378be45dfd3284c45e948201a45592d51
 section_count = 5
 
 [[files]]
+path = "logic/converge-deployment-provider-and-reconcile-planning-on-service-k.md"
+digest = "sha256:947081b8b8cf129409497fab01f1efb943fc10428d43eef38d9dc1cebb797fcd"
+ir_digest = "sha256:0d81a6729df2f0bb4685c4055bf1c390ec1549c4b12de14a389bfe4843134e36"
+section_count = 3
+
+[[files]]
+path = "logic/hand-reset-clean-backend-directly-to-a-reusable-waiter.md"
+digest = "sha256:453eb6c4df2286fcc31ab6b36aa910f0e71b0f65d2e63c19371a07d2055233e2"
+ir_digest = "sha256:2de1cf551c83ca5d16ca75c18b6fa25c3a791e715a24a20ee5b2a748bb1364a2"
+section_count = 3
+
+[[files]]
+path = "logic/move-backend-capacity-ownership-into-lease-tokens.md"
+digest = "sha256:ed6b9f0ae2ce1ae001e79ffde8fe408cc3680cef0680d04c6dbf21140ca583bf"
+ir_digest = "sha256:7fd279078c7853fd33ab84c3ca3b49f718a9ab31de94a9a91cb756e78aae0d56"
+section_count = 3
+
+[[files]]
+path = "logic/p0-centralize-saturated-capacity-deadlines-into-a-fifo-scheduler.md"
+digest = "sha256:7214b3a3cd2ec792229d7a6f74fc93f5277befb528284daadb3511887eb023c7"
+ir_digest = "sha256:8247ae6fb5cf34633a049b1600ca5a12e98dedb029cd81682906c86c82b4fddb"
+section_count = 3
+
+[[files]]
+path = "logic/p0-dense-buffer-readiness-reactor.md"
+digest = "sha256:f248be1898d08fc4b6d15fb09e9b4763ba31f22e7bbde3ecd56d73273f143c2b"
+ir_digest = "sha256:0ec6223433e17039a8410e93cd325653a67403c46b820a34559d4e714b9d08c1"
+section_count = 3
+
+[[files]]
+path = "logic/p0-detach-backend-reset-from-transaction-frontend-path.md"
+digest = "sha256:6f94c89805a413d209d4cc9e0ebd3dcd4699f78ebf2bd95c0728ea47fd1238c8"
+ir_digest = "sha256:931c095ff4cd74b6c0394682a510cb26858b7ccda8847f3545c0413418fe99f7"
+section_count = 3
+
+[[files]]
+path = "logic/p0-encode-discard-all-reset-frame-without-per-release-allocation.md"
+digest = "sha256:741705f3d59fd696b42c626c93da1af4e6c008f7cecc44311e141cf1591f5dd7"
+ir_digest = "sha256:5b2f56e095cec82b8db5b24155249c9ceb4025956ee16ec4ec557ff0dda0ca19"
+section_count = 3
+
+[[files]]
+path = "logic/p0-evaluate-current-thread-tokio-runtime-scheduler.md"
+digest = "sha256:a5d2b98833334f0ca358e5b70970df9b2ac3fcc48b27d5ac6b2eea7150e5b6c8"
+ir_digest = "sha256:b435b91fe89c1ec1697adf5cba130b3447c50975b0f738b7db3773d27935e784"
+section_count = 3
+
+[[files]]
+path = "logic/p0-evaluate-one-worker-tokio-runtime-locality.md"
+digest = "sha256:94d9c1829bc1cdaaf926147a892805d23c14100f9c3a2d39fc8ff88b764d0c92"
+ir_digest = "sha256:b235bf6b7b1603b6d6d2a4468548b33b8b01ea34210fd49d4750dba4388a9c41"
+section_count = 3
+
+[[files]]
+path = "logic/p0-evaluate-two-worker-tokio-runtime-locality.md"
+digest = "sha256:eb194b4b4656ec25911e6f8fdec8adb4f3b5c94ca320c4110a1d1a61da1c916a"
+ir_digest = "sha256:82ffb861b19151c764bbf56d2016821ffbccf7c06cce4308e8432f62bb8883ee"
+section_count = 3
+
+[[files]]
+path = "logic/p0-forward-buffered-backend-relay-frames-with-writev.md"
+digest = "sha256:8f3d173ad0c19dff15fb9e47dfff03830190482413c405ad26427137ad264aa7"
+ir_digest = "sha256:7f75392fa05cf4514a8f200b47d7a9455c1149e1bc90057f47e5b85f8f90edfe"
+section_count = 3
+
+[[files]]
+path = "logic/p0-gate-idle-liveness-peek-on-tokio-readability.md"
+digest = "sha256:2b317eaa102d5c7a66b559a2873df07a870fd5501a00b40bd4da5b65a74c8d69"
+ir_digest = "sha256:70e8e1f39cb352db2e8820b3bbc30df03b8392082f3286740b98d47c2e73714e"
+section_count = 3
+
+[[files]]
+path = "logic/p0-hand-off-one-backend-capacity-waiter-per-release.md"
+digest = "sha256:eadf5b7900c68723265736ab64e822bb415dc0f39fff86d99ba184d2d19a3596"
+ir_digest = "sha256:b226ef814190c6d9a25fa02d58219df333657eb67663d47302ccf2093a42ea81"
+section_count = 3
+
+[[files]]
+path = "logic/p0-lease-reserve-connections-after-bounded-transaction-pool-wait.md"
+digest = "sha256:c7a22379c50ae9da7ef2519d28df92154d9f56cdc904aa4115081bc4897e8fbe"
+ir_digest = "sha256:5685c80f91df50bfb5571767eb7a04f2dd08e41651abbec6fae524ae144ee44c"
+section_count = 3
+
+[[files]]
+path = "logic/p0-read-postgresql-relay-bytes-directly-into-framereader-buffer.md"
+digest = "sha256:ed847420923d903f6960352d45422f4129b053994f3b61614811c0f66639b077"
+ir_digest = "sha256:de4adbf8e482168ef8fbd080b6def0ec06e47c6973f56f8aad6293565bebd7a6"
+section_count = 3
+
+[[files]]
+path = "logic/p0-relay-backend-response-before-reading-next-frontend-frame.md"
+digest = "sha256:01e6c915c9429f681c14ceb5a35ea5e539219a96d121171a9b570d5c0f567309"
+ir_digest = "sha256:bd614b30dd3d798f93b3605dc07ab21ec72dafad3a9df30eb1d30f83363d9f6e"
+section_count = 0
+
+[[files]]
+path = "logic/p0-replace-idle-liveness-timer-with-nonblocking-socket-peek.md"
+digest = "sha256:b7482af6668a69341be9dab382dd826a8d820c0e1a62eb0b23204e9728cc6f21"
+ir_digest = "sha256:8ed9953f988700f4340d6691073198d3c5807d881f787b9dfd4d95383e5cf7e2"
+section_count = 3
+
+[[files]]
+path = "logic/p0-retain-framereader-with-each-physical-backend-connection.md"
+digest = "sha256:5752bc632c59d89bf7a6c05bb7b3fed44a25fafcc8b2aa4e2d270c52acdbfa64"
+ir_digest = "sha256:a2d92dc5b6c2a2dcbc532333242bd657a5a1ad513d27d4895bc75ce4b54ef688"
+section_count = 3
+
+[[files]]
+path = "logic/p0-reuse-one-acquire-deadline-timer-across-saturated-notify-retr.md"
+digest = "sha256:be365a5686bb17642d17a5ace1e1e120758abe1688774827fe9dada88b303727"
+ir_digest = "sha256:d562b684c63c75bb676d17855b6393d0810a6faf24ca65a8188d65c45213d224"
+section_count = 3
+
+[[files]]
+path = "logic/p0-reuse-transaction-backend-framereader-for-reset-response.md"
+digest = "sha256:e1b877a921fc208688897f7d0d019858892e6e69d4aac03cdaf419f5e0286679"
+ir_digest = "sha256:464b55c04f8a2aa050bd78439fffebcbfd5f208f03bd8cee0c30fc2d903cc788"
+section_count = 3
+
+[[files]]
+path = "logic/p0-tune-one-worker-tokio-event-polling-interval.md"
+digest = "sha256:d1eba41999cea22ed8330feb158eeb5e01ed05458d0c889e81146fce5ba595cd"
+ir_digest = "sha256:2eb3c4c7ea36f021ba99c74a55bf86eb4543850dc36b5d462cf18f395ce8bfc5"
+section_count = 3
+
+[[files]]
+path = "logic/p0-tune-tokio-worker-count-for-transaction-relay-throughput.md"
+digest = "sha256:d74e4f4ed185ff7df01981fde4833adbf1366801896e78adea7ccae4279e5eb1"
+ir_digest = "sha256:5b12d448cf35ff05a6636c14adb4b1078a028e48a30923f5278f6eb7d3b79b95"
+section_count = 3
+
+[[files]]
+path = "logic/p0-use-tokio-multi-thread-runtime-for-concurrent-proxy-relays.md"
+digest = "sha256:497753641a4198eb028b0b5b2df1c798a5e5b2d0adeb9681616fe6c82448087d"
+ir_digest = "sha256:8a1e7a3623d0cfbfaf20bfd594e0dc64ad590a4aeb5821072470d00c77e2b04b"
+section_count = 3
+
+[[files]]
 path = "logic/pg-wire-message-codec-frontend-backend-frames.md"
 digest = "sha256:091b349aa19051d9fd2ff659263ffadde4ade7f21d35475b5898e6a76b01f9a9"
 ir_digest = "sha256:e387738a08be633eef2b9adf6507e3879a8dd276e31865b855f221718c04f605"
 section_count = 5
+
+[[files]]
+path = "logic/pgbouncer-transaction-pooling-benchmark.md"
+digest = "sha256:b8670766ddd9428292ac8b3abcd8e4cf5682c94fbd65907093c8166f793131d6"
+ir_digest = "sha256:1acc7692a35dd52bfd64d608619871874b972781ad9f529a6de107de3825575e"
+section_count = 3
+
+[[files]]
+path = "logic/relay-transaction-backend-frames-opaque-except-readyforquery.md"
+digest = "sha256:a1655e444e3435f280bfa59e24901ec9a021e89304f5efb8492bc1b036ad8aa6"
+ir_digest = "sha256:e222eb7d8fa40710829200c58bbd7912155697e95b3cafc138d1538da11427b6"
+section_count = 3
+
+[[files]]
+path = "logic/remove-zero-timeout-timer-from-idle-backend-liveness-probes.md"
+digest = "sha256:b740a82b5e9e7526cfae7f13b0927d5f20ec0fb80a099b1a3e872135d04a1829"
+ir_digest = "sha256:21a06782635f357a5fa5de969575fb90800603a6e83bbbbf90e29647ba238060"
+section_count = 3
+
+[[files]]
+path = "logic/reuse-drained-transaction-framereader-for-reset-response.md"
+digest = "sha256:0656a42227810836bcc1c93af0fe2fd6268862cbd5b1db660956a9491cb493b7"
+ir_digest = "sha256:cd59d591575757a618eb3213181d5f372650b3f0e105553e68e59dc7e959e69d"
+section_count = 3
 
 [[files]]
 path = "logic/served-admin-plane-with-drain-aware-readiness.md"
@@ -36,3 +204,45 @@ path = "logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md"
 digest = "sha256:0c46c3e28a30fcb022030ee72c55bc8adda72a748364ac8116938b81f7467338"
 ir_digest = "sha256:03029e494ff1a48e828bec73408863543cdfa9ce678bc34993b80bdeedd4747c"
 section_count = 5
+
+[[files]]
+path = "logic/trust-startup-replay-for-capped-transaction-pooling.md"
+digest = "sha256:9f97de95769d3529cfa74dbe485b6fe99beb315d78088a657b699d776476a993"
+ir_digest = "sha256:069859cd4402a4b551cc4d40df2e0c5641d938c9d9a3f00718d6a20b4bdb9ce6"
+section_count = 3
+
+[[files]]
+path = "semantic/pgpool-crd-operator-control-plane.md"
+digest = "sha256:79cb3467ba3e5c382ba889b9ae54cc304f3b5fa88fbdf78a3bc35798701a603c"
+ir_digest = "sha256:5f9f67a97030bc742ba8e03554e6bf879d36016799acdcbab1f59bcc098102a1"
+section_count = 3
+
+[[files]]
+path = "semantic/pgpool-drain-safe-control-plane-status.md"
+digest = "sha256:c284dae26bd434c61261dbb9e9641574d192069dc8a09c1705ba8fb1e8205c0c"
+ir_digest = "sha256:2e814e1f3e53b0499f39ff54afad4df8e53e0815000b3e56124203f5e9fb2c72"
+section_count = 3
+
+[[files]]
+path = "semantic/pgpool-global-endpoint-quota-allocation.md"
+digest = "sha256:9dc08bbd9fda71f72b5b6c13c2b2d347ce6758a4650124c30007f20ae757d08d"
+ir_digest = "sha256:6aa4f3e6558349157d58943b3e513077f30e3ab1cdbceed71e312325a85a8d83"
+section_count = 3
+
+[[files]]
+path = "semantic/pgpool-runtime-connection-limit-discovery.md"
+digest = "sha256:4c79d399fbe846bfe1094a5ebbbe69d200821415de048e0c27896df492e4e863"
+ir_digest = "sha256:6e52f915cc0481b962b87d4804e9be723cbc02eecb3eb03353b96acb86751f2d"
+section_count = 3
+
+[[files]]
+path = "semantic/pgpool-stateless-deployment-instance.md"
+digest = "sha256:ade0087bd7482be63f26159bd983f12bfe6d544570d63296de346c36b8416907"
+ir_digest = "sha256:0e2f05c45953167deeb2fb1572de5fdf46188886712acb01fc864c5938f5d09c"
+section_count = 3
+
+[[files]]
+path = "validate/p0-relay-validated-contiguous-backend-buffer-without-frame-owner.md"
+digest = "sha256:6cb2f8140c776fe8f755a62f332806de46667eb8a4dbf933d66310095ae8ab46"
+ir_digest = "sha256:0c00adb18205b85a6b0e49d8a725e4e8c80794783d2b68115c76704229e37454"
+section_count = 3

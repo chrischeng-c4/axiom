@@ -12,14 +12,17 @@ use bytes::BytesMut;
 use server_lifecycle::ConnectionBudget;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
 
 use pgpool::pool::{
     BackendPool, LeaseDisposition, PoolConfig, PoolError, PoolRejectionReason, PoolStats,
+    ReserveLeasePolicy, ReserveLeaseRuntimeConfig,
 };
 use pgpool::proxy::BackendEndpointConfig;
 use pgpool::wire::{
-    BackendMessage, CommandComplete, ErrorResponse, Frame, FrameReader, FrontendMessage, Query,
-    ReadyForQuery, Role, TransactionStatus, WireCodecConfig, WireMessage,
+    AuthenticationOk, BackendMessage, CommandComplete, ErrorResponse, Frame, FrameReader,
+    FrontendMessage, NoticeResponse, Query, ReadyForQuery, Role, StartupMessage, TransactionStatus,
+    WireCodecConfig, WireMessage,
 };
 
 fn test_wire_config() -> WireCodecConfig {
@@ -120,6 +123,11 @@ async fn read_frontend_query(stream: &mut TcpStream) -> Query {
     };
     let tag = buf[0];
     let frame_bytes = buf.split_to(total).freeze();
+    assert_eq!(
+        frame_bytes.as_ref(),
+        b"Q\0\0\0\x10DISCARD ALL\0",
+        "reset must emit the exact fixed PostgreSQL Query frame"
+    );
     let payload = frame_bytes.slice(5..);
     let frame = Frame {
         tag: Some(tag),
@@ -198,6 +206,24 @@ async fn spawn_reusable_fake_backend() -> (u16, tokio::task::JoinHandle<()>) {
 // R1: idle reuse, liveness check, reset-before-return-to-idle.
 // ---------------------------------------------------------------------
 
+/// Every physical backend leg uses the same low-latency TCP policy as the
+/// accepted frontend server socket before it is exposed to a lease holder.
+#[tokio::test]
+async fn fresh_backend_lease_enables_tcp_nodelay() {
+    let (port, _backend) = spawn_fake_backend_accept_and_hold().await;
+    let pool = BackendPool::new(pool_config(port, 1));
+
+    let lease = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    assert!(
+        lease.stream.nodelay().expect("read TCP_NODELAY option"),
+        "new backend streams must disable Nagle coalescing before relay use"
+    );
+}
+
+/// This fixture intentionally leaves no backend bytes readable after reset, so
+/// it exercises the normal non-ready liveness path before the idle stream is
+/// returned to the next lease holder.
+///
 /// verify: pool::acquire_reuses_idle_connection_after_liveness_check_passes (R1)
 #[tokio::test]
 async fn acquire_reuses_idle_connection_after_liveness_check_passes() {
@@ -231,6 +257,69 @@ async fn acquire_reuses_idle_connection_after_liveness_check_passes() {
     let stats = pool.stats();
     assert_eq!(stats.backend_active, 1);
     assert_eq!(stats.backend_idle, 0);
+}
+
+/// `MSG_PEEK` must leave readable backend bytes in the socket. The backend
+/// sends one sentinel byte only after the reset has completed and the pool has
+/// parked its stream idle; the next acquire liveness probe observes it without
+/// consuming it, so the lease holder reads that exact byte afterwards.
+///
+/// verify: pool::acquire_liveness_peek_preserves_queued_backend_bytes (R3)
+#[tokio::test]
+async fn acquire_liveness_peek_preserves_queued_backend_bytes() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake backend");
+    let port = listener.local_addr().expect("fake backend addr").port();
+    let (reset_complete_tx, reset_complete_rx) = oneshot::channel();
+    let (send_sentinel_tx, send_sentinel_rx) = oneshot::channel();
+    let (sentinel_written_tx, sentinel_written_rx) = oneshot::channel();
+    let _backend = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept backend");
+        let _ = read_frontend_query(&mut stream).await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "DISCARD ALL".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+        let _ = reset_complete_tx.send(());
+        let _ = send_sentinel_rx.await;
+        stream
+            .write_all(&[0xA5])
+            .await
+            .expect("write queued sentinel");
+        let _ = sentinel_written_tx.send(());
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    });
+
+    let pool = BackendPool::new(pool_config(port, 1));
+    let first = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    pool.release(first.id, first.stream, LeaseDisposition::ReturnToIdle)
+        .await;
+    reset_complete_rx.await.expect("reset response completed");
+    send_sentinel_tx
+        .send(())
+        .expect("backend awaits sentinel trigger");
+    sentinel_written_rx.await.expect("sentinel was queued");
+
+    let mut reused = pool.acquire().await.expect("idle backend is reused");
+    assert!(!reused.fresh, "the queued-byte backend remains reusable");
+    let mut sentinel = [0_u8; 1];
+    reused
+        .stream
+        .read_exact(&mut sentinel)
+        .await
+        .expect("relay-side read sees byte preserved by liveness peek");
+    assert_eq!(sentinel, [0xA5], "MSG_PEEK must not consume queued bytes");
 }
 
 /// A fake backend that accepts connections in a loop; the first connection
@@ -365,6 +454,56 @@ async fn release_return_to_idle_sends_discard_all_before_reuse() {
     backend.await.expect("fake backend task joins");
 }
 
+/// PostgreSQL may emit a notice before reset's expected completion and
+/// readiness frames; that must not make an otherwise clean backend unusable.
+///
+/// verify: pool::release_return_to_idle_accepts_notice_before_ready (P0 #1716)
+#[tokio::test]
+async fn release_return_to_idle_accepts_notice_before_ready() {
+    let (port, backend) = spawn_fake_backend(|stream| async move {
+        let mut stream = stream;
+        let query = read_frontend_query(&mut stream).await;
+        assert_eq!(query.sql, "DISCARD ALL", "release must issue reset query");
+        write_backend(
+            &mut stream,
+            &BackendMessage::NoticeResponse(NoticeResponse {
+                fields: vec![
+                    (b'S', "NOTICE".to_string()),
+                    (b'M', "reset notice".to_string()),
+                ],
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::CommandComplete(CommandComplete {
+                tag: "DISCARD ALL".to_string(),
+            }),
+        )
+        .await;
+        write_backend(
+            &mut stream,
+            &BackendMessage::ReadyForQuery(ReadyForQuery {
+                status: TransactionStatus::Idle,
+            }),
+        )
+        .await;
+    })
+    .await;
+
+    let pool = BackendPool::new(pool_config(port, 2));
+    let lease = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    pool.release(lease.id, lease.stream, LeaseDisposition::ReturnToIdle)
+        .await;
+
+    assert_eq!(
+        pool.stats().backend_idle,
+        1,
+        "a validated reset notice must not prevent idle reuse"
+    );
+    backend.await.expect("fake backend task joins");
+}
+
 /// verify: pool::release_return_to_idle_closes_connection_when_reset_fails (R1)
 #[tokio::test]
 async fn release_return_to_idle_closes_connection_when_reset_fails() {
@@ -402,6 +541,51 @@ async fn release_return_to_idle_closes_connection_when_reset_fails() {
         "the capacity slot is freed instead"
     );
     backend.await.expect("fake backend task joins");
+}
+
+/// Cancelling one saturated reusable acquire must not lose capacity. The next
+/// live waiter receives the reset-clean socket, and the sole permit remains
+/// accounted for exactly once.
+///
+/// verify: pool::cancelled_waiter_allows_next_acquire_without_permit_leak (P0 #1691 no-go guard)
+#[tokio::test]
+async fn cancelled_waiter_allows_next_acquire_without_permit_leak() {
+    let (port, _backend) = spawn_reusable_fake_backend().await;
+    let pool = BackendPool::new(pool_config(port, 1));
+
+    let first = pool.acquire_fresh().await.expect("fresh acquire succeeds");
+    let first_id = first.id;
+
+    let cancelled_pool = pool.clone();
+    let cancelled = tokio::spawn(async move { cancelled_pool.acquire().await });
+    tokio::task::yield_now().await;
+    cancelled.abort();
+    assert!(cancelled
+        .await
+        .expect_err("aborted waiter task")
+        .is_cancelled());
+
+    let next_pool = pool.clone();
+    let next = tokio::spawn(async move { next_pool.acquire().await });
+    tokio::task::yield_now().await;
+
+    pool.release(first.id, first.stream, LeaseDisposition::ReturnToIdle)
+        .await;
+
+    let handed = next
+        .await
+        .expect("next waiter task joins")
+        .expect("next reusable acquire succeeds");
+    assert_eq!(
+        handed.id, first_id,
+        "cancelled waiter cannot lose the socket"
+    );
+    assert_eq!(pool.stats().backend_active, 1, "permit remains outstanding");
+    assert_eq!(
+        pool.stats().backend_idle,
+        0,
+        "no duplicate idle tuple is created"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -619,6 +803,58 @@ async fn acquire_times_out_with_saturated_error_after_acquire_timeout() {
         .await;
 }
 
+/// Repeated non-matching startup-replay publications wake the existing
+/// acquisition loop, but must not extend its original acquire deadline.
+///
+/// verify: pool::saturated_waiter_keeps_deadline_across_spurious_wakeups (P0 #1698)
+#[tokio::test]
+async fn saturated_waiter_keeps_deadline_across_spurious_wakeups() {
+    let (port, _backend) = spawn_fake_backend_accept_and_hold().await;
+    let mut config = pool_config(port, 1);
+    config.acquire_timeout = Duration::from_millis(180);
+    let pool = BackendPool::new(config);
+    let held = pool.acquire_fresh().await.expect("first acquire succeeds");
+
+    let waiting_startup = StartupMessage {
+        protocol_major: 3,
+        protocol_minor: 0,
+        parameters: vec![("user".to_string(), "waiting".to_string())],
+    };
+    let waiter_pool = pool.clone();
+    let started = std::time::Instant::now();
+    let waiter =
+        tokio::spawn(async move { waiter_pool.acquire_for_startup(&waiting_startup).await });
+
+    // These entries cannot satisfy the waiting startup identity, but each
+    // publishes the same Notify path that a backend return uses.
+    for i in 0..3 {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        pool.publish_startup_replay(
+            StartupMessage {
+                protocol_major: 3,
+                protocol_minor: 0,
+                parameters: vec![("user".to_string(), format!("other-{i}"))],
+            },
+            vec![BackendMessage::AuthenticationOk(AuthenticationOk)],
+        );
+    }
+
+    let result = waiter.await.expect("waiter task joins");
+    let elapsed = started.elapsed();
+    assert!(matches!(result, Err(PoolError::Saturated { max: 1, .. })));
+    assert!(
+        elapsed >= Duration::from_millis(165),
+        "wakeups must not make the acquire deadline fire early: waited {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(350),
+        "wakeups must not extend the fixed acquire deadline: waited {elapsed:?}"
+    );
+
+    pool.release(held.id, held.stream, LeaseDisposition::Close)
+        .await;
+}
+
 /// verify: pool::saturated_pool_error_maps_to_synthesized_error_response_53300 (R3)
 #[tokio::test]
 async fn saturated_pool_error_maps_to_synthesized_error_response_53300() {
@@ -705,5 +941,37 @@ async fn dropped_lease_without_explicit_release_does_not_leak_capacity_slot() {
         .expect("capacity was actually freed");
     assert_eq!(pool.stats().backend_active, 1);
     drop(second);
+}
+
+/// verify: pool::reserve_admission_waits_before_opening_reserve_backend (R2)
+#[tokio::test]
+async fn reserve_admission_waits_before_opening_reserve_backend() {
+    let mut config = pool_config(1, 0);
+    config.acquire_timeout = Duration::from_millis(25);
+    let pool = BackendPool::new_with_reserve(
+        config,
+        ReserveLeaseRuntimeConfig {
+            endpoint: "primary".into(),
+            pod: "pod-a".into(),
+            policy: ReserveLeasePolicy {
+                reserve_pool_timeout_seconds: 0,
+                queue_wait_timeout_seconds: 0,
+                reserve_idle_timeout_seconds: 1,
+                lease_ttl_seconds: 10,
+                request_chunk_size: 1,
+            },
+        },
+    );
+    assert!(matches!(
+        pool.acquire().await,
+        Err(PoolError::Saturated { .. })
+    ));
+    let stats = pool.stats();
+    assert_eq!(stats.backend_active, 0);
+    assert_eq!(stats.reserve_queued, 1);
+    assert_eq!(
+        stats.reserve_granted, 0,
+        "a queued demand cannot create a physical backend without an allocator grant"
+    );
 }
 // </HANDWRITE>

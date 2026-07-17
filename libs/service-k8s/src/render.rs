@@ -26,6 +26,12 @@ pub const ENV_SHARD_COUNT: &str = "SHARD_COUNT";
 pub const ENV_REPLICAS_PER_SHARD: &str = "REPLICAS_PER_SHARD";
 pub const ENV_VOTER_COUNT: &str = "VOTER_COUNT";
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1849" reason="Expose semantic common and Deployment submodules while preserving the monolithic root compatibility surface for existing StatefulSet consumers in this first landing.">
+/// Workload-neutral Pod composition and ordinary Kubernetes child helpers.
+pub mod common;
+/// Stateless `apps/v1` Deployment composition.
+pub mod deployment;
+
 /// Per-service render identity, threaded through the helpers.
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 pub struct RenderCtx<'a> {
@@ -37,6 +43,7 @@ pub struct RenderCtx<'a> {
     pub ns: &'a str,
     pub owner: Option<Value>,
 }
+// </HANDWRITE>
 
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-render-rs.md#source
 impl RenderCtx<'_> {

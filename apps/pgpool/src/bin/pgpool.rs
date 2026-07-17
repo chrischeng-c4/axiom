@@ -30,6 +30,8 @@ enum Command {
     /// Run the session-mode PostgreSQL proxy: bind the frontend, dial the
     /// configured backend per client, and relay until drain/shutdown.
     Serve(ServeArgs),
+    /// Render layered Kubernetes artifacts.
+    K8s(K8sArgs),
 }
 
 #[derive(clap::Args)]
@@ -103,6 +105,33 @@ struct ServeArgs {
     /// milliseconds.
     #[arg(long, env = "PGPOOL_POOL_ACQUIRE_TIMEOUT_MS", default_value_t = 5000)]
     pool_acquire_timeout_ms: u64,
+    /// Per-Pod backend connection quota admitted by the control plane.
+    #[arg(long, env = "PGPOOL_MAX_BACKEND_CONNECTIONS", default_value_t = 512)]
+    max_backend_connections: usize,
+    /// Endpoint name used by the asynchronous reserve-lease worker. Empty
+    /// disables reserve demand and keeps the historical local pool behavior.
+    #[arg(long, env = "PGPOOL_RESERVE_ENDPOINT", default_value = "")]
+    reserve_endpoint: String,
+    /// Stable Pod identity for the reserve grant. The Deployment renderer
+    /// supplies this from metadata.name through the Downward API.
+    #[arg(long, env = "PGPOOL_RESERVE_POD", default_value = "")]
+    reserve_pod: String,
+    /// Normal-pool wait before a saturated transaction is allowed to signal
+    /// a background reserve-grant request.
+    #[arg(long, env = "PGPOOL_RESERVE_POOL_TIMEOUT_MS", default_value_t = 1000)]
+    reserve_pool_timeout_ms: u64,
+    /// Terminal bounded wait for a normal or already granted reserve lease.
+    #[arg(long, env = "PGPOOL_QUEUE_WAIT_TIMEOUT_MS", default_value_t = 5000)]
+    queue_wait_timeout_ms: u64,
+    /// Idle reserve-grant release timeout, in milliseconds.
+    #[arg(long, env = "PGPOOL_RESERVE_IDLE_TIMEOUT_MS", default_value_t = 30000)]
+    reserve_idle_timeout_ms: u64,
+    /// Lease TTL requested by the background reserve worker, in seconds.
+    #[arg(long, env = "PGPOOL_RESERVE_LEASE_TTL_SECONDS", default_value_t = 60)]
+    reserve_lease_ttl_seconds: u64,
+    /// Maximum reserve units requested in one background allocator exchange.
+    #[arg(long, env = "PGPOOL_RESERVE_REQUEST_CHUNK_SIZE", default_value_t = 1)]
+    reserve_request_chunk_size: u32,
     /// Override the admin plane bind address (`host:port`); defaults to the
     /// `RuntimePlan`'s admin bind (`0.0.0.0:9080`) unchanged.
     #[arg(long, env = "PGPOOL_ADMIN_BIND")]
@@ -117,6 +146,105 @@ struct ServeArgs {
     /// starts, in milliseconds.
     #[arg(long, env = "PGPOOL_ADMIN_DRAIN_TIMEOUT_MS", default_value_t = 30000)]
     admin_drain_timeout_ms: u64,
+}
+
+#[derive(clap::Args)]
+struct K8sArgs {
+    #[command(subcommand)]
+    command: K8sCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sCommand {
+    /// Render the cluster-scoped Pgpool CustomResourceDefinition.
+    Crd(K8sCrdArgs),
+    /// Render or run the Pgpool operator control plane.
+    Operator(K8sOperatorArgs),
+    /// Render app-namespace Pgpool instance artifacts.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    command: K8sCrdCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sCrdCommand {
+    /// Render the Pgpool CustomResourceDefinition YAML.
+    Render(K8sOutputArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    command: K8sOperatorCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sOperatorCommand {
+    /// Render operator namespace, RBAC, and Deployment YAML.
+    Render(K8sOperatorRenderArgs),
+    /// Run the shared leader-elected reconcile controller.
+    Run,
+}
+
+#[derive(clap::Args)]
+struct K8sOutputArgs {
+    /// Write YAML to a path instead of stdout.
+    #[arg(long)]
+    out: Option<std::path::PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sOperatorRenderArgs {
+    /// Namespace containing the operator control plane.
+    #[arg(long, default_value = "pgpool-system")]
+    namespace: String,
+    /// Write YAML to a path instead of stdout.
+    #[arg(long)]
+    out: Option<std::path::PathBuf>,
+}
+
+#[derive(clap::Args)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    command: K8sInstanceCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sInstanceCommand {
+    /// Render the stateless Deployment, ClusterIP Service, ServiceAccount, and PDB.
+    Render(K8sInstanceRenderArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sInstanceRenderArgs {
+    #[arg(long, value_enum, default_value_t = K8sProfile::Dev)]
+    profile: K8sProfile,
+    /// Write YAML to a path instead of stdout.
+    #[arg(long)]
+    out: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum K8sProfile {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+impl From<K8sProfile> for pgpool::k8s::InstanceProfile {
+    fn from(value: K8sProfile) -> Self {
+        match value {
+            K8sProfile::Dev => Self::Dev,
+            K8sProfile::Staging => Self::Staging,
+            K8sProfile::Prod => Self::Prod,
+            K8sProfile::Template => Self::Template,
+        }
+    }
 }
 
 #[derive(clap::Args)]
@@ -210,7 +338,7 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
     },
 ];
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -231,7 +359,38 @@ async fn main() -> Result<()> {
         }
         Command::Issue(args) => issue(args).await,
         Command::Serve(args) => serve(args).await,
+        Command::K8s(args) => k8s(args).await,
     }
+}
+
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.command {
+        K8sCommand::Crd(args) => match args.command {
+            K8sCrdCommand::Render(args) => write_or_print(args.out, pgpool::operator::crd_yaml()),
+        },
+        K8sCommand::Operator(args) => match args.command {
+            K8sOperatorCommand::Render(args) => {
+                write_or_print(args.out, pgpool::operator::operator_yaml(&args.namespace))
+            }
+            K8sOperatorCommand::Run => pgpool::operator::run().await,
+        },
+        K8sCommand::Instance(args) => match args.command {
+            K8sInstanceCommand::Render(args) => write_or_print(
+                args.out,
+                pgpool::operator::instance_yaml(args.profile.into()),
+            ),
+        },
+    }
+}
+
+fn write_or_print(path: Option<std::path::PathBuf>, yaml: String) -> Result<()> {
+    if let Some(path) = path {
+        std::fs::write(&path, yaml)?;
+        println!("wrote {}", path.display());
+    } else {
+        print!("{yaml}");
+    }
+    Ok(())
 }
 
 fn runtime_plan() -> Result<()> {
@@ -331,6 +490,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
 /// drain and exit (R1-R7, AC1-AC4).
 async fn serve(args: ServeArgs) -> Result<()> {
     let mut plan = pgpool::default_runtime_plan();
+    plan.max_backend_connections = args.max_backend_connections;
 
     let frontend_bind = match &args.bind {
         Some(addr) => {
@@ -360,7 +520,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // through the same capacity-bounded `BackendPool` (R1), and the admin
     // plane's `NamedPool` holds a clone of this SAME pool for live stats
     // (R3) — cloned before the handler match arm below consumes it.
-    let backend_pool = pgpool::pool::BackendPool::new(pgpool::pool::PoolConfig {
+    let pool_config = pgpool::pool::PoolConfig {
         endpoint: pgpool::proxy::BackendEndpointConfig {
             host: args.backend_host.clone(),
             port: args.backend_port,
@@ -369,7 +529,25 @@ async fn serve(args: ServeArgs) -> Result<()> {
         acquire_timeout: std::time::Duration::from_millis(args.pool_acquire_timeout_ms),
         backend_connect_timeout,
         wire,
-    });
+    };
+    let backend_pool = if args.reserve_endpoint.is_empty() || args.reserve_pod.is_empty() {
+        pgpool::pool::BackendPool::new(pool_config)
+    } else {
+        pgpool::pool::BackendPool::new_with_reserve(
+            pool_config,
+            pgpool::pool::ReserveLeaseRuntimeConfig {
+                endpoint: args.reserve_endpoint.clone(),
+                pod: args.reserve_pod.clone(),
+                policy: pgpool::pool::ReserveLeasePolicy {
+                    reserve_pool_timeout_seconds: args.reserve_pool_timeout_ms / 1000,
+                    queue_wait_timeout_seconds: args.queue_wait_timeout_ms / 1000,
+                    reserve_idle_timeout_seconds: args.reserve_idle_timeout_ms / 1000,
+                    lease_ttl_seconds: args.reserve_lease_ttl_seconds,
+                    request_chunk_size: args.reserve_request_chunk_size,
+                },
+            },
+        )
+    };
     let admin_backend_pool = backend_pool.clone();
 
     // Called exactly once: the SAME `ConnectionBudget` is shared into

@@ -14,6 +14,67 @@ fn help_ships_standard_commands_and_runtime_plan() {
     assert!(stdout.contains("llm"));
     assert!(stdout.contains("upgrade"));
     assert!(stdout.contains("issue"));
+    assert!(stdout.contains("k8s"));
+}
+
+#[test]
+fn k8s_instance_render_is_operator_consumed_custom_resource() {
+    let output = pgpool()
+        .args(["k8s", "instance", "render", "--profile", "prod"])
+        .output()
+        .expect("render pgpool instance");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("kind: Pgpool"));
+    assert!(stdout.contains("apiVersion: pgpool.axiom.dev/v1alpha1"));
+    assert!(stdout.contains("provider: plain_postgres"));
+    assert!(stdout.contains("perPodQuota:"));
+    assert!(!stdout.contains("StatefulSet"));
+    assert!(!stdout.contains("volumeClaimTemplates"));
+    assert!(!stdout.contains("sessionAffinity: ClientIP"));
+}
+
+#[test]
+fn k8s_crd_and_operator_layers_render_parseable_assets() {
+    let crd = pgpool()
+        .args(["k8s", "crd", "render"])
+        .output()
+        .expect("render pgpool CRD");
+    assert!(crd.status.success());
+    let crd_stdout = String::from_utf8(crd.stdout).expect("utf8");
+    assert!(crd_stdout.contains("kind: CustomResourceDefinition"));
+    assert!(crd_stdout.contains("name: pgpools.pgpool.axiom.dev"));
+
+    let operator = pgpool()
+        .args([
+            "k8s",
+            "operator",
+            "render",
+            "--namespace",
+            "database-system",
+        ])
+        .output()
+        .expect("render pgpool operator");
+    assert!(operator.status.success());
+    let operator_stdout = String::from_utf8(operator.stdout).expect("utf8");
+    assert!(operator_stdout.contains("kind: ClusterRole"));
+    assert!(operator_stdout.contains("kind: Deployment"));
+    assert!(operator_stdout.contains("namespace: database-system"));
+    for command_part in ["- pgpool", "- k8s", "- operator", "- run"] {
+        assert!(operator_stdout.contains(command_part));
+    }
+}
+
+#[test]
+fn serve_accepts_control_plane_backend_quota() {
+    let output = pgpool()
+        .args(["serve", "--help"])
+        .output()
+        .expect("run serve help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("--max-backend-connections"));
+    assert!(stdout.contains("PGPOOL_MAX_BACKEND_CONNECTIONS"));
 }
 
 #[test]

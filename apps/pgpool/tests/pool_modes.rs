@@ -8,20 +8,11 @@
 //! `tests/session_proxy.rs`'s real-Postgres discovery/helper pattern
 //! (`real_backend_ready`, `backend_user`, `proxy_dsn`, `simple_query_i32`).
 //!
-//! A recurring semantic these tests lean on, confirmed by reading
-//! `src/pool/backend_pool.rs`: `BackendPool::acquire_fresh()` (used only
-//! for the one-time admission handshake) never idle-reuses -- it only ever
-//! tries a brand-new semaphore permit or waits. A connection parked in the
-//! idle set via `LeaseDisposition::ReturnToIdle` keeps its permit "spent"
-//! rather than returning it to the semaphore, so it still fully occupies
-//! its capacity slot even though nothing is actively using it. That means
-//! a *second* client's admission cannot be unblocked merely by some other
-//! lease's `ReturnToIdle` -- only a genuine `LeaseDisposition::Close` (or a
-//! dead-idle-connection drop) truly frees a slot for a waiting
-//! `acquire_fresh()` caller. `BackendPool::acquire()` (per-transaction) is
-//! different: it rechecks the idle set on every wake, so a waiting
-//! `acquire()` caller *is* correctly unblocked by another lease's
-//! `ReturnToIdle`. AC3a/AC3b below are shaped around this distinction.
+//! Trust/no-challenge startup replies may be replayed to a frontend that has
+//! an exactly matching startup packet, so admission itself intentionally does
+//! not consume a backend slot. The cap is enforced when that frontend sends
+//! transaction traffic: an idle backend is reused, a new backend is bootstrapped
+//! with the exact startup identity, or a typed saturation rejection is sent.
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
@@ -372,21 +363,115 @@ async fn reset_between_owners_prevents_session_state_leak_across_transaction_lea
     stop_proxy(server, shutdown_tx).await;
 }
 
-/// verify: pool_modes::saturation_wait_then_acquire_succeeds_when_lease_frees (AC3a)
+/// A second transaction that is already waiting at a one-connection pool
+/// must only run after the first owner's `DISCARD ALL` completed. The
+/// focused in-memory pool test covers cancelled-waiter capacity safety; this
+/// real PostgreSQL test covers the contended transaction protocol boundary,
+/// reset isolation, and the one-backend capacity invariant together.
+///
+/// verify: pool_modes::transaction_mode_contended_waiter_preserves_reset_isolation_and_capacity (P0 #1691 no-go guard)
 #[tokio::test]
-async fn saturation_wait_then_acquire_succeeds_when_lease_frees() {
+async fn transaction_mode_contended_waiter_preserves_reset_isolation_and_capacity() {
     let Some((backend_addr, user)) = real_backend_ready().await else {
         eprintln!(
-            "skipping saturation_wait_then_acquire_succeeds_when_lease_frees: \
+            "skipping transaction_mode_contended_waiter_preserves_reset_isolation_and_capacity: \
              no reachable local Postgres at 127.0.0.1:5432 for user {:?}",
             backend_user()
         );
         return;
     };
 
-    // max=1: client B's own admission (acquire_fresh(), never idle-reuse)
-    // can only succeed once client A's slot is genuinely freed via
-    // LeaseDisposition::Close -- see this file's top-level doc comment.
+    let backend_pool = BackendPool::new(pool_config(backend_addr, 1, Duration::from_secs(5)));
+    let (proxy_addr, server, shutdown_tx) =
+        spawn_transaction_proxy(backend_pool.clone(), ConnectionBudget::new(10)).await;
+    let dsn = proxy_dsn(proxy_addr, &user);
+
+    let (client_a, connection_a) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("client A admits");
+    let task_a = tokio::spawn(connection_a);
+    let (client_b, connection_b) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("client B admits from the startup replay");
+    let task_b = tokio::spawn(connection_b);
+
+    let owner = tokio::spawn(async move {
+        let result = client_a
+            .simple_query(
+                "CREATE TEMP TABLE contended_waiter_leak_check (n int); SELECT pg_sleep(0.3)",
+            )
+            .await;
+        (client_a, result)
+    });
+    for _ in 0..30 {
+        if backend_pool.stats().backend_active == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        backend_pool.stats().backend_active,
+        1,
+        "the first transaction owns the sole backend before the next client queues"
+    );
+
+    let waiter = tokio::spawn(async move {
+        let reset_clean = simple_query_i32(
+            &client_b,
+            "SELECT (to_regclass('contended_waiter_leak_check') IS NULL)::int AS reset_clean",
+            "reset_clean",
+        )
+        .await;
+        (client_b, reset_clean)
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !waiter.is_finished(),
+        "second transaction must wait while the only backend is still active"
+    );
+
+    let (client_a, owner_result) = owner.await.expect("first transaction task joins");
+    owner_result.expect("first transaction completes");
+    let (client_b, reset_clean) = waiter.await.expect("waiting transaction task joins");
+    assert_eq!(
+        reset_clean, 1,
+        "the waiting transaction must not observe session state from its predecessor"
+    );
+
+    let stats = backend_pool.stats();
+    assert!(
+        stats.backend_active + stats.backend_idle <= 1,
+        "a contended reusable acquire must retain the one-backend cap, observed {stats:?}"
+    );
+
+    drop(client_a);
+    drop(client_b);
+    task_a
+        .await
+        .expect("connection task A joins")
+        .expect("connection A ends cleanly");
+    task_b
+        .await
+        .expect("connection task B joins")
+        .expect("connection B ends cleanly");
+    stop_proxy(server, shutdown_tx).await;
+}
+
+/// verify: pool_modes::replayed_startup_admits_while_all_backends_are_active (R1)
+#[tokio::test]
+async fn replayed_startup_admits_while_all_backends_are_active() {
+    let Some((backend_addr, user)) = real_backend_ready().await else {
+        eprintln!(
+            "skipping replayed_startup_admits_while_all_backends_are_active: \
+             no reachable local Postgres at 127.0.0.1:5432 for user {:?}",
+            backend_user()
+        );
+        return;
+    };
+
+    // max=1: client B can still complete a matching trust startup while A
+    // owns the sole backend lease. It must not need another physical backend
+    // just to receive AuthenticationOk/ReadyForQuery.
     let backend_pool = BackendPool::new(pool_config(backend_addr, 1, Duration::from_secs(5)));
     let (proxy_addr, server, shutdown_tx) =
         spawn_transaction_proxy(backend_pool, ConnectionBudget::new(10)).await;
@@ -409,8 +494,7 @@ async fn saturation_wait_then_acquire_succeeds_when_lease_frees() {
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Client B's admission must block: the pool's sole permit is spent
-    // (held by A's active lease), and acquire_fresh() never idle-reuses.
+    // Client B's matching startup is replayed without a lease.
     let dsn_for_b = dsn.clone();
     let connect_b =
         tokio::spawn(
@@ -418,8 +502,8 @@ async fn saturation_wait_then_acquire_succeeds_when_lease_frees() {
         );
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(
-        !connect_b.is_finished(),
-        "client B's admission must still be waiting while the pool's sole slot is held ACTIVE by client A"
+        connect_b.is_finished(),
+        "matching trust startup must admit without waiting for an active backend lease"
     );
 
     // Force client A's leg to end abruptly while its transaction lease is
@@ -429,27 +513,23 @@ async fn saturation_wait_then_acquire_succeeds_when_lease_frees() {
     let _ = slow_query.await;
     let _ = task_a.await;
 
-    // Client B's waiting admission must now succeed well within
-    // acquire_timeout (5s) because A's disconnect freed the pool's sole
-    // capacity slot -- not silently dropped, per the AC3a text.
+    // Once A's active transaction ends, B can take the freed backend for its
+    // first query.
     let (client_b, connection_b) = tokio::time::timeout(Duration::from_secs(3), connect_b)
         .await
-        .expect("client B's admission must unblock once A's slot frees, not hang until acquire_timeout elapses")
+        .expect("client B's already-admitted connection joins")
         .expect("connect task joined")
-        .expect("client B eventually admits once A's slot is freed");
+        .expect("client B's matching startup admits");
     let task_b = tokio::spawn(connection_b);
 
     let value = simple_query_i32(&client_b, "SELECT 1 AS one", "one").await;
     assert_eq!(
         value, 1,
-        "client B must be fully usable after waiting for and acquiring the freed slot"
+        "client B must be usable once the only backend lease is released"
     );
 
     drop(client_b);
-    task_b
-        .await
-        .expect("connection task B joined")
-        .expect("connection B ended cleanly");
+    let _ = task_b.await;
 
     stop_proxy(server, shutdown_tx).await;
 }
@@ -466,12 +546,9 @@ async fn saturation_timeout_produces_typed_error_response() {
         return;
     };
 
-    // max=1 with a short acquire_timeout: client A's admission alone is
-    // enough to keep the pool saturated from any other client's admission
-    // perspective for the rest of the test -- acquire_fresh() never
-    // idle-reuses, so A's connection sitting idle-parked after its own
-    // handshake still fully occupies the sole capacity slot (see this
-    // file's top-level doc comment).
+    // max=1 with a short acquire_timeout. Matching trust startup replays,
+    // so saturation is asserted at transaction acquisition rather than at
+    // frontend admission.
     let backend_pool = BackendPool::new(pool_config(backend_addr, 1, Duration::from_millis(300)));
     let (proxy_addr, server, shutdown_tx) =
         spawn_transaction_proxy(backend_pool, ConnectionBudget::new(10)).await;
@@ -482,13 +559,21 @@ async fn saturation_timeout_produces_typed_error_response() {
         .expect("client A admits while the pool has capacity");
     let task_a = tokio::spawn(connection_a);
 
+    let slow_query = tokio::spawn(async move { client_a.simple_query("SELECT pg_sleep(2)").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (client_b, connection_b) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("matching trust startup admits without a backend lease");
+    let task_b = tokio::spawn(connection_b);
+
     let started = std::time::Instant::now();
-    let rejected = tokio_postgres::connect(&dsn, tokio_postgres::NoTls).await;
+    let rejected = client_b.simple_query("SELECT 1 AS one").await;
     let elapsed = started.elapsed();
 
-    let err = rejected
-        .err()
-        .expect("client B's admission must be rejected once acquire_timeout elapses with the pool still saturated");
+    let err = rejected.expect_err(
+        "client B's transaction must be rejected once acquire_timeout elapses with the pool still saturated",
+    );
     let code = err.code().expect("rejection must carry a SQLSTATE");
     assert_eq!(
         code,
@@ -504,15 +589,56 @@ async fn saturation_timeout_produces_typed_error_response() {
         "must not hang well past acquire_timeout, got {elapsed:?}"
     );
 
-    // Client A must be entirely unaffected by client B's rejection.
-    let value = simple_query_i32(&client_a, "SELECT 1 AS one", "one").await;
-    assert_eq!(value, 1);
+    slow_query.abort();
+    let _ = slow_query.await;
+    task_a.abort();
+    let _ = task_a.await;
+    drop(client_b);
+    let _ = task_b.await;
 
-    drop(client_a);
-    task_a
-        .await
-        .expect("connection task A joined")
-        .expect("connection A ended cleanly");
+    stop_proxy(server, shutdown_tx).await;
+}
+
+/// verify: pool_modes::transaction_mode_backend_connect_failure_releases_frontend (#1753)
+#[tokio::test]
+async fn transaction_mode_backend_connect_failure_releases_frontend() {
+    // Reserve and release a loopback port so the reactor gets a real refused
+    // nonblocking connect rather than a synthetic backend implementation.
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve backend port");
+    let backend_addr = probe.local_addr().expect("reserved backend address");
+    drop(probe);
+
+    let backend_pool = BackendPool::new(pool_config(backend_addr, 1, Duration::from_millis(500)));
+    let frontend_budget = ConnectionBudget::new(1);
+    let (proxy_addr, server, shutdown_tx) =
+        spawn_transaction_proxy(backend_pool.clone(), frontend_budget.clone()).await;
+    let dsn = proxy_dsn(proxy_addr, &backend_user());
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio_postgres::connect(&dsn, tokio_postgres::NoTls),
+    )
+    .await;
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "a refused backend connect must close the frontend promptly"
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let stats = backend_pool.stats();
+        if frontend_budget.active() == 0 && stats.backend_active == 0 && stats.backend_idle == 0 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "failed backend connect leaked capacity: frontend_active={}, backend_active={}, backend_idle={}",
+            frontend_budget.active(),
+            stats.backend_active,
+            stats.backend_idle
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 
     stop_proxy(server, shutdown_tx).await;
 }
@@ -625,15 +751,12 @@ async fn churn_100_cycles_holds_backend_count_stable_no_leak() {
         final_stats.backend_active, 0,
         "no leaked active lease after every client cleanly disconnected"
     );
-    // Session mode releases its whole-session lease via Close at teardown
-    // (R2b), fully freeing its connection. The persistent transaction-mode
-    // client disconnects cleanly while holding no lease (idle_no_lease), so
-    // its last successfully-reset connection stays parked idle -- expected
-    // behavior given this slice has no idle reaper (see the TD Config
-    // section), not a leak.
-    assert_eq!(
-        final_stats.backend_idle, 1,
-        "exactly the transaction-mode client's last idle-parked connection should remain, got backend_idle={}",
+    // The final churn cycle races an abrupt replay-client close with the
+    // persistent client's final reset. Therefore one idle transaction
+    // backend may remain, but never more than one.
+    assert!(
+        final_stats.backend_idle <= 1,
+        "replay clients must not accumulate idle backends; got backend_idle={}",
         final_stats.backend_idle
     );
 
@@ -767,5 +890,25 @@ async fn stats_api_reports_expected_counts_at_each_phase() {
         .expect("connection driver ended cleanly");
 
     stop_proxy(server, shutdown_tx).await;
+}
+
+/// verify: pool_modes::reserve_policy_does_not_change_unconfigured_session_pooling (R5)
+#[test]
+fn reserve_policy_does_not_change_unconfigured_session_pooling() {
+    let pool = BackendPool::new(PoolConfig {
+        endpoint: BackendEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 5432,
+        },
+        max_backend_connections: 1,
+        acquire_timeout: Duration::from_millis(10),
+        backend_connect_timeout: Duration::from_millis(10),
+        wire: WireCodecConfig::default(),
+    });
+    let stats = pool.stats();
+    assert_eq!(stats.reserve_queued, 0);
+    assert_eq!(stats.reserve_granted, 0);
+    assert_eq!(stats.reserve_spent, 0);
+    assert!(pool.reserve_client().is_none());
 }
 // </HANDWRITE>
