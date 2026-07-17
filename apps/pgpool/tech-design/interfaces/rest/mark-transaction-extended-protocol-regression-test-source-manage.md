@@ -28,3 +28,17 @@ flowchart LR
 ```
 
 The follow-up changes ownership metadata only. The existing regression continues proving error-then-close for both transaction engines; its new source mirror and HANDWRITE block let AW audit that proof without changing wire behavior.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/tests/transaction_extended_protocol.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: parse_is_rejected_without_hang
+    reason: Add auditable ownership metadata around the existing two-engine extended-protocol regression proof.
+```
