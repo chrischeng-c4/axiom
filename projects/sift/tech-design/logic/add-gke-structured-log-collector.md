@@ -126,7 +126,7 @@ changes:
     description: Share the existing insertId-free Cloud Logging identity with the CRI mapper.
   - path: projects/sift/src/bin/sift.rs
     action: modify
-    anchor: CollectArgs
+    anchor: collect
     section: logic
     impl_mode: hand-written
     description: Expose --cri-root with GKE metadata/state flags and the layered k8s collector renderer.
