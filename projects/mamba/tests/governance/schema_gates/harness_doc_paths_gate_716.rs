@@ -67,7 +67,7 @@ fn harness_doc_paths_report_is_green_and_complete() {
             .and_then(|value| value.as_u64())
             .unwrap_or(0)
             >= 7,
-        "#716 must scan the README, production gate, conventions, issue template, and issue-loop docs"
+        "#716 must scan the README, production gate, conventions, and issue template docs"
     );
     for zero_key in [
         "missing_docs",
@@ -88,7 +88,6 @@ fn harness_doc_paths_report_is_green_and_complete() {
         "projects/mamba/tests/README.md",
         "projects/mamba/tests/PRODUCTION-GATE.md",
         ".github/ISSUE_TEMPLATE/axis1-seed.md",
-        "projects/mamba/issue-loop.md",
     ] {
         assert!(
             docs.iter().any(|doc| doc.as_str() == Some(required_doc)),

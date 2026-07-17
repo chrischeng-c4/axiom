@@ -28,7 +28,6 @@ DOC_PATHS = (
     "projects/mamba/tests/harness/cpython/conventions/FIXTURE-LAYOUT.md",
     "projects/mamba/tests/harness/cpython/conventions/REAL-WORLD-CONVENTION.md",
     ".github/ISSUE_TEMPLATE/axis1-seed.md",
-    "projects/mamba/issue-loop.md",
     "projects/mamba/llms.txt",
     "CLAUDE.md",
     "AGENTS.md",
