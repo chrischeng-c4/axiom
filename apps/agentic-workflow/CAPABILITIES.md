@@ -59,14 +59,14 @@ Gate Inventory:
 ID: workflow-root-runner
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw wi run <id>` / `aw capability run [<cap-id>] --project <p>` - root-scoped WI, capability, and project workflow runners for coding agents.
+- CLI: `aw goal wi <id>` / `aw goal capability [<cap-id>] --project <p>` / `aw goal backlog --project <p>` - root-scoped WI, capability, project, and backlog-drain workflow runners for coding agents (#1899 re-homed the retired `aw wi run` / `aw capability run` verbs onto this closed root-type enum; both retired clap paths still parse and redirect here).
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid` - root parsing and JSON envelope contract.
 Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-`aw wi run`/`aw capability run` emit one EC-first CLI workflow chain from project, capability, epic, or change roots: a fresh bounded WI authors and generates a project-local EC contract before TD/codegen; EC red returns to adaptation, EC green permits terminal code-check, then the runner rolls work upward until the project root is complete or blocked. Capability remains the META-doc goal ledger and `aw health` remains read-only.
+`aw goal wi`/`aw goal capability`/`aw goal backlog` emit one EC-first CLI workflow chain from project, capability, epic, change, or backlog-drain roots: a fresh bounded WI authors and generates a project-local EC contract before TD/codegen; EC red returns to adaptation, EC green permits terminal code-check, then the runner rolls work upward until the project root is complete or blocked. Capability remains the META-doc goal ledger and `aw health` remains read-only.
 Gate Inventory:
 - apps/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
 
@@ -79,6 +79,7 @@ Gate Inventory:
 | Self-hosting root-runner policy | change | #1501 | implemented | verified | smoke | `cargo test -p agentic-workflow --test self_hosting_runner_policy_cli_test -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-self-hosting-runner-policy.md; AW rejects its own WI/capability/project root runners before mutation and uses sanctioned direct commits plus focused health/TD/EC verification instead |
 | EC-first WI root loop | change | #1500 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib phase_less_project_wi_enters_ec_before_td -- --nocapture`; `cargo test -p agentic-workflow --lib ec_red_and_green_loop_states_route_to_adaptation_or_terminal_check -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-wi-ec-td-root-loop.md; fresh WI roots persist EC draft/fill/review/gen transitions, enter TD only after successful EC generation, and route EC red/green to adaptation/code-check |
 | Closed workflow lock release | change | #1755 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib issue_lock_view_ignores_closed_issue_with_stale_lock_projection -- --nocapture`; lock discovery reads the configured tracker so closed/rejected items cannot retain a stale local projection that blocks unrelated TD/CB work |
+| Goal Unified Loop Verb | change | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cli::run::tests::self_hosting_wi_identity_and_rollup_never_reenter_root_runner -- --nocapture`; `cargo test -p agentic-workflow --test cli_tests goal_backlog -- --nocapture`; `cargo test -p agentic-workflow --lib emit_registry_entries_are_all_chain_valid -- --nocapture`; apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md; aw goal is the single loop verb with a closed four-leaf root-type enum, re-homing the retired aw wi run and aw capability run verbs onto aw goal wi and aw goal capability with unchanged envelope semantics, adding aw goal backlog as a tracker-driven drain of a project's open work items, migrating persisted next_action state on read, and carrying self-hosting admission rejection to every leaf (#1899) |
 
 ### Capability Control Plane
 
