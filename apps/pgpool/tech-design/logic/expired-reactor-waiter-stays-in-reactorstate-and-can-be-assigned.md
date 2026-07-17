@@ -52,3 +52,28 @@ changes:
     impl_mode: hand-written
     anchor: disconnected_waiters_do_not_consume_a_clean_backend
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: expired-waiter-cannot-be-assigned-verification
+requirements:
+  expired_waiter_is_removed:
+    id: R1
+    text: "Expiry removes the waiting identity from ReactorState and the stale pending first query cannot consume a later clean backend."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool expired_waiter_removal_prevents_late_assignment_and_accounting_underflow
+  late_removal_is_accounting_safe:
+    id: R2
+    text: "A later close of the already-expired client is idempotent for waiting_count, while runtime Assign defensively ignores Closing clients."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool expired_waiter_removal_prevents_late_assignment_and_accounting_underflow
+---
+flowchart TD
+    r1[R1 expired waiter is removed] --> cargo_test_p_pgpool_expired_waiter_removal_prevents_late_assignment_and_accounting_underflow[cargo test -p pgpool expired_waiter_removal_prevents_late_assignment_and_accounting_underflow]
+    r2[R2 late removal is accounting safe] --> cargo_test_p_pgpool_expired_waiter_removal_prevents_late_assignment_and_accounting_underflow
+```
