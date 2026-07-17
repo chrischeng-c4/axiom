@@ -56,22 +56,22 @@ changes:
 
 ```mermaid
 ---
-id: transaction-extended-protocol-rejection-verification
+id: transaction-extended-protocol-error-contract-verification
 requirements:
-  extended_parse_rejected:
+  error_then_close:
     id: R1
-    text: "Both transaction engines synthesize the unsupported-extended-protocol ErrorResponse then close when a client sends Parse, rather than waiting for ReadyForQuery."
+    text: "A Parse frame receives the explicit unsupported-extended-protocol FATAL ErrorResponse and EOF within the bounded regression timeout for legacy and reactor engines."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test transaction_extended_protocol parse_is_rejected_without_hang
-  simple_protocol_preserved:
+  simple_query_compatibility:
     id: R2
-    text: "Existing simple-query transaction traffic remains supported after the extended-protocol boundary check."
+    text: "The fail-fast boundary excludes Query frames, preserving simple-query transaction pooling behavior."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test pool_modes transaction_mode_reuses_backend_for_simple_queries
 ---
 flowchart TD
-    r1[R1 extended parse rejected] --> cargo_test_p_pgpool_test_transaction_extended_protocol_parse_is_rejected_without_hang[cargo test -p pgpool --test transaction_extended_protocol parse_is_rejected_without_hang]
-    r2[R2 simple protocol preserved] --> cargo_test_p_pgpool_test_pool_modes_transaction_mode_reuses_backend_for_simple_queries[cargo test -p pgpool --test pool_modes transaction_mode_reuses_backend_for_simple_queries]
+    r1[R1 error then close] --> cargo_test_p_pgpool_test_transaction_extended_protocol_parse_is_rejected_without_hang[cargo test -p pgpool --test transaction_extended_protocol parse_is_rejected_without_hang]
+    r2[R2 simple query compatibility] --> cargo_test_p_pgpool_test_pool_modes_transaction_mode_reuses_backend_for_simple_queries[cargo test -p pgpool --test pool_modes transaction_mode_reuses_backend_for_simple_queries]
 ```
