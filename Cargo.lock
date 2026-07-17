@@ -9329,6 +9329,7 @@ dependencies = [
  "bytes",
  "clap",
  "cli-std",
+ "futures-util",
  "http-body-util",
  "k8s-openapi",
  "kube",

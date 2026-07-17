@@ -7,10 +7,11 @@ use bytes::{Bytes, BytesMut};
 use pgpool::wire::{
     AuthenticationCleartextPassword, AuthenticationMd5Password, AuthenticationOk,
     AuthenticationSasl, AuthenticationSaslContinue, AuthenticationSaslFinal, BackendKeyData,
-    BackendMessage, Bind, CommandComplete, DataRow, Describe, DescribeTarget, ErrorResponse,
-    Execute, FieldDescription, Frame, FrameError, FrameReader, FrontendMessage, NoticeResponse,
-    ParameterStatus, Parse, PasswordMessage, Query, ReadyForQuery, RelayFrameKind, Role,
-    RowDescription, SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
+    BackendMessage, Bind, CancelRequest, CommandComplete, DataRow, Describe, DescribeTarget,
+    ErrorResponse, Execute, FieldDescription, Frame, FrameError, FrameReader, FrontendMessage,
+    NoticeResponse, OpaqueBackendMessage, OpaqueFrontendMessage, ParameterStatus, Parse,
+    PasswordMessage, Query, ReadyForQuery, RelayFrameKind, Role, RowDescription,
+    SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
     TransactionStatus, WireCodecConfig, WireMessage,
 };
 use tokio::io::{duplex, AsyncWriteExt};
@@ -582,6 +583,126 @@ fn frontend_extended_query_round_trip() {
     round_trip_frontend(sync, &config);
 }
 // </HANDWRITE>
+
+/// verify: wire_codec::relay_accepts_extended_copy_notify_and_empty_frames (R1/R3)
+#[test]
+fn relay_accepts_extended_copy_notify_and_empty_frames() {
+    let config = WireCodecConfig::default();
+    let backend_cases = [
+        (b'1', b"".as_slice()),
+        (b'2', b"".as_slice()),
+        (b'3', b"".as_slice()),
+        (b'I', b"".as_slice()),
+        (b'n', b"".as_slice()),
+        (b's', b"".as_slice()),
+        (b'c', b"".as_slice()),
+        (b'd', b"copy payload".as_slice()),
+        (b'A', b"\0\0\0\x2aorders\0updated\0".as_slice()),
+        (b't', b"\0\x01\0\0\0\x17".as_slice()),
+        (b'G', b"\0\0\x01\0\0".as_slice()),
+        (b'H', b"\0\0\x01\0\0".as_slice()),
+        (b'v', b"\0\0\0\x01option\0value\0".as_slice()),
+    ];
+    for (tag, payload) in backend_cases {
+        let encoded = encode_backend(&BackendMessage::Opaque(OpaqueBackendMessage {
+            tag,
+            payload: Bytes::copy_from_slice(payload),
+        }));
+        let mut reader = FrameReader::new(Role::Backend, &config);
+        reader.feed(&encoded);
+        let frame = reader
+            .next_relay_frame_with_raw()
+            .expect("covered backend tag validates")
+            .expect("covered backend frame is complete");
+        assert_eq!(frame.kind, RelayFrameKind::Other, "backend tag {tag:?}");
+        assert_eq!(frame.bytes.as_ref(), encoded.as_ref());
+    }
+
+    let frontend_cases = [
+        (b'C', b"Sstatement\0".as_slice()),
+        (b'H', b"".as_slice()),
+        (b'c', b"".as_slice()),
+        (b'd', b"copy payload".as_slice()),
+        (b'f', b"copy failed\0".as_slice()),
+        (b'F', b"\0\0\0\x01\0\0\0\0\0\0".as_slice()),
+    ];
+    let mut reader = FrameReader::new(Role::Frontend, &config);
+    relay_startup(&mut reader);
+    for (tag, payload) in frontend_cases {
+        let encoded = encode(&FrontendMessage::Opaque(OpaqueFrontendMessage {
+            tag,
+            payload: Bytes::copy_from_slice(payload),
+        }));
+        reader.feed(&encoded);
+        let frame = reader
+            .next_relay_frame_with_raw()
+            .expect("covered frontend tag validates")
+            .expect("covered frontend frame is complete");
+        assert_eq!(frame.kind, RelayFrameKind::Other, "frontend tag {tag:?}");
+        assert_eq!(frame.bytes.as_ref(), encoded.as_ref());
+    }
+
+    let cancel = encode(&FrontendMessage::Cancel(CancelRequest {
+        process_id: 42,
+        secret_key: 99,
+    }));
+    let mut cancel_reader = FrameReader::new(Role::Frontend, &config);
+    cancel_reader.feed(&cancel);
+    assert!(matches!(
+        cancel_reader.next_frame_with_raw(),
+        Ok(Some(frame)) if matches!(frame.message, WireMessage::Frontend(FrontendMessage::Cancel(_)))
+    ));
+}
+
+/// verify: wire_codec::relay_rejects_malformed_covered_frames (R3)
+#[test]
+fn relay_rejects_malformed_covered_frames() {
+    let config = WireCodecConfig::default();
+    for bytes in [
+        &[b'G', 0, 0, 0, 5, 0][..],
+        &[b'A', 0, 0, 0, 7, 0, 0, 0][..],
+        &[b'C', 0, 0, 0, 6, b'X', 0][..],
+    ] {
+        let role = if bytes[0] == b'C' {
+            Role::Frontend
+        } else {
+            Role::Backend
+        };
+        let mut reader = FrameReader::new(role, &config);
+        if role == Role::Frontend {
+            relay_startup(&mut reader);
+        }
+        reader.feed(bytes);
+        assert!(matches!(
+            reader.next_relay_frame_with_raw(),
+            Err(FrameError::Malformed { .. })
+        ));
+    }
+
+    let bounded = WireCodecConfig {
+        max_frame_bytes: 4,
+        ..WireCodecConfig::default()
+    };
+    for tag in [
+        b'1', b'2', b'3', b'A', b'G', b'H', b'I', b'W', b'c', b'd', b'n', b's', b't', b'v',
+    ] {
+        let mut reader = FrameReader::new(Role::Backend, &bounded);
+        reader.feed(&[tag, 0, 0, 0, 5]);
+        assert!(matches!(
+            reader.next_relay_frame_with_raw(),
+            Err(FrameError::Oversized { .. })
+        ));
+    }
+    for tag in [b'C', b'F', b'H', b'c', b'd', b'f'] {
+        let mut reader = FrameReader::new(Role::Frontend, &bounded);
+        relay_startup(&mut reader);
+        reader.feed(&[tag, 0, 0, 0, 5]);
+        assert!(matches!(
+            reader.next_relay_frame_with_raw(),
+            Err(FrameError::Oversized { .. })
+        ));
+    }
+}
 
 // R5: Terminate round trip, fixed-shape fieldless message.
 #[test]
