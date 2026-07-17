@@ -46,3 +46,18 @@ flowchart TD
     preserve -- yes --> artifact[write bounded proof artifact]
     artifact --> done([local architecture verified])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/sift/tests/vat_lumen_observability_e2e.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+  - path: projects/sift/observability/structured-stdout.md
+    action: create
+    section: logic
+    impl_mode: hand-written
+```
