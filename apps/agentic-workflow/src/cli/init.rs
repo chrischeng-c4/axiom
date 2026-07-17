@@ -2,7 +2,8 @@
 // CODEGEN-BEGIN
 use crate::cli::doc_mirror;
 use crate::models::{SddConfig, SddInterface};
-use crate::Result;
+use crate::{Context, Result};
+use anyhow::bail;
 use clap::Args;
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Select};
@@ -90,11 +91,51 @@ pub struct NewArgs {
     /// Create the target directory without installing Agentic Workflow assets.
     #[arg(long)]
     pub no_assets: bool,
+
+    /// Read-only: report aw-* agent fleet projection drift across
+    /// `.claude/agents/`, `.codex/agents/`, and `.agents/agents/` for an
+    /// existing target instead of installing (issue #1842). `name`/`--path`
+    /// still resolve the target the same way they do for a normal install.
+    #[arg(long)]
+    pub check_agents: bool,
+
+    /// Write-only: project the aw-* agent fleet to `.claude/agents/`,
+    /// `.codex/agents/`, and `.agents/agents/` for an existing target,
+    /// bypassing the full asset installer (no aw.toml/hooks/settings/
+    /// skills/META-doc refresh) so it is safe to run against an
+    /// already-initialized project (issue #1842). `name`/`--path` still
+    /// resolve the target the same way they do for a normal install.
+    #[arg(long)]
+    pub sync_agents: bool,
 }
 
 // @spec apps/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#Logic
 pub async fn run_new(args: NewArgs) -> Result<()> {
     let current_dir = env::current_dir()?;
+    if args.check_agents {
+        let target = resolve_new_target(&current_dir, &args.name, args.path.as_deref())?;
+        return run_agent_fleet_check(&target);
+    }
+    if args.sync_agents {
+        let target = resolve_new_target(&current_dir, &args.name, args.path.as_deref())?;
+        if !target.is_dir() {
+            anyhow::bail!(
+                "target directory does not exist: {} (run `aw new` without --sync-agents first)",
+                target.display()
+            );
+        }
+        install_agent_fleet(&target, &target.join(".claude"))?;
+        println!(
+            "{}",
+            format!(
+                "✅ aw-* agent fleet synced at {} (.claude/agents, .codex/agents, .agents/agents)",
+                target.display()
+            )
+            .green()
+            .bold()
+        );
+        return Ok(());
+    }
     let outcome = run_new_with_current_dir(args, &current_dir)?;
 
     println!();
@@ -888,12 +929,13 @@ fn install_system_files(project_root: &Path, _sdd_dir: &Path, claude_dir: &Path)
     std::fs::create_dir_all(&agents_skills_dir)?;
     install_agents_skills(&agents_skills_dir)?;
 
-    // Install Claude Code Agent definitions (issue #1034: projected from
-    // `templates/cli/mainthread/agents/`, same model as the skill installers
-    // above).
+    // Install the aw-* agent fleet on all three hosts (issue #1842:
+    // generalized from Claude-only #1034) from the same
+    // `templates/cli/mainthread/agents/` source as the skill installers
+    // above.
     println!();
-    println!("{}", "🧠 Updating Claude Code Agents...".cyan());
-    install_agents(claude_dir)?;
+    println!("{}", "🧠 Updating Claude/Codex/AGY Agents...".cyan());
+    install_agent_fleet(project_root, claude_dir)?;
 
     // Remove retired Claude Code hook scripts.
     println!();
@@ -1216,16 +1258,26 @@ fn deprecated_agent_names() -> Vec<&'static str> {
 }
 
 // Remove every [`deprecated_agent_names`] file still present under
-// `agents_dir`.
-fn prune_deprecated_agents(agents_dir: &Path) -> Result<()> {
+// `agents_dir`, at the given file extension (issue #1842: generalized from a
+// hardcoded `.md` so the same prune list covers Claude/AGY `.md` and Codex
+// `.toml` projections — extends the mechanism named in R4/AC4 rather than
+// duplicating it per host).
+fn prune_deprecated_fleet_files(agents_dir: &Path, ext: &str) -> Result<()> {
     for deprecated in deprecated_agent_names() {
-        let deprecated_path = agents_dir.join(format!("{deprecated}.md"));
+        let deprecated_path = agents_dir.join(format!("{deprecated}.{ext}"));
         if deprecated_path.exists() {
             std::fs::remove_file(&deprecated_path)?;
             println!("   {} {} (removed retired)", "✗".red(), deprecated);
         }
     }
     Ok(())
+}
+
+// Remove every [`deprecated_agent_names`] `.md` file still present under
+// `agents_dir` (the historical Claude-only entry point; kept so existing
+// callers/tests are unaffected by the issue #1842 multi-host generalization).
+fn prune_deprecated_agents(agents_dir: &Path) -> Result<()> {
+    prune_deprecated_fleet_files(agents_dir, "md")
 }
 
 // Write one subagent's `<name>.md` under `agents_dir`.
@@ -1237,11 +1289,10 @@ fn write_agent_file(agents_dir: &Path, name: &str, content: &str) -> Result<()> 
 
 // Install/refresh every `aw-*` subagent definition under `.claude/agents/`
 // from `templates/cli/mainthread/agents/` verbatim (issue #1034: same
-// single-source-of-truth model as [`install_claude_skills`]). Unlike the
-// skill trees, agent definitions are Claude Code-runtime-only — there is no
-// `.agents/agents/` counterpart because Codex has no matching subagent
-// mechanism yet; `templates/` remains the sole source either way, so a
-// future Codex-side projection is additive, not a re-architecture.
+// single-source-of-truth model as [`install_claude_skills`]). Claude is one
+// of three host projections since issue #1842 — see [`install_agent_fleet`]
+// for the Codex/`.codex/agents/` and AGY/`.agents/agents/` siblings, all
+// still sourced from `templates/cli/mainthread/agents/` alone.
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R5
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R6
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R18
@@ -1255,6 +1306,503 @@ fn install_agents(claude_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Three-host aw-* agent fleet projection (issue #1842)
+// ---------------------------------------------------------------------------
+//
+// `templates/cli/mainthread/agents/<name>.md` is the ONE canonical source for
+// every aw-* subagent (R1): YAML-ish frontmatter (`name`/`description`/
+// `model`/`model_tier`/`tools`) plus a host-neutral Markdown body. Claude
+// reads that file verbatim ([`install_agents`], passthrough). Codex
+// (`.codex/agents/<name>.toml`) and AGY (`.agents/agents/<name>.md`) are
+// rendered from the same parsed frontmatter+body via [`render_codex_agent`]
+// and [`render_agy_agent`] (R2), with per-host models resolved from the
+// declared `model_tier` through [`AGENT_MODEL_TIERS`] (R3). All three
+// installers share [`aw_agent_entries`] and [`prune_deprecated_fleet_files`],
+// so no host can silently diverge from the templates source or keep a
+// retired name (R4).
+
+/// Default AGY per-agent turn/timeout budget (issue #1842 R3 scope note:
+/// "AGY/Codex budget fields with defaults"). No canonical template currently
+/// needs to override these; a future one could add `agy_max_turns`/
+/// `agy_timeout_mins` frontmatter fields if that changes.
+const AGENT_FLEET_AGY_DEFAULT_MAX_TURNS: u32 = 30;
+const AGENT_FLEET_AGY_DEFAULT_TIMEOUT_MINS: u32 = 20;
+
+/// One canonical agent's parsed frontmatter (issue #1842). Borrows from the
+/// `'static` `templates/` source string, so it never allocates beyond the
+/// `tools` split.
+struct CanonicalAgentFrontmatter<'a> {
+    name: &'a str,
+    description: &'a str,
+    /// The literal Claude-facing `model:` field — kept alongside
+    /// `model_tier` (not derived from it) because Claude's projection is a
+    /// verbatim passthrough of the raw template file. Cross-checked against
+    /// `model_tier`'s resolved claude mapping by
+    /// [`validate_agent_fleet_frontmatter`] so the two fields can never
+    /// silently disagree.
+    model: &'a str,
+    model_tier: &'a str,
+    tools: Vec<&'a str>,
+}
+
+/// Split one `templates/cli/mainthread/agents/<name>.md` file into its parsed
+/// frontmatter and its host-neutral Markdown body (everything after the
+/// closing `---`, including the leading blank line — AGY's body is this
+/// slice verbatim, see [`render_agy_agent`]).
+///
+/// # Errors
+///
+/// Returns an error if the frontmatter delimiters are missing/malformed, or
+/// if `name`/`description`/`model_tier` are absent — all template authoring
+/// defects, not runtime input failures (R1/R3).
+fn parse_agent_frontmatter(raw: &str) -> Result<(CanonicalAgentFrontmatter<'_>, &str)> {
+    let after_open = raw
+        .strip_prefix("---\n")
+        .context("canonical agent template must open with `---` frontmatter")?;
+    let close_at = after_open
+        .find("\n---\n")
+        .context("canonical agent template frontmatter must be closed with `---`")?;
+    let frontmatter = &after_open[..close_at];
+    let body = &after_open[close_at + "\n---\n".len()..];
+
+    let mut name = None;
+    let mut description = None;
+    let mut model = None;
+    let mut model_tier = None;
+    let mut tools = Vec::new();
+    for line in frontmatter.lines() {
+        let (key, value) = line
+            .split_once(':')
+            .with_context(|| format!("malformed agent frontmatter line `{line}`"))?;
+        match key.trim() {
+            "name" => name = Some(value.trim()),
+            "description" => description = Some(value.trim()),
+            "model" => model = Some(value.trim()),
+            "model_tier" => model_tier = Some(value.trim()),
+            "tools" => {
+                tools = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .collect();
+            }
+            // Any other/future field is passthrough-only for Claude and
+            // unused by the Codex/AGY renderers.
+            _ => {}
+        }
+    }
+
+    Ok((
+        CanonicalAgentFrontmatter {
+            name: name.context("agent frontmatter missing required `name`")?,
+            description: description.context("agent frontmatter missing required `description`")?,
+            model: model.context("agent frontmatter missing required `model`")?,
+            model_tier: model_tier.context(
+                "agent frontmatter missing required `model_tier` (declare model_tier: top | standard | cheap)",
+            )?,
+            tools,
+        },
+        body,
+    ))
+}
+
+/// One model tier's resolved per-host model id(s). `codex` carries
+/// `(model, model_reasoning_effort)` since Codex needs both. `None` means
+/// "this tier declares no mapping for this host" (issue #1842 AC5).
+#[derive(Debug, Clone, Copy, Default)]
+struct TierHostModels {
+    claude: Option<&'static str>,
+    codex: Option<(&'static str, &'static str)>,
+    agy: Option<&'static str>,
+}
+
+/// The ONE per-tier -> per-host model mapping every aw-* agent's
+/// `model_tier` frontmatter field resolves through (R3). Current fleet:
+/// `aw-ec-reviewer` = top, `aw-dev`/`aw-td-writer`/`aw-ec-writer` = standard,
+/// `aw-hw-filler` = cheap.
+const AGENT_MODEL_TIERS: &[(&str, TierHostModels)] = &[
+    (
+        "top",
+        TierHostModels {
+            claude: Some("opus"),
+            codex: Some(("gpt-5.6-sol", "high")),
+            agy: Some("Gemini 3.5 Ultra (High)"),
+        },
+    ),
+    (
+        "standard",
+        TierHostModels {
+            claude: Some("sonnet"),
+            codex: Some(("gpt-5.4", "high")),
+            agy: Some("Gemini 3.5 Pro (High)"),
+        },
+    ),
+    (
+        "cheap",
+        TierHostModels {
+            claude: Some("haiku"),
+            // Codex has no dedicated cheap-tier model id in the current
+            // fleet; gpt-5.4 at low reasoning effort is the cheapest sensible
+            // mapping (per issue #1842 model-tier data).
+            codex: Some(("gpt-5.4", "low")),
+            agy: Some("Gemini 3.5 Flash (Medium)"),
+        },
+    ),
+];
+
+/// Resolve `tier`'s [`TierHostModels`] from `table`. Errors loudly on an
+/// unknown tier (issue #1842 AC5) instead of silently defaulting.
+fn tier_host_models(table: &[(&str, TierHostModels)], tier: &str) -> Result<TierHostModels> {
+    table
+        .iter()
+        .find(|(t, _)| *t == tier)
+        .map(|(_, models)| *models)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown model_tier `{tier}`; declare model_tier: top | standard | cheap in the canonical agent frontmatter"
+            )
+        })
+}
+
+/// Resolve one host's model mapping out of `tier_host_models(table, tier)`,
+/// naming `agent_name`/`host` in the error so a tier missing a host mapping
+/// fails loudly (issue #1842 AC5) instead of silently rendering nothing.
+fn resolve_host_model<T>(
+    table: &[(&str, TierHostModels)],
+    agent_name: &str,
+    tier: &str,
+    host: &str,
+    field: impl FnOnce(TierHostModels) -> Option<T>,
+) -> Result<T> {
+    let models = tier_host_models(table, tier)?;
+    field(models).ok_or_else(|| {
+        anyhow::anyhow!("agent `{agent_name}` model_tier `{tier}` has no `{host}` host mapping")
+    })
+}
+
+/// Escape `value` for embedding in a TOML basic (single-line, double-quoted)
+/// string.
+fn toml_escape_basic_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Render one canonical agent body into Codex's `developer_instructions`
+/// prose (issue #1842 R2): strip inline Markdown emphasis (`**bold**` and
+/// `` `code` ``, both of which always occur as matched pairs in the
+/// canonical templates) and turn `## Heading` lines into `Heading:` — the
+/// exact shape Codex's `developer_instructions` convention already used by
+/// `lumen-dev.toml`/`mamba-dev.toml` expects. Every other line (prose,
+/// bullets, numbered steps) passes through unchanged but for the same
+/// emphasis strip.
+fn codex_developer_instructions(body: &str) -> String {
+    let trimmed = body.trim_matches('\n');
+    let mut out = String::new();
+    for line in trimmed.split('\n') {
+        let plain = line.trim_end().replace("**", "").replace('`', "");
+        if let Some(heading) = plain.strip_prefix("## ") {
+            out.push_str(heading.trim());
+            out.push(':');
+        } else {
+            out.push_str(&plain);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Render one canonical agent as a Codex agent TOML file (issue #1842 R2):
+/// `name`/`description`/`model`/`model_reasoning_effort`/`sandbox_mode` plus
+/// deterministic `nickname_candidates`, and the body embedded as
+/// `developer_instructions` via [`codex_developer_instructions`].
+///
+/// # Errors
+///
+/// Returns an error if the rendered body would contain a literal `"""`,
+/// which would break out of the TOML triple-quoted string — a template
+/// authoring defect, not a runtime input failure.
+fn render_codex_agent(
+    fm: &CanonicalAgentFrontmatter<'_>,
+    body: &str,
+    codex_model: &str,
+    codex_effort: &str,
+) -> Result<String> {
+    let instructions = codex_developer_instructions(body);
+    if instructions.contains("\"\"\"") {
+        bail!(
+            "agent `{}` body contains a TOML triple-quote sequence; cannot embed as developer_instructions",
+            fm.name
+        );
+    }
+    let name = toml_escape_basic_string(fm.name);
+    let description = toml_escape_basic_string(fm.description);
+    let nickname_underscored = toml_escape_basic_string(&fm.name.replace('-', "_"));
+    Ok(format!(
+        "name = \"{name}\"\n\
+         description = \"{description}\"\n\
+         model = \"{codex_model}\"\n\
+         model_reasoning_effort = \"{codex_effort}\"\n\
+         sandbox_mode = \"workspace-write\"\n\
+         nickname_candidates = [\"{name}\", \"{nickname_underscored}\"]\n\
+         \n\
+         developer_instructions = \"\"\"\n{instructions}\"\"\"\n"
+    ))
+}
+
+/// Render one canonical agent as an AGY workspace subagent file (issue #1842
+/// R2): `kind: local`/`model`/`max_turns`/`timeout_mins`/
+/// `enable_write_tools`/`enable_mcp_tools` frontmatter, with the canonical
+/// body preserved byte-for-byte (no Markdown transform — AGY renders
+/// Markdown natively, same as Claude).
+///
+/// `enable_write_tools` is derived from the canonical `tools:` list (true iff
+/// it declares `Write` or `Edit`) rather than a separate frontmatter field,
+/// so the two can never drift.
+fn render_agy_agent(fm: &CanonicalAgentFrontmatter<'_>, body: &str, agy_model: &str) -> String {
+    let enable_write_tools = fm
+        .tools
+        .iter()
+        .any(|tool| *tool == "Write" || *tool == "Edit");
+    format!(
+        "---\n\
+         name: {name}\n\
+         description: {description}\n\
+         kind: local\n\
+         model: {agy_model}\n\
+         max_turns: {max_turns}\n\
+         timeout_mins: {timeout_mins}\n\
+         enable_write_tools: {enable_write_tools}\n\
+         enable_mcp_tools: false\n\
+         ---\n\
+         {body}",
+        name = fm.name,
+        description = fm.description,
+        max_turns = AGENT_FLEET_AGY_DEFAULT_MAX_TURNS,
+        timeout_mins = AGENT_FLEET_AGY_DEFAULT_TIMEOUT_MINS,
+    )
+}
+
+/// Install/refresh every `aw-*` subagent's Codex projection under
+/// `codex_dir/agents/*.toml` (issue #1842).
+fn install_codex_agents(codex_dir: &Path) -> Result<()> {
+    let agents_dir = codex_dir.join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    prune_deprecated_fleet_files(&agents_dir, "toml")?;
+    for (name, raw) in aw_agent_entries() {
+        let (fm, body) =
+            parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
+        let (model, effort) =
+            resolve_host_model(AGENT_MODEL_TIERS, name, fm.model_tier, "codex", |models| {
+                models.codex
+            })?;
+        let rendered = render_codex_agent(&fm, body, model, effort)?;
+        std::fs::write(agents_dir.join(format!("{name}.toml")), rendered)?;
+        println!("   ✓ {}", name);
+    }
+    Ok(())
+}
+
+/// Install/refresh every `aw-*` subagent's AGY projection under
+/// `agy_agents_dir/*.md` (issue #1842). `agy_agents_dir` is the
+/// `.agents/agents/` directory itself (unlike `install_agents`/
+/// `install_codex_agents`, which take the parent runtime dir and join
+/// `agents/`) because `.agents/skills/` is this tree's only existing sibling
+/// and already follows that same "pass the leaf dir" shape.
+fn install_agy_agents(agy_agents_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(agy_agents_dir)?;
+    prune_deprecated_fleet_files(agy_agents_dir, "md")?;
+    for (name, raw) in aw_agent_entries() {
+        let (fm, body) =
+            parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
+        let model = resolve_host_model(AGENT_MODEL_TIERS, name, fm.model_tier, "agy", |models| {
+            models.agy
+        })?;
+        let rendered = render_agy_agent(&fm, body, model);
+        std::fs::write(agy_agents_dir.join(format!("{name}.md")), rendered)?;
+        println!("   ✓ {}", name);
+    }
+    Ok(())
+}
+
+/// Cross-check every canonical agent's literal `model:` field against its
+/// `model_tier`'s resolved claude mapping in [`AGENT_MODEL_TIERS`] (issue
+/// #1842 AC5 sibling check: the two fields describe the same thing two
+/// different ways — passthrough source vs. tier-resolved — and must never
+/// silently disagree). Also a cheap way to fail loudly on an unknown tier or
+/// a tier missing its claude mapping before any host projection is written.
+fn validate_agent_fleet_frontmatter() -> Result<()> {
+    for (name, raw) in aw_agent_entries() {
+        let (fm, _body) =
+            parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
+        let expected_claude_model =
+            resolve_host_model(AGENT_MODEL_TIERS, name, fm.model_tier, "claude", |models| {
+                models.claude
+            })?;
+        if expected_claude_model != fm.model {
+            bail!(
+                "agent `{name}` frontmatter `model: {actual}` does not match its `model_tier: {tier}` claude mapping `{expected_claude_model}` — keep them in sync",
+                actual = fm.model,
+                tier = fm.model_tier,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Install/refresh the full aw-* agent fleet on all three hosts from
+/// `templates/cli/mainthread/agents/` (issue #1842 R4): Claude
+/// (`.claude/agents/`, passthrough), Codex (`.codex/agents/`, TOML), and AGY
+/// (`.agents/agents/`, frontmatter-mapped Markdown).
+fn install_agent_fleet(project_root: &Path, claude_dir: &Path) -> Result<()> {
+    validate_agent_fleet_frontmatter()?;
+    install_agents(claude_dir)?;
+    install_codex_agents(&project_root.join(".codex"))?;
+    install_agy_agents(&project_root.join(".agents").join("agents"))?;
+    Ok(())
+}
+
+/// One drifted/missing/stale agent-fleet projection file (issue #1842 AC3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentFleetFinding {
+    host: &'static str,
+    path: PathBuf,
+    status: &'static str,
+}
+
+/// Compare every host's on-disk agent-fleet projection against what
+/// [`install_agent_fleet`] would render, without writing anything (issue
+/// #1842 AC3). Returns one [`AgentFleetFinding`] per missing render, per
+/// byte-mismatched render, and per still-present deprecated fleet file on
+/// any of the three hosts.
+fn check_agent_fleet(project_root: &Path) -> Result<Vec<AgentFleetFinding>> {
+    validate_agent_fleet_frontmatter()?;
+    let claude_agents = project_root.join(".claude").join("agents");
+    let codex_agents = project_root.join(".codex").join("agents");
+    let agy_agents = project_root.join(".agents").join("agents");
+
+    let mut findings = Vec::new();
+    for (name, raw) in aw_agent_entries() {
+        let (fm, body) =
+            parse_agent_frontmatter(raw).with_context(|| format!("agent `{name}` template"))?;
+
+        check_one_projection(
+            &claude_agents.join(format!("{name}.md")),
+            raw,
+            "claude",
+            &mut findings,
+        )?;
+
+        let (codex_model, codex_effort) =
+            resolve_host_model(AGENT_MODEL_TIERS, name, fm.model_tier, "codex", |models| {
+                models.codex
+            })?;
+        let codex_rendered = render_codex_agent(&fm, body, codex_model, codex_effort)?;
+        check_one_projection(
+            &codex_agents.join(format!("{name}.toml")),
+            &codex_rendered,
+            "codex",
+            &mut findings,
+        )?;
+
+        let agy_model =
+            resolve_host_model(AGENT_MODEL_TIERS, name, fm.model_tier, "agy", |models| {
+                models.agy
+            })?;
+        let agy_rendered = render_agy_agent(&fm, body, agy_model);
+        check_one_projection(
+            &agy_agents.join(format!("{name}.md")),
+            &agy_rendered,
+            "agy",
+            &mut findings,
+        )?;
+    }
+
+    for deprecated in deprecated_agent_names() {
+        for (dir, ext, host) in [
+            (&claude_agents, "md", "claude"),
+            (&codex_agents, "toml", "codex"),
+            (&agy_agents, "md", "agy"),
+        ] {
+            let stale_path = dir.join(format!("{deprecated}.{ext}"));
+            if stale_path.exists() {
+                findings.push(AgentFleetFinding {
+                    host,
+                    path: stale_path,
+                    status: "stale",
+                });
+            }
+        }
+    }
+
+    Ok(findings)
+}
+
+/// Record whether `path` matches `expected`, pushing a `missing` or
+/// `drifted` [`AgentFleetFinding`] onto `findings` when it does not.
+fn check_one_projection(
+    path: &Path,
+    expected: &str,
+    host: &'static str,
+    findings: &mut Vec<AgentFleetFinding>,
+) -> Result<()> {
+    if !path.exists() {
+        findings.push(AgentFleetFinding {
+            host,
+            path: path.to_path_buf(),
+            status: "missing",
+        });
+        return Ok(());
+    }
+    let actual =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    if actual != expected {
+        findings.push(AgentFleetFinding {
+            host,
+            path: path.to_path_buf(),
+            status: "drifted",
+        });
+    }
+    Ok(())
+}
+
+/// `aw new --check-agents` entry point (issue #1842 AC3): read-only,
+/// names every drifted/missing/stale projection with the exact remediation
+/// command, and exits non-zero when any finding exists.
+fn run_agent_fleet_check(target: &Path) -> Result<()> {
+    if !target.is_dir() {
+        bail!(
+            "--check-agents target does not exist: {} (run without --check-agents to install first)",
+            target.display()
+        );
+    }
+    let findings = check_agent_fleet(target)?;
+    for finding in &findings {
+        println!(
+            "   {} [{}] {} ({})",
+            "✗".red(),
+            finding.host,
+            finding.path.display(),
+            finding.status
+        );
+    }
+    if findings.is_empty() {
+        println!(
+            "{}",
+            "✅ aw-* agent fleet projection is clean on all three hosts (claude/codex/agy)".green()
+        );
+        return Ok(());
+    }
+    bail!(
+        "aw-* agent fleet projection drift detected in {} file(s); run `aw new {} --path {} --sync-agents` to remediate",
+        findings.len(),
+        target
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "<project>".to_string()),
+        target.display(),
+    );
 }
 
 // Delete legacy hook scripts from `.claude/hooks/`.
@@ -1517,6 +2065,330 @@ mod tests {
         assert!(!legacy.exists(), "Legacy sdd-* agent should be removed");
     }
 
+    // Issue #1842 R6/AC2 — install_agent_fleet projects all five aw-* agents
+    // to all three hosts with per-tier models resolved, and a second run is
+    // byte-idempotent (AC1).
+    #[test]
+    fn test_install_agent_fleet_projects_all_hosts_and_is_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let project_root = tmp.path();
+        let claude_dir = project_root.join(".claude");
+
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        let expected_models = [
+            ("aw-dev", "sonnet", "gpt-5.4", "Gemini 3.5 Pro (High)"),
+            ("aw-td-writer", "sonnet", "gpt-5.4", "Gemini 3.5 Pro (High)"),
+            ("aw-ec-writer", "sonnet", "gpt-5.4", "Gemini 3.5 Pro (High)"),
+            (
+                "aw-ec-reviewer",
+                "opus",
+                "gpt-5.6-sol",
+                "Gemini 3.5 Ultra (High)",
+            ),
+            (
+                "aw-hw-filler",
+                "haiku",
+                "gpt-5.4",
+                "Gemini 3.5 Flash (Medium)",
+            ),
+        ];
+        for (name, claude_model, codex_model, agy_model) in expected_models {
+            let claude_path = claude_dir.join("agents").join(format!("{name}.md"));
+            assert!(claude_path.exists(), "missing claude projection {name}");
+            let claude_body = fs::read_to_string(&claude_path).unwrap();
+            assert!(
+                claude_body.contains(&format!("model: {claude_model}")),
+                "{name} claude projection should keep model: {claude_model}"
+            );
+
+            let codex_path = project_root
+                .join(".codex")
+                .join("agents")
+                .join(format!("{name}.toml"));
+            assert!(codex_path.exists(), "missing codex projection {name}");
+            let codex_body = fs::read_to_string(&codex_path).unwrap();
+            assert!(
+                codex_body.contains(&format!("model = \"{codex_model}\"")),
+                "{name} codex projection should resolve model {codex_model}, got:\n{codex_body}"
+            );
+            assert!(
+                codex_body.contains("developer_instructions = \"\"\""),
+                "{name} codex projection should embed developer_instructions"
+            );
+
+            let agy_path = project_root
+                .join(".agents")
+                .join("agents")
+                .join(format!("{name}.md"));
+            assert!(agy_path.exists(), "missing agy projection {name}");
+            let agy_body = fs::read_to_string(&agy_path).unwrap();
+            assert!(
+                agy_body.contains(&format!("model: {agy_model}")),
+                "{name} agy projection should resolve model {agy_model}, got:\n{agy_body}"
+            );
+            assert!(
+                agy_body.contains("kind: local"),
+                "{name} agy projection should declare kind: local"
+            );
+        }
+
+        // AC1: snapshot every projected file, run again, and assert nothing
+        // changed byte-for-byte (idempotency).
+        let mut before = std::collections::BTreeMap::new();
+        for dir in [
+            claude_dir.join("agents"),
+            project_root.join(".codex").join("agents"),
+            project_root.join(".agents").join("agents"),
+        ] {
+            for entry in fs::read_dir(&dir).unwrap() {
+                let entry = entry.unwrap();
+                before.insert(entry.path(), fs::read(entry.path()).unwrap());
+            }
+        }
+
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        for (path, contents) in &before {
+            let after = fs::read(path).unwrap();
+            assert_eq!(
+                &after,
+                contents,
+                "{} should be byte-identical on re-run",
+                path.display()
+            );
+        }
+    }
+
+    // Issue #1842 AC1 — deleting the aw-ec-reviewer Codex/AGY projections and
+    // re-running the producer regenerates them byte-identically.
+    #[test]
+    fn test_install_agent_fleet_regenerates_deleted_reviewer_projections() {
+        let tmp = TempDir::new().unwrap();
+        let project_root = tmp.path();
+        let claude_dir = project_root.join(".claude");
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        let codex_reviewer = project_root
+            .join(".codex")
+            .join("agents")
+            .join("aw-ec-reviewer.toml");
+        let agy_reviewer = project_root
+            .join(".agents")
+            .join("agents")
+            .join("aw-ec-reviewer.md");
+        let before_codex = fs::read(&codex_reviewer).unwrap();
+        let before_agy = fs::read(&agy_reviewer).unwrap();
+
+        fs::remove_file(&codex_reviewer).unwrap();
+        fs::remove_file(&agy_reviewer).unwrap();
+        assert!(!codex_reviewer.exists());
+        assert!(!agy_reviewer.exists());
+
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        assert_eq!(fs::read(&codex_reviewer).unwrap(), before_codex);
+        assert_eq!(fs::read(&agy_reviewer).unwrap(), before_agy);
+    }
+
+    // Issue #1842 R5 — non-fleet files in every host agents dir are never
+    // touched by install_agent_fleet (hand-authored dev agents / user files).
+    #[test]
+    fn test_install_agent_fleet_preserves_non_fleet_files() {
+        let tmp = TempDir::new().unwrap();
+        let project_root = tmp.path();
+        let claude_dir = project_root.join(".claude");
+
+        let claude_agents = claude_dir.join("agents");
+        let codex_agents = project_root.join(".codex").join("agents");
+        let agy_agents = project_root.join(".agents").join("agents");
+        fs::create_dir_all(&claude_agents).unwrap();
+        fs::create_dir_all(&codex_agents).unwrap();
+        fs::create_dir_all(&agy_agents).unwrap();
+
+        fs::write(claude_agents.join("jet-dev.md"), "jet-dev hand-authored").unwrap();
+        fs::write(
+            claude_agents.join("lumen-dev.md"),
+            "lumen-dev hand-authored",
+        )
+        .unwrap();
+        fs::write(
+            claude_agents.join("mamba-dev.md"),
+            "mamba-dev hand-authored",
+        )
+        .unwrap();
+        fs::write(codex_agents.join("lumen-dev.toml"), "lumen-dev toml").unwrap();
+        fs::write(codex_agents.join("mamba-dev.toml"), "mamba-dev toml").unwrap();
+        fs::write(agy_agents.join("some-user-agent.md"), "user agent").unwrap();
+
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(claude_agents.join("jet-dev.md")).unwrap(),
+            "jet-dev hand-authored"
+        );
+        assert_eq!(
+            fs::read_to_string(claude_agents.join("lumen-dev.md")).unwrap(),
+            "lumen-dev hand-authored"
+        );
+        assert_eq!(
+            fs::read_to_string(claude_agents.join("mamba-dev.md")).unwrap(),
+            "mamba-dev hand-authored"
+        );
+        assert_eq!(
+            fs::read_to_string(codex_agents.join("lumen-dev.toml")).unwrap(),
+            "lumen-dev toml"
+        );
+        assert_eq!(
+            fs::read_to_string(codex_agents.join("mamba-dev.toml")).unwrap(),
+            "mamba-dev toml"
+        );
+        assert_eq!(
+            fs::read_to_string(agy_agents.join("some-user-agent.md")).unwrap(),
+            "user agent"
+        );
+    }
+
+    // Issue #1842 AC4 — retiring a fleet name prunes its projection from all
+    // three host dirs on the next producer run.
+    #[test]
+    fn test_install_agent_fleet_prunes_retired_name_on_all_hosts() {
+        let tmp = TempDir::new().unwrap();
+        let project_root = tmp.path();
+        let claude_dir = project_root.join(".claude");
+        let claude_agents = claude_dir.join("agents");
+        let codex_agents = project_root.join(".codex").join("agents");
+        let agy_agents = project_root.join(".agents").join("agents");
+        fs::create_dir_all(&claude_agents).unwrap();
+        fs::create_dir_all(&codex_agents).unwrap();
+        fs::create_dir_all(&agy_agents).unwrap();
+
+        // Simulate a retired fleet member already present on all three hosts
+        // (`deprecated_agent_names()` already covers the retired score-*
+        // agents this repo actually shipped).
+        let retired = deprecated_agent_names()[0];
+        fs::write(claude_agents.join(format!("{retired}.md")), "retired").unwrap();
+        fs::write(codex_agents.join(format!("{retired}.toml")), "retired").unwrap();
+        fs::write(agy_agents.join(format!("{retired}.md")), "retired").unwrap();
+
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        assert!(!claude_agents.join(format!("{retired}.md")).exists());
+        assert!(!codex_agents.join(format!("{retired}.toml")).exists());
+        assert!(!agy_agents.join(format!("{retired}.md")).exists());
+    }
+
+    // Issue #1842 AC3 — check_agent_fleet reports clean on a freshly
+    // installed tree and reports drifted/missing/stale findings otherwise.
+    #[test]
+    fn test_check_agent_fleet_clean_then_reports_drift_and_stale() {
+        let tmp = TempDir::new().unwrap();
+        let project_root = tmp.path();
+        let claude_dir = project_root.join(".claude");
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+
+        assert!(
+            check_agent_fleet(project_root).unwrap().is_empty(),
+            "freshly installed fleet should report no drift"
+        );
+
+        // Missing: delete one host's projection.
+        let missing_path = project_root
+            .join(".agents")
+            .join("agents")
+            .join("aw-dev.md");
+        fs::remove_file(&missing_path).unwrap();
+
+        // Drifted: tamper with another host's projection.
+        let drifted_path = project_root
+            .join(".codex")
+            .join("agents")
+            .join("aw-td-writer.toml");
+        fs::write(&drifted_path, "tampered").unwrap();
+
+        // Stale: drop a retired name's file onto the claude host.
+        let retired = deprecated_agent_names()[0];
+        let stale_path = claude_dir.join("agents").join(format!("{retired}.md"));
+        fs::write(&stale_path, "retired").unwrap();
+
+        let findings = check_agent_fleet(project_root).unwrap();
+        assert!(findings
+            .iter()
+            .any(|f| f.path == missing_path && f.status == "missing"));
+        assert!(findings
+            .iter()
+            .any(|f| f.path == drifted_path && f.status == "drifted"));
+        assert!(findings
+            .iter()
+            .any(|f| f.path == stale_path && f.status == "stale"));
+
+        // Repairing via the producer clears every finding.
+        install_agent_fleet(project_root, &claude_dir).unwrap();
+        assert!(check_agent_fleet(project_root).unwrap().is_empty());
+    }
+
+    // Issue #1842 AC5 — an unknown model_tier fails loudly instead of
+    // silently defaulting.
+    #[test]
+    fn test_tier_host_models_rejects_unknown_tier() {
+        let err = tier_host_models(AGENT_MODEL_TIERS, "legendary").unwrap_err();
+        assert!(
+            err.to_string().contains("unknown model_tier"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // Issue #1842 AC5 — a tier that declares no mapping for a given host
+    // fails loudly instead of silently rendering an empty/default model.
+    #[test]
+    fn test_resolve_host_model_rejects_missing_host_mapping() {
+        let synthetic: &[(&str, TierHostModels)] = &[(
+            "codex-blind",
+            TierHostModels {
+                claude: Some("sonnet"),
+                codex: None,
+                agy: Some("Gemini 3.5 Pro (High)"),
+            },
+        )];
+        let err = resolve_host_model(synthetic, "test-agent", "codex-blind", "codex", |m| m.codex)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("no `codex` host mapping"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // Issue #1842 R2 — the Codex render strips inline Markdown emphasis and
+    // turns `## Heading` into `Heading:`.
+    #[test]
+    fn test_codex_developer_instructions_strips_markdown() {
+        let body = "\n## Scope\nDo **not** touch `capability.rs`.\n";
+        let out = codex_developer_instructions(body);
+        assert_eq!(out, "Scope:\nDo not touch capability.rs.\n");
+    }
+
+    // Issue #1842 R2 — the AGY render preserves the canonical body verbatim
+    // (no Markdown transform) and derives enable_write_tools from tools:.
+    #[test]
+    fn test_render_agy_agent_preserves_body_and_derives_write_tools() {
+        let fm = CanonicalAgentFrontmatter {
+            name: "aw-example",
+            description: "Example agent",
+            model: "sonnet",
+            model_tier: "standard",
+            tools: vec!["Read", "Write", "Bash"],
+        };
+        let body = "\n## Scope\nDo the thing.\n";
+        let rendered = render_agy_agent(&fm, body, "Gemini 3.5 Pro (High)");
+        assert!(
+            rendered.ends_with(body),
+            "body should be preserved verbatim"
+        );
+        assert!(rendered.contains("enable_write_tools: true"));
+        assert!(rendered.contains("kind: local"));
+        assert!(rendered.contains("model: Gemini 3.5 Pro (High)"));
+    }
+
     // REQ: R8 — install_hooks retires stale hook scripts
     #[test]
     fn test_install_hooks_removes_mainthread_hooks() {
@@ -1768,6 +2640,8 @@ mod tests {
             path: None,
             force: false,
             no_assets: true,
+            check_agents: false,
+            sync_agents: false,
         };
 
         let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
@@ -1788,6 +2662,8 @@ mod tests {
             path: Some(target.clone()),
             force: false,
             no_assets: false,
+            check_agents: false,
+            sync_agents: false,
         };
 
         let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
