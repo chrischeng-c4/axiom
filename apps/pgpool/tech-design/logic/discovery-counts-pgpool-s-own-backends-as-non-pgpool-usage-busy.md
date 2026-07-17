@@ -118,3 +118,42 @@ changes:
     section: logic
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-discovery-self-connection-accounting-verification
+requirements:
+  backend_identity:
+    id: R1
+    text: "Every data-plane backend startup removes client application_name values, emits one controlled pgpool-pod identity, and uses that rewritten startup for replay matching."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool backend_startup_identity
+  client_only_usage:
+    id: R2
+    text: "Discovery counts a held pgpool backend as pgpool usage and excludes PostgreSQL background workers from the client total."
+    kind: integration
+    risk: high
+    verify: cargo test -p pgpool --test connection_discovery pgpool_backend_connections_are_not_foreign_usage
+  reserved_capacity:
+    id: R3
+    text: "The allocatable connection limit is capped by configured and advisory ceilings and reduced by superuser_reserved_connections before endpoint capacity is computed."
+    kind: functional
+    risk: high
+    verify: cargo test -p pgpool platform::discovery
+  unchanged_target:
+    id: R4
+    text: "A busy pool with correctly classified pgpool backends leaves an unchanged replica target admitted and reports no blocked scale reason."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool operator::reconcile::tests::busy_pool_usage_does_not_block_unchanged_target
+---
+flowchart TD
+    r1[R1 backend identity] --> cargo_test_p_pgpool_backend_startup_identity[cargo test -p pgpool backend_startup_identity]
+    r2[R2 client only usage] --> cargo_test_p_pgpool_test_connection_discovery_pgpool_backend_connections_are_not_foreign_usage[cargo test -p pgpool --test connection_discovery pgpool_backend_connections_are_not_foreign_usage]
+    r3[R3 reserved capacity] --> cargo_test_p_pgpool_platform_discovery[cargo test -p pgpool platform::discovery]
+    r4[R4 unchanged target] --> cargo_test_p_pgpool_operator_reconcile_tests_busy_pool_usage_does_not_block_unchanged_target[cargo test -p pgpool operator::reconcile::tests::busy_pool_usage_does_not_block_unchanged_target]
+```
