@@ -46,15 +46,15 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-held-backend-query-ready-verification
+id: pgpool-held-backend-query-ready-contract-verification
 requirements:
-  query_ready_connection:
+  backend_visible_before_poll:
     id: R1
-    text: "The held pgpool backend executes a query after its driver starts before discovery polling asserts its client-backend classification."
+    text: "The held backend is query-ready before polling, so the regression deterministically proves pgpool-owned connections do not inflate foreign usage."
     kind: regression
     risk: medium
     verify: connection_discovery::pgpool_backend_connections_are_not_foreign_usage
 ---
 flowchart TD
-    r1[R1 query ready connection] --> connection_discovery_pgpool_backend_connections_are_not_foreign_usage[connection_discovery::pgpool_backend_connections_are_not_foreign_usage]
+    r1[R1 backend visible before poll] --> connection_discovery_pgpool_backend_connections_are_not_foreign_usage[connection_discovery::pgpool_backend_connections_are_not_foreign_usage]
 ```
