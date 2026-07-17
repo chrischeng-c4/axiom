@@ -77,3 +77,35 @@ changes:
     anchor: concurrent_pods_cannot_overgrant_reserve_capacity
     reason: Preserve coverage for reserve counters when the pure control plane does own a reserve ledger.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-truthful-reconcile-status-verification
+requirements:
+  no_unenacted_drain_projection:
+    id: R2
+    text: "Scale-in capacity holding does not fabricate Draining status or a drain request for a Pod without runtime confirmation."
+    kind: regression
+    risk: high
+    verify: plan_capacity_projects_only_observed_pod_names_and_readiness
+  observed_pod_identity_projection:
+    id: R1
+    text: "Status projects exactly the selected observed Pod names and their observed readiness for each endpoint."
+    kind: regression
+    risk: high
+    verify: plan_capacity_projects_only_observed_pod_names_and_readiness
+  reserve_status_honesty:
+    id: R3
+    text: "Operator plan status omits reserve counters and marks reserve accounting unavailable until a live ledger is reconciled."
+    kind: functional
+    risk: high
+    verify: context_aware_status_omits_unreconciled_reserve_counters
+---
+flowchart TD
+    r1[R1 observed pod identity projection] --> plan_capacity_projects_only_observed_pod_names_and_readiness[plan_capacity_projects_only_observed_pod_names_and_readiness]
+    r2[R2 no unenacted drain projection] --> plan_capacity_projects_only_observed_pod_names_and_readiness
+    r3[R3 reserve status honesty] --> context_aware_status_omits_unreconciled_reserve_counters[context_aware_status_omits_unreconciled_reserve_counters]
+```
