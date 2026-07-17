@@ -51,7 +51,6 @@ changes:
     impl_mode: hand-written
     anchor: startup_mismatch_and_auth_challenges_never_replay
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
