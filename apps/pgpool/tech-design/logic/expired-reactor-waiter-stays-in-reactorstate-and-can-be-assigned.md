@@ -12,30 +12,29 @@ fill_sections: [logic, changes, unit-test]
 id: expired-waiter-cannot-be-assigned
 entry: expire_waiters
 nodes:
-  expired: { kind: process, label: "deadline expires while client is Waiting" }
-  reject: { kind: process, label: "queue saturation ErrorResponse and mark Closing" }
-  remove: { kind: process, label: "remove client state and clear pending_first" }
-  assign_guard: { kind: decision, label: "Assign target is still eligible" }
-  close: { kind: terminal, label: "flush error then close socket" }
-  assign: { kind: terminal, label: "assign clean backend and relay pending query" }
+  expire: { kind: process, label: "take expired deadline token" }
+  close: { kind: process, label: "mark client Closing and queue 53300 error" }
+  detach: { kind: process, label: "clear pending_first and remove_client" }
+  flush: { kind: terminal, label: "close only after error output flushes" }
+  guard: { kind: decision, label: "Assign target has non-Closing client and pending frame" }
+  relay: { kind: terminal, label: "activate backend and relay first frame" }
 edges:
-  - { from: expire_waiters, to: expired }
-  - { from: expired, to: reject }
-  - { from: reject, to: remove }
-  - { from: remove, to: close }
-  - { from: assign_or_park, to: assign_guard }
-  - { from: assign_guard, to: close, label: Closing or absent client }
-  - { from: assign_guard, to: assign, label: Active eligible waiter }
+  - { from: expire_waiters, to: expire }
+  - { from: expire, to: close }
+  - { from: close, to: detach }
+  - { from: detach, to: flush }
+  - { from: drive_assign, to: guard }
+  - { from: guard, to: flush, label: invalid or Closing target }
+  - { from: guard, to: relay, label: live pending first frame }
 ---
 flowchart TD
-  expired["waiter deadline expires"] --> reject["queue saturation error and Closing"]
-  reject --> remove["remove state + clear pending_first"]
-  remove --> flush["flush error then close"]
-  free["backend becomes clean"] --> guard{"Assign client still eligible?"}
-  guard -->|Closing or missing| flush
-  guard -->|eligible| assign["assign backend and relay query"]
+  deadline["expired waiter deadline"] --> error["queue 53300 and Closing"]
+  error --> detach["clear pending query; remove ReactorState waiter"]
+  detach --> close["flush error then close"]
+  backend["clean backend arrives"] --> guard{"Assign target live and eligible?"}
+  guard -->|no| close
+  guard -->|yes| relay["activate and relay query"]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
