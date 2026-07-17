@@ -142,7 +142,9 @@ pub struct PgpoolControlPlane {
     pub budgets: GlobalConnectionBudget,
     reserve_ledgers: BTreeMap<String, ReserveLeaseLedger>,
     reserve_denials: BTreeMap<String, u64>,
-    pods: BTreeMap<String, PodControlStatus>,
+    /// Pod control records are endpoint-scoped: one Deployment Pod may hold
+    /// independent allocations for more than one remote endpoint.
+    pods: BTreeMap<String, BTreeMap<String, PodControlStatus>>,
 }
 
 impl PgpoolControlPlane {
@@ -206,8 +208,9 @@ impl PgpoolControlPlane {
             )?;
         }
         self.refresh_reserve_base(endpoint)?;
+        let endpoint_pods = self.pods.entry(endpoint.into()).or_default();
         for pod in pods {
-            self.pods.insert(
+            endpoint_pods.insert(
                 pod.clone(),
                 PodControlStatus {
                     pod,
@@ -226,13 +229,15 @@ impl PgpoolControlPlane {
     }
     // </HANDWRITE>
 
-    pub fn mark_ready(&mut self, pod: &str) -> Result<(), ControlPlaneError> {
-        let endpoint = self.pod(pod)?.endpoint.clone();
+    /// Mark exactly one endpoint allocation for a Pod as ready. The endpoint
+    /// is explicit so a shared Pod name cannot route to the wrong allocator.
+    pub fn mark_ready(&mut self, endpoint: &str, pod: &str) -> Result<(), ControlPlaneError> {
+        self.pod(endpoint, pod)?;
         self.budgets
-            .endpoint_mut(&endpoint)
-            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.clone()))?
+            .endpoint_mut(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?
             .mark_ready(pod)?;
-        let status = self.pod_mut(pod)?;
+        let status = self.pod_mut(endpoint, pod)?;
         status.phase = PodControlPhase::Ready;
         status.ready = true;
         Ok(())
@@ -241,16 +246,17 @@ impl PgpoolControlPlane {
     /// First removes readiness, then records the drain request and deadline.
     pub fn begin_drain(
         &mut self,
+        endpoint: &str,
         pod: &str,
         now_epoch_seconds: u64,
         timeout_seconds: u64,
     ) -> Result<(), ControlPlaneError> {
-        let endpoint = self.pod(pod)?.endpoint.clone();
+        self.pod(endpoint, pod)?;
         self.budgets
-            .endpoint_mut(&endpoint)
-            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.clone()))?
+            .endpoint_mut(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?
             .begin_drain(pod)?;
-        let status = self.pod_mut(pod)?;
+        let status = self.pod_mut(endpoint, pod)?;
         status.ready = false;
         status.drain_requested = true;
         status.phase = PodControlPhase::Draining;
@@ -261,10 +267,11 @@ impl PgpoolControlPlane {
 
     pub fn observe_pool(
         &mut self,
+        endpoint: &str,
         pod: &str,
         observation: BackendPoolObservation,
     ) -> Result<(), ControlPlaneError> {
-        let status = self.pod_mut(pod)?;
+        let status = self.pod_mut(endpoint, pod)?;
         status.backend_active = observation.active;
         status.backend_idle = observation.idle;
         Ok(())
@@ -272,10 +279,11 @@ impl PgpoolControlPlane {
 
     pub fn reconcile_drain(
         &mut self,
+        endpoint: &str,
         pod: &str,
         now_epoch_seconds: u64,
     ) -> Result<DrainProgress, ControlPlaneError> {
-        let status = self.pod(pod)?.clone();
+        let status = self.pod(endpoint, pod)?.clone();
         if status.phase != PodControlPhase::Draining {
             return Err(ControlPlaneError::InvalidPodPhase {
                 pod: pod.into(),
@@ -294,7 +302,7 @@ impl PgpoolControlPlane {
             .ok_or_else(|| ControlPlaneError::UnknownEndpoint(status.endpoint.clone()))?
             .release_after_drain(pod, true)?;
         self.refresh_reserve_base(&status.endpoint)?;
-        let status = self.pod_mut(pod)?;
+        let status = self.pod_mut(&status.endpoint, pod)?;
         status.quota = 0;
         status.phase = PodControlPhase::Released;
         status.backend_active = 0;
@@ -330,20 +338,30 @@ impl PgpoolControlPlane {
             .find_map(|endpoint| endpoint.blocked_scale_reason.clone());
         ControlPlaneStatus {
             endpoints,
-            pods: self.pods.values().cloned().collect(),
+            pods: self
+                .pods
+                .values()
+                .flat_map(|endpoint_pods| endpoint_pods.values().cloned())
+                .collect(),
             blocked_scale_reason,
         }
     }
 
-    fn pod(&self, pod: &str) -> Result<&PodControlStatus, ControlPlaneError> {
+    fn pod(&self, endpoint: &str, pod: &str) -> Result<&PodControlStatus, ControlPlaneError> {
         self.pods
-            .get(pod)
+            .get(endpoint)
+            .and_then(|endpoint_pods| endpoint_pods.get(pod))
             .ok_or_else(|| ControlPlaneError::UnknownPod(pod.into()))
     }
 
-    fn pod_mut(&mut self, pod: &str) -> Result<&mut PodControlStatus, ControlPlaneError> {
+    fn pod_mut(
+        &mut self,
+        endpoint: &str,
+        pod: &str,
+    ) -> Result<&mut PodControlStatus, ControlPlaneError> {
         self.pods
-            .get_mut(pod)
+            .get_mut(endpoint)
+            .and_then(|endpoint_pods| endpoint_pods.get_mut(pod))
             .ok_or_else(|| ControlPlaneError::UnknownPod(pod.into()))
     }
 
@@ -441,22 +459,26 @@ mod tests {
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 20)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         control
-            .observe_pool("pod-0", BackendPoolObservation { active: 2, idle: 3 })
+            .observe_pool(
+                "primary",
+                "pod-0",
+                BackendPoolObservation { active: 2, idle: 3 },
+            )
             .unwrap();
-        control.begin_drain("pod-0", 100, 30).unwrap();
+        control.begin_drain("primary", "pod-0", 100, 30).unwrap();
         assert!(!control.status().pods[0].ready);
         assert_eq!(
-            control.reconcile_drain("pod-0", 120).unwrap(),
+            control.reconcile_drain("primary", "pod-0", 120).unwrap(),
             DrainProgress::Held
         );
         assert_eq!(control.status().endpoints[0].allocated, 20);
         control
-            .observe_pool("pod-0", BackendPoolObservation::default())
+            .observe_pool("primary", "pod-0", BackendPoolObservation::default())
             .unwrap();
         assert_eq!(
-            control.reconcile_drain("pod-0", 121).unwrap(),
+            control.reconcile_drain("primary", "pod-0", 121).unwrap(),
             DrainProgress::Released
         );
         assert_eq!(control.status().endpoints[0].allocated, 0);
@@ -468,13 +490,17 @@ mod tests {
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 10)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         control
-            .observe_pool("pod-0", BackendPoolObservation { active: 1, idle: 0 })
+            .observe_pool(
+                "primary",
+                "pod-0",
+                BackendPoolObservation { active: 1, idle: 0 },
+            )
             .unwrap();
-        control.begin_drain("pod-0", 100, 30).unwrap();
+        control.begin_drain("primary", "pod-0", 100, 30).unwrap();
         assert_eq!(
-            control.reconcile_drain("pod-0", 130).unwrap(),
+            control.reconcile_drain("primary", "pod-0", 130).unwrap(),
             DrainProgress::Released
         );
     }
@@ -485,11 +511,15 @@ mod tests {
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 20)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         control
-            .observe_pool("pod-0", BackendPoolObservation { active: 3, idle: 7 })
+            .observe_pool(
+                "primary",
+                "pod-0",
+                BackendPoolObservation { active: 3, idle: 7 },
+            )
             .unwrap();
-        control.begin_drain("pod-0", 0, 60).unwrap();
+        control.begin_drain("primary", "pod-0", 0, 60).unwrap();
         let status = control.status();
         let metrics = status.prometheus();
         assert_eq!(status.endpoints[0].available, 30);
@@ -504,7 +534,7 @@ mod tests {
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 10)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         let allocation = control
             .budgets
             .endpoint("primary")
@@ -560,7 +590,7 @@ mod tests {
             control.reserve_ledger("primary").unwrap().grants().count(),
             1
         );
-        assert!(control.pods.get("pod-b").is_none());
+        assert!(control.pod("primary", "pod-b").is_err());
         assert!(control.status().blocked_scale_reason.is_some());
         assert_combined_capacity_invariant(&control);
 
@@ -602,10 +632,10 @@ mod tests {
             .is_err());
         assert_combined_capacity_invariant(&control);
 
-        control.mark_ready("pod-a").unwrap();
-        control.begin_drain("pod-a", 20, 0).unwrap();
+        control.mark_ready("primary", "pod-a").unwrap();
+        control.begin_drain("primary", "pod-a", 20, 0).unwrap();
         assert_eq!(
-            control.reconcile_drain("pod-a", 20).unwrap(),
+            control.reconcile_drain("primary", "pod-a", 20).unwrap(),
             DrainProgress::Released
         );
         assert_combined_capacity_invariant(&control);
@@ -627,6 +657,51 @@ mod tests {
             .admit_scale("primary", ["pod-c"], std::iter::empty::<&str>(), 30)
             .unwrap();
         assert_combined_capacity_invariant(&control);
+    }
+
+    #[test]
+    fn endpoint_scoped_pod_lifecycle_releases_cross_endpoint_allocations() {
+        let mut budgets = GlobalConnectionBudget::default();
+        for endpoint in ["primary", "read-pool"] {
+            budgets.insert(EndpointAllocator::new(
+                endpoint,
+                EndpointCapacity {
+                    effective_limit: 40,
+                    reserve: 0,
+                    non_pgpool_usage: 0,
+                    safety_headroom: 0,
+                },
+            ));
+        }
+        let mut control = PgpoolControlPlane::new(budgets);
+        control
+            .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 20)
+            .unwrap();
+        control
+            .admit_scale("read-pool", ["pod-0"], std::iter::empty::<&str>(), 20)
+            .unwrap();
+        assert!(matches!(
+            control.admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 1),
+            Err(ControlPlaneError::Allocation(
+                AllocationError::DuplicatePod { .. }
+            ))
+        ));
+
+        for endpoint in ["primary", "read-pool"] {
+            control.mark_ready(endpoint, "pod-0").unwrap();
+            control.begin_drain(endpoint, "pod-0", 10, 0).unwrap();
+            assert_eq!(
+                control.reconcile_drain(endpoint, "pod-0", 10).unwrap(),
+                DrainProgress::Released
+            );
+            assert_eq!(control.budgets.endpoint(endpoint).unwrap().held_quota(), 0);
+        }
+        assert_eq!(control.status().pods.len(), 2);
+        assert!(control
+            .status()
+            .pods
+            .iter()
+            .all(|pod| pod.phase == PodControlPhase::Released));
     }
 }
 // </HANDWRITE>

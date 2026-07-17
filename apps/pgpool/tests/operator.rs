@@ -140,9 +140,10 @@ fn status_projects_global_budget_and_managed_readiness() {
             40,
         )
         .unwrap();
-    control.mark_ready("pool-a").unwrap();
+    control.mark_ready("alloy-primary", "pool-a").unwrap();
     control
         .observe_pool(
+            "alloy-primary",
             "pool-a",
             BackendPoolObservation {
                 active: 11,
@@ -150,7 +151,9 @@ fn status_projects_global_budget_and_managed_readiness() {
             },
         )
         .unwrap();
-    control.begin_drain("pool-a", 100, 60).unwrap();
+    control
+        .begin_drain("alloy-primary", "pool-a", 100, 60)
+        .unwrap();
 
     let status = PgpoolStatus::from_control_plane(&spec(), 7, 1, &control.status());
     assert_eq!(status.phase, "Reconciling");
