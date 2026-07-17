@@ -109,3 +109,48 @@ flowchart TD
 ```
 
 The checkpoint is an acknowledgment boundary, not merely a read cursor: it never advances past a valid line until Sift durably accepts or identifies that event as a duplicate. Invalid structured lines use the explicit quarantine policy and may advance only after their bounded diagnostic is recorded. File one-shot, file follow, and stdin all call the same line/window pipeline; #1675 later supplies CRI records to that core without changing validation, mapping, delivery, or checkpoint semantics.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/sift/src/collector/mod.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define public collector configuration, source mode, summary, defaults, and the reusable run entrypoint.
+  - path: projects/sift/src/collector/model.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Validate axiom.service.log.v1, derive deterministic source-offset ids, and map the shared wire event into OperationalEventV2.
+  - path: projects/sift/src/collector/checkpoint.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Load and atomically fsync source-bound byte/line checkpoints and append bounded structured quarantine diagnostics.
+  - path: projects/sift/src/collector/client.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Deliver bounded EventWriteRequest batches through the existing authenticated HTTP ingest endpoint with accepted/duplicate accounting and bounded retries.
+  - path: projects/sift/src/collector/runtime.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Share one byte-offset window pipeline across seekable files, appended-file follow mode, and stdin resume/discard mode.
+  - path: projects/sift/src/bin/sift.rs
+    action: modify
+    anchor: append_event
+    section: logic
+    impl_mode: hand-written
+    description: Register sift collect with file/stdin, source identity, endpoint/token, project/environment, checkpoint/quarantine, batch/retry, and follow flags.
+  - path: projects/sift/tests/structured_stdout_collector_e2e.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Run real Sift serve and collect processes over Lumen JSONL, query the logging projection, replay the checkpoint, and prove quarantine continuation.
+```
+
+The implementation also exports the collector module from the already-standardized Sift crate root and adds direct workspace `reqwest` plus shared `service-observability` dependencies in `projects/sift/Cargo.toml`. Neither declarative file needs a new nested ownership region.
