@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T16:51:40.093570+00:00"
-digest = "sha256:a86b405516528a05650039d91da112fd6ae59ae8f0d2d240bcc005a85dfb132c"
-source_digest = "sha256:a86b405516528a05650039d91da112fd6ae59ae8f0d2d240bcc005a85dfb132c"
-ir_digest = "sha256:b9f782965953a2d7c9e9e80e89756520f749f1ace9551a7d334d55a1a3c89ef3"
+generated_at = "2026-07-17T17:02:21.328044+00:00"
+digest = "sha256:69ff340640f7da914246ccb7be0d8af0fe332b0339b65c798e6ba33acb2af3d7"
+source_digest = "sha256:69ff340640f7da914246ccb7be0d8af0fe332b0339b65c798e6ba33acb2af3d7"
+ir_digest = "sha256:4af704a0db7cea659ff3536f626a90509c635935a0726e38c7aec991cbc0d450"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -123,8 +123,8 @@ section_count = 3
 
 [[files]]
 path = "logic/p0-dense-buffer-readiness-reactor.md"
-digest = "sha256:27d2194d96f31a7183b3e378b63d9063f9b83f191406fc819435957a5840908e"
-ir_digest = "sha256:fac964bfcc63af35751edeaf04e07ce4ba5a4c8ceb4009a3ef1146ec8fb56b49"
+digest = "sha256:d130038fa993be2e257529b77debb704866f1884681dbc548a1151860e6afc8c"
+ir_digest = "sha256:d6f8f2af9ae994ca6c58ae5187051a530ea92602310d314bfc54b61a9842c4da"
 section_count = 3
 
 [[files]]
@@ -237,9 +237,9 @@ section_count = 3
 
 [[files]]
 path = "logic/pg-wire-message-codec-frontend-backend-frames.md"
-digest = "sha256:091b349aa19051d9fd2ff659263ffadde4ade7f21d35475b5898e6a76b01f9a9"
-ir_digest = "sha256:e387738a08be633eef2b9adf6507e3879a8dd276e31865b855f221718c04f605"
-section_count = 5
+digest = "sha256:391c825411a73ae2aedf6a3110385677293b744be019070fe5b5fd33ec3c1c19"
+ir_digest = "sha256:212a685300ce17afa55c1ef149a122e89ead249f451790bc8db482075d981cac"
+section_count = 6
 
 [[files]]
 path = "logic/pgbouncer-transaction-pooling-benchmark.md"
@@ -297,15 +297,15 @@ section_count = 3
 
 [[files]]
 path = "logic/served-admin-plane-with-drain-aware-readiness.md"
-digest = "sha256:8b400d8ca445bf548e2d186d396f82d83018b3a05c1ed9ecd6642ebfd82183b7"
-ir_digest = "sha256:6e7a0aa53233561ec270f7a708379d5689a427f6d7769eb6ac932003be0ea447"
-section_count = 6
+digest = "sha256:f89160ddd7145efcf48b992dd8d79a9d1983393cfb238c239560f073aff4178c"
+ir_digest = "sha256:f28ad23c5d6be84783dc2fa6a23883aebcce0af9fd91bb8a89a7706e737d9095"
+section_count = 7
 
 [[files]]
 path = "logic/session-mode-proxy-with-auth-passthrough-and-serve-entrypoint.md"
-digest = "sha256:0c46c3e28a30fcb022030ee72c55bc8adda72a748364ac8116938b81f7467338"
-ir_digest = "sha256:03029e494ff1a48e828bec73408863543cdfa9ce678bc34993b80bdeedd4747c"
-section_count = 5
+digest = "sha256:f46883a7f503eb7110b27c1c041fb358f5a8e64e33dd7495e4cf227fbb793bb8"
+ir_digest = "sha256:56081c9def3ac00f88b59676bb5bcf24812677402d6552a44df3e351d047bdfe"
+section_count = 6
 
 [[files]]
 path = "logic/trust-startup-replay-for-capped-transaction-pooling.md"
@@ -321,32 +321,32 @@ section_count = 3
 
 [[files]]
 path = "semantic/pgpool-crd-operator-control-plane.md"
-digest = "sha256:79cb3467ba3e5c382ba889b9ae54cc304f3b5fa88fbdf78a3bc35798701a603c"
-ir_digest = "sha256:5f9f67a97030bc742ba8e03554e6bf879d36016799acdcbab1f59bcc098102a1"
+digest = "sha256:4b154897860c571c4abe145fd61208570f5a147e6d47fb6a597a03df0c7965cf"
+ir_digest = "sha256:36e7c8594fed582781c5a50b456098826c602150f8c9d402af662c7e289edca2"
 section_count = 3
 
 [[files]]
 path = "semantic/pgpool-drain-safe-control-plane-status.md"
-digest = "sha256:c284dae26bd434c61261dbb9e9641574d192069dc8a09c1705ba8fb1e8205c0c"
-ir_digest = "sha256:2e814e1f3e53b0499f39ff54afad4df8e53e0815000b3e56124203f5e9fb2c72"
+digest = "sha256:7223ee4dd6c9fe94fc5dd583dcdee1dd949c2799a8ccbd69d150999b30282e39"
+ir_digest = "sha256:09dc5eb89bde7450707d1fb6410c956fd464e25fd568ca666d4b2412ecae0dd5"
 section_count = 3
 
 [[files]]
 path = "semantic/pgpool-global-endpoint-quota-allocation.md"
-digest = "sha256:9dc08bbd9fda71f72b5b6c13c2b2d347ce6758a4650124c30007f20ae757d08d"
-ir_digest = "sha256:6aa4f3e6558349157d58943b3e513077f30e3ab1cdbceed71e312325a85a8d83"
+digest = "sha256:6752bd1e5fb378a3b76194815d26e177b703ab03c6f2ca6464abb0924ab317bd"
+ir_digest = "sha256:bde24ba24f0496a3b65d8b565b4ce1a3463354df8e1ee3cc0fb613d0bfd21696"
 section_count = 3
 
 [[files]]
 path = "semantic/pgpool-runtime-connection-limit-discovery.md"
-digest = "sha256:e421582f34aeddffdf815f1093fe3c1994e4763bf611885c143f026f97119cf8"
-ir_digest = "sha256:275d8ddae0e7f0d65dac3a639505ec882bdea8f3c33a49068460cb3f77efc50e"
+digest = "sha256:857926bf170fd32c8c155ee1ce843bb141bfcef870b60fbafa63e5156727c6ce"
+ir_digest = "sha256:3deb368c511d661a490e2e251c701895a455a40a604a114ca2f6bef1f44ade2f"
 section_count = 3
 
 [[files]]
 path = "semantic/pgpool-stateless-deployment-instance.md"
-digest = "sha256:72fd72b035a2b4af37c09d0884ba1a883d2b61385b8d50c24d37561b70a04eae"
-ir_digest = "sha256:88e78f2bc70277a6a0e33064fae4d0b649fbf2c04ae41fbb3d813e4f102a2864"
+digest = "sha256:133bb241e088fc676f79d7db6bb73573f1f28038bdf03ae843008f2060b50ad6"
+ir_digest = "sha256:4ac1afec93ba07d776ad818c9447ba37fc275633a9ace786444737bd05cf13b2"
 section_count = 3
 
 [[files]]
