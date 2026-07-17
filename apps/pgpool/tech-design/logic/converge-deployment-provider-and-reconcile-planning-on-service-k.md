@@ -78,3 +78,71 @@ The provider boundary is mechanical. `service-k8s::render::common` owns workload
 Pgpool overrides only the planning and context-aware status hooks. Recoverable endpoint discovery failures are converted inside pgpool into a safe plan that retains the current Deployment target and records blocked or degraded capacity facts; they are not generic controller errors. Insufficient capacity follows the same hold-current path. Only an admitted target is rendered. Unrecoverable planning errors become the shared controller's plan error, apply no children, and requeue through the existing error policy.
 
 The controller order is invariant: obtain one plan, apply all plan children, observe every readiness target, then build status from the same plan context. Pgpool's remote PostgreSQL discovery, reserve and headroom calculation, per-Pod quota, drain-before-release state, CR status schema, and metric names remain app-owned. Kubernetes Lease and CR status are control-plane state; neither local disk nor Raft is introduced.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: libs/service-k8s/src/render.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Convert the monolithic compatibility surface into the semantic render module root and preserve deliberate root-level re-exports for existing StatefulSet consumers.
+  - path: libs/service-k8s/src/render/common.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: Own RenderCtx, ServicePodTemplate, labels, owner references, resources, ServiceAccount, ordinary ClusterIP Service, PDB, HPA, and CronJob composition independent of workload kind.
+  - path: libs/service-k8s/src/render/deployment.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: Own ServiceDeployment and service_deployment with replicas and caller-supplied rollout fields while emitting no stateful or sticky-session contract.
+  - path: libs/service-k8s/src/render/statefulset.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: Retain headless Service, WorkloadVolumeClaim, stable identity, downward-API topology, ServiceStatefulSet, and ShardedStatefulSet behavior outside Deployment composition.
+  - path: libs/service-k8s/src/service.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Add ReconcilePlan plus backwards-compatible default reconcile_plan and status_patch_with_context hooks to ManagedService.
+  - path: libs/service-k8s/src/controller.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Execute plan, apply children, observe readiness, and project status from the same context; surface unrecoverable planning errors through the existing requeue policy.
+  - path: libs/service-k8s/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Export ReconcilePlan and retain the existing controller, stateful planning, and render compatibility API.
+  - path: libs/service-k8s/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Document common, StatefulSet, and Deployment workload profiles plus the optional asynchronous planning seam.
+  - path: apps/pgpool/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Consume semantic service-k8s, server-lifecycle, server-tcp, server-http, metrics-prometheus, and transport-h2c identities with no legacy operator/server aliases.
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Compose the shared common and Deployment modules while retaining Pgpool-owned maxSurge zero, probes, preStop drain, security, resources, and remote endpoint settings.
+  - path: apps/pgpool/src/operator/reconcile.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: Implement the service-k8s planning/context hooks while keeping live PostgreSQL discovery, safe replica admission, quotas, and blocked status app-owned.
+  - path: apps/pgpool/tests/operator.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: Verify default and context-aware provider contracts plus Pgpool safe-hold behavior and Deployment-only output.
+```
