@@ -86,3 +86,49 @@ changes:
     anchor: docs_serves_swagger_ui_html_referencing_openapi_json
     reason: Verify docs HTML has no external network dependency.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-operational-hygiene-verification
+requirements:
+  docs_are_offline:
+    id: R3
+    text: "Docs HTML references only local admin paths and no remote CDN asset."
+    kind: functional
+    risk: medium
+    verify: docs_serves_offline_openapi_index
+  drain_reaps_reserves:
+    id: R4
+    text: "Completed drain removes every reserve grant owned by that endpoint Pod."
+    kind: regression
+    risk: high
+    verify: drain_completion_reaps_pod_reserve_grants
+  duplicate_batch_is_rejected:
+    id: R5
+    text: "Static allocation rejects duplicate Pod names within one batch without mutation."
+    kind: regression
+    risk: high
+    verify: duplicate_pod_batch_is_rejected_atomically
+  metrics_use_one_stats_snapshot:
+    id: R2
+    text: "Each admin metrics render captures one BackendPool stats snapshot per pool."
+    kind: regression
+    risk: medium
+    verify: metrics_render_uses_one_snapshot_per_pool
+  prometheus_labels_are_escaped:
+    id: R1
+    text: "Control-plane Prometheus output escapes hostile endpoint and Pod label values through the shared renderer primitive."
+    kind: regression
+    risk: medium
+    verify: control_plane_prometheus_escapes_hostile_labels
+---
+flowchart TD
+    r1[R1 prometheus labels are escaped] --> control_plane_prometheus_escapes_hostile_labels[control_plane_prometheus_escapes_hostile_labels]
+    r2[R2 metrics use one stats snapshot] --> metrics_render_uses_one_snapshot_per_pool[metrics_render_uses_one_snapshot_per_pool]
+    r3[R3 docs are offline] --> docs_serves_offline_openapi_index[docs_serves_offline_openapi_index]
+    r4[R4 drain reaps reserves] --> drain_completion_reaps_pod_reserve_grants[drain_completion_reaps_pod_reserve_grants]
+    r5[R5 duplicate batch is rejected] --> duplicate_pod_batch_is_rejected_atomically[duplicate_pod_batch_is_rejected_atomically]
+```
