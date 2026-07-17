@@ -52,8 +52,9 @@ AW loop against its own repo, and do not turn `aw health` (including its
 `takeover-audit` axis, the retired `aw standardize` namespace's successor)
 into a self-takeover gate: a broken lifecycle cannot be required to fix
 itself (self-deadlock). Self-AW hard-gates only the capability contract —
-CAPABILITIES.md work-roots with resolvable gap/claim ids and closing WI/TD
-refs. EC claim verification becomes a hard gate only once an EC inventory is
+CAPABILITIES.md work-roots with resolvable gap/claim ids; closing WI/TD
+evidence is discovered from the WI/commit side, and doc-stored WI refs are
+optional derived provenance (#1847). EC claim verification becomes a hard gate only once an EC inventory is
 actually configured for aw; until then it is advisory, like managed/semantic/
 traceability, TD lock, CB verify, cold rebuild, and workspace test gates.
 Changes to aw itself land as direct commits with `Refs #<issue>` trailers
@@ -318,9 +319,10 @@ and `### Capability Index` is the compact scan surface. H3-Hn capability
 headings use field-style contracts and work-root tables to map headings to
 epic/subepic WI roots. Atomic `change` WIs usually come from `aw wi atomize`
 rather than README rows. YAML `## Capability:` sections and legacy capability
-tables are migration input only. Verified progress requires closed/non-deferred
-work roots, passing declared verification gates or linked validation
-inventories, and resolving WI/TD refs. Do not use the old capability shorthand.
+tables are migration input only. Verified progress requires passing declared
+verification gates or linked validation inventories plus claim closure; WI
+linkage is derived provenance resolved from the WI side, and doc-stored WI
+refs are optional (stale ones degrade to advisory findings, #1847). Do not use the old capability shorthand.
 Project-local `aw.toml` may declare `[capability.profile].traits`; agents must
 let those traits derive required baseline capabilities before adding
 domain-specific capability roots. Trait-derived baseline capabilities are a
