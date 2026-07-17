@@ -28,6 +28,7 @@ fn instance() -> Pgpool {
     instance
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Verify CR status omits unsupported reserve counters and exposes unavailable reserve accounting.">
 #[test]
 fn context_aware_status_projects_capacity_plan() {
     let service = instance();
@@ -65,4 +66,5 @@ fn context_aware_status_projects_capacity_plan() {
     assert_eq!(patch["status"]["endpoints"][0]["allocated"], 80);
     assert_eq!(patch["status"]["blockedScaleReason"], blocked);
 }
+// </HANDWRITE>
 // HANDWRITE-END

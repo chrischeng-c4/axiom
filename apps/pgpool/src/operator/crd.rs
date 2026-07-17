@@ -209,6 +209,7 @@ pub struct PgpoolStatus {
 }
 
 impl PgpoolStatus {
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Omit reserve counters when no live reserve ledger exists and expose whether reserve accounting is available.">
     pub fn from_control_plane(
         spec: &PgpoolSpec,
         observed_generation: i64,
@@ -283,6 +284,7 @@ impl PgpoolStatus {
             message: format!("{ready_replicas}/{desired_replicas} pgpool pods ready"),
         }
     }
+// </HANDWRITE>
 }
 
 fn pod_phase(phase: PodControlPhase) -> &'static str {

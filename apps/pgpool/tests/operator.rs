@@ -193,6 +193,7 @@ fn operator_assets_are_leader_elected_and_layered() {
     assert!(yaml.contains("namespace: database-system"));
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Preserve coverage for reserve counters when the pure control plane does own a reserve ledger.">
 /// verify: operator::concurrent_pods_cannot_overgrant_reserve_capacity (R4)
 #[test]
 fn concurrent_pods_cannot_overgrant_reserve_capacity() {
@@ -258,4 +259,5 @@ fn concurrent_pods_cannot_overgrant_reserve_capacity() {
         "base allocation plus every granted reserve unit remains capped"
     );
 }
+// </HANDWRITE>
 // </HANDWRITE>

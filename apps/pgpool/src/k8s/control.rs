@@ -310,6 +310,7 @@ impl PgpoolControlPlane {
         Ok(DrainProgress::Released)
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Distinguish control-plane reserve ledger availability from endpoint discovery availability in the shared status context.">
     pub fn status(&self) -> ControlPlaneStatus {
         let endpoints: Vec<_> = self
             .budgets
@@ -346,6 +347,7 @@ impl PgpoolControlPlane {
             blocked_scale_reason,
         }
     }
+// </HANDWRITE>
 
     fn pod(&self, endpoint: &str, pod: &str) -> Result<&PodControlStatus, ControlPlaneError> {
         self.pods
