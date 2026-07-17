@@ -69,3 +69,28 @@ flowchart TD
     r1[R1 tls only fixture] --> apps_pgpool_tests_tls_required_discovery_sh[apps/pgpool/tests/tls_required_discovery.sh]
     r2[R2 managed tls query] --> connection_discovery_cloudsql_discovery_succeeds_against_tls_required_postgres[connection_discovery::cloudsql_discovery_succeeds_against_tls_required_postgres]
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-managed-discovery-tls-required-proof-verification
+requirements:
+  cloudsql_tls_discovery:
+    id: R2
+    text: "CloudSql discovery trusts the fixture CA and returns runtime connection facts after a real Rustls PostgreSQL handshake."
+    kind: integration
+    risk: high
+    verify: connection_discovery::cloudsql_discovery_succeeds_against_tls_required_postgres
+  plaintext_rejected:
+    id: R1
+    text: "The disposable PostgreSQL fixture accepts only hostssl connections and its proof script fails if an explicit plaintext client is accepted."
+    kind: integration
+    risk: high
+    verify: apps/pgpool/tests/tls_required_discovery.sh
+---
+flowchart TD
+    r1[R1 plaintext rejected] --> apps_pgpool_tests_tls_required_discovery_sh[apps/pgpool/tests/tls_required_discovery.sh]
+    r2[R2 cloudsql tls discovery] --> connection_discovery_cloudsql_discovery_succeeds_against_tls_required_postgres[connection_discovery::cloudsql_discovery_succeeds_against_tls_required_postgres]
+```
