@@ -77,7 +77,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: Parse and canonicalize W3C version 00 traceparent, reject malformed or zero ids, and create exporter-independent root or child request correlation.
+    description: Parse and canonicalize strict W3C version 00 traceparent, reject malformed or zero ids, and create exporter-independent root or child request correlation.
   - path: libs/service-http/src/transport.rs
     action: modify
     section: logic
@@ -104,7 +104,6 @@ changes:
     impl_mode: hand-written
     description: Prove valid parent preservation, local id generation, malformed and zero-id fallback, request routing, and no-OTLP behavior.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
