@@ -118,7 +118,7 @@ fn cr_renders_owned_stateless_shared_deployment() {
     }
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Migrate operator control-plane status coverage to the explicit endpoint-scoped Pod lifecycle API.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1889" reason="Migrate operator control-plane status coverage to the explicit endpoint-scoped Pod lifecycle API.">
 #[test]
 fn status_projects_global_budget_and_managed_readiness() {
     let mut budgets = GlobalConnectionBudget::default();
