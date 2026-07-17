@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T16:49:28.888137+00:00"
-digest = "sha256:b0382fd401cb82dbd7e7553a4b2d53f40a634e1058287b69ec948aa28e1ef34b"
-source_digest = "sha256:b0382fd401cb82dbd7e7553a4b2d53f40a634e1058287b69ec948aa28e1ef34b"
-ir_digest = "sha256:c713c6033345a87fdba9b493adc6e40e0c11857cf0915dcc5958562da24ed3f8"
+generated_at = "2026-07-17T16:51:40.093570+00:00"
+digest = "sha256:a86b405516528a05650039d91da112fd6ae59ae8f0d2d240bcc005a85dfb132c"
+source_digest = "sha256:a86b405516528a05650039d91da112fd6ae59ae8f0d2d240bcc005a85dfb132c"
+ir_digest = "sha256:b9f782965953a2d7c9e9e80e89756520f749f1ace9551a7d334d55a1a3c89ef3"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -123,8 +123,8 @@ section_count = 3
 
 [[files]]
 path = "logic/p0-dense-buffer-readiness-reactor.md"
-digest = "sha256:2bcee28d5a00e9cda3a4a2c7bcfcee92afffea2b37d1a6336314e9b60b919cb1"
-ir_digest = "sha256:18e6c92a9097b536c3b2a068f2ee03a2f61c12437e76300dbf6f4877cf8e0ea1"
+digest = "sha256:27d2194d96f31a7183b3e378b63d9063f9b83f191406fc819435957a5840908e"
+ir_digest = "sha256:fac964bfcc63af35751edeaf04e07ce4ba5a4c8ceb4009a3ef1146ec8fb56b49"
 section_count = 3
 
 [[files]]
