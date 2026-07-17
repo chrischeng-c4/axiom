@@ -943,7 +943,7 @@ async fn dropped_lease_without_explicit_release_does_not_leak_capacity_slot() {
     drop(second);
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Update explicit policy fixtures to Duration values.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1891" reason="Update explicit policy fixtures to Duration values.">
 /// verify: pool::reserve_admission_waits_before_opening_reserve_backend (R2)
 #[tokio::test]
 async fn reserve_admission_waits_before_opening_reserve_backend() {
