@@ -455,7 +455,6 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 async fn run_brief(args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = args.slug.clone();
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
@@ -479,6 +478,12 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
             }
         };
     let spec_path = spec_path.unwrap_or_default();
+    let allowed_dirty_paths = brief_allowed_dirty_paths(&markers, change_paths.as_deref());
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &allowed_dirty_paths,
+    )?;
 
     if markers.is_empty() {
         // A TD may legitimately generate no HANDWRITE blocks, or a caller may
@@ -594,6 +599,24 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
     let _ = args.json;
     let _ = args.force;
     Ok(())
+}
+
+/// While a marker is pending, brief mode must begin from a clean tree so its
+/// payload dispatch names an unambiguous source snapshot. Once the active TD
+/// has no markers left, its declared Changes paths are the only legitimate
+/// marker-free evidence that may be staged by the terminal Cb-Fill commit.
+fn brief_allowed_dirty_paths<'a>(
+    markers: &[HandwriteMarkerEntry],
+    change_paths: Option<&'a [String]>,
+) -> Vec<&'a str> {
+    if markers.is_empty() {
+        return change_paths
+            .unwrap_or_default()
+            .iter()
+            .map(String::as_str)
+            .collect();
+    }
+    Vec::new()
 }
 
 fn resolve_active_spec_path(
@@ -1567,6 +1590,22 @@ mod tests {
             Some("hello-world".to_string())
         );
         assert_eq!(slugify_short(""), None);
+    }
+
+    #[test]
+    fn marker_free_brief_allows_only_declared_evidence_paths() {
+        let paths = vec![
+            "apps/pgpool/tests/connection_discovery.rs".to_string(),
+            "apps/pgpool/tech-design/semantic/discovery.md".to_string(),
+        ];
+        assert_eq!(
+            brief_allowed_dirty_paths(&[], Some(&paths)),
+            vec![
+                "apps/pgpool/tests/connection_discovery.rs",
+                "apps/pgpool/tech-design/semantic/discovery.md",
+            ]
+        );
+        assert!(brief_allowed_dirty_paths(&[marker("pending")], Some(&paths)).is_empty());
     }
 
     #[test]
