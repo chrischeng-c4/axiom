@@ -21,10 +21,10 @@ Public API manifest for `apps/agentic-workflow/src/cli/init.rs` generated from A
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `NewArgs` | apps/agentic-workflow/src/cli/init.rs | struct | pub | 61 |  |
-| `run_new` | apps/agentic-workflow/src/cli/init.rs | function | pub | 95 | run_new(args: NewArgs) -> Result<()> |
-| `WorkspaceType` | apps/agentic-workflow/src/cli/init.rs | enum | pub(crate) | 648 |  |
-| `detect_workspace_type` | apps/agentic-workflow/src/cli/init.rs | function | pub(crate) | 664 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
+| `NewArgs` | apps/agentic-workflow/src/cli/init.rs | struct | pub | 62 |  |
+| `run_new` | apps/agentic-workflow/src/cli/init.rs | function | pub | 96 | run_new(args: NewArgs) -> Result<()> |
+| `WorkspaceType` | apps/agentic-workflow/src/cli/init.rs | enum | pub(crate) | 649 |  |
+| `detect_workspace_type` | apps/agentic-workflow/src/cli/init.rs | function | pub(crate) | 665 | detect_workspace_type(project_root: &Path) -> WorkspaceType |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
@@ -58,6 +58,7 @@ const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
 const SKILL_GUARD: &str = include_str!("../../templates/cli/mainthread/skills/aw-guard/SKILL.md");
+const SKILL_GOAL: &str = include_str!("../../templates/cli/mainthread/skills/aw-goal/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/scripts/release.sh");
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R15
@@ -1033,6 +1034,7 @@ fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
         ("aw-build-release", SKILL_BUILD_RELEASE),
         ("aw-health", SKILL_HEALTH),
         ("aw-guard", SKILL_GUARD),
+        ("aw-goal", SKILL_GOAL),
     ]
 }
 
@@ -1157,6 +1159,11 @@ fn deprecated_skill_names() -> Vec<&'static str> {
         "aw-codex-review",
         "aw-gemini-explore-codebase",
         "aw-gemini-explore-specs",
+        // #1897: the generic Stop-hook goal-loop skill (never reliably
+        // fired, see its own "Known gaps") is retired in favor of the
+        // CLI-owned `aw goal` verifiable-condition loop + thin `aw-goal`
+        // dispatcher skill.
+        "goal-loop",
     ]
 }
 
@@ -2946,6 +2953,50 @@ auth_method = "cli"
         }
     }
 
+    // #1897: the generic Stop-hook `goal-loop` skill is retired in favor of
+    // the CLI-owned `aw goal` verifiable-condition loop; both skill-tree
+    // installers must prune it if found on disk from a previous install.
+    #[test]
+    fn test_install_skills_prunes_goal_loop() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            let retired = skills_dir.join("goal-loop");
+            fs::create_dir_all(&retired).unwrap();
+            fs::write(retired.join("SKILL.md"), "# retired goal-loop").unwrap();
+
+            install(&skills_dir).unwrap();
+
+            assert!(
+                !retired.exists(),
+                "removed goal-loop skill should be pruned"
+            );
+        }
+    }
+
+    // #1897: the new `aw-goal` skill projects into both skill trees.
+    #[test]
+    fn test_install_skills_projects_aw_goal() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            fs::create_dir_all(&skills_dir).unwrap();
+
+            install(&skills_dir).unwrap();
+
+            let skill_path = skills_dir.join("aw-goal").join("SKILL.md");
+            assert!(skill_path.exists(), "aw-goal skill should be installed");
+            let content = fs::read_to_string(&skill_path).unwrap();
+            assert!(content.contains("aw goal set"));
+        }
+    }
+
     #[test]
     fn test_install_claude_skills_preserves_unrelated_codex_review_skill() {
         let tmp = TempDir::new().unwrap();
@@ -3323,4 +3374,20 @@ changes:
       `install_agents_skills` prune them from `.claude/skills/` and
       `.agents/skills/` on every install. Kept skills' bodies (`aw-wi`)
       no longer reference the retired `/aw:capability` skill.
+  - path: apps/agentic-workflow/src/cli/init.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1897: adds the `SKILL_GOAL` `include_str!` const (templates
+      source `templates/cli/mainthread/skills/aw-goal/SKILL.md`) and its
+      `aw_skill_entries` row so the new thin `/aw:goal` dispatcher skill
+      projects into both `.claude/skills/` and `.agents/skills/`. Adds
+      `"goal-loop"` to `deprecated_skill_names` so the retired generic
+      Stop-hook goal-loop skill is pruned from both trees on every install
+      (it never reliably fired its `SubagentStop` hook — see its own
+      "Known gaps"; the CLI-owned `aw goal` verifiable-condition loop is
+      the enforcement now). Adds `test_install_skills_prunes_goal_loop`
+      and `test_install_skills_projects_aw_goal` fixtures proving both
+      directions on both installers.
 ```

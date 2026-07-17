@@ -152,7 +152,7 @@ pub const WORKFLOW_TABLE_VERBS: &[&str] =
 /// table: the CLI-convention trio (`llm`/`upgrade`/`issue` — see "CLI
 /// Convention: every CLI ships `llm`, `upgrade`, `issue`") plus the
 /// remaining agent-support verbs.
-pub const SUPPORT_TABLE_VERBS: &[&str] = &["guard", "llm", "upgrade", "issue"];
+pub const SUPPORT_TABLE_VERBS: &[&str] = &["guard", "llm", "upgrade", "issue", "goal"];
 
 /// Marker pair around the generated Workflow CLI table, nested inside the
 /// `aw:start`/`aw:end` managed block.
@@ -1205,4 +1205,13 @@ changes:
       stale skills retired in `crate::cli::init`; `aw-wi` is the sole
       remaining consumer of the `CLAUDE.md` -> `AGENTS.md` cross-reference
       swap).
+  - path: apps/agentic-workflow/src/cli/doc_mirror.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1897: adds `"goal"` to `SUPPORT_TABLE_VERBS` so the generated
+      root-doc Support CLI table picks up the new `aw goal` ad-hoc
+      verifiable-condition-loop verb family alongside `guard`/`llm`/
+      `upgrade`/`issue`.
 ```

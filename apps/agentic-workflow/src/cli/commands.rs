@@ -8,6 +8,7 @@ use crate::cli::conf;
 use crate::cli::drift;
 use crate::cli::ec;
 use crate::cli::generator;
+use crate::cli::goal;
 use crate::cli::guard;
 use crate::cli::init;
 use crate::cli::issues;
@@ -36,6 +37,9 @@ pub enum Commands {
 
     /// Agent-runtime direct edit/create guard for Codex, Claude Code, and AGY.
     Guard(guard::GuardArgs),
+
+    /// Ad-hoc CLI-owned verifiable-condition loop for bounded work outside the WI lifecycle.
+    Goal(goal::GoalArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
     Conf(conf::ConfArgs),
@@ -90,6 +94,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Guard(args) => {
             guard::run(args).await?;
+        }
+        Commands::Goal(args) => {
+            goal::run(args)?;
         }
         Commands::Conf(args) => {
             conf::run(args)?;

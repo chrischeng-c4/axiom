@@ -43,7 +43,7 @@ must be resolved from a canonical tracker label before the command is emitted.
 | `ChainBlockerKind` | apps/agentic-workflow/src/cli/chain.rs | enum | pub | 47 |  |
 | `ChainBlocker` | apps/agentic-workflow/src/cli/chain.rs | struct | pub | 75 |  |
 | `validate_aw_command_string` | apps/agentic-workflow/src/cli/chain.rs | function | pub | 142 | validate_aw_command_string(cmd: &str) -> Result<(), ChainBlocker> |
-| `normalize_legacy_next_action` | apps/agentic-workflow/src/cli/chain.rs | function | pub | 1263 | normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> |
+| `normalize_legacy_next_action` | apps/agentic-workflow/src/cli/chain.rs | function | pub | 1298 | normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> |
 
 ## Source
 <!-- type: source lang: rust -->
@@ -302,6 +302,21 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "project-root envelope's work-item queue gate command",
     },
     EmitSite {
+        source: "run.rs:ec_draft_command (EC-first fresh WI admission)",
+        sample: "aw ec draft 1500 --project agentic-workflow --wi 1500",
+        note: "a fresh bounded WI creates its project-local EC skeleton before TD/codegen",
+    },
+    EmitSite {
+        source: "ec.rs:EC-first WI transition",
+        sample: "aw ec gen --project agentic-workflow --verify --wi 1500",
+        note: "only a successful EC generation may unlock the owning WI's TD create act",
+    },
+    EmitSite {
+        source: "run.rs:ec_verify_command (EC verdict transition)",
+        sample: "aw ec verify --project agentic-workflow --wi 1500",
+        note: "a completed TD/codegen candidate records its EC verdict before root dispatch",
+    },
+    EmitSite {
         source: "run.rs:loop_state_envelope (converged)",
         sample: "aw td code-check 915",
         note: "loop engine's terminal act, sourced from LoopState.next_action \
@@ -401,6 +416,13 @@ const EMIT_REGISTRY: &[EmitSite] = &[
         note: "#1276: bare, slug-less `aw td code-check`'s guidance envelope now points at the \
                `aw health` drift/marker axis instead of running the retired whole-tree audit \
                walker (the #844 livelock class) itself",
+    },
+    EmitSite {
+        source: "goal.rs:print_check_outcome (blocked self-loop)",
+        sample: "aw goal check a1b2c3d4",
+        note: "#1897: `aw goal check`'s red-gate report loops back on itself with the \
+               resolved goal id until every recorded gate is green or the goal's budget/\
+               24h expiry ceiling is exhausted",
     },
 ];
 
@@ -697,6 +719,41 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "issue.comment",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    // -- goal (support: ad-hoc verifiable-condition loop, #1897) --------
+    // Goal state is workspace-scoped ephemeral `/tmp/aw` JSON, explicitly
+    // outside the WI/TD/EC tracked-lifecycle surface `mutates_lifecycle`
+    // documents above, so every `goal.*` leaf is `false` here regardless
+    // of whether it writes its own state file.
+    VerbLifecycle {
+        path: "goal.set",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.check",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.show",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.list",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.clear",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: false,
         sunset_criterion: "",
@@ -1859,6 +1916,18 @@ changes:
       `issue.comment` verb (`Utility` class, no sunset criterion), keeping
       `leaf_verb_paths_are_all_classified` green for the `aw issue comment`
       subcommand wired in `standard_cli.rs`.
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      #1897: added five `VERB_LIFECYCLE_REGISTRY` entries (`goal.set`,
+      `goal.check`, `goal.show`, `goal.list`, `goal.clear` — all `Utility`
+      class, `mutates_lifecycle: false` since goal state is workspace-scoped
+      ephemeral `/tmp/aw` JSON explicitly outside the tracked WI/TD/EC
+      lifecycle surface) for the new `aw goal` verb family, plus an
+      `EMIT_REGISTRY` entry for `goal.rs:print_check_outcome`'s red-gate
+      `aw goal check <id>` self-loop next-command.
   - path: apps/agentic-workflow/src/cli/chain.rs
     action: modify
     impl_mode: codegen
