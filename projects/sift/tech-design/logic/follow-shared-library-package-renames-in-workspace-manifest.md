@@ -58,3 +58,35 @@ changes:
 ```
 
 The bounded implementation also corrects the four corresponding dependency entries in `projects/sift/Cargo.toml`. Cargo manifests are declarative build inputs rather than Rust codegen targets; the generated regression test is the executable drift gate for that hand-authored manifest change.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: sift-shared-library-manifest-convergence-verification
+requirements:
+  current_packages_preserve_aliases:
+    id: R1
+    text: "Sift maps its four established Rust dependency aliases to the current service-k8s, storage-durable, metrics-prometheus, and raft-runtime package paths."
+    kind: regression
+    risk: high
+    verify: cargo test -p sift --test shared_library_manifest_aliases manifest_uses_current_shared_library_packages -- --exact
+  sift_library_resolves:
+    id: R3
+    text: "Sift library source continues to resolve its existing crate aliases without runtime or API changes."
+    kind: regression
+    risk: medium
+    verify: cargo check -p sift --lib
+  workspace_manifest_loads:
+    id: R2
+    text: "The repository workspace loads every manifest after the package/path convergence and no retired shared-library directory is required."
+    kind: functional
+    risk: high
+    verify: cargo metadata --no-deps
+---
+flowchart TD
+    r1[R1 current packages preserve aliases] --> cargo_test_p_sift_test_shared_library_manifest_aliases_manifest_uses_current_shared_library_packages_exact[cargo test -p sift --test shared_library_manifest_aliases manifest_uses_current_shared_library_packages -- --exact]
+    r2[R2 workspace manifest loads] --> cargo_metadata_no_deps[cargo metadata --no-deps]
+    r3[R3 sift library resolves] --> cargo_check_p_sift_lib[cargo check -p sift --lib]
+```
