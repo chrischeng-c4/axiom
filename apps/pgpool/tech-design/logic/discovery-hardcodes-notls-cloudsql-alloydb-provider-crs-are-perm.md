@@ -10,30 +10,21 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: provider-driven-discovery-tls
-entry: remote_endpoint_provider
+entry: provider
 nodes:
-  plain: { kind: process, label: "PlainPostgres selects NoTls" }
-  managed: { kind: process, label: "CloudSql or AlloyDb selects rustls system-root connector" }
-  connect: { kind: decision, label: "connect and query runtime PostgreSQL facts" }
-  blocked: { kind: terminal, label: "publish discovery error and hold safe target" }
-  facts: { kind: terminal, label: "publish connection facts" }
+  plain: { kind: process, label: "NoTls" }
+  tls: { kind: process, label: "rustls system roots" }
+  facts: { kind: terminal, label: "query connection facts" }
 edges:
-  - { from: remote_endpoint_provider, to: plain, label: plain_postgres }
-  - { from: remote_endpoint_provider, to: managed, label: cloud_sql or alloy_db }
-  - { from: plain, to: connect }
-  - { from: managed, to: connect }
-  - { from: connect, to: blocked, label: connect or query failure }
-  - { from: connect, to: facts, label: success }
+  - { from: provider, to: plain, label: plain_postgres }
+  - { from: provider, to: tls, label: cloud_sql or alloy_db }
+  - { from: plain, to: facts }
+  - { from: tls, to: facts }
 ---
 flowchart TD
-  provider{"provider"} -->|plain_postgres| notls["NoTls"]
-  provider -->|cloud_sql / alloy_db| rustls["rustls system roots"]
-  notls --> query["discover runtime limits"]
-  rustls --> query
-  query -->|ok| facts["connection facts"]
-  query -->|error| blocked["safe Blocked status"]
+  provider{"provider"} -->|plain| notls["NoTls"] --> facts["discover facts"]
+  provider -->|managed| rustls["rustls roots"] --> facts
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
