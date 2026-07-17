@@ -69,7 +69,7 @@ impl BackendMessage {
         }
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in backend.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1877" reason="logic section in backend.rs is hand-written pending codegen support">
     /// Decodes a fully-buffered `Frame` into a typed `BackendMessage` by tag
     /// byte (and, for tag `'R'`, by the 4-byte authentication sub-code).
     pub fn decode(frame: &Frame, config: &WireCodecConfig) -> Result<BackendMessage, FrameError> {
