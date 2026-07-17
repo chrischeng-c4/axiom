@@ -29,3 +29,35 @@ flowchart TD
   validate --> relay[verbatim relay]
   classify -->|CancelRequest| cancel[deliberate rejection]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/wire/backend.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: BackendMessage::decode
+  - path: apps/pgpool/src/wire/frontend.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: FrontendMessage::decode
+  - path: apps/pgpool/src/wire/reader.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: validate_backend_relay
+  - path: apps/pgpool/tests/wire_codec.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: frontend_extended_query_round_trip
+  - path: apps/pgpool/tests/session_proxy.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: real_postgres_session_connects_queries_and_disconnects_cleanly
+```
