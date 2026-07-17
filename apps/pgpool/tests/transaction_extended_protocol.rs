@@ -89,6 +89,7 @@ async fn spawn_transaction_proxy(
     (proxy_addr, server, shutdown_tx)
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Give the existing transaction extended-protocol integration proof explicit, auditable ownership without changing behavior.">
 /// verify: transaction_extended_protocol::parse_is_rejected_without_hang (R1)
 #[tokio::test]
 async fn parse_is_rejected_without_hang() {
@@ -131,3 +132,4 @@ async fn parse_is_rejected_without_hang() {
         server.await.expect("transaction proxy server task joins");
     }
 }
+// </HANDWRITE>
