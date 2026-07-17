@@ -315,7 +315,7 @@ impl<'a> Parser<'a> {
                                          //          body.
         let mut targets: Vec<String> = Vec::new();
         let mut prepends: Vec<Spanned<Stmt>> = Vec::new();
-        let mut units: Vec<(Option<Vec<String>>, String)> = Vec::new();
+        let mut units: Vec<(Option<Vec<String>>, String, bool)> = Vec::new();
         loop {
             if self.peek_kind() == Some(TokenKind::LParen) {
                 let (lp_start, _) = self.advance();
@@ -334,10 +334,19 @@ impl<'a> Parser<'a> {
                 units.push((
                     Some(group),
                     format!("__for_target_{}_{}__", lp_start, units.len()),
+                    false,
                 ));
             } else {
+                // PEP 3132: a starred name (`for a, *b in seq:`) collects the
+                // remaining iteration-value elements into a list (#1895).
+                let starred = if self.peek_kind() == Some(TokenKind::Star) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
                 let (s, e) = self.expect_name()?;
-                units.push((None, self.text_at(s, e).to_string()));
+                units.push((None, self.text_at(s, e).to_string(), starred));
             }
             if self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
@@ -348,18 +357,34 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
+        if units.iter().filter(|(_, _, starred)| *starred).count() > 1 {
+            return Err(MambaError::syntax(
+                self.span_from(start),
+                "multiple starred expressions in assignment".to_string(),
+            ));
+        }
+        let mut star_index = None;
         // Single outer-paren group with no continuation → treat as flat.
         if units.len() == 1 {
             match units.into_iter().next().unwrap() {
-                (Some(group), _) => {
+                (Some(group), _, _) => {
                     targets = group;
                 }
-                (None, name) => {
+                (None, _, true) => {
+                    return Err(MambaError::syntax(
+                        self.span_from(start),
+                        "starred assignment target must be in a list or tuple".to_string(),
+                    ));
+                }
+                (None, name, false) => {
                     targets.push(name);
                 }
             }
         } else {
-            for (group, flat_name) in units {
+            for (idx, (group, flat_name, starred)) in units.into_iter().enumerate() {
+                if starred {
+                    star_index = Some(idx);
+                }
                 targets.push(flat_name.clone());
                 if let Some(names) = group {
                     let span = Span::dummy();
@@ -405,6 +430,7 @@ impl<'a> Parser<'a> {
         let stmt = if is_async {
             Stmt::AsyncFor {
                 targets,
+                star_index,
                 var_ty,
                 iter,
                 body,
@@ -413,6 +439,7 @@ impl<'a> Parser<'a> {
         } else {
             Stmt::For {
                 targets,
+                star_index,
                 var_ty,
                 iter,
                 body,
