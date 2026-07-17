@@ -24,15 +24,18 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 
-use crate::pool::backend_pool::{BackendLease, BackendPool};
+use crate::pool::backend_pool::{BackendLease, BackendPool, StartupAdmission};
+use crate::pool::telemetry::{TransactionPhase, TransactionPhaseOutcome};
 use crate::pool::types::{BackendConnectionId, LeaseDisposition, PoolRejectionReason};
+use crate::pool::TransactionReactor;
 use crate::proxy::{
-    forward_backend, forward_frontend, read_frame, read_startup, relay_until_ready,
+    forward_backend, forward_backend_batch, forward_frontend, forward_raw,
+    read_backend_relay_batch_with_raw, read_relay_frame_with_raw, read_startup, relay_until_ready,
     HandshakeOutcome, RejectionReason,
 };
 use crate::wire::{
-    BackendMessage, FrameReader, FrontendMessage, Role, TransactionStatus, WireCodecConfig,
-    WireMessage,
+    FrameReader, FrontendMessage, RelayFrame, RelayFrameKind, Role, TransactionStatus,
+    WireCodecConfig,
 };
 
 /// Full configuration for one `TransactionHandler`, per the TD Schema
@@ -58,11 +61,41 @@ pub struct TransactionProxyConfig {
 #[derive(Debug, Clone)]
 pub struct TransactionHandler {
     config: TransactionProxyConfig,
+    engine: TransactionEngine,
+}
+
+#[derive(Debug, Clone)]
+enum TransactionEngine {
+    Legacy,
+    Reactor(TransactionReactor),
 }
 
 impl TransactionHandler {
+    // @spec apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md#logic
     pub fn new(config: TransactionProxyConfig) -> Self {
-        Self { config }
+        if let Some(policy) = config.backend_pool.reserve_policy() {
+            tracing::info!(
+                reserve_pool_timeout_seconds = policy.reserve_pool_timeout_seconds,
+                queue_wait_timeout_seconds = policy.queue_wait_timeout_seconds,
+                reserve_idle_timeout_seconds = policy.reserve_idle_timeout_seconds,
+                "pgpool reserve lease cache enabled; control-plane exchange stays off the relay path"
+            );
+        }
+        // The single-owner readiness reactor is the production transaction
+        // data path. Keep an explicit legacy escape hatch for operational
+        // rollback while the session-mode Tokio handler remains unchanged.
+        let engine = if std::env::var("PGPOOL_TRANSACTION_ENGINE").as_deref() == Ok("legacy") {
+            TransactionEngine::Legacy
+        } else {
+            match TransactionReactor::start(config.backend_pool.clone()) {
+                Ok(reactor) => TransactionEngine::Reactor(reactor),
+                Err(error) => {
+                    tracing::warn!(%error, "pgpool transaction reactor unavailable; using legacy handler");
+                    TransactionEngine::Legacy
+                }
+            }
+        };
+        Self { config, engine }
     }
 
     pub fn config(&self) -> &TransactionProxyConfig {
@@ -78,8 +111,40 @@ impl TcpHandler for TransactionHandler {
 
     fn handle(&self, stream: TcpStream, cx: ConnectionContext) -> Self::Future {
         let config = self.config.clone();
+        let engine = self.engine.clone();
         Box::pin(async move {
-            run_transaction_client(stream, &config, cx.peer_addr).await;
+            match engine {
+                TransactionEngine::Legacy => {
+                    run_transaction_client(stream, &config, cx.peer_addr).await;
+                }
+                TransactionEngine::Reactor(reactor) => {
+                    let permit = match config.frontend_budget.try_acquire() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            let mut client = stream;
+                            write_rejection(&mut client, RejectionReason::FrontendBudgetExhausted)
+                                .await;
+                            return Ok(());
+                        }
+                    };
+                    match reactor.handoff(stream, permit) {
+                        Ok(done) => {
+                            // Keep the tcp-server task alive for the reactor
+                            // client's real lifetime. Drain therefore stops
+                            // accepting new frontends but still waits for an
+                            // already-open transaction to commit/close.
+                            let _ = done.await;
+                        }
+                        Err(_) => {
+                            tracing::info!(
+                                peer = %cx.peer_addr,
+                                outcome = "reactor_handoff_failed",
+                                "pgpool transaction reactor handoff failed"
+                            );
+                        }
+                    }
+                }
+            }
             Ok(())
         })
     }
@@ -108,52 +173,49 @@ async fn run_transaction_client(
         }
     };
 
-    // Admission handshake: acquire_fresh() always dials brand-new (Pool
-    // Lease State Machine's `admitting` state); its own `PoolError` maps to
-    // `rejected_saturated` (pool momentarily full even for admission) or
-    // `rejected_backend_unreachable` per the Lease FSM's two admission
-    // rejection edges.
-    let lease = match config.backend_pool.acquire_fresh().await {
-        Ok(lease) => lease,
-        Err(crate::pool::types::PoolError::Saturated { .. }) => {
-            let mut client = client;
-            write_pool_rejection(&mut client, PoolRejectionReason::BackendPoolSaturated).await;
-            drop(permit);
-            tracing::info!(
-                peer = %peer_addr,
-                outcome = "rejected_pool_saturated_admission",
-                "pgpool transaction admission rejected"
-            );
-            return;
-        }
-        Err(crate::pool::types::PoolError::BackendUnreachable(_)) => {
-            let mut client = client;
-            write_rejection(&mut client, RejectionReason::BackendUnreachable).await;
-            drop(permit);
-            tracing::info!(
-                peer = %peer_addr,
-                outcome = "rejected_backend_unreachable",
-                "pgpool transaction admission rejected"
-            );
-            return;
-        }
-    };
-
     let (mut client_read, mut client_write) = client.into_split();
     let mut frontend_reader = FrameReader::new(Role::Frontend, &config.wire);
 
-    let BackendLease {
-        id: handshake_id,
-        stream: handshake_backend,
-        ..
-    } = lease;
-    let (mut backend_read, mut backend_write) = handshake_backend.into_split();
-    let mut backend_reader = FrameReader::new(Role::Backend, &config.wire);
-
+    // @spec apps/pgpool/tech-design/logic/trust-startup-replay-for-capped-transaction-pooling.md#logic
+    // Decode startup before asking the pool for capacity. A matching,
+    // challenge-free reply can therefore establish a frontend without taking
+    // a physical backend from the capped pool.
     let startup =
         match read_startup(&mut client_read, &mut client_write, &mut frontend_reader).await {
             Ok(startup) => startup,
             Err(_) => {
+                drop(permit);
+                return;
+            }
+        };
+
+    let mut replay_safe_startup = false;
+    match config.backend_pool.acquire_for_startup(&startup).await {
+        Ok(StartupAdmission::Replay(messages)) => {
+            replay_safe_startup = true;
+            for message in messages {
+                if forward_backend(&mut client_write, &message).await.is_err() {
+                    drop(permit);
+                    return;
+                }
+            }
+        }
+        Ok(StartupAdmission::Fresh(lease)) => {
+            let BackendLease {
+                id: handshake_id,
+                stream: handshake_backend,
+                ..
+            } = lease;
+            let (mut backend_read, mut backend_write) = handshake_backend.into_split();
+            let mut backend_reader = FrameReader::new(Role::Backend, &config.wire);
+
+            if forward_frontend(
+                &mut backend_write,
+                &FrontendMessage::Startup(startup.clone()),
+            )
+            .await
+            .is_err()
+            {
                 release_backend(
                     config,
                     handshake_id,
@@ -165,72 +227,74 @@ async fn run_transaction_client(
                 drop(permit);
                 return;
             }
-        };
-    if forward_frontend(&mut backend_write, &FrontendMessage::Startup(startup))
-        .await
-        .is_err()
-    {
-        release_backend(
-            config,
-            handshake_id,
-            backend_read,
-            backend_write,
-            LeaseDisposition::Close,
-        )
-        .await;
-        drop(permit);
-        return;
-    }
 
-    match relay_until_ready(
-        &mut client_read,
-        &mut client_write,
-        &mut backend_read,
-        &mut backend_write,
-        &mut frontend_reader,
-        &mut backend_reader,
-    )
-    .await
-    {
-        Ok(HandshakeOutcome::Rejected) => {
-            // The backend's own `ErrorResponse` was already forwarded
-            // verbatim by `relay_until_ready`.
+            match relay_until_ready(
+                &mut client_read,
+                &mut client_write,
+                &mut backend_read,
+                &mut backend_write,
+                &mut frontend_reader,
+                &mut backend_reader,
+            )
+            .await
+            {
+                Ok(HandshakeOutcome::Ready { startup_replay }) => {
+                    if let Some(messages) = startup_replay {
+                        replay_safe_startup = true;
+                        config
+                            .backend_pool
+                            .publish_startup_replay(startup.clone(), messages);
+                    }
+                }
+                Ok(HandshakeOutcome::Rejected) | Err(_) => {
+                    // The backend's ErrorResponse, when present, was already
+                    // forwarded verbatim by relay_until_ready.
+                    release_backend(
+                        config,
+                        handshake_id,
+                        backend_read,
+                        backend_write,
+                        LeaseDisposition::Close,
+                    )
+                    .await;
+                    drop(permit);
+                    return;
+                }
+            }
+
+            // The fresh handshake backend must be reset before later
+            // transaction leases can reuse it; replay clients hold none.
             release_backend(
                 config,
                 handshake_id,
                 backend_read,
                 backend_write,
-                LeaseDisposition::Close,
+                LeaseDisposition::ReturnToIdle,
             )
             .await;
+        }
+        Err(crate::pool::types::PoolError::Saturated { .. }) => {
+            write_pool_rejection(&mut client_write, PoolRejectionReason::BackendPoolSaturated)
+                .await;
             drop(permit);
+            tracing::info!(
+                peer = %peer_addr,
+                outcome = "rejected_pool_saturated_admission",
+                "pgpool transaction admission rejected"
+            );
             return;
         }
-        Ok(HandshakeOutcome::Ready) => {}
-        Err(_) => {
-            release_backend(
-                config,
-                handshake_id,
-                backend_read,
-                backend_write,
-                LeaseDisposition::Close,
-            )
-            .await;
+        Err(crate::pool::types::PoolError::BackendUnreachable(_)) => {
+            write_rejection(&mut client_write, RejectionReason::BackendUnreachable).await;
             drop(permit);
+            tracing::info!(
+                peer = %peer_addr,
+                outcome = "rejected_backend_unreachable",
+                "pgpool transaction admission rejected"
+            );
             return;
         }
     }
-
-    // Handshake succeeded: reset immediately and return to idle. The client
-    // holds NO backend lease at this point (Lease FSM's `idle_no_lease`).
-    release_backend(
-        config,
-        handshake_id,
-        backend_read,
-        backend_write,
-        LeaseDisposition::ReturnToIdle,
-    )
-    .await;
 
     // `await_client_activity` loop: each non-Terminate frontend frame
     // acquires a per-transaction lease and relays until that transaction's
@@ -238,18 +302,24 @@ async fn run_transaction_client(
     // a frame the client had already pipelined ahead of the previous leg's
     // `ReadyForQuery` (captured by `relay_one_transaction`, never lost),
     // standing in for a fresh frontend read on this iteration.
-    let mut pending_first_frame: Option<FrontendMessage> = None;
+    let mut pending_first_frame: Option<RelayFrame> = None;
     loop {
         let first_frame = match pending_first_frame.take() {
             Some(msg) => msg,
-            None => match read_frame(&mut client_read, &mut frontend_reader).await {
-                Ok(Some(WireMessage::Frontend(FrontendMessage::Terminate(_)))) | Ok(None) => {
+            None => match read_relay_frame_with_raw(&mut client_read, &mut frontend_reader).await {
+                Ok(Some(frame)) => match frame.kind {
+                    RelayFrameKind::FrontendTerminate => {
+                        drop(permit);
+                        return;
+                    }
+                    RelayFrameKind::Other => frame,
+                    RelayFrameKind::BackendReady(_) => {
+                        unreachable!("frontend-role reader only emits Frontend frames")
+                    }
+                },
+                Ok(None) => {
                     drop(permit);
                     return;
-                }
-                Ok(Some(WireMessage::Frontend(msg))) => msg,
-                Ok(Some(WireMessage::Backend(_))) => {
-                    unreachable!("frontend-role reader only emits Frontend frames")
                 }
                 Err(_) => {
                     drop(permit);
@@ -263,9 +333,30 @@ async fn run_transaction_client(
         // `PoolError` here (saturation timeout, or a fresh-connect failure
         // inside `acquire()`) is reported to this client as the synthesized
         // pool-saturated rejection.
-        let lease = match config.backend_pool.acquire().await {
-            Ok(lease) => lease,
+        let acquire_started = config.backend_pool.transaction_phase_started_at();
+        let acquisition = if replay_safe_startup {
+            config
+                .backend_pool
+                .acquire_for_replayed_startup(&startup)
+                .await
+        } else {
+            config.backend_pool.acquire().await
+        };
+        let lease = match acquisition {
+            Ok(lease) => {
+                config.backend_pool.record_transaction_phase_started(
+                    TransactionPhase::Acquire,
+                    TransactionPhaseOutcome::Success,
+                    acquire_started,
+                );
+                lease
+            }
             Err(_) => {
+                config.backend_pool.record_transaction_phase_started(
+                    TransactionPhase::Acquire,
+                    TransactionPhaseOutcome::Failure,
+                    acquire_started,
+                );
                 write_pool_rejection(&mut client_write, PoolRejectionReason::BackendPoolSaturated)
                     .await;
                 drop(permit);
@@ -281,6 +372,7 @@ async fn run_transaction_client(
         let (mut txn_backend_read, mut txn_backend_write) = txn_backend.into_split();
         let mut txn_backend_reader = FrameReader::new(Role::Backend, &config.wire);
 
+        let relay_started = config.backend_pool.transaction_phase_started_at();
         let outcome = relay_one_transaction(
             &mut client_read,
             &mut client_write,
@@ -291,6 +383,15 @@ async fn run_transaction_client(
             first_frame,
         )
         .await;
+        let relay_outcome = match outcome {
+            TxnLegOutcome::ReadyIdle(_) => TransactionPhaseOutcome::Success,
+            TxnLegOutcome::Ended => TransactionPhaseOutcome::Failure,
+        };
+        config.backend_pool.record_transaction_phase_started(
+            TransactionPhase::Relay,
+            relay_outcome,
+            relay_started,
+        );
 
         match outcome {
             TxnLegOutcome::ReadyIdle(pending) => {
@@ -328,7 +429,7 @@ enum TxnLegOutcome {
     /// this leg's `ReadyForQuery` -- captured (never forwarded to this
     /// now-being-reset backend) so it becomes the next lease's
     /// `first_frame` without a redundant socket read.
-    ReadyIdle(Option<FrontendMessage>),
+    ReadyIdle(Option<RelayFrame>),
     /// `Terminate`/EOF/`FrameError` on either leg: release `Close`, close
     /// the client.
     Ended,
@@ -344,10 +445,13 @@ async fn relay_one_transaction(
     backend_write: &mut OwnedWriteHalf,
     frontend_reader: &mut FrameReader,
     backend_reader: &mut FrameReader,
-    first_frame: FrontendMessage,
+    first_frame: RelayFrame,
 ) -> TxnLegOutcome {
-    let is_terminate = matches!(first_frame, FrontendMessage::Terminate(_));
-    if forward_frontend(backend_write, &first_frame).await.is_err() {
+    let is_terminate = matches!(first_frame.kind, RelayFrameKind::FrontendTerminate);
+    if forward_raw(backend_write, &first_frame.bytes)
+        .await
+        .is_err()
+    {
         return TxnLegOutcome::Ended;
     }
     if is_terminate {
@@ -372,69 +476,41 @@ async fn relay_one_transaction(
     // disconnect end (and free/close) this leg promptly even while the
     // backend is still mid-response, instead of only being noticed after
     // the backend eventually replies.
-    let mut pending_frontend: Option<FrontendMessage> = None;
+    let mut pending_frontend: Option<RelayFrame> = None;
 
     loop {
         let is_idle = loop {
             if pending_frontend.is_some() {
                 // Already have a pending frame; only await the backend now.
-                match read_frame(backend_read, backend_reader).await {
-                    Ok(Some(WireMessage::Backend(BackendMessage::ReadyForQuery(ready)))) => {
-                        let idle = matches!(&ready.status, TransactionStatus::Idle);
-                        if forward_backend(client_write, &BackendMessage::ReadyForQuery(ready))
-                            .await
-                            .is_err()
-                        {
-                            return TxnLegOutcome::Ended;
-                        }
-                        break idle;
-                    }
-                    Ok(Some(WireMessage::Backend(msg))) => {
-                        if forward_backend(client_write, &msg).await.is_err() {
-                            return TxnLegOutcome::Ended;
-                        }
-                    }
-                    Ok(Some(WireMessage::Frontend(_))) => {
-                        unreachable!("backend-role reader only emits Backend frames")
-                    }
-                    Ok(None) | Err(_) => return TxnLegOutcome::Ended,
+                match relay_backend_batch(backend_read, client_write, backend_reader).await {
+                    Ok(Some(status)) => break matches!(status, TransactionStatus::Idle),
+                    Ok(None) => {}
+                    Err(()) => return TxnLegOutcome::Ended,
                 }
             } else {
                 tokio::select! {
-                    backend_result = read_frame(backend_read, backend_reader) => {
+                    backend_result = relay_backend_batch(backend_read, client_write, backend_reader) => {
                         match backend_result {
-                            Ok(Some(WireMessage::Backend(BackendMessage::ReadyForQuery(ready)))) => {
-                                let idle = matches!(&ready.status, TransactionStatus::Idle);
-                                if forward_backend(client_write, &BackendMessage::ReadyForQuery(ready))
-                                    .await
-                                    .is_err()
-                                {
-                                    return TxnLegOutcome::Ended;
-                                }
-                                break idle;
-                            }
-                            Ok(Some(WireMessage::Backend(msg))) => {
-                                if forward_backend(client_write, &msg).await.is_err() {
-                                    return TxnLegOutcome::Ended;
-                                }
-                            }
-                            Ok(Some(WireMessage::Frontend(_))) => {
-                                unreachable!("backend-role reader only emits Backend frames")
-                            }
-                            Ok(None) | Err(_) => return TxnLegOutcome::Ended,
+                            Ok(Some(status)) => break matches!(status, TransactionStatus::Idle),
+                            Ok(None) => {}
+                            Err(()) => return TxnLegOutcome::Ended,
                         }
                     }
-                    frontend_result = read_frame(client_read, frontend_reader) => {
+                    frontend_result = read_relay_frame_with_raw(client_read, frontend_reader) => {
                         match frontend_result {
-                            Ok(Some(WireMessage::Frontend(FrontendMessage::Terminate(_))))
-                            | Ok(None)
-                            | Err(_) => return TxnLegOutcome::Ended,
-                            Ok(Some(WireMessage::Frontend(msg))) => {
-                                pending_frontend = Some(msg);
-                            }
-                            Ok(Some(WireMessage::Backend(_))) => {
-                                unreachable!("frontend-role reader only emits Frontend frames")
-                            }
+                            Ok(Some(frame)) => match frame.kind {
+                                RelayFrameKind::FrontendTerminate => {
+                                    return TxnLegOutcome::Ended;
+                                }
+                                RelayFrameKind::Other => {
+                                    pending_frontend = Some(frame);
+                                }
+                                RelayFrameKind::BackendReady(_) => {
+                                    unreachable!("frontend-role reader only emits Frontend frames")
+                                }
+                            },
+                            Ok(None) => return TxnLegOutcome::Ended,
+                            Err(_) => return TxnLegOutcome::Ended,
                         }
                     }
                 }
@@ -450,22 +526,45 @@ async fn relay_one_transaction(
         // the next statement in an explicit BEGIN...COMMIT).
         let msg = match pending_frontend.take() {
             Some(msg) => msg,
-            None => match read_frame(client_read, frontend_reader).await {
-                Ok(Some(WireMessage::Frontend(msg))) => msg,
-                Ok(Some(WireMessage::Backend(_))) => {
-                    unreachable!("frontend-role reader only emits Frontend frames")
-                }
+            None => match read_relay_frame_with_raw(client_read, frontend_reader).await {
+                Ok(Some(frame)) => match frame.kind {
+                    RelayFrameKind::FrontendTerminate | RelayFrameKind::Other => frame,
+                    RelayFrameKind::BackendReady(_) => {
+                        unreachable!("frontend-role reader only emits Frontend frames")
+                    }
+                },
                 Ok(None) | Err(_) => return TxnLegOutcome::Ended,
             },
         };
-        if let FrontendMessage::Terminate(terminate) = msg {
-            let _ = forward_frontend(backend_write, &FrontendMessage::Terminate(terminate)).await;
+        if matches!(msg.kind, RelayFrameKind::FrontendTerminate) {
+            let _ = forward_raw(backend_write, &msg.bytes).await;
             return TxnLegOutcome::Ended;
         }
-        if forward_frontend(backend_write, &msg).await.is_err() {
+        if forward_raw(backend_write, &msg.bytes).await.is_err() {
             return TxnLegOutcome::Ended;
         }
     }
+}
+
+/// Relays a single immediately available backend batch. The batch helper
+/// stops before awaiting another socket read and at `ReadyForQuery`, so its
+/// status has the same ownership meaning as the former one-frame loop.
+async fn relay_backend_batch(
+    backend_read: &mut OwnedReadHalf,
+    client_write: &mut OwnedWriteHalf,
+    backend_reader: &mut FrameReader,
+) -> Result<Option<TransactionStatus>, ()> {
+    let batch = read_backend_relay_batch_with_raw(backend_read, backend_reader)
+        .await
+        .map_err(|_| ())?
+        .ok_or(())?;
+    forward_backend_batch(client_write, &batch)
+        .await
+        .map_err(|_| ())?;
+    if batch.terminal_error {
+        return Err(());
+    }
+    Ok(batch.ready)
 }
 
 async fn release_backend(

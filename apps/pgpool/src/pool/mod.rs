@@ -7,11 +7,23 @@
 
 mod backend_pool;
 mod handler;
+mod reactor;
+mod reserve;
+pub(crate) mod telemetry;
 mod transaction;
 mod types;
 
-pub use backend_pool::{BackendLease, BackendPool};
+pub use backend_pool::{BackendLease, BackendPool, StartupAdmission};
 pub use handler::PoolHandler;
+pub(crate) use reactor::TransactionReactor;
+pub use reserve::{
+    ReserveLeaseBatch, ReserveLeaseClient, ReserveLeaseClientStats, ReserveLeaseDemand,
+    ReserveLeasePolicy, ReserveLeaseRuntimeConfig, ReserveLeaseUse,
+};
+pub use telemetry::{
+    TransactionPhaseMetric, TransactionPhaseTelemetry, TransactionPhaseTelemetrySnapshot,
+    RESERVE_GRANTED_METRIC, RESERVE_QUEUED_METRIC, RESERVE_SPENT_METRIC,
+};
 pub use transaction::{TransactionHandler, TransactionProxyConfig};
 pub use types::{
     BackendConnectionId, BackendPoolStats, LeaseDisposition, PoolConfig, PoolError,

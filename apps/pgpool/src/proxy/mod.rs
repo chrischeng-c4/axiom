@@ -17,7 +17,8 @@ pub use config::{BackendEndpointConfig, SessionProxyConfig};
 pub use error::{ProxyError, RejectionReason, SessionOutcome};
 pub use handler::SessionHandler;
 pub(crate) use relay::{
-    forward_backend, forward_frontend, read_frame, read_startup, relay_until_ready,
+    forward_backend, forward_backend_batch, forward_frontend, forward_raw,
+    read_backend_relay_batch_with_raw, read_relay_frame_with_raw, read_startup, relay_until_ready,
     HandshakeOutcome,
 };
 pub use session::run_session;
