@@ -106,6 +106,20 @@ pub struct CraneliftJitBackend {
     /// arm64 `Reloc::Arm64Call` ±128MB BL immediate-range bug.
     extern_addrs: HashMap<String, *const u8>,
     internal_funcs: HashMap<u32, FuncId>,
+    /// #1440: hidden tstate-taking body FuncId per internal function,
+    /// present only when a public/hidden split was built for that body (see
+    /// `declare_internal`). Entry bodies (`__main__`, name == u32::MAX)
+    /// never get an entry here — they are never reached via an internal
+    /// MIR `Call`. When present, the paired FuncId in `internal_funcs`
+    /// becomes a thin trampoline that fetches this thread's bundled
+    /// recursion-state pointer once and forwards to this hidden body;
+    /// callers that already hold that pointer (`VarAlloc::hidden_tstate_ptr`)
+    /// call straight into this hidden body instead, via `emit_internal_call`,
+    /// skipping the redundant fetch. `get_func_ptr`, `MirConst::FuncRef`,
+    /// entry selection, and variadic/kwargs/boxed-return registration all
+    /// deliberately keep using `internal_funcs` so external/AOT/TAG_FUNC
+    /// callers see the unchanged original ABI.
+    internal_hidden_funcs: HashMap<u32, FuncId>,
     /// Declared return TypeId per internal function for NaN-boxing promotion
     internal_return_tys: HashMap<u32, TypeId>,
     /// Bodies whose non-None returns are native bool producers even when the
@@ -214,6 +228,7 @@ impl CraneliftJitBackend {
             extern_param_counts: HashMap::new(),
             extern_addrs,
             internal_funcs: HashMap::new(),
+            internal_hidden_funcs: HashMap::new(),
             internal_return_tys: HashMap::new(),
             internal_native_bool_returns: HashSet::new(),
             internal_param_counts: HashMap::new(),
@@ -411,17 +426,82 @@ impl CraneliftJitBackend {
         }
         self.internal_param_counts
             .insert(body.name.0, body.params.len());
+
+        // #1440: also forward-declare a hidden body taking the caller's
+        // bundled thread-state pointer as arg0, so internal-to-internal
+        // calls can thread it through instead of every callee re-fetching
+        // via `mb_recursion_state_ptr`. The entry body (module-level
+        // `__main__`, name == u32::MAX) is never reached via an internal
+        // MIR `Call`, so it has no need for a hidden variant. Gated on the
+        // bundled-state helper actually being registered — when it is not
+        // (e.g. a minimal synthetic backend built without runtime
+        // externs), skip entirely and keep the pre-#1440 single-ABI shape;
+        // `emit_internal_call` and the `mb_recursion_enter` fast path both
+        // fall back correctly when no hidden variant exists.
+        let is_entry_body = body.name.0 == u32::MAX;
+        if !is_entry_body && self.extern_funcs.contains_key("mb_recursion_state_ptr") {
+            let mut hidden_sig = Signature::new(CallConv::SystemV);
+            hidden_sig.params.push(AbiParam::new(cl_types::I64));
+            for (_, ty_id) in &body.params {
+                hidden_sig
+                    .params
+                    .push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(*ty_id))));
+            }
+            hidden_sig
+                .returns
+                .push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(body.return_ty))));
+            let hidden_name = format!("_mb_{}_h", body.name.0);
+            let hidden_id = self
+                .module()
+                .declare_function(&hidden_name, Linkage::Local, &hidden_sig)
+                .map_err(|e| {
+                    crate::error::MambaError::codegen(format!("declare hidden: {e}"))
+                })?;
+            self.internal_hidden_funcs.insert(body.name.0, hidden_id);
+        }
         Ok(func_id)
     }
 
+    /// #1440: dispatcher — external ABI is unchanged. When `declare_internal`
+    /// registered a hidden tstate-taking variant for this body, compile that
+    /// hidden body plus a thin public trampoline onto it; otherwise compile
+    /// the plain public body directly, byte-for-byte as before #1440.
     fn compile_function(
         &mut self,
         body: &MirBody,
         tcx: &TypeContext,
         externs: &[MirExtern],
     ) -> crate::error::Result<()> {
-        let func_id = self.internal_funcs[&body.name.0];
+        if let Some(&hidden_func_id) = self.internal_hidden_funcs.get(&body.name.0) {
+            self.compile_function_body(body, tcx, externs, hidden_func_id, true)?;
+            self.emit_public_trampoline(body, tcx, hidden_func_id)
+        } else {
+            let func_id = self.internal_funcs[&body.name.0];
+            self.compile_function_body(body, tcx, externs, func_id, false)
+        }
+    }
+
+    /// #1440: the parameterized compiler shared by both ABI shapes. When
+    /// `has_hidden_tstate_param` is true, `func_id` names the hidden
+    /// `_mb_{sym}_h` body (see `declare_internal`): the signature gains a
+    /// leading bundled-tstate-pointer param, and `vars.hidden_tstate_ptr` is
+    /// populated so `emit_internal_call`/`mb_recursion_enter` can reuse it.
+    /// When false, `func_id` names the plain public body — byte-for-byte
+    /// today's pre-#1440 shape. See `compile_function` (the dispatcher
+    /// above) and `emit_public_trampoline` (the public forwarder built when
+    /// a hidden variant exists).
+    fn compile_function_body(
+        &mut self,
+        body: &MirBody,
+        tcx: &TypeContext,
+        externs: &[MirExtern],
+        func_id: FuncId,
+        has_hidden_tstate_param: bool,
+    ) -> crate::error::Result<()> {
         let mut sig = Signature::new(CallConv::SystemV);
+        if has_hidden_tstate_param {
+            sig.params.push(AbiParam::new(cl_types::I64));
+        }
         for (_, ty_id) in &body.params {
             sig.params
                 .push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(*ty_id))));
@@ -456,13 +536,23 @@ impl CraneliftJitBackend {
         builder.append_block_params_for_function_params(entry_cl);
         builder.switch_to_block(entry_cl);
 
+        // #1440: arg0 is the caller's bundled tstate pointer when this body
+        // was compiled with the hidden signature — capture it before
+        // binding the original params, which now start one slot later.
+        let param_offset = if has_hidden_tstate_param {
+            vars.hidden_tstate_ptr = Some(builder.block_params(entry_cl)[0]);
+            1
+        } else {
+            0
+        };
+
         // Track parameter VRegs — these are borrowed from the caller and must
         // NOT be released by the callee's epilogue. The caller owns them.
         let mut param_vregs = std::collections::HashSet::new();
         for (i, (vreg, ty_id)) in body.params.iter().enumerate() {
             let cl_type = Self::mamba_to_cl_type(tcx.get(*ty_id));
             let var = vars.get(*vreg, &mut builder, cl_type);
-            let param_val = builder.block_params(entry_cl)[i];
+            let param_val = builder.block_params(entry_cl)[i + param_offset];
             builder.def_var(var, param_val);
             param_vregs.insert(*vreg);
             // Tag Int/Bool params as raw_ints so subsequent CheckedAdd/Sub/Mul
@@ -632,6 +722,76 @@ impl CraneliftJitBackend {
                     .insert(body.name.0, cc.code_info().total_size);
             }
         }
+        Ok(())
+    }
+
+    /// #1440: build the public `_mb_{sym}` body as a thin forwarder onto its
+    /// hidden tstate-taking variant. Fetches this thread's bundled
+    /// recursion-state pointer once via `mb_recursion_state_ptr` (the same
+    /// helper `mb_recursion_enter`'s slow path already calls) and forwards
+    /// it plus the original args. External callers, AOT, and
+    /// `MirConst::FuncRef`/`get_func_ptr` consumers all still resolve
+    /// through `internal_funcs`, so this trampoline is the ONLY thing that
+    /// changes shape for them — its declared signature and exported symbol
+    /// name are unchanged from the pre-#1440 body.
+    fn emit_public_trampoline(
+        &mut self,
+        body: &MirBody,
+        tcx: &TypeContext,
+        hidden_func_id: FuncId,
+    ) -> crate::error::Result<()> {
+        let func_id = self.internal_funcs[&body.name.0];
+        let mut sig = Signature::new(CallConv::SystemV);
+        for (_, ty_id) in &body.params {
+            sig.params
+                .push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(*ty_id))));
+        }
+        let ret_ty = Self::mamba_to_cl_type(tcx.get(body.return_ty));
+        sig.returns.push(AbiParam::new(ret_ty));
+
+        let mut func = Function::with_name_signature(
+            cranelift_codegen::ir::UserFuncName::user(0, func_id.as_u32()),
+            sig,
+        );
+        let mut fb_ctx = cranelift_frontend::FunctionBuilderContext::new();
+        let mut builder = cranelift_frontend::FunctionBuilder::new(&mut func, &mut fb_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let orig_args: Vec<_> = builder.block_params(entry).to_vec();
+        let state_ptr_id = *self
+            .extern_funcs
+            .get("mb_recursion_state_ptr")
+            .ok_or_else(|| {
+                crate::error::MambaError::codegen(
+                    "emit_public_trampoline: mb_recursion_state_ptr not registered".to_string(),
+                )
+            })?;
+        let state_ptr_ref = self
+            .module()
+            .declare_func_in_func(state_ptr_id, builder.func);
+        let state_call = builder.ins().call(state_ptr_ref, &[]);
+        let tstate_ptr = builder.inst_results(state_call)[0];
+
+        let mut hidden_args = Vec::with_capacity(orig_args.len() + 1);
+        hidden_args.push(tstate_ptr);
+        hidden_args.extend(orig_args);
+        let hidden_ref = self
+            .module()
+            .declare_func_in_func(hidden_func_id, builder.func);
+        let call = builder.ins().call(hidden_ref, &hidden_args);
+        let results = builder.inst_results(call).to_vec();
+        builder.ins().return_(&results);
+        builder.finalize();
+
+        let mut ctx = cranelift_codegen::Context::for_function(func);
+        self.module()
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| {
+                crate::error::MambaError::codegen(format!("define trampoline: {e}"))
+            })?;
         Ok(())
     }
 
@@ -2422,7 +2582,24 @@ impl CraneliftJitBackend {
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
     ) {
-        if let Some(&callee_id) = self.internal_funcs.get(&sym_id) {
+        // #1440: prefer the callee's hidden tstate-taking variant when this
+        // function already holds a bundled tstate pointer (i.e. it was
+        // itself compiled with the hidden signature) AND the callee has one
+        // registered. This skips both the public trampoline's call and its
+        // internal `mb_recursion_state_ptr` re-fetch. Falls back to the
+        // plain `internal_funcs` entry — today's only path — whenever
+        // either side of that isn't true (no hidden variant was built for
+        // the callee, or this function itself has no tstate pointer, e.g.
+        // the entry body).
+        let target: Option<(FuncId, Option<cranelift_codegen::ir::Value>)> = vars
+            .hidden_tstate_ptr
+            .and_then(|ptr| {
+                self.internal_hidden_funcs
+                    .get(&sym_id)
+                    .map(|&id| (id, Some(ptr)))
+            })
+            .or_else(|| self.internal_funcs.get(&sym_id).map(|&id| (id, None)));
+        if let Some((callee_id, tstate_ptr)) = target {
             let func_ref = self.module().declare_func_in_func(callee_id, builder.func);
             // Bitcast F64 args to I64 — internal functions use I64 ABI for all params.
             let mut arg_vals: Vec<_> = args.iter().map(|a| vars.use_as_i64(*a, builder)).collect();
@@ -2442,6 +2619,13 @@ impl CraneliftJitBackend {
                         arg_vals.push(pad);
                     }
                 }
+            }
+            // #1440: forward this function's own bundled tstate pointer as
+            // arg0 when calling a callee's hidden variant — inserted AFTER
+            // the arity reshape above since `internal_param_counts` records
+            // only the original (non-tstate) arity.
+            if let Some(tstate_ptr) = tstate_ptr {
+                arg_vals.insert(0, tstate_ptr);
             }
             let call = builder.ins().call(func_ref, &arg_vals);
             if let Some(dest_vreg) = dest {
@@ -2693,8 +2877,18 @@ impl CraneliftJitBackend {
                 use cranelift_codegen::ir::InstBuilder;
 
                 let mem_flags = MemFlags::trusted();
-                let ptrs =
-                    if let Some(&state_ptr_id) = self.extern_funcs.get("mb_recursion_state_ptr") {
+                let ptrs = if let Some(state_ptr) = vars.hidden_tstate_ptr {
+                    // #1440: this function was compiled with the hidden
+                    // tstate-taking signature and already holds the bundled
+                    // state pointer (passed in by its caller or the public
+                    // trampoline) — reuse it directly instead of re-calling
+                    // `mb_recursion_state_ptr`. Same layout as the
+                    // FFI-fetched pointer below (depth @ +0, limit @ +8), so
+                    // the fast/slow logic downstream is unchanged.
+                    let depth_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 0);
+                    let limit_ptr = builder.ins().load(cl_types::I64, mem_flags, state_ptr, 8);
+                    Some((depth_ptr, limit_ptr))
+                } else if let Some(&state_ptr_id) = self.extern_funcs.get("mb_recursion_state_ptr") {
                         let state_ptr_ref = self
                             .module()
                             .declare_func_in_func(state_ptr_id, builder.func);
@@ -3422,6 +3616,91 @@ mod tests {
                     func()
                 };
                 assert_eq!(result, MbValue::from_bool(true).to_bits() as i64);
+            }
+            _ => panic!("expected Jit output"),
+        }
+    }
+
+    /// #1440: when the real runtime externs are declared — exactly as
+    /// `codegen()` always arranges via `runtime_externs()`, chained in
+    /// regardless of what the module's own MIR references — they include
+    /// `mb_recursion_state_ptr`, so `declare_internal` must build a hidden
+    /// tstate-taking variant for every non-entry body, and calls between
+    /// two such bodies must resolve hidden-to-hidden (bypassing the public
+    /// trampoline's own `mb_recursion_state_ptr` re-fetch) while still
+    /// producing the correct result.
+    ///
+    /// This is a structural + functional check rather than a CLIF-text
+    /// scan: Cranelift's `Function::display()` prints callees by numeric
+    /// FuncId (`u0:NNN`), never by their declared string name, so grepping
+    /// compiled CLIF for "mb_recursion_state_ptr" can never confirm
+    /// engagement either way.
+    #[test]
+    fn test_hidden_tstate_variant_engages_with_runtime_externs_present() {
+        let _guard = acquire_jit_lock();
+        let tcx = TypeContext::new();
+        let int_ty = tcx.int();
+        let mir = MirModule {
+            bodies: vec![
+                MirBody {
+                    name: SymbolId(0),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![MirInst::LoadConst {
+                            dest: VReg(0),
+                            value: MirConst::Int(42),
+                            ty: int_ty,
+                        }],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+                MirBody {
+                    name: SymbolId(1),
+                    params: vec![],
+                    return_ty: int_ty,
+                    blocks: vec![BasicBlock {
+                        id: BlockId(0),
+                        stmts: vec![MirInst::Call {
+                            dest: Some(VReg(0)),
+                            func: SymbolId(0),
+                            args: vec![],
+                            ty: int_ty,
+                        }],
+                        terminator: Terminator::Return(Some(VReg(0))),
+                    }],
+                },
+            ],
+            externs: runtime_externs(),
+        };
+        let mut backend = CraneliftJitBackend::new().unwrap();
+        let output = backend.codegen(&mir, &tcx).unwrap();
+
+        assert!(
+            backend.internal_hidden_funcs.contains_key(&0),
+            "declare_internal should build a hidden tstate-taking variant \
+             for the non-entry callee once mb_recursion_state_ptr is \
+             declared via runtime_externs()"
+        );
+        assert!(
+            backend.internal_hidden_funcs.contains_key(&1),
+            "the non-entry caller should also get a hidden variant, which \
+             is the precondition for emit_internal_call's hidden-to-hidden \
+             fast path"
+        );
+
+        match output {
+            crate::codegen::CodegenOutput::Jit { entry } => {
+                let result = unsafe {
+                    let func: extern "C" fn() -> i64 = std::mem::transmute(entry);
+                    func()
+                };
+                assert_eq!(
+                    result, 42,
+                    "caller-hidden-body -> callee-hidden-body direct call \
+                     must still return the callee's value"
+                );
             }
             _ => panic!("expected Jit output"),
         }
