@@ -28,8 +28,11 @@ pub enum LlmTopic {
     /// The verifier: ec defines what to test; ec green is the only gate.
     Ec,
     /// The loop state + engine: wi carries goal/verifier/iterations/
-    /// last_result/next_action; aw run iterates until ec green.
+    /// last_result/next_action; `aw goal wi` iterates until ec green.
     Wi,
+    /// The loop verb: the closed four-leaf root-type enum (wi / capability /
+    /// backlog / adhoc) and which verifier each one names.
+    Goal,
 }
 
 /// Output format.
@@ -82,8 +85,13 @@ const TOPICS: &[cli_std::llm::Topic] = &[
     },
     cli_std::llm::Topic {
         id: "wi",
-        summary: "the loop state and how to operate the aw run envelope",
+        summary: "the loop state and how to operate the aw goal envelope",
         body: WI_MD,
+    },
+    cli_std::llm::Topic {
+        id: "goal",
+        summary: "the loop verb: the four root types and their verifiers",
+        body: GOAL_MD,
     },
 ];
 
@@ -115,6 +123,7 @@ fn topic_name(topic: LlmTopic) -> &'static str {
         LlmTopic::Td => "td",
         LlmTopic::Ec => "ec",
         LlmTopic::Wi => "wi",
+        LlmTopic::Goal => "goal",
     }
 }
 
@@ -177,11 +186,14 @@ validation inventories and external contracts.
 
 ## The completion loop
 
-`aw capability` runs report / next / run / check:
+`aw capability` runs report / next / check; driving a capability or
+project-wide root to terminal is `aw goal capability` (#1899 -- the old
+`aw capability run` clap path is retired and redirects to it):
 
 - `report` -- readiness, production scope, and blockers for the project.
 - `next`   -- the next bounded capability action to take.
-- `run`    -- drive that action.
+- `aw goal capability [<cap-id>] --project <p>` -- drive that action (omit
+  the id to run the whole project end to end).
 - `check`  -- re-evaluate against the contract.
 
 Aggregate readiness across all dimensions lives in `aw health`.
@@ -284,16 +296,57 @@ loop converges on ec green.
   child completes; stop when `completion.workflow_complete=true`.
 - `completion.requires_hitl=true` -> stop and ask a human.
 
-Drive it: `aw wi run <id>` for one work item, or `aw capability run
-<capability-id> --project <project>` for a capability's work-root queue; the
-linear authoring path is `skeleton -> fill -> validate`; unresolved product
-decisions become HITL. There is no WI review or arbitration phase. The
-implementation path is `wi -> ec skeleton/fill/review/gen -> td/codegen ->
-ec verify -> code-check -> parent rollup`; capability is the META-doc goal
-ledger and `aw health` is read-only observation, not an authoring step.
+Drive it: `aw goal wi <id>` for one work item, or `aw goal capability
+<capability-id> --project <project>` for a capability's work-root queue (see
+the `goal` topic for the full root-type map); the linear authoring path is
+`skeleton -> fill -> validate`; unresolved product decisions become HITL.
+There is no WI review or arbitration phase. The implementation path is
+`wi -> ec skeleton/fill/review/gen -> td/codegen -> ec verify -> code-check
+-> parent rollup`; capability is the META-doc goal ledger and `aw health` is
+read-only observation, not an authoring step.
 
-For exact flags, run `aw wi run --help`, `aw capability run --help`, or
+For exact flags, run `aw goal wi --help`, `aw goal capability --help`, or
 `aw wi --help`.
+"#;
+
+const GOAL_MD: &str = r#"# aw llm --topic goal -- the loop verb (four root types, one mental model)
+
+`aw goal` is aw's single loop verb (#1899). Every invocation names a root
+and a verifier: lifecycle roots use the ec/terminal/rollup verifier chain,
+the ad-hoc root uses gate commands. The root-type set is a closed
+four-leaf enum -- never a fifth.
+
+## The four leaves
+
+| kind         | CLI form                                              | verifier |
+|--------------|--------------------------------------------------------|----------|
+| `wi`         | `aw goal wi <id>`                                       | lifecycle chain of that root (ec / terminal / rollup) |
+| `capability` | `aw goal capability [<capability-id>] --project <p>`    | capability work-root closure / project promise rollup |
+| `backlog`    | `aw goal backlog --project <p>`                         | zero open unparked WIs for the project |
+| `adhoc`      | `aw goal set --gate "<cmd>" <intent>` -> `aw goal check` | every recorded gate command exits 0 |
+
+## Mental model
+
+- `wi` and `capability` are the re-homed lifecycle runners (formerly the
+  now-retired `aw wi run` / `aw capability run` verbs): envelope semantics
+  (`aw.cli.v1`, `invoke.command`, `agent_prompt`,
+  `completion.workflow_complete`, `completion.requires_hitl`,
+  `hitl_question`) carry over unchanged -- this was a re-homing, not a
+  redesign.
+- `backlog` is a tracker-driven drain of every open WI for a project, one
+  WI per tick through the same engine `wi` uses; a WI that hits HITL or a
+  hard blocker is parked (not surfaced) so the drain continues, and the
+  terminal envelope reports the parked set for human follow-up.
+- `adhoc` is for bounded work OUTSIDE the WI/TD/EC lifecycle (test-pass
+  gates, migration sweeps): record one or more machine-runnable gate
+  commands with `aw goal set`, then poll `aw goal check` until `done` or
+  `gave_up`. Prose alone is never a gate.
+- Never invent a fifth leaf. A retired top-level runner invocation
+  (`aw wi run` / `aw capability run` / the older top-level `aw run`)
+  returns an error envelope naming the exact `aw goal` replacement.
+
+For exact flags, run `aw goal --help`, `aw goal wi --help`, `aw goal
+capability --help`, or `aw goal backlog --help`.
 "#;
 
 #[cfg(test)]
