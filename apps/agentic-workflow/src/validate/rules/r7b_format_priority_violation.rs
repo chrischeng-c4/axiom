@@ -32,6 +32,7 @@ const REQUIRED: &[(&str, &str)] = &[
     ("runtime-image", "yaml"),
     ("deployment", "yaml"),
     ("tool-contract", "yaml"),
+    ("dx-contract", "yaml"),
     ("mindmap", "mermaid"),
     ("requirements", "mermaid"),
     ("unit-test", "mermaid"),
