@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T15:33:50.088355+00:00"
-digest = "sha256:4e8b01f63450dbb9fecc384908b40a30741fab7ccd031c2cf2bc10836fa42bbb"
-source_digest = "sha256:4e8b01f63450dbb9fecc384908b40a30741fab7ccd031c2cf2bc10836fa42bbb"
-ir_digest = "sha256:e934cf1010a5ec2849567ea65fabee993dbb54f62780197cd012f253594d5a00"
+generated_at = "2026-07-17T15:43:28.395223+00:00"
+digest = "sha256:c81825c33ae9314a608f40636618b07409a52a0fe7ce0414c27977f3f2cab1e4"
+source_digest = "sha256:c81825c33ae9314a608f40636618b07409a52a0fe7ce0414c27977f3f2cab1e4"
+ir_digest = "sha256:e6bffc190f5637618b8f5d38236d1c96440c13afc29163e006ffc68ba33ffdc2"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -323,6 +323,12 @@ section_count = 3
 path = "semantic/pgpool-stateless-deployment-instance.md"
 digest = "sha256:72fd72b035a2b4af37c09d0884ba1a883d2b61385b8d50c24d37561b70a04eae"
 ir_digest = "sha256:88e78f2bc70277a6a0e33064fae4d0b649fbf2c04ae41fbb3d813e4f102a2864"
+section_count = 3
+
+[[files]]
+path = "semantic/reactor-does-blocking-dns-on-the-readiness-thread-register-failu.md"
+digest = "sha256:2fd3a3ea07683cbdef5a0f37b9fa49a37736a004f7881af669fcf833f0771e26"
+ir_digest = "sha256:373a8f901fd8e69ad62b71f9fb97b6b8935ddab61ae801e22620e74422e39001"
 section_count = 3
 
 [[files]]
