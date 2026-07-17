@@ -69,3 +69,37 @@ flowchart TD
 ```
 
 The collector contract is exporter-independent. Reserved top-level fields are `schema`, `timestamp`, `severity`, `service`, `event`, `message`, `trace_id`, `span_id`, `parent_span_id`, `trace_flags`, `request_id`, and `attributes`. Correlation is inherited from the nearest entered span, with event fields taking precedence only when they pass the documented lowercase-hex validation. Authorization, cookie, baggage, and tracestate-like keys are excluded before bounded attributes are serialized.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: libs/service-observability/src/jsonl.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define the public axiom.service.log.v1 event model, correlation validation, sensitive-field exclusion, bounded attributes, and tracing-subscriber JSONL formatter.
+  - path: libs/service-observability/src/logging.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Install the versioned JSONL formatter for collector-compatible mode while preserving explicit pretty output and optional OTLP composition.
+  - path: libs/service-observability/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Export the versioned event contract and formatter surfaces for service adopters and collectors.
+  - path: libs/service-observability/contracts/axiom.service.log.v1.schema.json
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Publish the machine-readable versioned stdout event schema and its required and prohibited-by-default fields.
+  - path: libs/service-observability/tests/service_log_jsonl.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Verify independent-line parsing, service identity, span correlation inheritance, validation, redaction, bounds, no-context behavior, and no-OTLP operation.
+```
+
+The bounded hand-authored implementation also adds direct `serde` and `serde_json` dependencies to `libs/service-observability/Cargo.toml`; the contract test makes the static schema and Rust event surface drift together.
