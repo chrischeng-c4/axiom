@@ -98,12 +98,6 @@ changes:
     section: logic
     impl_mode: hand-written
     description: Compose JsonFields and ServiceJsonFormatter for LogFormat::Json while retaining explicit pretty output and optional OTLP layering.
-  - path: libs/service-observability/src/lib.rs
-    action: modify
-    anchor: config
-    section: logic
-    impl_mode: hand-written
-    description: Export the versioned event, service identity payload, formatter, and collector-compatibility constants.
   - path: libs/service-observability/contracts/axiom.service.log.v1.schema.json
     action: create
     section: logic
