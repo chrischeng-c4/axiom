@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "project": "vat",
+  "source_digest": "sha256:594d991ff8f1de7bb7a6b65b0eba16de5650f1f139590adc0aebf8ed846a0345",
+  "decision": "accepted",
+  "reviewer_kind": "human",
+  "reviewed_by": "chrischeng",
+  "reviewed_at": "2026-07-17T17:01:58.286203+00:00",
+  "summary": "Human semantic approval supplied after the VAT observability-runner discussion. All EC cases now explicitly map to declared capability claims; the hand-authored legacy manifest is preserved under tests/legacy while current references consistently name the AW-generated apps/vat/aw.toml inventory.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": []
+}

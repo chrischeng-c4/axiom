@@ -115,7 +115,7 @@ changes:
     section: e2e-test
     impl_mode: hand-written
     reason: "Provide the source-controlled Ubuntu 24.04 systemd fixture required by the control. Apple Container machines boot their image init process, so this fixture is a reproducible k3s-substrate control rather than a minimal application container. It is built explicitly into the local Apple Container image store as `local/vat-k8s-systemd:phase0` or supplied through VAT_LOCAL_K8S_MACHINE_IMAGE."
-  - path: apps/vat/tests/aw-ec.toml
+  - path: apps/vat/aw.toml
     action: modify
     section: e2e-test
     impl_mode: hand-written

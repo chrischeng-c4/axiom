@@ -217,7 +217,7 @@ e2e_tests:
     assertions:
       - "AC4: build_produces_tagged_image_visible_in_container_image_list (gated on the container_available() skip helper, mirroring vat_cluster.rs's Docker-gated pattern and vat_sandbox_microvm.rs's container-gated tests) writes a minimal, valid Dockerfile to a tempdir, runs vat build against it, and asserts both a successful BuildReport and that `container image list` (singular noun — confirmed correct over the incorrect plural `container images` by the Phase 0 spike #1472) shows the tag."
       - "AC5: the fixture Dockerfile used by this test is a plain, unmodified Dockerfile — vat build never edits, lints, or rewrites the Dockerfile it is given; the same command also succeeds manually against a real, already-existing repo Dockerfile without requiring any edit to it."
-      - "Registered in apps/vat/tests/aw-ec.toml (R7) alongside the container_available() skip helper so `aw ec gen --verify` / `aw health --verify-tests` pick this up as a configured EC-gated test command for the agent-native-gpu-native-dev-containers capability."
+      - "Registered in the generated apps/vat/aw.toml EC inventory alongside the container_available() skip helper so `aw ec gen --verify` / `aw health --verify-tests` pick this up as a configured EC-gated test command for the agent-native-gpu-native-dev-containers capability."
   - id: vat-build-lean-and-default-compile
     name: "default and lean (--no-default-features) build compile after the serde_yaml promotion"
     capability_id: agent-native-gpu-native-dev-containers
@@ -264,7 +264,7 @@ changes:
     section: e2e-test
     impl_mode: hand-written
     reason: "R7/AC3/AC4/AC5: `container_available()` skip helper (mirrors `vat_cluster.rs`'s Docker-gated pattern and `vat_sandbox_microvm.rs`'s container-gated tests) plus `build_fails_missing_dockerfile` (no subprocess, always runs) and the container-gated `build_produces_tagged_image_visible_in_container_image_list` test asserting both a successful `BuildReport` and that singular-noun `container image list` (not the plural `container images`, per the Phase 0 spike's R7 finding) shows the built tag."
-  - path: apps/vat/tests/aw-ec.toml
+  - path: apps/vat/aw.toml
     action: modify
     section: e2e-test
     impl_mode: hand-written

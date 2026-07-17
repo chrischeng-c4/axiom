@@ -116,7 +116,7 @@ Gate Inventory:
 | Production readiness | ready |
 | Tech design root | `apps/vat/tech-design` |
 | TD lock | `apps/vat/tech-design/td.lock` |
-| External-contract inventory | `apps/vat/tests/aw-ec.toml` |
+| External-contract inventory | `apps/vat/aw.toml` (`aw.ec.generated`) |
 | Source ownership | full codegen, 100.0% (65/65) |
 | Semantic coverage | 100.0% |
 | Traceability coverage | 95.6% |

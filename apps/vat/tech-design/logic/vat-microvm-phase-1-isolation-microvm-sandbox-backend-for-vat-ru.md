@@ -274,7 +274,7 @@ e2e_tests:
     command: "cargo test -p vat --test vat_sandbox_microvm -- --nocapture"
     assertions:
       - "AC1/R2: `vat run --isolation micro_vm --microvm-image <ref> -- <cmd>` resolves and executes a real `container run` invocation, rootfs bind-mounted at /workspace, workdir honored, env vars visible inside the guest, and `--network none` enforced under EgressPolicy::Deny. Skips cleanly (does not fail) when the `container` CLI is not installed \u2014 mirrors the existing Docker-gated test pattern."
-      - "Registered in `apps/vat/tests/aw-ec.toml` alongside the fail-closed integration test so `aw ec gen --verify` / `aw health --verify-tests` pick both up as configured EC-gated test commands for this capability."
+      - "Registered in the generated `apps/vat/aw.toml` EC inventory alongside the fail-closed integration test so `aw ec gen --verify` / `aw health --verify-tests` pick both up as configured EC-gated test commands for this capability."
   - id: vat-doctor-selected-plan-docker-probe
     name: "selected-plan doctor skips Docker only for explicit Apple-Container plans"
     capability_id: agent-native-gpu-native-dev-containers
@@ -352,7 +352,7 @@ changes:
     section: e2e-test
     impl_mode: hand-written
     reason: "AC1: new container-gated smoke test exercising a real `container run` end to end through Isolation::MicroVm; skips cleanly when the `container` CLI is not installed, mirroring the existing Docker-gated test pattern."
-  - path: apps/vat/tests/aw-ec.toml
+  - path: apps/vat/aw.toml
     action: modify
     section: e2e-test
     impl_mode: hand-written

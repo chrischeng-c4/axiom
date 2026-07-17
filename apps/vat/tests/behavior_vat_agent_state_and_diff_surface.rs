@@ -15,8 +15,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_agent_state_and_diff_surface() {
-    let command =
-        "rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured apps/vat/README.md";
+    let command = "rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured apps/vat/README.md";
     let id = "vat-agent-state-and-diff-surface";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

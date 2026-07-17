@@ -7,7 +7,7 @@
 // @contract production-like-integration-scenarios
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture
+// @command cargo test -p vat --lib scenario_run_starts_app_dependency_and_runner -- --nocapture
 // AW-EC-END
 
 // Contract: vat run --scenario prod-like succeeds
@@ -18,7 +18,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn scenario_run_starts_app_dependency_and_runner() {
     let command =
-        "cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture";
+        "cargo test -p vat --lib scenario_run_starts_app_dependency_and_runner -- --nocapture";
     let id = "scenario-run-starts-app-dependency-and-runner";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

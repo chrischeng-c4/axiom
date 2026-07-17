@@ -7,7 +7,7 @@
 // @contract production-like-integration-scenarios
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat --test vat_toml_runner scenario_hermetic_requires_http_mock_service -- --nocapture
+// @command cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture
 // AW-EC-END
 
 // Contract: hermetic scenario without http-mock exits non-zero
@@ -17,7 +17,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn scenario_hermetic_requires_http_mock_service() {
     let command =
-        "cargo test -p vat --test vat_toml_runner scenario_hermetic_requires_http_mock_service -- --nocapture";
+        "cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture";
     let id = "scenario-hermetic-requires-http-mock-service";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

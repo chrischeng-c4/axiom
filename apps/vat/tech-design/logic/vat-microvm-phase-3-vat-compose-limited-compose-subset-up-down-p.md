@@ -763,7 +763,7 @@ e2e_tests:
       - "R9: foreground and detached up share one project/token ComposeHandoff; only the token owner publishes the durable VAT id and the parent never performs global VAT-store name/time discovery."
       - "R9: down writes .compose-stop-request and waits for the VAT parent to persist terminal runner/service cleanup before resetting project.json. Runner exit while VAT remains Running projects stopping and retains the binding. Current handoff_protocol: 1 VAT load/read/malformed/missing failure is EvidenceUnavailable, which retains the binding and requests retry rather than terminal reset; only protocol-absent historic JSON plus metadata NotFound may recover. A concurrent up is rejected during that window; runner PID evidence is never used as a direct signal target."
       - "R9: Docker or MicroVM cleanup_error retains the VAT, project binding, and published-port ownership and forces nonzero lifecycle retention. A later down retries only the persisted runtime resource; a failed rm -f releases only after successful bounded exact-name list proof of absence (Docker anchored name filter/exact line, MicroVM parsed JSON/no id)."
-      - "Registered in apps/vat/tests/aw-ec.toml (R11) alongside vat_compose_import.rs's pure test, so aw ec gen --verify / aw health --verify-tests pick both up as configured EC-gated test commands for the agent-native-gpu-native-dev-containers capability."
+      - "Registered in the generated apps/vat/aw.toml EC inventory alongside vat_compose_import.rs's pure test, so aw ec gen --verify / aw health --verify-tests pick both up as configured EC-gated test commands for the agent-native-gpu-native-dev-containers capability."
   - id: vat-compose-runtime-local-build-artifacts
     name: "runtime-local compose build: canonical context/dockerfile/args, image-store mapping, and failure-safe materialization"
     capability_id: agent-native-gpu-native-dev-containers
@@ -784,7 +784,7 @@ e2e_tests:
     command: "vat compose import ./docker-compose.yml && vat compose up -d --project demo && vat compose ps demo && vat compose logs demo web && vat compose down demo"
     assertions:
       - "AC6: a real, unmodified mainstream docker-compose.yml (one image: service, one build: service, a depends_on entry) succeeds through the full import -> up -d -> ps -> logs -> down cycle, retaining an imported registry ready for another up, and the source compose file itself required no edits."
-      - "Not part of the cargo test / aw-ec.toml gated surface (no CI-portable fixture repo is bundled for this manual smoke); recorded here as the human verification step named by AC6, run once against a developer-supplied compose file during this WI's own close-out."
+      - "Not part of the cargo test / generated aw.toml EC gated surface (no CI-portable fixture repo is bundled for this manual smoke); recorded here as the human verification step named by AC6, run once against a developer-supplied compose file during this WI's own close-out."
 ```
 
 ## Changes
@@ -842,7 +842,7 @@ changes:
     section: e2e-test
     impl_mode: hand-written
     reason: "AC5: gated full up -d / ps / logs / down cycle test against a real container/docker backend, using a `container_available()` skip helper mirroring `vat_cluster.rs`'s Docker-gated pattern and `vat_sandbox_microvm.rs`'s container-gated tests -- new test file, hand-authored per this project's e2e-test convention."
-  - path: apps/vat/tests/aw-ec.toml
+  - path: apps/vat/aw.toml
     action: modify
     section: e2e-test
     impl_mode: hand-written
