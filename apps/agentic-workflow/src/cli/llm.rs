@@ -242,9 +242,11 @@ iff ec is green; td chases ec green. So ec is the one artifact that decides
 - The approval path is `draft -> fill -> check -> review`. `needs_revision`
   routes back to bounded `fill`; `accepted` advances to `gen -> verify`.
   Production-required EC needs digest-bound independent review evidence.
-  `ec_review_backing` (human default | agent | either) picks who may back
-  it; same-agent self-review never counts. `ec_review_mode = "deferred"`
-  queues a pending human review without blocking the runner (#1828/#1829).
+  `ec_review_backing` (either default, agent-first | agent | human, opt-in
+  blocking human-only review) picks who may back it; same-agent self-review
+  never counts, and a human audit can always reopen an agent-accepted EC.
+  `ec_review_mode = "deferred"` queues a pending human review without
+  blocking the runner (#1828/#1829/#1859).
 - ec green is the only code-check gate. Code style / fmt are not gates.
 - Wired per project via `aw.toml` `ec.<category>`; absent -> the
   default test gate. Non-capability scope (delivery, docs) has no behavior ec

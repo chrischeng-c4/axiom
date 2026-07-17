@@ -30,7 +30,7 @@ scenarios:
     then:
       - "the gate fails with semantic_review_required"
       - "next points to aw ec review"
-      - "the workflow requires HITL"
+      - "the terminal gate itself always blocks until an accepted review exists, regardless of ec_review_backing policy; what differs by policy is whether aw ec review's own response is a blocking human HITL question (explicit human policy, #1859) or a non-blocking pending_agent_review envelope (unconfigured/either/agent policy, #1859 default) — see aw-ec-agent-review-protocol.md S3/S3b/S4"
   - id: S2
     title: objective omissions cannot be human-approved
     given:
@@ -67,7 +67,7 @@ scenarios:
     title: non-independent or policy-disallowed agent evidence is rejected
     given:
       - "reviewer_kind is agent"
-      - "either the project's ec_review_backing policy does not allow agent evidence (default: human-only), or reviewed_by matches the identity recorded as this EC digest's author (ec-author.json, written at aw ec gen time)"
+      - "either the project's ec_review_backing policy does not allow agent evidence (only the explicit \"human\" policy disallows it; the unconfigured default is \"either\", #1859), or reviewed_by matches the identity recorded as this EC digest's author (ec-author.json, written at aw ec gen time)"
     then:
       - "production acceptance fails with an explicit independence or policy error"
       - "a human reviewer_kind is always accepted regardless of policy, so a human audit can still reopen (needs_revision) an EC whose current accepted record is agent-backed"
@@ -342,5 +342,34 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: Traceability edge for omission, false-green, independence, HITL, bounded-revision, and #1828 deferred-mode non-blocking tests.
+  - path: apps/agentic-workflow/src/cli/ec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: |
+      #1859: flip the unconfigured/mistyped-key `ec_review_backing` default
+      from `human` to `either` (agent-first). `resolve_ec_project_context`'s
+      `unwrap_or_else` fallback and `normalize_review_backing`'s catch-all
+      arm both become `EC_REVIEW_BACKING_EITHER`; `normalize_review_backing`
+      gains an explicit `"human"` match arm so the literal opt-in value is
+      preserved exactly. No routing logic changed — `run_review`'s existing
+      `ec_review_backing_allows` check already dispatches the blocking human
+      HITL vs. non-blocking `pending_agent_review` envelope on the resolved
+      policy value, so the default flip alone moves an unconfigured
+      project's `aw ec review` from S1's blocking HITL to the non-blocking
+      envelope defined in aw-ec-agent-review-protocol.md (S3/S4); explicit
+      `ec_review_backing = "human"` (S3b there) is byte-for-byte the
+      pre-#1859 default. See aw-ec-agent-review-protocol.md UT3.
+  - path: apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md
+    action: modify
+    section: scenarios
+    impl_mode: hand-written
+    description: |
+      #1859: restate S1 (missing-review gate failure) as backing-policy-
+      agnostic for the terminal gate itself, cross-referencing which
+      `aw ec review` response shape (blocking HITL vs. non-blocking
+      `pending_agent_review`) applies per policy; restate S5's rejection
+      condition without the stale "default: human-only" parenthetical now
+      that the unconfigured default is `either`.
 ```
 <!-- HANDWRITE-END -->

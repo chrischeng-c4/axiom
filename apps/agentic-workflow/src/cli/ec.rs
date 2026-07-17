@@ -767,9 +767,10 @@ pub struct EcProjectContext {
     /// (`aw.toml`), for static validation against the vat.toml
     /// runner registries they target.
     pub ec_bindings: BTreeMap<String, crate::models::project::EcBinding>,
-    /// #1829: this project's EC review-backing policy (`human` | `agent` |
-    /// `either`), resolved from `Project::ec_review_backing` and defaulting
-    /// to `human` when absent or unrecognized.
+    /// #1829/#1859: this project's EC review-backing policy (`human` |
+    /// `agent` | `either`), resolved from `Project::ec_review_backing` and
+    /// defaulting to `either` (agent-first) when absent or unrecognized;
+    /// explicit `human` opts into blocking human-only review.
     pub review_backing: String,
     /// #1828: this project's EC review-timing policy (`blocking` |
     /// `deferred`), resolved from `Project::ec_review_mode` and defaulting
@@ -3241,7 +3242,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         .as_ref()
         .and_then(|project| project.ec_review_backing.as_deref())
         .map(normalize_review_backing)
-        .unwrap_or_else(|| EC_REVIEW_BACKING_HUMAN.to_string());
+        .unwrap_or_else(|| EC_REVIEW_BACKING_EITHER.to_string());
     let review_mode = project_model
         .as_ref()
         .and_then(|project| project.ec_review_mode.as_deref())
@@ -3267,9 +3268,10 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
     })
 }
 
-/// #1829: `human` (default), `agent`, and `either` are recognized
-/// review-backing policies; any other value falls back to `human` so
-/// production behavior stays unchanged for projects that mistype the key.
+/// #1829/#1859: `human`, `agent`, and `either` (default) are recognized
+/// review-backing policies. The unconfigured/mistyped-key fallback is
+/// `either` (agent-first, #1859) — a project opts into blocking human-only
+/// review only by setting the key to the literal `human`.
 const EC_REVIEW_BACKING_HUMAN: &str = "human";
 const EC_REVIEW_BACKING_AGENT: &str = "agent";
 const EC_REVIEW_BACKING_EITHER: &str = "either";
@@ -3278,7 +3280,8 @@ fn normalize_review_backing(value: &str) -> String {
     match value.trim() {
         EC_REVIEW_BACKING_AGENT => EC_REVIEW_BACKING_AGENT.to_string(),
         EC_REVIEW_BACKING_EITHER => EC_REVIEW_BACKING_EITHER.to_string(),
-        _ => EC_REVIEW_BACKING_HUMAN.to_string(),
+        EC_REVIEW_BACKING_HUMAN => EC_REVIEW_BACKING_HUMAN.to_string(),
+        _ => EC_REVIEW_BACKING_EITHER.to_string(),
     }
 }
 
@@ -6999,18 +7002,35 @@ e2e_tests:
         assert!(error.to_string().contains("stale"));
     }
 
-    // AC4: default `review_backing` policy (absent = `human`) rejects
-    // agent-backed evidence outright, regardless of independence, so
-    // pre-#1829 production behavior is unchanged by default.
+    // AC2: explicit `ec_review_backing = "human"` (opt-in blocking human-only
+    // review, #1859) rejects agent-backed evidence outright, regardless of
+    // independence — reproduces pre-#1859 default production behavior
+    // byte-for-byte for projects that opt in.
     #[test]
-    fn ec_review_default_policy_rejects_agent_evidence() {
+    fn ec_review_human_backing_rejects_agent_evidence() {
         let (_tmp, ctx) = write_demo_repo();
-        assert_eq!(ctx.review_backing, "human");
+        let mut ctx = ctx;
+        ctx.review_backing = "human".to_string();
         let manifest = build_expected_manifest(&ctx).unwrap();
         let record = accepted_agent_record(&ctx, &manifest);
         let error = validate_ec_review_payload(&ctx, &manifest, &record)
-            .expect_err("agent evidence must be rejected under the default human-only policy");
+            .expect_err("agent evidence must be rejected under the explicit human-only policy");
         assert!(error.to_string().contains("review_backing"));
+    }
+
+    // AC1/#1859: with no `ec_review_backing` key, the resolved default is
+    // `either` (agent-first) and an independent agent-backed verdict
+    // satisfies validation end-to-end — no opt-in required.
+    #[test]
+    fn ec_review_unconfigured_default_accepts_agent_evidence() {
+        let (_tmp, ctx) = write_demo_repo();
+        assert_eq!(ctx.review_backing, "either");
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_author_record(&ctx, &manifest).unwrap();
+        let record = accepted_agent_record(&ctx, &manifest);
+        validate_ec_review_payload(&ctx, &manifest, &record).expect(
+            "independent agent-backed evidence must satisfy validation under the unconfigured default",
+        );
     }
 
     // AC2: independence is enforced by author identity, not merely by

@@ -113,10 +113,14 @@ capability and EC gates remain the source of product truth.
 `check` -> independent `review`; `needs_revision` returns to bounded `fill`,
 while `accepted` advances to `gen` and `verify`. Production-required EC review
 evidence is digest-bound and independent: project `aw.toml`
-`ec_review_backing` selects `human` (default) | `agent` | `either`; agent
-verdicts come from a host-dispatched independent `aw-ec-reviewer` subagent via
-the non-blocking `pending_agent_review` envelope, and same-agent self-review
-is never accepted (#1829). `ec_review_mode = "deferred"` records a pending
+`ec_review_backing` selects `either` (default, agent-first) | `agent` |
+`human` (opt-in blocking human-only review). An unconfigured project's
+`aw ec review` emits the non-blocking `pending_agent_review` envelope, and
+agent verdicts come from a host-dispatched independent `aw-ec-reviewer`
+subagent, with same-agent self-review never accepted (#1829). A human
+`--evidence-file` submission always remains valid evidence regardless of
+policy, so the post-completion human batch audit can reopen an
+agent-accepted EC (#1859). `ec_review_mode = "deferred"` records a pending
 human review as `deferred_pending_human` without blocking the runner and
 queues it in `aw ec`/`aw health` for post-completion batch review (#1828).
 `aw health` routes missing approval to `aw ec review` and accepted EC

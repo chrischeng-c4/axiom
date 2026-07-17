@@ -40,14 +40,24 @@ scenarios:
       - "validation is rejected with an explicit not-independent error"
       - "no durable review record is written"
   - id: S3
-    title: policy default preserves pre-#1829 human-only behavior
+    title: unconfigured default is agent-first (#1859)
     given:
       - "aw.toml has no ec_review_backing (or an unrecognized value)"
     when:
+      - "an independent (non-author) reviewer_kind: agent accepted verdict is submitted"
+    then:
+      - "the project's resolved review_backing normalizes to either"
+      - "the independent agent evidence is accepted, satisfying the terminal gate with no human evidence required"
+      - "reviewer_kind: human evidence remains accepted exactly as before"
+  - id: S3b
+    title: explicit human backing opts into blocking human-only review (#1859)
+    given:
+      - "aw.toml sets ec_review_backing = \"human\""
+    when:
       - "reviewer_kind: agent evidence is submitted"
     then:
-      - "the project's resolved review_backing normalizes to human"
       - "the agent evidence is rejected regardless of independence"
+      - "aw ec review with no accepted record instead emits the blocking human HITL question (requires_hitl: true), not the non-blocking pending_agent_review envelope"
       - "reviewer_kind: human evidence is accepted exactly as before #1829"
   - id: S4
     title: aw ec review emits a structured agent envelope when policy allows it
@@ -197,6 +207,12 @@ flowchart TD
 
 Composition notes:
 
+- **#1859 agent-first default**: the `policy` decision's unconfigured/
+  mistyped-key fallback is `either`, not `human` — an unconfigured project
+  takes the `agentenv` branch by default (S3), and only an explicit
+  `ec_review_backing = "human"` takes the `humanhitl` branch (S3b). This
+  changes which branch is the default, not the branches themselves or the
+  `policycheck` independence/policy gate.
 - **#1828 deferred mode**: this protocol's agent path is inline and
   non-blocking at the point `aw ec review` is invoked — it never sets
   `requires_hitl: true` for the agent branch. Deferred/batched timing (when
@@ -238,9 +254,9 @@ requirementDiagram
     risk: high
     verifymethod: test
   }
-  requirement default_policy_human_only {
+  requirement default_policy_agent_first {
     id: UT3
-    text: "absent ec_review_backing, agent evidence is rejected and human evidence behaves exactly as before #1829"
+    text: "absent ec_review_backing, independent agent evidence is accepted (agent-first default, #1859); explicit ec_review_backing = human reproduces the pre-#1859 blocking-HITL/agent-rejected behavior byte-for-byte, and human evidence behaves exactly as before #1829 under either policy"
     risk: high
     verifymethod: test
   }
@@ -304,5 +320,18 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: Traceability edge for agent-acceptance, independence-rejection, default-policy, bounded-revision, and human-audit-reopen tests.
+  - path: apps/agentic-workflow/tech-design/surface/specs/aw-ec-agent-review-protocol.md
+    action: modify
+    section: scenarios
+    impl_mode: hand-written
+    description: |
+      #1859: replace S3 ("policy default preserves pre-#1829 human-only
+      behavior") with S3 ("unconfigured default is agent-first") + new S3b
+      ("explicit human backing opts into blocking human-only review"),
+      rename UT3 to `default_policy_agent_first`, and add a Composition
+      note stating the `policy` decision node's unconfigured/mistyped-key
+      fallback branch flips from `humanhitl` to `agentenv` — the decision's
+      two branches and the `policycheck` independence/policy gate are
+      unchanged.
 ```
 <!-- HANDWRITE-END -->
