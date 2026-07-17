@@ -106,6 +106,11 @@ changes:
     impl_mode: hand-written
     anchor: ManagedService
     reason: Add ReconcilePlan plus backwards-compatible default reconcile_plan and status_patch_with_context hooks to ManagedService.
+  - path: libs/service-k8s/Cargo.toml
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: Provide test-only http and tower types for an inert kube Client that proves default planning performs no cluster I/O.
   - path: libs/service-k8s/src/controller.rs
     action: modify
     section: logic
@@ -122,6 +127,18 @@ changes:
     section: unit-test
     impl_mode: hand-written
     reason: Verify that Pgpool projects opaque plan capacity context after shared readiness while the existing operator and reconcile unit tests continue covering Deployment-only output and safe capacity holds.
+  - path: apps/pgpool/src/pool/reactor/runtime.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: handoff
+    reason: Complete the semantic shared-library adoption by consuming ConnectionPermit from server-lifecycle instead of the retired server-core identity.
+  - path: apps/pgpool/tests/trust_startup_replay.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: wire
+    reason: Complete test-surface adoption of server-lifecycle and server-tcp after the shared-library rename.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->

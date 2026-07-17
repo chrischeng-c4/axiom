@@ -24,6 +24,7 @@ use crate::service::{ManagedService, ReadyFacts};
 
 /// Reconcile errors: `kube` + serde failures plus a guard for malformed rendered
 /// objects (an operator bug, not a cluster condition).
+// <HANDWRITE gap="missing-generator:logic:async-anchor" tracker="#1855" reason="AW cannot currently scaffold a hand-written region around async fn reconcile, so the planning error seam is bounded manually under the blocker.">
 #[derive(thiserror::Error, Debug)]
 /// @spec libs/service-k8s/tech-design/semantic/source/libs-service-k8s-src-controller-rs.md#source
 pub enum Error {
@@ -33,7 +34,10 @@ pub enum Error {
     Serde(#[from] serde_json::Error),
     #[error("rendered object missing required field: {0}")]
     Missing(&'static str),
+    #[error("service reconcile plan failed: {0}")]
+    Plan(String),
 }
+// </HANDWRITE>
 
 struct Ctx {
     client: Client,
@@ -155,6 +159,7 @@ async fn ready_replicas(client: &Client, ns: &str, kind: &str, name: &str) -> Re
         .unwrap_or(0))
 }
 
+// <HANDWRITE gap="missing-generator:logic:async-anchor" tracker="#1855" reason="AW cannot currently match async Rust functions as hand-write anchors; implement the TD-owned plan/apply/readiness/status sequence under the filed blocker.">
 async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Action, Error> {
     // Leader-election gate: a follower watches but never applies.
     if !ctx.election.is_leader.load(Ordering::Relaxed) {
@@ -166,8 +171,13 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     let name = obj.name_any();
     let client = &ctx.client;
 
-    // 1. Render + apply every child object.
-    for child in obj.render() {
+    // 1. Let the service perform async admission/observation, then apply the
+    // planned children through the shared SSA path.
+    let plan = obj
+        .reconcile_plan(client.clone())
+        .await
+        .map_err(|error| Error::Plan(error.to_string()))?;
+    for child in plan.children {
         apply_object(client, &ns, S::MANAGER, child).await?;
     }
 
@@ -179,7 +189,7 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     }
 
     // 3. Write the status subresource (Merge avoids managed-field conflicts).
-    let status = obj.status_patch(&ReadyFacts { ready });
+    let status = obj.status_patch_with_context(&ReadyFacts { ready }, &plan.context);
     let api: Api<S> = Api::namespaced(client.clone(), &ns);
     api.patch_status(&name, &PatchParams::default(), &Patch::Merge(&status))
         .await?;
@@ -187,6 +197,7 @@ async fn reconcile<S: ManagedService>(obj: Arc<S>, ctx: Arc<Ctx>) -> Result<Acti
     // Periodic re-reconcile corrects drift and refreshes status.
     Ok(Action::requeue(Duration::from_secs(30)))
 }
+// </HANDWRITE>
 
 fn error_policy<S: ManagedService>(_obj: Arc<S>, _err: &Error, _ctx: Arc<Ctx>) -> Action {
     Action::requeue(Duration::from_secs(15))
