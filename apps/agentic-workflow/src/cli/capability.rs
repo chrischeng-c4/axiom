@@ -6764,16 +6764,34 @@ fn choose_next_action(
                     | CapabilityGapStatus::InProgress
                     | CapabilityGapStatus::Blocked
             ) {
-                let active_issue = item
+                // R3 (#1847): tracker-side wins. `item.wi_evidence` already
+                // resolves both the doc-stored Active WI ref AND WI-body
+                // derived provenance (WIs that declare this capability/gap
+                // in their own `## Capability Alignment` section with no
+                // doc-stored ref at all -- see `wi_derived_capability_evidence`).
+                // Prefer an OPEN tracker match over the doc ref so a
+                // capability already served by an open WI never routes back
+                // to `CreateWi` just because the doc row's WI cell is empty
+                // or absent; only fall back to the (possibly stale) doc ref
+                // when the tracker has no open evidence for this gap.
+                let tracker_open_evidence = item
                     .wi_evidence
                     .iter()
-                    .find(|evidence| evidence.gap_id == gap.id);
+                    .find(|evidence| evidence.gap_id == gap.id && evidence.state == "open");
+                let active_issue = tracker_open_evidence.or_else(|| {
+                    item.wi_evidence
+                        .iter()
+                        .find(|evidence| evidence.gap_id == gap.id)
+                });
                 let active_issue_is_epic =
                     active_issue.is_some_and(|issue| issue.issue_type == IssueType::Epic.as_str());
                 let td_ref = td_ref_for_gap(item, &gap.id);
                 let td_spec_path = td_ref.map(|td_ref| td_ref.spec_path.as_str());
                 let td_review_status = td_ref.and_then(|td_ref| td_ref.review_status.as_deref());
-                let (kind, command, reason) = match gap.active_wi.as_deref() {
+                let active_ref = tracker_open_evidence
+                    .map(|evidence| evidence.reference.clone())
+                    .or_else(|| gap.active_wi.clone());
+                let (kind, command, reason) = match active_ref.as_deref() {
                     Some(_active) if active_issue_is_epic => {
                         if let Some(action) = first_child_wi_action(report) {
                             return action;
@@ -13730,6 +13748,107 @@ old tail placeholder
         assert_eq!(action.command, "aw wi plan --project jet");
         assert!(action.reason.contains("issue inventory unavailable"));
         assert!(action.reason.contains("local/review-only"));
+        assert!(!action.requires_hitl);
+    }
+
+    /// R3 (#1847): tracker-side open WI evidence -- an open WI whose own body
+    /// declares the capability/gap in `## Capability Alignment`, with no
+    /// README-side Active WI ref at all -- must schedule that WI, not route
+    /// back to `CreateWi`. Regression guard for the jet-class failure mode
+    /// (fictitious/absent doc refs must never re-create work that already
+    /// exists on the tracker side).
+    #[test]
+    fn next_action_schedules_tracker_open_wi_found_via_body_ref_without_doc_ref() {
+        let document = canonical_doc(one_field_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let mut item = sample_report_item_with_gap(None);
+        item.wi_evidence.push(CapabilityWiEvidence {
+            reference: "#4201".to_string(),
+            gap_id: "package-manager-readiness".to_string(),
+            issue_type: "enhancement".to_string(),
+            state: "open".to_string(),
+            phase: None,
+            expected_command: None,
+            title: "derive package-manager readiness from tracker".to_string(),
+        });
+        report.capabilities = vec![item];
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
+
+        assert_ne!(action.kind, CapabilityActionKind::CreateWi);
+        assert_eq!(action.kind, CapabilityActionKind::RunTd);
+        assert_eq!(
+            action.command,
+            crate::cli::run::ec_draft_command("jet", "4201")
+        );
+        assert!(!action.requires_hitl);
+    }
+
+    /// R3 (#1847): a capability gap with no doc-stored Active WI ref and no
+    /// tracker-side WI at all (open or otherwise) still routes to WI
+    /// creation, never to a missing-ref error.
+    #[test]
+    fn next_action_routes_red_gate_with_no_tracker_wi_to_creation() {
+        let document = canonical_doc(one_field_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capabilities = vec![sample_report_item_with_gap(None)];
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
+
+        assert_eq!(action.kind, CapabilityActionKind::CreateWi);
+        assert_eq!(action.command, "aw wi plan --project jet");
+        assert!(action
+            .reason
+            .contains("open capability gap has no active WI in README"));
+        assert!(!action.requires_hitl);
+    }
+
+    /// R3 (#1847): a stale doc-stored Active WI ref (the jet/#1801-class
+    /// failure -- a WI id that no longer resolves to open tracker work)
+    /// degrades to an advisory reconciliation action, never a hard parse/
+    /// readiness error, when the tracker has no open evidence for the gap.
+    #[test]
+    fn next_action_degrades_stale_doc_ref_with_no_open_tracker_wi_to_advisory() {
+        let document = canonical_doc(one_field_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let mut item = sample_report_item_with_gap(Some("#3783"));
+        item.wi_evidence.push(CapabilityWiEvidence {
+            reference: "#3783".to_string(),
+            gap_id: "package-manager-readiness".to_string(),
+            issue_type: "unknown".to_string(),
+            state: "unknown".to_string(),
+            phase: None,
+            expected_command: None,
+            title: String::new(),
+        });
+        report.capabilities = vec![item];
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
+
+        assert_eq!(action.kind, CapabilityActionKind::ReconcileWiRefs);
+        assert_eq!(action.command, "aw wi plan --project jet");
+        assert!(action.reason.contains("set-wi-ref"));
         assert!(!action.requires_hitl);
     }
 
