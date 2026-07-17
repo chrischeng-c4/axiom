@@ -150,7 +150,7 @@ impl TcpHandler for TransactionHandler {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in transaction.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in transaction.rs is hand-written pending codegen support">
 /// One accepted frontend connection's full transaction-mode lifecycle.
 /// Never panics: every rejection/error path writes (or forwards) the
 /// appropriate wire frame, releases the frontend permit, and releases any
@@ -189,6 +189,7 @@ async fn run_transaction_client(
                 return;
             }
         };
+    let startup = config.backend_pool.normalize_backend_startup(startup);
 
     let mut replay_safe_startup = false;
     match config.backend_pool.acquire_for_startup(&startup).await {
