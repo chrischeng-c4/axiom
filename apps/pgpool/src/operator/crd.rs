@@ -211,7 +211,7 @@ pub struct PgpoolStatus {
 }
 
 impl PgpoolStatus {
-    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Omit reserve counters when no live reserve ledger exists and expose whether reserve accounting is available.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1890" reason="Omit reserve counters when no live reserve ledger exists and expose whether reserve accounting is available.">
     pub fn from_control_plane(
         spec: &PgpoolSpec,
         observed_generation: i64,
