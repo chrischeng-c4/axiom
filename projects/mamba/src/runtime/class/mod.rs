@@ -16907,6 +16907,7 @@ pub fn mb_call_method_kwargs(
         }
     }
 
+    let mut direct_result: Option<MbValue> = None;
     let bound: Option<Vec<MbValue>> = (|| {
         // Receiver class → resolve the (possibly inherited) method value.
         // Also handles `mod.func(**kwargs)`: a module value is a Dict tagged
@@ -16957,6 +16958,39 @@ pub fn mb_call_method_kwargs(
         }
         let params = super::closure::func_params(method_val)?;
         if params.iter().any(|p| matches!(p.kind, 2 | 4)) {
+            return None;
+        }
+        if params.iter().any(|p| matches!(p.kind, 3)) {
+            // Keyword-only params can't survive the flatten-to-positional
+            // `out` this closure builds below: the slot-fill loop flattens
+            // every resolved param — keyword-only included — into one
+            // positional list, but the callee's own binder never advances
+            // its positional cursor for a keyword-only slot, so the
+            // flattened value strands as an uncounted trailing positional
+            // and raises a false "too many positional arguments" TypeError
+            // (#1916). A plain module-level function has no `self` to
+            // prepend, so it's safe to hand off directly to
+            // mb_call_spread_kwargs, which binds pos+kwargs by name via
+            // bind_declared_call_frame (correctly handles keyword-only
+            // params) instead of flattening. The instance-method branch
+            // above can't reuse this: mb_call_spread_kwargs never sees
+            // `receiver`, so it has no way to bind `self`. Leave that case
+            // on the pre-existing legacy trailing-dict fallback below.
+            //
+            // mb_call_spread_kwargs's own declared-frame path (step 4) only
+            // wraps dispatch in with_closure_cells, not with_callable_module
+            // — unlike mb_call_spread's fast path, which every non-kind-3
+            // module call already goes through. Without that wrapper the
+            // callee executes under whatever "active module" the caller left
+            // behind, so its own top-level imports/globals (e.g. uu.py's
+            // `binascii`) read back as None instead of the real module.
+            // Push the callee's own module context explicitly so this path
+            // matches what the working non-kind-3 path already gets for free.
+            if super::module::is_module_value(receiver) {
+                direct_result = Some(super::closure::with_callable_module(method_val, || {
+                    super::builtins::mb_call_spread_kwargs(method_val, pos_list, kwargs_dict)
+                }));
+            }
             return None;
         }
         let bindable_pos: Vec<usize> = params
@@ -17052,6 +17086,9 @@ pub fn mb_call_method_kwargs(
         Some(out)
     })();
 
+    if let Some(result) = direct_result {
+        return result;
+    }
     // An unexpected-keyword raise short-circuits here.
     if super::exception::current_exception_type().is_some() {
         return MbValue::none();
