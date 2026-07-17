@@ -227,7 +227,7 @@ pub fn render_cli_tables(section: &str) -> String {
 /// referencing literal swaps — a skill's own script-invocation path
 /// (`.claude/skills/...` → `.agents/skills/...`, needed by
 /// aw-build-debug/aw-build-release/aw-mamba-test-coverage) and a doc
-/// cross-reference (`CLAUDE.md` → `AGENTS.md`, needed by aw-cb-fill/aw-wi).
+/// cross-reference (`CLAUDE.md` → `AGENTS.md`, needed by aw-wi).
 /// Companion `scripts/*.sh` files need no transform (verified: zero
 /// `.claude`/`CLAUDE` literal references in any of the 4 scripts), so only
 /// `SKILL.md` bodies are run through this whitelist.
