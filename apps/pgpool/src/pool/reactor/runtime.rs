@@ -63,7 +63,7 @@ impl std::fmt::Debug for TransactionReactor {
 }
 
 impl TransactionReactor {
-    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1881" reason="Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.">
     /// Starts the dedicated readiness owner. Backend pool configuration and
     /// admin-stat publication are captured here; no transaction socket has
     /// crossed the boundary yet.
