@@ -9,24 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: prestop-get-drain
-entry: prestop
+id: prestop-get-drain-contract
+entry: prestop_request
 nodes:
-  prestop: { kind: start, label: "Kubernetes preStop HTTP GET /drain" }
-  handler: { kind: process, label: "shared idempotent drain handler" }
-  ready: { kind: process, label: "DrainController flips readiness" }
-  done: { kind: terminal, label: "SIGTERM arrives after drain starts" }
+  prestop_request: { kind: start, label: "Kubernetes GET /drain" }
+  route: { kind: process, label: "GET or POST route invokes handlers::drain" }
+  transition: { kind: process, label: "shared controller starts drain idempotently" }
+  readiness: { kind: terminal, label: "readyz returns draining before SIGTERM" }
 edges:
-  - { from: prestop, to: handler }
-  - { from: handler, to: ready }
-  - { from: ready, to: done }
+  - { from: prestop_request, to: route }
+  - { from: route, to: transition }
+  - { from: transition, to: readiness }
 ---
 flowchart TD
-  prestop[preStop GET /drain] --> handler[shared drain handler]
-  handler --> ready[DrainController flips readiness]
-  ready --> done[SIGTERM after drain starts]
+  prestop_request[GET /drain] --> route[one drain handler]
+  route --> transition[shared controller]
+  transition --> readiness[readyz draining]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
