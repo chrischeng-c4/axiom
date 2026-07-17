@@ -116,6 +116,11 @@ struct ServeArgs {
     /// supplies this from metadata.name through the Downward API.
     #[arg(long, env = "PGPOOL_RESERVE_POD", default_value = "")]
     reserve_pod: String,
+    /// Stable pod identity used to identify every physical PostgreSQL backend
+    /// connection opened by this pgpool process. The Deployment renderer
+    /// supplies metadata.name through the Downward API.
+    #[arg(long, env = "PGPOOL_POD_NAME", default_value = "local")]
+    pod_name: String,
     /// Normal-pool wait before a saturated transaction is allowed to signal
     /// a background reserve-grant request.
     #[arg(long, env = "PGPOOL_RESERVE_POOL_TIMEOUT_MS", default_value_t = 1000)]
@@ -479,7 +484,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in pgpool.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in pgpool.rs is hand-written pending codegen support">
 /// `serve_entry` in the TD Logic flowchart: build a `TcpServerConfig` from
 /// `RuntimePlan` with NO server-tcp-level `ConnectionBudget` wired in (the
 /// `SessionHandler`/`TransactionHandler` enforce their own admission so a
@@ -531,7 +536,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         backend_connect_timeout,
         wire,
     };
-    let backend_pool = if args.reserve_endpoint.is_empty() || args.reserve_pod.is_empty() {
+    let backend_application_name = format!("pgpool-{}", args.pod_name);
+    let backend_pool = (if args.reserve_endpoint.is_empty() || args.reserve_pod.is_empty() {
         pgpool::pool::BackendPool::new(pool_config)
     } else {
         pgpool::pool::BackendPool::new_with_reserve(
@@ -548,7 +554,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 },
             },
         )
-    };
+    })
+    .with_backend_application_name(backend_application_name);
     let admin_backend_pool = backend_pool.clone();
 
     // Called exactly once: the SAME `ConnectionBudget` is shared into
