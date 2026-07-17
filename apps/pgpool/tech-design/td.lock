@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T10:53:11.523612+00:00"
-digest = "sha256:9f62f05d768b5fe18f5bef0d321e9577879473cac40c59df1981339cdf8f6b5a"
-source_digest = "sha256:9f62f05d768b5fe18f5bef0d321e9577879473cac40c59df1981339cdf8f6b5a"
-ir_digest = "sha256:e9bfb6277093f92c84796bc6b3c5e5d93c69de06ac4448de5d4500b02e01acb3"
+generated_at = "2026-07-17T13:27:14.444060+00:00"
+digest = "sha256:b9094b3595ac473ed198d7bdb3521164dd85856199561a291c709ca4546ad127"
+source_digest = "sha256:b9094b3595ac473ed198d7bdb3521164dd85856199561a291c709ca4546ad127"
+ir_digest = "sha256:d675091accc38a04708ab81ec2ebc281f4cd7c84f36899a1c5437bccbfb5c5d0"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -21,8 +21,8 @@ section_count = 3
 
 [[files]]
 path = "interfaces/rest/wire-decoders-cover-only-9-backend-tags-copy-notify-extended-emp.md"
-digest = "sha256:8945c2dfd3d5c485352be646bdd16c43ee044e77b5c266be32c31cc2e84c1c39"
-ir_digest = "sha256:af36311b4e254a6d458498c03972db78c2b3d2ba31769075c6eba5027d00bf89"
+digest = "sha256:0726a2b20486da76cc8821532f67f29300597c5a88ba7fe692ed6d44cad45213"
+ir_digest = "sha256:cb80168b3a9a0e37c5b0e4090581cccce71c9c09e6e4f3a0de2cd6510eca8668"
 section_count = 3
 
 [[files]]
