@@ -35,3 +35,20 @@ flowchart TD
   buffered --> parse
   transition --- events["ReadyForQuery Idle, startup replay, auth challenge"]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/reactor/runtime.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: read_client
+  - path: apps/pgpool/tests/trust_startup_replay.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: backend_first_relay_keeps_pipelined_query_out_of_resetting_backend
+```
