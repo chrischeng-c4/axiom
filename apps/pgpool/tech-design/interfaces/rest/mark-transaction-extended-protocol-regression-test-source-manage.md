@@ -49,15 +49,15 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-transaction-extended-protocol-source-ownership-verification
+id: pgpool-transaction-extended-protocol-source-ownership-contract-verification
 requirements:
-  source_ownership:
+  managed_regression:
     id: R1
-    text: "The existing transaction extended-protocol integration test remains behaviorally unchanged while gaining an auditable source-ownership marker."
+    text: "Ownership metadata must preserve the existing real-Postgres, two-engine extended-protocol regression behavior and make the file pass AW source management checks."
     kind: regression
     risk: low
     verify: transaction_extended_protocol::parse_is_rejected_without_hang
 ---
 flowchart TD
-    r1[R1 source ownership] --> transaction_extended_protocol_parse_is_rejected_without_hang[transaction_extended_protocol::parse_is_rejected_without_hang]
+    r1[R1 managed regression] --> transaction_extended_protocol_parse_is_rejected_without_hang[transaction_extended_protocol::parse_is_rejected_without_hang]
 ```
