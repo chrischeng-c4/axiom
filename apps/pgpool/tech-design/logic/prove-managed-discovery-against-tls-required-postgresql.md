@@ -31,3 +31,22 @@ flowchart LR
 ```
 
 The Docker proof creates a one-use localhost certificate, forces `hostssl` authentication, and cleans up after the test. The Rust integration test only runs its TLS assertion when the script supplies endpoint and CA environment values; without them ordinary developer test runs remain hermetic.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/tests/connection_discovery.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: cloudsql_discovery_succeeds_against_tls_required_postgres
+    reason: Exercise configured-CA Rustls discovery against the endpoint supplied by the TLS-required container proof.
+  - path: apps/pgpool/tests/tls_required_discovery.sh
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: Start and clean up a disposable hostssl-only PostgreSQL 15 container and run the targeted Rust test.
+```
