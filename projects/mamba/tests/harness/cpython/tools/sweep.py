@@ -37,18 +37,24 @@ Typical round flow:
   python3.12 tests/harness/cpython/tools/sweep.py behavior/std-libs/socket
   python3.12 tests/harness/cpython/tools/sweep.py --list /tmp/cluster.txt
 
-State: tests/cpython/.cache/sweep/failures.txt (one path per line, relative to
-tests/cpython). `--store` merges this run into it: stored' = (stored - covered)
-+ failed-in-this-run, so partial runs never resurrect or drop uncovered
-entries. Limits parity note: runner.rs also caps child memory (RLIMIT_AS
-1 GiB); macOS sh ulimit cannot express that, so only the CPU cap is applied
-here — a runaway-allocation fixture can diverge between the two gates.
+State: `--failures` prefers tests/cpython/.cache/conformance/last_gate.json,
+the verdict sidecar the cargo gate itself writes on every full, unfiltered
+run (#1771) — always as fresh as the last real gate, never corrupted by a
+loaded/partial sweep. It falls back to the older
+tests/cpython/.cache/sweep/failures.txt (one path per line, relative to
+tests/cpython) only when no sidecar exists yet. `--store` still merges this
+run into failures.txt: stored' = (stored - covered) + failed-in-this-run, so
+partial runs never resurrect or drop uncovered entries. Limits parity note:
+runner.rs also caps child memory (RLIMIT_AS 1 GiB); macOS sh ulimit cannot
+express that, so only the CPU cap is applied here — a runaway-allocation
+fixture can diverge between the two gates.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import random
 import shlex
@@ -67,6 +73,11 @@ MAMBA_DIR = TOOLS_DIR.parents[3]                       # projects/mamba
 FIXTURES_DIR = MAMBA_DIR / "tests" / "cpython"
 STATE_DIR = FIXTURES_DIR / ".cache" / "sweep"
 STATE_FILE = STATE_DIR / "failures.txt"
+# Written by runner.rs (#1771) at the end of every full, unfiltered cargo gate
+# run — always fresher than STATE_FILE, which only updates on a manual
+# `--all --store` sweep and can silently drift stale under sweep load
+# degradation (see external-contracts/HARNESS.md).
+CONFORMANCE_SIDECAR = FIXTURES_DIR / ".cache" / "conformance" / "last_gate.json"
 ORACLE_CACHE_DIR = (
     Path(os.environ["CARGO_TARGET_DIR"])
     if os.environ.get("CARGO_TARGET_DIR")
@@ -257,16 +268,42 @@ def load_state() -> list[str]:
         return []
 
 
+def load_sidecar_failures() -> list[str] | None:
+    """Read the runner's verdict sidecar (#1771) for the current failure set.
+
+    Returns None if no sidecar exists yet (fresh checkout, or the gate has
+    never run unfiltered), so callers fall back to the stored failures.txt.
+    """
+    try:
+        data = json.loads(CONFORMANCE_SIDECAR.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    bad = {FAIL, DIVERGE, INVALID}
+    # Sidecar paths are recorded relative to the mamba crate root (i.e. they
+    # include the "tests/cpython/" segment); every other path in this file
+    # (all_fixtures/load_state/classify) is relative to FIXTURES_DIR itself,
+    # which already points at tests/cpython. Strip the segment so callers
+    # don't double it up when re-joining onto FIXTURES_DIR.
+    prefix = "tests/cpython/"
+    return sorted(
+        entry["path"][len(prefix):] if entry["path"].startswith(prefix)
+        else entry["path"]
+        for entry in data.get("non_pass", [])
+        if entry.get("verdict") in bad
+    )
+
+
 def select_fixtures(args) -> list[str]:
     selected: list[str] = []
     if args.all:
         selected = all_fixtures()
     elif args.failures:
-        selected = load_state()
+        sidecar_failures = load_sidecar_failures()
+        selected = sidecar_failures if sidecar_failures is not None else load_state()
         if not selected:
             sys.exit(
-                f"no stored failure set at {STATE_FILE}; "
-                "run `sweep.py --all --store` first"
+                f"no failures found in {CONFORMANCE_SIDECAR} or {STATE_FILE}; "
+                "run the full cargo gate, or `sweep.py --all --store`, first"
             )
     elif args.sample:
         failed = set(load_state())
