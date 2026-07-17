@@ -217,24 +217,21 @@ fn issue_1104_perf_pins_match_current_repo_evidence() {
         "os.path current-state perf evidence drifted; update #1104 gate if the repo's exact pin set changed",
     );
 
-    let blocked_missing = vec![
-        ("json-native", pins_for_module(&pins, "json")),
-        ("typing-lightweight", pins_for_module(&pins, "typing")),
-        ("posixpath-native", pins_for_module(&pins, "posixpath")),
-    ]
-    .into_iter()
-    .filter_map(|(module, matches)| {
-        if matches.is_empty() {
-            Some(module)
-        } else {
-            None
-        }
-    })
-    .collect::<Vec<_>>();
+    assert_eq!(
+        pins_for_module(&pins, "json"),
+        vec!["json_1104.toml"],
+        "json current-state perf evidence drifted; update #1104 gate if the repo's exact pin set changed",
+    );
 
     assert_eq!(
-        blocked_missing,
-        vec!["json-native", "typing-lightweight", "posixpath-native"],
-        "TODO(#1104): do not invent missing perf evidence. Expected current blocked modules are json-native, typing-lightweight, and posixpath-native; if new exact pins were added, update this gate to record them explicitly.",
+        pins_for_module(&pins, "typing"),
+        vec!["typing_1104.toml"],
+        "typing current-state perf evidence drifted; update #1104 gate if the repo's exact pin set changed",
+    );
+
+    assert_eq!(
+        pins_for_module(&pins, "posixpath"),
+        vec!["posixpath_1104.toml"],
+        "posixpath current-state perf evidence drifted; update #1104 gate if the repo's exact pin set changed",
     );
 }
