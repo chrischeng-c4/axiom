@@ -58,3 +58,21 @@ requirements:
 flowchart TD
     r1[R1 backend visible before poll] --> connection_discovery_pgpool_backend_connections_are_not_foreign_usage[connection_discovery::pgpool_backend_connections_are_not_foreign_usage]
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-held-backend-query-ready-verification
+requirements:
+  query_ready_connection:
+    id: R1
+    text: "The held pgpool backend executes a query after its driver starts before discovery polling asserts its client-backend classification."
+    kind: regression
+    risk: medium
+    verify: connection_discovery::pgpool_backend_connections_are_not_foreign_usage
+---
+flowchart TD
+    r1[R1 query ready connection] --> connection_discovery_pgpool_backend_connections_are_not_foreign_usage[connection_discovery::pgpool_backend_connections_are_not_foreign_usage]
+```

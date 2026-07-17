@@ -61,3 +61,21 @@ requirements:
 flowchart TD
     r1[R1 managed regression] --> transaction_extended_protocol_parse_is_rejected_without_hang[transaction_extended_protocol::parse_is_rejected_without_hang]
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-transaction-extended-protocol-source-ownership-verification
+requirements:
+  source_ownership:
+    id: R1
+    text: "The existing transaction extended-protocol integration test remains behaviorally unchanged while gaining an auditable source-ownership marker."
+    kind: regression
+    risk: low
+    verify: transaction_extended_protocol::parse_is_rejected_without_hang
+---
+flowchart TD
+    r1[R1 source ownership] --> transaction_extended_protocol_parse_is_rejected_without_hang[transaction_extended_protocol::parse_is_rejected_without_hang]
+```
