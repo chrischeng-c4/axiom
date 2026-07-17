@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-17T15:17:26.580615+00:00"
-digest = "sha256:fd95ae1e0ae32e68ac033b91db64264020cf16852ca6b51e4e4005b90c192088"
-source_digest = "sha256:fd95ae1e0ae32e68ac033b91db64264020cf16852ca6b51e4e4005b90c192088"
-ir_digest = "sha256:539faef9c2196cd10b393c119bbafa1f6a4f5efca3acd3dc36a8ecc56333524e"
+generated_at = "2026-07-17T15:54:19.538005+00:00"
+digest = "sha256:732b5f9bd3ec89ea52fe8abead2db47aee5487d5f5f30d05e52d33a8c0d5d5db"
+source_digest = "sha256:732b5f9bd3ec89ea52fe8abead2db47aee5487d5f5f30d05e52d33a8c0d5d5db"
+ir_digest = "sha256:f086990366e9aaf79c48fb22ea9afa3237a04dd87b1a04e9a83e2f7eb7453eac"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5263,9 +5263,15 @@ section_count = 1
 
 [[files]]
 path = "surface/specs/aw-goal-condition-loop.md"
-digest = "sha256:3a63ea6e89b9b58428032166b9dc00ebf7cf5f0f30609ba41f702445d8b0f4c1"
-ir_digest = "sha256:f7ffd261a9068c1c572428fc56bee3d8ad3a5435f51845aef3f4f4fe124898eb"
-section_count = 4
+digest = "sha256:5e3ad49df733e9a5f4ca1a061b1e43a949c80926b8f66523e49010007a7bc081"
+ir_digest = "sha256:5538fce6c7640ceaf7675e82554636d69aa5c638df3ab5b5c9b01db56bd9f99f"
+section_count = 5
+
+[[files]]
+path = "surface/specs/aw-goal-unified-loop-verb.md"
+digest = "sha256:50db1042994c824377abe33106cebc1a8f9e45a9baafe964d6b04186251d923f"
+ir_digest = "sha256:4039a06e62e0f141265e5ae3a73b85a172608f8eb975477230d1ab180e7a02b8"
+section_count = 12
 
 [[files]]
 path = "surface/specs/aw-mainthread-only-execution.md"
@@ -5299,8 +5305,8 @@ section_count = 5
 
 [[files]]
 path = "surface/specs/aw-self-hosting-runner-policy.md"
-digest = "sha256:833663181a363c4fef6513b3b0e6f35a922963815f0e79730438a4ad29dbda63"
-ir_digest = "sha256:5f5366597fbe113cf7cc6f4961e32fbca57a016f7cfa7c9c753159a2e990fd24"
+digest = "sha256:6dddab612746f93fcabeb1bae33cd4f077e5fac1b5006eb930187a7a2989bb6e"
+ir_digest = "sha256:3d957ab4de1a0432a0701aa97b7d8f06ed2662886a57e741f0049409661d6dd0"
 section_count = 5
 
 [[files]]
