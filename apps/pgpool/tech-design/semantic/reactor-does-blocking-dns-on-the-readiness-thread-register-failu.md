@@ -53,3 +53,35 @@ changes:
     anchor: start
     reason: Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-reactor-cached-backend-address-verification
+requirements:
+  benchmark_path_unchanged:
+    id: R3
+    text: "The change preserves the reactor data-plane event loop and connection benchmark behavior."
+    kind: performance
+    risk: medium
+    verify: cargo test -p pgpool pool::reactor --lib
+  failed_registration_recycles_token:
+    id: R2
+    text: "A failed backend registration returns the allocated token to the reusable free-token set."
+    kind: regression
+    risk: high
+    verify: failed_backend_registration_recycles_token
+  reactor_uses_cached_address:
+    id: R1
+    text: "The readiness thread receives a pre-resolved SocketAddr and open_backend has no hostname resolution call."
+    kind: regression
+    risk: high
+    verify: reactor_backend_address_is_cached_before_thread_start
+---
+flowchart TD
+    r1[R1 reactor uses cached address] --> reactor_backend_address_is_cached_before_thread_start[reactor_backend_address_is_cached_before_thread_start]
+    r2[R2 failed registration recycles token] --> failed_backend_registration_recycles_token[failed_backend_registration_recycles_token]
+    r3[R3 benchmark path unchanged] --> cargo_test_p_pgpool_pool_reactor_lib[cargo test -p pgpool pool::reactor --lib]
+```
