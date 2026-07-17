@@ -202,7 +202,7 @@ async fn discover_endpoint(
     ))
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in reconcile.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1882" reason="unit-test section in reconcile.rs is hand-written pending codegen support">
 fn plan_capacity(
     instance: &str,
     desired: u32,
@@ -215,10 +215,15 @@ fn plan_capacity(
             desired.saturating_mul(item.spec.per_pod_quota) <= capacity.usable()
         })
     });
-    let applied = if requested_fits {
-        desired
-    } else {
+    // Capacity admission only blocks an increase. A transiently busy
+    // endpoint can make the current allocation look larger than fresh
+    // capacity, but it must not turn an unchanged Deployment target into a
+    // permanent Blocked reconciliation loop.
+    let scale_up_blocked = desired > current_target && !requested_fits;
+    let applied = if scale_up_blocked {
         current_target
+    } else {
+        desired
     };
     let held_pods = actual_pods.max(current_target).max(applied);
     let endpoints: Vec<_> = observations
@@ -233,7 +238,7 @@ fn plan_capacity(
             let allocated = held_pods.saturating_mul(item.spec.per_pod_quota);
             let requested = desired.saturating_mul(item.spec.per_pod_quota);
             let blocked_scale_reason = item.error.clone().or_else(|| {
-                (requested > capacity.usable()).then(|| {
+                (scale_up_blocked && requested > capacity.usable()).then(|| {
                     format!(
                         "endpoint {} scale blocked: requested={}, usable={}, held={allocated}",
                         item.spec.name,
@@ -342,6 +347,14 @@ mod tests {
         assert_eq!(applied, 2);
         assert_eq!(status.endpoints[0].allocated, 80);
         assert!(status.blocked_scale_reason.is_some());
+    }
+
+    #[test]
+    fn busy_pool_usage_does_not_block_an_unchanged_target() {
+        let (applied, status) = plan_capacity("pool", 2, 2, 2, &[observation(60)]);
+        assert_eq!(applied, 2);
+        assert!(status.blocked_scale_reason.is_none());
+        assert!(status.endpoints[0].blocked_scale_reason.is_none());
     }
 
     #[test]
