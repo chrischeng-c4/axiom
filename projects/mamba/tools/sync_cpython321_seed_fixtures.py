@@ -23,9 +23,9 @@ from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
 MAMBA_DIR = TOOLS_DIR.parent
-CPYTHON_DIR = MAMBA_DIR / "tests" / "cpython"
-SEEDS_DIR = CPYTHON_DIR / "config" / "seeds"
-MANIFESTS_DIR = CPYTHON_DIR / "config" / "manifests"
+HARNESS_CPYTHON_DIR = MAMBA_DIR / "tests" / "harness" / "cpython"
+SEEDS_DIR = HARNESS_CPYTHON_DIR / "config" / "seeds"
+MANIFESTS_DIR = HARNESS_CPYTHON_DIR / "config" / "manifests"
 FIXTURE_GEN = TOOLS_DIR / "fixture_gen.py"
 
 SKIP_STEMS = {
