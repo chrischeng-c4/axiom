@@ -397,6 +397,7 @@ async fn drain_flips_readyz_and_process_exits_cleanly() {
     );
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in admin_plane.rs is hand-written pending codegen support">
 /// verify: admin::served_contract_matches_offline_spec (AC3, R4/R5)
 ///
 /// Diffs the live process's served `/openapi.json` and route set against
@@ -484,6 +485,7 @@ async fn served_contract_matches_offline_spec() {
     let _ = serve.child.start_kill();
     let _ = serve.child.wait().await;
 }
+// </HANDWRITE>
 
 /// verify: admin::metrics_exposes_prometheus_pool_gauges (AC4, R1/R3)
 ///
