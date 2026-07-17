@@ -136,9 +136,10 @@ raw low-level label filter.
 Planning commands read the configured issue backend and write local artifacts
 under `/tmp/aw/workspaces/<workspace>/workitems/<project>/`. They do not publish or mutate tracker issues.
 
-Use this lane after `/aw:capability` confirms a capability or when the user gives a
-roadmap-sized request. Large work must stay as `type=epic` or a local planning
-artifact until atomized into bounded WI candidates.
+Use this lane after `aw capability report`/`aw capability next` confirms a
+capability or when the user gives a roadmap-sized request. Large work must
+stay as `type=epic` or a local planning artifact until atomized into bounded
+WI candidates.
 
 ```bash
 aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]

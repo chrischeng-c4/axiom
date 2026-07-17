@@ -16,27 +16,11 @@ use std::process::Command;
 const SDD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Claude Code Skills
-const SKILL_CODEX_REVIEW: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-codex-review/SKILL.md");
-const SKILL_GEMINI_EXPLORE_SPECS: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-gemini-explore-specs/SKILL.md");
-const SKILL_GEMINI_EXPLORE_CODEBASE: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-gemini-explore-codebase/SKILL.md");
-const SKILL_CAPABILITY: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-capability/SKILL.md");
 const SKILL_WI: &str = include_str!("../../templates/cli/mainthread/skills/aw-wi/SKILL.md");
 const SKILL_BUILD_DEBUG: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-debug/SKILL.md");
-const SKILL_RELEASE_PATCH: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-release-patch/SKILL.md");
 const SKILL_MAMBA_TEST_COVERAGE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-mamba-test-coverage/SKILL.md");
-const SKILL_TD_CREATE: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-td-create/SKILL.md");
-const SKILL_CB_FILL: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-cb-fill/SKILL.md");
-const SKILL_CB_CLAIM: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-cb-claim/SKILL.md");
 const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
@@ -46,8 +30,6 @@ const SCRIPT_BUILD_RELEASE: &str =
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R15
 const SCRIPT_BUILD_DEBUG: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-debug/scripts/build.sh");
-const SCRIPT_RELEASE_PATCH: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-release-patch/scripts/release.sh");
 const SCRIPT_MAMBA_TEST_COVERAGE: &str = include_str!(
     "../../templates/cli/mainthread/skills/aw-mamba-test-coverage/scripts/coverage.sh"
 );
@@ -1012,17 +994,9 @@ fn update_version_in_content(content: &str, new_version: &str) -> String {
 // list a different skill set than each other or than `templates/`).
 fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("aw-codex-review", SKILL_CODEX_REVIEW),
-        ("aw-gemini-explore-specs", SKILL_GEMINI_EXPLORE_SPECS),
-        ("aw-gemini-explore-codebase", SKILL_GEMINI_EXPLORE_CODEBASE),
-        ("aw-capability", SKILL_CAPABILITY),
         ("aw-wi", SKILL_WI),
         ("aw-build-debug", SKILL_BUILD_DEBUG),
-        ("aw-release-patch", SKILL_RELEASE_PATCH),
         ("aw-mamba-test-coverage", SKILL_MAMBA_TEST_COVERAGE),
-        ("aw-td-create", SKILL_TD_CREATE),
-        ("aw-cb-fill", SKILL_CB_FILL),
-        ("aw-cb-claim", SKILL_CB_CLAIM),
         ("aw-build-release", SKILL_BUILD_RELEASE),
         ("aw-health", SKILL_HEALTH),
         ("aw-guard", SKILL_GUARD),
@@ -1036,7 +1010,6 @@ fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
 fn skill_script_entries() -> &'static [(&'static str, &'static str, &'static str)] {
     &[
         ("aw-build-debug", "build.sh", SCRIPT_BUILD_DEBUG),
-        ("aw-release-patch", "release.sh", SCRIPT_RELEASE_PATCH),
         (
             "aw-mamba-test-coverage",
             "coverage.sh",
@@ -1141,6 +1114,16 @@ fn deprecated_skill_names() -> Vec<&'static str> {
         // `takeover-audit` axis; `audit record` rehomed as `aw td
         // audit-record`.
         "aw-standardize",
+        // #1858: eight stale skills retired (lifecycle-superseded +
+        // external-model helpers no longer in use).
+        "aw-release-patch",
+        "aw-cb-claim",
+        "aw-cb-fill",
+        "aw-td-create",
+        "aw-capability",
+        "aw-codex-review",
+        "aw-gemini-explore-codebase",
+        "aw-gemini-explore-specs",
     ]
 }
 
@@ -2760,17 +2743,13 @@ auth_method = "cli"
         install_claude_skills(&skills_dir).unwrap();
 
         let expected_skills = [
-            "aw-codex-review",
-            "aw-gemini-explore-specs",
-            "aw-gemini-explore-codebase",
-            "aw-capability",
             "aw-wi",
             "aw-health",
             // REQ: R12 — active support skills
             "aw-build-debug",
             "aw-build-release",
-            "aw-release-patch",
             "aw-mamba-test-coverage",
+            "aw-guard",
         ];
 
         for skill in &expected_skills {
@@ -2892,6 +2871,48 @@ auth_method = "cli"
         }
     }
 
+    // #1858: eight stale skills (lifecycle-superseded + external-model
+    // helpers) are retired; both skill-tree installers must prune them
+    // if found on disk from a previous install.
+    #[test]
+    fn test_install_skills_prunes_1858_retired_skills() {
+        let retired = [
+            "aw-release-patch",
+            "aw-cb-claim",
+            "aw-cb-fill",
+            "aw-td-create",
+            "aw-capability",
+            "aw-codex-review",
+            "aw-gemini-explore-codebase",
+            "aw-gemini-explore-specs",
+        ];
+
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            fs::create_dir_all(&skills_dir).unwrap();
+
+            for skill in &retired {
+                let legacy_dir = skills_dir.join(skill);
+                fs::create_dir_all(&legacy_dir).unwrap();
+                fs::write(legacy_dir.join("SKILL.md"), "# legacy").unwrap();
+            }
+
+            install(&skills_dir).unwrap();
+
+            for skill in &retired {
+                assert!(
+                    !skills_dir.join(skill).exists(),
+                    "retired skill {} should be pruned",
+                    skill
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_install_claude_skills_preserves_unrelated_codex_review_skill() {
         let tmp = TempDir::new().unwrap();
@@ -2921,7 +2942,6 @@ auth_method = "cli"
         let expected_scripts: &[(&str, &str)] = &[
             ("aw-build-debug", "build.sh"),
             ("aw-build-release", "release.sh"),
-            ("aw-release-patch", "release.sh"),
             ("aw-mamba-test-coverage", "coverage.sh"),
         ];
 
@@ -2972,7 +2992,7 @@ auth_method = "cli"
         // Core skills should still be present
         for skill in &[
             "aw-build-debug",
-            "aw-release-patch",
+            "aw-build-release",
             "aw-mamba-test-coverage",
         ] {
             assert!(
