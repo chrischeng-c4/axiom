@@ -189,48 +189,48 @@ The existing standardized crate root exports `pub mod collector`. The manifest a
 ---
 id: structured-stdout-collector-core-verification
 requirements:
-  adapter_boundary:
-    id: R5
-    text: "Collector validation, mapping, delivery, and checkpoint logic contain no Lumen or CRI-specific parsing, leaving #1675 only a source adapter."
-    kind: contract
-    risk: medium
-    verify: cargo test -p sift collector::
-  bounded_delivery:
-    id: R4
-    text: "Batches use existing /v1/events:write with bounded size, memory, timeout, retry, optional bearer token, and terminal non-advancing failure."
-    kind: stability
-    risk: high
-    verify: cargo test -p sift collector::client
-  checkpoint_idempotency:
+  ack_checkpoint:
     id: R3
-    text: "Source identity plus byte and line checkpoint state is atomically persisted only after accepted or duplicate acknowledgment; replay produces no duplicate event."
+    text: "The real process test proves checkpoint offset advances after acknowledgments, rerun sends no new items, forced replay is duplicate-safe, and queried Sift contains one record per source line."
     kind: durability
     risk: high
     verify: cargo test -p sift --test structured_stdout_collector_e2e real_file_collector_ingests_queries_and_resumes -- --exact
-  finite_follow:
-    id: R6
-    text: "One-shot terminates with a machine-readable summary while follow waits at EOF and reuses identical offset/window behavior."
-    kind: regression
-    risk: medium
-    verify: cargo test -p sift collector::runtime
-  source_pipeline:
+  adapters:
     id: R1
-    text: "The Sift-owned collector reads unchanged axiom.service.log.v1 records from a finite file through the same core used for stdin and follow mode."
+    text: "File and stdin adapters feed the same bounded reader; the real CLI one-shot reads an unchanged Lumen JSONL file and follow is a file-only EOF policy."
     kind: integration
     risk: high
     verify: cargo test -p sift --test structured_stdout_collector_e2e real_file_collector_ingests_queries_and_resumes -- --exact
-  validation_mapping:
-    id: R2
-    text: "Schema, bounds, timestamps, and correlation are validated before deterministic source-offset mapping into OperationalEventV2; invalid lines become bounded quarantine entries."
-    kind: functional
+  cri_layering:
+    id: R5
+    text: "Collector modules depend only on the shared service log contract and canonical Sift event/ingest types; Lumen and CRI envelopes are absent from the core."
+    kind: contract
+    risk: medium
+    verify: cargo test -p sift collector::
+  finite_follow:
+    id: R6
+    text: "Runtime tests cover finite EOF summary, source mismatch, truncated file refusal, stdin resume discard, and follow configuration validation."
+    kind: regression
+    risk: medium
+    verify: cargo test -p sift collector::runtime::tests
+  retry_backpressure:
+    id: R4
+    text: "Client tests classify network, 429, and 5xx as retryable; nonretryable 4xx and item rejections are terminal; batch and retry settings are bounded."
+    kind: stability
     risk: high
-    verify: cargo test -p sift collector::model
+    verify: cargo test -p sift collector::client::tests
+  strict_mapping:
+    id: R2
+    text: "Focused model tests cover schema mismatch, timestamp and bound failures, sensitive-safe preserved payload, lowercase correlation validation, primitive attribute conversion, and deterministic ids."
+    kind: security
+    risk: high
+    verify: cargo test -p sift collector::model::tests
 ---
 flowchart TD
-    r1[R1 source pipeline] --> cargo_test_p_sift_test_structured_stdout_collector_e2e_real_file_collector_ingests_queries_and_resumes_exact[cargo test -p sift --test structured_stdout_collector_e2e real_file_collector_ingests_queries_and_resumes -- --exact]
-    r3[R3 checkpoint idempotency] --> cargo_test_p_sift_test_structured_stdout_collector_e2e_real_file_collector_ingests_queries_and_resumes_exact
-    r2[R2 validation mapping] --> cargo_test_p_sift_collector_model[cargo test -p sift collector::model]
-    r4[R4 bounded delivery] --> cargo_test_p_sift_collector_client[cargo test -p sift collector::client]
-    r5[R5 adapter boundary] --> cargo_test_p_sift_collector[cargo test -p sift collector::]
-    r6[R6 finite follow] --> cargo_test_p_sift_collector_runtime[cargo test -p sift collector::runtime]
+    r1[R1 adapters] --> cargo_test_p_sift_test_structured_stdout_collector_e2e_real_file_collector_ingests_queries_and_resumes_exact[cargo test -p sift --test structured_stdout_collector_e2e real_file_collector_ingests_queries_and_resumes -- --exact]
+    r3[R3 ack checkpoint] --> cargo_test_p_sift_test_structured_stdout_collector_e2e_real_file_collector_ingests_queries_and_resumes_exact
+    r2[R2 strict mapping] --> cargo_test_p_sift_collector_model_tests[cargo test -p sift collector::model::tests]
+    r4[R4 retry backpressure] --> cargo_test_p_sift_collector_client_tests[cargo test -p sift collector::client::tests]
+    r5[R5 cri layering] --> cargo_test_p_sift_collector[cargo test -p sift collector::]
+    r6[R6 finite follow] --> cargo_test_p_sift_collector_runtime_tests[cargo test -p sift collector::runtime::tests]
 ```
