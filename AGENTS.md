@@ -199,6 +199,16 @@ ecosystem binary ships — see "CLI Convention: every CLI ships `llm`,
 `aw guard` is the agent-runtime direct edit/create guard for Codex and
 Claude Code (live-denies out-of-lifecycle writes).
 
+`aw goal` is a CLI-owned verifiable-condition loop for bounded work
+OUTSIDE the WI/TD/EC lifecycle — test-pass gates, migration sweeps, backlog
+drains, and other ad-hoc tasks a human hands an agent directly. `aw goal
+set --gate "<command>" <intent>` records the prose intent plus one or more
+required machine-runnable gate commands as workspace-scoped state (never a
+repo-root file); `aw goal check [<id>]` runs the gates and reports
+deterministically (`done`, `blocked` with `next.command`, or `gave_up` on
+budget/24h expiry). aw-managed work keeps using `aw wi run`/`aw capability
+run`; do not use `aw goal` as a substitute runner for those.
+
 When the user asks for `aw wi`, `sdd issues`, `sdd gh issue`, or similar
 wording after the merge, inspect Agentic Workflow-managed GitHub issues for the
 merged project:
