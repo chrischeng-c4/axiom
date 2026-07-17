@@ -1,3 +1,5 @@
+# SPEC-MANAGED: apps/courier/tech-design/semantic/app/main.md#text-source-unit
+# CODEGEN-BEGIN
 # HANDWRITE-BEGIN
 import os
 from contextlib import asynccontextmanager
@@ -185,3 +187,4 @@ async def mutate_issues(request: BatchMutationRequest):
 
     return results
 # HANDWRITE-END
+# CODEGEN-END

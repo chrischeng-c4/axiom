@@ -141,9 +141,9 @@ label = "app:courier"
 
 [[projects.workspaces]]
 name = "courier"
-paths = ["apps/courier/**"]
+paths = ["apps/courier/app/**", "apps/courier/pyproject.toml", "apps/courier/uv.lock"]
 target = "python"
-test_cmd = "uv run pytest"
+test_cmd = "cd apps/courier && uv run pytest"
 verify_cold = false
 
 [[projects]]

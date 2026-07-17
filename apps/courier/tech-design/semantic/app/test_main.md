@@ -2,6 +2,19 @@
 id: apps-courier-app-test-main-py
 summary: Lossless text-source-unit coverage for `apps/courier/app/test_main.py`.
 fill_sections: [text-source-unit, changes]
+capability_refs:
+  - id: github-issues-proxy
+    role: primary
+    claim: github-issues-proxy-service
+    coverage: full
+  - id: security-hardening
+    role: contributes
+    claim: security-hardening-root
+    coverage: full
+  - id: long-running-stability
+    role: contributes
+    claim: long-running-stability-root
+    coverage: full
 ---
 
 # Fillback apps/courier/app/test_main.py

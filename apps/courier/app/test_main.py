@@ -1,3 +1,5 @@
+# SPEC-MANAGED: apps/courier/tech-design/semantic/app/test_main.md#text-source-unit
+# CODEGEN-BEGIN
 # HANDWRITE-BEGIN
 import os
 import unittest
@@ -143,3 +145,4 @@ class TestCourierApp(unittest.TestCase):
                 self.assertEqual(p_op.number, e_op.get("number"))
                 self.assertEqual(p_op.state, e_op.get("state"))
 # HANDWRITE-END
+# CODEGEN-END
