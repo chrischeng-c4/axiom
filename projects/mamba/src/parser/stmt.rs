@@ -594,9 +594,15 @@ impl<'a> Parser<'a> {
     /// the subject expression (skipping balanced parens/brackets/braces) to
     /// determine if there is a `:` at the outermost nesting level.
     /// Returns `true` if a `:` is found before a newline/EOF at depth 0.
+    ///
+    /// A match-statement subject expression is grammatically mandatory
+    /// (PEP 634), so a `:` found before any subject token has been consumed
+    /// (#1923) means `match` is being used as a plain identifier — e.g. the
+    /// annotated-assignment target `match: TYPE` — not a match-statement.
     fn match_subject_has_colon(&self) -> bool {
         let mut depth = 0usize;
         let mut i = self.pos + 1; // start after the `match` token
+        let mut seen_subject_token = false;
         while i < self.tokens.len() {
             match &self.tokens[i].kind {
                 TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
@@ -608,10 +614,11 @@ impl<'a> Parser<'a> {
                     }
                     depth -= 1;
                 }
-                TokenKind::Colon if depth == 0 => return true,
+                TokenKind::Colon if depth == 0 => return seen_subject_token,
                 TokenKind::Newline | TokenKind::Eof if depth == 0 => return false,
                 _ => {}
             }
+            seen_subject_token = true;
             i += 1;
         }
         false
@@ -1491,6 +1498,66 @@ mod tests {
                 assert!(matches!(target.node, Expr::Ident(ref n) if n == "match"));
             }
             other => panic!("expected Assign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_match_bare_annotation_module_level() {
+        // #1923 — `match: TYPE` with no subject tokens before the `:` is a
+        // bare annotation on the identifier `match`, not a match-statement
+        // (whose subject expression is grammatically mandatory).
+        match parse_stmt("match: int\n") {
+            Stmt::BareAnnotation { name, ty } => {
+                assert_eq!(name, "match");
+                assert!(matches!(ty.node, TypeExpr::Named(ref n) if n == "int"));
+            }
+            other => panic!("expected BareAnnotation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_match_bare_annotation_union_type() {
+        // #1923 — union-type annotation shouldn't change the disambiguation.
+        match parse_stmt("match: str | None\n") {
+            Stmt::BareAnnotation { name, ty } => {
+                assert_eq!(name, "match");
+                assert!(matches!(ty.node, TypeExpr::Union(ref elems) if elems.len() == 2));
+            }
+            other => panic!("expected BareAnnotation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_match_bare_annotation_in_class_body() {
+        // #1923 — the original failing shape: a dataclass-style field named
+        // `match` inside a class body.
+        let src = "class Foo:\n    match: str\n    other: int\n";
+        let module = parser::parse(src, fid()).expect("parse failed");
+        match module.stmts.into_iter().next().unwrap().node {
+            Stmt::ClassDef { body, .. } => {
+                assert_eq!(body.len(), 2);
+                match &body[0].node {
+                    Stmt::BareAnnotation { name, ty } => {
+                        assert_eq!(name, "match");
+                        assert!(matches!(ty.node, TypeExpr::Named(ref n) if n == "str"));
+                    }
+                    other => panic!("expected BareAnnotation, got {other:?}"),
+                }
+            }
+            other => panic!("expected ClassDef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_match_statement_single_ident_subject_not_regressed() {
+        // #1923 regression guard: a real match-statement with a single-token
+        // (non-tuple) subject must still dispatch to parse_match(), since the
+        // fix only changes behavior when zero subject tokens precede the `:`.
+        let src = "match command:\n    case \"go\":\n        pass\n";
+        let module = parser::parse(src, fid()).expect("parse failed");
+        match module.stmts.into_iter().next().unwrap().node {
+            Stmt::Match { .. } => {}
+            other => panic!("expected Match, got {other:?}"),
         }
     }
 
