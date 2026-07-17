@@ -2277,6 +2277,7 @@ mod tests {
         let module = Module {
             stmts: vec![sp(Stmt::For {
                 targets: vec!["i".into()],
+                star_index: None,
                 var_ty: None,
                 iter: sp(Expr::ListLit(vec![])),
                 body: vec![sp(Stmt::Pass)],
@@ -2324,6 +2325,7 @@ mod tests {
             stmts: vec![
                 sp(Stmt::For {
                     targets: vec!["i".into()],
+                    star_index: None,
                     var_ty: None,
                     iter: sp(Expr::ListLit(vec![])),
                     body: vec![sp(Stmt::Pass)],

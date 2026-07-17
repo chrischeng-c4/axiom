@@ -534,6 +534,7 @@ impl TypeChecker {
             }
             Stmt::For {
                 targets,
+                star_index: _,
                 var_ty,
                 iter,
                 body,
@@ -541,6 +542,7 @@ impl TypeChecker {
             }
             | Stmt::AsyncFor {
                 targets,
+                star_index: _,
                 var_ty,
                 iter,
                 body,
