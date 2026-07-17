@@ -475,6 +475,23 @@ an independent namespace such as `<svc>-system`; `operator run` is the controlle
 process/container entrypoint. `instance` renders the app-namespace custom
 resource that an application team applies next to the app it integrates with.
 
+### Control plane and data plane responsibilities
+
+Every Kubernetes-native service composes a shared **control plane** and a
+per-instance **data plane**. The control plane is the CRD, Operator, reconcile
+loop, status, finalizers, and lifecycle resources. Its common mechanics belong
+in `libs/service-k8s`; each service supplies only its domain schema, policy,
+and operator defaults. The Operator normally runs in `<svc>-system`.
+
+The data plane is the workload rendered for one service instance and the
+resources that carry its traffic and durable state. For a StatefulSet-profile
+service, that includes the StatefulSet, client/headless Services, PVCs, PDBs,
+and applicable backup or maintenance workloads. It belongs in the instance's
+app or service-owned namespace; do not require a fixed shared data-plane
+namespace. A service's data-plane behavior remains domain-specific, but the
+control-plane/data-plane split is a service-archetype contract, not a
+service-specific capability.
+
 When a reconcile's rendered shape stops including a resource it rendered
 previously — a conditional HPA, a per-mode Service, or any other
 conditionally-rendered child — the service operator must explicitly delete
