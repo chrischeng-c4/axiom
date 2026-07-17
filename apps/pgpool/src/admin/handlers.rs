@@ -48,11 +48,13 @@ pub async fn openapi_json() -> Json<serde_json::Value> {
     Json(crate::spec::openapi())
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Replace remote Swagger CDN assets with a self-contained offline documentation page.">
 /// `GET /docs` — a minimal Swagger UI page loading `/openapi.json`,
 /// mirroring `libs/service-http`'s `docs_swagger` convention (R6).
 pub async fn docs() -> impl IntoResponse {
     Html(SWAGGER_HTML)
 }
+// </HANDWRITE>
 
 /// `GET /pools` — one `PoolStatsResponse` entry per `AdminState.pools`
 /// member, read live (R3).

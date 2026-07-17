@@ -270,6 +270,7 @@ mod tests {
         assert_eq!(offline_routes, served_routes);
     }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Verify docs HTML has no external network dependency.">
     /// verify: admin::docs_serves_swagger_ui_html_referencing_openapi_json (R6)
     #[tokio::test]
     async fn docs_serves_swagger_ui_html_referencing_openapi_json() {
@@ -279,5 +280,6 @@ mod tests {
         assert!(body.contains("swagger-ui"));
         assert!(body.contains("/openapi.json"));
     }
+// </HANDWRITE>
 }
 // </HANDWRITE>
