@@ -91,31 +91,35 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: Define the public axiom.service.log.v1 event model, correlation validation, sensitive-field exclusion, bounded attributes, and tracing-subscriber JSONL formatter.
+    description: Define ServiceLogEventV1, stable schema constants, correlation validation, sensitive-key exclusion, bounded attributes, and the tracing-subscriber JSONL formatter.
   - path: libs/service-observability/src/logging.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Install the versioned JSONL formatter for collector-compatible mode while preserving explicit pretty output and optional OTLP composition.
+    description: Compose JsonFields and ServiceJsonFormatter for LogFormat::Json while retaining explicit pretty output and optional OTLP layering.
   - path: libs/service-observability/src/lib.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Export the versioned event contract and formatter surfaces for service adopters and collectors.
+    description: Export the versioned event, service identity payload, formatter, and collector-compatibility constants.
   - path: libs/service-observability/contracts/axiom.service.log.v1.schema.json
     action: create
     section: logic
     impl_mode: hand-written
-    description: Publish the machine-readable versioned stdout event schema and its required and prohibited-by-default fields.
+    description: Define the machine-readable required, optional, nested service, correlation-pattern, attribute-bound, and additional-property rules.
+  - path: libs/service-observability/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document JSON as the stdout collector contract and pretty as development-only output for all service adopters.
   - path: libs/service-observability/tests/service_log_jsonl.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Verify independent-line parsing, service identity, span correlation inheritance, validation, redaction, bounds, no-context behavior, and no-OTLP operation.
+    description: Capture real tracing output and verify per-line framing, stable schema, inherited correlation, validation, redaction, bounds, static-schema drift, and exporter independence.
 ```
 
-The bounded hand-authored implementation also adds direct `serde` and `serde_json` dependencies to `libs/service-observability/Cargo.toml`; the contract test makes the static schema and Rust event surface drift together.
-
+`libs/service-observability/Cargo.toml` gains the direct workspace `serde` and `serde_json` dependencies required by the public wire type and formatter. Those declarative dependency entries are covered by compiling the generated target set rather than receiving source-ownership markers.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
