@@ -86,6 +86,7 @@ target/
 
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/goal-loop/
 
 # Frontend build artifacts
 dist/
