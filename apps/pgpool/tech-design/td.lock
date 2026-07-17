@@ -2,15 +2,21 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T10:25:02.042584+00:00"
-digest = "sha256:573eb36ca03a0ad8ccef6de7579157cc1443d622c9bfe0353bbf1906e9a1e99d"
-source_digest = "sha256:573eb36ca03a0ad8ccef6de7579157cc1443d622c9bfe0353bbf1906e9a1e99d"
-ir_digest = "sha256:41c427f89dea33873ef340ac95bf1c815049d8c263d710b4eba2c0b745cc1106"
+generated_at = "2026-07-17T10:40:08.479052+00:00"
+digest = "sha256:49d5f8afa1ddddad256e7cf2b696938abee6555a0ece1bac4bf67cb23380ad26"
+source_digest = "sha256:49d5f8afa1ddddad256e7cf2b696938abee6555a0ece1bac4bf67cb23380ad26"
+ir_digest = "sha256:e0faba89ad62c0e53a6769e39cf3f1664bc9eb3cee6d5c15ecc50aea68f35b62"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
 digest = "sha256:e278b719cb602c42fad54ba035e31e814ba05fcea4b551c3ccb3a3836e47df55"
 ir_digest = "sha256:5b003795efc2650be3eb0fcd03f2aee9353c41ea5bacfb17a19d3fd02aef9279"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/transaction-mode-hangs-on-extended-query-protocol-fail-fast-with.md"
+digest = "sha256:b16d6b9b446be8ef45f39e3a8529ede6ad3831f2092c0aad019ee26df8ffaf26"
+ir_digest = "sha256:b78e8936b27e2a23fc3a472eb2499ad052dd20e7727ebde09eeef7650e660518"
 section_count = 3
 
 [[files]]
@@ -249,8 +255,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/pgpool-stateless-deployment-instance.md"
-digest = "sha256:ade0087bd7482be63f26159bd983f12bfe6d544570d63296de346c36b8416907"
-ir_digest = "sha256:0e2f05c45953167deeb2fb1572de5fdf46188886712acb01fc864c5938f5d09c"
+digest = "sha256:72fd72b035a2b4af37c09d0884ba1a883d2b61385b8d50c24d37561b70a04eae"
+ir_digest = "sha256:88e78f2bc70277a6a0e33064fae4d0b649fbf2c04ae41fbb3d813e4f102a2864"
 section_count = 3
 
 [[files]]
