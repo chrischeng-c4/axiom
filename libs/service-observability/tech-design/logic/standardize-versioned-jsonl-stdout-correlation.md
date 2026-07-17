@@ -127,41 +127,41 @@ changes:
 ---
 id: versioned-service-jsonl-stdout-verification
 requirements:
-  adopter_and_schema_surface:
+  composition:
     id: R5
-    text: "The public Rust event model and static schema stay aligned, JSON remains collector-compatible, and pretty remains an explicit development-only choice."
-    kind: contract
+    text: "All service-observability tests pass in logging-only mode and with the optional OTLP feature without changing the JSON contract; pretty remains explicitly non-collector-compatible."
+    kind: regression
     risk: medium
     verify: cargo test -p service-observability
-  inherited_correlation:
+  correlation:
     id: R3
-    text: "Active valid trace, span, parent, flags, and request fields are inherited without requiring an OTLP exporter."
+    text: "Nearest active span correlation is promoted only when ids are valid and works in the default no-OTLP build."
     kind: functional
     risk: high
     verify: cargo test -p service-observability --test service_log_jsonl active_span_fields_become_valid_correlation -- --exact
-  jsonl_contract:
-    id: R1
-    text: "Collector-compatible output uses the axiom.service.log.v1 event contract and every stdout line parses independently."
+  framing_identity:
+    id: R2
+    text: "Two real tracing events produce two independently parseable compact JSON lines with timestamp, severity, service identity, event, message, and bounded attributes."
     kind: functional
     risk: high
     verify: cargo test -p service-observability --test service_log_jsonl jsonl_lines_parse_independently_with_identity -- --exact
-  safe_untrusted_fields:
+  safety_bounds:
     id: R4
-    text: "Sensitive propagation fields are excluded, correlation values are validated, and attribute count and size are bounded without breaking JSONL framing."
+    text: "Sensitive and invalid reserved fields are omitted, no more than 64 attributes survive, values are bounded, and JSON framing stays valid."
     kind: security
     risk: high
     verify: cargo test -p service-observability --test service_log_jsonl sensitive_and_oversized_attributes_are_safe -- --exact
-  stable_fields:
-    id: R2
-    text: "Each structured event contains timestamp, severity, service identity, event, message, and bounded attributes."
-    kind: regression
+  wire_contract:
+    id: R1
+    text: "ServiceLogEventV1 and the static schema identify axiom.service.log.v1 and reject drift in required and optional fields."
+    kind: contract
     risk: high
-    verify: cargo test -p service-observability --test service_log_jsonl jsonl_lines_parse_independently_with_identity -- --exact
+    verify: cargo test -p service-observability --test service_log_jsonl schema_contract_matches_rust_event -- --exact
 ---
 flowchart TD
-    r1[R1 jsonl contract] --> cargo_test_p_service_observability_test_service_log_jsonl_jsonl_lines_parse_independently_with_identity_exact[cargo test -p service-observability --test service_log_jsonl jsonl_lines_parse_independently_with_identity -- --exact]
-    r2[R2 stable fields] --> cargo_test_p_service_observability_test_service_log_jsonl_jsonl_lines_parse_independently_with_identity_exact
-    r3[R3 inherited correlation] --> cargo_test_p_service_observability_test_service_log_jsonl_active_span_fields_become_valid_correlation_exact[cargo test -p service-observability --test service_log_jsonl active_span_fields_become_valid_correlation -- --exact]
-    r4[R4 safe untrusted fields] --> cargo_test_p_service_observability_test_service_log_jsonl_sensitive_and_oversized_attributes_are_safe_exact[cargo test -p service-observability --test service_log_jsonl sensitive_and_oversized_attributes_are_safe -- --exact]
-    r5[R5 adopter and schema surface] --> cargo_test_p_service_observability[cargo test -p service-observability]
+    r1[R1 wire contract] --> cargo_test_p_service_observability_test_service_log_jsonl_schema_contract_matches_rust_event_exact[cargo test -p service-observability --test service_log_jsonl schema_contract_matches_rust_event -- --exact]
+    r2[R2 framing identity] --> cargo_test_p_service_observability_test_service_log_jsonl_jsonl_lines_parse_independently_with_identity_exact[cargo test -p service-observability --test service_log_jsonl jsonl_lines_parse_independently_with_identity -- --exact]
+    r3[R3 correlation] --> cargo_test_p_service_observability_test_service_log_jsonl_active_span_fields_become_valid_correlation_exact[cargo test -p service-observability --test service_log_jsonl active_span_fields_become_valid_correlation -- --exact]
+    r4[R4 safety bounds] --> cargo_test_p_service_observability_test_service_log_jsonl_sensitive_and_oversized_attributes_are_safe_exact[cargo test -p service-observability --test service_log_jsonl sensitive_and_oversized_attributes_are_safe -- --exact]
+    r5[R5 composition] --> cargo_test_p_service_observability[cargo test -p service-observability]
 ```
