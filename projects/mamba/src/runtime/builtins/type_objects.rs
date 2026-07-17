@@ -1,7 +1,7 @@
 use crate::runtime::rc::{self, MbObject, ObjData, ObjKind};
 use crate::runtime::stdlib::uuid_mod;
 use crate::runtime::value::MbValue;
-use crate::runtime::{async_rt, class, dict_ops, exception, gc, iter, module};
+use crate::runtime::{async_rt, class, closure, dict_ops, exception, gc, iter, module};
 use rustc_hash::FxHashMap;
 
 /// type(value) — return a type object with __name__ attribute.
@@ -18,6 +18,11 @@ pub fn mb_type(val: MbValue) -> MbValue {
         let id = val.as_int().unwrap_or(0) as u64;
         if uuid_mod::is_uuid_handle(id) {
             "UUID"
+        } else if closure::mb_func_is_registered(val) {
+            // Closure handles (lambdas, capturing nested `def`s) are TAG_INT
+            // indirection over a side table (#1919), unlike a plain top-level
+            // `def` which gets a direct TAG_FUNC value caught below.
+            "function"
         } else {
             "int"
         }
