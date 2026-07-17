@@ -1263,7 +1263,16 @@ fn collect_numeric_require_ids(source: &str, node: Node<'_>, ids: &mut Vec<usize
     if node.kind() == "call_expression" {
         if let Some(function) = node.child_by_field_name("function") {
             let function_text = &source[function.byte_range()];
-            if function_text == "require" || function_text == "_r" {
+            // GH #1930 — `--splitting` lowers `import(spec)` to
+            // `__jet__.dynamicImport(id)` instead of `require(id)`. Without
+            // this alias, the entry-reachability rescue pass below can't see
+            // that a numeric id is still referenced, so async-chunk-only
+            // modules get pruned as "unreachable" before code splitting ever
+            // sees them (empty chunk bodies, empty `moduleChunks`).
+            if function_text == "require"
+                || function_text == "_r"
+                || function_text == "__jet__.dynamicImport"
+            {
                 if let Some(arguments) = node.child_by_field_name("arguments") {
                     if let Some(first) = arguments.named_child(0) {
                         if first.kind() == "number" {
@@ -2269,6 +2278,34 @@ Object.defineProperty(_m2.exports, "__esModule", { value: true });
     fn test_js_parses_without_errors_reports_syntax_errors() {
         assert!(js_parses_without_errors("const value = `${name}`;"));
         assert!(!js_parses_without_errors("const value = ;"));
+    }
+
+    #[test]
+    fn test_numeric_require_ids_recognizes_dynamic_import_lowering() {
+        // GH #1930 — `--splitting` lowers `import(spec)` to
+        // `__jet__.dynamicImport(id)` instead of `require(id)`. The entry-
+        // reachability rescue pass (apply_tree_shaking) walks this id set to
+        // decide which compiled modules survive into the final bundle; if a
+        // member-expression call like `__jet__.dynamicImport(2)` isn't
+        // recognized here, async-chunk-only modules get pruned as
+        // "unreachable" before code splitting ever sees them, producing
+        // empty chunk bodies and an empty moduleChunks manifest.
+        let source = "__jet__.dynamicImport(2).then(function (mod) { return mod.default(); });";
+        let ids = numeric_require_ids(source);
+        assert!(
+            ids.contains(&2),
+            "must recognize __jet__.dynamicImport(id) as a reachability edge, got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn test_numeric_require_ids_still_recognizes_require_and_mangled_alias() {
+        let source = "var a = require(1); var b = _r(2);";
+        let ids = numeric_require_ids(source);
+        assert!(
+            ids.contains(&1) && ids.contains(&2),
+            "require(id) and _r(id) must both stay recognized, got {ids:?}"
+        );
     }
 }
 // CODEGEN-END

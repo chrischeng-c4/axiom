@@ -257,6 +257,9 @@ path = "tests/build/svgr.rs"
 [[test]]
 name = "tree_shaking"
 path = "tests/build/tree_shaking.rs"
+[[test]]
+name = "code_splitting"
+path = "tests/build/code_splitting.rs"
 
 # tests/stories/ — jet stories: CSF story discovery + parse (Storybook replacement)
 [[test]]

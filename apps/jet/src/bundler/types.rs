@@ -77,6 +77,13 @@ pub struct BundleOptions {
     /// library entry path (`LibBuildOptions`) defaults this to `true`.
     /// @issue #171
     pub declaration: bool,
+
+    /// Enable code splitting: dynamic `import()` boundaries become separate
+    /// chunk files loaded at runtime via `__jet__.loadChunk`/`dynamicImport`,
+    /// instead of being inlined into the single bundle. Default `false`
+    /// keeps the existing single-file output byte-for-byte unchanged.
+    /// @issue #1930
+    pub splitting: bool,
 }
 
 /// Production build configuration.
@@ -194,6 +201,40 @@ pub struct BundleOutput {
 
     /// Generated assets
     pub assets: Vec<Asset>,
+
+    /// Code-split chunk artifacts (async + shared), populated only when
+    /// `BundleOptions::splitting` is `true`. `code` is the entry chunk in
+    /// both modes; when splitting is off this is always empty, so existing
+    /// consumers that only read `code`/`source_map`/`assets` are unaffected.
+    /// @issue #1930
+    pub chunks: Vec<ChunkArtifact>,
+}
+
+/// A single non-entry chunk produced by code splitting (async or shared).
+///
+/// The entry chunk is represented by `BundleOutput::code` directly; this
+/// struct carries the `__jet__.registerChunk(name, fn(){...})`-wrapped body
+/// for every other chunk plus enough metadata to build the runtime manifest
+/// and content-hashed output filename.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+/// @issue #1930
+#[derive(Debug, Clone)]
+pub struct ChunkArtifact {
+    /// Chunk name (e.g. `"chunk-lazy1"` or `"shared"`), stable across builds
+    /// — the content hash is appended separately when writing the file.
+    pub name: String,
+
+    /// Chunk JavaScript, already wrapped in
+    /// `__jet__.registerChunk("<name>", function(){ ... });`.
+    pub code: String,
+
+    /// Names of other chunks this chunk depends on (loaded first by
+    /// `loadChunk`). Mirrors `splitting::Chunk::imports`.
+    pub imports: Vec<String>,
+
+    /// Compiled-module ids assigned to this chunk, used to build the
+    /// `moduleChunks: { id: name }` runtime manifest.
+    pub module_ids: Vec<usize>,
 }
 
 /// Asset output
@@ -239,6 +280,7 @@ impl Default for BundleOptions {
             formats: vec![OutputFormat::Esm],
             preserve_modules: false,
             declaration: false,
+            splitting: false,
         }
     }
 }

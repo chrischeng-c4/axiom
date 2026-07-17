@@ -31,6 +31,13 @@ pub struct ModuleResolutionIndex {
     /// Explicit tsconfig `baseUrl`, threaded from the bundler's resolver so
     /// codegen resolves local bare specifiers the same way graph discovery did.
     base_url: Option<PathBuf>,
+    /// When true, `transform_dynamic_import` lowers a resolved internal
+    /// dynamic `import()` to `__jet__.dynamicImport(id)` instead of
+    /// `Promise.resolve(require(id))`, so it can be loaded lazily from a
+    /// code-split chunk. Default `false` (via `#[derive(Default)]`) keeps
+    /// every existing caller's lowering unchanged.
+    /// @issue #1930
+    splitting: bool,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
@@ -79,7 +86,15 @@ impl ModuleResolutionIndex {
             package_roots,
             alias_entries: alias_entries.to_vec(),
             base_url,
+            splitting: false,
         }
+    }
+
+    /// Enable `--splitting` dynamic-import lowering (`__jet__.dynamicImport`).
+    /// @issue #1930
+    pub fn with_splitting(mut self, splitting: bool) -> Self {
+        self.splitting = splitting;
+        self
     }
 }
 
@@ -510,6 +525,23 @@ fn transform_dynamic_import(
                         resolution_index,
                         current_dir,
                     );
+                    // --splitting: a resolved internal module (require_target
+                    // is the bare-numeric "require(<id>)" shape every
+                    // successful resolve_module_path branch returns) lowers
+                    // to the chunk-aware runtime loader so its owning chunk
+                    // can be fetched lazily. Unresolved/external specifiers
+                    // (the "require('<path>')" fallback shape) keep the
+                    // existing Promise.resolve(require(...)) lowering
+                    // unchanged — there is no chunk to load for them. When
+                    // splitting is off (the default), this branch never
+                    // triggers and lowering is byte-for-byte unchanged.
+                    // @issue #1930
+                    let splitting = resolution_index.map(|idx| idx.splitting).unwrap_or(false);
+                    if splitting {
+                        if let Some(id) = parse_resolved_require_id(&require_target) {
+                            return Ok(format!("__jet__.dynamicImport({})", id));
+                        }
+                    }
                     return Ok(format!("Promise.resolve({})", require_target));
                 }
             }
@@ -517,6 +549,20 @@ fn transform_dynamic_import(
     }
     // Fallback: return original
     Ok(source[node.byte_range()].to_string())
+}
+
+/// Extract the module id from a `resolve_module_path` result of the shape
+/// `"require(<id>)"` (a resolved internal module). Returns `None` for the
+/// unresolved-specifier fallback shape `"require('<path>')"`, since that
+/// has no chunk to load at runtime — the caller keeps the existing
+/// `Promise.resolve(require(...))` lowering for it.
+/// @issue #1930
+fn parse_resolved_require_id(require_target: &str) -> Option<usize> {
+    require_target
+        .strip_prefix("require(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit()))
+        .and_then(|inner| inner.parse::<usize>().ok())
 }
 
 /// Resolve module path to require() target.
@@ -2827,6 +2873,145 @@ genCalc
             resolved_with_alias, resolved_without_alias,
             "an alias-miss must resolve identically whether or not alias_entries is populated: {resolved_with_alias} vs {resolved_without_alias}"
         );
+    }
+
+    /// WI #1930 — `--splitting` dynamic-`import()` lowering. On: a resolved
+    /// internal module lowers to `__jet__.dynamicImport(id)` so its owning
+    /// chunk can be fetched lazily at runtime. Off (default): unchanged
+    /// `Promise.resolve(require(id))` lowering, byte-for-byte identical to
+    /// pre-#1930 behavior (AC2). Unresolved/external specifiers keep the
+    /// existing `Promise.resolve(require('<spec>'))` fallback regardless of
+    /// the flag, since there is no chunk to load for them.
+    mod code_splitting_dynamic_import_lowering_tests {
+        use super::*;
+
+        #[test]
+        fn resolved_import_lowers_to_dynamic_import_when_splitting_enabled() {
+            let mut module_map: HashMap<PathBuf, usize> = HashMap::new();
+            module_map.insert(PathBuf::from("./lazy"), 5);
+            let index = ModuleResolutionIndex::from_module_map_and_aliases_and_base_url(
+                &module_map,
+                &[],
+                None,
+            )
+            .with_splitting(true);
+
+            let result = transform_modules_with_dir_and_index(
+                "import('./lazy');",
+                &module_map,
+                Some(&index),
+                None,
+            )
+            .expect("transform should succeed");
+
+            assert!(
+                result.code.contains("__jet__.dynamicImport(5)"),
+                "splitting-on resolved dynamic import must lower to __jet__.dynamicImport(id): {}",
+                result.code
+            );
+            assert!(
+                !result.code.contains("Promise.resolve(require("),
+                "splitting-on resolved dynamic import must not use the Promise.resolve(require(...)) shape: {}",
+                result.code
+            );
+        }
+
+        #[test]
+        fn resolved_import_keeps_promise_resolve_require_when_splitting_disabled() {
+            let mut module_map: HashMap<PathBuf, usize> = HashMap::new();
+            module_map.insert(PathBuf::from("./lazy"), 5);
+            // Default ModuleResolutionIndex: splitting is false (derive
+            // Default + explicit `splitting: false` in every constructor).
+            let index = ModuleResolutionIndex::from_module_map_and_aliases_and_base_url(
+                &module_map,
+                &[],
+                None,
+            );
+
+            let result = transform_modules_with_dir_and_index(
+                "import('./lazy');",
+                &module_map,
+                Some(&index),
+                None,
+            )
+            .expect("transform should succeed");
+
+            assert!(
+                result.code.contains("Promise.resolve(require(5))"),
+                "splitting-off resolved dynamic import must keep the pre-#1930 \
+                 Promise.resolve(require(id)) lowering (AC2): {}",
+                result.code
+            );
+            assert!(
+                !result.code.contains("dynamicImport"),
+                "splitting-off output must never mention dynamicImport: {}",
+                result.code
+            );
+        }
+
+        #[test]
+        fn no_resolution_index_keeps_promise_resolve_require_lowering() {
+            // `resolution_index: None` is the legacy call shape
+            // (`transform_modules`/`transform_modules_with_dir`); must be
+            // unaffected by the new splitting field entirely.
+            let mut module_map: HashMap<PathBuf, usize> = HashMap::new();
+            module_map.insert(PathBuf::from("./lazy"), 5);
+
+            let result =
+                transform_modules_with_dir_and_index("import('./lazy');", &module_map, None, None)
+                    .expect("transform should succeed");
+
+            assert!(
+                result.code.contains("Promise.resolve(require(5))"),
+                "no resolution_index must keep the legacy lowering: {}",
+                result.code
+            );
+        }
+
+        #[test]
+        fn unresolved_specifier_keeps_promise_resolve_require_even_when_splitting_enabled() {
+            let module_map: HashMap<PathBuf, usize> = HashMap::new();
+            let index = ModuleResolutionIndex::from_module_map_and_aliases_and_base_url(
+                &module_map,
+                &[],
+                None,
+            )
+            .with_splitting(true);
+
+            let result = transform_modules_with_dir_and_index(
+                "import('some-external-pkg');",
+                &module_map,
+                Some(&index),
+                None,
+            )
+            .expect("transform should succeed");
+
+            assert!(
+                result
+                    .code
+                    .contains("Promise.resolve(require('some-external-pkg'))"),
+                "an unresolved/external specifier has no chunk to load, so it must \
+                 keep the existing fallback lowering even with splitting on: {}",
+                result.code
+            );
+            assert!(
+                !result.code.contains("dynamicImport"),
+                "unresolved specifier must never lower to dynamicImport: {}",
+                result.code
+            );
+        }
+
+        #[test]
+        fn parse_resolved_require_id_parses_digits_and_rejects_string_fallback() {
+            assert_eq!(parse_resolved_require_id("require(5)"), Some(5));
+            assert_eq!(parse_resolved_require_id("require(0)"), Some(0));
+            assert_eq!(parse_resolved_require_id("require('./lazy')"), None);
+            assert_eq!(
+                parse_resolved_require_id("require('some-external-pkg')"),
+                None
+            );
+            assert_eq!(parse_resolved_require_id("not a require call"), None);
+        }
     }
 }
 // CODEGEN-END

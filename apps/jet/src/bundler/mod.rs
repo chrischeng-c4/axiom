@@ -34,7 +34,7 @@ pub use lib_build::{
     build_library, AssetKind, AssetOutput, EntryOutput, LibBuildOptions, LibBuildResult, RawCopyDir,
 };
 pub use splitting::SplitResult;
-pub use types::{BundleOptions, BundleOutput, ModuleId, PreloadHint};
+pub use types::{BundleOptions, BundleOutput, ChunkArtifact, ModuleId, PreloadHint};
 
 /// Determine module kind from file extension
 /// GH #3821 — fallback extension string used when a resolved-module
@@ -236,6 +236,161 @@ fn generate_runtime() -> String {
     .to_string()
 }
 
+/// Generate the code-splitting runtime module system: `generate_runtime`'s
+/// `define`/`require` (kept verbatim) plus `registerChunk`/`loadChunk`/
+/// `dynamicImport` for lazy chunk loading.
+///
+/// Used only by `Bundler::generate_split_bundle` (the `--splitting` entry
+/// chunk). Kept as a separate function — rather than extending
+/// `generate_runtime` in place — so the non-splitting runtime-module-system
+/// fallback (`generate_bundle_with_runtime`, used whenever a build has
+/// cycles or dynamic imports regardless of `--splitting`) stays byte-for-byte
+/// unchanged (AC2).
+/// @issue #1930
+fn generate_split_runtime() -> String {
+    r#"// Jet Module Runtime (code splitting)
+(function() {
+  'use strict';
+
+  var modules = {};
+  var cache = {};
+
+  // Module definition
+  function define(id, factory) {
+    modules[id] = factory;
+  }
+
+  // Module require
+  function require(id) {
+    // Return cached module if exists
+    if (cache[id]) {
+      return cache[id].exports;
+    }
+
+    // Create module object
+    var module = cache[id] = {
+      exports: {},
+      id: id,
+      loaded: false
+    };
+
+    // Execute module factory
+    var factory = modules[id];
+    if (!factory) {
+      throw new Error('Module not found: ' + id);
+    }
+
+    factory.call(module.exports, require, module, module.exports);
+    module.loaded = true;
+
+    return module.exports;
+  }
+
+  // Chunk registry, in-flight load dedup map, and the entry script's own
+  // src — captured synchronously at IIFE-execution time, since
+  // document.currentScript is only valid during the initial script's own
+  // (top-level) execution — so async/shared chunk <script> tags resolve
+  // against the right base path.
+  var registeredChunks = {};
+  var chunkPromises = {};
+  var entryScriptSrc =
+    (typeof document !== 'undefined' && document.currentScript)
+      ? document.currentScript.src
+      : '';
+
+  // Register an async/shared chunk's modules. Called by the chunk file
+  // itself once it loads, via a generated call into this function
+  // (see Bundler::generate_split_bundle's chunk wrapper on the Rust side).
+  function registerChunk(name, factory) {
+    factory();
+    registeredChunks[name] = true;
+  }
+
+  // Load an async/shared chunk by name, injecting a <script> tag. Dep-first:
+  // loads the chunk's declared dependency chunks (chunkManifest imports)
+  // before the chunk itself. Dedups concurrent loads of the same chunk.
+  function loadChunk(name) {
+    if (registeredChunks[name]) {
+      return Promise.resolve();
+    }
+    if (typeof document === 'undefined') {
+      return Promise.reject(new Error(
+        '__jet__.loadChunk: no document available to load chunk "' + name + '"'
+      ));
+    }
+    if (chunkPromises[name]) {
+      return chunkPromises[name];
+    }
+    var manifest = (window.__jet__ && window.__jet__.chunkManifest) ||
+      { chunks: {}, moduleChunks: {} };
+    var info = manifest.chunks[name];
+    if (!info) {
+      return Promise.reject(new Error('__jet__.loadChunk: unknown chunk "' + name + '"'));
+    }
+    var promise = Promise.all((info.imports || []).map(loadChunk)).then(function() {
+      if (registeredChunks[name]) {
+        return;
+      }
+      return new Promise(function(resolve, reject) {
+        var base = entryScriptSrc.substring(0, entryScriptSrc.lastIndexOf('/') + 1);
+        var script = document.createElement('script');
+        script.src = base + info.file;
+        script.onload = function() {
+          if (registeredChunks[name]) {
+            resolve();
+          } else {
+            reject(new Error(
+              '__jet__.loadChunk: chunk "' + name + '" loaded but did not register'
+            ));
+          }
+        };
+        script.onerror = function() {
+          reject(new Error(
+            '__jet__.loadChunk: failed to load chunk "' + name + '" (' + script.src + ')'
+          ));
+        };
+        document.head.appendChild(script);
+      });
+    });
+    chunkPromises[name] = promise;
+    return promise;
+  }
+
+  // Dynamic import() lowering target: require the module directly if it is
+  // already available (e.g. bundled into the entry chunk), otherwise load
+  // its owning chunk first.
+  function dynamicImport(id) {
+    if (modules[id]) {
+      return Promise.resolve().then(function() {
+        return require(id);
+      });
+    }
+    var manifest = (window.__jet__ && window.__jet__.chunkManifest) ||
+      { chunks: {}, moduleChunks: {} };
+    var chunkName = manifest.moduleChunks[id];
+    if (!chunkName) {
+      return Promise.reject(new Error('__jet__.dynamicImport: no chunk maps to module ' + id));
+    }
+    return loadChunk(chunkName).then(function() {
+      return require(id);
+    });
+  }
+
+  // Expose global runtime
+  window.__jet__ = {
+    define: define,
+    require: require,
+    modules: modules,
+    cache: cache,
+    registerChunk: registerChunk,
+    loadChunk: loadChunk,
+    dynamicImport: dynamicImport
+  };
+})();
+"#
+    .to_string()
+}
+
 /// Generate `<link rel="modulepreload">` tags from preload hints.
 ///
 /// Returns HTML tags suitable for injection into `<head>`. Only static
@@ -383,6 +538,12 @@ pub struct Bundler {
     /// Explicit tsconfig `baseUrl`, retained for the codegen-time resolver so
     /// emitted requires use the same local-module mapping as graph discovery.
     base_url: Option<PathBuf>,
+    /// When true, `generate_bundle` emits a multi-chunk `BundleOutput`
+    /// (entry + async/shared `ChunkArtifact`s) instead of a single file, and
+    /// dynamic `import()` lowers to `__jet__.dynamicImport(id)`. Default
+    /// `false` keeps the existing single-file output unchanged.
+    /// @issue #1930
+    splitting: bool,
 }
 
 /// Compilation cache for incremental builds
@@ -409,6 +570,7 @@ impl Bundler {
     pub fn new(options: BundleOptions) -> Result<Self> {
         let minify = options.minify;
         let defines = options.defines.clone();
+        let splitting = options.splitting;
         let mut resolve_options = options.resolve_options;
         // WI #1305: retain a copy of the already-loaded alias table before
         // `resolve_options` moves into `ModuleResolver::new` below, so the
@@ -437,6 +599,7 @@ impl Bundler {
             base_url,
             unresolved_deps: Mutex::new(Vec::new()),
             parsed_trees: Mutex::new(HashMap::new()),
+            splitting,
         })
     }
 
@@ -981,7 +1144,8 @@ impl Bundler {
                 &module_map,
                 &self.alias_entries,
                 self.base_url.clone(),
-            );
+            )
+            .with_splitting(self.splitting);
         let side_effect_free_module_ids =
             collect_side_effect_free_module_indices(&graph, &sorted_ids);
 
@@ -1329,6 +1493,24 @@ impl Bundler {
                 code: String::new(),
                 source_map: None,
                 assets: Vec::new(),
+                chunks: Vec::new(),
+            });
+        }
+
+        // Code splitting (`--splitting`): produce a multi-chunk output
+        // instead of the single-file formats below. Wins over
+        // has_cycle/scope-hoist selection since a split build always needs
+        // the runtime module registry (dynamic imports are chunk
+        // boundaries). Returns early so the single-file paths below stay
+        // byte-for-byte unchanged when splitting is off.
+        // @issue #1930
+        if self.splitting {
+            let (entry_code, chunks) = self.generate_split_bundle(&modules)?;
+            return Ok(BundleOutput {
+                code: entry_code,
+                source_map: None,
+                assets: Vec::new(),
+                chunks,
             });
         }
 
@@ -1400,8 +1582,139 @@ impl Bundler {
             code: bundle,
             source_map: None,
             assets: Vec::new(),
+            chunks: Vec::new(),
         })
     }
+
+    /// Multi-chunk bundle generation for `--splitting`.
+    ///
+    /// Partitions `modules` into an entry chunk plus async/shared chunks via
+    /// `splitting::split_chunks_with_config`, then wraps every non-entry
+    /// chunk's module defines in `__jet__.registerChunk(name, function(){...})`.
+    /// Modules within a chunk are emitted in compiled-module `id` order
+    /// (chunk partitioning is set-based internally, so this keeps output
+    /// deterministic across runs).
+    ///
+    /// The returned entry code is intentionally the raw
+    /// `generate_runtime() + defines + require(entry_id)` shape — it does
+    /// NOT yet contain `__jet__.chunkManifest`. The manifest needs every
+    /// chunk's final content-hashed filename, which isn't known until the
+    /// caller (`cli.rs`'s build handler) has minified and hashed each
+    /// `ChunkArtifact`; that caller injects the manifest object literal into
+    /// this entry code before running it through the same minify tail.
+    /// @issue #1930
+    fn generate_split_bundle(
+        &self,
+        modules: &[CompiledModule],
+    ) -> Result<(String, Vec<ChunkArtifact>)> {
+        let entry = modules
+            .iter()
+            .find(|m| m.id == 0)
+            .ok_or_else(|| anyhow::anyhow!("code splitting: no entry module (id 0) in bundle"))?;
+
+        let edges = {
+            let graph = self.graph.read();
+            split_edges_from_graph(&graph)
+        };
+        let all_modules: Vec<PathBuf> = modules.iter().map(|m| m.path.clone()).collect();
+
+        let split_result = splitting::split_chunks_with_config(
+            &entry.path,
+            &edges,
+            &all_modules,
+            &splitting::ManualChunkConfig::default(),
+        );
+
+        let by_path: HashMap<&PathBuf, &CompiledModule> =
+            modules.iter().map(|m| (&m.path, m)).collect();
+        let modules_for = |paths: &[PathBuf]| -> Vec<&CompiledModule> {
+            let mut found: Vec<&CompiledModule> = paths
+                .iter()
+                .filter_map(|p| by_path.get(p).copied())
+                .collect();
+            found.sort_by_key(|m| m.id);
+            found
+        };
+
+        let entry_chunk = split_result
+            .chunks
+            .iter()
+            .find(|c| c.chunk_type == splitting::ChunkType::Entry)
+            .ok_or_else(|| anyhow::anyhow!("code splitting: no entry chunk produced"))?;
+
+        let mut entry_code = String::new();
+        entry_code.push_str(&generate_split_runtime());
+        entry_code.push_str("\n\n");
+        for module in modules_for(&entry_chunk.modules) {
+            entry_code.push_str(&format_module_define(module));
+        }
+        entry_code.push_str("// Execute entry point\n");
+        entry_code.push_str(&format!("__jet__.require({});\n", entry.id));
+
+        let chunks: Vec<ChunkArtifact> = split_result
+            .chunks
+            .iter()
+            .filter(|c| c.chunk_type != splitting::ChunkType::Entry)
+            .map(|chunk| {
+                let chunk_modules = modules_for(&chunk.modules);
+                let module_ids: Vec<usize> = chunk_modules.iter().map(|m| m.id).collect();
+                let mut body = String::new();
+                for module in &chunk_modules {
+                    body.push_str(&format_module_define(module));
+                }
+                let code = format!(
+                    "__jet__.registerChunk({:?}, function() {{\n{}}});\n",
+                    chunk.name, body
+                );
+                ChunkArtifact {
+                    name: chunk.name.clone(),
+                    code,
+                    imports: chunk.imports.clone(),
+                    module_ids,
+                }
+            })
+            .collect();
+
+        Ok((entry_code, chunks))
+    }
+}
+
+/// Build code-splitting edges from the module graph: one `SplitEdge` per
+/// graph dependency edge, `is_dynamic` set from `EdgeKind::DynamicImport`.
+/// Free function (not a `Bundler` method) so it's unit-testable directly
+/// against a hand-built `ModuleGraph`.
+/// @issue #1930
+fn split_edges_from_graph(graph: &ModuleGraph) -> Vec<splitting::SplitEdge> {
+    let mut edges = Vec::new();
+    for id in graph.all_node_ids() {
+        let Some(node) = graph.get_node(id) else {
+            continue;
+        };
+        for (dep_id, kind) in graph.dependencies(id) {
+            let Some(dep_node) = graph.get_node(dep_id) else {
+                continue;
+            };
+            edges.push(splitting::SplitEdge {
+                from: node.path.clone(),
+                to: dep_node.path.clone(),
+                is_dynamic: kind == graph::EdgeKind::DynamicImport,
+            });
+        }
+    }
+    edges
+}
+
+/// Format one compiled module as a `__jet__.define(id, function(...){...})`
+/// block. Shared by the single-file runtime bundle
+/// (`generate_bundle_with_runtime`) and per-chunk code-splitting output
+/// (`Bundler::generate_split_bundle`) so both emit byte-identical module
+/// blocks.
+fn format_module_define(module: &CompiledModule) -> String {
+    let module_path = module.path.to_string_lossy();
+    format!(
+        "// Module {}: {}\n__jet__.define({}, function(require, module, exports) {{\n{}\n}});\n\n",
+        module.id, module_path, module.id, module.code
+    )
 }
 
 /// Fallback bundle generator using the full `__jet__` runtime.
@@ -1415,14 +1728,7 @@ fn generate_bundle_with_runtime(modules: &[CompiledModule]) -> String {
     bundle.push_str("\n\n");
 
     for module in modules {
-        let module_path = module.path.to_string_lossy();
-        bundle.push_str(&format!("// Module {}: {}\n", module.id, module_path));
-        bundle.push_str(&format!(
-            "__jet__.define({}, function(require, module, exports) {{\n",
-            module.id
-        ));
-        bundle.push_str(&module.code);
-        bundle.push_str("\n});\n\n");
+        bundle.push_str(&format_module_define(module));
     }
 
     bundle.push_str("// Execute entry point\n");
@@ -2640,6 +2946,192 @@ mod gh3821_bundler_edge_kind_extension_warn_tests {
         assert!(
             non_utf8.contains("Import") || non_utf8.contains("classif"),
             "non-utf8 warn must name the consequence: {non_utf8}"
+        );
+    }
+}
+
+/// WI #1930 — `jet build --splitting` chunk codegen core + runtime loader.
+///
+/// Covers `SplitEdge` extraction from a hand-built `ModuleGraph` and
+/// structural assertions on `Bundler::generate_split_bundle`'s entry/chunk
+/// output (the `dynamicImport`/`chunkManifest`/`registerChunk` runtime
+/// wiring). Transform-level dynamic-import lowering on/off is covered in
+/// `transform::modules`'s test module; the full multi-file on-disk build
+/// (including the OFF-path single-file byte-stability proxy) is covered by
+/// the `tests/build/code_splitting.rs` integration test.
+#[cfg(test)]
+mod code_splitting_tests {
+    use super::*;
+
+    fn compiled(id: usize, path: &str, code: &str) -> CompiledModule {
+        CompiledModule {
+            id,
+            path: PathBuf::from(path),
+            code: code.to_string(),
+            source_map: None,
+            dependencies: Vec::new(),
+            hash: String::new(),
+        }
+    }
+
+    // ── SplitEdge extraction (split_edges_from_graph) ───────────────────
+
+    #[test]
+    fn split_edges_from_graph_marks_dynamic_vs_static() {
+        let mut graph = ModuleGraph::new();
+        let entry = graph.add_module(PathBuf::from("entry.js"), graph::ModuleKind::Script, 0);
+        let shared = graph.add_module(PathBuf::from("shared.js"), graph::ModuleKind::Script, 0);
+        let lazy = graph.add_module(PathBuf::from("lazy.js"), graph::ModuleKind::Script, 0);
+        graph.add_dependency(entry, shared, EdgeKind::Import);
+        graph.add_dependency(entry, lazy, EdgeKind::DynamicImport);
+
+        let mut edges = split_edges_from_graph(&graph);
+        edges.sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
+
+        assert_eq!(
+            edges.len(),
+            2,
+            "expected exactly the 2 registered edges: {edges:?}"
+        );
+        let static_edge = edges
+            .iter()
+            .find(|e| e.to == PathBuf::from("shared.js"))
+            .expect("static edge to shared.js missing");
+        assert_eq!(static_edge.from, PathBuf::from("entry.js"));
+        assert!(
+            !static_edge.is_dynamic,
+            "Import edge must not be marked dynamic"
+        );
+
+        let dynamic_edge = edges
+            .iter()
+            .find(|e| e.to == PathBuf::from("lazy.js"))
+            .expect("dynamic edge to lazy.js missing");
+        assert_eq!(dynamic_edge.from, PathBuf::from("entry.js"));
+        assert!(
+            dynamic_edge.is_dynamic,
+            "DynamicImport edge must be marked dynamic"
+        );
+    }
+
+    #[test]
+    fn split_edges_from_graph_empty_graph_yields_no_edges() {
+        let graph = ModuleGraph::new();
+        assert!(split_edges_from_graph(&graph).is_empty());
+    }
+
+    // ── generate_split_bundle structural assertions ─────────────────────
+
+    /// entry.js statically imports shared.js and dynamically imports
+    /// lazy1.js. Mirrors the shape of the integration fixture in
+    /// `tests/build/code_splitting.rs` at unit-test scale.
+    fn split_bundle_fixture() -> (String, Vec<ChunkArtifact>) {
+        let bundler = Bundler::new(BundleOptions {
+            splitting: true,
+            ..Default::default()
+        })
+        .expect("bundler new");
+
+        {
+            let mut g = bundler.graph.write();
+            let entry = g.add_module(
+                PathBuf::from("/fixture/entry.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            let shared = g.add_module(
+                PathBuf::from("/fixture/shared.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            let lazy = g.add_module(
+                PathBuf::from("/fixture/lazy1.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            g.add_dependency(entry, shared, EdgeKind::Import);
+            g.add_dependency(entry, lazy, EdgeKind::DynamicImport);
+        }
+
+        let modules = vec![
+            compiled(0, "/fixture/entry.js", "__jet__.dynamicImport(2);"),
+            compiled(1, "/fixture/shared.js", "exports.shared = 1;"),
+            compiled(2, "/fixture/lazy1.js", "exports.lazy = 1;"),
+        ];
+
+        bundler
+            .generate_split_bundle(&modules)
+            .expect("generate_split_bundle should succeed")
+    }
+
+    #[test]
+    fn entry_code_contains_dynamic_import_and_chunk_manifest_reference() {
+        let (entry_code, _chunks) = split_bundle_fixture();
+        assert!(
+            entry_code.contains("dynamicImport"),
+            "entry runtime must expose dynamicImport: {entry_code}"
+        );
+        assert!(
+            entry_code.contains("chunkManifest"),
+            "entry runtime must reference chunkManifest: {entry_code}"
+        );
+    }
+
+    #[test]
+    fn entry_code_does_not_self_register_as_a_chunk() {
+        // Async/shared chunk FILES are wrapped in a `__jet__.registerChunk(
+        // "<name>", function(){...})` CALL; the entry chunk is executed
+        // directly (`__jet__.require(<entry id>)`) and must never be
+        // wrapped in that call — even though its own runtime DEFINES the
+        // registerChunk capability (a bare `registerChunk: registerChunk`
+        // property) for other chunks to call into once loaded.
+        let (entry_code, _chunks) = split_bundle_fixture();
+        assert!(
+            !entry_code.contains("__jet__.registerChunk("),
+            "entry code must not call __jet__.registerChunk(...): {entry_code}"
+        );
+        assert!(
+            entry_code.contains("__jet__.require("),
+            "entry code must directly require the entry module: {entry_code}"
+        );
+    }
+
+    #[test]
+    fn async_chunk_files_call_register_chunk_with_their_own_name() {
+        let (_entry_code, chunks) = split_bundle_fixture();
+        let lazy_chunk = chunks
+            .iter()
+            .find(|c| c.name == "chunk-lazy1")
+            .unwrap_or_else(|| panic!("expected a chunk-lazy1 chunk, got: {chunks:#?}"));
+        assert!(
+            lazy_chunk
+                .code
+                .contains("__jet__.registerChunk(\"chunk-lazy1\""),
+            "chunk file must call registerChunk with its own name: {}",
+            lazy_chunk.code
+        );
+        assert!(
+            lazy_chunk.code.contains("exports.lazy = 1;"),
+            "chunk file must contain its module body: {}",
+            lazy_chunk.code
+        );
+        assert_eq!(lazy_chunk.module_ids, vec![2]);
+    }
+
+    #[test]
+    fn single_reference_module_stays_inlined_in_entry_not_split_into_shared() {
+        // shared.js is a static dependency of the entry only (not also
+        // reachable from the lazy split point in this fixture), so
+        // `split_chunks_with_config`'s shared-module detection (referenced
+        // by 2+ chunks) must NOT carve it into a separate "shared" chunk.
+        let (entry_code, chunks) = split_bundle_fixture();
+        assert!(
+            !chunks.iter().any(|c| c.name == "shared"),
+            "single-reference module must not produce a shared chunk: {chunks:#?}"
+        );
+        assert!(
+            entry_code.contains("exports.shared = 1;"),
+            "entry must inline the only-statically-referenced module: {entry_code}"
         );
     }
 }

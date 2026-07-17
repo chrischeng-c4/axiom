@@ -2423,6 +2423,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     ..Default::default()
                 },
                 defines: defines.clone(),
+                splitting,
                 ..Default::default()
             };
 
@@ -2453,212 +2454,59 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
             };
 
-            // Post-process: define replacement + syntax-aware static branch DCE.
-            // The transform step already ran both per module (parallel, small
-            // parses), so at bundle level replacement is a no-op unless a
-            // define pattern only materialized across module glue. Gate the
-            // DCE fixpoint (up to 8 full tree-sitter parses of the assembled
-            // bundle — ~2s on the mui corpus) on the replacement actually
-            // changing something.
-            let replaced = crate::bundler::define::replace_defines(&result.code, &defines);
-            lap("replace_defines");
-            // Fold expression-level define guards UNCONDITIONALLY. Per-module
-            // transforms already substitute `process.env.NODE_ENV` upstream, so
-            // `replace_defines` here is often a no-op while the assembled bundle
-            // still carries always-false `"production" !== "production" &&
-            // console.warn(...)` guards (styled-components ships several).
-            // fold_define_short_circuits collapses only literal-vs-literal
-            // compares — pure define residue — and is internally gated, so
-            // running it always is safe and cheap. eliminate_static_conditionals
-            // then strips any statement-position `if (false) {}` the fold left.
-            let oxc_minify_enabled = std::env::var_os("JET_DISABLE_OXC_MINIFY").is_none();
-            let folded = crate::bundler::fold::fold_define_short_circuits(&replaced);
-            let mut code = if folded == result.code || oxc_minify_enabled {
-                folded
+            // --splitting: minify + content-hash each async/shared chunk
+            // BEFORE the entry, so the runtime manifest injected into the
+            // entry below can name final hashed filenames (WI #1930). Off
+            // path leaves `hashed_chunks` empty and every step below
+            // byte-identical to pre-#1930 behavior (AC2).
+            let hashed_chunks: Vec<HashedChunk> = if splitting {
+                let mut out = Vec::with_capacity(result.chunks.len());
+                for chunk in &result.chunks {
+                    let processed = run_bundle_post_process_tail(
+                        &chunk.code,
+                        &defines,
+                        minify,
+                        &drops,
+                        &mut lap,
+                    );
+                    let chunk_hash = content_hash_prefix(&processed);
+                    out.push(HashedChunk {
+                        name: chunk.name.clone(),
+                        filename: format!("assets/{}.{}.js", chunk.name, chunk_hash),
+                        code: processed,
+                        imports: chunk.imports.clone(),
+                        module_ids: chunk.module_ids.clone(),
+                    });
+                }
+                out
             } else {
-                crate::bundler::dce::eliminate_static_conditionals_syntax(&folded)
+                Vec::new()
             };
-            lap("static_conditionals_dce");
+            lap("chunk_post_process");
 
-            // Post-process: minify
-            if minify {
-                // JET_MINIFY_STAGE_DUMP=<dir> writes the bundle after each
-                // minify stage so a runtime-only breakage (parses fine,
-                // misbehaves in the browser) can be bisected to one pass.
-                let stage_dump = std::env::var_os("JET_MINIFY_STAGE_DUMP").map(PathBuf::from);
-                let dump_stage = |stage: &str, code: &str| {
-                    if let Some(dir) = &stage_dump {
-                        let _ = std::fs::create_dir_all(dir);
-                        let _ = std::fs::write(dir.join(format!("{stage}.js")), code);
-                    }
-                };
-                dump_stage("0-bundle", &code);
-                code = crate::bundler::minify::minify_js(&code, &drops);
-                lap("minify_js");
-                dump_stage("1-minify-js", &code);
-                code = crate::bundler::minify::replace_bool_literals(&code);
-                lap("bool_literals");
-                code = crate::bundler::minify::strip_use_client_directives(&code);
-                lap("strip_directives");
-                dump_stage("2-bool-literals", &code);
-                let mut module_glue_base = None;
-                {
-                    let optimized =
-                        crate::bundler::scope_hoist_opt::optimize_generated_module_glue(&code);
-                    if optimized.len() < code.len() {
-                        if oxc_minify_enabled {
-                            module_glue_base = Some(code);
-                            code = optimized;
-                        } else if crate::bundler::dce::js_parses_without_errors(&optimized) {
-                            code = optimized;
-                        }
-                    }
-                }
-                lap("module_glue");
-                if std::env::var_os("JET_ENABLE_DIRECT_EXPORT_READS").is_some() {
-                    let lowered = crate::bundler::scope_hoist_opt::lower_direct_export_reads(&code);
-                    if lowered != code && crate::bundler::dce::js_parses_without_errors(&lowered) {
-                        code = lowered;
-                    }
-                }
-                lap("direct_export_reads");
-                let mut oxc_applied = false;
-                if oxc_minify_enabled {
-                    if let Some(polished) = crate::bundler::minify::oxc_minify_js_candidate(&code) {
-                        if polished.len() < code.len() {
-                            code = polished;
-                            oxc_applied = true;
-                        }
-                    } else if let Some(base) = module_glue_base.take() {
-                        code = base;
-                    }
-                }
-                lap("oxc_minify");
-                // Optimistic guard scheme: run mangle → fold → semicolon
-                // compaction unguarded, then parse ONCE. Parsing the full
-                // bundle with tree-sitter is the third-largest build cost
-                // (~0.5-0.9s across the corpus when done per stage); on the
-                // happy path one parse certifies all three stages. Only when
-                // that single parse fails do we re-run the chain with the
-                // original per-stage guards to keep whichever stages are
-                // individually sound — same output as the old scheme, the
-                // extra parses are paid only on the rare corruption path.
-                // Compute mangle -> fold -> semicolon-compaction ONCE, then
-                // certify with as few full-bundle tree-sitter parses as
-                // possible. The happy path is a single parse of the most
-                // minified candidate. When that parse fails (a minify pass
-                // produced output tree-sitter flags), we DON'T recompute the
-                // expensive mangle: the already-computed `mangled`/`folded`
-                // values ARE the stagewise fallback results (fold operates on
-                // mangled, semicolon on folded), so we just probe them in
-                // size order and keep the first that parses — byte-identical
-                // to the old per-stage-guard scheme, minus the re-mangle and
-                // the redundant parses.
-                if !oxc_applied {
-                    let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
-                    lap("mangle");
-                    let folded = crate::bundler::fold::fold_constants(&mangled);
-                    lap("fold");
-                    let compacted =
-                        crate::bundler::minify::remove_semicolons_before_block_close_candidate(
-                            &folded,
-                        );
-                    lap("semicolon_compaction");
-                    let candidate = if compacted.len() < folded.len() {
-                        &compacted
-                    } else {
-                        &folded
-                    };
-                    if crate::bundler::dce::js_parses_without_errors(candidate) {
-                        code = candidate.clone();
-                        lap("single_parse_guard");
-                    } else if crate::bundler::dce::js_parses_without_errors(&folded) {
-                        // semicolon-compaction is the culprit; keep folded.
-                        code = folded;
-                        lap("reuse_parse_guard");
-                    } else if crate::bundler::dce::js_parses_without_errors(&mangled) {
-                        // fold broke parse; keep mangled, still try its compaction.
-                        let s =
-                            crate::bundler::minify::remove_semicolons_before_block_close_candidate(
-                                &mangled,
-                            );
-                        code = if s.len() < mangled.len()
-                            && crate::bundler::dce::js_parses_without_errors(&s)
-                        {
-                            s
-                        } else {
-                            mangled
-                        };
-                        tracing::warn!("Constant folding skipped: optimized bundle did not parse");
-                        lap("reuse_parse_guard");
-                    } else {
-                        // Mangle itself broke parse — fall all the way back to the
-                        // pre-mangle bundle and fold/compact that.
-                        tracing::warn!("Variable mangling skipped: optimized bundle did not parse");
-                        let f = crate::bundler::fold::fold_constants(&code);
-                        let base = if crate::bundler::dce::js_parses_without_errors(&f) {
-                            f
-                        } else {
-                            code.clone()
-                        };
-                        let s =
-                            crate::bundler::minify::remove_semicolons_before_block_close_candidate(
-                                &base,
-                            );
-                        code = if s.len() < base.len()
-                            && crate::bundler::dce::js_parses_without_errors(&s)
-                        {
-                            s
-                        } else {
-                            base
-                        };
-                        lap("remangle_fallback");
-                    }
-                    dump_stage("3-mangle", &code);
-                    dump_stage("4-fold", &code);
-                    // Post-mangle dead `var X=Y.exports;` alias removal — safe
-                    // here (name assignment is fixed; removing it pre-mangle
-                    // tripped a mangler collision). Parse-guarded; reverts on the
-                    // rare shape it can't handle.
-                    {
-                        let pruned = crate::bundler::minify::remove_dead_exports_aliases(&code);
-                        if pruned.len() < code.len()
-                            && crate::bundler::dce::js_parses_without_errors(&pruned)
-                        {
-                            code = pruned;
-                        }
-                    }
-                    lap("dead_exports_aliases");
-                    if oxc_minify_enabled {
-                        if let Some(polished) =
-                            crate::bundler::minify::oxc_minify_js_candidate(&code)
-                        {
-                            if polished.len() < code.len() {
-                                code = polished;
-                            }
-                        }
-                    }
-                    lap("oxc_minify_after_legacy");
-                }
-                // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
-                // block-level empty-statement removal, bracket-to-dot
-                // properties. Worth ~0.3-2KB gzip per fixture but costs two
-                // extra full-bundle passes plus a tree-sitter guard parse —
-                // currently a net loss against the duration bar, so opt-in
-                // until the passes pay for themselves.
-                if std::env::var_os("JET_EXTRA_MINIFY").is_some() {
-                    let polished = crate::bundler::minify::squeeze_residual_spaces(&code);
-                    let polished =
-                        crate::bundler::dce::remove_redundant_empty_statements(&polished);
-                    let polished = crate::bundler::minify::bracket_to_dot_properties(&polished);
-                    if polished.len() < code.len()
-                        && crate::bundler::dce::js_parses_without_errors(&polished)
-                    {
-                        code = polished;
-                    }
-                }
-                dump_stage("5-squeeze", &code);
-            }
+            // Inject `__jet__.chunkManifest = {...}` into the raw entry code
+            // before the shared post-process tail runs on it, so define
+            // replacement/minify see the manifest as ordinary bundle code
+            // (same treatment as the runtime IIFE already baked into
+            // `result.code`). Off path: `raw_entry` equals `result.code`
+            // unchanged.
+            let raw_entry = if splitting {
+                let manifest_js = build_chunk_manifest_js(&hashed_chunks);
+                inject_chunk_manifest(&result.code, &manifest_js)
+                    .context("Failed to inject code-splitting chunk manifest")?
+            } else {
+                result.code.clone()
+            };
+
+            // Post-process: define replacement + syntax-aware static branch
+            // DCE + (if minify) the full minify pipeline. Extracted into
+            // `run_bundle_post_process_tail` (WI #1930) so the `--splitting`
+            // per-chunk loop above can run the identical tail over each
+            // chunk's raw code; this entry call site is byte-for-byte the
+            // same sequence as before extraction (`raw_entry` == `result.code`
+            // when `splitting` is false).
+            let mut code =
+                run_bundle_post_process_tail(&raw_entry, &defines, minify, &drops, &mut lap);
 
             // Content hash for filename
             let hash = content_hash_prefix(&code);
@@ -2667,13 +2515,14 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
             std::fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
 
-            // Source maps
+            // Source maps (entry-only; async/shared chunks get no map files
+            // this WI — @issue #1930).
             match &sourcemap_mode {
                 crate::bundler::types::SourceMapOption::External => {
                     let map_filename = format!("{}.map", &out_filename);
                     let sources = vec![(
                         coerce_sourcemap_entry_path_or_warn(&entry),
-                        result.code.clone(),
+                        raw_entry.clone(),
                     )];
                     let map = crate::bundler::sourcemap::generate_source_map(
                         &out_filename,
@@ -2690,7 +2539,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 crate::bundler::types::SourceMapOption::Inline => {
                     let sources = vec![(
                         coerce_sourcemap_entry_path_or_warn(&entry),
-                        result.code.clone(),
+                        raw_entry.clone(),
                     )];
                     let map = crate::bundler::sourcemap::generate_source_map(
                         &out_filename,
@@ -2706,6 +2555,15 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // Write output
             std::fs::write(output_dir.join(&out_filename), &code)
                 .context("Failed to write bundle")?;
+            for chunk in &hashed_chunks {
+                let chunk_path = output_dir.join(&chunk.filename);
+                if let Some(parent) = chunk_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .context("Failed to create chunk output directory")?;
+                }
+                std::fs::write(&chunk_path, &chunk.code)
+                    .with_context(|| format!("Failed to write chunk {}", chunk.filename))?;
+            }
             let css_filenames = write_bundle_assets(&output_dir, &result.assets)
                 .context("Failed to write bundle assets")?;
             copy_public_dir(&root_dir, &output_dir).context("Failed to copy public assets")?;
@@ -2720,15 +2578,6 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
             let duration = start.elapsed();
             let size_kb = code.len() as f64 / 1024.0;
-            // GH #3705 — the prior `let _ = splitting; // TODO` silently
-            // discarded the flag after clap parsing and validate_combination
-            // both approved it. Build said "complete", but `--splitting`
-            // never reached the chunk splitter, so dynamic-import bundles
-            // landed as one file. Surface the no-op explicitly so users
-            // know their flag is currently a TODO (tracked by #1089).
-            if splitting {
-                eprintln!("{}", format_splitting_not_implemented_warn());
-            }
 
             println!(
                 "Build complete in {:.0}ms: {}/{} ({:.1} KB)",
@@ -2737,6 +2586,15 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 out_filename,
                 size_kb,
             );
+            for chunk in &hashed_chunks {
+                println!(
+                    "  chunk {}: {}/{} ({:.1} KB)",
+                    chunk.name,
+                    output,
+                    chunk.filename,
+                    chunk.code.len() as f64 / 1024.0,
+                );
+            }
             Ok(())
         }
 
@@ -4724,6 +4582,291 @@ fn find_entry_point(root_dir: &PathBuf) -> Result<PathBuf> {
     anyhow::bail!("No entry point found. Tried: {}", candidates.join(", "))
 }
 
+/// Post-process one bundle's raw code: define replacement + syntax-aware
+/// static branch DCE, then (if `minify`) the full minify pipeline.
+///
+/// Extracted from the single-file `jet build` write path (WI #1930) so the
+/// `--splitting` per-chunk write loop can run the identical tail over each
+/// chunk's raw code. `lap` is taken as `impl FnMut` (not a concrete closure
+/// type) so callers can pass `&mut lap` and keep accumulating into the same
+/// `JET_BUNDLE_TIMING` closure across multiple calls (one per chunk).
+fn run_bundle_post_process_tail(
+    raw_code: &str,
+    defines: &HashMap<String, String>,
+    minify: bool,
+    drops: &[crate::bundler::minify::DropStatement],
+    mut lap: impl FnMut(&str),
+) -> String {
+    // Post-process: define replacement + syntax-aware static branch DCE.
+    // The transform step already ran both per module (parallel, small
+    // parses), so at bundle level replacement is a no-op unless a
+    // define pattern only materialized across module glue. Gate the
+    // DCE fixpoint (up to 8 full tree-sitter parses of the assembled
+    // bundle — ~2s on the mui corpus) on the replacement actually
+    // changing something.
+    let replaced = crate::bundler::define::replace_defines(raw_code, defines);
+    lap("replace_defines");
+    // Fold expression-level define guards UNCONDITIONALLY. Per-module
+    // transforms already substitute `process.env.NODE_ENV` upstream, so
+    // `replace_defines` here is often a no-op while the assembled bundle
+    // still carries always-false `"production" !== "production" &&
+    // console.warn(...)` guards (styled-components ships several).
+    // fold_define_short_circuits collapses only literal-vs-literal
+    // compares — pure define residue — and is internally gated, so
+    // running it always is safe and cheap. eliminate_static_conditionals
+    // then strips any statement-position `if (false) {}` the fold left.
+    let oxc_minify_enabled = std::env::var_os("JET_DISABLE_OXC_MINIFY").is_none();
+    let folded = crate::bundler::fold::fold_define_short_circuits(&replaced);
+    let mut code = if folded == raw_code || oxc_minify_enabled {
+        folded
+    } else {
+        crate::bundler::dce::eliminate_static_conditionals_syntax(&folded)
+    };
+    lap("static_conditionals_dce");
+
+    // Post-process: minify
+    if minify {
+        // JET_MINIFY_STAGE_DUMP=<dir> writes the bundle after each
+        // minify stage so a runtime-only breakage (parses fine,
+        // misbehaves in the browser) can be bisected to one pass.
+        let stage_dump = std::env::var_os("JET_MINIFY_STAGE_DUMP").map(PathBuf::from);
+        let dump_stage = |stage: &str, code: &str| {
+            if let Some(dir) = &stage_dump {
+                let _ = std::fs::create_dir_all(dir);
+                let _ = std::fs::write(dir.join(format!("{stage}.js")), code);
+            }
+        };
+        dump_stage("0-bundle", &code);
+        code = crate::bundler::minify::minify_js(&code, drops);
+        lap("minify_js");
+        dump_stage("1-minify-js", &code);
+        code = crate::bundler::minify::replace_bool_literals(&code);
+        lap("bool_literals");
+        code = crate::bundler::minify::strip_use_client_directives(&code);
+        lap("strip_directives");
+        dump_stage("2-bool-literals", &code);
+        let mut module_glue_base = None;
+        {
+            let optimized = crate::bundler::scope_hoist_opt::optimize_generated_module_glue(&code);
+            if optimized.len() < code.len() {
+                if oxc_minify_enabled {
+                    module_glue_base = Some(code);
+                    code = optimized;
+                } else if crate::bundler::dce::js_parses_without_errors(&optimized) {
+                    code = optimized;
+                }
+            }
+        }
+        lap("module_glue");
+        if std::env::var_os("JET_ENABLE_DIRECT_EXPORT_READS").is_some() {
+            let lowered = crate::bundler::scope_hoist_opt::lower_direct_export_reads(&code);
+            if lowered != code && crate::bundler::dce::js_parses_without_errors(&lowered) {
+                code = lowered;
+            }
+        }
+        lap("direct_export_reads");
+        let mut oxc_applied = false;
+        if oxc_minify_enabled {
+            if let Some(polished) = crate::bundler::minify::oxc_minify_js_candidate(&code) {
+                if polished.len() < code.len() {
+                    code = polished;
+                    oxc_applied = true;
+                }
+            } else if let Some(base) = module_glue_base.take() {
+                code = base;
+            }
+        }
+        lap("oxc_minify");
+        // Optimistic guard scheme: run mangle → fold → semicolon
+        // compaction unguarded, then parse ONCE. Parsing the full
+        // bundle with tree-sitter is the third-largest build cost
+        // (~0.5-0.9s across the corpus when done per stage); on the
+        // happy path one parse certifies all three stages. Only when
+        // that single parse fails do we re-run the chain with the
+        // original per-stage guards to keep whichever stages are
+        // individually sound — same output as the old scheme, the
+        // extra parses are paid only on the rare corruption path.
+        // Compute mangle -> fold -> semicolon-compaction ONCE, then
+        // certify with as few full-bundle tree-sitter parses as
+        // possible. The happy path is a single parse of the most
+        // minified candidate. When that parse fails (a minify pass
+        // produced output tree-sitter flags), we DON'T recompute the
+        // expensive mangle: the already-computed `mangled`/`folded`
+        // values ARE the stagewise fallback results (fold operates on
+        // mangled, semicolon on folded), so we just probe them in
+        // size order and keep the first that parses — byte-identical
+        // to the old per-stage-guard scheme, minus the re-mangle and
+        // the redundant parses.
+        if !oxc_applied {
+            let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
+            lap("mangle");
+            let folded = crate::bundler::fold::fold_constants(&mangled);
+            lap("fold");
+            let compacted =
+                crate::bundler::minify::remove_semicolons_before_block_close_candidate(&folded);
+            lap("semicolon_compaction");
+            let candidate = if compacted.len() < folded.len() {
+                &compacted
+            } else {
+                &folded
+            };
+            if crate::bundler::dce::js_parses_without_errors(candidate) {
+                code = candidate.clone();
+                lap("single_parse_guard");
+            } else if crate::bundler::dce::js_parses_without_errors(&folded) {
+                // semicolon-compaction is the culprit; keep folded.
+                code = folded;
+                lap("reuse_parse_guard");
+            } else if crate::bundler::dce::js_parses_without_errors(&mangled) {
+                // fold broke parse; keep mangled, still try its compaction.
+                let s = crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                    &mangled,
+                );
+                code = if s.len() < mangled.len()
+                    && crate::bundler::dce::js_parses_without_errors(&s)
+                {
+                    s
+                } else {
+                    mangled
+                };
+                tracing::warn!("Constant folding skipped: optimized bundle did not parse");
+                lap("reuse_parse_guard");
+            } else {
+                // Mangle itself broke parse — fall all the way back to the
+                // pre-mangle bundle and fold/compact that.
+                tracing::warn!("Variable mangling skipped: optimized bundle did not parse");
+                let f = crate::bundler::fold::fold_constants(&code);
+                let base = if crate::bundler::dce::js_parses_without_errors(&f) {
+                    f
+                } else {
+                    code.clone()
+                };
+                let s =
+                    crate::bundler::minify::remove_semicolons_before_block_close_candidate(&base);
+                code = if s.len() < base.len() && crate::bundler::dce::js_parses_without_errors(&s)
+                {
+                    s
+                } else {
+                    base
+                };
+                lap("remangle_fallback");
+            }
+            dump_stage("3-mangle", &code);
+            dump_stage("4-fold", &code);
+            // Post-mangle dead `var X=Y.exports;` alias removal — safe
+            // here (name assignment is fixed; removing it pre-mangle
+            // tripped a mangler collision). Parse-guarded; reverts on the
+            // rare shape it can't handle.
+            {
+                let pruned = crate::bundler::minify::remove_dead_exports_aliases(&code);
+                if pruned.len() < code.len()
+                    && crate::bundler::dce::js_parses_without_errors(&pruned)
+                {
+                    code = pruned;
+                }
+            }
+            lap("dead_exports_aliases");
+            if oxc_minify_enabled {
+                if let Some(polished) = crate::bundler::minify::oxc_minify_js_candidate(&code) {
+                    if polished.len() < code.len() {
+                        code = polished;
+                    }
+                }
+            }
+            lap("oxc_minify_after_legacy");
+        }
+        // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
+        // block-level empty-statement removal, bracket-to-dot
+        // properties. Worth ~0.3-2KB gzip per fixture but costs two
+        // extra full-bundle passes plus a tree-sitter guard parse —
+        // currently a net loss against the duration bar, so opt-in
+        // until the passes pay for themselves.
+        if std::env::var_os("JET_EXTRA_MINIFY").is_some() {
+            let polished = crate::bundler::minify::squeeze_residual_spaces(&code);
+            let polished = crate::bundler::dce::remove_redundant_empty_statements(&polished);
+            let polished = crate::bundler::minify::bracket_to_dot_properties(&polished);
+            if polished.len() < code.len()
+                && crate::bundler::dce::js_parses_without_errors(&polished)
+            {
+                code = polished;
+            }
+        }
+        dump_stage("5-squeeze", &code);
+    }
+
+    code
+}
+
+/// One code-split chunk (`ChunkArtifact`) after `run_bundle_post_process_tail`
+/// minify + content-hashing, ready to be written to disk and referenced from
+/// the runtime chunk manifest.
+/// @issue #1930
+struct HashedChunk {
+    /// Chunk name (e.g. "chunk-lazy1"), matches `ChunkArtifact::imports`
+    /// entries so the manifest's per-chunk `imports` list round-trips.
+    name: String,
+    /// Output-relative filename, e.g. "assets/chunk-lazy1.abcd1234.js".
+    filename: String,
+    /// Post-processed (minified if enabled) chunk code, ready to write.
+    code: String,
+    /// Names of other chunks this chunk depends on (loaded first by
+    /// `__jet__.loadChunk`).
+    imports: Vec<String>,
+    /// Compiled-module ids this chunk owns, for the manifest's
+    /// `moduleChunks: { id: name }` reverse index.
+    module_ids: Vec<usize>,
+}
+
+/// Build the `__jet__.chunkManifest = {...};` statement from already-hashed
+/// chunks: `{ chunks: { name: { file, imports } }, moduleChunks: { id: name } }`.
+/// @issue #1930
+fn build_chunk_manifest_js(chunks: &[HashedChunk]) -> String {
+    let mut chunks_obj = serde_json::Map::new();
+    let mut module_chunks_obj = serde_json::Map::new();
+    for chunk in chunks {
+        chunks_obj.insert(
+            chunk.name.clone(),
+            serde_json::json!({
+                "file": chunk.filename,
+                "imports": chunk.imports,
+            }),
+        );
+        for id in &chunk.module_ids {
+            module_chunks_obj.insert(
+                id.to_string(),
+                serde_json::Value::String(chunk.name.clone()),
+            );
+        }
+    }
+    let manifest = serde_json::json!({
+        "chunks": chunks_obj,
+        "moduleChunks": module_chunks_obj,
+    });
+    format!(
+        "__jet__.chunkManifest = {};\n",
+        serde_json::to_string(&manifest)
+            .unwrap_or_else(|_| "{\"chunks\":{},\"moduleChunks\":{}}".to_string())
+    )
+}
+
+/// Inject `__jet__.chunkManifest = {...};` into raw (pre-minify) entry code,
+/// right before the final `__jet__.require(<id>);` call.
+///
+/// `__jet__.require(` is `Bundler::generate_split_bundle`'s bundler-emitted
+/// anchor (not user-controllable), guaranteed to appear exactly once in raw
+/// entry code, so `rfind` locates the entry point call unambiguously.
+/// @issue #1930
+fn inject_chunk_manifest(entry_code: &str, manifest_js: &str) -> Result<String> {
+    let anchor = entry_code
+        .rfind("__jet__.require(")
+        .context("code splitting: entry code missing __jet__.require(...) anchor")?;
+    let mut out = String::with_capacity(entry_code.len() + manifest_js.len());
+    out.push_str(&entry_code[..anchor]);
+    out.push_str(manifest_js);
+    out.push_str(&entry_code[anchor..]);
+    Ok(out)
+}
+
 fn content_hash_prefix(content: &str) -> String {
     use sha2::{Digest, Sha256};
 
@@ -5158,25 +5301,6 @@ pub(crate) fn format_build_watch_not_implemented_warn() -> String {
      `jet dev` (HMR + dev server) or `jet test --watch` (re-runs the \
      test suite on file change). `jet build --watch` will be wired in \
      once #3708 lands; until then the flag is parsed and ignored."
-        .to_string()
-}
-
-/// GH #3705 — `jet build --splitting` previously hit
-/// `let _ = splitting; // TODO: integrate with chunk splitter`, which
-/// silently discarded the flag. Build said "complete" and the user
-/// only noticed when they inspected `dist/` and found one un-split
-/// bundle where they expected chunks at dynamic-import boundaries.
-/// Surface the no-op explicitly with a tagged warn naming both
-/// the issue tag and the downstream tracker (#1089). Once the
-/// chunk splitter is wired in, this warn deletes itself.
-/// @spec .aw/tech-design/projects/jet/semantic/jet-src.md#schema
-pub(crate) fn format_splitting_not_implemented_warn() -> String {
-    "warning [GH #3705]: jet build --splitting is currently a no-op — \
-     the chunk splitter is not yet wired into the bundler pipeline \
-     (tracked by #1089). The build produced ONE file, not chunks at \
-     dynamic-import boundaries. Drop --splitting until #1089 lands, \
-     or expect first-load size budgets, dynamic-import semantics, and \
-     bundle-size CI gates that assume splitting is on to misbehave."
         .to_string()
 }
 
@@ -6627,81 +6751,15 @@ mod gh3708_build_watch_not_implemented_warn_tests {
         );
     }
 
-    #[test]
-    fn warn_distinct_from_splitting_warn() {
-        // GH #3705 and GH #3708 are sibling silent-no-op fixes; the
-        // warns must be clearly distinguishable so a user who sees one
-        // doesn't think the other was meant.
-        let watch = format_build_watch_not_implemented_warn();
-        let split = format_splitting_not_implemented_warn();
-        assert_ne!(watch, split);
-        assert!(watch.contains("GH #3708"));
-        assert!(split.contains("GH #3705"));
-    }
-}
-
-#[cfg(test)]
-mod gh3705_splitting_not_implemented_warn_tests {
-    //! GH #3705 — `jet build --splitting` previously hit
-    //! `let _ = splitting; // TODO: integrate with chunk splitter`.
-    //! Build said "complete", the user assumed splitting happened,
-    //! and only noticed when `dist/` held one un-split bundle.
-    //! The warn helper exists so we can assert the exact wording
-    //! without spawning the binary or running an end-to-end build.
-    use super::*;
-
-    #[test]
-    fn warn_tags_gh_issue_so_breadcrumb_is_searchable() {
-        let msg = format_splitting_not_implemented_warn();
-        assert!(msg.contains("GH #3705"), "msg: {msg}");
-    }
-
-    #[test]
-    fn warn_names_the_no_op_so_users_know_their_flag_is_ignored() {
-        let msg = format_splitting_not_implemented_warn();
-        assert!(msg.contains("no-op"), "msg: {msg}");
-        assert!(msg.contains("--splitting"), "msg: {msg}");
-    }
-
-    #[test]
-    fn warn_points_at_downstream_tracker_for_fix_eta() {
-        let msg = format_splitting_not_implemented_warn();
-        assert!(msg.contains("#1089"), "msg: {msg}");
-    }
-
-    #[test]
-    fn warn_names_the_observable_symptom_one_file_not_chunks() {
-        let msg = format_splitting_not_implemented_warn();
-        assert!(
-            msg.contains("ONE file") || msg.contains("one file"),
-            "warn must name the observable symptom: {msg}"
-        );
-    }
-
-    #[test]
-    fn warn_names_downstream_consumers_so_users_know_what_else_breaks() {
-        let msg = format_splitting_not_implemented_warn();
-        assert!(
-            msg.contains("first-load") || msg.contains("dynamic-import") || msg.contains("CI"),
-            "warn must name at least one downstream consumer: {msg}"
-        );
-    }
-
-    #[test]
-    fn warn_is_deterministic() {
-        let a = format_splitting_not_implemented_warn();
-        let b = format_splitting_not_implemented_warn();
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn warn_starts_with_warning_keyword_so_it_renders_as_a_warning() {
-        let msg = format_splitting_not_implemented_warn();
-        assert!(
-            msg.to_ascii_lowercase().starts_with("warning"),
-            "warn must announce itself as a warning so log filters catch it: {msg}"
-        );
-    }
+    // GH #3705's `format_splitting_not_implemented_warn` + its dedicated
+    // `gh3705_splitting_not_implemented_warn_tests` module (and this
+    // module's `warn_distinct_from_splitting_warn` cross-check) are
+    // deleted as of #1930: `--splitting` is now wired to the chunk
+    // splitter and no longer warns. The behavioral replacement —
+    // asserting a real `jet build --splitting` run emits no
+    // no-op/#3705 warning — lives in
+    // `tests/build/code_splitting.rs::splitting_flag_no_longer_warns`
+    // since it needs a real subprocess build, not a pure string check.
 }
 
 #[cfg(test)]
