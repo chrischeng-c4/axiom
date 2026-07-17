@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T10:40:08.479052+00:00"
-digest = "sha256:49d5f8afa1ddddad256e7cf2b696938abee6555a0ece1bac4bf67cb23380ad26"
-source_digest = "sha256:49d5f8afa1ddddad256e7cf2b696938abee6555a0ece1bac4bf67cb23380ad26"
-ir_digest = "sha256:e0faba89ad62c0e53a6769e39cf3f1664bc9eb3cee6d5c15ecc50aea68f35b62"
+generated_at = "2026-07-17T10:52:31.415547+00:00"
+digest = "sha256:4c28c2855fa5629d053f37bd63acf66524572cf3264f9e26abcb87082261cd13"
+source_digest = "sha256:4c28c2855fa5629d053f37bd63acf66524572cf3264f9e26abcb87082261cd13"
+ir_digest = "sha256:7f6d48e5cc8425fea9ce8998e1fddf2171c20a40e58c385bb619336752df67c7"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -17,6 +17,12 @@ section_count = 3
 path = "interfaces/rest/transaction-mode-hangs-on-extended-query-protocol-fail-fast-with.md"
 digest = "sha256:b16d6b9b446be8ef45f39e3a8529ede6ad3831f2092c0aad019ee26df8ffaf26"
 ir_digest = "sha256:b78e8936b27e2a23fc3a472eb2499ad052dd20e7727ebde09eeef7650e660518"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/wire-decoders-cover-only-9-backend-tags-copy-notify-extended-emp.md"
+digest = "sha256:280827c75941c093f5febb9fd8a21bee4ddbca46022111ef266a46ad047b0925"
+ir_digest = "sha256:58bad2d28fc5cb63e57422bd7dbda2e016e60710c5f8b622a8b0d10b84c1e7fd"
 section_count = 3
 
 [[files]]
