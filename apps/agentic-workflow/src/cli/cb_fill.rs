@@ -837,7 +837,6 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         }
     };
     let project_root = crate::find_project_root()?;
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
 
     if !worktree_abs.exists() {
@@ -892,6 +891,16 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             std::process::exit(2);
         }
     };
+
+    // The active marker's file is the only source path a fill application may
+    // carry: an adoption payload must preserve its existing body while
+    // committing the author's bounded implementation edit and tracker update
+    // together. All unrelated dirty paths remain a hard preflight failure.
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &[target.source_path.as_str()],
+    )?;
 
     // Read the payload.
     let payload_abs = cb_marker_payload_path(&project_root, &slug, &marker_id);
