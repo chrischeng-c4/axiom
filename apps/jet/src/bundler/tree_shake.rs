@@ -123,6 +123,14 @@ pub fn analyze_used_exports_from(
         None => ModuleLookup::new(modules),
     };
 
+    // The bundle entry's export namespace is part of the public artifact.
+    // Treat it as a wildcard consumer so `export * from ...` on a library
+    // entry propagates every named leaf export instead of shaking the leaf
+    // out before CJS lowering can copy it onto `module.exports`.
+    used.entry(entry.to_path_buf())
+        .or_default()
+        .insert("*".to_string());
+
     // Step 1: Collect all exports per module (ESM + CJS). Per-module extraction
     // is pure byte-scanning with no shared state — parallel across the corpus.
     // On barrel-heavy bundles (MUI/antd, hundreds of modules) the sequential
@@ -1995,6 +2003,32 @@ const internal = 2;
         assert!(
             !leaf_used.contains("unused"),
             "star re-export should not mark unrelated leaf exports live: {leaf_used:?}"
+        );
+    }
+
+    #[test]
+    fn entry_star_reexport_preserves_the_public_namespace() {
+        let modules = vec![
+            (
+                PathBuf::from("/fixture/entry.js"),
+                "export * from './react-router';\n".to_string(),
+            ),
+            (
+                PathBuf::from("/fixture/react-router.js"),
+                "export const Link = 1;\nexport const Route = 2;\nexport default 3;\n".to_string(),
+            ),
+        ];
+
+        let result = analyze_used_exports(&modules).unwrap();
+        let leaf_used = result
+            .used_exports
+            .get(&PathBuf::from("/fixture/react-router.js"))
+            .expect("entry re-export must keep its leaf module live");
+        assert!(leaf_used.contains("Link"), "{leaf_used:?}");
+        assert!(leaf_used.contains("Route"), "{leaf_used:?}");
+        assert!(
+            !leaf_used.contains("default"),
+            "export * must not propagate the default export: {leaf_used:?}"
         );
     }
 

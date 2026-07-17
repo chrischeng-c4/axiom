@@ -259,6 +259,17 @@ fn count_identifier_refs_in_range(b: &[u8], ident_bytes: &[u8], start: usize, en
 /// scope hoisting).
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_unused_exports(code: &str) -> String {
+    eliminate_unused_exports_inner(code, None)
+}
+
+/// Like [`eliminate_unused_exports`], but preserves the public export object
+/// of the production bundle entry. Its exports can be consumed by the host
+/// after the bundle runs, so no in-bundle read is required to make them live.
+pub fn eliminate_unused_exports_preserving_entry(code: &str, entry_module_id: usize) -> String {
+    eliminate_unused_exports_inner(code, Some(entry_module_id))
+}
+
+fn eliminate_unused_exports_inner(code: &str, entry_module_id: Option<usize>) -> String {
     let mut result = inline_direct_literal_export_reads(code);
 
     // Phase 1: Remove unused _m{i}e.NAME export assignments
@@ -284,15 +295,21 @@ pub fn eliminate_unused_exports(code: &str) -> String {
     let bare_required_modules = collect_bare_require_module_ids(&result);
     let exports_to_remove: Vec<(String, String)> = export_candidates
         .into_iter()
-        .filter(|candidate| !used_exports.contains(candidate))
+        .filter(|candidate| {
+            module_id_from_export_obj(&candidate.0).and_then(|id| id.parse::<usize>().ok())
+                != entry_module_id
+                && !used_exports.contains(candidate)
+        })
         .collect();
 
     let direct_exports_to_remove: Vec<(usize, usize, String)> = direct_export_assignments
         .iter()
         .filter_map(|((id, export_name), assignment)| {
             let canonical = (format!("_m{id}e"), export_name.clone());
-            (!used_exports.contains(&canonical) && !bare_required_modules.contains(id))
-                .then(|| (assignment.span.0, assignment.span.1, String::new()))
+            (Some(*id) != entry_module_id
+                && !used_exports.contains(&canonical)
+                && !bare_required_modules.contains(id))
+            .then(|| (assignment.span.0, assignment.span.1, String::new()))
         })
         .collect();
 
@@ -3744,6 +3761,20 @@ var stylis=_r(13);console.log(stylis.MS);})();"#;
         assert!(
             crate::bundler::dce::js_parses_without_errors(&result),
             "result should remain valid JS, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_keeps_entry_exports() {
+        let code = r#"var _m0={exports:{}};
+var _m0_TrendingUp = wrapIcon(_m1_MuiTrendingUp);
+_m0.exports["TrendingUp"] = _m0_TrendingUp;"#;
+
+        let result = eliminate_unused_exports_preserving_entry(code, 0);
+
+        assert!(
+            result.contains("_m0.exports[\"TrendingUp\"] = _m0_TrendingUp"),
+            "the public entry export must survive without an internal read, got: {result}"
         );
     }
 

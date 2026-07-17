@@ -42,7 +42,8 @@ use super::CompiledModule;
 
 // Re-export post-flattening optimizations from the split module.
 pub use super::scope_hoist_opt::{
-    eliminate_unused_exports, inline_cross_module_constants, is_side_effect_free,
+    eliminate_unused_exports, eliminate_unused_exports_preserving_entry,
+    inline_cross_module_constants, is_side_effect_free,
 };
 
 /// Generate a scope-hoisted bundle from compiled modules.

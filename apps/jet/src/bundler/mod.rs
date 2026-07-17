@@ -1377,7 +1377,7 @@ impl Bundler {
                 // R4: Cross-module constant inlining → R5: DCE
                 let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
                 lap("r4_inline_constants");
-                let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
+                let after_r5 = scope_hoist::eliminate_unused_exports_preserving_entry(&after_r4, 0);
                 lap("r5_unused_exports");
                 let after_markers = dce::eliminate_unread_es_module_markers(&after_r5);
                 lap("es_module_markers");
