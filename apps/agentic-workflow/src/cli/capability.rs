@@ -975,6 +975,7 @@ pub struct TdCapabilityEvidence {
 pub enum CapabilityActionKind {
     DefineCapabilityMap,
     FormatMigrationRequired,
+    LocationMigrationRequired,
     HumanConfirmRequired,
     CreateWi,
     ReconcileWiRefs,
@@ -1588,6 +1589,7 @@ fn capability_check_blocks_on_next_action(
         kind,
         CapabilityActionKind::DefineCapabilityMap
             | CapabilityActionKind::FormatMigrationRequired
+            | CapabilityActionKind::LocationMigrationRequired
             | CapabilityActionKind::HumanConfirmRequired
             | CapabilityActionKind::CreateWi
             | CapabilityActionKind::ReconcileWiRefs
@@ -1887,7 +1889,8 @@ fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()>
             "Capability map placeholder for `{project}`. Define project-specific product promises after human confirmation."
         )
     });
-    let body = render_empty_capability_readme(&title, &brief);
+    let readme_resident = cap_path.file_name().and_then(|name| name.to_str()) == Some("README.md");
+    let body = render_empty_capability_readme(&title, &brief, readme_resident);
     std::fs::write(&cap_path, body)
         .with_context(|| format!("write capability map {}", cap_path.display()))?;
     let payload = serde_json::json!({
@@ -1907,10 +1910,22 @@ fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()>
     Ok(())
 }
 
-fn render_empty_capability_readme(title: &str, brief: &str) -> String {
-    format!(
-        "# {title}\n\n## Brief\n\n{brief}\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md). Add that file's `## Brief` here after confirming the project-local rules.\n\n## Capability Contract\n\nThe full project capability contract lives in [CAPABILITIES.md](CAPABILITIES.md). Add that file's `## Brief` here after confirming the capability contract.\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
-    )
+/// Render an empty capability-map shell. `readme_resident` selects the
+/// project-README required-headings shape (`## Brief` / `## Contributing` /
+/// `## Capability Contract` pointer / `## Capabilities`) for an explicit
+/// `--cap-path README.md` override; the default (CAPABILITIES.md-resident,
+/// #1848) shape is just `## Brief` / `## Capabilities` /
+/// `### Capability Index` -- the project-CAPABILITIES required headings --
+/// since the file itself is the contract, not a pointer to one.
+fn render_empty_capability_readme(title: &str, brief: &str, readme_resident: bool) -> String {
+    let capabilities_section = "## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n";
+    if readme_resident {
+        format!(
+            "# {title}\n\n## Brief\n\n{brief}\n\n## Contributing\n\nProject-local authoring and verification rules live in [CONTRIBUTING.md](CONTRIBUTING.md). Add that file's `## Brief` here after confirming the project-local rules.\n\n## Capability Contract\n\nThe full project capability contract lives in [CAPABILITIES.md](CAPABILITIES.md). Add that file's `## Brief` here after confirming the capability contract.\n\n{capabilities_section}"
+        )
+    } else {
+        format!("# {title}\n\n## Brief\n\n{brief}\n\n{capabilities_section}")
+    }
 }
 
 fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Result<()> {
@@ -4159,6 +4174,7 @@ fn capability_action_kind_label(kind: CapabilityActionKind) -> &'static str {
     match kind {
         CapabilityActionKind::DefineCapabilityMap => "define_capability_map",
         CapabilityActionKind::FormatMigrationRequired => "format_migration_required",
+        CapabilityActionKind::LocationMigrationRequired => "location_migration_required",
         CapabilityActionKind::HumanConfirmRequired => "human_confirm_required",
         CapabilityActionKind::CreateWi => "create_wi",
         CapabilityActionKind::ReconcileWiRefs => "reconcile_wi_refs",
@@ -5535,24 +5551,44 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
 fn migrate_capability_format(project: &str, args: CapabilityMigrateArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let readme_relocation_source = if args.cap_path.is_none() {
+        readme_capability_migration_source(&project_root, project, &cap_path)?
+    } else {
+        None
+    };
+    let (action_kind, reason) = if readme_relocation_source.is_some() {
+        (
+            CapabilityActionKind::LocationMigrationRequired,
+            "relocate README-resident capability structure to CAPABILITIES.md".to_string(),
+        )
+    } else {
+        (
+            CapabilityActionKind::FormatMigrationRequired,
+            "rewrite capability map to canonical Markdown format".to_string(),
+        )
+    };
     let action = CapabilityAction {
-        kind: CapabilityActionKind::FormatMigrationRequired,
+        kind: action_kind,
         capability_id: None,
         gap_id: None,
         claim_id: None,
         target: cap_path.display().to_string(),
         command: format!("aw capability migrate --project {project}"),
-        reason: "rewrite capability map to canonical Markdown format".to_string(),
+        reason,
         requires_hitl: false,
         hitl_question: None,
     };
-    let result = apply_capability_format_migration_tick(
-        1,
-        &project_root,
-        project,
-        args.cap_path.as_deref(),
-        &action,
-    );
+    let result = if let Some(readme_path) = readme_relocation_source {
+        apply_readme_capability_relocation_tick(1, project, &cap_path, &readme_path, &action)
+    } else {
+        apply_capability_format_migration_tick(
+            1,
+            &project_root,
+            project,
+            args.cap_path.as_deref(),
+            &action,
+        )
+    };
     let changed = result
         .stdout
         .as_deref()
@@ -5878,6 +5914,18 @@ async fn build_capability_report_inner(
     }
     let test_gates = project_test_gate_report(project, &project_root, verify)?;
     let cap_path = resolve_capability_path(&project_root, project, cap_path_override)?;
+    if cap_path_override.is_none() {
+        if let Some(readme_path) =
+            readme_capability_migration_source(&project_root, project, &cap_path)?
+        {
+            return Ok(capability_map_readme_resident_report(
+                project,
+                cap_path,
+                &readme_path,
+                test_gates,
+            ));
+        }
+    }
     let cap_body = match std::fs::read_to_string(&cap_path) {
         Ok(body) => body,
         Err(err) => {
@@ -11297,7 +11345,7 @@ fn capability_path_from_row(project_root: &Path, row: &CapabilityProjectRow) -> 
     let path = if let Some(cap_path) = row.cap_path.as_deref() {
         PathBuf::from(cap_path)
     } else if let Some(project_path) = row.path.as_deref() {
-        PathBuf::from(project_path).join("README.md")
+        PathBuf::from(project_path).join("CAPABILITIES.md")
     } else {
         anyhow::bail!(
             "project '{}' must declare [[projects]].cap_path or [[projects]].path",
@@ -11309,6 +11357,88 @@ fn capability_path_from_row(project_root: &Path, row: &CapabilityProjectRow) -> 
     } else {
         project_root.join(path)
     })
+}
+
+/// README-resident capability structure detection for the default (no
+/// explicit `cap_path`) resolution path (#1848). `CAPABILITIES.md` is the
+/// default `cap_path`; when it does not exist yet and the project's README
+/// still carries canonical or legacy capability structure, that README is
+/// migration input, not a hard read failure.
+fn readme_capability_migration_source(
+    project_root: &Path,
+    project: &str,
+    cap_path: &Path,
+) -> Result<Option<PathBuf>> {
+    if cap_path.exists() {
+        return Ok(None);
+    }
+    let row = resolve_project_row(project_root, project)?;
+    let Some(project_path) = row.path.as_deref().filter(|path| !path.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let readme_path = project_root.join(project_path).join("README.md");
+    if readme_path == cap_path || !readme_path.is_file() {
+        return Ok(None);
+    }
+    let body = std::fs::read_to_string(&readme_path)
+        .with_context(|| format!("failed to read {}", readme_path.display()))?;
+    let document = parse_capability_document(&body, &readme_path).with_context(|| {
+        format!(
+            "failed to parse capability map from {}",
+            readme_path.display()
+        )
+    })?;
+    if document.capabilities.is_empty() && document.legacy_rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(readme_path))
+}
+
+fn capability_map_readme_resident_report(
+    project: &str,
+    cap_path: PathBuf,
+    readme_path: &Path,
+    test_gates: ProjectTestGateReport,
+) -> CapabilityReport {
+    let reason = format!(
+        "capability structure is README-resident at {}; `{}` is the default cap_path — run `aw capability migrate --project {project}` to relocate it",
+        readme_path.display(),
+        cap_path.display()
+    );
+    let next_action = CapabilityAction {
+        kind: CapabilityActionKind::LocationMigrationRequired,
+        capability_id: None,
+        gap_id: None,
+        claim_id: None,
+        target: readme_path.display().to_string(),
+        command: format!("aw capability migrate --project {project}"),
+        reason: reason.clone(),
+        requires_hitl: false,
+        hitl_question: None,
+    };
+    CapabilityReport {
+        action: "capability",
+        project: project.to_string(),
+        cap_path,
+        format_version: 0,
+        status: "blocked".to_string(),
+        test_gates,
+        production_ready: false,
+        production_status: ProductionStatus::NotEvaluated,
+        production_scope: Vec::new(),
+        production_blockers: Vec::new(),
+        capability_count: 0,
+        verified_count: 0,
+        percent: 0.0,
+        claim_count: 0,
+        verified_claim_count: 0,
+        claim_percent: 0.0,
+        capabilities: Vec::new(),
+        blockers: vec![reason],
+        warnings: Vec::new(),
+        next_action,
+        run_results: Vec::new(),
+    }
 }
 
 fn resolve_td_path(project_root: &Path, project: &str) -> Result<PathBuf> {
@@ -11929,6 +12059,131 @@ fn apply_capability_format_migration_tick(
             hitl_question: None,
         },
     }
+}
+
+/// Structural README->CAPABILITIES.md relocation (#1848 R2). Reads canonical
+/// or legacy capability structure out of `readme_path`, writes a fresh
+/// CAPABILITIES.md-shaped `cap_path` (post-#1847 shape: `## Brief`,
+/// `## Capabilities`, `### Capability Index`, no required WI column), and
+/// rewrites the README in place down to a human-readable summary that
+/// points at the new contract.
+fn apply_readme_capability_relocation_tick(
+    tick: usize,
+    project: &str,
+    cap_path: &Path,
+    readme_path: &Path,
+    action: &CapabilityAction,
+) -> CapabilityRunResult {
+    let result = (|| -> Result<String> {
+        let readme_body = std::fs::read_to_string(readme_path)
+            .with_context(|| format!("failed to read {}", readme_path.display()))?;
+        let document =
+            parse_capability_document_repairing_previous_migration(&readme_body, readme_path)
+                .with_context(|| {
+                    format!(
+                        "failed to parse capability map from {}",
+                        readme_path.display()
+                    )
+                })?;
+        if document.capabilities.is_empty() && document.legacy_rows.is_empty() {
+            anyhow::bail!(
+                "{} has no canonical or legacy capability rows to relocate",
+                readme_path.display()
+            );
+        }
+        if let Some(parent) = cap_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+        }
+        let cap_body = render_relocated_capability_document(&document, project);
+        std::fs::write(cap_path, &cap_body)
+            .with_context(|| format!("failed to write {}", cap_path.display()))?;
+        let readme_residue = render_readme_capability_migration_residue(&readme_body, project);
+        std::fs::write(readme_path, &readme_residue)
+            .with_context(|| format!("failed to write {}", readme_path.display()))?;
+        Ok(format!(
+            "migrated {} -> {}",
+            readme_path.display(),
+            cap_path.display()
+        ))
+    })();
+
+    match result {
+        Ok(stdout) => CapabilityRunResult {
+            tick,
+            kind: action.kind,
+            command: action.command.clone(),
+            executed_command: action.command.clone(),
+            status: "pass".to_string(),
+            exit_code: Some(0),
+            stdout: Some(stdout),
+            stderr: None,
+            hitl_question: None,
+        },
+        Err(err) => CapabilityRunResult {
+            tick,
+            kind: action.kind,
+            command: action.command.clone(),
+            executed_command: action.command.clone(),
+            status: "fail".to_string(),
+            exit_code: Some(1),
+            stdout: None,
+            stderr: Some(err.to_string()),
+            hitl_question: None,
+        },
+    }
+}
+
+/// Render a fresh CAPABILITIES.md body (`## Brief` + `## Capabilities` +
+/// `### Capability Index` + per-capability sections) from capability
+/// structure parsed out of a README.
+fn render_relocated_capability_document(document: &CapabilityDocument, project: &str) -> String {
+    let title = project_display_name(project);
+    let mut out = format!(
+        "# {title}\n\n## Brief\n\nMachine-readable capability contract for {title}.\n\n## Capabilities\n\nCanonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.\n\n"
+    );
+    out.push_str(&render_capability_registry(document, project));
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Strip migrated capability sections out of a README body and leave a
+/// `## Capability Contract` pointer at CAPABILITIES.md in their place (the
+/// project-README required-headings shape: `## Brief` / `## Contributing` /
+/// `## Capability Contract`).
+fn render_readme_capability_migration_residue(readme_body: &str, project: &str) -> String {
+    let stripped = collapse_markdown_blank_runs_outside_fences(&strip_migrated_capability_sources(
+        readme_body,
+    ));
+    if has_markdown_heading(&stripped, 2, Some("Capability Contract")) {
+        return stripped.replacen(CAPABILITY_MIGRATION_INSERT_MARKER, "", 1);
+    }
+    let (prefix, suffix) =
+        if let Some((before, after)) = stripped.split_once(CAPABILITY_MIGRATION_INSERT_MARKER) {
+            (before.to_string(), Some(after.to_string()))
+        } else {
+            (stripped, None)
+        };
+    let title = project_display_name(project);
+    let mut out = prefix.trim_end().to_string();
+    out.push_str("\n\n## Capability Contract\n\nMachine-readable capability contract for ");
+    out.push_str(&title);
+    out.push_str(". Full contract:\n[CAPABILITIES.md](CAPABILITIES.md).\n");
+    if let Some(suffix) = suffix {
+        let suffix = suffix.trim_start_matches('\n');
+        if !suffix.trim().is_empty() {
+            out.push('\n');
+            out.push_str(suffix);
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+    }
+    out
 }
 
 fn strip_previous_canonical_capability_tail(body: &str) -> Option<String> {
@@ -15241,10 +15496,31 @@ generated_at: 2026-06-18T00:00:00Z
     }
 
     #[test]
-    fn capability_init_renders_empty_canonical_readme_shell() {
+    fn capability_init_renders_capabilities_md_resident_shell_by_default() {
         let body = render_empty_capability_readme(
             "Cclab Core",
             "Capability map placeholder for `cclab-core`.",
+            false,
+        );
+        let doc = cap_doc(&body);
+
+        assert!(body.starts_with("# Cclab Core\n\n## Brief\n\n"));
+        assert!(!body.contains("## Contributing"));
+        assert!(!body.contains("## Capability Contract"));
+        assert!(body.contains("\n## Capabilities\n\n### Capability Index\n\n"));
+        assert!(body.contains(
+            "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |"
+        ));
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.capabilities.is_empty());
+    }
+
+    #[test]
+    fn capability_init_renders_readme_resident_shell_for_explicit_readme_override() {
+        let body = render_empty_capability_readme(
+            "Cclab Core",
+            "Capability map placeholder for `cclab-core`.",
+            true,
         );
         let doc = cap_doc(&body);
 
@@ -15263,6 +15539,105 @@ generated_at: 2026-06-18T00:00:00Z
         ));
         assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
         assert!(doc.capabilities.is_empty());
+    }
+
+    #[test]
+    fn capability_path_from_row_defaults_to_capabilities_md() {
+        // #1848 AC1: default `cap_path` resolution is `<project>/CAPABILITIES.md`.
+        let row = CapabilityProjectRow {
+            name: "demo".to_string(),
+            path: Some("projects/demo".to_string()),
+            td_path: None,
+            cap_path: None,
+        };
+        let resolved = capability_path_from_row(Path::new("/root"), &row).unwrap();
+        assert_eq!(resolved, Path::new("/root/projects/demo/CAPABILITIES.md"));
+    }
+
+    #[test]
+    fn capability_path_from_row_explicit_cap_path_wins() {
+        // #1848 AC1: explicit `cap_path` (aw.toml or CLI override) still wins
+        // over the CAPABILITIES.md default.
+        let row = CapabilityProjectRow {
+            name: "demo".to_string(),
+            path: Some("projects/demo".to_string()),
+            td_path: None,
+            cap_path: Some("projects/demo/README.md".to_string()),
+        };
+        let resolved = capability_path_from_row(Path::new("/root"), &row).unwrap();
+        assert_eq!(resolved, Path::new("/root/projects/demo/README.md"));
+    }
+
+    #[test]
+    fn resolve_capability_path_override_argument_wins_over_default() {
+        // #1848 AC1: the `--cap-path` CLI override wins even though the
+        // project has no explicit aw.toml cap_path.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("aw.toml"), "[project]\nname = \"demo\"\n").unwrap();
+
+        let resolved =
+            resolve_capability_path(tmp.path(), "demo", Some(Path::new("custom/OTHER.md")))
+                .unwrap();
+        assert_eq!(resolved, tmp.path().join("custom/OTHER.md"));
+    }
+
+    #[test]
+    fn readme_capability_migration_source_detects_readme_resident_structure() {
+        // #1848 R2/AC2: when CAPABILITIES.md does not exist yet and the
+        // project README still carries canonical capability structure, that
+        // README is a migration source, not a hard read failure.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("aw.toml"), "[project]\nname = \"demo\"\n").unwrap();
+        std::fs::write(project_dir.join("README.md"), one_capability()).unwrap();
+
+        let cap_path = project_dir.join("CAPABILITIES.md");
+        let found = readme_capability_migration_source(tmp.path(), "demo", &cap_path).unwrap();
+        assert_eq!(found, Some(project_dir.join("README.md")));
+    }
+
+    #[test]
+    fn readme_capability_migration_source_none_when_capabilities_md_exists() {
+        // Once CAPABILITIES.md exists it is authoritative; the README is not
+        // re-treated as a migration source even if it still has capability
+        // sections lingering.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("aw.toml"), "[project]\nname = \"demo\"\n").unwrap();
+        std::fs::write(project_dir.join("README.md"), one_capability()).unwrap();
+        let cap_path = project_dir.join("CAPABILITIES.md");
+        std::fs::write(
+            &cap_path,
+            "# Demo\n\n## Brief\n\nx\n\n## Capabilities\n\n### Capability Index\n\n",
+        )
+        .unwrap();
+
+        let found = readme_capability_migration_source(tmp.path(), "demo", &cap_path).unwrap();
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn readme_capability_migration_source_none_when_readme_has_no_capability_structure() {
+        // A plain human-summary README (post-migration shape, or a project
+        // that never had README-resident capability structure) is not a
+        // migration source.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("aw.toml"), "[project]\nname = \"demo\"\n").unwrap();
+        std::fs::write(
+            project_dir.join("README.md"),
+            "# Demo\n\n## Brief\n\nHuman summary.\n\n## Capability Contract\n\nSee CAPABILITIES.md.\n",
+        )
+        .unwrap();
+        let cap_path = project_dir.join("CAPABILITIES.md");
+
+        let found = readme_capability_migration_source(tmp.path(), "demo", &cap_path).unwrap();
+        assert_eq!(found, None);
     }
 
     #[test]
