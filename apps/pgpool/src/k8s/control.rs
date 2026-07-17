@@ -168,7 +168,7 @@ impl PgpoolControlPlane {
         }
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Pass outstanding reserve-grant units into static scale admission, reject instead of implicitly reclaiming grants, and cover admit/grant/release sequences.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Pass outstanding reserve-grant units into static scale admission, reject instead of implicitly reclaiming grants, and cover admit/grant/release sequences.">
     /// Reserve desired and rollout-surge Pods in one transaction. The caller
     /// passes an empty surge set for the default no-surge Deployment policy.
     pub fn admit_scale<I, J, S, T>(
@@ -189,12 +189,21 @@ impl PgpoolControlPlane {
             .map(Into::into)
             .chain(rollout_surge_pods.into_iter().map(Into::into))
             .collect();
+        let outstanding_reserve = self
+            .reserve_ledgers
+            .get(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?
+            .held_reserve();
         {
             let allocator = self
                 .budgets
                 .endpoint_mut(endpoint)
                 .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?;
-            allocator.reserve_many(pods.clone(), quota_per_pod)?;
+            allocator.reserve_many_with_external_held(
+                pods.clone(),
+                quota_per_pod,
+                outstanding_reserve,
+            )?;
         }
         self.refresh_reserve_base(endpoint)?;
         for pod in pods {
@@ -215,7 +224,7 @@ impl PgpoolControlPlane {
         }
         Ok(())
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     pub fn mark_ready(&mut self, pod: &str) -> Result<(), ControlPlaneError> {
         let endpoint = self.pod(pod)?.endpoint.clone();
@@ -400,6 +409,17 @@ mod tests {
         PgpoolControlPlane::new(budgets)
     }
 
+    fn assert_combined_capacity_invariant(control: &PgpoolControlPlane) {
+        let allocator = control.budgets.endpoint("primary").unwrap();
+        let ledger = control.reserve_ledger("primary").unwrap();
+        assert_eq!(ledger.base_held, allocator.held_quota());
+        assert_eq!(
+            ledger.held_total(),
+            ledger.base_held + ledger.held_reserve()
+        );
+        assert!(ledger.held_total() <= allocator.capacity.usable());
+    }
+
     #[test]
     fn desired_and_surge_pods_are_admitted_atomically_before_ready() {
         let mut control = control_plane(60);
@@ -493,6 +513,120 @@ mod tests {
             .next()
             .unwrap();
         assert_eq!(allocation.state, crate::k8s::AllocationState::Ready);
+    }
+
+    #[test]
+    fn reserve_aware_static_scale_admission_rejects_overcommit_without_mutation() {
+        let mut control = control_plane(100);
+        control
+            .admit_scale("primary", ["pod-a"], std::iter::empty::<&str>(), 70)
+            .unwrap();
+        let grant = control
+            .grant_reserve(
+                "primary",
+                10,
+                [ReserveLeaseRequest {
+                    pod: "pod-a".into(),
+                    token: "reserve-a".into(),
+                    units: 15,
+                    expires_at_epoch_seconds: 20,
+                }],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        let error = control
+            .admit_scale("primary", ["pod-b"], std::iter::empty::<&str>(), 30)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ControlPlaneError::Allocation(AllocationError::InsufficientCapacity {
+                held: 85,
+                requested: 30,
+                usable: 100,
+                ..
+            })
+        ));
+        assert_eq!(
+            control.budgets.endpoint("primary").unwrap().held_quota(),
+            70
+        );
+        assert_eq!(
+            control.reserve_ledger("primary").unwrap().held_reserve(),
+            15
+        );
+        assert_eq!(
+            control.reserve_ledger("primary").unwrap().grants().count(),
+            1
+        );
+        assert!(control.pods.get("pod-b").is_none());
+        assert!(control.status().blocked_scale_reason.is_some());
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .reserve_ledgers
+            .get_mut("primary")
+            .unwrap()
+            .release_after_close(&grant.key)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+    }
+
+    #[test]
+    fn reserve_and_static_sequence_never_exceeds_usable_capacity() {
+        let mut control = control_plane(100);
+        control
+            .admit_scale("primary", ["pod-a"], std::iter::empty::<&str>(), 60)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+
+        let grant = control
+            .grant_reserve(
+                "primary",
+                10,
+                [ReserveLeaseRequest {
+                    pod: "pod-a".into(),
+                    token: "reserve-a".into(),
+                    units: 20,
+                    expires_at_epoch_seconds: 30,
+                }],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+
+        assert!(control
+            .admit_scale("primary", ["pod-b"], std::iter::empty::<&str>(), 30)
+            .is_err());
+        assert_combined_capacity_invariant(&control);
+
+        control.mark_ready("pod-a").unwrap();
+        control.begin_drain("pod-a", 20, 0).unwrap();
+        assert_eq!(
+            control.reconcile_drain("pod-a", 20).unwrap(),
+            DrainProgress::Released
+        );
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .admit_scale("primary", ["pod-b"], std::iter::empty::<&str>(), 70)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .reserve_ledgers
+            .get_mut("primary")
+            .unwrap()
+            .release_after_close(&grant.key)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .admit_scale("primary", ["pod-c"], std::iter::empty::<&str>(), 30)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
     }
 }
 // </HANDWRITE>

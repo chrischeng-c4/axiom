@@ -111,8 +111,25 @@ impl EndpointAllocator {
         self.blocked_reason.as_deref()
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Admit static Pod quota against the allocator quota plus externally-held reserve capacity, preserving the allocator's atomic error and blocked-scale status behavior.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Admit static Pod quota against the allocator quota plus externally-held reserve capacity, preserving the allocator's atomic error and blocked-scale status behavior.">
     pub fn reserve_many<I, S>(&mut self, pods: I, quota_per_pod: u32) -> Result<(), AllocationError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.reserve_many_with_external_held(pods, quota_per_pod, 0)
+    }
+
+    /// Atomically reserve static Pod quota while accounting for capacity that
+    /// is held outside this allocator, such as outstanding reserve grants.
+    /// The external hold is advisory input from the same control-plane
+    /// transaction; it is never reclaimed as a side effect of static admission.
+    pub fn reserve_many_with_external_held<I, S>(
+        &mut self,
+        pods: I,
+        quota_per_pod: u32,
+        external_held: u32,
+    ) -> Result<(), AllocationError>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -127,9 +144,9 @@ impl EndpointAllocator {
             }
         }
         let requested = quota_per_pod.saturating_mul(pods.len().try_into().unwrap_or(u32::MAX));
-        let held = self.held_quota();
+        let held = self.held_quota().saturating_add(external_held);
         let usable = self.capacity.usable();
-        if !self.can_hold_additional(requested) {
+        if held.saturating_add(requested) > usable {
             let error = AllocationError::InsufficientCapacity {
                 endpoint: self.endpoint.clone(),
                 held,
@@ -150,10 +167,10 @@ impl EndpointAllocator {
             );
         }
         self.blocked_reason = None;
-        debug_assert!(self.held_quota() <= self.capacity.usable());
+        debug_assert!(self.held_quota().saturating_add(external_held) <= usable);
         Ok(())
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     pub fn mark_ready(&mut self, pod: &str) -> Result<(), AllocationError> {
         self.allocation_mut(pod)?.state = AllocationState::Ready;
