@@ -300,6 +300,11 @@ test('test 3 — all ids collected', async ({ page }) => {
 /// resolution logic using the page.js `_resolveUrl` function semantics
 /// (unit-level check for the JS logic).
 ///
+/// Also covers #1910 AC3: a relative navigation with no base URL resolved
+/// must fail fast with an error naming the full resolution chain (flag ->
+/// launched serve -> running session -> jet.toml), rather than silently
+/// sending the unresolved relative path to the CDP navigation layer.
+///
 /// REQ: R3
 #[tokio::test]
 async fn test_baseurl_resolution_relative_path() {
@@ -318,11 +323,18 @@ import { test, expect } from '@jet/test';
 // Must match the JS implementation in page.js exactly.
 function resolveUrl(url, baseURL) {
   if (!url) return url;
-  const isRelative = url.startsWith('/') || !/[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(url);
-  if (isRelative && baseURL) {
+  const isRelative = url.startsWith('/') || !/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(url);
+  if (!isRelative) return url;
+  if (baseURL) {
     return baseURL.replace(/\/$/, '') + (url.startsWith('/') ? url : '/' + url);
   }
-  return url;
+  throw new Error(
+    'page.goto("' + url + '") is a relative URL but no base URL was resolved. jet ' +
+      'resolves the e2e base URL in order: (1) the `--base-url` flag, (2) `jet e2e ' +
+      '--serve`\'s launched server, (3) a running `jet serve`/`jet dev` session for ' +
+      'this project, (4) `[e2e].base_url` in jet.toml. Set one of these, or pass an ' +
+      'absolute URL to page.goto().'
+  );
 }
 
 test('relative path resolved against baseURL', () => {
@@ -339,10 +351,23 @@ test('absolute URL passes through unchanged', () => {
   }
 });
 
-test('no baseURL: relative path passes through as-is', () => {
-  const resolved = resolveUrl('/about', '');
-  if (resolved !== '/about') {
-    throw new Error('Expected /about, got: ' + resolved);
+test('no baseURL: relative navigation throws chain-naming error (#1910 AC3)', () => {
+  let threw = false;
+  let message = '';
+  try {
+    resolveUrl('/about', '');
+  } catch (err) {
+    threw = true;
+    message = String((err && err.message) || err);
+  }
+  if (!threw) {
+    throw new Error('Expected resolveUrl to throw when a relative URL has no baseURL');
+  }
+  const requiredPhrases = ['--base-url', 'jet e2e --serve', 'jet serve', 'jet.toml'];
+  for (const phrase of requiredPhrases) {
+    if (!message.includes(phrase)) {
+      throw new Error('Expected error to name "' + phrase + '" in the resolution chain, got: ' + message);
+    }
   }
 });
 
@@ -350,6 +375,19 @@ test('relative path without leading slash resolved', () => {
   const resolved = resolveUrl('path/to/page', 'http://localhost:4200');
   if (resolved !== 'http://localhost:4200/path/to/page') {
     throw new Error('Expected http://localhost:4200/path/to/page, got: ' + resolved);
+  }
+});
+
+// #1910 regression guard: a non-authority absolute URI (no "://", e.g.
+// data:/blob:/mailto:) must never be treated as relative — neither
+// baseURL-prepended nor thrown on — even with a baseURL configured. Real
+// page.goto('data:text/html,...') calls are exercised end-to-end by
+// tests/browser-bridge/page_api_parity.rs's T7/T8/T13/T27 (goBack/reload/
+// content/toHaveURL), which caught this exact regression during #1910.
+test('data: URI passes through unchanged despite having no "://"', () => {
+  const resolved = resolveUrl('data:text/html,<p>hi</p>', 'http://localhost:4200');
+  if (resolved !== 'data:text/html,<p>hi</p>') {
+    throw new Error('Expected data: URI unchanged, got: ' + resolved);
   }
 });
 "#;
@@ -364,8 +402,8 @@ test('relative path without leading slash resolved', () => {
     };
 
     assert_eq!(
-        summary.passed, 4,
-        "all 4 baseURL resolution tests should pass"
+        summary.passed, 5,
+        "all 5 baseURL resolution tests should pass"
     );
     assert_eq!(summary.failed, 0);
 }

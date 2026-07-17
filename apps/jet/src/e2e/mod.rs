@@ -424,6 +424,67 @@ pub enum E2eEvidenceEvent {
     },
 }
 
+/// Base URL resolution chain for `jet e2e run|open|manual`, first hit wins:
+///
+///   1. explicit `--base-url` flag,
+///   2. `jet e2e --serve`'s own launched server (mutually exclusive with 1,
+///      enforced by the caller's `--serve`/`--base-url` guard),
+///   3. a running `jet serve`/`jet dev` session for this project, discovered
+///      via the persistent session registry (`.jet/serve-session.json`,
+///      written by `dev_server::session::write_from_env` and read here with
+///      [`crate::dev_server::session::read`]),
+///   4. `[e2e].base_url` in `jet.toml`.
+///
+/// Returns `None` when none of the four sources resolve. That `None` is not
+/// itself an error: absolute-URL-only e2e suites never need a base URL, so
+/// the hard error naming this chain is raised lazily, on the JS side, only
+/// when a spec attempts a *relative* navigation with no base URL resolved
+/// (`data/runtime/test/page.js`'s `Page._resolveUrl`) — see #1910.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+/// @issue #1910
+fn resolve_e2e_base_url(
+    project_root: &Path,
+    flag_base_url: Option<&str>,
+    launched_serve: Option<&crate::dev_server::serve_process::ServeLaunch>,
+    quiet: bool,
+) -> Option<String> {
+    let resolved = if let Some(flag) = flag_base_url {
+        Some((flag.to_string(), "--base-url flag"))
+    } else if let Some(serve) = launched_serve {
+        Some((
+            serve.session.url.clone(),
+            "`jet e2e --serve`'s launched server",
+        ))
+    } else if let Ok(session) = crate::dev_server::session::read(project_root) {
+        Some((
+            session.url,
+            "a running `jet serve`/`jet dev` session for this project",
+        ))
+    } else {
+        crate::task_runner::config::JetConfig::load(project_root)
+            .ok()
+            .and_then(|config| config.e2e)
+            .and_then(|e2e| e2e.base_url)
+            .map(|url| (url, "`[e2e].base_url` in jet.toml"))
+    };
+
+    if let Some((url, source)) = &resolved {
+        report_e2e_base_url_source(url, source, quiet);
+    }
+    resolved.map(|(url, _)| url)
+}
+
+/// Surfaces which source won the [`resolve_e2e_base_url`] chain. `println!`
+/// is the actually-visible channel for `jet e2e` CLI output in this
+/// codebase (no `tracing` subscriber is installed in the compiled binary);
+/// suppressed under `quiet` (`--json` output modes) so the line never
+/// pollutes machine-readable stdout.
+fn report_e2e_base_url_source(url: &str, source: &str, quiet: bool) {
+    if !quiet {
+        println!("E2E base URL: {url} (source: {source})");
+    }
+}
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
     if opts.serve != E2eServeMode::Off && opts.base_url.is_some() {
@@ -455,10 +516,12 @@ pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
             .context("starting `jet serve` for e2e run")?,
         ),
     };
-    let base_url = launched_serve
-        .as_ref()
-        .map(|serve| serve.session.url.clone())
-        .or_else(|| opts.base_url.clone());
+    let base_url = resolve_e2e_base_url(
+        &opts.project_root,
+        opts.base_url.as_deref(),
+        launched_serve.as_ref(),
+        opts.print_json,
+    );
     let serve_session = launched_serve.as_ref().map(|serve| serve.session.clone());
 
     let run_result = run_cases(
@@ -543,10 +606,12 @@ pub async fn run_manual_mode(opts: E2eManualOptions) -> Result<E2eRunResult> {
             .context("starting `jet serve` for e2e manual")?,
         ),
     };
-    let base_url = launched_serve
-        .as_ref()
-        .map(|serve| serve.session.url.clone())
-        .or_else(|| opts.base_url.clone());
+    let base_url = resolve_e2e_base_url(
+        &opts.project_root,
+        opts.base_url.as_deref(),
+        launched_serve.as_ref(),
+        opts.print_json,
+    );
     let serve_session = launched_serve.as_ref().map(|serve| serve.session.clone());
 
     let run_result = run_cases(
@@ -684,10 +749,12 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
             .context("starting `jet serve` for e2e open")?,
         ),
     };
-    let base_url = launched_serve
-        .as_ref()
-        .map(|serve| serve.session.url.clone())
-        .or_else(|| opts.base_url.clone());
+    let base_url = resolve_e2e_base_url(
+        &opts.project_root,
+        opts.base_url.as_deref(),
+        launched_serve.as_ref(),
+        false,
+    );
     let serve_session = launched_serve.as_ref().map(|serve| serve.session.clone());
     let initial_summary = Summary::default();
     let shell_path = open_runner_shell_path(&opts.evidence_dir);
@@ -3340,6 +3407,127 @@ mod tests {
         assert!(
             serve_log.path.ends_with(".jet/serve.log"),
             "serve log artifact should point at the session log file: {serve_log:?}",
+        );
+    }
+
+    // ── #1910: resolve_e2e_base_url chain ordering ─────────────────────────
+
+    fn fake_serve_session(url: &str) -> crate::dev_server::session::ServeSession {
+        crate::dev_server::session::ServeSession {
+            schema_version: crate::dev_server::session::SCHEMA_VERSION.to_string(),
+            mode: crate::dev_server::session::MODE_DETACHED.to_string(),
+            target: crate::dev_server::session::TARGET_DOM.to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 4321,
+            url: url.to_string(),
+            pid: 999,
+            root_dir: String::new(),
+            log_file: None,
+            started_at: crate::dev_server::session::now_unix(),
+        }
+    }
+
+    fn fake_launched_serve(
+        url: &str,
+        root_dir: &Path,
+    ) -> crate::dev_server::serve_process::ServeLaunch {
+        crate::dev_server::serve_process::ServeLaunch {
+            session: fake_serve_session(url),
+            session_file: crate::dev_server::session::session_path(root_dir),
+            log_file: crate::dev_server::session::log_path(root_dir),
+        }
+    }
+
+    fn write_e2e_jet_toml(root_dir: &Path, base_url: &str) {
+        std::fs::write(
+            root_dir.join("jet.toml"),
+            format!("[e2e]\nbase_url = \"{base_url}\"\n"),
+        )
+        .unwrap();
+    }
+
+    fn write_running_session(root_dir: &Path, url: &str) {
+        crate::dev_server::session::write(
+            &crate::dev_server::session::session_path(root_dir),
+            &fake_serve_session(url),
+        )
+        .unwrap();
+    }
+
+    /// #1910 AC (chain order) — the `--base-url` flag wins over every other
+    /// source, including a launched serve session, a running session, and
+    /// `[e2e].base_url` in jet.toml.
+    #[test]
+    fn resolve_e2e_base_url_prefers_flag_over_everything() {
+        let tmp = TempDir::new().unwrap();
+        write_e2e_jet_toml(tmp.path(), "http://config.example");
+        write_running_session(tmp.path(), "http://session.example");
+        let launched = fake_launched_serve("http://serve.example", tmp.path());
+
+        let resolved = resolve_e2e_base_url(
+            tmp.path(),
+            Some("http://flag.example"),
+            Some(&launched),
+            true,
+        );
+        assert_eq!(resolved.as_deref(), Some("http://flag.example"));
+    }
+
+    /// #1910 AC (chain order) — `jet e2e --serve`'s launched server wins over
+    /// a running session and jet.toml when no `--base-url` flag is given.
+    #[test]
+    fn resolve_e2e_base_url_prefers_launched_serve_over_session_and_config() {
+        let tmp = TempDir::new().unwrap();
+        write_e2e_jet_toml(tmp.path(), "http://config.example");
+        write_running_session(tmp.path(), "http://session.example");
+        let launched = fake_launched_serve("http://serve.example", tmp.path());
+
+        let resolved = resolve_e2e_base_url(tmp.path(), None, Some(&launched), true);
+        assert_eq!(resolved.as_deref(), Some("http://serve.example"));
+    }
+
+    /// #1910 AC (chain order) — a running `jet serve`/`jet dev` session for
+    /// this project wins over `[e2e].base_url` in jet.toml when no flag and
+    /// no launched serve are present. Session discovery is faked via the
+    /// same `.jet/serve-session.json` file `dev_server::session::write_from_env`
+    /// writes for real `jet serve`/`jet dev` runs.
+    #[test]
+    fn resolve_e2e_base_url_prefers_running_session_over_config() {
+        let tmp = TempDir::new().unwrap();
+        write_e2e_jet_toml(tmp.path(), "http://config.example");
+        write_running_session(tmp.path(), "http://session.example");
+
+        let resolved = resolve_e2e_base_url(tmp.path(), None, None, true);
+        assert_eq!(resolved.as_deref(), Some("http://session.example"));
+    }
+
+    /// #1910 AC1 — with no flag, no launched serve, and no running session,
+    /// `[e2e].base_url` in jet.toml is used (the "config used when flag
+    /// absent" contract).
+    #[test]
+    fn resolve_e2e_base_url_falls_back_to_jet_toml_when_flag_and_session_absent() {
+        let tmp = TempDir::new().unwrap();
+        write_e2e_jet_toml(tmp.path(), "http://config.example");
+
+        let resolved = resolve_e2e_base_url(tmp.path(), None, None, true);
+        assert_eq!(resolved.as_deref(), Some("http://config.example"));
+    }
+
+    /// #1910 AC3 — with none of the four sources present, resolution yields
+    /// `None` rather than raising an error itself: the hard error naming the
+    /// resolution chain is raised lazily, on the JS side, only when a spec
+    /// attempts a relative navigation (see
+    /// `tests/browser-bridge/page_fixture_auto_inject.rs`'s
+    /// `test_baseurl_resolution_relative_path` for the error-naming-all-
+    /// sources proof). This keeps absolute-URL-only suites free of any
+    /// base-URL requirement.
+    #[test]
+    fn resolve_e2e_base_url_returns_none_when_no_source_resolves() {
+        let tmp = TempDir::new().unwrap();
+        let resolved = resolve_e2e_base_url(tmp.path(), None, None, true);
+        assert!(
+            resolved.is_none(),
+            "with none of the four sources present, resolution must yield None"
         );
     }
 

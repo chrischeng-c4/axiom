@@ -3349,6 +3349,37 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// #1910 — proves the `[e2e].base_url` jet.toml value actually reaches
+    /// the JS-side boot script's `jetConfig.baseURL`, not just that
+    /// `JetConfig` parses the section. Pairs with the Rust-side
+    /// resolution-chain ordering tests in `e2e::tests`
+    /// (`resolve_e2e_base_url_*`).
+    #[test]
+    fn build_boot_forwards_configured_base_url_to_js_jet_config() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("jet.toml"),
+            "[e2e]\nbase_url = \"http://localhost:4173\"\n",
+        )
+        .unwrap();
+        let jet_config = crate::task_runner::config::JetConfig::load(tmp.path()).unwrap();
+        let mut config = RunnerConfig::default_for_root(tmp.path()).unwrap();
+        config.base_url = jet_config.e2e.and_then(|e2e| e2e.base_url);
+
+        let spec_path = tmp.path().join("example.spec.ts");
+        std::fs::write(&spec_path, "// empty\n").unwrap();
+        let spec = SpecFile {
+            path: spec_path.clone(),
+            relative: PathBuf::from("example.spec.ts"),
+        };
+
+        let boot = build_boot(&spec_path, &spec, &config);
+        assert!(
+            boot.contains(r#"baseURL: "http://localhost:4173""#),
+            "boot script must forward the jet.toml base_url into jetConfig.baseURL: {boot}"
+        );
+    }
+
     #[test]
     fn transform_spec_passes_through_js() {
         let tmp = TempDir::new().unwrap();

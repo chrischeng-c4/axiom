@@ -201,7 +201,7 @@ mod tests {
 
         let props = json["properties"].as_object().unwrap();
         for expected in [
-            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen",
+            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen", "e2e",
         ] {
             assert!(
                 props.contains_key(expected),

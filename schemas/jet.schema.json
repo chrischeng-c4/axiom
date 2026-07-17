@@ -36,6 +36,17 @@
         }
       ]
     },
+    "e2e": {
+      "description": "End-to-end test settings (`jet e2e`). Optional because most projects pass `--base-url` explicitly or use `jet e2e --serve`. Surfaced here so `[e2e]` is a recognized top-level section under `deny_unknown_fields`. @issue #1910",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/E2eConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "lib": {
       "description": "Library-build settings (`jet build --lib`). Optional because most projects ship an app, not a publishable library; absent → app-mode build. Surfaced here so `[lib]` is a recognized top-level section under `deny_unknown_fields`. @issue #170",
       "anyOf": [
@@ -119,6 +130,20 @@
           "additionalProperties": {
             "type": "string"
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "E2eConfig": {
+      "description": "`[e2e]` section of `jet.toml`.\n\nOptional because most projects pass `--base-url` explicitly or use `jet e2e --serve`. When present, `base_url` is the last non-error link in the base-URL resolution chain: `--base-url` flag -> `jet e2e --serve`'s launched server -> a running `jet serve`/`jet dev` session for this project -> `[e2e].base_url` -> hard error (thrown on the JS side, at the first relative navigation, so absolute-URL-only suites never need any of these sources). @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema @issue #1910",
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "description": "Base URL used by `jet e2e` when no `--base-url` flag, launched serve session, or running `jet serve`/`jet dev` session is available. Consumed via `RunnerConfig::base_url`, which reaches the JS-side `page.goto()` relative-URL resolver.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

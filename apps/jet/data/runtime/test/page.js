@@ -80,14 +80,35 @@ export class Page {
   }
 
   // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R3
+  // #1910 — relative navigations with no resolved base URL fail fast here,
+  // naming the full resolution chain, instead of sending an unresolved
+  // relative path down to the CDP navigation layer (which used to fail with
+  // an opaque "invalid URL"/net error far from the real cause). Absolute
+  // URLs never consult `_baseURL`, so absolute-only suites are unaffected.
   _resolveUrl(url) {
     if (!url) return url;
-    // Relative URL: starts with "/" or is scheme-less (no "://").
-    const isRelative = url.startsWith("/") || !/[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(url);
-    if (isRelative && this._baseURL) {
+    // Relative URL: starts with "/" (origin-relative), or has no URI scheme
+    // prefix at all. A scheme prefix is `letter[letters/digits/+-.]*:` per
+    // RFC 3986 — deliberately NOT requiring "://", so non-authority absolute
+    // URIs (`data:`, `blob:`, `mailto:`, `javascript:`, ...) are correctly
+    // treated as already-absolute instead of being misread as relative
+    // (#1910 — this used to be masked because the old code only prepended
+    // baseURL when `isRelative && this._baseURL`, so an unset baseURL made
+    // the misclassification a harmless no-op; the #1910 throw below made it
+    // observable, e.g. `page.goto('data:text/html,...')` in tests without a
+    // configured base URL).
+    const isRelative = url.startsWith("/") || !/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(url);
+    if (!isRelative) return url;
+    if (this._baseURL) {
       return this._baseURL.replace(/\/$/, "") + (url.startsWith("/") ? url : "/" + url);
     }
-    return url;
+    throw new Error(
+      `page.goto("${url}") is a relative URL but no base URL was resolved. jet ` +
+        "resolves the e2e base URL in order: (1) the `--base-url` flag, (2) `jet e2e " +
+        "--serve`'s launched server, (3) a running `jet serve`/`jet dev` session for " +
+        "this project, (4) `[e2e].base_url` in jet.toml. Set one of these, or pass an " +
+        "absolute URL to page.goto()."
+    );
   }
 
   // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R6

@@ -85,6 +85,14 @@ pub struct JetConfig {
     /// `package.json` instead of hard-coding one framework runtime.
     #[serde(default)]
     pub codegen: CodegenConfig,
+
+    /// End-to-end test settings (`jet e2e`). Optional because most projects
+    /// pass `--base-url` explicitly or use `jet e2e --serve`. Surfaced here
+    /// so `[e2e]` is a recognized top-level section under
+    /// `deny_unknown_fields`.
+    /// @issue #1910
+    #[serde(default)]
+    pub e2e: Option<E2eConfig>,
 }
 
 /// `[test]` section of `jet.toml`.
@@ -239,6 +247,27 @@ pub struct LibConfig {
     pub raw_copy: Option<Vec<RawCopy>>,
 }
 
+/// `[e2e]` section of `jet.toml`.
+///
+/// Optional because most projects pass `--base-url` explicitly or use `jet
+/// e2e --serve`. When present, `base_url` is the last non-error link in the
+/// base-URL resolution chain: `--base-url` flag -> `jet e2e --serve`'s
+/// launched server -> a running `jet serve`/`jet dev` session for this
+/// project -> `[e2e].base_url` -> hard error (thrown on the JS side, at the
+/// first relative navigation, so absolute-URL-only suites never need any of
+/// these sources).
+/// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
+/// @issue #1910
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct E2eConfig {
+    /// Base URL used by `jet e2e` when no `--base-url` flag, launched serve
+    /// session, or running `jet serve`/`jet dev` session is available.
+    /// Consumed via `RunnerConfig::base_url`, which reaches the JS-side
+    /// `page.goto()` relative-URL resolver.
+    pub base_url: Option<String>,
+}
+
 /// `[codegen]` settings.
 ///
 /// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
@@ -369,7 +398,7 @@ fn default_true() -> bool {
 /// the did-you-mean suggestion when a typo lands at section level.
 /// Keep in lockstep with the struct fields above.
 const JET_TOP_LEVEL_KEYS: &[&str] = &[
-    "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen",
+    "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen", "e2e",
 ];
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
@@ -487,7 +516,7 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
         for expected in [
-            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen",
+            "pipeline", "dev", "alias", "build", "resolve", "test", "wasm", "lib", "codegen", "e2e",
         ] {
             assert!(
                 props.iter().any(|p| p == expected),
@@ -698,6 +727,44 @@ root_props = [0]
         let wasm = config.wasm.expect("[wasm] section should parse");
         assert_eq!(wasm.entry, "src/Counter.tsx");
         assert_eq!(wasm.root_component, "Counter");
+    }
+
+    /// #1910 — the `[e2e]` section (last link in the base-URL resolution
+    /// chain before the hard error) round-trips into `JetConfig::e2e`.
+    #[test]
+    fn jet_config_parses_e2e_section() {
+        let toml_str = r#"
+[e2e]
+base_url = "http://localhost:4173"
+"#;
+        let config: JetConfig = toml::from_str(toml_str).unwrap();
+        let e2e = config.e2e.expect("[e2e] section should parse");
+        assert_eq!(e2e.base_url.as_deref(), Some("http://localhost:4173"));
+    }
+
+    /// #1910 — absent `[e2e]` section stays `None` (no forced default URL).
+    #[test]
+    fn jet_config_defaults_e2e_section_to_none() {
+        let config: JetConfig = toml::from_str("").unwrap();
+        assert!(config.e2e.is_none());
+    }
+
+    /// #1910 — `[e2e]` inherits the same `deny_unknown_fields` typo
+    /// protection as every other section (e.g. `base_urll` instead of
+    /// `base_url`).
+    #[test]
+    fn jet_config_rejects_unknown_e2e_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jet.toml");
+        std::fs::write(&path, "[e2e]\nbase_urll = \"http://localhost:3000\"\n").unwrap();
+
+        let err = JetConfig::load(dir.path())
+            .expect_err("E2eConfig deny_unknown_fields must reject `base_urll`");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("base_urll"),
+            "diagnostic must name the offending sub-key, got: {msg}"
+        );
     }
 
     /// #1233 R2 — Slice 8. Typos *inside* a recognized section now
