@@ -181,9 +181,9 @@ macro_rules! mb_outln {
 /// print(value) — print a value to stdout (or capture buffer).
 pub fn mb_print(val: MbValue) -> MbValue {
     // TAG_FUNC user-defined functions render as `<function NAME at 0xADDR>`
-    // to match CPython. Closure handles share TAG_INT with regular ints and
-    // can't be reliably detected here without colliding with low-value ints,
-    // so they fall through to the int branch (rendering as their handle ID).
+    // to match CPython. Closure handles (lambdas, capturing nested `def`s)
+    // are a separate TAG_INT indirection over a side table (#1919), handled
+    // explicitly in the as_int() branch below via `mb_func_is_registered`.
     if let Some(name) = pep695_display_name(val) {
         mb_outln!("{name}");
         return MbValue::none();
@@ -205,7 +205,26 @@ pub fn mb_print(val: MbValue) -> MbValue {
         return MbValue::none();
     }
     if let Some(i) = val.as_int() {
-        mb_outln!("{i}");
+        if super::closure::mb_func_is_registered(val) {
+            let name_val = super::closure::mb_func_get_name(val);
+            let name = if let Some(ptr) = name_val.as_ptr() {
+                unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        "<lambda>".to_string()
+                    }
+                }
+            } else {
+                "<lambda>".to_string()
+            };
+            let addr = super::closure::mb_closure_get_func(val)
+                .as_func()
+                .unwrap_or(0);
+            mb_outln!("<function {name} at 0x{addr:x}>");
+        } else {
+            mb_outln!("{i}");
+        }
     } else if let Some(f) = val.as_float() {
         mb_outln!("{}", super::string_ops::python_float_repr(f));
     } else if let Some(b) = val.as_bool() {
@@ -828,7 +847,26 @@ fn print_repr(val: MbValue) {
         return;
     }
     if let Some(i) = val.as_int() {
-        mb_out!("{i}");
+        if super::closure::mb_func_is_registered(val) {
+            let name_val = super::closure::mb_func_get_name(val);
+            let name = if let Some(ptr) = name_val.as_ptr() {
+                unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        "<lambda>".to_string()
+                    }
+                }
+            } else {
+                "<lambda>".to_string()
+            };
+            let addr = super::closure::mb_closure_get_func(val)
+                .as_func()
+                .unwrap_or(0);
+            mb_out!("<function {name} at 0x{addr:x}>");
+        } else {
+            mb_out!("{i}");
+        }
     } else if let Some(f) = val.as_float() {
         mb_out!("{}", super::string_ops::python_float_repr(f));
     } else if let Some(b) = val.as_bool() {
@@ -4043,6 +4081,31 @@ pub fn mb_repr(val: MbValue) -> MbValue {
             return MbValue::from_ptr(MbObject::new_str(format!(
                 "<coroutine object at 0x{:x}>",
                 i
+            )));
+        }
+        // Closure handles (lambdas, capturing nested `def`s) are TAG_INT
+        // indirection over a side table (#1919) — unlike a plain top-level
+        // `def`, which gets a direct TAG_FUNC value and is caught by the
+        // `as_func()` branch below. Render the same as that branch instead
+        // of falling through to the raw handle id.
+        if super::closure::mb_func_is_registered(val) {
+            let name_val = super::closure::mb_func_get_name(val);
+            let name = if let Some(ptr) = name_val.as_ptr() {
+                unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        "<lambda>".to_string()
+                    }
+                }
+            } else {
+                "<lambda>".to_string()
+            };
+            let addr = super::closure::mb_closure_get_func(val)
+                .as_func()
+                .unwrap_or(0);
+            return MbValue::from_ptr(MbObject::new_str(format!(
+                "<function {name} at 0x{addr:x}>"
             )));
         }
         format!("{i}")

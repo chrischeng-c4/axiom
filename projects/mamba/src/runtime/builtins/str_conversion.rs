@@ -4,9 +4,11 @@ use super::super::value::MbValue;
 /// str(value) — convert to string object.
 pub fn mb_str(val: MbValue) -> MbValue {
     // TAG_FUNC user-defined functions render as `<function NAME at 0xADDR>`
-    // to match CPython. Closure handles share TAG_INT with low-value ints
-    // (closure IDs start at 1), so we restrict detection to TAG_FUNC only
-    // to avoid corrupting integer rendering.
+    // to match CPython. Closure handles (lambdas, capturing nested `def`s)
+    // are a separate TAG_INT indirection over a side table keyed off
+    // CLOSURE_HANDLE_BASE (2^39), well above any real Python int this repro
+    // path is likely to hit; they're handled explicitly below via
+    // `mb_func_is_registered` rather than here.
     if let Some(addr) = val.as_func().filter(|a| *a > 4096) {
         let name_val = super::super::closure::mb_func_get_name(val);
         let name = if let Some(ptr) = name_val.as_ptr() {
@@ -48,6 +50,29 @@ pub fn mb_str(val: MbValue) -> MbValue {
         }
         if super::super::stdlib::fractions_mod::is_fraction_handle(i as u64) {
             return super::super::stdlib::fractions_mod::mb_fraction_str(val);
+        }
+        // Closure handles (lambdas, capturing nested `def`s) are TAG_INT
+        // indirection over a side table (#1919) — render the same as the
+        // TAG_FUNC branch above instead of leaking the raw handle id.
+        if super::super::closure::mb_func_is_registered(val) {
+            let name_val = super::super::closure::mb_func_get_name(val);
+            let name = if let Some(ptr) = name_val.as_ptr() {
+                unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        "<lambda>".to_string()
+                    }
+                }
+            } else {
+                "<lambda>".to_string()
+            };
+            let addr = super::super::closure::mb_closure_get_func(val)
+                .as_func()
+                .unwrap_or(0);
+            return MbValue::from_ptr(MbObject::new_str(format!(
+                "<function {name} at 0x{addr:x}>"
+            )));
         }
         format!("{i}")
     } else if let Some(f) = val.as_float() {
