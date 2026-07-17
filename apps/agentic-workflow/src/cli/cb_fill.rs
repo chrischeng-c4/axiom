@@ -491,12 +491,10 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
         // transition was recorded. Verify the scoped marker gate and record
         // the normal post-fill phase rather than stranding the WI at
         // `cb_genned` with no legal `--apply --marker` command.
-        if issue.as_ref().is_some_and(|issue| {
-            issue
-                .phase
-                .as_deref()
-                .is_some_and(crate::issues::types::td_phase::is_post_gen)
-        }) {
+        if issue
+            .as_ref()
+            .is_some_and(|issue| marker_free_fill_can_commit_evidence(issue.phase.as_deref()))
+        {
             let scope = change_paths.as_deref().unwrap_or_default();
             if let Err(message) = run_cb_check_gate_scoped(&worktree_abs, scope).await {
                 emit_error(
@@ -617,6 +615,13 @@ fn brief_allowed_dirty_paths<'a>(
             .collect();
     }
     Vec::new()
+}
+
+fn marker_free_fill_can_commit_evidence(phase: Option<&str>) -> bool {
+    phase.is_some_and(|phase| {
+        crate::issues::types::td_phase::is_post_gen(phase)
+            || phase == crate::issues::types::td_phase::CB_FILLED
+    })
 }
 
 fn resolve_active_spec_path(
@@ -1606,6 +1611,15 @@ mod tests {
             ]
         );
         assert!(brief_allowed_dirty_paths(&[marker("pending")], Some(&paths)).is_empty());
+    }
+
+    #[test]
+    fn marker_free_fill_reenters_for_the_terminal_cb_filled_phase() {
+        assert!(marker_free_fill_can_commit_evidence(Some("cb_genned")));
+        assert!(marker_free_fill_can_commit_evidence(Some("cb_filled")));
+        assert!(!marker_free_fill_can_commit_evidence(Some(
+            "td_contract_in_progress"
+        )));
     }
 
     #[test]
