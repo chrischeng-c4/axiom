@@ -1433,6 +1433,13 @@ test('T32: expect(locator).toHaveCount() passes when count matches', async ({ pa
 }
 
 /// T33 — R26: expect(locator).toHaveClass() polls element.className.
+///
+/// Playwright's string form requires a *full* match of the whole `class`
+/// attribute value, not a token/substring match — a single-token string like
+/// `'active'` against `class="foo active bar"` does NOT pass in real
+/// Playwright; a RegExp such as `/(^|\s)active(\s|$)/` is the documented way
+/// to match one class among several (#1909 gap-fill: this spec used to
+/// assert the old, incorrect token-match behavior).
 // REQ: R26
 #[tokio::test]
 async fn test_t33_to_have_class() {
@@ -1448,9 +1455,10 @@ async fn test_t33_to_have_class() {
     let spec = r#"
 import { test, expect } from '@jet/test';
 
-test('T33: expect(locator).toHaveClass() passes when class contains expected token', async ({ page }) => {
+test('T33: expect(locator).toHaveClass() requires a full match of the class attribute', async ({ page }) => {
   await page.setContent('<div id="el" class="foo active bar">el</div>');
-  await expect(page.locator('#el')).toHaveClass('active');
+  await expect(page.locator('#el')).toHaveClass('foo active bar');
+  await expect(page.locator('#el')).toHaveClass(/(^|\s)active(\s|$)/);
 });
 "#;
 
@@ -1785,6 +1793,525 @@ test('#1908: expect(locator).toBeVisible() with no opts.timeout uses the configu
         summary.passed, 1,
         "#1908 AC3 config-default spec should pass"
     );
+    assert_eq!(summary.failed, 0);
+}
+
+// ── #1909 — Playwright locator matcher parity (attached/checked/disabled/
+// focused/class/CSS) ──────────────────────────────────────────────────────
+//
+// Same fake-wire-channel pattern as #1907/#1908 above: `Page`/`Locator` are
+// constructed directly against a hand-rolled `sendRequest` closure, so no
+// CDP/Chromium round trip is needed. `toBeChecked`, `toBeDisabled`,
+// `toBeFocused`, and `toHaveCSS` already existed before this WI (added by an
+// earlier matchers-state-value-a11y change) — the tests below cover the real
+// semantic gaps filled here (`isChecked()`/`isEnabled()` didn't recognize
+// ARIA checked/disabled roles; `computedStyle()` used bracket/IDL indexing
+// instead of `getPropertyValue()`, so kebab-case CSS property names like
+// `background-color` silently resolved to `undefined`; `toHaveClass()`'s
+// string form accepted a whitespace-token partial match instead of
+// Playwright's full-match semantics) plus the two genuinely new surfaces
+// (`toBeAttached` and `toHaveClass`'s array form). `toBeFocused` had no gap
+// (`el === document.activeElement` already matches Playwright) — its test
+// below is regression coverage only.
+
+/// #1909: `toBeAttached()` is a new matcher — polls `Locator.isAttached()`,
+/// true once the locator resolves to a non-null element regardless of
+/// visibility. Positive (attaches after a couple of polls), negative (never
+/// attaches, times out with a last-observed diff), and `.not` cases.
+// REQ: #1909
+#[tokio::test]
+async fn test_1909_to_be_attached_positive_negative_not() {
+    if !node_available() {
+        eprintln!("skipping #1909 toBeAttached: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+function makeAttachedSend(satisfyAfterCall) {
+  let calls = 0;
+  return async (req) => {
+    if (req.kind === 'evaluate') {
+      calls += 1;
+      return { kind: 'ok', value: calls >= satisfyAfterCall };
+    }
+    return { kind: 'ok' };
+  };
+}
+
+test('#1909: toBeAttached() retries until a delayed element attaches', async () => {
+  const page = new Page('fake-page-id', makeAttachedSend(2), '');
+  const loc = page.locator('#late');
+  await expect(loc).toBeAttached({ timeout: 500 });
+});
+
+test('#1909: toBeAttached() times out with a last-observed-state diff', async () => {
+  const page = new Page('fake-page-id', makeAttachedSend(1000), '');
+  const loc = page.locator('#never');
+  let thrown = null;
+  try {
+    await expect(loc).toBeAttached({ timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) throw new Error('expected toBeAttached({ timeout: 250 }) to throw');
+  if (!thrown.diff || !thrown.diff.includes('actual:   false')) {
+    throw new Error(`expected a last-observed-state diff, got diff=${JSON.stringify(thrown.diff)} message=${thrown.message}`);
+  }
+});
+
+test('#1909: expect(locator).not.toBeAttached() passes when the element never attaches', async () => {
+  const page = new Page('fake-page-id', makeAttachedSend(1000), '');
+  const loc = page.locator('#absent');
+  await expect(loc).not.toBeAttached({ timeout: 250 });
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(summary.passed, 3, "#1909 toBeAttached specs should pass");
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1909 gap-fill: `toBeChecked()` already existed, but `Locator.isChecked()`
+/// only read the native `checked` property — Playwright's real check honours
+/// `role="checkbox"|"radio"|"menuitemcheckbox"|"menuitemradio"|"switch"` via
+/// `aria-checked` first. Proves the generated evaluate expression now
+/// branches on `aria-checked` (captured via the fake wire channel — no live
+/// DOM is evaluated here, see module doc above), plus a negative-with-diff
+/// case, the AC2-required delayed-state-flip case, and a `.not` case.
+// REQ: #1909 AC2
+#[tokio::test]
+async fn test_1909_to_be_checked_aria_role_gap_fill_and_delayed_flip() {
+    if !node_available() {
+        eprintln!("skipping #1909 toBeChecked: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+test('#1909: toBeChecked() observes aria-checked for ARIA checkbox/radio roles', async () => {
+  let lastExpression = null;
+  const send = async (req) => {
+    if (req.kind === 'evaluate') {
+      lastExpression = req.expression;
+      return { kind: 'ok', value: true };
+    }
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('[role="checkbox"]');
+  await expect(loc).toBeChecked({ timeout: 500 });
+  if (!lastExpression || lastExpression.indexOf('aria-checked') === -1) {
+    throw new Error(`expected isChecked() to branch on aria-checked, got expression=${lastExpression}`);
+  }
+});
+
+test('#1909: toBeChecked() times out with a last-observed-state diff when never checked', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: false };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#cb');
+  let thrown = null;
+  try {
+    await expect(loc).toBeChecked({ timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) throw new Error('expected toBeChecked({ timeout: 250 }) to throw when never checked');
+  if (!thrown.diff || !thrown.diff.includes('actual:   false')) {
+    throw new Error(`expected a last-observed-state diff, got diff=${JSON.stringify(thrown.diff)} message=${thrown.message}`);
+  }
+});
+
+test('#1909 AC2: toBeChecked() retries under auto-wait until a delayed checkbox flips checked', async () => {
+  let calls = 0;
+  const send = async (req) => {
+    if (req.kind === 'evaluate') {
+      calls += 1;
+      return { kind: 'ok', value: calls >= 3 };
+    }
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#cb');
+  await expect(loc).toBeChecked({ timeout: 500 });
+});
+
+test('#1909: expect(locator).not.toBeChecked() passes for an unchecked box', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: false };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#cb');
+  await expect(loc).not.toBeChecked({ timeout: 250 });
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(summary.passed, 4, "#1909 toBeChecked specs should pass");
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1909 gap-fill: `toBeDisabled()` already existed, but
+/// `Locator.isEnabled()` read the native `disabled` property directly — it
+/// didn't honour `aria-disabled="true"` on an ancestor, nor use the
+/// `:disabled` CSS pseudo-class (which is what makes fieldset-ancestry
+/// disabling, i.e. `<fieldset disabled>` with a non-legend descendant,
+/// resolve correctly via the browser's own HTML-living-standard
+/// implementation instead of a raw property read). Proves the generated
+/// evaluate expression now checks both, plus a negative-with-diff case and a
+/// `.not` case.
+// REQ: #1909
+#[tokio::test]
+async fn test_1909_to_be_disabled_fieldset_aria_gap_fill() {
+    if !node_available() {
+        eprintln!("skipping #1909 toBeDisabled: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+test('#1909: toBeDisabled() checks :disabled and climbs for aria-disabled ancestors', async () => {
+  let lastExpression = null;
+  const send = async (req) => {
+    if (req.kind === 'evaluate') {
+      lastExpression = req.expression;
+      // isEnabled() === false (matches :disabled or an aria-disabled
+      // ancestor) so isDisabled() === true and the matcher is satisfied.
+      return { kind: 'ok', value: false };
+    }
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#field');
+  await expect(loc).toBeDisabled({ timeout: 500 });
+  if (!lastExpression || lastExpression.indexOf(':disabled') === -1 || lastExpression.indexOf('aria-disabled') === -1) {
+    throw new Error(`expected isEnabled() to check :disabled and aria-disabled ancestry, got expression=${lastExpression}`);
+  }
+});
+
+test('#1909: toBeDisabled() times out with a last-observed-state diff on an enabled element', async () => {
+  const send = async (req) => {
+    // isEnabled() === true (neither :disabled nor an aria-disabled
+    // ancestor) so isDisabled() stays false forever.
+    if (req.kind === 'evaluate') return { kind: 'ok', value: true };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#field');
+  let thrown = null;
+  try {
+    await expect(loc).toBeDisabled({ timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) throw new Error('expected toBeDisabled({ timeout: 250 }) to throw on an enabled element');
+  if (!thrown.diff || !thrown.diff.includes('actual:   false')) {
+    throw new Error(`expected a last-observed-state diff, got diff=${JSON.stringify(thrown.diff)} message=${thrown.message}`);
+  }
+});
+
+test('#1909: expect(locator).not.toBeDisabled() passes for an enabled element', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: true };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#field');
+  await expect(loc).not.toBeDisabled({ timeout: 250 });
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(summary.passed, 3, "#1909 toBeDisabled specs should pass");
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1909: `toBeFocused()` already existed and its observation
+/// (`el === document.activeElement`) already matches Playwright semantics —
+/// no gap found. Adds the positive/negative/`.not` regression coverage AC1
+/// requires for all six matchers.
+// REQ: #1909
+#[tokio::test]
+async fn test_1909_to_be_focused_positive_negative_not() {
+    if !node_available() {
+        eprintln!("skipping #1909 toBeFocused: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+test('#1909: toBeFocused() passes once document.activeElement matches', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: true };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#i');
+  await expect(loc).toBeFocused({ timeout: 500 });
+});
+
+test('#1909: toBeFocused() times out with a last-observed-state diff when never focused', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: false };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#i');
+  let thrown = null;
+  try {
+    await expect(loc).toBeFocused({ timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) throw new Error('expected toBeFocused({ timeout: 250 }) to throw when never focused');
+  if (!thrown.diff || !thrown.diff.includes('actual:   false')) {
+    throw new Error(`expected a last-observed-state diff, got diff=${JSON.stringify(thrown.diff)} message=${thrown.message}`);
+  }
+});
+
+test('#1909: expect(locator).not.toBeFocused() passes for an unfocused element', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: false };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#i');
+  await expect(loc).not.toBeFocused({ timeout: 250 });
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(summary.passed, 3, "#1909 toBeFocused specs should pass");
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1909 gap-fill: `toHaveClass()`'s string form previously accepted a
+/// whitespace-token partial match (`'active'` against
+/// `class="foo active bar"`); Playwright's real semantics require a *full*
+/// match of the class attribute for the string form (a RegExp is the
+/// documented way to match one class among several — see the corrected
+/// `test_t33_to_have_class` above for the equivalent Chromium-backed
+/// coverage). Also covers the AC2-required delayed-state-flip case and a
+/// `.not` case.
+// REQ: #1909 AC2
+#[tokio::test]
+async fn test_1909_to_have_class_full_match_gap_fill_and_not() {
+    if !node_available() {
+        eprintln!("skipping #1909 toHaveClass full-match: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+test('#1909: toHaveClass() string form requires a full match, not a token match', async () => {
+  const send = async (req) => {
+    if (req.kind === 'get_attribute' || req.kind === 'evaluate') {
+      return { kind: 'ok', value: 'foo active bar' };
+    }
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#el');
+  await expect(loc).toHaveClass('foo active bar');
+  let thrown = null;
+  try {
+    await expect(loc).toHaveClass('active', { timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) throw new Error('expected a token-only string to fail the full-match requirement');
+  await expect(loc).toHaveClass(/(^|\s)active(\s|$)/);
+});
+
+test('#1909 AC2: toHaveClass() retries under auto-wait until a delayed class attribute flips to match', async () => {
+  let calls = 0;
+  const send = async (req) => {
+    if (req.kind === 'get_attribute' || req.kind === 'evaluate') {
+      calls += 1;
+      return { kind: 'ok', value: calls >= 3 ? 'is-active' : 'is-inactive' };
+    }
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#el');
+  await expect(loc).toHaveClass('is-active', { timeout: 500 });
+});
+
+test('#1909: expect(locator).not.toHaveClass() passes when the class never matches', async () => {
+  const send = async (req) => {
+    if (req.kind === 'get_attribute' || req.kind === 'evaluate') return { kind: 'ok', value: 'foo bar' };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#el');
+  await expect(loc).not.toHaveClass('active', { timeout: 250 });
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(
+        summary.passed, 3,
+        "#1909 toHaveClass full-match/delayed-flip/not specs should pass"
+    );
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1909: `toHaveClass()`'s array form — a new surface, not present before
+/// this WI. Matches Playwright's multi-element positional comparison: each
+/// entry in `expected` (string or RegExp) is checked against the `class`
+/// attribute of the correspondingly-indexed resolved element, and the array
+/// length must equal the resolved element count.
+// REQ: #1909
+#[tokio::test]
+async fn test_1909_to_have_class_array_form() {
+    if !node_available() {
+        eprintln!("skipping #1909 toHaveClass array form: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+test('#1909: toHaveClass() array form matches each resolved element positionally', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') {
+      return { kind: 'ok', value: ['component', 'component selected', 'component'] };
+    }
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('.component');
+  await expect(loc).toHaveClass(['component', /selected/, 'component']);
+});
+
+test('#1909: toHaveClass() array form fails with a last-observed diff on a length mismatch', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: ['component'] };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('.component');
+  let thrown = null;
+  try {
+    await expect(loc).toHaveClass(['component', 'component selected'], { timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) throw new Error('expected an array-length mismatch to fail');
+  if (!thrown.diff || thrown.diff.indexOf('actual:') === -1) {
+    throw new Error(`expected a last-observed diff, got diff=${JSON.stringify(thrown.diff)}`);
+  }
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(
+        summary.passed, 2,
+        "#1909 toHaveClass array-form specs should pass"
+    );
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1909 gap-fill: `toHaveCSS()` already existed, but
+/// `Locator.computedStyle()` read `getComputedStyle(el)[name]` — bracket/IDL
+/// indexing only resolves camelCase property names (`style.backgroundColor`)
+/// and silently returns `undefined` for the kebab-case CSS property names
+/// real Playwright specs pass (`'background-color'`, `'font-size'`, ...),
+/// since those aren't valid `CSSStyleDeclaration` IDL attribute names. Proves
+/// the generated evaluate expression now calls `getPropertyValue()` with the
+/// name normalized to kebab-case, plus a negative-with-diff case and a
+/// `.not` case.
+// REQ: #1909
+#[tokio::test]
+async fn test_1909_to_have_css_kebab_case_gap_fill() {
+    if !node_available() {
+        eprintln!("skipping #1909 toHaveCSS: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+test('#1909: toHaveCSS() uses getPropertyValue() with a kebab-cased property name', async () => {
+  let lastExpression = null;
+  const send = async (req) => {
+    if (req.kind === 'evaluate') {
+      lastExpression = req.expression;
+      return { kind: 'ok', value: 'rgb(255, 0, 0)' };
+    }
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#el');
+  // camelCase input must normalize to the kebab-case CSS property name.
+  await expect(loc).toHaveCSS('backgroundColor', 'rgb(255, 0, 0)', { timeout: 500 });
+  if (!lastExpression || lastExpression.indexOf('getPropertyValue') === -1 || lastExpression.indexOf('background-color') === -1) {
+    throw new Error(`expected computedStyle() to call getPropertyValue('background-color'), got expression=${lastExpression}`);
+  }
+});
+
+test('#1909: toHaveCSS() times out with a last-observed-state diff on a mismatched value', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: 'rgb(0, 0, 0)' };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#el');
+  let thrown = null;
+  try {
+    await expect(loc).toHaveCSS('background-color', 'rgb(255, 0, 0)', { timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) throw new Error('expected a mismatched CSS value to time out');
+  if (!thrown.diff || !thrown.diff.includes('actual:   "rgb(0, 0, 0)"')) {
+    throw new Error(`expected a last-observed diff, got diff=${JSON.stringify(thrown.diff)}`);
+  }
+});
+
+test('#1909: expect(locator).not.toHaveCSS() passes when the value never matches', async () => {
+  const send = async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: 'rgb(0, 0, 0)' };
+    return { kind: 'ok' };
+  };
+  const page = new Page('fake-page-id', send, '');
+  const loc = page.locator('#el');
+  await expect(loc).not.toHaveCSS('background-color', 'rgb(255, 0, 0)', { timeout: 250 });
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(summary.passed, 3, "#1909 toHaveCSS specs should pass");
     assert_eq!(summary.failed, 0);
 }
 // CODEGEN-END

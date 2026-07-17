@@ -83,6 +83,7 @@ import {
   toHaveCount,
   toHaveClass,
   toHaveAttribute,
+  toBeAttached,
   toBeChecked,
   toBeDisabled,
   toBeEnabled,
@@ -1611,6 +1612,14 @@ function __expectBase(actual) {
         throw new Error("toHaveAttribute: expected a Locator object");
       }
       return toHaveAttribute(actual, name, expected, opts);
+    },
+
+    // toBeAttached: locator-only matcher. New for #1909.
+    async toBeAttached(opts) {
+      if (!(actual instanceof Locator)) {
+        throw new Error("toBeAttached: expected a Locator object");
+      }
+      return toBeAttached(actual, opts);
     },
 
     // ── DOM-integrated matchers (Phase 3 + Phase 6 locator dispatch) ─────

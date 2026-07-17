@@ -1221,6 +1221,16 @@ export class Locator {
     return { x: res.x, y: res.y, width: res.width, height: res.height };
   }
 
+  // True once the locator resolves to an element that exists in the DOM,
+  // regardless of visibility — the same "Attached" check `_waitForActionable`
+  // already runs as its first actionability step. #1909.
+  async isAttached() {
+    const expr = `(function(){var el=${this._resolveFirstExpr()};return !!el;})()`;
+    const res = await this._evaluate(expr);
+    if (res.kind === "error") return false;
+    return Boolean(res.value);
+  }
+
   async isVisible() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};${_visibilityCheckSrc}})()`;
     const res = await this._evaluate(expr);
@@ -1232,8 +1242,25 @@ export class Locator {
     return !(await this.isVisible());
   }
 
+  // Disabled if the element matches the native `:disabled` pseudo-class
+  // (covers the `disabled` attribute/property on native form controls,
+  // including inheritance from an ancestor `<fieldset disabled>` per the
+  // HTML living standard — real Chromium already implements that
+  // inheritance, so `:disabled` is correct where a raw `.disabled` property
+  // read is not) or any ancestor carries `aria-disabled="true"`. Gap-fill
+  // for #1909 (previously read `el.disabled` directly, missing both cases).
   async isEnabled() {
-    const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return false;return !el.disabled;})()`;
+    const expr = `(function(){
+      var el=${this._resolveFirstExpr()};
+      if(!el)return false;
+      if(typeof el.matches==='function'&&el.matches(':disabled'))return false;
+      var cur=el;
+      while(cur){
+        if(cur.getAttribute&&cur.getAttribute('aria-disabled')==='true')return false;
+        cur=cur.parentElement;
+      }
+      return true;
+    })()`;
     const res = await this._evaluate(expr);
     if (res.kind === "error") return false;
     return Boolean(res.value);
@@ -1243,8 +1270,20 @@ export class Locator {
     return !(await this.isEnabled());
   }
 
+  // Native <input type=checkbox|radio> uses the `checked` property. ARIA
+  // checkbox/radio/menuitemcheckbox/menuitemradio/switch roles use
+  // `aria-checked="true"` instead, checked before falling back to `.checked`.
+  // Gap-fill for #1909 (previously read `el.checked` only).
   async isChecked() {
-    const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return false;return !!el.checked;})()`;
+    const expr = `(function(){
+      var el=${this._resolveFirstExpr()};
+      if(!el)return false;
+      var role=el.getAttribute&&el.getAttribute('role');
+      if(role==='checkbox'||role==='radio'||role==='menuitemcheckbox'||role==='menuitemradio'||role==='switch'){
+        return el.getAttribute('aria-checked')==='true';
+      }
+      return !!el.checked;
+    })()`;
     const res = await this._evaluate(expr);
     if (res.kind === "error") return false;
     return Boolean(res.value);
@@ -1257,11 +1296,17 @@ export class Locator {
     return Boolean(res.value);
   }
 
-  // Returns the resolved value of `window.getComputedStyle(el)[name]`, or null
-  // if the element is missing. Name is a camelCase CSS property.
+  // Returns `getComputedStyle(el).getPropertyValue(name)`, or null if the
+  // element is missing. `name` is normalized camelCase -> kebab-case first,
+  // so both spellings resolve — but the underlying lookup is always the
+  // CSS-syntax `getPropertyValue()`, not bracket/IDL property indexing
+  // (`style[name]`), which only resolves camelCase IDL names and silently
+  // returns undefined for the kebab-case CSS property names real specs pass
+  // (e.g. `'background-color'`). Gap-fill for #1909.
   async computedStyle(name) {
-    const n = JSON.stringify(name);
-    const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return null;return window.getComputedStyle(el)[${n}];})()`;
+    const kebab = String(name).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+    const n = JSON.stringify(kebab);
+    const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return null;return window.getComputedStyle(el).getPropertyValue(${n});})()`;
     const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return res.value != null ? String(res.value) : null;
@@ -1340,6 +1385,18 @@ export class Locator {
     const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return typeof res.value === "number" ? res.value : 0;
+  }
+
+  // Returns the `class` attribute value of every element the locator
+  // currently resolves to, in document order — used by toHaveClass's array
+  // form, which Playwright matches positionally against each resolved
+  // element (see matchers.js::toHaveClass). New for #1909.
+  async classNames() {
+    const matches = `(${_collectMatchesSrc(this._selector, this._filters)})()`;
+    const expr = `${matches}.map(function(el){ return el.getAttribute('class') || ""; })`;
+    const res = await this._evaluate(expr);
+    if (res.kind === "error") throw new Error(res.message);
+    return Array.isArray(res.value) ? res.value.map(String) : [];
   }
 
   async innerHTML() {

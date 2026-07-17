@@ -271,21 +271,42 @@ export async function toHaveCount(locator, expected, opts) {
 }
 
 /**
- * expect(locator).toHaveClass(string|regex, opts?) — polls element.className.
+ * expect(locator).toHaveClass(expected, opts?) — polls the element's `class`
+ * attribute.
+ *
+ * `expected` is one of:
+ *   - string: FULL match against the resolved `class` attribute value.
+ *     Playwright requires the *entire* attribute string, not a token/
+ *     substring match — use a RegExp such as `/(^|\s)foo(\s|$)/` to match one
+ *     class among several.
+ *   - RegExp: tested against the full `class` attribute value.
+ *   - array of string|RegExp: matched positionally against the `class`
+ *     attribute of *every* element the locator currently resolves to
+ *     (Playwright's multi-element form) — the array length must equal the
+ *     resolved element count.
+ *
+ * Gap-fill for #1909: previously accepted a whitespace-token partial match
+ * for strings (not real Playwright semantics) and had no array form.
  *
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R26
  */
 export async function toHaveClass(locator, expected, opts) {
   const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
+  const isArrayForm = Array.isArray(expected);
   const probe = async () => {
-    // Use getAttribute("class") via the existing getAttribute method.
+    if (isArrayForm) return locator.classNames();
     const cls = await locator.getAttribute("class");
     return cls || "";
   };
-  const predicate = (className) => {
-    if (expected instanceof RegExp) return expected.test(className);
-    // String: check if className contains the expected class token.
-    return className === expected || className.split(/\s+/).includes(expected);
+  const predicate = (value) => {
+    if (isArrayForm) {
+      return (
+        Array.isArray(value) &&
+        value.length === expected.length &&
+        expected.every((token, i) => matchesPattern(value[i], token))
+      );
+    }
+    return matchesPattern(value, expected);
   };
   return pollUntil(
     probe,
@@ -317,6 +338,24 @@ export async function toHaveAttribute(locator, name, expected, opts) {
         : `Expected attribute ${JSON.stringify(name)} to match ${displayPattern(expected)}, got ${JSON.stringify(lastValue)}`;
       return new AssertionError(msg, `- expected: ${displayPattern(expected)}\n+ actual:   ${JSON.stringify(lastValue)}`);
     },
+  );
+}
+
+/**
+ * expect(locator).toBeAttached(opts?) — polls locator.isAttached(): true once
+ * the element exists in the DOM, regardless of visibility. New for #1909.
+ */
+export async function toBeAttached(locator, opts) {
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
+  return pollUntil(
+    () => locator.isAttached(),
+    (v) => v === true,
+    timeout,
+    (lastValue, lastError) => new AssertionError(
+      lastError ? `toBeAttached: ${lastError.message ?? String(lastError)}`
+                : `Expected element to be attached within ${timeout}ms, got ${JSON.stringify(lastValue)}`,
+      `- expected: true\n+ actual:   ${JSON.stringify(lastValue)}`,
+    ),
   );
 }
 
