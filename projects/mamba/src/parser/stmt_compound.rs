@@ -123,7 +123,7 @@ impl<'a> Parser<'a> {
         decorators: Vec<Spanned<Expr>>,
     ) -> crate::error::Result<Spanned<Stmt>> {
         let (start, _) = self.advance(); // consume `class`
-        let (ns, ne) = self.expect(TokenKind::Ident)?;
+        let (ns, ne) = self.expect_name()?;
         let name = self.text_at(ns, ne).to_string();
         let type_params = self.parse_optional_type_params()?;
         let (bases, keyword_args) = if self.peek_kind() == Some(TokenKind::LParen) {
