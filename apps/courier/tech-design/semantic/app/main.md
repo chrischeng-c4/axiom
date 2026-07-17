@@ -174,3 +174,19 @@ changes:
     description: |
       Lossless text-source-unit ownership created from explicit file fillback.
 ```
+
+## Overview
+<!-- type: overview -->
+
+- `lifespan` - FastAPI lifespan context manager.
+- `verify_auth` - Dependency function verifying bearer tokens.
+- `is_repo_allowed` - Check if repository is in allowed list.
+- `parse_repo` - Parse owner and name from repository path.
+- `forward_to_github` - Forward requests to GitHub API.
+- `health_check` - Health check route.
+- `get_issues` - GET issues route.
+- `mutate_issues` - POST issues route.
+- `OpType` - Enum representing mutation operations.
+- `IssueOp` - Pydantic model for mutation operations.
+- `BatchMutationRequest` - Pydantic model for batch request.
+

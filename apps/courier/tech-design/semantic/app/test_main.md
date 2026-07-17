@@ -152,3 +152,17 @@ changes:
     description: |
       Lossless text-source-unit ownership created from explicit file fillback.
 ```
+
+## Overview
+<!-- type: overview -->
+
+- `TestCourierApp` - Unit tests for Courier FastAPI app.
+- `TestCourierApp.setUp` - Setup method preparing headers.
+- `TestCourierApp.test_health_checks` - Test health check endpoints.
+- `TestCourierApp.test_auth_failures` - Test security authentication behavior.
+- `TestCourierApp.test_get_issues_disallowed_repo` - Test route restriction for disallowed repos.
+- `TestCourierApp.test_get_issues_single_view` - Test viewing single issues from GitHub.
+- `TestCourierApp.test_get_issues_search` - Test issue searching API call forwarding.
+- `TestCourierApp.test_post_issues_batch` - Test mutating batch requests.
+- `TestCourierApp.test_contract_validation` - Test validating request model against contract fixture.
+
