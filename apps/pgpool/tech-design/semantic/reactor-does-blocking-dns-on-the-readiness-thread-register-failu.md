@@ -52,7 +52,6 @@ changes:
     anchor: start
     reason: Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
