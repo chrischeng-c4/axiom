@@ -351,14 +351,7 @@ async fn run_transaction_client(
             config.backend_pool.acquire().await
         };
         let lease = match acquisition {
-            Ok(lease) => {
-                config.backend_pool.record_transaction_phase_started(
-                    TransactionPhase::Acquire,
-                    TransactionPhaseOutcome::Success,
-                    acquire_started,
-                );
-                lease
-            }
+            Ok(lease) => lease,
             Err(_) => {
                 config.backend_pool.record_transaction_phase_started(
                     TransactionPhase::Acquire,
@@ -371,6 +364,39 @@ async fn run_transaction_client(
                 return;
             }
         };
+
+        // A non-replay-safe client authenticated only during its initial
+        // admission. A fresh per-transaction socket has not received that
+        // Startup/auth exchange, so forwarding the raw Query would violate
+        // the PostgreSQL protocol. Until credentials can be terminated by
+        // pgpool, close the fresh lease and surface the normal typed pool
+        // rejection instead.
+        if lease.fresh && !replay_safe_startup {
+            config.backend_pool.record_transaction_phase_started(
+                TransactionPhase::Acquire,
+                TransactionPhaseOutcome::Failure,
+                acquire_started,
+            );
+            let BackendLease { id, stream, .. } = lease;
+            let (backend_read, backend_write) = stream.into_split();
+            release_backend(
+                config,
+                id,
+                backend_read,
+                backend_write,
+                LeaseDisposition::Close,
+            )
+            .await;
+            write_pool_rejection(&mut client_write, PoolRejectionReason::BackendPoolSaturated)
+                .await;
+            drop(permit);
+            return;
+        }
+        config.backend_pool.record_transaction_phase_started(
+            TransactionPhase::Acquire,
+            TransactionPhaseOutcome::Success,
+            acquire_started,
+        );
 
         let BackendLease {
             id: txn_id,
