@@ -9,27 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: lossless-wire-relay-tag-coverage
-entry: bounded_frame
+id: lossless-wire-relay-contract
+entry: frame
 nodes:
-  bounded_frame: { kind: start, label: "length-bounded frontend or backend frame" }
-  classify: { kind: decision, label: "known control frame or opaque relay frame" }
-  validate: { kind: process, label: "validate minimum structure and configured bounds" }
-  relay: { kind: process, label: "preserve exact bytes across session and relay paths" }
-  cancel: { kind: terminal, label: "deliberately reject unsupported CancelRequest" }
+  frame: { kind: start, label: "complete bounded PostgreSQL frame" }
+  accepted: { kind: process, label: "validate then relay byte-for-byte" }
+  malformed: { kind: terminal, label: "reject malformed or over-limit frame" }
+  cancel: { kind: terminal, label: "reject CancelRequest deliberately" }
 edges:
-  - { from: bounded_frame, to: classify }
-  - { from: classify, to: validate }
-  - { from: validate, to: relay }
-  - { from: classify, to: cancel, label: cancel }
+  - { from: frame, to: accepted, label: covered tag }
+  - { from: frame, to: malformed, label: invalid }
+  - { from: frame, to: cancel, label: CancelRequest }
 ---
 flowchart TD
-  bounded_frame[bounded wire frame] --> classify{recognized control frame?}
-  classify --> validate[validate structure and limits]
-  validate --> relay[verbatim relay]
-  classify -->|CancelRequest| cancel[deliberate rejection]
+  frame[complete frame] -->|covered tag| accepted[validate and relay bytes]
+  frame -->|invalid| malformed[bounded rejection]
+  frame -->|cancel| cancel[explicit unsupported branch]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
