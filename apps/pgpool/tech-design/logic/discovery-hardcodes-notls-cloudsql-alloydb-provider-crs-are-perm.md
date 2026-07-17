@@ -43,9 +43,8 @@ changes:
     action: modify
     section: unit-test
     impl_mode: hand-written
-    anchor: provider_advisory_is_projected_into_discovery_context
+    anchor: discovers_runtime_limit_from_real_postgres_when_available
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
