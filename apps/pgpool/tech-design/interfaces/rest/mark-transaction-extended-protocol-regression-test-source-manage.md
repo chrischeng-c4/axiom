@@ -9,26 +9,28 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-transaction-regression-source-ownership
-entry: test_source
+id: pgpool-transaction-regression-source-ownership-contract
+entry: source_file
 nodes:
-  test_source: { kind: start, label: "Existing extended-protocol integration regression test" }
-  managed: { kind: process, label: "Attach SPEC-MANAGED source mirror" }
-  ownership: { kind: process, label: "Wrap test implementation in HANDWRITE ownership" }
-  verify: { kind: terminal, label: "Test passes and AW ownership audit is clean" }
+  source_file: { kind: start, label: "Transaction extended-protocol regression source" }
+  spec: { kind: process, label: "Point to this TD logic section with SPEC-MANAGED" }
+  handwrite: { kind: process, label: "Declare the existing test setup and assertions HANDWRITE" }
+  test: { kind: process, label: "Run real-Postgres test when available; skip otherwise" }
+  audit: { kind: terminal, label: "Code-check recognizes the test as managed" }
 edges:
-  - { from: test_source, to: managed }
-  - { from: managed, to: ownership }
-  - { from: ownership, to: verify }
+  - { from: source_file, to: spec }
+  - { from: spec, to: handwrite }
+  - { from: handwrite, to: test }
+  - { from: test, to: audit }
 ---
 flowchart LR
-    test_source([Extended-protocol regression]) --> managed[SPEC-MANAGED mirror]
-    managed --> ownership[HANDWRITE ownership]
-    ownership --> verify([Targeted test and code-check pass])
+    source_file([Existing regression source]) --> spec[SPEC-MANAGED this TD]
+    spec --> handwrite[HANDWRITE test code]
+    handwrite --> test[Run two-engine integration test]
+    test --> audit([Managed code-check])
 ```
 
-The follow-up changes ownership metadata only. The existing regression continues proving error-then-close for both transaction engines; its new source mirror and HANDWRITE block let AW audit that proof without changing wire behavior.
-
+The marker envelope covers the full integration test because its local-Postgres readiness probe, proxy startup, and legacy/reactor loop form one cohesive regression concern. No behavior, timing, assertion, or skip policy changes in this work item.
 ## Changes
 <!-- type: changes lang: yaml -->
 
