@@ -289,6 +289,7 @@ impl FrameReader {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in reader.rs is hand-written pending codegen support">
 fn validate_frontend_relay(
     frame: &Frame,
     config: &WireCodecConfig,
@@ -312,6 +313,7 @@ fn validate_frontend_relay(
         }
     }
 }
+// </HANDWRITE>
 
 fn validate_backend_relay(
     frame: &Frame,
