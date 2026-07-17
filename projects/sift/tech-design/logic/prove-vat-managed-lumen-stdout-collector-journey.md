@@ -9,44 +9,43 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: sift-vat-lumen-observability-journey-logic
-entry: build
+id: sift-vat-lumen-observability-journey-contract
+entry: prerequisites
 nodes:
-  build: { kind: process, label: "build current VAT, Lumen, and Sift binaries" }
-  vat: { kind: process, label: "start real Lumen and Sift as VAT-managed services" }
-  request: { kind: process, label: "VAT runner sends fixed traceparent to Lumen HTTP" }
-  captured: { kind: decision, label: "trace id appears in VAT-advertised Lumen stdout" }
-  collect: { kind: process, label: "runner invokes real sift collect on that exact path" }
-  query: { kind: process, label: "runner queries real Sift logging API by trace id" }
-  preserve: { kind: decision, label: "service payload message span parent and trace preserved" }
-  artifact: { kind: process, label: "write bounded proof artifact and retain VAT evidence" }
-  fail: { kind: terminal, label: "fail the real runner with captured diagnostics" }
-  done: { kind: terminal, label: "local stdout architecture verified end to end" }
+  prerequisites: { kind: decision, label: "current target/debug vat lumen and sift binaries exist" }
+  config: { kind: process, label: "write temporary vat.toml with absolute binary paths and retained artifacts" }
+  start: { kind: process, label: "VAT starts Lumen and Sift on allocated loopback ports" }
+  probe: { kind: process, label: "re-executed Rust test probe sends traceparent and reads VAT_SERVICE_LUMEN_STDOUT_LOG" }
+  collect: { kind: process, label: "probe executes target/debug/sift collect with checkpoint and quarantine paths" }
+  query: { kind: process, label: "probe POSTs project local environment test trace query" }
+  assert: { kind: decision, label: "one Lumen audit record preserves trace parent local span service event message and payload" }
+  proof: { kind: process, label: "write observability-proof.json as VAT artifact" }
+  fail: { kind: terminal, label: "nonzero VAT runner with retained logs state and diff" }
+  done: { kind: terminal, label: "VAT result ok and proof artifact recorded" }
 edges:
-  - { from: build, to: vat }
-  - { from: vat, to: request }
-  - { from: request, to: captured }
-  - { from: captured, to: fail, label: "no" }
-  - { from: captured, to: collect, label: "yes" }
+  - { from: prerequisites, to: fail, label: "no; print build command" }
+  - { from: prerequisites, to: config, label: "yes" }
+  - { from: config, to: start }
+  - { from: start, to: probe }
+  - { from: probe, to: collect }
   - { from: collect, to: query }
-  - { from: query, to: preserve }
-  - { from: preserve, to: fail, label: "no" }
-  - { from: preserve, to: artifact, label: "yes" }
-  - { from: artifact, to: done }
+  - { from: query, to: assert }
+  - { from: assert, to: fail, label: "no" }
+  - { from: assert, to: proof, label: "yes" }
+  - { from: proof, to: done }
 ---
 flowchart TD
-    build[build current VAT Lumen Sift] --> vat[start real services through VAT]
-    vat --> request[send fixed traceparent to Lumen]
-    request --> captured{trace in advertised stdout}
-    captured -- no --> fail([fail with retained evidence])
-    captured -- yes --> collect[run real sift collect]
-    collect --> query[query Sift logs by trace]
-    query --> preserve{correlation and payload preserved}
-    preserve -- no --> fail
-    preserve -- yes --> artifact[write bounded proof artifact]
-    artifact --> done([local architecture verified])
+    prerequisites{all current debug binaries exist} -- no --> fail([fail with exact build command])
+    prerequisites -- yes --> config[write temporary VAT contract]
+    config --> start[start Lumen and Sift]
+    start --> probe[runner sends traceparent and reads advertised stdout]
+    probe --> collect[run real sift collect]
+    collect --> query[query Sift by trace]
+    query --> assert{all correlation and payload fields preserved}
+    assert -- no --> fail
+    assert -- yes --> proof[write retained proof artifact]
+    proof --> done([VAT result ok])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
