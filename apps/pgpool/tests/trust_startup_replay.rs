@@ -106,10 +106,12 @@ async fn read_backend(stream: &mut TcpStream, reader: &mut FrameReader) -> Optio
 
 async fn authenticate_backend(stream: &mut TcpStream, auth: BackendAuth, connection_id: usize) {
     let mut reader = FrameReader::new(Role::Frontend, &wire());
-    assert!(matches!(
-        read_frontend(stream, &mut reader).await,
-        Some(FrontendMessage::Startup(_))
-    ));
+    let Some(FrontendMessage::Startup(_)) = read_frontend(stream, &mut reader).await else {
+        // A fresh lease rejected before relay is expected to close without
+        // writing a PostgreSQL frame. A raw Query here would prove a protocol
+        // violation, and the client-side regression assertion would fail.
+        return;
+    };
 
     match auth {
         BackendAuth::Trust => {}
@@ -256,6 +258,27 @@ async fn spawn_proxy(
     (address, server, shutdown_tx)
 }
 
+/// Construct one handler through the legacy escape hatch so a regression can
+/// cover the `BackendLease::fresh` branch that production's reactor bypasses.
+/// The variable is read synchronously by `TransactionHandler::new`; restoring
+/// it before the listener begins accepting keeps the override test-local.
+async fn spawn_legacy_proxy(
+    pool: BackendPool,
+) -> (
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let previous = std::env::var_os("PGPOOL_TRANSACTION_ENGINE");
+    std::env::set_var("PGPOOL_TRANSACTION_ENGINE", "legacy");
+    let proxy = spawn_proxy(pool).await;
+    match previous {
+        Some(value) => std::env::set_var("PGPOOL_TRANSACTION_ENGINE", value),
+        None => std::env::remove_var("PGPOOL_TRANSACTION_ENGINE"),
+    }
+    proxy
+}
+
 async fn admit(
     proxy: std::net::SocketAddr,
     startup: StartupMessage,
@@ -318,6 +341,25 @@ async fn simple_query(stream: &mut TcpStream) {
             return;
         }
     }
+}
+
+async fn expect_pool_rejection(stream: &mut TcpStream) {
+    write_frontend(
+        stream,
+        &FrontendMessage::Query(Query {
+            sql: "SELECT should_not_reach_unauthenticated_backend".to_string(),
+        }),
+    )
+    .await;
+    let mut reader = FrameReader::new(Role::Backend, &wire());
+    let response = tokio::time::timeout(Duration::from_secs(2), read_backend(stream, &mut reader))
+        .await
+        .expect("fresh lease rejection responds without hanging")
+        .expect("fresh lease rejection remains a PostgreSQL ErrorResponse");
+    assert!(
+        matches!(response, BackendMessage::ErrorResponse(_)),
+        "fresh unauthenticated lease must be rejected before query relay, got {response:?}"
+    );
 }
 
 async fn write_pipelined_queries(stream: &mut TcpStream, sql: &[&str]) {
@@ -801,7 +843,7 @@ async fn exact_no_challenge_startup_replays_without_a_backend_lease() {
     backend_server.abort();
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1880" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
 /// verify: trust_startup_replay::startup_mismatch_and_auth_challenges_never_replay (R2)
 #[tokio::test]
 async fn startup_mismatch_and_auth_challenges_never_replay() {
@@ -849,6 +891,38 @@ async fn startup_mismatch_and_auth_challenges_never_replay() {
         stop_proxy(proxy_server, shutdown).await;
         backend_server.abort();
     }
+}
+
+/// verify: trust_startup_replay::auth_required_fresh_legacy_lease_is_rejected_before_query_relay (R1, R2)
+#[tokio::test]
+async fn auth_required_fresh_legacy_lease_is_rejected_before_query_relay() {
+    let (backend_port, accepted, backend_server) = spawn_backend(BackendAuth::Md5).await;
+    let pool = BackendPool::new(pool_config(backend_port, 2));
+    let (proxy, proxy_server, shutdown) = spawn_legacy_proxy(pool.clone()).await;
+
+    let (mut client, _) = admit(proxy, startup("auth-fresh"), true)
+        .await
+        .expect("initial auth handshake admits the frontend");
+    assert_eq!(
+        pool.startup_replay_count(),
+        0,
+        "md5 authentication must not create a replay-safe startup entry"
+    );
+    wait_for_idle(&pool).await;
+    let occupied = pool
+        .acquire()
+        .await
+        .expect("hold the authenticated idle lease so the client takes a fresh one");
+    expect_pool_rejection(&mut client).await;
+    assert!(
+        accepted.load(Ordering::SeqCst) <= 2,
+        "the rejected fresh lease must not create extra backend connections"
+    );
+
+    close_client(client).await;
+    drop(occupied);
+    stop_proxy(proxy_server, shutdown).await;
+    backend_server.abort();
 }
 // </HANDWRITE>
 
