@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 mod checkpoint;
 mod client;
+mod cri;
 mod model;
 mod runtime;
+mod source;
 
 pub use checkpoint::{CollectorCheckpoint, QuarantineEntry};
 pub use model::decode_service_log;
@@ -19,11 +21,26 @@ pub const DEFAULT_MAX_LINE_BYTES: usize = 512 * 1024;
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_MAX_RETRIES: usize = 3;
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="1675" reason="Add typed CRI source configuration and metadata over the shared collector runtime.">
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CriMetadata {
+    pub gcp_project: String,
+    pub cluster: Option<String>,
+    pub location: Option<String>,
+    pub node: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CriSourceConfig {
+    pub root: PathBuf,
+    pub metadata: CriMetadata,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceSpec {
     File(PathBuf),
     Stdin,
+    Cri(CriSourceConfig),
 }
 // </HANDWRITE>
 
@@ -77,13 +94,32 @@ impl CollectorConfig {
             bail!("collector timeout and polling durations must be nonzero");
         }
         if self.follow && matches!(self.source, SourceSpec::Stdin) {
-            bail!("collector follow mode requires a regular file source");
+            bail!("collector follow mode requires a regular file or CRI source");
         }
         if self.checkpoint_path == self.quarantine_path {
             bail!("collector checkpoint and quarantine paths must differ");
         }
+        if let SourceSpec::Cri(cri) = &self.source {
+            validate_metadata("gcp_project", &cri.metadata.gcp_project)?;
+            for (name, value) in [
+                ("cluster", cri.metadata.cluster.as_deref()),
+                ("location", cri.metadata.location.as_deref()),
+                ("node", cri.metadata.node.as_deref()),
+            ] {
+                if let Some(value) = value {
+                    validate_metadata(name, value)?;
+                }
+            }
+        }
         Ok(())
     }
+}
+
+fn validate_metadata(name: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+        bail!("collector CRI {name} must be nonempty, bounded, and control-character-free");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -95,6 +131,8 @@ pub struct CollectorSummary {
     pub accepted: u64,
     pub duplicates: u64,
     pub rejected: u64,
+    pub lost_bytes: u64,
+    pub lost_sources: u64,
 }
 
 pub async fn run_collector(config: CollectorConfig) -> Result<CollectorSummary> {

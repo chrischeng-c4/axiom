@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:255e6322" tracker="pending-tracker" reason="Own source-neutral records, enrichment, opaque commit cursors, outcomes, CollectorSource, and linear file/stdin framing."
+// HANDWRITE-BEGIN gap="missing-generator:logic:255e6322" tracker="1675" reason="Own source-neutral records, enrichment, opaque commit cursors, outcomes, CollectorSource, and linear file/stdin framing."
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -366,5 +366,4 @@ mod tests {
     }
 }
 
-<!-- marker: missing-generator:logic:255e6322 path: projects/sift/src/collector/source.rs reason: Own source-neutral records, enrichment, opaque commit cursors, outcomes, CollectorSource, and linear file/stdin framing. -->
 // HANDWRITE-END

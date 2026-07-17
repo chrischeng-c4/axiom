@@ -10,7 +10,7 @@ fn sift(args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("utf-8 deployment output")
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in deployment_cli.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="1675" reason="Verify collector rendering preserves the least-privilege node-log contract.">
 #[test]
 fn layered_deployment_cli_renders_all_artifact_planes() {
     let dockerfile = sift(&["dockerfile", "render", "--variant", "source"]);
@@ -32,6 +32,35 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(instance.contains("kind: Sift"));
     assert!(instance.contains("replicasPerShard: 1"));
     assert!(instance.contains("sift:0.1.0"));
+
+    let collector = sift(&[
+        "k8s",
+        "collector",
+        "render",
+        "--namespace",
+        "observability",
+        "--image",
+        "example.invalid/sift:1.2.3",
+    ]);
+    assert!(collector.contains("kind: DaemonSet"));
+    assert!(collector.contains("namespace: observability"));
+    assert!(collector.contains("image: example.invalid/sift:1.2.3"));
+    assert!(collector.contains("automountServiceAccountToken: false"));
+    assert!(collector.contains("path: /var/log/pods"));
+    assert!(collector.contains("mountPath: /var/log/pods\n              readOnly: true"));
+    assert!(collector.contains("path: /var/lib/sift-collector"));
+    assert!(collector.contains("secretKeyRef:"));
+    assert!(collector.contains("configMapKeyRef:"));
+    assert!(collector.contains("fieldPath: spec.nodeName"));
+    assert!(collector.contains("runAsNonRoot: true"));
+    assert!(collector.contains("readOnlyRootFilesystem: true"));
+    assert!(collector.contains("seccompProfile:"));
+    assert!(collector.contains("drop: [\"ALL\"]"));
+    assert!(collector.contains("requests: { cpu: 25m, memory: 64Mi }"));
+    assert!(collector.contains("limits: { cpu: 500m, memory: 256Mi }"));
+    assert!(!collector.contains("kind: ClusterRole"));
+    assert!(!collector.contains("kind: Role"));
+    assert!(!collector.contains("REPLACE_"));
 }
 // </HANDWRITE>
 

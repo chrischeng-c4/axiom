@@ -41,7 +41,7 @@ pub fn crd_yaml() -> String {
     strip_ownership_markers(include_str!("../k8s/crd/sift.yaml"))
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in deploy.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="1675" reason="Render validated Sift collector DaemonSet assets beside the existing operator layer.">
 pub fn operator_yaml(namespace: &str) -> Result<String> {
     if namespace.trim().is_empty() {
         bail!("operator namespace must not be empty");
@@ -50,6 +50,28 @@ pub fn operator_yaml(namespace: &str) -> Result<String> {
         strip_ownership_markers(include_str!("../k8s/operator/operator.yaml"))
             .replace("namespace: sift-system", &format!("namespace: {namespace}")),
     )
+}
+
+pub fn collector_yaml(namespace: &str, image: &str) -> Result<String> {
+    validate_manifest_value("collector namespace", namespace)?;
+    validate_manifest_value("collector image", image)?;
+    Ok(
+        strip_ownership_markers(include_str!("../k8s/collector/daemonset.yaml"))
+            .replace("REPLACE_NAMESPACE", namespace)
+            .replace("REPLACE_IMAGE", image),
+    )
+}
+
+fn validate_manifest_value(name: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty()
+        || value.len() > 512
+        || value
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        bail!("{name} must be a nonempty single bounded token");
+    }
+    Ok(())
 }
 // </HANDWRITE>
 

@@ -14,7 +14,7 @@ Kubernetes expose or retain process output; neither parses application logs.
 | Structured service output | `service-observability` plus each service | Emit `axiom.service.log.v1` JSONL to stdout. No Sift client or collector dependency belongs in an application. |
 | Local process lifecycle and capture | VAT | Capture stdout/stderr and expose trusted same-run paths such as `VAT_SERVICE_LUMEN_STDOUT_LOG`. VAT does not parse, forward, redact, or replay those bytes. |
 | File/stdin collection | Sift | Validate, map, batch, retry, quarantine, checkpoint, and send through Sift's bounded ingest API. |
-| Kubernetes collection | Sift | A Sift-owned CRI/GKE adapter reads container-runtime logs and feeds the same collector core. This adapter remains tracked by #1675. |
+| Kubernetes collection | Sift | The Sift-owned CRI/GKE adapter reads container-runtime logs, tracks device/inode rotation, and feeds the same collector core. |
 | Durable operational event and query | Sift | Fsync the raw event journal, project logs, and serve project/environment/correlation queries. |
 
 Metrics remain on `/metrics`. OTLP traces may be exported independently, but
@@ -54,7 +54,7 @@ flowchart LR
     stdout --> cri["container runtime CRI log files"]
 
     subgraph siftplane["Sift-owned collector plane"]
-        adapter["CRI/GKE adapter (#1675)"] --> core["same collector core"]
+        adapter["CRI/GKE source adapter"] --> core["same collector core"]
         checkpoint["source identity + offset / rotation state"] --> adapter
         quarantine["bounded invalid-line quarantine"] <-- core
     end
@@ -66,9 +66,10 @@ flowchart LR
 ```
 
 The application pod has no Sift sidecar, SDK, endpoint, token, or backpressure
-loop. A DaemonSet or node-level deployment is an adapter choice inside the
-Sift plane; CRI rotation semantics are deliberately isolated from the generic
-file/stdin collector.
+loop. `sift k8s collector render` emits the node-level DaemonSet. It mounts
+`/var/log/pods` read-only, keeps its device/inode checkpoint under a dedicated
+writable host path, reads endpoint/project metadata from a ConfigMap and the
+token from a Secret, and has no Kubernetes API permissions or token mount.
 
 ## `axiom.service.log.v1`
 
@@ -94,16 +95,26 @@ new local root so logging never depends on an exporter or collector being up.
 
 ## Collector guarantees
 
-- File and stdin sources share strict schema/correlation validation and mapping
-  to `OperationalEventV2`.
+- File, stdin, and CRI sources implement one source/cursor interface and share
+  the sole strict schema decoder, `OperationalEventV2` mapper, bounded batch,
+  retry client, quarantine writer, and acknowledgment-before-commit runtime.
 - Event ids derive from stable source identity, byte offset, and source bytes,
   so replay is idempotent at Sift ingest.
 - Checkpoints advance only after the valid batch is acknowledged and invalid
   lines are fsynced to the bounded quarantine JSONL.
 - Network errors, `429`, and `5xx` use bounded retry/backoff. Terminal rejects
   leave the checkpoint unchanged.
-- One-shot mode ends at the current EOF. Follow mode is file-only. Truncation or
-  rotation fails closed until the #1675 adapter supplies rotation identity.
+- CRI `P` fragments are assembled through `F`; incomplete groups remain
+  uncommitted for restart/follow replay. Device/inode identity drains renamed
+  files before same-path replacements start at offset zero.
+- CRI discovery records last observed lengths. If retention removes a source
+  with observed uncommitted bytes, the checkpoint and quarantine expose
+  `lost_bytes`, `lost_sources`, and a durable `source_lost` record.
+- Direct CRI and Cloud Logging input use the same recursively canonical
+  workload+payload ID for `axiom.service.log.v1`, making dual delivery
+  duplicate-safe even when Cloud Logging supplies its own preserved `insertId`.
+- One-shot mode ends at current EOF. Follow mode supports regular files and
+  CRI discovery without keeping more than one configured batch in memory.
 
 ## Reproduce locally
 
@@ -112,12 +123,18 @@ From the repository root:
 ```bash
 cargo build -p vat -p lumen -p sift --bins
 cargo test -p sift --test vat_lumen_observability_e2e vat_managed_lumen_stdout_reaches_real_sift_query -- --exact --nocapture
+cargo test -p sift --test collector_cri -- --nocapture
+cargo test -p sift --test deployment_cli
+sift k8s collector render --namespace sift-system --image ghcr.io/chrischeng-c4/axiom/sift:0.1.0
 ```
 
 The test starts real current-workspace VAT, Lumen, and Sift binaries. Its VAT
 runner sends a fixed `traceparent`, reads only the advertised Lumen stdout path,
 executes the real `sift collect` CLI, queries the real Sift logging API, and
-retains `observability-proof.json`. Passing this test is bounded local
-composition evidence; it does not claim Kubernetes CRI readiness, production
-load, HA, or remote deployment.
+retains `observability-proof.json`. The CRI suite uses real Sift processes and
+node-log fixtures to verify partial framing, W3C trace correlation, workload
+metadata, rename/replacement restart semantics, canonical Cloud Logging
+coexistence, endpoint outage recovery, and explicit loss accounting. These are
+complete local architecture proofs; they do not claim a live GKE rollout,
+production load, HA, or independent EC approval.
 <!-- HANDWRITE-END -->

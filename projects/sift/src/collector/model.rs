@@ -10,15 +10,34 @@ use service_observability::{
 };
 use sha2::{Digest, Sha256};
 
+use super::source::RecordEnrichment;
 use crate::{AttributeValue, InstrumentationScope, OperationalEventV2, SignalKind};
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in model.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="1675" reason="Apply bounded source enrichment and shared Cloud Logging coexistence identity after decoding.">
 pub fn decode_service_log(
     raw_line: &[u8],
     source_id: &str,
     offset: u64,
     project: &str,
     environment: &str,
+) -> Result<OperationalEventV2> {
+    decode_service_log_enriched(
+        raw_line,
+        source_id,
+        offset,
+        project,
+        environment,
+        &RecordEnrichment::default(),
+    )
+}
+
+pub(crate) fn decode_service_log_enriched(
+    raw_line: &[u8],
+    source_id: &str,
+    offset: u64,
+    project: &str,
+    environment: &str,
+    enrichment: &RecordEnrichment,
 ) -> Result<OperationalEventV2> {
     let json = trim_line_ending(raw_line);
     let log: ServiceLogEventV1 =
@@ -81,6 +100,21 @@ pub fn decode_service_log(
     event.span_id = log.span_id;
     event.request_id = log.request_id;
     event.severity = Some(log.severity);
+    event.resource.extend(enrichment.resource.clone());
+    event.attributes.extend(enrichment.attributes.clone());
+    if enrichment.cloud_logging_coexistence {
+        let resource_type = event
+            .resource
+            .get("gcp.resource.type")
+            .context("CRI enrichment requires gcp.resource.type")?;
+        event.event_id = crate::ingest::gcp::stable_id(
+            project,
+            resource_type,
+            &event.occurred_at,
+            &event.resource,
+            &event.payload,
+        );
+    }
     event.validate()?;
     Ok(event)
 }

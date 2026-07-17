@@ -9,8 +9,8 @@ use serde_json::Value;
 use sift::{
     auth::SiftVerifier,
     collector::{
-        CollectorConfig, SourceSpec, DEFAULT_BATCH_SIZE, DEFAULT_MAX_LINE_BYTES,
-        DEFAULT_MAX_RETRIES,
+        CollectorConfig, CriMetadata, CriSourceConfig, SourceSpec, DEFAULT_BATCH_SIZE,
+        DEFAULT_MAX_LINE_BYTES, DEFAULT_MAX_RETRIES,
     },
     decode_event_json,
     deploy::{DockerfileVariant, InstanceProfile},
@@ -32,7 +32,7 @@ struct Cli {
 enum Command {
     /// Run the unified h2c/HTTP1 operational-event service.
     Serve(ServeArgs),
-    /// Collect axiom.service.log.v1 JSONL from a file or stdin into Sift.
+    /// Collect axiom.service.log.v1 JSONL from a file, stdin, or Kubernetes CRI logs.
     Collect(CollectArgs),
     /// Write or import versioned events into the local raw journal.
     Event(EventArgs),
@@ -85,8 +85,15 @@ struct ServeArgs {
 #[derive(Args)]
 struct CollectArgs {
     /// JSONL source path, or `-` for stdin.
-    #[arg(long)]
-    source: String,
+    #[arg(
+        long,
+        conflicts_with = "cri_root",
+        required_unless_present = "cri_root"
+    )]
+    source: Option<String>,
+    /// Kubernetes node CRI pod-log root, normally /var/log/pods.
+    #[arg(long, conflicts_with = "source", required_unless_present = "source")]
+    cri_root: Option<PathBuf>,
     /// Stable identity used with byte offsets to derive idempotency keys.
     #[arg(long)]
     source_id: Option<String>,
@@ -100,6 +107,15 @@ struct CollectArgs {
     project: String,
     #[arg(long, default_value = "local")]
     environment: String,
+    /// GCP project used for k8s_container monitored-resource identity.
+    #[arg(long, env = "GCP_PROJECT_ID")]
+    gcp_project: Option<String>,
+    #[arg(long, env = "GKE_CLUSTER_NAME")]
+    cluster: Option<String>,
+    #[arg(long, env = "GKE_LOCATION")]
+    location: Option<String>,
+    #[arg(long, env = "NODE_NAME")]
+    node: Option<String>,
     /// Durable source offset checkpoint; defaults beside the source file.
     #[arg(long)]
     checkpoint: Option<PathBuf>,
@@ -114,7 +130,7 @@ struct CollectArgs {
     max_retries: usize,
     #[arg(long, default_value_t = 10)]
     request_timeout_secs: u64,
-    /// Continue watching a regular file after reaching its current end.
+    /// Continue watching a regular file or refreshing CRI discovery after EOF.
     #[arg(long)]
     follow: bool,
     #[arg(long, default_value_t = 250)]
@@ -253,6 +269,29 @@ enum K8sCommand {
     Operator(K8sOperatorArgs),
     /// Render one namespaced Sift custom resource.
     Instance(K8sInstanceArgs),
+    /// Render the Sift-owned node CRI collector DaemonSet.
+    Collector(K8sCollectorArgs),
+}
+
+#[derive(Args)]
+struct K8sCollectorArgs {
+    #[command(subcommand)]
+    command: K8sCollectorCommand,
+}
+
+#[derive(Subcommand)]
+enum K8sCollectorCommand {
+    Render(K8sCollectorRenderArgs),
+}
+
+#[derive(Args)]
+struct K8sCollectorRenderArgs {
+    #[arg(long, default_value = "sift-system")]
+    namespace: String,
+    #[arg(long, default_value = "ghcr.io/chrischeng-c4/axiom/sift:0.1.0")]
+    image: String,
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -564,14 +603,39 @@ async fn main() -> Result<()> {
 
 // <HANDWRITE gap="missing-generator:logic" tracker="1873" reason="Implement the Sift-owned local structured-stdout collector CLI seam.">
 async fn collect(args: CollectArgs) -> Result<()> {
-    let (source, default_source_id, default_checkpoint) = if args.source == "-" {
+    let (source, default_source_id, default_checkpoint) = if let Some(root) = args.cri_root {
+        let canonical = std::fs::canonicalize(&root)
+            .with_context(|| format!("resolve CRI root {}", root.display()))?;
+        let gcp_project = args
+            .gcp_project
+            .context("--gcp-project or GCP_PROJECT_ID is required with --cri-root")?;
+        let source_id = args
+            .node
+            .as_deref()
+            .map(|node| format!("cri-node:{node}"))
+            .unwrap_or_else(|| format!("cri-root:{}", canonical.display()));
+        (
+            SourceSpec::Cri(CriSourceConfig {
+                root: canonical,
+                metadata: CriMetadata {
+                    gcp_project,
+                    cluster: args.cluster,
+                    location: args.location,
+                    node: args.node,
+                },
+            }),
+            source_id,
+            PathBuf::from("sift-cri.checkpoint.json"),
+        )
+    } else if args.source.as_deref() == Some("-") {
         (
             SourceSpec::Stdin,
             "stdin".to_string(),
             PathBuf::from("sift-stdin.checkpoint.json"),
         )
     } else {
-        let path = PathBuf::from(&args.source);
+        let source_arg = args.source.context("--source or --cri-root is required")?;
+        let path = PathBuf::from(&source_arg);
         let canonical = std::fs::canonicalize(&path)
             .with_context(|| format!("resolve collector source {}", path.display()))?;
         let source_id = format!("file:{}", canonical.display());
@@ -805,6 +869,14 @@ async fn k8s(args: K8sArgs) -> Result<()> {
                     "kubectl apply -f -",
                 )
             }
+        },
+        K8sCommand::Collector(args) => match args.command {
+            K8sCollectorCommand::Render(args) => write_artifact(
+                args.out.as_deref(),
+                "sift-collector.yaml",
+                &sift::deploy::collector_yaml(&args.namespace, &args.image)?,
+                "kubectl apply -f -",
+            ),
         },
     }
 }

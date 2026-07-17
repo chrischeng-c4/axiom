@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:25c76bad" tracker="pending-tracker" reason="Own safe CRI discovery, envelope/partial framing, device-inode rotation, multi-source checkpoint, metadata, and loss accounting."
+// HANDWRITE-BEGIN gap="missing-generator:logic:25c76bad" tracker="1675" reason="Own safe CRI discovery, envelope/partial framing, device-inode rotation, multi-source checkpoint, metadata, and loss accounting."
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom};
@@ -13,8 +13,8 @@ use crate::AttributeValue;
 
 use super::checkpoint::QuarantineEntry;
 use super::source::{
-    read_bounded_line, CollectorSource, CommitStats, RawRecord, ReadOutcome,
-    RecordEnrichment, SourceCursor, SourceRejection,
+    read_bounded_line, CollectorSource, CommitStats, RawRecord, ReadOutcome, RecordEnrichment,
+    SourceCursor, SourceRejection,
 };
 use super::CriSourceConfig;
 
@@ -171,11 +171,12 @@ impl CriSource {
                 .context("CRI byte offset overflow")?;
             next_line = next_line.checked_add(1).context("CRI line overflow")?;
             if preview.len() < 1024 {
-                preview.extend_from_slice(&fragment.preview[..fragment.preview.len().min(1024 - preview.len())]);
+                preview.extend_from_slice(
+                    &fragment.preview[..fragment.preview.len().min(1024 - preview.len())],
+                );
             }
             if fragment.oversized {
                 oversized = true;
-                continue;
             }
             let frame = match parse_cri_frame(&fragment.preview) {
                 Ok(frame) => frame,
@@ -302,11 +303,10 @@ impl CollectorSource for CriSource {
                     next_line,
                     observed_len,
                 } => {
-                    let file = self
-                        .checkpoint
-                        .files
-                        .get_mut(identity)
-                        .with_context(|| format!("missing CRI checkpoint identity {identity}"))?;
+                    let file =
+                        self.checkpoint.files.get_mut(identity).with_context(|| {
+                            format!("missing CRI checkpoint identity {identity}")
+                        })?;
                     file.offset = *next_offset;
                     file.line = *next_line;
                     file.observed_len = file.observed_len.max(*observed_len);
@@ -340,17 +340,17 @@ impl CollectorSource for CriSource {
             }
         }
         self.checkpoint.accepted = self.checkpoint.accepted.saturating_add(stats.accepted);
-        self.checkpoint.duplicates = self
-            .checkpoint
-            .duplicates
-            .saturating_add(stats.duplicates);
+        self.checkpoint.duplicates = self.checkpoint.duplicates.saturating_add(stats.duplicates);
         self.checkpoint.rejected = self.checkpoint.rejected.saturating_add(stats.rejected);
         self.checkpoint.save(&self.checkpoint_path)
     }
 
     fn refresh(&mut self) -> Result<()> {
         let mut discovered = discover(&self.root, &self.checkpoint.files)?;
-        let present: HashSet<_> = discovered.iter().map(|file| file.identity.clone()).collect();
+        let present: HashSet<_> = discovered
+            .iter()
+            .map(|file| file.identity.clone())
+            .collect();
 
         for file in &discovered {
             let entry = self
@@ -499,9 +499,15 @@ fn parse_cri_frame(line: &[u8]) -> Result<CriFrame> {
         .iter()
         .enumerate()
         .filter_map(|(index, byte)| (*byte == b' ').then_some(index));
-    let first = spaces.next().context("CRI record is missing timestamp delimiter")?;
-    let second = spaces.next().context("CRI record is missing stream delimiter")?;
-    let third = spaces.next().context("CRI record is missing tag delimiter")?;
+    let first = spaces
+        .next()
+        .context("CRI record is missing timestamp delimiter")?;
+    let second = spaces
+        .next()
+        .context("CRI record is missing stream delimiter")?;
+    let third = spaces
+        .next()
+        .context("CRI record is missing tag delimiter")?;
     let timestamp = std::str::from_utf8(&line[..first]).context("CRI timestamp must be UTF-8")?;
     DateTime::parse_from_rfc3339(timestamp).context("CRI timestamp must be RFC3339")?;
     let stream = match &line[first + 1..second] {
@@ -535,7 +541,10 @@ fn enrichment(
 ) -> RecordEnrichment {
     let mut resource = BTreeMap::from([
         ("gcp.resource.type".to_string(), "k8s_container".to_string()),
-        ("gcp.project_id".to_string(), config.metadata.gcp_project.clone()),
+        (
+            "gcp.project_id".to_string(),
+            config.metadata.gcp_project.clone(),
+        ),
         (
             "gcp.resource.label.project_id".to_string(),
             config.metadata.gcp_project.clone(),
@@ -552,7 +561,10 @@ fn enrichment(
             "gcp.resource.label.container_name".to_string(),
             file.workload.container.clone(),
         ),
-        ("k8s.namespace.name".to_string(), file.workload.namespace.clone()),
+        (
+            "k8s.namespace.name".to_string(),
+            file.workload.namespace.clone(),
+        ),
         ("k8s.pod.name".to_string(), file.workload.pod.clone()),
         ("k8s.pod.uid".to_string(), file.workload.pod_uid.clone()),
         (
@@ -569,10 +581,7 @@ fn enrichment(
     }
     if let Some(location) = &config.metadata.location {
         resource.insert("cloud.region".to_string(), location.clone());
-        resource.insert(
-            "gcp.resource.label.location".to_string(),
-            location.clone(),
-        );
+        resource.insert("gcp.resource.label.location".to_string(), location.clone());
     }
     if let Some(node) = &config.metadata.node {
         resource.insert("k8s.node.name".to_string(), node.clone());
@@ -582,11 +591,13 @@ fn enrichment(
         attributes: BTreeMap::from([
             (
                 "collector.stream".to_string(),
-                AttributeValue::String(match stream {
-                    CriStream::Stdout => "stdout",
-                    CriStream::Stderr => "stderr",
-                }
-                .to_string()),
+                AttributeValue::String(
+                    match stream {
+                        CriStream::Stdout => "stdout",
+                        CriStream::Stderr => "stderr",
+                    }
+                    .to_string(),
+                ),
             ),
             (
                 "k8s.container.restart_count".to_string(),
@@ -632,7 +643,12 @@ fn discover(
     Ok(files)
 }
 
-fn visit_regular_files(root: &Path, directory: &Path, depth: usize, output: &mut Vec<PathBuf>) -> Result<()> {
+fn visit_regular_files(
+    root: &Path,
+    directory: &Path,
+    depth: usize,
+    output: &mut Vec<PathBuf>,
+) -> Result<()> {
     if depth > 3 {
         return Ok(());
     }
@@ -663,9 +679,15 @@ fn parse_workload_path(relative: &Path) -> Result<Option<WorkloadIdentity>> {
         return Ok(None);
     }
     let mut pod = components[0].splitn(3, '_');
-    let Some(namespace) = pod.next() else { return Ok(None) };
-    let Some(pod_name) = pod.next() else { return Ok(None) };
-    let Some(pod_uid) = pod.next() else { return Ok(None) };
+    let Some(namespace) = pod.next() else {
+        return Ok(None);
+    };
+    let Some(pod_name) = pod.next() else {
+        return Ok(None);
+    };
+    let Some(pod_uid) = pod.next() else {
+        return Ok(None);
+    };
     let container = &components[1];
     let Some(restart_text) = components[2].split(".log").next() else {
         return Ok(None);
@@ -681,7 +703,9 @@ fn parse_workload_path(relative: &Path) -> Result<Option<WorkloadIdentity>> {
     ] {
         validate_workload_id(name, value)?;
     }
-    let restart = restart_text.parse::<u32>().context("CRI restart index must be u32")?;
+    let restart = restart_text
+        .parse::<u32>()
+        .context("CRI restart index must be u32")?;
     Ok(Some(WorkloadIdentity {
         namespace: namespace.to_string(),
         pod: pod_name.to_string(),
@@ -694,7 +718,9 @@ fn parse_workload_path(relative: &Path) -> Result<Option<WorkloadIdentity>> {
 fn validate_workload_id(name: &str, value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > MAX_WORKLOAD_ID_BYTES
-        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
     {
         bail!("invalid CRI {name}");
     }
@@ -731,9 +757,10 @@ mod tests {
         assert_eq!(identity.pod_uid, "1234-abcd");
         assert_eq!(identity.container, "lumen");
         assert_eq!(identity.restart, 0);
-        assert!(parse_workload_path(Path::new("escape.log")).unwrap().is_none());
+        assert!(parse_workload_path(Path::new("escape.log"))
+            .unwrap()
+            .is_none());
     }
 }
 
-<!-- marker: missing-generator:logic:25c76bad path: projects/sift/src/collector/cri.rs reason: Own safe CRI discovery, envelope/partial framing, device-inode rotation, multi-source checkpoint, metadata, and loss accounting. -->
 // HANDWRITE-END

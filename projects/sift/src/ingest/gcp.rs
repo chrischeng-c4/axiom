@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
+use service_observability::SERVICE_LOG_SCHEMA_V1;
 use sha2::{Digest, Sha256};
 
 use crate::{AttributeValue, OperationalEventV2, SignalKind};
@@ -47,12 +48,33 @@ pub fn normalize_structured_log(value: Value, project_hint: &str) -> Result<Oper
         Some(value) => parse_timestamp(Some(value), "receiveTimestamp")?,
         None => occurred_at.clone(),
     };
-    let event_id = object
+    let resource = normalize_resource(resource_type, &labels);
+    let insert_id = object
         .get("insertId")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| stable_id(project, resource_type, &occurred_at, json_payload));
+        .map(str::to_string);
+    let is_axiom_service_log =
+        json_payload.get("schema").and_then(Value::as_str) == Some(SERVICE_LOG_SCHEMA_V1);
+    let event_id = if is_axiom_service_log {
+        stable_id(
+            project,
+            resource_type,
+            &occurred_at,
+            &resource,
+            json_payload,
+        )
+    } else {
+        insert_id.clone().unwrap_or_else(|| {
+            stable_id(
+                project,
+                resource_type,
+                &occurred_at,
+                &resource,
+                json_payload,
+            )
+        })
+    };
     let environment = labels
         .get("environment")
         .or_else(|| labels.get("namespace_name"))
@@ -67,7 +89,7 @@ pub fn normalize_structured_log(value: Value, project_hint: &str) -> Result<Oper
     );
     event.occurred_at = occurred_at;
     event.observed_at = observed;
-    event.resource = normalize_resource(resource_type, &labels);
+    event.resource = resource;
     event.severity = object
         .get("severity")
         .and_then(Value::as_str)
@@ -85,6 +107,12 @@ pub fn normalize_structured_log(value: Value, project_hint: &str) -> Result<Oper
         .map(str::to_string);
     event.request_id = request_id(object, json_payload);
     event.attributes = normalize_attributes(object);
+    if let Some(insert_id) = insert_id {
+        event.attributes.insert(
+            "gcp.insert_id".to_string(),
+            AttributeValue::String(insert_id),
+        );
+    }
     event.validate()?;
     Ok(event)
 }
@@ -199,8 +227,14 @@ fn trace_id(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in gcp.rs is hand-written pending codegen support">
-fn stable_id(project: &str, resource_type: &str, timestamp: &str, payload: &Value) -> String {
+// <HANDWRITE gap="missing-generator:logic" tracker="1675" reason="Share the insertId-free Cloud Logging identity with CRI collection.">
+pub(crate) fn stable_id(
+    project: &str,
+    resource_type: &str,
+    timestamp: &str,
+    resource: &BTreeMap<String, String>,
+    payload: &Value,
+) -> String {
     let mut digest = Sha256::new();
     digest.update(project.as_bytes());
     digest.update([0]);
@@ -208,8 +242,58 @@ fn stable_id(project: &str, resource_type: &str, timestamp: &str, payload: &Valu
     digest.update([0]);
     digest.update(timestamp.as_bytes());
     digest.update([0]);
-    digest.update(serde_json::to_vec(payload).unwrap_or_default());
+    for key in [
+        "gcp.resource.label.project_id",
+        "gcp.resource.label.location",
+        "gcp.resource.label.cluster_name",
+        "gcp.resource.label.namespace_name",
+        "gcp.resource.label.pod_name",
+        "gcp.resource.label.container_name",
+    ] {
+        digest.update(key.as_bytes());
+        digest.update([0]);
+        digest.update(resource.get(key).map(String::as_bytes).unwrap_or_default());
+        digest.update([0]);
+    }
+    digest.update(canonical_json(payload));
     format!("gcp-log-{}", hex::encode(&digest.finalize()[..16]))
+}
+
+fn canonical_json(value: &Value) -> Vec<u8> {
+    fn write(value: &Value, output: &mut Vec<u8>) {
+        match value {
+            Value::Object(object) => {
+                output.push(b'{');
+                let mut keys = object.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                for (index, key) in keys.into_iter().enumerate() {
+                    if index > 0 {
+                        output.push(b',');
+                    }
+                    serde_json::to_writer(&mut *output, key)
+                        .expect("JSON object key serialization");
+                    output.push(b':');
+                    write(&object[key], output);
+                }
+                output.push(b'}');
+            }
+            Value::Array(values) => {
+                output.push(b'[');
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        output.push(b',');
+                    }
+                    write(value, output);
+                }
+                output.push(b']');
+            }
+            _ => serde_json::to_writer(output, value).expect("JSON scalar serialization"),
+        }
+    }
+
+    let mut output = Vec::new();
+    write(value, &mut output);
+    output
 }
 // </HANDWRITE>
 
@@ -219,6 +303,112 @@ fn scalar(value: &Value) -> Option<String> {
         Value::Bool(value) => Some(value.to_string()),
         Value::Number(value) => Some(value.to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod coexistence_tests {
+    use super::*;
+
+    #[test]
+    fn fallback_identity_is_recursive_object_order_independent() {
+        let resource = BTreeMap::from([
+            (
+                "gcp.resource.label.project_id".to_string(),
+                "project-a".to_string(),
+            ),
+            (
+                "gcp.resource.label.pod_name".to_string(),
+                "lumen-0".to_string(),
+            ),
+        ]);
+        let left = serde_json::from_str::<Value>(
+            r#"{"schema":"axiom.service.log.v1","service":{"name":"lumen","version":"1"},"attributes":{"b":2,"a":1}}"#,
+        )
+        .unwrap();
+        let right = serde_json::from_str::<Value>(
+            r#"{"attributes":{"a":1,"b":2},"service":{"version":"1","name":"lumen"},"schema":"axiom.service.log.v1"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            stable_id(
+                "project-a",
+                "k8s_container",
+                "2026-07-17T10:00:00Z",
+                &resource,
+                &left
+            ),
+            stable_id(
+                "project-a",
+                "k8s_container",
+                "2026-07-17T10:00:00Z",
+                &resource,
+                &right
+            )
+        );
+    }
+
+    #[test]
+    fn fallback_identity_separates_workload_resources() {
+        let payload = serde_json::json!({"message": "same"});
+        let left = BTreeMap::from([(
+            "gcp.resource.label.pod_name".to_string(),
+            "lumen-0".to_string(),
+        )]);
+        let right = BTreeMap::from([(
+            "gcp.resource.label.pod_name".to_string(),
+            "lumen-1".to_string(),
+        )]);
+        assert_ne!(
+            stable_id(
+                "project-a",
+                "k8s_container",
+                "2026-07-17T10:00:00Z",
+                &left,
+                &payload
+            ),
+            stable_id(
+                "project-a",
+                "k8s_container",
+                "2026-07-17T10:00:00Z",
+                &right,
+                &payload
+            )
+        );
+    }
+
+    #[test]
+    fn axiom_service_log_uses_canonical_id_and_preserves_cloud_insert_id() {
+        let payload = serde_json::json!({
+            "schema": SERVICE_LOG_SCHEMA_V1,
+            "timestamp": "2026-07-17T10:00:00Z",
+            "severity": "INFO",
+            "service": {"name": "lumen", "version": "1"},
+            "event": "request_complete",
+            "message": "done",
+            "attributes": {}
+        });
+        let value = serde_json::json!({
+            "insertId": "cloud-generated-id",
+            "timestamp": "2026-07-17T10:00:00Z",
+            "jsonPayload": payload,
+            "resource": {
+                "type": "k8s_container",
+                "labels": {
+                    "project_id": "project-a",
+                    "namespace_name": "prod",
+                    "pod_name": "lumen-0",
+                    "container_name": "lumen"
+                }
+            }
+        });
+        let event = normalize_structured_log(value, "unused").unwrap();
+        assert!(event.event_id.starts_with("gcp-log-"));
+        assert_ne!(event.event_id, "cloud-generated-id");
+        assert_eq!(
+            event.attributes["gcp.insert_id"].as_str(),
+            Some("cloud-generated-id")
+        );
     }
 }
 // HANDWRITE-END

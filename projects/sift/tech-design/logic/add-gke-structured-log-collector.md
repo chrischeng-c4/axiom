@@ -82,7 +82,7 @@ Contract invariants:
 - CRI discovery canonicalizes the configured root, never follows symlinks, accepts regular files whose relative path matches `<namespace>_<pod>_<uid>/<container>/<restart>.log...`, bounds every identifier, and keys files by Unix `device:inode`. Previously checkpointed identities drain before new identities; rename preserves identity/offset and same-path inode replacement starts from zero.
 - `collector.cri.checkpoint.v1` binds to canonical root and stores each identity's offset, line, last observed length, last relative path/workload fields, retirement flag, and cumulative counters. Missing identities with `offset < observed_len` generate exactly one `source_lost` quarantine item and increment `lost_bytes`/`lost_sources`; acknowledged EOF removal is loss-free.
 - Source enrichment sets `gcp.resource.type=k8s_container`, `gcp.project_id`, optional `k8s.cluster.name`/`cloud.region`, namespace, pod, uid, container, optional node, `collector.stream`, source identity, and byte offset. The producer payload and trace/span/request fields remain unchanged.
-- CRI calls the same `gcp::stable_id(project, resource_type, timestamp, jsonPayload)` used when Cloud Logging input lacks `insertId`. Equivalent dual delivery therefore has one journal event id and one `project:event_id` coexistence key; explicit external `insertId` stays authoritative.
+- CRI calls the same `gcp::stable_id(project, resource_type, timestamp, monitored_resource_labels, jsonPayload)` used for Cloud Logging entries whose payload schema is `axiom.service.log.v1`. Resource labels include project, cluster, location, namespace, pod, and container so equivalent dual delivery has one journal event id while separate workloads cannot collide; Cloud `insertId` is preserved as `gcp.insert_id`, while it remains authoritative for non-Axiom GCP logs.
 - Endpoint failure never calls `source.commit`. The runtime holds at most one batch; node log retention is the outage buffer, and disappearance before acknowledgment is surfaced by durable loss accounting on the next reconciliation.
 - `sift k8s collector render` renders a Sift-owned ServiceAccount and DaemonSet with `/var/log/pods` read-only, `/var/lib/sift-collector` read-write, Secret/ConfigMap-sourced endpoint/token/project/cluster/location, Downward API node name, disabled token automount, non-root UID/GID, seccomp RuntimeDefault, dropped capabilities, read-only root filesystem, and CPU/memory requests/limits. It creates no Role or ClusterRole because it performs no Kubernetes API calls.
 ## Changes
@@ -123,7 +123,7 @@ changes:
     anchor: stable_id
     section: logic
     impl_mode: hand-written
-    description: Share the existing insertId-free Cloud Logging identity with the CRI mapper.
+    description: Share the canonical Axiom service-log Cloud Logging identity with the CRI mapper while preserving external insertId metadata.
   - path: projects/sift/src/bin/sift.rs
     action: modify
     anchor: collect
@@ -168,7 +168,7 @@ id: gke-cri-collector-adapter-verification
 requirements:
   coexistence:
     id: R5
-    text: "Equivalent CRI and insertId-free Cloud Logging inputs converge on one event id and real-Sift dual delivery is duplicate-safe."
+    text: "Equivalent CRI and Cloud Logging inputs, including a Cloud-generated insertId, converge on one canonical Axiom service-log event id and real-Sift dual delivery is duplicate-safe."
     kind: compatibility
     risk: high
     verify: cargo test -p sift --test collector_cri

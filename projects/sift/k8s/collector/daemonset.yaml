@@ -1,3 +1,4 @@
+# HANDWRITE-BEGIN gap="missing-generator:logic:23a927bb" tracker="1675" reason="Define the zero-API-permission ServiceAccount and hardened node collector DaemonSet."
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -147,5 +148,4 @@ spec:
           hostPath:
             path: /var/lib/sift-collector
             type: DirectoryOrCreate
-
-<!-- marker: missing-generator:logic:23a927bb path: projects/sift/k8s/collector/daemonset.yaml reason: Define the zero-API-permission ServiceAccount and hardened node collector DaemonSet. -->
+# HANDWRITE-END

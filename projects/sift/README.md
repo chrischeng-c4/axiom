@@ -49,8 +49,9 @@ Sift does not own generic search, topic replay, or online broker delivery:
   correlations, evidence references, data gaps, and executable next queries.
 
 The first implementation should prioritize the Sift core API and storage path.
-The GKE DaemonSet collector remains a planned producer path, not the first
-runtime dependency.
+The Sift-owned GKE DaemonSet collector is an optional producer path over the
+same collector core; it is not a Sift startup dependency and applications stay
+coupled only to structured stdout.
 
 ## Capabilities
 
@@ -73,7 +74,7 @@ first-class domain roots.
 | Schema Governance | 1657 | implemented | partial | conformance | not_ready | OperationalEventV2/upcast/privacy, fixed projection-index allowlist, metric cardinality, and profile blob reference validation are verified; GenAI/evaluation schemas remain |
 | Materialized Observability Stores | 1660 | implemented | partial | conformance | not_ready | logging, trace, error, metric, audit/change, and OTel profile stores pass; GenAI/evaluation remains #1670 |
 | Query Tail And Replay | 1671 | implemented | partial | conformance | not_ready | durable replay plus authorized logging, trace, error, metric, audit/change, and profile analysis reads pass; unified cross-signal query and streaming tail remain #1671 |
-| GKE Event Collection | 1675 | planned | planned | conformance | not_ready | later DaemonSet producer reads CRI logs and emits deduplicated structured events |
+| GKE Event Collection | 1675 | implemented | verified | conformance | not_ready | Sift-owned DaemonSet, CRI partial/rotation/restart, metadata, outage/loss accounting, and coexistence fixtures pass locally; live GKE and EC approval remain |
 | Security Audit And Governance | 1668 | implemented | verified | conformance | ready | immutable hash-chained audit/change projections, retention with legal hold, scoped reads, controlled hashed exports, and rebuild equality pass |
 | Profile Observability | 1669 | implemented | verified | conformance | not_ready | current OTel JSON/protobuf dictionary profiles, blob-before-ack, missing/corrupt rejection, flamegraphs, top functions, diffs, trace correlation, retention, and rebuild equality pass; multi-node cold-restore proof remains #1676 |
 | AI And Agent Observability | 1670 | planned | planned | conformance | not_ready | GenAI observations, sessions, token/cost views, and typed evaluation scores |
@@ -93,7 +94,7 @@ first-class domain roots.
 | Security Hardening | 1616 | implemented | partial | conformance | not_ready | shared auth and deployment hardening exist; content governance and audit controls remain |
 | Competitor Feature Parity | 1676 | planned | planned | conformance | not_ready | explicit GCP Observability, OTel, and agent-observability comparison boundaries |
 | Competitor Performance | 1676 | planned | planned | conformance | not_ready | retained performance floors for ingest, query, tail, replay, rules, and rebuild |
-| GCP Cloud Logging Compatibility | 1664 | implemented | partial | conformance | not_ready | structured ingest plus dedicated jsonPayload/GKE log projection, full-text query, cursor/tail, retention, and raw rebuild pass; collector coexistence remains #1675 |
+| GCP Cloud Logging Compatibility | 1664 | implemented | partial | conformance | not_ready | structured ingest, log projection/query/rebuild, and canonical Axiom service-log coexistence with preserved Cloud insertId pass; broader compatibility remains under #1664 |
 
 ### Operational Event Ingest
 
@@ -393,27 +394,27 @@ ID: gke-event-collection
 Type: Service
 Root WI: 1675
 Status: confirmed
-Surfaces: K8s: later Sift collector DaemonSet for GKE nodes; File: container
+Surfaces: K8s: Sift collector DaemonSet for GKE nodes; File: container
 runtime CRI log files under the node log directory; HTTP: collector to Sift
 event ingest API.
-EC Dimensions: behavior: pending collector fixture gate - CRI stdout/stderr
-parse, JSON payload validation, GCP/GKE metadata enrichment, rotation handoff,
-and duplicate prevention.
+EC Dimensions: behavior: local collector fixture gate passes for CRI
+stdout/stderr parse, JSON validation, GCP/GKE metadata, rotation/restart,
+outage/loss accounting, and duplicate prevention; live-cluster EC remains.
 Required Verification: conformance, dogfood
 Promise:
 Collect structured application logs from GKE workloads without requiring
 application code changes, convert them into Sift operational events, preserve
 trace context when present, and reject or quarantine unstructured payloads.
 Gate Inventory:
-- pending: projects/sift/tests/collector_cri.rs
-- pending: projects/sift/tests/gke_metadata.rs
+- implemented: projects/sift/tests/collector_cri.rs
+- implemented: projects/sift/tests/deployment_cli.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| daemonset-collector-node-log-read | change | 1675 | planned | planned | dogfood | CRI rotation handoff and restart gate |
-| structured-json-payload-validation | change | 1675 | planned | planned | conformance | structured-only validation gate |
-| kubernetes-metadata-enrichment | change | 1675 | planned | planned | conformance | GKE resource enrichment gate |
-| cloud-logging-coexistence-duplicate-prevention | change | 1675 | planned | planned | dogfood | coexistence identity and outage-recovery gate |
+| daemonset-collector-node-log-read | change | 1675 | implemented | passing | dogfood | CRI partial, rename, inode replacement, restart, and checkpoint gate |
+| structured-json-payload-validation | change | 1675 | implemented | passing | conformance | shared `axiom.service.log.v1` decoder and quarantine gate |
+| kubernetes-metadata-enrichment | change | 1675 | implemented | passing | conformance | real query asserts GCP, cluster, namespace, pod, uid, container, node, and stream |
+| cloud-logging-coexistence-duplicate-prevention | change | 1675 | implemented | passing | dogfood | canonical fallback identity, outage recovery, and explicit loss gate |
 
 ### Security Audit And Governance
 

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:c01b686c" tracker="pending-tracker" reason="Prove framing, correlation, metadata, rotation/restart, dedupe, outage recovery, and loss against real Sift."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:c01b686c" tracker="1675" reason="Prove framing, correlation, metadata, rotation/restart, dedupe, outage recovery, and loss against real Sift."
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -84,9 +84,16 @@ async fn wait_ready(process: &mut SiftProcess, client: &reqwest::Client, base: &
             }
         }
         if let Some(status) = process.child.try_wait().expect("poll Sift child") {
-            panic!("Sift exited before readiness with {status}: {}", process.stderr_text());
+            panic!(
+                "Sift exited before readiness with {status}: {}",
+                process.stderr_text()
+            );
         }
-        assert!(Instant::now() < deadline, "Sift readiness timeout: {}", process.stderr_text());
+        assert!(
+            Instant::now() < deadline,
+            "Sift readiness timeout: {}",
+            process.stderr_text()
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -120,12 +127,7 @@ fn cri_line(stream: &str, tag: &str, content: &str) -> String {
     format!("2026-07-17T10:00:00.123456789Z {stream} {tag} {content}\n")
 }
 
-fn collector_command(
-    root: &Path,
-    checkpoint: &Path,
-    quarantine: &Path,
-    endpoint: &str,
-) -> Command {
+fn collector_command(root: &Path, checkpoint: &Path, quarantine: &Path, endpoint: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_sift"));
     command.args([
         "collect",
@@ -160,12 +162,7 @@ fn collector_command(
     command
 }
 
-fn run_collector(
-    root: &Path,
-    checkpoint: &Path,
-    quarantine: &Path,
-    endpoint: &str,
-) -> Output {
+fn run_collector(root: &Path, checkpoint: &Path, quarantine: &Path, endpoint: &str) -> Output {
     collector_command(root, checkpoint, quarantine, endpoint)
         .output()
         .expect("run real CRI collector")
@@ -192,7 +189,11 @@ async fn query_logs(client: &reqwest::Client, base: &str, trace_id: Option<&str>
         .send()
         .await
         .expect("query Sift logs");
-    assert!(response.status().is_success(), "query status {}", response.status());
+    assert!(
+        response.status().is_success(),
+        "query status {}",
+        response.status()
+    );
     response.json().await.expect("decode log page")
 }
 
@@ -200,10 +201,16 @@ async fn wait_for_count(client: &reqwest::Client, base: &str, count: usize) -> V
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let page = query_logs(client, base, None).await;
-        if page["records"].as_array().is_some_and(|rows| rows.len() == count) {
+        if page["records"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == count)
+        {
             return page;
         }
-        assert!(Instant::now() < deadline, "projection did not reach {count}: {page:#}");
+        assert!(
+            Instant::now() < deadline,
+            "projection did not reach {count}: {page:#}"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -245,8 +252,17 @@ async fn cri_partial_rotation_trace_metadata_and_cloud_coexistence() {
     let incomplete = successful_summary(run_collector(&root, &checkpoint, &quarantine, &base));
     assert_eq!(incomplete["accepted"], 0);
     assert_eq!(incomplete["lines"], 0);
-    let checkpoint_value: Value = serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
-    assert_eq!(checkpoint_value["files"].as_object().unwrap().values().next().unwrap()["offset"], 0);
+    let checkpoint_value: Value =
+        serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
+    assert_eq!(
+        checkpoint_value["files"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()["offset"],
+        0
+    );
 
     let mut file = OpenOptions::new().append(true).open(&log).unwrap();
     write!(file, "{}", cri_line("stdout", "F", &traced[split..])).unwrap();
@@ -269,9 +285,11 @@ async fn cri_partial_rotation_trace_metadata_and_cloud_coexistence() {
     assert_eq!(record["resource"]["k8s.pod.uid"], "1234-abcd");
     assert_eq!(record["resource"]["k8s.container.name"], "lumen");
     assert_eq!(record["resource"]["k8s.node.name"], "node-a");
-    assert_eq!(record["attributes"]["collector.stream"], "stdout");
+    assert_eq!(record["attributes"]["collector.stream"]["type"], "string");
+    assert_eq!(record["attributes"]["collector.stream"]["value"], "stdout");
 
     let gcp_duplicate = json!({
+        "insertId": "cloud-logging-generated-id",
         "timestamp": "2026-07-17T10:00:00Z",
         "severity": "INFO",
         "jsonPayload": service_event(
@@ -337,9 +355,18 @@ async fn cri_partial_rotation_trace_metadata_and_cloud_coexistence() {
         .iter()
         .map(|record| record["body_text"].as_str().unwrap())
         .collect::<Vec<_>>();
-    let old_index = bodies.iter().position(|body| *body == "old inode drained").unwrap();
-    let new_index = bodies.iter().position(|body| *body == "new inode started").unwrap();
-    assert!(old_index < new_index, "known rotated inode must drain first: {bodies:?}");
+    let old_index = bodies
+        .iter()
+        .position(|body| *body == "old inode drained")
+        .unwrap();
+    let new_index = bodies
+        .iter()
+        .position(|body| *body == "new inode started")
+        .unwrap();
+    assert!(
+        old_index < new_index,
+        "known rotated inode must drain first: {bodies:?}"
+    );
 
     let resumed = successful_summary(run_collector(&root, &checkpoint, &quarantine, &base));
     assert_eq!(resumed["accepted"], 0);
@@ -368,14 +395,23 @@ async fn endpoint_outage_retains_offset_and_recovery_drains_file() {
     let failed = run_collector(&root, &checkpoint, &quarantine, &base);
     assert!(!failed.status.success());
     let value: Value = serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
-    assert_eq!(value["files"].as_object().unwrap().values().next().unwrap()["offset"], 0);
+    assert_eq!(
+        value["files"].as_object().unwrap().values().next().unwrap()["offset"],
+        0
+    );
 
     let client = reqwest::Client::builder().http1_only().build().unwrap();
     let mut process = SiftProcess::spawn(port, &temp.path().join("sift-data"));
     wait_ready(&mut process, &client, &base).await;
     let recovered = successful_summary(run_collector(&root, &checkpoint, &quarantine, &base));
     assert_eq!(recovered["accepted"], 1);
-    assert_eq!(query_logs(&client, &base, Some(TRACE_ID)).await["records"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        query_logs(&client, &base, Some(TRACE_ID)).await["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -394,7 +430,9 @@ fn missing_observed_unread_source_is_durably_accounted() {
     .unwrap();
     std::fs::write(&log, cri_line("stdout", "F", &event)).unwrap();
     let unused = format!("http://127.0.0.1:{}", reserve_port());
-    assert!(!run_collector(&root, &checkpoint, &quarantine, &unused).status.success());
+    assert!(!run_collector(&root, &checkpoint, &quarantine, &unused)
+        .status
+        .success());
     let observed_len = std::fs::metadata(&log).unwrap().len();
     std::fs::remove_file(&log).unwrap();
 
@@ -408,5 +446,4 @@ fn missing_observed_unread_source_is_durably_accounted() {
     assert!(rejection.contains("observed uncommitted bytes"));
 }
 
-<!-- marker: missing-generator:unit-test:c01b686c path: projects/sift/tests/collector_cri.rs reason: Prove framing, correlation, metadata, rotation/restart, dedupe, outage recovery, and loss against real Sift. -->
 // HANDWRITE-END
