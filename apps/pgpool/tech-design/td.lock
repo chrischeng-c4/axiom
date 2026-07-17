@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T13:27:14.444060+00:00"
-digest = "sha256:b9094b3595ac473ed198d7bdb3521164dd85856199561a291c709ca4546ad127"
-source_digest = "sha256:b9094b3595ac473ed198d7bdb3521164dd85856199561a291c709ca4546ad127"
-ir_digest = "sha256:d675091accc38a04708ab81ec2ebc281f4cd7c84f36899a1c5437bccbfb5c5d0"
+generated_at = "2026-07-17T13:37:20.347492+00:00"
+digest = "sha256:6cd0b55b0bc565464dc363c6702455318cfb81b404935f1a84dabb9148f1f83b"
+source_digest = "sha256:6cd0b55b0bc565464dc363c6702455318cfb81b404935f1a84dabb9148f1f83b"
+ir_digest = "sha256:f9ff16131d065eaa95ce7441e98e6090f65e69d164691c251d73e7a88687d388"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -197,6 +197,12 @@ section_count = 3
 path = "logic/prestop-hook-uses-httpget-against-post-only-drain-drain-before-s.md"
 digest = "sha256:a7b9ddce6cab92b63641d1524ca3d3fc60bd98f62b5a2d85f93f6c59e033386b"
 ir_digest = "sha256:497b507db36cee472a7bd81285bf2dafcdfb0ba4fc37071a82a1de7dce1800ed"
+section_count = 3
+
+[[files]]
+path = "logic/reactor-never-re-parses-buffered-frames-on-mode-transition-pipel.md"
+digest = "sha256:d43c2106add6744746a1975d509cac7c4a8db45c1dbf44c640a8f586c2b8c014"
+ir_digest = "sha256:430f563a463d7d3dc0e36b0dba44ff263ec493a394e16c49974af1d66a0085b7"
 section_count = 3
 
 [[files]]
