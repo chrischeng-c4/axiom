@@ -4460,4 +4460,27 @@ changes:
       terminal via the emitted `aw goal wi <id>`, and the next `aw goal
       backlog` invocation then advances the drain.
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: unit-test
+    description: |
+      #1899 assertion repair: `self_hosting_policy_envelope_is_terminal_
+      and_has_no_root_retry` previously banned the substring `aw goal
+      capability` anywhere in the serialized policy envelope, which the
+      post-retirement policy prose legitimately names. The gate is now
+      structural: a recursive `has_command_key` walk asserts no `command`
+      key exists anywhere in the envelope JSON, so no executable root
+      retry can be handed back while prose may reference the goal forms.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/llm.rs"
+    action: modify
+    section: unit-test
+    description: |
+      #1899/#1816 audience-partition alignment: `agent_first_product_
+      contracts_reject_removed_architecture` no longer requires the
+      canonical product-responsibility phrases in README (human-first
+      doc; the canonical phrasing lives in CAPABILITIES.md and the TD
+      contracts). README stays in the removed-semantics negative loop so
+      it can never re-advertise retired architecture.
+    impl_mode: hand-written
 ```

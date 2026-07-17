@@ -503,17 +503,23 @@ mod tests {
 
         for (name, contract) in active_contracts {
             let normalized = contract.to_ascii_lowercase();
-            for required in [
-                "agent-first project-iteration cli",
-                "next-action guidance",
-                "durable artifact skeletons",
-                "strict format",
-                "code generation",
-            ] {
-                assert!(
-                    normalized.contains(required),
-                    "{name} must contain canonical product responsibility `{required}`",
-                );
+            // README is human-first under the META-doc audience partition
+            // (#1816): it must not advertise removed semantics, but the
+            // canonical responsibility phrasing lives in CAPABILITIES.md and
+            // the TD contracts, not in human prose.
+            if name != "README" {
+                for required in [
+                    "agent-first project-iteration cli",
+                    "next-action guidance",
+                    "durable artifact skeletons",
+                    "strict format",
+                    "code generation",
+                ] {
+                    assert!(
+                        normalized.contains(required),
+                        "{name} must contain canonical product responsibility `{required}`",
+                    );
+                }
             }
             for removed in [
                 "cue",
