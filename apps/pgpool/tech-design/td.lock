@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T06:36:54.361848+00:00"
-digest = "sha256:e7dd1f17ee33b08708f314ac47a67aaeb9bdcc9b658b9f5813598e65358e7c32"
-source_digest = "sha256:e7dd1f17ee33b08708f314ac47a67aaeb9bdcc9b658b9f5813598e65358e7c32"
-ir_digest = "sha256:211ad2b49dc4f2ee1486d58462cfa2d9bef31f6f2b25ad7930e8f89f6d999e1e"
+generated_at = "2026-07-17T06:40:49.528962+00:00"
+digest = "sha256:9e4a097bcee4c51c4fb715ea8b1014c05817be4dbe45def77f85845bc7259a61"
+source_digest = "sha256:9e4a097bcee4c51c4fb715ea8b1014c05817be4dbe45def77f85845bc7259a61"
+ir_digest = "sha256:d4248a6547520092cc28ee43ccbf1c920ca4730ae55688c0e87ed0393b1f3f84"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -27,8 +27,8 @@ section_count = 5
 
 [[files]]
 path = "logic/converge-deployment-provider-and-reconcile-planning-on-service-k.md"
-digest = "sha256:da22836972af84fd161fe98a7c5dcefdd407adc629273e8a856c5246ef282368"
-ir_digest = "sha256:231515c2e3d45e646a0317e6d29ed5ea902f6dbb9b4701438d8e863410d5655a"
+digest = "sha256:6e68ce562a5473aa9e4422c780c2e00cb2bdac681d589a99ee22c67513ff7b2f"
+ir_digest = "sha256:99b89885c167d2641e17beb2b99b893b4bff55a58f717af13c83819bd1516a99"
 section_count = 3
 
 [[files]]
