@@ -1,8 +1,24 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md#unit-test
 // <HANDWRITE gap="missing-generator:unit-test:pgpool-platform-discovery" tracker="#1570" reason="Real PostgreSQL discovery fixture generation is not available.">
 use pgpool::platform::{
-    discover_connection_facts, EndpointProvider, EndpointRole, ProviderAdvisory, RemoteEndpoint,
+    discover_connection_facts, discovery_tls_mode, DiscoveryTlsMode, EndpointProvider,
+    EndpointRole, ProviderAdvisory, RemoteEndpoint,
 };
+
+#[test]
+fn managed_provider_selects_tls_discovery() {
+    assert_eq!(
+        discovery_tls_mode(EndpointProvider::PlainPostgres),
+        DiscoveryTlsMode::NoTls
+    );
+    for provider in [EndpointProvider::CloudSql, EndpointProvider::AlloyDb] {
+        assert_eq!(
+            discovery_tls_mode(provider),
+            DiscoveryTlsMode::SystemRoots,
+            "managed provider {provider:?} must never take the plaintext discovery path"
+        );
+    }
+}
 
 #[tokio::test]
 async fn discovers_runtime_limit_from_real_postgres_when_available() {
@@ -17,6 +33,7 @@ async fn discovers_runtime_limit_from_real_postgres_when_available() {
         provider: EndpointProvider::PlainPostgres,
         role: EndpointRole::Primary,
         configured_ceiling: None,
+        tls_ca_pem: None,
     };
     let Ok(facts) = discover_connection_facts(endpoint, config, ProviderAdvisory::default()).await
     else {
@@ -45,6 +62,7 @@ async fn pgpool_backend_connections_are_not_foreign_usage() {
         provider: EndpointProvider::PlainPostgres,
         role: EndpointRole::Primary,
         configured_ceiling: None,
+        tls_ca_pem: None,
     };
     let Ok(baseline) = discover_connection_facts(
         endpoint.clone(),
@@ -69,9 +87,20 @@ async fn pgpool_backend_connections_are_not_foreign_usage() {
         let _ = connection.await;
     });
 
-    let facts = discover_connection_facts(endpoint, discovery_config, ProviderAdvisory::default())
+    let mut facts = baseline.clone();
+    for _ in 0..20 {
+        facts = discover_connection_facts(
+            endpoint.clone(),
+            discovery_config.clone(),
+            ProviderAdvisory::default(),
+        )
         .await
         .expect("discovery remains available while a pgpool backend is held");
+        if facts.runtime.pgpool_connections >= baseline.runtime.pgpool_connections + 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     assert!(
         facts.runtime.pgpool_connections >= baseline.runtime.pgpool_connections + 1,
         "held pgpool backend must be classified as pgpool usage: baseline={baseline:?}, after={facts:?}"

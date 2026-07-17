@@ -1,7 +1,10 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md#logic
 // <HANDWRITE gap="missing-generator:logic:pgpool-platform-discovery" tracker="#1570" reason="Live PostgreSQL system-view discovery needs an async adapter primitive.">
+use std::sync::Once;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -9,6 +12,21 @@ pub enum EndpointProvider {
     PlainPostgres,
     CloudSql,
     AlloyDb,
+}
+
+/// Transport selected only for control-plane connection discovery. Pgpool's
+/// PostgreSQL wire data plane remains independent of this policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiscoveryTlsMode {
+    NoTls,
+    SystemRoots,
+}
+
+pub const fn discovery_tls_mode(provider: EndpointProvider) -> DiscoveryTlsMode {
+    match provider {
+        EndpointProvider::PlainPostgres => DiscoveryTlsMode::NoTls,
+        EndpointProvider::CloudSql | EndpointProvider::AlloyDb => DiscoveryTlsMode::SystemRoots,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +42,9 @@ pub struct RemoteEndpoint {
     pub provider: EndpointProvider,
     pub role: EndpointRole,
     pub configured_ceiling: Option<u32>,
+    /// Optional PEM root bundle loaded from an operator-managed Secret for a
+    /// managed PostgreSQL endpoint with a private CA.
+    pub tls_ca_pem: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +79,8 @@ pub struct ConnectionFacts {
 
 #[derive(Debug, Error)]
 pub enum ConnectionDiscoveryError {
+    #[error("failed to configure discovery TLS: {0}")]
+    TlsConfiguration(String),
     #[error("failed to connect to remote PostgreSQL endpoint: {0}")]
     Connect(#[source] tokio_postgres::Error),
     #[error("remote PostgreSQL discovery query failed: {0}")]
@@ -100,15 +123,34 @@ pub async fn discover_connection_facts(
     postgres: tokio_postgres::Config,
     advisory: ProviderAdvisory,
 ) -> Result<ConnectionFacts, ConnectionDiscoveryError> {
-    let (client, connection) = postgres
-        .connect(tokio_postgres::NoTls)
-        .await
-        .map_err(ConnectionDiscoveryError::Connect)?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::warn!(%error, "remote PostgreSQL discovery connection ended");
+    let client = match discovery_tls_mode(endpoint.provider) {
+        DiscoveryTlsMode::NoTls => {
+            let (client, connection) = postgres
+                .connect(tokio_postgres::NoTls)
+                .await
+                .map_err(ConnectionDiscoveryError::Connect)?;
+            tokio::spawn(async move {
+                if let Err(error) = connection.await {
+                    tracing::warn!(%error, "remote PostgreSQL discovery connection ended");
+                }
+            });
+            client
         }
-    });
+        DiscoveryTlsMode::SystemRoots => {
+            let tls =
+                MakeRustlsConnect::new(discovery_rustls_config(endpoint.tls_ca_pem.as_deref())?);
+            let (client, connection) = postgres
+                .connect(tls)
+                .await
+                .map_err(ConnectionDiscoveryError::Connect)?;
+            tokio::spawn(async move {
+                if let Err(error) = connection.await {
+                    tracing::warn!(%error, "remote PostgreSQL TLS discovery connection ended");
+                }
+            });
+            client
+        }
+    };
 
     let row = client
         .query_one(
@@ -131,9 +173,9 @@ pub async fn discover_connection_facts(
         .filter(|value| *value > 0)
         .ok_or_else(|| ConnectionDiscoveryError::InvalidMaxConnections(runtime_max_raw))?;
     let superuser_reserved_raw: String = row.get("superuser_reserved_connections");
-    let superuser_reserved_connections = superuser_reserved_raw
-        .parse::<u32>()
-        .map_err(|_| ConnectionDiscoveryError::InvalidSuperuserReservedConnections(superuser_reserved_raw))?;
+    let superuser_reserved_connections = superuser_reserved_raw.parse::<u32>().map_err(|_| {
+        ConnectionDiscoveryError::InvalidSuperuserReservedConnections(superuser_reserved_raw)
+    })?;
     let total_connections = count_to_u32(row.get("total_connections"))?;
     let pgpool_connections = count_to_u32(row.get("pgpool_connections"))?;
     let runtime = RuntimeConnectionFacts {
@@ -158,6 +200,50 @@ pub async fn discover_connection_facts(
     })
 }
 // </HANDWRITE>
+
+fn discovery_rustls_config(
+    tls_ca_pem: Option<&[u8]>,
+) -> Result<rustls::ClientConfig, ConnectionDiscoveryError> {
+    static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
+    INSTALL_CRYPTO_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+    let certificates = rustls_native_certs::load_native_certs();
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in certificates.certs {
+        roots.add(certificate).map_err(|error| {
+            ConnectionDiscoveryError::TlsConfiguration(format!("add system root: {error}"))
+        })?;
+    }
+    if let Some(pem) = tls_ca_pem {
+        let mut reader = std::io::Cursor::new(pem);
+        let mut added = 0;
+        for certificate in rustls_pemfile::certs(&mut reader) {
+            let certificate = certificate.map_err(|error| {
+                ConnectionDiscoveryError::TlsConfiguration(format!(
+                    "read configured CA PEM: {error}"
+                ))
+            })?;
+            roots.add(certificate).map_err(|error| {
+                ConnectionDiscoveryError::TlsConfiguration(format!("add configured CA: {error}"))
+            })?;
+            added += 1;
+        }
+        if added == 0 {
+            return Err(ConnectionDiscoveryError::TlsConfiguration(
+                "configured TLS CA Secret contains no PEM certificates".into(),
+            ));
+        }
+    }
+    if roots.is_empty() {
+        return Err(ConnectionDiscoveryError::TlsConfiguration(
+            "no system trust roots available for managed PostgreSQL discovery".into(),
+        ));
+    }
+    Ok(rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth())
+}
 
 fn count_to_u32(value: i64) -> Result<u32, ConnectionDiscoveryError> {
     value
@@ -184,12 +270,14 @@ mod tests {
             provider: EndpointProvider::AlloyDb,
             role: EndpointRole::Primary,
             configured_ceiling: None,
+            tls_ca_pem: None,
         };
         let read_pool = RemoteEndpoint {
             name: "alloy-read-pool".into(),
             provider: EndpointProvider::AlloyDb,
             role: EndpointRole::ReadPool,
             configured_ceiling: None,
+            tls_ca_pem: None,
         };
         assert_ne!(primary, read_pool);
         assert_eq!(primary.provider, EndpointProvider::AlloyDb);

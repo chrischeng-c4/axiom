@@ -76,6 +76,7 @@ fn crd_is_namespaced_and_carries_endpoint_budget_status() {
         "endpoints:",
         "provider:",
         "configuredCeiling:",
+        "tlsCaSecretRef:",
         "effectiveLimit:",
         "blockedScaleReason:",
         "backendActive:",

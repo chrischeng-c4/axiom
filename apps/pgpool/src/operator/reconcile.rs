@@ -184,12 +184,37 @@ async fn discover_endpoint(
             .with_context(|| format!("Secret {}/{} is not UTF-8", reference.name, reference.key))?;
         postgres.password(password);
     }
+    let tls_ca_pem = if let Some(reference) = &endpoint.tls_ca_secret_ref {
+        let secrets: Api<Secret> = Api::namespaced(client.clone(), namespace);
+        let secret = secrets
+            .get(&reference.name)
+            .await
+            .with_context(|| format!("read TLS CA Secret {}", reference.name))?;
+        Some(
+            secret
+                .data
+                .as_ref()
+                .and_then(|data| data.get(&reference.key))
+                .ok_or_else(|| {
+                    anyhow!(
+                        "TLS CA Secret {}/{} is missing",
+                        reference.name,
+                        reference.key
+                    )
+                })?
+                .0
+                .clone(),
+        )
+    } else {
+        None
+    };
     let facts = discover_connection_facts(
         RemoteEndpoint {
             name: endpoint.name.clone(),
             provider: provider(endpoint.provider),
             role: role(endpoint.role),
             configured_ceiling: endpoint.configured_ceiling,
+            tls_ca_pem,
         },
         postgres,
         ProviderAdvisory::default(),

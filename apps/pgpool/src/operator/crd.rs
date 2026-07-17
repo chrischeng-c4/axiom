@@ -42,6 +42,9 @@ pub struct PgpoolEndpointBudgetSpec {
     pub user: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_secret_ref: Option<PgpoolSecretKeyRef>,
+    /// Optional PEM CA bundle for the control-plane discovery TLS client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_ca_secret_ref: Option<PgpoolSecretKeyRef>,
     #[serde(default)]
     pub reserve: u32,
     #[serde(default)]
@@ -83,6 +86,7 @@ impl Default for PgpoolEndpointBudgetSpec {
             database: None,
             user: None,
             password_secret_ref: None,
+            tls_ca_secret_ref: None,
             reserve: 10,
             safety_headroom: 10,
             configured_ceiling: None,
