@@ -2808,7 +2808,7 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             format!("aw capability check --project {} --verify", report.project)
         } else {
             format!(
-                "aw capability run --project {} --non-interactive --max-ticks 1",
+                "aw goal capability --project {} --non-interactive --max-ticks 1",
                 report.project
             )
         });
@@ -2852,7 +2852,7 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         return Some(format!("aw health --project {} full", report.project));
     }
     Some(format!(
-        "aw capability run --project {} --non-interactive --max-ticks 1",
+        "aw goal capability --project {} --non-interactive --max-ticks 1",
         report.project
     ))
 }

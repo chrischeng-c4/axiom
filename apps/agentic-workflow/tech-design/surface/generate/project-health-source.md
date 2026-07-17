@@ -2351,6 +2351,10 @@ fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
             // project's terminal EC gate accepts (`human` | `agent` |
             // `either`), independent of the axis's own advisory/hard status.
             "review_backing": report.ec.review_backing,
+            // #1828: this project's review-timing policy and any
+            // outstanding pending-review queue entry (advisory in
+            // `deferred` mode, a hard blocker in `blocking` mode once
+            // `--verify-ec` runs).
             "review_mode": report.ec.review_mode,
             "pending_review": report.ec.pending_review,
         });
@@ -2881,7 +2885,7 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             format!("aw capability check --project {} --verify", report.project)
         } else {
             format!(
-                "aw capability run --project {} --non-interactive --max-ticks 1",
+                "aw goal capability --project {} --non-interactive --max-ticks 1",
                 report.project
             )
         });
@@ -2925,7 +2929,7 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         return Some(format!("aw health --project {} full", report.project));
     }
     Some(format!(
-        "aw capability run --project {} --non-interactive --max-ticks 1",
+        "aw goal capability --project {} --non-interactive --max-ticks 1",
         report.project
     ))
 }
@@ -4955,6 +4959,44 @@ mod tests {
     }
 
     #[test]
+    fn project_health_ec_axis_is_hard_and_green_once_a_command_is_configured_and_passes() {
+        // #1280: self-AW's EC gate flips from advisory to hard the moment a
+        // real command surface exists and passes verification
+        // (`command_count > 0`) — exactly the fixture-loop inventory case
+        // this issue registers (`aw.toml`'s
+        // `td-cb-lifecycle-automation-self-ec-fixture-loop-gate`).
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.ec = ec_report_for(
+            "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
+            ProjectTestCommandStatus::Passed,
+        );
+
+        let axis = project_health_ec_axis(&report);
+
+        assert_eq!(axis["status"], "passed");
+        assert_eq!(axis["command_count"], 1);
+        assert_eq!(axis["passed_commands"], 1);
+    }
+
+    #[test]
+    fn project_health_ec_axis_is_hard_and_red_when_the_configured_runner_fails() {
+        // #1280 AC3: a failing fixture-loop command must surface as a hard
+        // "failed" gate (a production blocker), not get silently downgraded
+        // to advisory just because this is aw's own self-health.
+        let mut report = ready_project_health_report("agentic-workflow");
+        report.ec = ec_report_for(
+            "td-cb-lifecycle-automation-self-ec-fixture-loop-gate",
+            ProjectTestCommandStatus::Failed,
+        );
+
+        let axis = project_health_ec_axis(&report);
+
+        assert_eq!(axis["status"], "failed");
+        assert_eq!(axis["command_count"], 1);
+        assert_eq!(axis["passed_commands"], 0);
+    }
+
+    #[test]
     fn claim_closure_closes_when_required_edges_are_present() {
         let document = claim_document(true);
         let case = ec_case("behavior");
@@ -5600,4 +5642,14 @@ changes:
       in self-hosting compact/full health envelopes. When capability readiness
       is incomplete for Agentic Workflow itself, the next command is focused
       capability verification rather than the forbidden project root runner.
+  - path: apps/agentic-workflow/src/cli/project.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899: `project_health_next_command`'s two capability-remediation
+      `next.command` literals switch from `aw capability run --project {}
+      --non-interactive --max-ticks 1` to `aw goal capability --project {}
+      --non-interactive --max-ticks 1`, following the retirement of `aw
+      capability run` into the unified `aw goal` loop verb.
 ```

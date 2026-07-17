@@ -790,7 +790,7 @@ async fn fixture_loop_drives_wi_run_to_workflow_complete() {
     let extra_envs: &[(&str, &str)] = &[(issues::AW_FIXTURE_LOCAL_BACKEND_ENV, "1")];
 
     // Hop 1: open WI -> internal fill/code-check chain -> terminal closed WI.
-    let first = follow_envelopes(&aw_bin, root, &["wi", "run", slug], extra_envs)
+    let first = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
         .unwrap_or_else(|failure| panic!("{failure}"));
     let first_last = first.last().expect("at least one hop");
     assert_eq!(
@@ -810,7 +810,7 @@ async fn fixture_loop_drives_wi_run_to_workflow_complete() {
 
     // Hop 2: closed WI -> closed parent epic -> capability rollup ->
     // completion.workflow_complete == true.
-    let second = follow_envelopes(&aw_bin, root, &["wi", "run", slug], extra_envs)
+    let second = follow_envelopes(&aw_bin, root, &["goal", "wi", slug], extra_envs)
         .unwrap_or_else(|failure| panic!("{failure}"));
     assert!(
         second.len() >= 3,

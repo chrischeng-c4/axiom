@@ -4362,4 +4362,51 @@ changes:
       `FormatMigrationRequired` arm (dispatch to
       `aw capability run --project <name> --non-interactive`).
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1899: `wi_run_command`, `capability_run_command`, and
+      `project_capability_rollup_command` -- the shared envelope
+      command-string builders every `next`/`resume_command`/`agent_prompt`
+      site funnels through -- now emit `aw goal wi <id>`, `aw goal
+      capability <cap-id> --project <p>`, and `aw goal capability --project
+      <p> --non-interactive --max-ticks 1` respectively, in place of the
+      previous `aw wi run <id>` / `aw capability run [<cap-id>] --project
+      <p>` forms. `run_wi_root`/`run_capability_root` themselves are
+      unchanged (`aw goal wi`/`aw goal capability` in `goal.rs` call them
+      directly); only the emitted command strings moved. Adds
+      `emit_retired_verb_redirect(retired, root_kind, root_id, replacement,
+      print)`, a shared helper the retired `aw capability run` clap leaf now
+      calls: it prints a `status: "error"`, `action: "retired_verb"`
+      `aw.cli.v1` envelope naming the exact `aw goal` replacement command in
+      `next.command`, then returns an error, so the old verb stays
+      registered (never a bare clap "unknown subcommand") but never
+      re-enters the run engine. `aw wi run <id>` is NOT retired by this
+      change: its clap-parsing home, `src/cli/issues.rs`, carries unrelated
+      in-flight edits that are out of scope here, so it remains a
+      fully-functional unretired alias that still calls straight into
+      `run_wi_root` (only the *emitted* `aw goal wi` command strings favor
+      the new form; the old `aw wi run` clap leaf keeps working exactly as
+      before).
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1899: `CapabilityCommand::Run` no longer runs the
+      project-wide/single-capability tick loop directly -- it computes the
+      `aw goal capability ...` replacement command from the same
+      project/capability-id inputs and calls the shared
+      `run::emit_retired_verb_redirect` helper. `run_capability_tick`
+      becomes `pub(crate)` so `goal.rs`'s `run_goal_capability` (the new
+      `aw goal capability --project <p>` project-wide rollup path) can call
+      it directly; the redundant `run_capability_root_tick` thin wrapper
+      (superseded by `goal.rs` calling `crate::cli::run::run_capability_root`
+      directly) is deleted. Every literal `aw capability run ...` string
+      previously embedded in agent-facing prose (capability report
+      remediation hints, HITL `resume_command` builders, the
+      `--non-interactive` bail message) is replaced with the equivalent `aw
+      goal capability ...` form.
+    impl_mode: hand-written
 ```

@@ -23,10 +23,11 @@ Public API manifest for `apps/agentic-workflow/src/cli/goal.rs` generated from A
 |------|--------|------|------------|------|-----------|
 | `GoalArgs` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 54 |  |
 | `GoalCommand` | apps/agentic-workflow/src/cli/goal.rs | enum | pub | 60 |  |
-| `GoalSetArgs` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 74 |  |
-| `GoalIdArgs` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 94 |  |
-| `GoalState` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 101 |  |
-| `run` | apps/agentic-workflow/src/cli/goal.rs | function | pub | 139 | run(args: GoalArgs) -> Result<()> |
+| `GoalCapabilityArgs` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 86 |  |
+| `GoalSetArgs` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 127 |  |
+| `GoalIdArgs` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 147 |  |
+| `GoalState` | apps/agentic-workflow/src/cli/goal.rs | struct | pub | 154 |  |
+| `run` | apps/agentic-workflow/src/cli/goal.rs | function | pub | 198 | run(args: GoalArgs) -> Result<()> |
 
 ## Source
 <!-- type: source lang: rust -->
@@ -104,6 +105,59 @@ pub enum GoalCommand {
     List,
     /// Discard a goal's recorded state.
     Clear(GoalIdArgs),
+    /// Drive one work item to terminal (#1899: unified re-home of the
+    /// retired `aw wi run <id>`).
+    Wi(crate::cli::issues::WiRunArgs),
+    /// Drive a capability work-root, or the whole project end to end when
+    /// no capability id is given (#1899: unified re-home of the retired
+    /// `aw capability run [<cap-id>] --project <p>`).
+    Capability(GoalCapabilityArgs),
+}
+
+/// `aw goal capability [<capability-id>] --project <project>` args (#1899).
+/// Mirrors the field subset of `crate::cli::capability::CapabilityRunArgs`
+/// that the project-wide rollup engine consumes, plus a mandatory
+/// `--project` since `aw goal` has no project-scoped parent command to
+/// inherit it from.
+#[derive(Debug, Args, Clone)]
+pub struct GoalCapabilityArgs {
+    /// Capability id to drive via the shared root-driven workflow runner.
+    /// Omit to run the project-wide capability completion loop end to end.
+    pub capability_id: Option<String>,
+
+    /// Project to drive.
+    #[arg(long)]
+    pub project: String,
+
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+
+    /// Require bounded, non-interactive execution. Used by the
+    /// project-wide rollup form (no capability id); ignored for a single
+    /// capability id, which is always one bounded tick.
+    #[arg(long)]
+    pub non_interactive: bool,
+
+    /// Maximum bounded ticks to run (project-wide rollup form only).
+    #[arg(long, default_value_t = 1)]
+    pub max_ticks: usize,
+
+    /// Include issue inventory when computing next action routing.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+
+    /// Skip issue inventory for README/TD-only bounded ticks.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
+
+    /// Emit human-readable text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -172,14 +226,83 @@ enum CheckStatus {
 }
 
 /// Run `aw goal <command>`.
-pub fn run(args: GoalArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
+///
+/// The lifecycle root types (`Wi`, `Capability`) don't touch the ad-hoc
+/// goal-state engine below at all -- they delegate straight to the shared
+/// root-driven workflow runner (`crate::cli::run` / `crate::cli::capability`)
+/// that used to be reached via the now-retired `aw wi run` / `aw capability
+/// run` verbs (#1899). Async only because those two delegate targets are.
+pub async fn run(args: GoalArgs) -> Result<()> {
     match args.command {
-        GoalCommand::Set(set_args) => run_set(&project_root, set_args),
-        GoalCommand::Check(id_args) => run_check(&project_root, id_args),
-        GoalCommand::Show(id_args) => run_show(&project_root, id_args),
-        GoalCommand::List => run_list(&project_root),
-        GoalCommand::Clear(id_args) => run_clear(&project_root, id_args),
+        GoalCommand::Set(set_args) => {
+            let project_root = crate::find_project_root()?;
+            run_set(&project_root, set_args)
+        }
+        GoalCommand::Check(id_args) => {
+            let project_root = crate::find_project_root()?;
+            run_check(&project_root, id_args)
+        }
+        GoalCommand::Show(id_args) => {
+            let project_root = crate::find_project_root()?;
+            run_show(&project_root, id_args)
+        }
+        GoalCommand::List => {
+            let project_root = crate::find_project_root()?;
+            run_list(&project_root)
+        }
+        GoalCommand::Clear(id_args) => {
+            let project_root = crate::find_project_root()?;
+            run_clear(&project_root, id_args)
+        }
+        GoalCommand::Wi(wi_args) => run_goal_wi(wi_args).await,
+        GoalCommand::Capability(cap_args) => run_goal_capability(cap_args).await,
+    }
+}
+
+/// `aw goal wi <id>` -- thin re-home of the retired `aw wi run <id>`
+/// (#1899 R1/R3): identical envelope semantics, same shared root loop.
+async fn run_goal_wi(args: crate::cli::issues::WiRunArgs) -> Result<()> {
+    crate::cli::run::run_wi_root(
+        &args.id,
+        crate::cli::run::RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: args.goal,
+        },
+    )
+    .await
+}
+
+/// `aw goal capability [<capability-id>] --project <project>` -- thin
+/// re-home of the retired `aw capability run [<cap-id>] --project <p>`
+/// (#1899 R1/R3): a capability id drives that one work-root through the
+/// shared root loop; no id drives the project-wide bounded-tick rollup
+/// (the same engine `aw capability run --project <p> --non-interactive`
+/// used).
+async fn run_goal_capability(args: GoalCapabilityArgs) -> Result<()> {
+    let print = crate::cli::run::RunPrintOptions {
+        human: args.human,
+        pretty: args.pretty,
+        goal: false,
+    };
+    match args.capability_id.as_deref() {
+        Some(capability_id) => {
+            crate::cli::run::run_capability_root(&args.project, capability_id, print).await
+        }
+        None => {
+            let run_args = crate::cli::capability::CapabilityRunArgs {
+                capability_id: None,
+                cap_path: args.cap_path.clone(),
+                non_interactive: args.non_interactive,
+                max_ticks: args.max_ticks,
+                include_issue_inventory: args.include_issue_inventory,
+                skip_issue_inventory: args.skip_issue_inventory,
+                json: false,
+                human: args.human,
+                pretty: args.pretty,
+            };
+            crate::cli::capability::run_capability_tick(&args.project, run_args).await
+        }
     }
 }
 
@@ -950,4 +1073,27 @@ changes:
       commands only, never LLM-judged/prose-only conditions, and this does
       not replace `aw wi run`/`aw capability run` completion semantics or
       cross session/workspace boundaries.
+  - path: apps/agentic-workflow/src/cli/goal.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899: `aw goal` becomes the single unified loop verb. Two new
+      `GoalCommand` variants -- `Wi(crate::cli::issues::WiRunArgs)` and
+      `Capability(GoalCapabilityArgs)` -- re-home the retired `aw wi run
+      <id>` and `aw capability run [<cap-id>] --project <p>` lifecycle root
+      types as `aw goal wi <id>` / `aw goal capability [<cap-id>] --project
+      <p>`. `GoalCapabilityArgs` mirrors the field subset of
+      `capability::CapabilityRunArgs` the shared engine needs plus a
+      mandatory `--project` (no parent command to inherit it from). `run`
+      became `pub async fn` and dispatches the two new variants to
+      `run_goal_wi`/`run_goal_capability`, which delegate straight into the
+      same shared root-driven workflow runner
+      (`crate::cli::run::run_wi_root`, `crate::cli::run::run_capability_root`,
+      `crate::cli::capability::run_capability_tick`) the retired verbs used
+      -- envelope semantics (aw.cli.v1 schema, `completion.workflow_complete`,
+      `requires_hitl`, `hitl_question`, progress JSONL, re-run-same-root
+      convention) are unchanged, this is a re-home not a rewrite. The
+      pre-existing `set`/`check`/`show`/`list`/`clear` ad-hoc leaves and
+      their engine are untouched.
 ```

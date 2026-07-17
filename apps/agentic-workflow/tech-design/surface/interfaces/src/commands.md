@@ -69,7 +69,9 @@ pub enum Commands {
     /// Agent-runtime direct edit/create guard for Codex, Claude Code, and AGY.
     Guard(guard::GuardArgs),
 
-    /// Ad-hoc CLI-owned verifiable-condition loop for bounded work outside the WI lifecycle.
+    /// Unified loop verb: lifecycle root types (`wi`, `capability`) plus the
+    /// ad-hoc CLI-owned verifiable-condition loop for bounded work outside
+    /// the WI lifecycle (`set`/`check`/`show`/`list`/`clear`).
     Goal(goal::GoalArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
@@ -127,7 +129,7 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
             guard::run(args).await?;
         }
         Commands::Goal(args) => {
-            goal::run(args)?;
+            goal::run(args).await?;
         }
         Commands::Conf(args) => {
             conf::run(args)?;
@@ -240,4 +242,17 @@ changes:
       variant (support CLI, next to `Guard`) plus its synchronous
       `goal::run(args)?` dispatch arm for the new `aw goal` ad-hoc
       verifiable-condition-loop verb family.
+  - path: apps/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899: `aw goal` becomes the unified loop verb, gaining lifecycle
+      root types (`aw goal wi <id>`, `aw goal capability [<cap-id>]
+      --project <p>`) that re-home `aw wi run` / `aw capability run` while
+      keeping the ad-hoc `set`/`check`/`show`/`list`/`clear` leaves.
+      `goal::run` became async (it now delegates lifecycle root types into
+      the shared runner engine), so the `Commands::Goal` dispatch arm awaits
+      it: `goal::run(args).await?;`. The doc comment on the `Goal` variant
+      is updated to describe both halves of the unified verb.
 ```

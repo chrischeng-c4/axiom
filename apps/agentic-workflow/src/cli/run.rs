@@ -1,6 +1,12 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 // CODEGEN-BEGIN
-//! `aw wi run` / `aw capability run` -- root-driven workflow runner envelope.
+//! `aw goal wi` / `aw goal capability` -- root-driven workflow runner envelope
+//! (#1899: re-homed under `aw goal`; the retired `aw capability run` clap
+//! path still parses and redirects here via an error envelope. `aw wi run`
+//! remains a fully-functional unretired alias -- its clap-parsing home,
+//! `src/cli/issues.rs`, carries unrelated in-flight edits that are out of
+//! scope for this change, so it still calls straight into the run engine
+//! rather than redirecting).
 
 #[cfg(test)]
 use crate::cli::capability::HitlInteractionKind;
@@ -355,7 +361,7 @@ fn self_hosting_policy_envelope(
             "Verify the resulting policy and capability evidence with aw health --project agentic-workflow.",
         ],
         agent_prompt: format!(
-            "Do not invoke `aw wi run` or `aw capability run` for `{project}`. Use sanctioned direct self-hosting work, then verify focused artifacts and health."
+            "Do not invoke `aw goal wi` or `aw goal capability` for `{project}`. Use sanctioned direct self-hosting work, then verify focused artifacts and health."
         ),
     }
 }
@@ -382,8 +388,76 @@ pub(crate) fn emit_self_hosting_policy_error(
     Ok(())
 }
 
-/// Print options shared by every thin runner shell (`aw wi run`,
-/// `aw capability run <id>`). Mirrors the human/pretty/goal subset that
+/// #1899 R3: `aw wi run <id>` / `aw capability run [<cap-id>] --project
+/// <project>` are retired -- `aw goal` is the single unified loop verb.
+/// Their clap paths still parse (so a stale agent gets a structured
+/// redirect envelope instead of a bare clap usage error) but the handler
+/// never re-enters the run engine; it only ever emits this envelope naming
+/// the exact `aw goal ...` replacement.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RetiredVerbEnvelope {
+    schema_version: &'static str,
+    status: &'static str,
+    action: &'static str,
+    message: String,
+    root: WorkflowNode,
+    completion: CanonicalWorkflowCompletion,
+    next: CanonicalWorkflowNext,
+    requires_hitl: bool,
+}
+
+/// Emit the retired-verb redirect envelope and fail the process (non-zero
+/// exit): `retired` is the verb string as typed (e.g. `"aw wi run"`),
+/// `replacement` is the exact `aw goal ...` command the agent should run
+/// instead.
+/// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub(crate) fn emit_retired_verb_redirect(
+    retired: &str,
+    root_kind: &str,
+    root_id: &str,
+    replacement: &str,
+    print: RunPrintOptions,
+) -> Result<()> {
+    let envelope = RetiredVerbEnvelope {
+        schema_version: "aw.cli.v1",
+        status: "error",
+        action: "retired_verb",
+        message: format!(
+            "`{retired}` is retired: `aw goal` is now the single unified loop verb. Run `{replacement}` instead."
+        ),
+        root: WorkflowNode {
+            kind: root_kind.to_string(),
+            id: root_id.to_string(),
+        },
+        completion: CanonicalWorkflowCompletion {
+            root_complete: false,
+            workflow_complete: false,
+            requires_hitl: false,
+            criteria: Vec::new(),
+            missing: vec![format!("`{retired}` no longer drives the root loop (#1899)")],
+        },
+        next: CanonicalWorkflowNext {
+            kind: "run_command".to_string(),
+            command: Some(replacement.to_string()),
+            reason: format!(
+                "`{retired}` is retired; `aw goal` unifies every root-driven loop (#1899)"
+            ),
+            payload_path: None,
+        },
+        requires_hitl: false,
+    };
+    if print.human {
+        println!("`{retired}` is retired. Run `{replacement}` instead.");
+    } else if print.pretty {
+        println!("{}", serde_json::to_string_pretty(&envelope)?);
+    } else {
+        println!("{}", serde_json::to_string(&envelope)?);
+    }
+    anyhow::bail!("`{retired}` is retired; run `{replacement}` instead")
+}
+
+/// Print options shared by every thin runner shell (`aw goal wi`,
+/// `aw goal capability <id>`). Mirrors the human/pretty/goal subset that
 /// actually affects output shape.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Copy, Default)]
@@ -394,8 +468,8 @@ pub(crate) struct RunPrintOptions {
 }
 
 /// One deterministic tick over a resolved workflow root -- the single
-/// implementation shared by `aw wi run <id>` and
-/// `aw capability run <capability-id>`. No caller duplicates this
+/// implementation shared by `aw goal wi <id>` and
+/// `aw goal capability <capability-id>`. No caller duplicates this
 /// dispatch; they only resolve a root and forward here.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 async fn run_resolved_root(root: ResolvedRunRoot, print: RunPrintOptions) -> Result<()> {
@@ -448,10 +522,12 @@ async fn run_resolved_root(root: ResolvedRunRoot, print: RunPrintOptions) -> Res
     Ok(())
 }
 
-/// Command string `aw wi run <id>` would print for the given work-item id.
+/// Command string `aw goal wi <id>` would print for the given work-item id
+/// (#1899: canonical goal-namespace form; retired `aw wi run <id>` name
+/// still parses but only redirects here).
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn wi_run_command(id: &str) -> String {
-    format!("aw wi run {id}")
+    format!("aw goal wi {id}")
 }
 
 /// The first mutating act for a bounded WI without an EC verifier. EC owns the
@@ -468,7 +544,7 @@ pub(crate) fn ec_verify_command(project: &str, wi: &str) -> String {
     format!("aw ec verify --project {project} --wi {wi}")
 }
 
-/// Thin shell: `aw wi run <id>` -- drive one work item's next lifecycle tick
+/// Thin shell: `aw goal wi <id>` -- drive one work item's next lifecycle tick
 /// via the shared root loop.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> {
@@ -489,14 +565,16 @@ pub(crate) async fn run_wi_root(id: &str, print: RunPrintOptions) -> Result<()> 
     run_resolved_root(root, print).await
 }
 
-/// Command string `aw capability run <capability-id> --project <project>`
-/// would print.
+/// Command string `aw goal capability <capability-id> --project <project>`
+/// would print (#1899: canonical goal-namespace form; retired `aw
+/// capability run <capability-id> --project <project>` name still parses
+/// but only redirects here).
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) fn capability_run_command(project: &str, capability_id: &str) -> String {
-    format!("aw capability run {capability_id} --project {project}")
+    format!("aw goal capability {capability_id} --project {project}")
 }
 
-/// Thin shell: `aw capability run <capability-id>` -- drive that
+/// Thin shell: `aw goal capability <capability-id>` -- drive that
 /// capability's next work-root tick via the shared root loop.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub(crate) async fn run_capability_root(
@@ -522,7 +600,7 @@ pub(crate) fn project_capability_rollup_command(project: &str) -> String {
     if is_self_hosting_project(project) {
         return format!("aw health --project {project} claims");
     }
-    format!("aw capability run --project {project} --non-interactive --max-ticks 1")
+    format!("aw goal capability --project {project} --non-interactive --max-ticks 1")
 }
 
 struct RunProgressSink {
@@ -1166,7 +1244,7 @@ fn open_epic_envelope(issue: &Issue) -> WorkflowEnvelope {
             format!("aw wi show {issue_id}"),
             format!(
                 "open epic `{}` has no recognized project identity label; add one of \
-                 `project:<name>`, `app:<name>`, or `lib:<name>`, then re-run `aw wi run {issue_id}`",
+                 `project:<name>`, `app:<name>`, or `lib:<name>`, then re-run `aw goal wi {issue_id}`",
                 issue_ref(issue)
             ),
             true,
@@ -1317,7 +1395,7 @@ fn loop_state_envelope(
                         },
                         invoke: WorkflowInvoke { command },
                         agent_prompt: format!(
-                            "Loop engine: run next.command, then re-run `aw wi run {slug}` to re-observe the loop state."
+                            "Loop engine: run next.command, then re-run `aw goal wi {slug}` to re-observe the loop state."
                         ),
                         requires_hitl: false,
                         artifact_quality_profile: None,
@@ -1506,7 +1584,7 @@ fn capability_action_envelope_with_planning_base(
         CapabilityActionKind::FormatMigrationRequired
         | CapabilityActionKind::LocationMigrationRequired => (
             "capability",
-            format!("aw capability run --project {project} --non-interactive"),
+            format!("aw goal capability --project {project} --non-interactive"),
         ),
         CapabilityActionKind::CreateWi | CapabilityActionKind::LinkClaimVerification => {
             ("epicize", format!("aw wi epicize --project {project}"))
@@ -2187,7 +2265,7 @@ fn commit_project_persistence_if_approved(
                 .map(|path| project_root.join(path))
                 .collect::<Vec<_>>();
             let message = format!(
-                "aw capability run({project}) lifecycle persistence\n\nProject: {project}\nLifecycle-Stage: Project-Persistence\nDirty-Paths: {}\n",
+                "aw goal capability({project}) lifecycle persistence\n\nProject: {project}\nLifecycle-Stage: Project-Persistence\nDirty-Paths: {}\n",
                 dirty_paths.join(", ")
             );
             crate::git::commit_scoped_paths(project_root, &paths, &message)?;
@@ -3053,7 +3131,7 @@ mod tests {
             .is_some_and(|axes| axes.iter().any(|axis| axis == "traceability")));
         assert!(!serde_json::to_string(&envelope)
             .unwrap()
-            .contains("aw capability run"));
+            .contains("aw goal capability"));
     }
 
     #[test]
@@ -3186,7 +3264,7 @@ cap_path = "apps/jet/README.md"
 
             assert_eq!(project_from_labels(&issue), None);
             let mut envelope = open_epic_envelope(&issue);
-            ensure_hitl_question(&mut envelope, "aw wi run 1513");
+            ensure_hitl_question(&mut envelope, "aw goal wi 1513");
 
             assert_eq!(envelope.action, "blocked");
             assert_eq!(envelope.next.command, "aw wi show 1513");
@@ -3214,7 +3292,7 @@ cap_path = "apps/jet/README.md"
             gap_id: None,
             claim_id: None,
             target: "README.md".to_string(),
-            command: "aw capability run --project jet --non-interactive --max-ticks 1".to_string(),
+            command: "aw goal capability --project jet --non-interactive --max-ticks 1".to_string(),
             reason: "README capability map needs Markdown-table migration".to_string(),
             requires_hitl: false,
             hitl_question: None,
@@ -3232,7 +3310,7 @@ cap_path = "apps/jet/README.md"
         assert_eq!(envelope.next.kind, "capability");
         assert_eq!(
             envelope.next.command,
-            "aw capability run --project jet --non-interactive"
+            "aw goal capability --project jet --non-interactive"
         );
         assert!(!envelope.requires_hitl);
         assert!(!envelope.completion.workflow_complete);
@@ -3250,7 +3328,7 @@ cap_path = "apps/jet/README.md"
 
         assert_eq!(envelope.action, "dispatch");
         assert_eq!(envelope.next.kind, "execute_change");
-        assert_eq!(envelope.next.command, "aw wi run 4301");
+        assert_eq!(envelope.next.command, "aw goal wi 4301");
         assert!(!envelope.requires_hitl);
         assert!(!envelope.completion.workflow_complete);
         assert_no_removed_wi_verbs(&envelope);
@@ -3785,7 +3863,7 @@ review_status: pending
             id: "capability:package-manager:confirm_candidate".to_string(),
             question: "Should this capability be confirmed?".to_string(),
             target: "Package Manager".to_string(),
-            resume_command: "aw capability run --project jet --non-interactive --max-ticks 1"
+            resume_command: "aw goal capability --project jet --non-interactive --max-ticks 1"
                 .to_string(),
             interaction: HitlInteraction::user_question(),
             choices: Vec::new(),
@@ -3817,7 +3895,7 @@ review_status: pending
         assert_eq!(envelope.next.command, "aw capability report --project jet");
         let mut expected_question = question;
         expected_question.resume_command =
-            "aw capability run --project jet --non-interactive".to_string();
+            "aw goal capability --project jet --non-interactive".to_string();
         assert_eq!(envelope.hitl_question, Some(expected_question));
     }
 
@@ -3864,7 +3942,7 @@ review_status: pending
         assert!(envelope.completion.root_complete);
         assert!(!envelope.completion.workflow_complete);
         assert_eq!(envelope.next.kind, "inspect_parent");
-        assert_eq!(envelope.next.command, "aw wi run 4101");
+        assert_eq!(envelope.next.command, "aw goal wi 4101");
     }
 
     #[test]
