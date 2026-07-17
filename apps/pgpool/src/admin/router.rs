@@ -22,10 +22,11 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/docs"),
     ("GET", "/pools"),
     ("GET", "/pools/{pool}/stats"),
+    ("GET", "/drain"),
     ("POST", "/drain"),
 ];
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in router.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1883" reason="logic section in router.rs is hand-written pending codegen support">
 /// Builds the admin `Router` from `AdminState` (R1, R3): registers exactly
 /// the routes in [`ADMIN_ROUTES`], nothing more.
 pub fn build_router(state: AdminState) -> Router {
@@ -37,7 +38,7 @@ pub fn build_router(state: AdminState) -> Router {
         .route("/docs", get(handlers::docs))
         .route("/pools", get(handlers::pools))
         .route("/pools/{pool}/stats", get(handlers::pool_stats))
-        .route("/drain", post(handlers::drain))
+        .route("/drain", get(handlers::drain).post(handlers::drain))
         .with_state(state)
 }
 // </HANDWRITE>
