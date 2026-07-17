@@ -2,10 +2,16 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T17:02:21.328044+00:00"
-digest = "sha256:69ff340640f7da914246ccb7be0d8af0fe332b0339b65c798e6ba33acb2af3d7"
-source_digest = "sha256:69ff340640f7da914246ccb7be0d8af0fe332b0339b65c798e6ba33acb2af3d7"
-ir_digest = "sha256:4af704a0db7cea659ff3536f626a90509c635935a0726e38c7aec991cbc0d450"
+generated_at = "2026-07-17T17:05:39.519053+00:00"
+digest = "sha256:fe6da7109401407351f04bf71c0140b2ff6ca6204ff60270dc64ce4de72f0cd9"
+source_digest = "sha256:fe6da7109401407351f04bf71c0140b2ff6ca6204ff60270dc64ce4de72f0cd9"
+ir_digest = "sha256:1c294be7a5f3ca61fb9d2d6143701f683edec6cdc0e1c16b28155769687d940e"
+
+[[files]]
+path = "generate/build-rs-source.md"
+digest = "sha256:007eb98f3b304cdcd37ed4caa3a46bc56295cde89cbee4798c46691e78d79791"
+ir_digest = "sha256:d94fa250b5e0f441077caf909a7480f2d2c426d3dda6b4d7cc6c1dfed210495e"
+section_count = 2
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
