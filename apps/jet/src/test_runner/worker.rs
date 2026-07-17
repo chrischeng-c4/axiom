@@ -1644,7 +1644,8 @@ fn page_req_id_str(req: &crate::cdp_driver::PageRequest) -> Option<&str> {
         | PageRequest::Hover { page_id, .. }
         | PageRequest::LocatorPress { page_id, .. }
         | PageRequest::SubscribeEvent { page_id, .. }
-        | PageRequest::RemoveEventListener { page_id, .. } => Some(page_id.as_str()),
+        | PageRequest::RemoveEventListener { page_id, .. }
+        | PageRequest::Route { page_id, .. } => Some(page_id.as_str()),
         // NewPage and B3 context variants do not carry a page_id — they are
         // routed directly in the worker loop rather than via dispatch_page_request.
         PageRequest::NewPage { .. }
@@ -1698,7 +1699,8 @@ fn page_req_id(req: &crate::cdp_driver::PageRequest) -> u64 {
         | PageRequest::ContextAddCookies { req_id, .. }
         | PageRequest::ContextClearCookies { req_id, .. }
         | PageRequest::ContextStorageState { req_id, .. }
-        | PageRequest::ContextSetStorageState { req_id, .. } => *req_id,
+        | PageRequest::ContextSetStorageState { req_id, .. }
+        | PageRequest::Route { req_id, .. } => *req_id,
     }
 }
 
@@ -1881,6 +1883,52 @@ async fn start_network_event_pump_if_needed(
                         responses.remove(&key);
                     }
                 }
+                // Declarative page.route() interception (#1911). CDP pauses
+                // every request once `Fetch.enable` is active (sent lazily by
+                // `Page::add_route` on a page's first registered route); the
+                // page owning this CDP session decides fulfill/abort/continue
+                // against its currently registered routes and we resolve the
+                // pause with the matching Fetch.* command. Spawned per event
+                // (mirrors the `Network.loadingFinished` body fetch above) so
+                // multiple concurrently paused requests resolve independently
+                // instead of serializing behind this recv loop.
+                "Fetch.requestPaused" => {
+                    let Some(request_id) = event.params["requestId"].as_str() else {
+                        continue;
+                    };
+                    let request_id = request_id.to_string();
+                    let request_url = event.params["request"]["url"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    let session_id = event.session_id.clone();
+                    let pages_for_fetch = pages.clone();
+                    let root_session_for_fetch = root_session.clone();
+                    tokio::spawn(async move {
+                        let page =
+                            page_for_cdp_session(&pages_for_fetch, session_id.as_deref()).await;
+                        // No page owns this CDP session — fail open (continue)
+                        // rather than leave the request paused forever.
+                        let action = match &page {
+                            Some(page) => page.decide_fetch_action(&request_url).await,
+                            None => crate::browser::FetchAction::Continue,
+                        };
+                        let (method, params) =
+                            crate::browser::fetch_action_to_cdp(&action, &request_id);
+                        let session = match session_id {
+                            Some(sid) => root_session_for_fetch.child_session(sid),
+                            None => root_session_for_fetch.clone(),
+                        };
+                        if let Err(err) = session.send(method, params).await {
+                            tracing::warn!(
+                                target: "jet::test_runner::worker",
+                                error = %err,
+                                request_id = %request_id,
+                                "Fetch.requestPaused: failed to resolve paused request via {method}"
+                            );
+                        }
+                    });
+                }
                 _ => {}
             }
         }
@@ -1905,6 +1953,21 @@ async fn page_id_for_cdp_session(
     pages.iter().find_map(|(page_id, page)| {
         (page.session().session_id() == Some(session_id)).then(|| page_id.clone())
     })
+}
+
+/// Same lookup as [`page_id_for_cdp_session`] but returns the `Page`
+/// handle itself rather than its id — used by the `Fetch.requestPaused`
+/// pump (#1911), which needs to call `Page::decide_fetch_action`.
+async fn page_for_cdp_session(
+    pages: &Arc<Mutex<HashMap<String, Arc<Page>>>>,
+    session_id: Option<&str>,
+) -> Option<Arc<Page>> {
+    let session_id = session_id?;
+    let pages = pages.lock().await;
+    pages
+        .values()
+        .find(|page| page.session().session_id() == Some(session_id))
+        .cloned()
 }
 
 async fn network_response_body(

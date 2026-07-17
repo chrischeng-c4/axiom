@@ -74,6 +74,38 @@ pub struct NetworkFailure {
     pub message: String,
 }
 
+/// How a `page.route()` interception (#1911) resolved a request that
+/// matched a registered route. There is no "not intercepted" variant —
+/// plain passthrough traffic (the common case) simply leaves
+/// [`NetworkObservation::route`] as `None`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteResolutionKind {
+    /// `{ fulfill: {...} }` — the request was answered from the mock
+    /// without reaching the network.
+    Fulfilled,
+    /// `{ abort: ... }` — the request was failed with a CDP error reason
+    /// instead of being sent.
+    Aborted,
+    /// `{ continue: true }` — the request matched a route but was let
+    /// through unmodified (request modification on continue is out of
+    /// scope for #1911).
+    Continued,
+}
+
+/// Evidence attached to a routed [`NetworkObservation`]: which
+/// resolution the matching route applied, plus the pattern that matched
+/// (last-registered-wins, so this also documents which of several
+/// overlapping routes actually fired) so failures are diagnosable
+/// without re-running the browser.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteResolution {
+    pub kind: RouteResolutionKind,
+    pub pattern: String,
+}
+
 /// One observed request/response pair, plus the step-relative timing
 /// the driver recorded. Either `response` or `failure` is populated
 /// — never both.
@@ -88,6 +120,10 @@ pub struct NetworkObservation {
     pub failure: Option<NetworkFailure>,
     /// Wall-time the round-trip took, measured by the driver.
     pub duration_ms: u64,
+    /// Set when a `page.route()` route matched this request (#1911).
+    /// `None` for ordinary observed (non-intercepted) traffic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<RouteResolution>,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
@@ -99,6 +135,7 @@ impl NetworkObservation {
             response: Some(response),
             failure: None,
             duration_ms,
+            route: None,
         }
     }
 
@@ -109,11 +146,20 @@ impl NetworkObservation {
             response: None,
             failure: Some(failure),
             duration_ms,
+            route: None,
         }
     }
 
     pub fn is_completed(&self) -> bool {
         self.response.is_some()
+    }
+
+    /// Attach route-resolution evidence (#1911) — fluent setter so
+    /// `completed`/`failed` call sites stay unchanged for ordinary
+    /// (non-routed) observations.
+    pub fn with_route(mut self, resolution: RouteResolution) -> Self {
+        self.route = Some(resolution);
+        self
     }
 }
 
@@ -266,6 +312,83 @@ mod tests {
             back.response.as_ref().unwrap().body.as_deref(),
             Some(r#"{"ok":true}"#),
         );
+    }
+
+    // ── #1911 route-resolution evidence ──────────────────────────────────
+
+    #[test]
+    fn route_field_absent_by_default() {
+        // AC2 companion: ordinary (non-routed) observations must not grow
+        // a `route` key — the field is opt-in evidence, not a default tag.
+        let obs = NetworkObservation::completed(
+            request("GET", "https://aut.test/api"),
+            NetworkResponse {
+                status: 200,
+                headers: vec![],
+                body: None,
+            },
+            1,
+        );
+        assert!(obs.route.is_none());
+        let json = serde_json::to_string(&obs).unwrap();
+        assert!(!json.contains("\"route\""), "{json}");
+    }
+
+    #[test]
+    fn with_route_attaches_resolution_kind_and_pattern() {
+        // AC2: routed requests show resolution kind in network evidence.
+        let obs = NetworkObservation::completed(
+            request("GET", "https://aut.test/api/users"),
+            NetworkResponse {
+                status: 201,
+                headers: vec![],
+                body: None,
+            },
+            5,
+        )
+        .with_route(RouteResolution {
+            kind: RouteResolutionKind::Fulfilled,
+            pattern: "**/api/users*".into(),
+        });
+        assert_eq!(
+            obs.route.as_ref().unwrap().kind,
+            RouteResolutionKind::Fulfilled
+        );
+        let json = serde_json::to_string(&obs).unwrap();
+        assert!(
+            json.contains("\"route\":{\"kind\":\"fulfilled\",\"pattern\":\"**/api/users*\"}"),
+            "{json}"
+        );
+        let back: NetworkObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, obs);
+    }
+
+    #[test]
+    fn route_resolution_kind_snake_cases_every_variant() {
+        // Pin the wire vocabulary AC2 consumers key off of.
+        let cases = [
+            (RouteResolutionKind::Fulfilled, "\"fulfilled\""),
+            (RouteResolutionKind::Aborted, "\"aborted\""),
+            (RouteResolutionKind::Continued, "\"continued\""),
+        ];
+        for (kind, expected) in cases {
+            let json = serde_json::to_string(&kind).unwrap();
+            assert_eq!(json, expected);
+        }
+    }
+
+    #[test]
+    fn old_recorded_evidence_without_route_key_still_deserializes() {
+        // Forward-compat: JSON captured before #1911 (no `route` key at
+        // all) must still parse — additive schema change, not a bump.
+        let legacy = serde_json::json!({
+            "schema_version": NETWORK_OBSERVATION_SCHEMA_VERSION,
+            "request": { "method": "GET", "url": "https://aut.test/legacy" },
+            "response": { "status": 200 },
+            "duration_ms": 3
+        });
+        let obs: NetworkObservation = serde_json::from_value(legacy).unwrap();
+        assert!(obs.route.is_none());
     }
 }
 // CODEGEN-END

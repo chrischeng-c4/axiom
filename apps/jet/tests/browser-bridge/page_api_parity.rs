@@ -389,6 +389,97 @@ fn parse_page_request_new_variants() {
     }
 }
 
+// ── #1911 — page.route() declarative network interception (wire shape) ───────
+// v1 is declarative: matching + CDP Fetch-domain resolution happen entirely
+// on the Rust side (browser::route), so these are wire-shape/serde tests
+// only — no handler-callback channel to exercise, no browser required.
+
+/// Verify PageRequest::Route (register) serializes correctly.
+#[test]
+fn page_request_route_register_serializes() {
+    use jet::cdp_driver::{PageRequest, RouteOp};
+    let req = PageRequest::Route {
+        req_id: 40,
+        page_id: "t1".to_string(),
+        op: RouteOp::Register,
+        pattern: Some("**/api/users*".to_string()),
+        descriptor: Some(serde_json::json!({ "fulfill": { "status": 201 } })),
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    assert!(json.contains("\"kind\":\"route\""), "json={json}");
+    assert!(json.contains("\"op\":\"register\""), "json={json}");
+    assert!(json.contains("**/api/users*"), "json={json}");
+    assert!(json.contains("\"fulfill\""), "json={json}");
+}
+
+/// Verify PageRequest::Route (unroute / unroute_all) serializes with the
+/// snake_case RouteOp vocabulary the JS façade sends, including the two
+/// ops that omit `pattern`/`descriptor` entirely.
+#[test]
+fn page_request_route_unroute_variants_serialize() {
+    use jet::cdp_driver::{PageRequest, RouteOp};
+    let unroute = PageRequest::Route {
+        req_id: 41,
+        page_id: "t1".to_string(),
+        op: RouteOp::Unroute,
+        pattern: Some("**/*.png".to_string()),
+        descriptor: None,
+    };
+    let unroute_json = serde_json::to_string(&unroute).unwrap();
+    assert!(
+        unroute_json.contains("\"op\":\"unroute\""),
+        "unroute_json={unroute_json}"
+    );
+    assert!(
+        unroute_json.contains("**/*.png"),
+        "unroute_json={unroute_json}"
+    );
+
+    let unroute_all = PageRequest::Route {
+        req_id: 42,
+        page_id: "t1".to_string(),
+        op: RouteOp::UnrouteAll,
+        pattern: None,
+        descriptor: None,
+    };
+    let unroute_all_json = serde_json::to_string(&unroute_all).unwrap();
+    assert!(
+        unroute_all_json.contains("\"op\":\"unroute_all\""),
+        "unroute_all_json={unroute_all_json}"
+    );
+}
+
+/// Verify PageResponse::RouteResult — the response `unroute`/`unroute_all`
+/// resolve with; the JS façade reads `res.removed` off this.
+#[test]
+fn page_response_route_result_serializes() {
+    use jet::cdp_driver::PageResponse;
+    let resp = PageResponse::RouteResult {
+        req_id: 43,
+        removed: 3,
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(json.contains("\"kind\":\"route_result\""), "json={json}");
+    assert!(json.contains("\"removed\":3"), "json={json}");
+}
+
+/// parse_page_request handles the `route` wire shape for all three ops.
+#[test]
+fn parse_page_request_route_variants() {
+    use jet::cdp_driver::parse_page_request;
+
+    let cases = [
+        r#"{"kind":"route","req_id":50,"page_id":"t","op":"register","pattern":"**/api/*","descriptor":{"continue":true}}"#,
+        r#"{"kind":"route","req_id":51,"page_id":"t","op":"unroute","pattern":"**/api/*"}"#,
+        r#"{"kind":"route","req_id":52,"page_id":"t","op":"unroute_all"}"#,
+    ];
+
+    for json in &cases {
+        let req = parse_page_request(json);
+        assert!(req.is_some(), "failed to parse: {json}");
+    }
+}
+
 // ── Browser integration tests (Chromium required) ────────────────────────────
 
 /// T1 — R1: page.title() returns document.title string.

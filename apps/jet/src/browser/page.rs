@@ -4,8 +4,21 @@
 
 use crate::browser::cdp::CdpSession;
 use crate::browser::locator::{Locator, LocatorError, LocatorOptions, SelectorExpr};
+use crate::browser::route;
 use anyhow::{Context, Result};
 use serde_json::Value;
+
+/// Per-page declarative-route registration state (#1911). Guarded by a
+/// single `tokio::sync::Mutex` on `Page` so registration, removal, and
+/// per-request decision-making never race each other. `fetch_enabled`
+/// tracks whether CDP `Fetch.enable` has already been sent for this page
+/// — sent lazily, once, on the first `page.route()` call (see
+/// `Page::add_route`).
+#[derive(Default)]
+struct RouteState {
+    routes: Vec<route::RouteEntry>,
+    fetch_enabled: bool,
+}
 
 /// A browser page (tab) with a CDP session attached.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser.md#schema
@@ -17,6 +30,12 @@ pub struct Page {
     /// existing page-level API (50-test regression surface) unchanged.
     // @spec .aw/issues/open/enhancement-browsercontext-refactor-multi-context-isolation-fo.md#R4
     context_id: Option<String>,
+    /// Declarative `page.route()` registrations (#1911). A fresh `Page` —
+    /// and therefore a fresh, empty route list — is created per test (see
+    /// the `page` fixture in `data/runtime/test/index.js`), which is what
+    /// gives routes test-to-test isolation without any extra teardown step.
+    // @spec enhancement-page-route-network-interception (#1911)
+    route_state: tokio::sync::Mutex<RouteState>,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser.md#schema
@@ -26,6 +45,7 @@ impl Page {
             session,
             target_id,
             context_id: None,
+            route_state: tokio::sync::Mutex::new(RouteState::default()),
         }
     }
 
@@ -41,6 +61,7 @@ impl Page {
             session,
             target_id,
             context_id,
+            route_state: tokio::sync::Mutex::new(RouteState::default()),
         }
     }
 
@@ -233,6 +254,79 @@ impl Page {
     pub async fn enable_network_events(&self) -> Result<()> {
         self.session
             .send("Network.enable", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
+    /// Register a declarative route (#1911): requests whose full URL
+    /// matches `pattern` (Playwright-style glob or exact URL — see
+    /// [`route::CompiledPattern`]) resolve per `descriptor`
+    /// (`{fulfill:{...}} | {abort:...} | {continue:true}` — see
+    /// [`route::parse_route_descriptor`]). Lazily sends CDP `Fetch.enable`
+    /// the first time any route is registered on this page. When multiple
+    /// registered routes match the same request, the **last-registered**
+    /// one wins (see [`route::decide_fetch_action`]) — Playwright
+    /// precedence.
+    pub async fn add_route(&self, pattern: &str, descriptor: &Value) -> Result<(), String> {
+        let compiled = route::CompiledPattern::compile(pattern)?;
+        let parsed = route::parse_route_descriptor(descriptor)?;
+
+        let already_enabled = self.route_state.lock().await.fetch_enabled;
+        if !already_enabled {
+            self.ensure_fetch_enabled()
+                .await
+                .map_err(|e| format!("Fetch.enable failed: {e}"))?;
+        }
+
+        let mut state = self.route_state.lock().await;
+        state.fetch_enabled = true;
+        state.routes.push(route::RouteEntry {
+            pattern: compiled,
+            descriptor: parsed,
+        });
+        Ok(())
+    }
+
+    /// Remove routes registered with exactly `pattern` (text match against
+    /// the original pattern string passed to [`Page::add_route`], not
+    /// glob-equivalence — matches Playwright's `page.unroute()`). Returns
+    /// the number of routes removed.
+    pub async fn remove_routes(&self, pattern: &str) -> usize {
+        let mut state = self.route_state.lock().await;
+        let before = state.routes.len();
+        state.routes.retain(|r| r.pattern.source() != pattern);
+        before - state.routes.len()
+    }
+
+    /// Remove every registered route (`page.unrouteAll()`). Returns the
+    /// number of routes removed.
+    pub async fn clear_routes(&self) -> usize {
+        let mut state = self.route_state.lock().await;
+        let n = state.routes.len();
+        state.routes.clear();
+        n
+    }
+
+    /// Decide how to resolve a paused request against this page's
+    /// currently registered routes. Called from the `Fetch.requestPaused`
+    /// CDP event pump
+    /// (`test_runner::worker::start_network_event_pump_if_needed`).
+    pub async fn decide_fetch_action(&self, url: &str) -> route::FetchAction {
+        let state = self.route_state.lock().await;
+        route::decide_fetch_action(&state.routes, url)
+    }
+
+    /// Send CDP `Fetch.enable` with a catch-all pattern so every request
+    /// this page issues pauses for a routing decision. CDP requires an
+    /// explicit non-empty `patterns` list to guarantee interception of
+    /// every request (an empty/absent list only intercepts a narrower,
+    /// Chromium-chosen default).
+    async fn ensure_fetch_enabled(&self) -> Result<()> {
+        self.session
+            .send(
+                "Fetch.enable",
+                serde_json::json!({ "patterns": [{ "urlPattern": "*" }] }),
+            )
             .await?;
         Ok(())
     }

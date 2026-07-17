@@ -12,5 +12,6 @@ pub mod page_binding;
 
 pub use page_binding::{
     dispatch_page_request, parse_page_request, write_page_response, PageRequest, PageResponse,
+    RouteOp,
 };
 // CODEGEN-END

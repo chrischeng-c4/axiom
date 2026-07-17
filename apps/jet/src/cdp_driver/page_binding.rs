@@ -32,6 +32,17 @@ use tokio::io::AsyncWriteExt;
 
 // ── Wire types ────────────────────────────────────────────────────────────────
 
+/// Sub-action for [`PageRequest::Route`] (#1911): register a declarative
+/// route, remove routes matching one pattern, or clear every route on the
+/// page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteOp {
+    Register,
+    Unroute,
+    UnrouteAll,
+}
+
 /// Requests the JS page proxy sends to the Rust host for page actions.
 ///
 /// `req_id` correlates with the matching `PageResponse`. `page_id` is the CDP
@@ -285,6 +296,20 @@ pub enum PageRequest {
         context_id: String,
         state: serde_json::Value,
     },
+
+    /// Declarative page-level network interception (#1911):
+    /// `page.route()` / `page.unroute()` / `page.unrouteAll()`. `Register`
+    /// requires `pattern` + `descriptor`; `Unroute` requires `pattern`;
+    /// `UnrouteAll` needs neither. `descriptor` is the raw
+    /// `{fulfill:{...}} | {abort:...} | {continue:true}` object — parsed
+    /// on the Rust side by `browser::route::parse_route_descriptor`.
+    Route {
+        req_id: u64,
+        page_id: String,
+        op: RouteOp,
+        pattern: Option<String>,
+        descriptor: Option<serde_json::Value>,
+    },
 }
 
 /// Responses the Rust host sends back for `PageRequest` messages.
@@ -333,6 +358,11 @@ pub enum PageResponse {
         req_id: u64,
         value: serde_json::Value,
     },
+
+    /// Result of a `Route` `unroute` / `unroute_all` request: the number
+    /// of routes removed (#1911). `register` requests resolve with the
+    /// plain `Ok` variant instead.
+    RouteResult { req_id: u64, removed: usize },
 
     /// Asynchronous page event forwarded from CDP to the JS Page instance.
     Event {
@@ -449,7 +479,8 @@ pub async fn dispatch_page_request(req: PageRequest, page: Option<&Page>) -> Pag
         | PageRequest::ContextAddCookies { req_id, .. }
         | PageRequest::ContextClearCookies { req_id, .. }
         | PageRequest::ContextStorageState { req_id, .. }
-        | PageRequest::ContextSetStorageState { req_id, .. } => *req_id,
+        | PageRequest::ContextSetStorageState { req_id, .. }
+        | PageRequest::Route { req_id, .. } => *req_id,
     };
 
     let req_id = req_id_of(&req);
@@ -778,6 +809,51 @@ pub async fn dispatch_page_request(req: PageRequest, page: Option<&Page>) -> Pag
 
         // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R5
         PageRequest::RemoveEventListener { req_id, .. } => PageResponse::Ok { req_id },
+
+        // Declarative page.route()/unroute()/unrouteAll() (#1911). Matching
+        // and CDP Fetch-domain resolution both live on `Page`
+        // (`browser::page::Page::add_route` / `remove_routes` /
+        // `clear_routes`) — this arm only parses the wire op and surfaces
+        // errors as a clean `PageResponse::Error` rejection.
+        PageRequest::Route {
+            req_id,
+            op,
+            pattern,
+            descriptor,
+            ..
+        } => match op {
+            RouteOp::Register => {
+                let (Some(pattern), Some(descriptor)) = (pattern.as_deref(), descriptor.as_ref())
+                else {
+                    return PageResponse::Error {
+                        req_id,
+                        message: "route: register requires both `pattern` and `descriptor`"
+                            .to_string(),
+                    };
+                };
+                match page.add_route(pattern, descriptor).await {
+                    Ok(()) => PageResponse::Ok { req_id },
+                    Err(e) => PageResponse::Error {
+                        req_id,
+                        message: format!("page.route failed: {e}"),
+                    },
+                }
+            }
+            RouteOp::Unroute => {
+                let Some(pattern) = pattern.as_deref() else {
+                    return PageResponse::Error {
+                        req_id,
+                        message: "route: unroute requires `pattern`".to_string(),
+                    };
+                };
+                let removed = page.remove_routes(pattern).await;
+                PageResponse::RouteResult { req_id, removed }
+            }
+            RouteOp::UnrouteAll => {
+                let removed = page.clear_routes().await;
+                PageResponse::RouteResult { req_id, removed }
+            }
+        },
 
         // B3 context variants are handled directly in `worker.rs` alongside
         // `NewPage` because they require access to the `Browser` / contexts
@@ -1281,6 +1357,61 @@ mod tests {
         let s = serde_json::to_string(&resp).unwrap();
         assert!(s.contains("browser"));
         assert!(s.contains("os error 2"));
+    }
+
+    // #1911 — page.route() wire shape round-trips.
+    #[test]
+    fn parse_page_request_route_register() {
+        let json = r#"{"kind":"route","req_id":1,"page_id":"t1","op":"register","pattern":"**/api/users*","descriptor":{"fulfill":{"status":201}}}"#;
+        let req = parse_page_request(json).expect("should parse");
+        match req {
+            PageRequest::Route {
+                req_id,
+                page_id,
+                op,
+                pattern,
+                descriptor,
+            } => {
+                assert_eq!(req_id, 1);
+                assert_eq!(page_id, "t1");
+                assert_eq!(op, RouteOp::Register);
+                assert_eq!(pattern.as_deref(), Some("**/api/users*"));
+                assert!(descriptor.is_some());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parse_page_request_route_unroute_all_omits_pattern_and_descriptor() {
+        // unroute_all needs neither field — both must deserialize as `None`
+        // when the JS side simply omits the keys.
+        let json = r#"{"kind":"route","req_id":2,"page_id":"t1","op":"unroute_all"}"#;
+        let req = parse_page_request(json).expect("should parse");
+        match req {
+            PageRequest::Route {
+                op,
+                pattern,
+                descriptor,
+                ..
+            } => {
+                assert_eq!(op, RouteOp::UnrouteAll);
+                assert!(pattern.is_none());
+                assert!(descriptor.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn page_response_route_result_serializes() {
+        let resp = PageResponse::RouteResult {
+            req_id: 9,
+            removed: 2,
+        };
+        let s = serde_json::to_string(&resp).unwrap();
+        assert!(s.contains("\"kind\":\"route_result\""));
+        assert!(s.contains("\"removed\":2"));
     }
 }
 

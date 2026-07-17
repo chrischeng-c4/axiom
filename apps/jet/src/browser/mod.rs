@@ -27,6 +27,7 @@ pub mod install;
 pub mod launcher;
 pub mod locator;
 pub mod page;
+pub mod route;
 
 use anyhow::{Context, Result};
 
@@ -36,6 +37,7 @@ pub use install::{install_chromium, DEFAULT_CHROMIUM_REVISION};
 pub use launcher::{BrowserLauncher, LaunchOptions};
 pub use locator::{Actionability, Locator, LocatorError, LocatorOptions, SelectorExpr};
 pub use page::Page;
+pub use route::{fetch_action_to_cdp, ErrorReason, FetchAction, FulfillSpec, RouteDescriptor};
 
 /// High-level browser handle. Owns the CDP connection and child process.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser.md#schema

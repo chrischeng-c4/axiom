@@ -283,88 +283,89 @@ export class Page {
     await new Promise((resolve) => setTimeout(resolve, 30 * 60 * 1000));
   }
 
-  // ── Route interception (P3.3) ────────────────────────────────────────────
-  // MVP: intercept `fetch()` and `XMLHttpRequest` in the page context via a
-  // JS override installed with evaluate(). The override consults
-  // `window.__jetRoutes` so subsequent route() calls just mutate the list
-  // without reinstalling. The installer is idempotent (gated by a flag).
+  // ── Route interception (#1911) ───────────────────────────────────────────
+  // v1 is DECLARATIVE: page.route(pattern, descriptor) registers a route
+  // over the wire (`kind: "route", op: "register"`) and the Rust CDP
+  // Fetch-domain handler (browser::page::Page::add_route /
+  // decide_fetch_action, driven by Fetch.requestPaused in
+  // test_runner/worker.rs) does all matching + resolution — there is no
+  // JS-side handler-callback channel. Playwright's function-handler form
+  // (`page.route(pattern, route => {...})`) is recognized for shape parity
+  // but throws, naming the supported descriptor form as the alternative.
   //
-  // Limitations vs CDP Fetch.enable (deferred):
-  // - Navigation + resource loads (images, CSS) are NOT intercepted — only
-  //   fetch/XHR made by page JS.
-  // - Routes are scoped to the current document; a subsequent goto()/
-  //   setContent() wipes window.__jetRoutes. Call page.route() AFTER nav.
+  // descriptor shapes (parsed by browser::route::parse_route_descriptor):
+  //   { fulfill: { status?, headers?, contentType?, body?, json? } }
+  //   { abort: true } | { abort: "<errorReason>" }
+  //   { continue: true }
+  //
+  // Pattern is a Playwright-style glob string matched against the full
+  // request URL (`**/*.png`, `**/api/users*`) or an exact URL — last
+  // registered route wins on overlap (Playwright precedence, decided in
+  // browser::route::decide_fetch_action). RegExp patterns are out of scope
+  // for v1. Routes live on the Page's route_state and are dropped when the
+  // page closes (test isolation — index.js already creates a fresh Page per
+  // test).
   //
   // @spec .aw/tech-design/projects/jet/logic/route-intercept.md#R1 R2 R3
 
-  async route(urlPattern, config) {
+  async route(urlPattern, descriptor) {
     this._assertOpen();
-    if (!config || typeof config !== "object") {
-      throw new Error("page.route: config must be an object");
+    if (typeof descriptor === "function") {
+      throw new Error(
+        "page.route: function handlers are not supported yet — jet's v1 router is " +
+          "declarative. Pass a descriptor object instead: " +
+          "{ fulfill: { status, headers, body, json } } | { abort: true } | { continue: true }."
+      );
     }
-    const isRegex = urlPattern instanceof RegExp;
-    const patternJson = JSON.stringify(
-      isRegex
-        ? { kind: "regex", source: urlPattern.source, flags: urlPattern.flags }
-        : { kind: "glob", value: String(urlPattern) },
-    );
-    const configJson = JSON.stringify({
-      status: config.status ?? 200,
-      body: config.body ?? "",
-      headers: config.headers ?? {},
-      contentType: config.contentType ?? null,
-      abort: Boolean(config.abort),
-    });
-    const expr = `(function(){
-      if (!window.__jetRoutesInstalled) { ${_jetRouteInstallerSrc()}; window.__jetRoutesInstalled = true; }
-      window.__jetRoutes.push({ pattern: ${patternJson}, config: ${configJson} });
-    })()`;
+    if (urlPattern instanceof RegExp) {
+      throw new Error(
+        "page.route: RegExp patterns are not supported yet — pass a glob string " +
+          "pattern instead (e.g. '**/api/users*')."
+      );
+    }
+    if (!descriptor || typeof descriptor !== "object") {
+      throw new Error(
+        "page.route: descriptor must be an object — " +
+          "{ fulfill: {...} } | { abort: true } | { continue: true }."
+      );
+    }
     const res = await this._send({
-      kind: "evaluate",
+      kind: "route",
       page_id: this.__jet_page_id,
-      expression: expr,
+      op: "register",
+      pattern: String(urlPattern),
+      descriptor,
     });
     if (res.kind === "error") throw new Error(`page.route: ${res.message}`);
   }
 
   async unroute(urlPattern) {
     this._assertOpen();
-    const isRegex = urlPattern instanceof RegExp;
-    const patternJson = JSON.stringify(
-      isRegex
-        ? { kind: "regex", source: urlPattern.source, flags: urlPattern.flags }
-        : { kind: "glob", value: String(urlPattern) },
-    );
-    const expr = `(function(){
-      if (!window.__jetRoutes) return 0;
-      var before = window.__jetRoutes.length;
-      var target = ${patternJson};
-      window.__jetRoutes = window.__jetRoutes.filter(function(r){
-        if (r.pattern.kind !== target.kind) return true;
-        if (target.kind === 'regex') return !(r.pattern.source === target.source && r.pattern.flags === target.flags);
-        return r.pattern.value !== target.value;
-      });
-      return before - window.__jetRoutes.length;
-    })()`;
+    if (urlPattern instanceof RegExp) {
+      throw new Error(
+        "page.unroute: RegExp patterns are not supported yet — pass a glob string " +
+          "pattern instead."
+      );
+    }
     const res = await this._send({
-      kind: "evaluate",
+      kind: "route",
       page_id: this.__jet_page_id,
-      expression: expr,
+      op: "unroute",
+      pattern: String(urlPattern),
     });
     if (res.kind === "error") throw new Error(`page.unroute: ${res.message}`);
-    return typeof res.value === "number" ? res.value : 0;
+    return typeof res.removed === "number" ? res.removed : 0;
   }
 
   async unrouteAll() {
     this._assertOpen();
-    const expr = `(function(){ if (window.__jetRoutes) { var n = window.__jetRoutes.length; window.__jetRoutes = []; return n; } return 0; })()`;
     const res = await this._send({
-      kind: "evaluate",
+      kind: "route",
       page_id: this.__jet_page_id,
-      expression: expr,
+      op: "unroute_all",
     });
     if (res.kind === "error") throw new Error(`page.unrouteAll: ${res.message}`);
-    return typeof res.value === "number" ? res.value : 0;
+    return typeof res.removed === "number" ? res.removed : 0;
   }
 
   // ── Event subscriptions ──────────────────────────────────────────────────────
@@ -1663,112 +1664,5 @@ function _uuid() {
 
 function _sleep(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
-}
-
-// Returns the JS source of the fetch/XHR installer, evaluated inside the
-// page. The installer defines window.__jetRoutes (if not present) and
-// overrides window.fetch + XMLHttpRequest to consult the list. Idempotent —
-// page.route() gates the call with window.__jetRoutesInstalled.
-//
-// @spec .aw/tech-design/projects/jet/logic/route-intercept.md#R4
-function _jetRouteInstallerSrc() {
-  return `
-    window.__jetRoutes = window.__jetRoutes || [];
-    var __matchPattern = function(url, pat){
-      if (pat.kind === 'regex') return new RegExp(pat.source, pat.flags).test(url);
-      var g = pat.value;
-      // Expand ** → .* and * → [^/]* for glob matching. Escape other regex meta.
-      var re = '^' + g.replace(/[.+^\\\${}()|[\\]\\\\]/g, '\\\\$&')
-        .replace(/\\*\\*/g, '\\u0001').replace(/\\*/g, '[^/]*').replace(/\\u0001/g, '.*') + '$';
-      return new RegExp(re).test(url);
-    };
-    var __fulfillBodyToBuffer = function(body){
-      if (body == null) return '';
-      if (typeof body === 'string') return body;
-      try { return JSON.stringify(body); } catch (e) { return String(body); }
-    };
-    var __origFetch = window.fetch.bind(window);
-    window.fetch = function(input, init){
-      var url = typeof input === 'string' ? input : (input && input.url) || '';
-      for (var i = 0; i < window.__jetRoutes.length; i++) {
-        var r = window.__jetRoutes[i];
-        if (!__matchPattern(url, r.pattern)) continue;
-        var c = r.config;
-        if (c.abort) {
-          return Promise.reject(new TypeError('net::ERR_FAILED (jet route aborted)'));
-        }
-        var headers = Object.assign({}, c.headers || {});
-        if (c.contentType && !Object.keys(headers).map(function(k){return k.toLowerCase();}).includes('content-type')) {
-          headers['content-type'] = c.contentType;
-        }
-        return Promise.resolve(new Response(__fulfillBodyToBuffer(c.body), {
-          status: c.status || 200,
-          headers: headers,
-        }));
-      }
-      return __origFetch(input, init);
-    };
-    // Minimal XHR override — matches by URL, supports static fulfill/abort.
-    var __OrigXHR = window.XMLHttpRequest;
-    function __JetXHR(){
-      this.__orig = new __OrigXHR();
-      this.__listeners = {};
-      this.readyState = 0; this.status = 0; this.responseText = ''; this.response = '';
-      var self = this;
-      ['load','loadend','error','abort','readystatechange'].forEach(function(evt){
-        self.__orig.addEventListener(evt, function(){ self.__dispatch(evt); });
-      });
-    }
-    __JetXHR.prototype.addEventListener = function(evt, fn){
-      (this.__listeners[evt] = this.__listeners[evt] || []).push(fn);
-    };
-    __JetXHR.prototype.__dispatch = function(evt){
-      this.readyState = this.__orig.readyState;
-      this.status = this.__orig.status;
-      this.responseText = this.__orig.responseText;
-      this.response = this.__orig.response;
-      (this.__listeners[evt] || []).forEach(function(fn){ try { fn.call(this); } catch (e) {} }, this);
-      var h = this['on' + evt];
-      if (typeof h === 'function') { try { h.call(this); } catch (e) {} }
-    };
-    __JetXHR.prototype.open = function(method, url){
-      this.__method = method;
-      this.__url = url;
-      for (var i = 0; i < window.__jetRoutes.length; i++) {
-        var r = window.__jetRoutes[i];
-        if (__matchPattern(url, r.pattern)) { this.__mock = r.config; return; }
-      }
-      this.__orig.open.apply(this.__orig, arguments);
-    };
-    __JetXHR.prototype.setRequestHeader = function(k, v){
-      if (this.__mock) return;
-      this.__orig.setRequestHeader(k, v);
-    };
-    __JetXHR.prototype.send = function(body){
-      var self = this;
-      if (this.__mock) {
-        var c = self.__mock;
-        setTimeout(function(){
-          if (c.abort) {
-            self.readyState = 4; self.status = 0; self.responseText = ''; self.response = '';
-            (self.__listeners.error || []).forEach(function(fn){ try { fn.call(self); } catch(e){} });
-            if (typeof self.onerror === 'function') { try { self.onerror(); } catch(e){} }
-            return;
-          }
-          self.readyState = 4; self.status = c.status || 200;
-          self.responseText = __fulfillBodyToBuffer(c.body);
-          self.response = self.responseText;
-          ['readystatechange', 'load', 'loadend'].forEach(function(evt){
-            (self.__listeners[evt] || []).forEach(function(fn){ try { fn.call(self); } catch(e){} });
-            var h = self['on' + evt];
-            if (typeof h === 'function') { try { h.call(self); } catch(e){} }
-          });
-        }, 0);
-        return;
-      }
-      this.__orig.send(body);
-    };
-    window.XMLHttpRequest = __JetXHR;
-  `;
 }
 // CODEGEN-END
