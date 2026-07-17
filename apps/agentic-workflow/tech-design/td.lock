@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-17T10:38:19.880882+00:00"
-digest = "sha256:a9b568892463e88a7d6d326ba1e36d461dcf860872b3c408c8dbaed34e11729a"
-source_digest = "sha256:a9b568892463e88a7d6d326ba1e36d461dcf860872b3c408c8dbaed34e11729a"
-ir_digest = "sha256:87086503cad41eb5c17105faff338848ccdf89ba5cb154a07b86f722f1bdb135"
+generated_at = "2026-07-17T14:15:46.345201+00:00"
+digest = "sha256:797da8626ed63a61d69babf3a0b85d7dcbeed0f018157514f59847e30434b93f"
+source_digest = "sha256:797da8626ed63a61d69babf3a0b85d7dcbeed0f018157514f59847e30434b93f"
+ir_digest = "sha256:5e575ba2b67e12d9cd4649f2d279e8a03c110c6fbbfdfe61316e9a982103e9b7"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4590,8 +4590,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:31143805c61dfafd9ac7e03bb276325eb555204b5d3da02630253f00e3e6dee9"
-ir_digest = "sha256:2c8e2b709f07be8c1bf9a92607ee33f504b32997564b041957188217941d9bfc"
+digest = "sha256:1905ea4062d7ac5da91072428162df384447377024af8e290e8c5fd508a0a394"
+ir_digest = "sha256:6ed90f3eed7cacadff091ec583215f9dc9bfa6d6ebc9f69999d96b4fa7a5d3e2"
 section_count = 2
 
 [[files]]
@@ -4947,8 +4947,8 @@ section_count = 2
 
 [[files]]
 path = "surface/generate/project-health-source.md"
-digest = "sha256:2e6fee4ad7a907d41761d6d731e2d570a77a3d20d813a5cde64bc1b6247fd8f4"
-ir_digest = "sha256:2afd337c187364a9476e59e2655ca12110345445087e05bd20228fd63ea0918c"
+digest = "sha256:58a303f65f317e2b6e81085c509133afa4a4906eedf238cd57b2f19978c2723f"
+ir_digest = "sha256:7284c90499642ad82c387dc9d9cb2aa724774d7a5951b37b88d120da1ad1c06d"
 section_count = 2
 
 [[files]]
@@ -4995,8 +4995,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/chain.md"
-digest = "sha256:0d6c6b45b20eb769412ba25462a20fb1df557ee0245019d057860aa929390298"
-ir_digest = "sha256:64a783636131ec01e0bf0c747edc2dcc6aa57daa4acf90e5ffd76d40af91ae6b"
+digest = "sha256:3e29dff19c7b4f658b609f290a08d4878bb1538dad2ab1d39ed73617a0af82e7"
+ir_digest = "sha256:24fb41b9587038a426506fe081c5600c000f5b9bd92b186e1ff6617a421625ff"
 section_count = 2
 
 [[files]]
@@ -5007,8 +5007,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/commands.md"
-digest = "sha256:214d0702448036af2f344660994d7e64cb602f6ae5acbe9ae6518557c0440c92"
-ir_digest = "sha256:71621f08f6e34981955b04d7e08e506aa5f743bfc9bd83726b534670e96a8753"
+digest = "sha256:8745c4ff8325771b11607a411cf4daf6e6f305fe4b9d4bc85403143dff8b4044"
+ir_digest = "sha256:d106bc352c7f0c1d5611d643dc9d7025a8ba868aedad822267aed92a470695d6"
 section_count = 2
 
 [[files]]
@@ -5031,8 +5031,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/goal.md"
-digest = "sha256:c8d8cac029dfdf510b49ad7f12b6922b1b881c961d4f95e8e4ca1bd91d44db24"
-ir_digest = "sha256:5098ec74c1eefafde14df293c0a029368d78d7e63cc9b564cb29fae52708c782"
+digest = "sha256:388d0548252b97cd6a2077f1ad3fe33f4567f69b72544ed0e6d635c28b996378"
+ir_digest = "sha256:33578474672e14bc778f79df01ae3c122ce9af2e5390ba6911eb758bba84b145"
 section_count = 2
 
 [[files]]
