@@ -105,41 +105,41 @@ The product source already has the required adopter seams: `serve` maps `--log-f
 ---
 id: lumen-structured-stdout-traceparent-verification
 requirements:
-  independence:
-    id: R5
-    text: "The conformance process has no OTLP endpoint or Sift dependency and produces stdout consumable as independent JSONL records."
-    kind: integration
-    risk: medium
-    verify: cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact
-  invalid_missing:
-    id: R4
-    text: "Malformed and missing traceparent requests both succeed and emit valid locally rooted correlation."
-    kind: regression
+  fixed_parent:
+    id: R3
+    text: "The valid version-00 traceparent keeps the fixed trace and parent ids and creates a distinct lowercase nonzero Lumen span id."
+    kind: functional
     risk: high
     verify: cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact
-  outer_trace_layer:
-    id: R2
-    text: "The public collection route audit event runs inside the shared request span rather than a Lumen-local propagation implementation."
+  jsonl_only:
+    id: R1
+    text: "Every nonempty stdout line from the isolated real Lumen process parses as axiom.service.log.v1 with service.name lumen."
     kind: contract
     risk: high
     verify: cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact
-  structured_mode:
-    id: R1
-    text: "A real Lumen process uses the shared JSON formatter and every captured operational stdout line conforms to axiom.service.log.v1."
-    kind: functional
+  safe_fallback:
+    id: R4
+    text: "Malformed and absent traceparent requests succeed and their audit events contain safe locally generated lowercase nonzero trace and span ids without a propagated parent."
+    kind: regression
     risk: high
     verify: cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact
-  valid_parent:
-    id: R3
-    text: "A fixed valid traceparent preserves its trace and parent span ids while Lumen creates a distinct nonzero local span id."
-    kind: functional
+  shared_outer_span:
+    id: R2
+    text: "The existing public collection route emits its audit event within the existing outer shared HTTP request span."
+    kind: integration
     risk: high
+    verify: cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact
+  standalone_contract:
+    id: R5
+    text: "The process runs with embedded WAL, no OTLP endpoint, and no Sift configuration; its captured records need no transformation for file collection."
+    kind: integration
+    risk: medium
     verify: cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact
 ---
 flowchart TD
-    r1[R1 structured mode] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact[cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact]
-    r2[R2 outer trace layer] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
-    r3[R3 valid parent] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
-    r4[R4 invalid missing] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
-    r5[R5 independence] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
+    r1[R1 jsonl only] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact[cargo test -p lumen --test structured_stdout_traceparent real_lumen_process_correlates_structured_stdout -- --exact]
+    r2[R2 shared outer span] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
+    r3[R3 fixed parent] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
+    r4[R4 safe fallback] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
+    r5[R5 standalone contract] --> cargo_test_p_lumen_test_structured_stdout_traceparent_real_lumen_process_correlates_structured_stdout_exact
 ```
