@@ -54,3 +54,35 @@ changes:
     anchor: PgpoolControlPlane::admit_scale
     reason: Pass outstanding reserve-grant units into static scale admission, reject instead of implicitly reclaiming grants, and cover admit/grant/release sequences.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-reserve-aware-static-admission-verification
+requirements:
+  combined_capacity_invariant:
+    id: R3
+    text: "Admit, grant, drain-release, and reserve-release sequences preserve held total at or below usable capacity."
+    kind: invariant
+    risk: high
+    verify: reserve_and_static_sequence_never_exceeds_usable_capacity
+  reject_precedence_preserves_physical_reserves:
+    id: R2
+    text: "A scale-up that would over-commit rejects without reclaiming idle, draining, or expired reserve grants."
+    kind: functional
+    risk: high
+    verify: reserve_aware_static_scale_admission_rejects_overcommit_without_mutation
+  static_admission_counts_outstanding_reserves:
+    id: R1
+    text: "Static scale admission includes every outstanding reserve grant in the endpoint capacity check."
+    kind: regression
+    risk: high
+    verify: reserve_aware_static_scale_admission_rejects_overcommit_without_mutation
+---
+flowchart TD
+    r1[R1 static admission counts outstanding reserves] --> reserve_aware_static_scale_admission_rejects_overcommit_without_mutation[reserve_aware_static_scale_admission_rejects_overcommit_without_mutation]
+    r2[R2 reject precedence preserves physical reserves] --> reserve_aware_static_scale_admission_rejects_overcommit_without_mutation
+    r3[R3 combined capacity invariant] --> reserve_and_static_sequence_never_exceeds_usable_capacity[reserve_and_static_sequence_never_exceeds_usable_capacity]
+```
