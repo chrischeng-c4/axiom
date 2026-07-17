@@ -113,7 +113,7 @@ id: exporter-independent-w3c-server-context-verification
 requirements:
   invalid_or_missing_context_is_safe:
     id: R2
-    text: "Missing, malformed, unsupported-version, wrong-length, invalid-hex, or all-zero traceparent values create a fresh valid root trace/span and do not reject the HTTP request."
+    text: "Missing, malformed, unsupported-version, wrong-length, uppercase, invalid-hex, or all-zero traceparent values create a fresh valid root trace/span and do not reject the HTTP request."
     kind: negative
     risk: high
     verify: cargo test -p service-http --test request_trace_context invalid_or_missing_traceparent_creates_safe_root -- --exact
