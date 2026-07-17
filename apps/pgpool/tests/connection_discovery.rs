@@ -128,6 +128,49 @@ async fn pgpool_backend_connections_are_not_foreign_usage() {
     drop(held_backend);
     connection_task.abort();
 }
+
+/// Proves the managed-provider Rustls path against the TLS-required endpoint
+/// started by `tls_required_discovery.sh`. Keeping its environment opt-in lets
+/// the ordinary integration suite remain usable without Docker.
+#[tokio::test]
+async fn cloudsql_discovery_succeeds_against_tls_required_postgres() {
+    let Ok(port) = std::env::var("PGPOOL_TLS_DISCOVERY_PORT") else {
+        eprintln!(
+            "skipping cloudsql_discovery_succeeds_against_tls_required_postgres: \
+             run `sh apps/pgpool/tests/tls_required_discovery.sh`"
+        );
+        return;
+    };
+    let port: u16 = port
+        .parse()
+        .expect("PGPOOL_TLS_DISCOVERY_PORT must be a valid u16");
+    let ca_path = std::env::var("PGPOOL_TLS_DISCOVERY_CA")
+        .expect("PGPOOL_TLS_DISCOVERY_CA is required with PGPOOL_TLS_DISCOVERY_PORT");
+    let tls_ca_pem = std::fs::read(&ca_path)
+        .unwrap_or_else(|error| panic!("read TLS discovery CA {ca_path}: {error}"));
+    let config = format!(
+        "host=localhost port={port} user=postgres dbname=postgres \
+         connect_timeout=5 application_name=pgpool-tls-discovery-proof"
+    )
+    .parse::<tokio_postgres::Config>()
+    .expect("valid TLS discovery PostgreSQL config");
+    let endpoint = RemoteEndpoint {
+        name: "tls-required-cloudsql".into(),
+        provider: EndpointProvider::CloudSql,
+        role: EndpointRole::Primary,
+        configured_ceiling: None,
+        tls_ca_pem: Some(tls_ca_pem),
+    };
+
+    let facts = discover_connection_facts(endpoint, config, ProviderAdvisory::default())
+        .await
+        .expect("Cloud SQL discovery must trust the configured CA and query TLS-only PostgreSQL");
+
+    assert!(facts.runtime.max_connections > 0);
+    assert!(facts.runtime.total_connections >= 1);
+    assert!(facts.runtime.pgpool_connections >= 1);
+    assert_eq!(facts.endpoint.provider, EndpointProvider::CloudSql);
+}
 // </HANDWRITE>
 
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#1924" reason="Prove configured-CA CloudSql Rustls discovery against an externally supplied TLS-only PostgreSQL endpoint.">
