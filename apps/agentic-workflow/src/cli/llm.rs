@@ -159,14 +159,17 @@ fn registered_verbs() -> Vec<String> {
 const CAPABILITY_MD: &str = r#"# aw llm --topic capability -- the WHAT pillar
 
 A capability is the unit of "what should exist and be production-ready". The
-product surface is declared as Markdown capability roots in the project
-README (capability headings + work-root tables); detailed proof lives in
+product surface is declared as Markdown capability roots in the project's
+CAPABILITIES.md (the default `cap_path`; capability headings + work-root
+tables) with a human-readable summary in README; detailed proof lives in
 validation inventories and external contracts.
 
 ## Mental model
 
-- Capability roots are machine-readable README headings, each with an `ID`,
-  surfaces, EC dimensions, a promise, and a work-root table.
+- Capability roots are machine-readable CAPABILITIES.md headings, each with
+  an `ID`, surfaces, EC dimensions, a promise, and a work-root table.
+  README-resident capability structure is migration input only --
+  `aw capability migrate` relocates it.
 - Each work-root row is a gap to close and a claim to verify. Its slug is the
   `gap` / `claim` id that TD frontmatter references.
 - Readiness is measured, not asserted: a capability is `verified` only when

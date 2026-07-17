@@ -147,12 +147,15 @@ promotion is `aw td promote`.
 --human --skip-issue-inventory` first, then use the rollout/draft/WI/action
 queue artifacts instead of freehand README edits. Treat
 `create_wi:issue_inventory_skipped` as tracker-sync work, not WI backlog.
-Use `migrate` only for YAML/legacy-to-canonical Markdown conversion, and
+Use `migrate` for YAML/legacy-to-canonical Markdown conversion and for
+relocating README-resident capability structure to CAPABILITIES.md, and
 use `check --verify` when capability proof should include configured test
-gates. README is the default `cap_path` and uses `## Brief`,
+gates. CAPABILITIES.md is the default `cap_path` and uses `## Brief`,
 `## Capabilities`, `### Capability Index`, field-style capability
-contracts, and work-root tables. YAML `## Capability:` sections and legacy
-capability tables are migration input only.
+contracts, and work-root tables; README keeps a human-readable summary
+that links to the capability contract. YAML `## Capability:` sections,
+legacy capability tables, and README-resident capability structure are
+migration input only.
 
 `aw health` is a read-only aggregate of project readiness metrics:
 capability readiness, managed/semantic/traceability coverage, command
@@ -321,14 +324,17 @@ add `@spec` annotations where appropriate, and feed the gap back into
 Agentic Workflow until it can become `CODEGEN`.
 
 Product capability completion is separate from source ownership. `aw
-capability` reads the project README or configured `cap_path`; README capability
-structure is Markdown-first: `#` is the project root, `## Brief` is the
-agent-readable project summary, `## Capabilities` owns the capability registry,
-and `### Capability Index` is the compact scan surface. H3-Hn capability
-headings use field-style contracts and work-root tables to map headings to
-epic/subepic WI roots. Atomic `change` WIs usually come from `aw wi atomize`
-rather than README rows. YAML `## Capability:` sections and legacy capability
-tables are migration input only. Verified progress requires passing declared
+capability` reads the project's `CAPABILITIES.md` (the default `cap_path`)
+or configured `cap_path`; capability document structure is Markdown-first:
+`#` is the project root, `## Brief` is the agent-readable project summary,
+`## Capabilities` owns the capability registry, and `### Capability Index`
+is the compact scan surface. H3-Hn capability headings use field-style
+contracts and work-root tables to map headings to epic/subepic WI roots.
+Atomic `change` WIs usually come from `aw wi atomize` rather than
+CAPABILITIES.md rows. README-resident capability structure is migration
+input — `aw capability migrate` relocates it to CAPABILITIES.md and leaves
+a human-readable summary in README. YAML `## Capability:` sections and
+legacy capability tables are also migration input only. Verified progress requires passing declared
 verification gates or linked validation inventories plus claim closure; WI
 linkage is derived provenance resolved from the WI side, and doc-stored WI
 refs are optional (stale ones degrade to advisory findings, #1847). Do not use the old capability shorthand.

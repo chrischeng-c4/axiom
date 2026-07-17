@@ -4284,4 +4284,64 @@ changes:
       `ensure_wi_body_capability_alignment_ref_adds_missing_id_to_existing_section`,
       and `ensure_wi_body_capability_alignment_ref_is_a_noop_when_both_ids_already_present`.
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1848 (R1-R3): the default `cap_path` resolution (no explicit
+      `[[projects]].cap_path`/`--cap-path`) flips from `<project>/README.md`
+      to `<project>/CAPABILITIES.md` in `capability_path_from_row`; an
+      explicit `cap_path` (aw.toml or `--cap-path`) still wins unchanged.
+      New `readme_capability_migration_source` detects the degradation case:
+      when the resolved default CAPABILITIES.md does not exist yet and the
+      project's README still carries canonical or legacy capability
+      structure, that README is a migration source, not a hard read
+      failure. `build_capability_report_inner` calls it right after
+      `resolve_capability_path` (default-path only) and, when a source is
+      found, short-circuits to the new `capability_map_readme_resident_report`
+      helper, which returns a `status: "blocked"` report whose `next_action`
+      is the new `CapabilityActionKind::LocationMigrationRequired` variant
+      naming `aw capability migrate --project <name>` -- never a parse
+      error. `migrate_capability_format` branches on this same detection: a
+      README-resident default project routes to the new
+      `apply_readme_capability_relocation_tick` (reads+parses the README via
+      `parse_capability_document_repairing_previous_migration`, renders a
+      fresh CAPABILITIES.md body via the new
+      `render_relocated_capability_document` -- `## Brief` / `## Capabilities`
+      intro / `### Capability Index` + per-capability sections, reusing
+      `render_capability_registry` for the body -- writes it, then rewrites
+      the README via the new `render_readme_capability_migration_residue`,
+      which strips migrated capability sections
+      (`strip_migrated_capability_sources` + the existing
+      `CAPABILITY_MIGRATION_INSERT_MARKER` split/consume pattern) and leaves
+      a `## Capability Contract` pointer to CAPABILITIES.md in their place);
+      any other project keeps the existing in-place
+      `apply_capability_format_migration_tick` YAML/legacy-to-canonical
+      path. `render_empty_capability_readme` (the `aw capability init`
+      shell) gains a `readme_resident: bool` parameter: the new default
+      (CAPABILITIES.md-resident) shape is `## Brief` / `## Capabilities` /
+      `### Capability Index` only; the README-resident shape (selected only
+      for an explicit `--cap-path README.md` override) keeps the prior
+      `## Contributing` + `## Capability Contract` pointer scaffold.
+      `init_capability_readme` derives `readme_resident` from the resolved
+      `cap_path` file name. New focused tests:
+      `capability_path_from_row_defaults_to_capabilities_md`,
+      `capability_path_from_row_explicit_cap_path_wins`,
+      `resolve_capability_path_override_argument_wins_over_default`,
+      `readme_capability_migration_source_detects_readme_resident_structure`,
+      `readme_capability_migration_source_none_when_capabilities_md_exists`,
+      `readme_capability_migration_source_none_when_readme_has_no_capability_structure`,
+      `capability_init_renders_capabilities_md_resident_shell_by_default`,
+      and `capability_init_renders_readme_resident_shell_for_explicit_readme_override`.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1848: the workflow envelope dispatcher's exhaustive match on
+      `CapabilityActionKind` gains the new `LocationMigrationRequired`
+      variant (#1848), routed identically to the existing
+      `FormatMigrationRequired` arm (dispatch to
+      `aw capability run --project <name> --non-interactive`).
+    impl_mode: hand-written
 ```

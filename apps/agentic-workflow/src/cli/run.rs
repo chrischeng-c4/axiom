@@ -1503,7 +1503,8 @@ fn capability_action_envelope_with_planning_base(
     }
 
     let (kind, command) = match action.kind {
-        CapabilityActionKind::FormatMigrationRequired => (
+        CapabilityActionKind::FormatMigrationRequired
+        | CapabilityActionKind::LocationMigrationRequired => (
             "capability",
             format!("aw capability run --project {project} --non-interactive"),
         ),
