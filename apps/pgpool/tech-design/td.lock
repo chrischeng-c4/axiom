@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T13:37:20.347492+00:00"
-digest = "sha256:6cd0b55b0bc565464dc363c6702455318cfb81b404935f1a84dabb9148f1f83b"
-source_digest = "sha256:6cd0b55b0bc565464dc363c6702455318cfb81b404935f1a84dabb9148f1f83b"
-ir_digest = "sha256:f9ff16131d065eaa95ce7441e98e6090f65e69d164691c251d73e7a88687d388"
+generated_at = "2026-07-17T13:52:35.557086+00:00"
+digest = "sha256:449015ce73a359215b68c449f63608d82e55c6ef3c3cd23c5859956a22d6e2ad"
+source_digest = "sha256:449015ce73a359215b68c449f63608d82e55c6ef3c3cd23c5859956a22d6e2ad"
+ir_digest = "sha256:1cd14419fb7ecaa45be0864b20cc651d86d2404e75f114c7e777ba03e22e0a3b"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -221,6 +221,12 @@ section_count = 3
 path = "logic/reuse-drained-transaction-framereader-for-reset-response.md"
 digest = "sha256:0656a42227810836bcc1c93af0fe2fd6268862cbd5b1db660956a9491cb493b7"
 ir_digest = "sha256:cd59d591575757a618eb3213181d5f372650b3f0e105553e68e59dc7e959e69d"
+section_count = 3
+
+[[files]]
+path = "logic/serve-startup-races-on-the-drain-watch-channel-can-swallow-sigte.md"
+digest = "sha256:4bc69c5f95b01cc76fa6688e6499cd94e8d604dc0782b698cdcd29496a69213e"
+ir_digest = "sha256:5bba38b6d3ba8657aa5f8cfd0fe8d99957ecdba7d82d72ae65dcc93c028507c9"
 section_count = 3
 
 [[files]]
