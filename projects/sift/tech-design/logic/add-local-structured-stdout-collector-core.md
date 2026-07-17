@@ -10,106 +10,134 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: structured-stdout-collector-core
-entry: configure
+entry: validate_config
 nodes:
-  configure:
+  validate_config:
     kind: start
-    label: "Sift collect receives source, stable source id, endpoint, project, environment, checkpoint, quarantine, batch, retry, and follow settings"
-  resume:
+    label: "validate nonempty source/project/environment, HTTP endpoint, batch 1..1000, line limit, retry count, and file-only follow"
+  checkpoint:
     kind: process
-    label: "load durable checkpoint and verify its source identity; seek or discard to acknowledged byte offset"
-  read:
-    kind: process
-    label: "read a bounded JSONL window from file or stdin while tracking line start and end offsets"
-  decode:
+    label: "load collector.checkpoint.v1 or initialize offset=0 line=0; reject source-id mismatch or truncated file"
+  reader:
     kind: decision
-    label: "line is bounded valid axiom.service.log.v1?"
-  quarantine:
+    label: "file or stdin source?"
+  seek:
     kind: process
-    label: "stage bounded rejection with source id, line, offset, code, message, and preview"
-  map:
+    label: "seek regular file to acknowledged byte offset"
+  discard:
     kind: process
-    label: "map service identity, event payload, attributes, severity, timestamps, and correlation to OperationalEventV2"
-  id:
-    kind: process
-    label: "derive deterministic event id from source identity, line offset, and content digest"
-  batch:
-    kind: process
-    label: "append to bounded delivery batch"
+    label: "discard exactly acknowledged bytes from repeatable stdin stream"
   window:
-    kind: decision
-    label: "batch full or current source window exhausted?"
-  deliver:
     kind: process
-    label: "POST EventWriteRequest through existing /v1/events:write with project and optional bearer token"
-  outcome:
+    label: "read at most batch_size valid events plus intervening rejected lines with max_line_bytes framing"
+  valid:
     kind: decision
-    label: "all items accepted or duplicate?"
+    label: "parse and validate one axiom.service.log.v1 event?"
+  rejection:
+    kind: process
+    label: "stage collector.rejection.v1 with deterministic source offset and bounded preview/error"
+  event:
+    kind: process
+    label: "build log OperationalEventV2 with stable resource, original payload, correlation, and event id sha256(source id, start offset, line)"
+  delivery:
+    kind: decision
+    label: "window has mapped events?"
+  post:
+    kind: process
+    label: "POST <=batch_size events to endpoint/v1/events:write with x-sift-project and optional bearer"
+  response:
+    kind: decision
+    label: "HTTP success and every result accepted or duplicate?"
+  terminal:
+    kind: decision
+    label: "nonretryable 4xx or rejected item?"
   retry:
     kind: process
-    label: "retry retryable transport, 429, or 5xx failures with bounded exponential backoff"
-  exhausted:
+    label: "retry network, 429, and 5xx through max_retries with capped exponential delay"
+  fail:
     kind: terminal
-    label: "stop without advancing checkpoint and report runnable endpoint/token remediation"
-  commit:
+    label: "return collector_delivery_exhausted remediation; retain prior checkpoint"
+  durable:
     kind: process
-    label: "append staged quarantine records then atomically fsync checkpoint at the acknowledged window end"
+    label: "append staged rejection JSONL, then atomic_write checkpoint with FsyncPolicy::Always"
   eof:
     kind: decision
-    label: "EOF in follow mode?"
+    label: "reader reached EOF?"
+  follow:
+    kind: decision
+    label: "follow enabled?"
   wait:
     kind: process
-    label: "wait bounded interval and continue reading appended bytes"
+    label: "sleep poll interval and read newly appended bytes"
+  next:
+    kind: process
+    label: "start next bounded window"
   done:
     kind: terminal
-    label: "emit accepted, duplicate, rejected, line, and final-offset summary"
+    label: "return run summary accepted, duplicates, rejected, lines, start_offset, final_offset"
 edges:
-  - { from: configure, to: resume }
-  - { from: resume, to: read }
-  - { from: read, to: decode }
-  - { from: decode, to: quarantine, label: "no" }
-  - { from: decode, to: map, label: "yes" }
-  - { from: map, to: id }
-  - { from: id, to: batch }
-  - { from: quarantine, to: window }
-  - { from: batch, to: window }
-  - { from: window, to: read, label: "no" }
-  - { from: window, to: deliver, label: "valid items" }
-  - { from: window, to: commit, label: "rejections only" }
-  - { from: deliver, to: outcome }
-  - { from: outcome, to: commit, label: "yes" }
-  - { from: outcome, to: retry, label: "retryable" }
-  - { from: retry, to: deliver, label: "attempt remains" }
-  - { from: retry, to: exhausted, label: "exhausted" }
-  - { from: commit, to: eof }
-  - { from: eof, to: wait, label: "yes" }
-  - { from: wait, to: read }
-  - { from: eof, to: done, label: "no" }
+  - { from: validate_config, to: checkpoint }
+  - { from: checkpoint, to: reader }
+  - { from: reader, to: seek, label: "file" }
+  - { from: reader, to: discard, label: "stdin" }
+  - { from: seek, to: window }
+  - { from: discard, to: window }
+  - { from: window, to: valid }
+  - { from: valid, to: rejection, label: "no" }
+  - { from: valid, to: event, label: "yes" }
+  - { from: rejection, to: delivery }
+  - { from: event, to: delivery }
+  - { from: delivery, to: post, label: "yes" }
+  - { from: delivery, to: durable, label: "no" }
+  - { from: post, to: response }
+  - { from: response, to: durable, label: "yes" }
+  - { from: response, to: terminal, label: "no" }
+  - { from: terminal, to: fail, label: "yes" }
+  - { from: terminal, to: retry, label: "no" }
+  - { from: retry, to: post, label: "attempt remains" }
+  - { from: retry, to: fail, label: "exhausted" }
+  - { from: durable, to: eof }
+  - { from: eof, to: next, label: "no" }
+  - { from: next, to: window }
+  - { from: eof, to: follow, label: "yes" }
+  - { from: follow, to: wait, label: "yes" }
+  - { from: wait, to: window }
+  - { from: follow, to: done, label: "no" }
 ---
 flowchart TD
-    config[collector config] --> resume[load source-matched checkpoint]
-    resume --> read[read bounded JSONL window]
-    read --> valid{v1 line valid?}
-    valid -->|no| reject[stage bounded quarantine record]
-    valid -->|yes| map[map OperationalEventV2 plus deterministic id]
-    reject --> window{window ready?}
-    map --> window
-    window -->|no| read
-    window -->|events| post[bounded POST to Sift ingest]
-    post --> ack{accepted or duplicate?}
-    ack -->|retryable| retry[bounded backoff retry]
+    config[validate collector config] --> checkpoint[source-bound durable checkpoint]
+    checkpoint --> reader{source}
+    reader -->|file| seek[seek byte offset]
+    reader -->|stdin| discard[discard replayed bytes]
+    seek --> window[bounded line window]
+    discard --> window
+    window --> valid{valid v1 event?}
+    valid -->|no| reject[stage bounded rejection]
+    valid -->|yes| event[map event plus deterministic id]
+    reject --> deliver{mapped events?}
+    event --> deliver
+    deliver -->|yes| post[POST bounded existing ingest]
+    post --> ack{all accepted or duplicate?}
+    ack -->|retryable| retry[bounded exponential retry]
     retry --> post
-    ack -->|terminal or exhausted| stop([stop; checkpoint unchanged])
-    ack -->|yes| commit[quarantine then atomic checkpoint]
-    window -->|rejections only| commit
-    commit --> eof{follow at EOF?}
-    eof -->|yes| wait[wait for append]
-    wait --> read
-    eof -->|no| done([terminal summary])
+    ack -->|terminal or exhausted| fail([checkpoint unchanged])
+    ack -->|yes| durable[quarantine append then atomic fsync checkpoint]
+    deliver -->|no| durable
+    durable --> eof{EOF?}
+    eof -->|no| window
+    eof -->|follow| wait[wait for append]
+    wait --> window
+    eof -->|one-shot| done([terminal summary])
 ```
 
-The checkpoint is an acknowledgment boundary, not merely a read cursor: it never advances past a valid line until Sift durably accepts or identifies that event as a duplicate. Invalid structured lines use the explicit quarantine policy and may advance only after their bounded diagnostic is recorded. File one-shot, file follow, and stdin all call the same line/window pipeline; #1675 later supplies CRI records to that core without changing validation, mapping, delivery, or checkpoint semantics.
+Contract invariants:
 
+- The decoder accepts only `axiom.service.log.v1`, RFC3339 timestamps, known uppercase severities, nonempty bounded service/event fields, at most 64 bounded primitive attributes, lowercase nonzero 32/16-character trace/span ids, optional valid parent/flags/request fields, and a line no larger than the configured cap.
+- `OperationalEventV2.event_id` is `stdout-` plus SHA-256 over stable source id, starting byte offset, and exact line bytes. Resource includes `service.name`, `service.version`, and `collector.source_id`; payload preserves the complete decoded service event; signal is `log`.
+- A checkpoint is scoped to one source id and stores next byte offset, next line number, and cumulative accepted/duplicate/rejected counters. File size below its offset is a terminal rotation/truncation error delegated to #1675.
+- The client sends the canonical `EventWriteRequest` to the existing bounded ingest route. Only network errors, HTTP 429, and HTTP 5xx retry. Other 4xx responses and item-level rejections stop without checkpoint advancement.
+- Rejections never contain more than 1024 bytes of original input or 512 bytes of error text. They are written before the window checkpoint; valid later lines remain processable.
+- Follow mode is valid only for regular files. It waits at EOF and re-enters the same window loop; it introduces no alternate parser or delivery semantics.
 ## Changes
 <!-- type: changes lang: yaml -->
 
