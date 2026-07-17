@@ -9,29 +9,29 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-managed-discovery-tls-required-proof
-entry: docker_postgres
+id: pgpool-managed-discovery-tls-required-proof-contract
+entry: proof_script
 nodes:
-  docker_postgres: { kind: start, label: "Start a disposable PostgreSQL container with a self-signed localhost certificate and hostssl-only HBA." }
-  plaintext: { kind: process, label: "Attempt sslmode=disable and require rejection." }
-  ca: { kind: process, label: "Copy the server certificate as the configured CA PEM." }
-  discovery: { kind: process, label: "Run CloudSql discovery through the Rustls connector." }
-  facts: { kind: terminal, label: "Receive runtime connection facts over a verified TLS handshake." }
+  proof_script: { kind: start, label: "Docker proof script creates certificate, key, and hostssl-only HBA." }
+  ready: { kind: process, label: "Wait for the final PostgreSQL process to report readiness." }
+  reject: { kind: decision, label: "Does sslmode=disable fail?" }
+  run_test: { kind: process, label: "Pass mapped port and copied CA path to the targeted discovery test." }
+  cleanup: { kind: terminal, label: "Trap removes container and temporary certificate material." }
 edges:
-  - { from: docker_postgres, to: plaintext }
-  - { from: plaintext, to: ca }
-  - { from: ca, to: discovery }
-  - { from: discovery, to: facts }
+  - { from: proof_script, to: ready }
+  - { from: ready, to: reject }
+  - { from: reject, to: run_test, label: rejected }
+  - { from: run_test, to: cleanup }
 ---
-flowchart LR
-    docker_postgres([TLS-required PostgreSQL]) --> plaintext[Reject plaintext]
-    plaintext --> ca[Pass server CA to test]
-    ca --> discovery[CloudSql Rustls discovery]
-    discovery --> facts([Runtime facts returned])
+flowchart TD
+    proof_script([Start hostssl-only postgres]) --> ready[Wait ready]
+    ready --> reject{Plaintext rejected?}
+    reject -->|yes| run_test[Run CloudSql TLS discovery]
+    reject -->|no| cleanup([Fail proof and clean up])
+    run_test --> cleanup
 ```
 
-The Docker proof creates a one-use localhost certificate, forces `hostssl` authentication, and cleans up after the test. The Rust integration test only runs its TLS assertion when the script supplies endpoint and CA environment values; without them ordinary developer test runs remain hermetic.
-
+The server certificate is self-signed for `localhost`, then copied out as the exact configured CA used by `RemoteEndpoint::tls_ca_pem`. The test endpoint uses `EndpointProvider::CloudSql`, ensuring the path selects `MakeRustlsConnect`; a successful runtime facts query proves TLS negotiation, certificate trust, PostgreSQL authentication, and query decoding together.
 ## Changes
 <!-- type: changes lang: yaml -->
 
