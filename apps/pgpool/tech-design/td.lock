@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T14:47:11.780395+00:00"
-digest = "sha256:890c89c3af677ae88c9c76e962c42254d7966031e2fc01a54bf81d3aa8144e86"
-source_digest = "sha256:890c89c3af677ae88c9c76e962c42254d7966031e2fc01a54bf81d3aa8144e86"
-ir_digest = "sha256:42690613548c97e12097ca705174fa9120d6308be68267964c6177a3d6fe2dc3"
+generated_at = "2026-07-17T15:03:11.611251+00:00"
+digest = "sha256:380c57e94c1958b3d267643484a81d4528a7d2370bf92af073ccc0a15d465de7"
+source_digest = "sha256:380c57e94c1958b3d267643484a81d4528a7d2370bf92af073ccc0a15d465de7"
+ir_digest = "sha256:232e3c9a9578a516869e1621c660d3c8d437827772a178440a522fcbc7a58044"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -29,6 +29,12 @@ section_count = 3
 path = "interfaces/rest/wire-decoders-cover-only-9-backend-tags-copy-notify-extended-emp.md"
 digest = "sha256:0726a2b20486da76cc8821532f67f29300597c5a88ba7fe692ed6d44cad45213"
 ir_digest = "sha256:cb80168b3a9a0e37c5b0e4090581cccce71c9c09e6e4f3a0de2cd6510eca8668"
+section_count = 3
+
+[[files]]
+path = "logic/admit-scale-ignores-outstanding-reserve-grants-static-reserve-ca.md"
+digest = "sha256:f021d0011bd28a627d39d82a27ad9df06e37e5d74fc85de248436970fe4847aa"
+ir_digest = "sha256:eb3a6b52d6382361233053a656a14302ffd2dadfb153015a48aa39cb8746ae32"
 section_count = 3
 
 [[files]]
