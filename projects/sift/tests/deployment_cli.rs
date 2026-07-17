@@ -61,6 +61,11 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(!collector.contains("kind: ClusterRole"));
     assert!(!collector.contains("kind: Role"));
     assert!(!collector.contains("REPLACE_"));
+
+    let ingest_help = sift(&["llm", "--topic", "ingest"]);
+    assert!(ingest_help.contains("--cri-root /var/log/pods"));
+    assert!(ingest_help.contains("sift k8s collector render"));
+    assert!(ingest_help.contains("same checkpointed `axiom.service.log.v1`"));
 }
 // </HANDWRITE>
 

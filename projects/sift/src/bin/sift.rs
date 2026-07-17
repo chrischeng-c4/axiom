@@ -537,7 +537,7 @@ const LLM_TOPICS: &[cli_std::llm::Topic] = &[
     cli_std::llm::Topic {
         id: "ingest",
         summary: "versioned six-signal ingest and the fsync acknowledgement boundary",
-        body: "# Sift ingest\n\nUse `sift collect --source <service.stdout.jsonl>` for the Sift-owned, checkpointed `axiom.service.log.v1` collector. Use `--source -` for stdin and `--follow` only with a regular file. Canonical event clients use `sift event write <file>` or `sift event import <file>`; HTTP collectors use `/v1/events:write` or OTLP `/v1/logs`, `/v1/traces`, `/v1/metrics`, and `/v1/profiles`. Accepted items have completed the shared durable append path.",
+        body: "# Sift ingest\n\nUse `sift collect --source <service.stdout.jsonl>` for file capture, `--source -` for stdin, or `--cri-root /var/log/pods --gcp-project <id>` for the Sift-owned Kubernetes CRI adapter. File, stdin, and CRI records feed the same checkpointed `axiom.service.log.v1` decoder/batch/retry core; `--follow` supports regular files and CRI discovery. Render the least-privilege node deployment with `sift k8s collector render`. Canonical event clients use `sift event write <file>` or `sift event import <file>`; HTTP collectors use `/v1/events:write` or OTLP `/v1/logs`, `/v1/traces`, `/v1/metrics`, and `/v1/profiles`. Accepted items have completed the shared durable append path.",
     },
     cli_std::llm::Topic {
         id: "operations",
