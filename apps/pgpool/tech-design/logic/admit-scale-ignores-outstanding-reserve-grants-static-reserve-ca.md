@@ -44,13 +44,13 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: EndpointAllocator::reserve_many
+    anchor: reserve_many
     reason: Admit static Pod quota against the allocator quota plus externally-held reserve capacity, preserving the allocator's atomic error and blocked-scale status behavior.
   - path: apps/pgpool/src/k8s/control.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: PgpoolControlPlane::admit_scale
+    anchor: admit_scale
     reason: Pass outstanding reserve-grant units into static scale admission, reject instead of implicitly reclaiming grants, and cover admit/grant/release sequences.
 ```
 ## Unit Test
