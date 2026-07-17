@@ -31,7 +31,6 @@
 //! Goldens retired (D5.6): the live CPython oracle replaces the static
 //! `.expected` files; this harness no longer reads goldens or `regen_golden.py`.
 
-use datatest_stable::harness;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
@@ -478,6 +477,184 @@ fn record_oracle_cache_disabled(path: &Path) {
     report_oracle_cache("disabled", path, hit, miss, disabled);
 }
 
+// ── Runner verdict sidecar ────────────────────────────────────────
+//
+// sweep.py's inner loop used to need a separate, manually-triggered
+// `--all --store` sweep (~2 min, and vulnerable to false FAILs under
+// ThreadPoolExecutor load — see HARNESS.md "Sweep load degradation")
+// just to learn what the real gate saw fail. Instead, every fixture's
+// verdict is recorded here as `run_conformance` returns, then flushed
+// once — after the whole suite finishes — to a schema-versioned JSON
+// sidecar that IS the real gate's own output, so it can never disagree
+// with itself. sweep.py reads this first, falling back to
+// `.cache/sweep/failures.txt` only when the sidecar doesn't exist yet
+// (fresh checkout). (#1771)
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Pass,
+    Fail,
+    Diverge,
+    Xfail,
+    Skip,
+    Invalid,
+}
+
+impl Verdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Pass => "PASS",
+            Verdict::Fail => "FAIL",
+            Verdict::Diverge => "DIVERGE",
+            Verdict::Xfail => "XFAIL",
+            Verdict::Skip => "SKIP",
+            Verdict::Invalid => "INVALID",
+        }
+    }
+}
+
+struct VerdictEntry {
+    path: String,
+    verdict: Verdict,
+    detail: String,
+}
+
+static VERDICTS: std::sync::Mutex<Vec<VerdictEntry>> = std::sync::Mutex::new(Vec::new());
+
+/// Record one fixture's verdict. `detail` is trimmed to its first line and
+/// capped at 200 bytes — plenty to identify a failure, small enough that a
+/// 46k-fixture sidecar stays a few hundred KB rather than embedding full
+/// stdout/stderr dumps already available in the cargo test output itself.
+fn record_verdict(path: &Path, verdict: Verdict, detail: impl Into<String>) {
+    let detail = detail.into();
+    let mut detail = detail.lines().next().unwrap_or("").to_string();
+    detail.truncate(200);
+    if let Ok(mut entries) = VERDICTS.lock() {
+        entries.push(VerdictEntry {
+            path: path.display().to_string(),
+            verdict,
+            detail,
+        });
+    }
+}
+
+/// `true` iff invoked with no extra test-binary args (no filter/`--exact`/
+/// `--skip`/`--list`) — i.e. the real, full, unfiltered gate. A partial or
+/// listing run must never overwrite the sidecar with a fragment of the
+/// corpus, so the checkpoint invocation
+/// (`cargo test -p mamba --release --test conformance`, no trailing args)
+/// is the only shape that refreshes it.
+fn is_full_unfiltered_run() -> bool {
+    std::env::args().nth(1).is_none()
+}
+
+fn verdict_sidecar_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/.cache/conformance/last_gate.json")
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn write_verdict_sidecar() {
+    let entries = match VERDICTS.lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+
+    let mut pass = 0usize;
+    let mut fail = 0usize;
+    let mut diverge = 0usize;
+    let mut xfail = 0usize;
+    let mut skip = 0usize;
+    let mut invalid = 0usize;
+    let mut non_pass: Vec<&VerdictEntry> = Vec::new();
+    for entry in entries.iter() {
+        match entry.verdict {
+            Verdict::Pass => pass += 1,
+            Verdict::Fail => fail += 1,
+            Verdict::Diverge => diverge += 1,
+            Verdict::Xfail => xfail += 1,
+            Verdict::Skip => skip += 1,
+            Verdict::Invalid => invalid += 1,
+        }
+        if entry.verdict != Verdict::Pass {
+            non_pass.push(entry);
+        }
+    }
+    non_pass.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let generated_at_unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut body = String::with_capacity(512 + non_pass.len() * 96);
+    body.push_str("{\n");
+    body.push_str("  \"schema_version\": 1,\n");
+    body.push_str("  \"harness_kind\": \"conformance\",\n");
+    body.push_str(&format!(
+        "  \"generated_at_unix_secs\": {generated_at_unix_secs},\n"
+    ));
+    body.push_str(&format!("  \"total\": {},\n", entries.len()));
+    body.push_str("  \"counts\": {\n");
+    body.push_str(&format!("    \"PASS\": {pass},\n"));
+    body.push_str(&format!("    \"FAIL\": {fail},\n"));
+    body.push_str(&format!("    \"DIVERGE\": {diverge},\n"));
+    body.push_str(&format!("    \"XFAIL\": {xfail},\n"));
+    body.push_str(&format!("    \"SKIP\": {skip},\n"));
+    body.push_str(&format!("    \"INVALID\": {invalid}\n"));
+    body.push_str("  },\n");
+    body.push_str(&format!("  \"non_pass_count\": {},\n", non_pass.len()));
+    body.push_str("  \"non_pass\": [\n");
+    for (i, entry) in non_pass.iter().enumerate() {
+        if i > 0 {
+            body.push_str(",\n");
+        }
+        body.push_str(&format!(
+            "    {{\"path\": \"{}\", \"verdict\": \"{}\", \"detail\": \"{}\"}}",
+            json_escape(&entry.path),
+            entry.verdict.as_str(),
+            json_escape(&entry.detail),
+        ));
+    }
+    if !non_pass.is_empty() {
+        body.push('\n');
+    }
+    body.push_str("  ]\n");
+    body.push_str("}\n");
+
+    let path = verdict_sidecar_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&path, &body) {
+        eprintln!(
+            "  [verdict-sidecar] WARNING: could not write {}: {e}",
+            path.display()
+        );
+    } else {
+        eprintln!(
+            "  [verdict-sidecar] wrote {} ({} fixtures, {} non-pass)",
+            path.display(),
+            entries.len(),
+            non_pass.len()
+        );
+    }
+}
+
 fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // bench/*.py fixtures are owned by perf-pin Rust tests (shell-outs to
     // python3 + mamba run); they have no `.expected` goldens by design.
@@ -485,6 +662,7 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // their absence. See #2239.
     if path.components().any(|c| c.as_os_str() == "bench") {
         eprintln!("  [bench-skip] {}", path.display());
+        record_verdict(path, Verdict::Skip, "bench (perf-pin owned)");
         return Ok(());
     }
 
@@ -493,6 +671,7 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
 
     if has_pipeline_run_directive(&src) {
         eprintln!("  [pipeline-skip] {}", path.display());
+        record_verdict(path, Verdict::Skip, "pipeline fixture");
         return Ok(());
     }
 
@@ -501,11 +680,17 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // Remove `# mamba-xfail` directive to re-enable a test.
     if let Some(reason) = &directives.xfail {
         eprintln!("  [xfail] {}: {reason}", path.display());
+        record_verdict(path, Verdict::Xfail, reason.as_str());
         return Ok(());
     }
 
     if directives.strict_type || is_type_strict_path(path) {
-        return run_type_strict(path);
+        let result = run_type_strict(path);
+        match &result {
+            Ok(()) => record_verdict(path, Verdict::Pass, ""),
+            Err(err) => record_verdict(path, Verdict::Fail, err.to_string()),
+        }
+        return result;
     }
 
     // D5.6 capstone proved the dynamic CPython oracle reproduces every static
@@ -530,14 +715,14 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
                 record_oracle_cache_miss(path);
                 let expected = spawn_python(path)?;
                 if !expected.status.success() {
-                    return Err(format!(
-                        "{}: INVALID fixture: CPython ended with {}\nstdout:\n{}\nstderr:\n{}",
-                        path.display(),
+                    let detail = format!(
+                        "INVALID fixture: CPython ended with {}\nstdout:\n{}\nstderr:\n{}",
                         status_detail(expected.status),
                         String::from_utf8_lossy(&expected.stdout),
                         String::from_utf8_lossy(&expected.stderr)
-                    )
-                    .into());
+                    );
+                    record_verdict(path, Verdict::Invalid, detail.as_str());
+                    return Err(format!("{}: {detail}", path.display()).into());
                 }
                 oracle_cache_put(cache_file, &expected.stdout);
                 expected.stdout
@@ -546,14 +731,14 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
         None => {
             let expected = spawn_python(path)?;
             if !expected.status.success() {
-                return Err(format!(
-                    "{}: INVALID fixture: CPython ended with {}\nstdout:\n{}\nstderr:\n{}",
-                    path.display(),
+                let detail = format!(
+                    "INVALID fixture: CPython ended with {}\nstdout:\n{}\nstderr:\n{}",
                     status_detail(expected.status),
                     String::from_utf8_lossy(&expected.stdout),
                     String::from_utf8_lossy(&expected.stderr)
-                )
-                .into());
+                );
+                record_verdict(path, Verdict::Invalid, detail.as_str());
+                return Err(format!("{}: {detail}", path.display()).into());
             }
             expected.stdout
         }
@@ -562,22 +747,21 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     let output = spawn_mamba(path)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = resource_failure(output.status, &stderr)
+        let reason = resource_failure(output.status, &stderr)
             .unwrap_or_else(|| status_detail(output.status));
-        return Err(format!(
-            "{}: mamba run ended with {}\nstdout:\n{}\nstderr:\n{}",
-            path.display(),
-            detail,
+        let detail = format!(
+            "mamba run ended with {reason}\nstdout:\n{}\nstderr:\n{stderr}",
             String::from_utf8_lossy(&output.stdout),
-            stderr
-        )
-        .into());
+        );
+        record_verdict(path, Verdict::Fail, detail.as_str());
+        return Err(format!("{}: {detail}", path.display()).into());
     }
 
     let expected_stdout = String::from_utf8_lossy(&expected_stdout_bytes);
     let actual_stdout = String::from_utf8_lossy(&output.stdout);
     if actual_stdout != expected_stdout {
         let diff = format_diff(&expected_stdout, &actual_stdout);
+        record_verdict(path, Verdict::Diverge, diff.as_str());
         return Err(format!(
             "{}: output mismatch\n\n--- expected (CPython)\n+++ actual (mamba)\n{}",
             path.display(),
@@ -585,6 +769,7 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
         )
         .into());
     }
+    record_verdict(path, Verdict::Pass, "");
     Ok(())
 }
 
@@ -623,8 +808,26 @@ fn format_diff(expected: &str, actual: &str) -> String {
 // non-fixture trees (`.cache/` — notably the materialized oracle-env venv,
 // whose site-packages contain thousands of stdlib/test .py files — and
 // `tools/`), which must never be collected as conformance cases.
-harness!(
-    run_conformance,
-    "tests/cpython",
-    r"tests/cpython/(behavior|type|surface|_regression|real_world|errors|security|security-matrix|perf|concurrency)/.*\.py$"
-);
+//
+// Hand-expanded (rather than `datatest_stable::harness!`) so `main` can flush
+// the verdict sidecar after `datatest_stable::runner` returns — the macro
+// generates `fn main` itself and leaves no hook for post-suite code. This is
+// exactly what the macro expands to (see `datatest_stable::macros::harness`);
+// only the trailing sidecar flush is new. (#1771)
+fn main() -> std::process::ExitCode {
+    use datatest_stable::test_kinds::*;
+
+    let full_run = is_full_unfiltered_run();
+    let requirements = vec![datatest_stable::Requirements::new(
+        run_conformance.kind().resolve(run_conformance),
+        stringify!(run_conformance).to_string(),
+        "tests/cpython".to_string().into(),
+        r"tests/cpython/(behavior|type|surface|_regression|real_world|errors|security|security-matrix|perf|concurrency)/.*\.py$".to_string(),
+    )];
+
+    let exit_code = datatest_stable::runner(&requirements);
+    if full_run {
+        write_verdict_sidecar();
+    }
+    exit_code
+}
