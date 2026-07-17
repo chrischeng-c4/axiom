@@ -60,6 +60,7 @@ impl FrontendMessage {
         }
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in frontend.rs is hand-written pending codegen support">
     /// Decodes a fully-buffered `Frame` into a typed `FrontendMessage` by
     /// tag byte (or, untagged, by protocol version code for
     /// StartupMessage/SSLRequest).
@@ -93,6 +94,7 @@ impl FrontendMessage {
             Some(other) => Err(FrameError::UnknownTag { tag: other }),
         }
     }
+// </HANDWRITE>
 }
 
 fn decode_untagged(

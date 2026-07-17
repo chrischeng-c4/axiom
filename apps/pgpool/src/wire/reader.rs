@@ -359,6 +359,7 @@ fn validate_extended_query_frame(
 }
 // </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in reader.rs is hand-written pending codegen support">
 fn validate_backend_relay(
     frame: &Frame,
     config: &WireCodecConfig,
@@ -433,6 +434,7 @@ fn validate_backend_relay(
         }
     }
 }
+// </HANDWRITE>
 
 fn read_bounded_count(cur: &mut Cursor<'_>, tag: u8, max: usize) -> Result<usize, FrameError> {
     let count = cur.read_i16(Some(tag))?;

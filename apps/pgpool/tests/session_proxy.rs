@@ -140,6 +140,7 @@ async fn spawn_proxy(
     (proxy_addr, server, shutdown_tx)
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in session_proxy.rs is hand-written pending codegen support">
 /// verify: session_proxy::real_postgres_session_connects_queries_and_disconnects_cleanly (AC1)
 #[tokio::test]
 async fn real_postgres_session_connects_queries_and_disconnects_cleanly() {
@@ -175,6 +176,7 @@ async fn real_postgres_session_connects_queries_and_disconnects_cleanly() {
     let _ = shutdown_tx.send(());
     server.await.expect("proxy server task");
 }
+// </HANDWRITE>
 
 /// verify: session_proxy::real_postgres_scram_auth_succeeds_without_credential_persistence (AC2)
 ///
