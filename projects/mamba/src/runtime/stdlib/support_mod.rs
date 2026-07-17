@@ -476,10 +476,16 @@ pub fn register() {
     //    PID so each process gets a unique name; mirror that so fixtures that do
     //    `open(TESTFN, 'x')` (exclusive create) don't collide with a stale file
     //    left by another fixture process in the shared CWD.
+    //    `TESTFN_ASCII` (#1936): CPython's real TESTFN_ASCII is a guaranteed-
+    //    pure-ASCII variant of TESTFN (TESTFN itself can carry non-ASCII on
+    //    some platforms). Ours is already pure ASCII, so reuse the same value.
     let testfn = format!("@mamba_test_{}", std::process::id());
     merge_register(
         "test.support.os_helper",
-        vec![("TESTFN", MbValue::from_ptr(MbObject::new_str(testfn)))],
+        vec![
+            ("TESTFN", MbValue::from_ptr(MbObject::new_str(testfn.clone()))),
+            ("TESTFN_ASCII", MbValue::from_ptr(MbObject::new_str(testfn))),
+        ],
     );
 
     // 5) Missing submodules referenced via `from test.support import <leaf>`.
