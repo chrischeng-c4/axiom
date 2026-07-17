@@ -837,6 +837,7 @@ fn take_detached_compose_stop_request(path: &Path) -> bool {
     true
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in run.rs is hand-written pending codegen support">
 fn run_configured(
     vat: &mut store::Vat,
     cfg: &VatConfig,
@@ -1038,6 +1039,7 @@ fn run_configured(
     vat.log(Event::new(EventKind::RunFinished, summary))?;
     Ok(code)
 }
+// </HANDWRITE>
 
 fn scenario_service_ids(
     cfg: &VatConfig,
