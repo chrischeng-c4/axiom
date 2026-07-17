@@ -94,11 +94,13 @@ changes:
     description: Define ServiceLogEventV1, stable schema constants, correlation validation, sensitive-key exclusion, bounded attributes, and the tracing-subscriber JSONL formatter.
   - path: libs/service-observability/src/logging.rs
     action: modify
+    anchor: init_tracing_with_identity
     section: logic
     impl_mode: hand-written
     description: Compose JsonFields and ServiceJsonFormatter for LogFormat::Json while retaining explicit pretty output and optional OTLP layering.
   - path: libs/service-observability/src/lib.rs
     action: modify
+    anchor: config
     section: logic
     impl_mode: hand-written
     description: Export the versioned event, service identity payload, formatter, and collector-compatibility constants.
