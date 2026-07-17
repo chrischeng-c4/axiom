@@ -31,6 +31,14 @@ flowchart TD
 
 ```yaml
 changes:
+  - path: apps/pgpool/Cargo.toml
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+  - path: Cargo.lock
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
   - path: apps/pgpool/src/wire/backend.rs
     action: modify
     section: logic
@@ -41,6 +49,10 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: decode
+  - path: apps/pgpool/src/wire/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
   - path: apps/pgpool/src/wire/reader.rs
     action: modify
     section: logic
