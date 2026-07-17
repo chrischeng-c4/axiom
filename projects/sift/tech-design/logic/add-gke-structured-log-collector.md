@@ -154,11 +154,13 @@ changes:
     description: Prove the rendered collector least-privilege and resource contract.
   - path: projects/sift/README.md
     action: modify
+    anchor: GKE Event Collection
     section: logic
     impl_mode: hand-written
     description: Link implemented GKE collection work roots to their verification evidence.
   - path: projects/sift/observability/structured-stdout.md
     action: modify
+    anchor: Kubernetes architecture
     section: logic
     impl_mode: hand-written
     description: Document delivered CRI commands, ownership, coexistence, checkpoint, and loss semantics.
