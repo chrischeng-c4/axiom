@@ -67,7 +67,7 @@ pub struct ControlPlaneStatus {
 }
 
 impl ControlPlaneStatus {
-    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Escape endpoint and Pod labels and reap Pod-owned reserve grants on completed drain.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Escape endpoint and Pod labels and reap Pod-owned reserve grants on completed drain.">
     pub fn prometheus(&self) -> String {
         let mut output = String::new();
         for endpoint in &self.endpoints {
