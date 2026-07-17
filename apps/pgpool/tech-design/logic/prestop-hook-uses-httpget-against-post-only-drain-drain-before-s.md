@@ -111,3 +111,28 @@ changes:
     section: logic
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-prestop-get-drain-verification
+requirements:
+  offline_served_contract:
+    id: R2
+    text: "Offline route and OpenAPI surfaces list GET and POST drain methods exactly as the served router does."
+    kind: conformance
+    risk: high
+    verify: cargo test -p pgpool served_contract_matches_offline_spec
+  prestop_get_drain:
+    id: R1
+    text: "Rendered preStop httpGet reaches a served GET /drain route that starts the shared DrainController before SIGTERM."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool prestop_get_drain
+---
+flowchart TD
+    r1[R1 prestop get drain] --> cargo_test_p_pgpool_prestop_get_drain[cargo test -p pgpool prestop_get_drain]
+    r2[R2 offline served contract] --> cargo_test_p_pgpool_served_contract_matches_offline_spec[cargo test -p pgpool served_contract_matches_offline_spec]
+```
