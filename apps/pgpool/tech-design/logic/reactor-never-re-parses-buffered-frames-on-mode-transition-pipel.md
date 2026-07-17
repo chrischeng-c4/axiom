@@ -82,3 +82,20 @@ flowchart TD
     r1[R1 startup pipeline completes] --> cargo_test_p_pgpool_test_trust_startup_replay_reactor_pipelined_startup_and_first_query_complete[cargo test -p pgpool --test trust_startup_replay reactor_pipelined_startup_and_first_query_complete]
     r2[R2 backpressure preserved] --> cargo_test_p_pgpool_test_trust_startup_replay_backend_first_relay_keeps_pipelined_query_out_of_resetting_backend[cargo test -p pgpool --test trust_startup_replay backend_first_relay_keeps_pipelined_query_out_of_resetting_backend]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/reactor/runtime.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: read_client
+  - path: apps/pgpool/tests/trust_startup_replay.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: backend_first_relay_keeps_pipelined_query_out_of_resetting_backend
+```
