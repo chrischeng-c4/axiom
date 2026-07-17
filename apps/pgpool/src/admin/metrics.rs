@@ -16,7 +16,7 @@ use metrics_prometheus::{render_labeled, Label, LabeledSample, SampleGroup};
 /// Content-type header value the TD's e2e test asserts verbatim.
 pub const CONTENT_TYPE: &str = "text/plain;version=0.0.4";
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Capture one BackendPool stats snapshot per pool per Prometheus render.">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Capture one BackendPool stats snapshot per pool per Prometheus render.">
 /// Renders the full Prometheus text-format body for every pool in `state`.
 pub fn render(state: &AdminState) -> String {
     let snapshots = pool_metric_snapshots(state);
