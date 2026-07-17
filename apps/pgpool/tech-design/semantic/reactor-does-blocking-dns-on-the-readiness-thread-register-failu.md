@@ -39,7 +39,6 @@ flowchart TD
 ```
 
 Backend DNS is resolved once by `TransactionReactor::start` before its dedicated readiness thread is spawned. The address is cached for that reactor lifetime; a new handler/reactor creation refreshes it, while routine DNS TTL refresh is intentionally deferred. `open_backend` only dials the cached `SocketAddr`. If Mio registration fails after token allocation, the token is immediately returned to `free_tokens` because no readiness event could retain it.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
