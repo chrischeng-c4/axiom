@@ -49,6 +49,7 @@ async fn discovers_runtime_limit_from_real_postgres_when_available() {
     );
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Drive the held pgpool backend to query-ready state before observing it through runtime discovery.">
 #[tokio::test]
 async fn pgpool_backend_connections_are_not_foreign_usage() {
     let user = std::env::var("USER").unwrap_or_else(|_| "postgres".into());
@@ -113,6 +114,7 @@ async fn pgpool_backend_connections_are_not_foreign_usage() {
             .saturating_sub(facts.runtime.pgpool_connections)
     );
 }
+// </HANDWRITE>
 
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#1924" reason="Prove configured-CA CloudSql Rustls discovery against an externally supplied TLS-only PostgreSQL endpoint.">
 /// Proves the managed-provider Rustls path against the TLS-required endpoint
