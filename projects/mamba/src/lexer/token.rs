@@ -890,6 +890,22 @@ pub enum TokenKind {
     #[regex(r#"'([^'\\]|\\.)*'"#, |lex| {
         let s = lex.slice(); Some(apply_escape_sequences(&s[1..s.len()-1]))
     })]
+    // Python 2-compat `u`/`U` unicode-string prefix (#1920) — a no-op prefix
+    // in CPython 3, so it shares `Str`'s payload and escape processing;
+    // the callback only differs in skipping the 2-byte prefix+quote instead
+    // of the 1-byte bare quote.
+    #[regex(r#"u"([^"\\]|\\.)*""#, |lex| {
+        let s = lex.slice(); Some(apply_escape_sequences(&s[2..s.len()-1]))
+    })]
+    #[regex(r#"u'([^'\\]|\\.)*'"#, |lex| {
+        let s = lex.slice(); Some(apply_escape_sequences(&s[2..s.len()-1]))
+    })]
+    #[regex(r#"U"([^"\\]|\\.)*""#, |lex| {
+        let s = lex.slice(); Some(apply_escape_sequences(&s[2..s.len()-1]))
+    })]
+    #[regex(r#"U'([^'\\]|\\.)*'"#, |lex| {
+        let s = lex.slice(); Some(apply_escape_sequences(&s[2..s.len()-1]))
+    })]
     Str(String),
 
     // Triple-quoted strings (#211)
@@ -1626,6 +1642,35 @@ mod tests {
     fn test_lex_empty_string() {
         let kinds = lex_kinds("\"\"");
         assert_eq!(kinds, vec![TokenKind::Str("".into())]);
+    }
+
+    #[test]
+    fn test_lex_u_prefix_string_double() {
+        // #1920 — Python 2-compat `u"..."` no-op prefix; must tokenize as a
+        // single Str token (previously split into a bare `u` Ident + an
+        // orphaned string).
+        let kinds = lex_kinds("u\"bar\"");
+        assert_eq!(kinds, vec![TokenKind::Str("bar".into())]);
+    }
+
+    #[test]
+    fn test_lex_u_prefix_string_single() {
+        let kinds = lex_kinds("u'bar'");
+        assert_eq!(kinds, vec![TokenKind::Str("bar".into())]);
+    }
+
+    #[test]
+    fn test_lex_uppercase_u_prefix_string() {
+        let kinds = lex_kinds("U'bar'");
+        assert_eq!(kinds, vec![TokenKind::Str("bar".into())]);
+    }
+
+    #[test]
+    fn test_lex_u_prefix_string_with_escape() {
+        // The prefix is a no-op — escape processing still applies, same as
+        // an unprefixed string.
+        let kinds = lex_kinds("u\"he\\\"llo\"");
+        assert_eq!(kinds, vec![TokenKind::Str("he\"llo".into())]);
     }
 
     // --- F-strings ---
