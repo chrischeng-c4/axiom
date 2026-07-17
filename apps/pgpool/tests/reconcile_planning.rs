@@ -28,7 +28,7 @@ fn instance() -> Pgpool {
     instance
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Verify CR status omits unsupported reserve counters and exposes unavailable reserve accounting.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1890" reason="Verify CR status omits unsupported reserve counters and exposes unavailable reserve accounting.">
 #[test]
 fn context_aware_status_omits_unreconciled_reserve_counters() {
     let service = instance();
