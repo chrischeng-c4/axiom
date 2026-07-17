@@ -76,7 +76,6 @@ changes:
     anchor: reserve_admission_waits_before_opening_reserve_backend
     reason: Update explicit policy fixtures to Duration values.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
