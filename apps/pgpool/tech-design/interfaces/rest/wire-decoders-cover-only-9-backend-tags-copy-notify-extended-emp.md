@@ -62,29 +62,29 @@ changes:
 
 ```mermaid
 ---
-id: lossless-wire-relay-tag-coverage-verification
+id: lossless-wire-relay-contract-verification
 requirements:
-  session_losslessness:
-    id: R2
-    text: "Session mode preserves COPY, LISTEN/NOTIFY, empty-query, and extended-query exchanges instead of disconnecting on an unknown tag."
-    kind: functional
+  invalid_rejected:
+    id: R3
+    text: "Malformed and oversized versions of newly covered tags remain rejected before relay."
+    kind: negative
     risk: high
-    verify: cargo test -p pgpool --test session_proxy session_mode_relays_extended_copy_notify_and_empty_query
-  tag_validation:
+    verify: cargo test -p pgpool --test wire_codec relay_rejects_malformed_covered_frames
+  opaque_tags_relay:
     id: R1
-    text: "Every newly accepted frontend and backend tag has well-formed relay coverage plus malformed and oversize rejection coverage."
+    text: "Well-formed extended, COPY, notification, and empty-query frames remain valid opaque relay frames without an UnknownTag failure."
     kind: regression
     risk: high
     verify: cargo test -p pgpool --test wire_codec relay_accepts_extended_copy_notify_and_empty_frames
-  transaction_definition:
-    id: R3
-    text: "Transaction relay validation accepts covered frames up to its explicit extended-protocol fail-fast boundary rather than failing with UnknownTag."
-    kind: regression
+  session_end_to_end:
+    id: R2
+    text: "A real session-mode client completes covered PostgreSQL exchanges without a proxy-initiated unknown-tag disconnect."
+    kind: functional
     risk: high
-    verify: cargo test -p pgpool --test wire_codec transaction_relay_covered_tags_are_not_unknown
+    verify: cargo test -p pgpool --test session_proxy session_mode_relays_extended_copy_notify_and_empty_query
 ---
 flowchart TD
-    r1[R1 tag validation] --> cargo_test_p_pgpool_test_wire_codec_relay_accepts_extended_copy_notify_and_empty_frames[cargo test -p pgpool --test wire_codec relay_accepts_extended_copy_notify_and_empty_frames]
-    r2[R2 session losslessness] --> cargo_test_p_pgpool_test_session_proxy_session_mode_relays_extended_copy_notify_and_empty_query[cargo test -p pgpool --test session_proxy session_mode_relays_extended_copy_notify_and_empty_query]
-    r3[R3 transaction definition] --> cargo_test_p_pgpool_test_wire_codec_transaction_relay_covered_tags_are_not_unknown[cargo test -p pgpool --test wire_codec transaction_relay_covered_tags_are_not_unknown]
+    r1[R1 opaque tags relay] --> cargo_test_p_pgpool_test_wire_codec_relay_accepts_extended_copy_notify_and_empty_frames[cargo test -p pgpool --test wire_codec relay_accepts_extended_copy_notify_and_empty_frames]
+    r2[R2 session end to end] --> cargo_test_p_pgpool_test_session_proxy_session_mode_relays_extended_copy_notify_and_empty_query[cargo test -p pgpool --test session_proxy session_mode_relays_extended_copy_notify_and_empty_query]
+    r3[R3 invalid rejected] --> cargo_test_p_pgpool_test_wire_codec_relay_rejects_malformed_covered_frames[cargo test -p pgpool --test wire_codec relay_rejects_malformed_covered_frames]
 ```
