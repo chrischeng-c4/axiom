@@ -168,6 +168,14 @@ impl<'a> Parser<'a> {
                         },
                         self.span_from(start),
                     ))
+                } else if self.peek_kind() == Some(TokenKind::LParen) {
+                    // `type` is a lexer soft-keyword token (TokenKind::Type),
+                    // distinct from TokenKind::Ident, so it doesn't fall into
+                    // the Ident branch's existing call-annotation handling
+                    // above (#1929) — a call expression here (`type(None)`,
+                    // e.g. `Union[int, type(None)]`) is annotation-position
+                    // PEP 3107 syntax, never validated as a real type.
+                    self.parse_type_call_annotation(start, "type")
                 } else {
                     Ok(Spanned::new(
                         TypeExpr::Named("type".to_string()),
