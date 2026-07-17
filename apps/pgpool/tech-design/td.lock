@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T16:19:33.080836+00:00"
-digest = "sha256:c4fb61ee83d8c9f6f7da3a8b2916df75c3b2d8fdf5e383b5196b0536290ff1d3"
-source_digest = "sha256:c4fb61ee83d8c9f6f7da3a8b2916df75c3b2d8fdf5e383b5196b0536290ff1d3"
-ir_digest = "sha256:c30b96cb29b52254a05610ff398e6791f22fc51b648cf78439c857fdc264ad86"
+generated_at = "2026-07-17T16:28:11.593379+00:00"
+digest = "sha256:88a0d6517f4c6a64383dda20036208b1552e4a75ed23badd9fe456cd281e38f8"
+source_digest = "sha256:88a0d6517f4c6a64383dda20036208b1552e4a75ed23badd9fe456cd281e38f8"
+ir_digest = "sha256:83b1269cd56427b090c081a5d0ed65e47e49308a6cdb4d01c465ff921648052a"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -255,8 +255,8 @@ section_count = 3
 
 [[files]]
 path = "logic/prove-managed-discovery-against-tls-required-postgresql.md"
-digest = "sha256:178d5518679f7ff23710ad630d5d01fc062e37a1c2784e74af133e89477efb0f"
-ir_digest = "sha256:2ce6d5e13aabe7d78026383398b2bc5855a4680a26cf5b7e546160338358148d"
+digest = "sha256:ff1d0ec36b7428b25732d6cdda6a49209f8d982f5fdcb85fa2ef8953fa1a51c6"
+ir_digest = "sha256:9a1f38b03b3657dee43a9cadefd6700fc4037a2936fc011b83ec5323a883e985"
 section_count = 3
 
 [[files]]
