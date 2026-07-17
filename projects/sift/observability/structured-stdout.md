@@ -1,4 +1,4 @@
-<!-- HANDWRITE-BEGIN gap="missing-generator:logic:228fb179" tracker="pending-tracker" reason="scaffold for projects/sift/observability/structured-stdout.md — fill in by hand and update tracker when codegen is ready" -->
+<!-- HANDWRITE-BEGIN gap="missing-generator:logic:228fb179" tracker="1902" reason="Document the canonical local and Kubernetes structured stdout architecture and ownership boundaries." -->
 # Structured stdout observability
 
 This is the canonical ownership and verification contract for operational

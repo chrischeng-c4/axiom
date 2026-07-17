@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:7f82566a" tracker="pending-tracker" reason="scaffold for projects/sift/tests/vat_lumen_observability_e2e.rs — fill in by hand and update tracker when codegen is ready"
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:7f82566a" tracker="1902" reason="Prove the real VAT-managed Lumen stdout to Sift collector and query journey."
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
@@ -9,8 +9,7 @@ use serde_json::{json, Value};
 
 const TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
 const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";
-const TRACEPARENT: &str =
-    "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01";
+const TRACEPARENT: &str = "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01";
 
 fn debug_binary(name: &str) -> PathBuf {
     Path::new(env!("CARGO_BIN_EXE_sift"))
@@ -86,14 +85,14 @@ VAT_OBSERVABILITY_PROBE = "1"
 id = "lumen"
 cmd = [{lumen}, "serve", "--host", "127.0.0.1", "--port", "{{port}}", "--wal", "embedded", "--log-level", "info", "--log-format", "json"]
 ready_http = "http://127.0.0.1:{{port}}/readyz"
-export = {{ LUMEN_URL = "LUMEN_URL" }}
+export = {{ LUMEN_URL = "http://{{host}}:{{port}}" }}
 timeout_s = 20
 
 [[services]]
 id = "sift"
 cmd = [{sift}, "serve", "--host", "127.0.0.1", "--port", "{{port}}", "--data-dir", "sift-data", "--log-level", "warn", "--log-format", "json"]
 ready_http = "http://127.0.0.1:{{port}}/readyz"
-export = {{ SIFT_URL = "SIFT_URL" }}
+export = {{ SIFT_URL = "http://{{host}}:{{port}}" }}
 timeout_s = 20
 
 [[runners]]
@@ -120,25 +119,33 @@ artifacts = ["observability-proof.json"]
         .output()
         .expect("run real VAT observability journey");
 
-    assert!(
-        output.status.success(),
-        "VAT journey failed: stdout=\n{}\nstderr=\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains(TRACE_ID),
-        "VAT must not replay captured Lumen log bytes into its stdout: {stdout}"
-    );
     let events = jsonl(&output.stdout);
     let result = events
         .iter()
         .find(|event| event["type"] == "result")
         .expect("VAT result event");
+    let vat_id = result["id"].as_str().expect("VAT id");
+    if !output.status.success() {
+        let logs = Command::new(&vat)
+            .env("VAT_HOME", vat_home.path())
+            .args(["logs", vat_id, "runner"])
+            .output()
+            .expect("read failed VAT runner logs");
+        panic!(
+            "VAT journey failed: stdout=\n{}\nstderr=\n{}\nrunner stdout=\n{}\nrunner stderr=\n{}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&logs.stdout),
+            String::from_utf8_lossy(&logs.stderr)
+        );
+    }
+    assert!(
+        !stdout.contains(TRACE_ID),
+        "VAT must not replay captured Lumen log bytes into its stdout: {stdout}"
+    );
     assert_eq!(result["ok"], true);
     assert_eq!(result["state"], "kept");
-    let vat_id = result["id"].as_str().expect("VAT id");
 
     let state_output = Command::new(&vat)
         .env("VAT_HOME", vat_home.path())
@@ -163,8 +170,7 @@ async fn vat_runner_observability_probe() {
     let sift_url = std::env::var("SIFT_URL").expect("VAT Sift endpoint export");
     let logs_dir = PathBuf::from(std::env::var("VAT_LOGS_DIR").expect("VAT logs directory"));
     let lumen_stdout = PathBuf::from(
-        std::env::var("VAT_SERVICE_LUMEN_STDOUT_LOG")
-            .expect("VAT Lumen stdout path export"),
+        std::env::var("VAT_SERVICE_LUMEN_STDOUT_LOG").expect("VAT Lumen stdout path export"),
     );
     assert!(lumen_stdout.starts_with(&logs_dir));
     assert!(lumen_stdout.is_file());
@@ -228,23 +234,36 @@ async fn vat_runner_observability_probe() {
         String::from_utf8_lossy(&collector.stderr)
     );
     let summary: Value = serde_json::from_slice(&collector.stdout).unwrap();
-    assert!(summary["accepted"].as_u64().unwrap_or(0) >= 1, "{summary:#}");
+    assert!(
+        summary["accepted"].as_u64().unwrap_or(0) >= 1,
+        "{summary:#}"
+    );
     assert_eq!(summary["rejected"], 0);
 
     let record = wait_for_sift_record(&client, &sift_url).await;
     assert_eq!(record["resource"]["service.name"], "lumen");
     assert_eq!(record["trace_id"], TRACE_ID);
     assert_eq!(record["span_id"], local_span);
-    assert_eq!(record["attributes"]["parent_span_id"], PARENT_SPAN_ID);
-    assert_eq!(record["attributes"]["trace.flags"], "01");
+    assert_eq!(record["attributes"]["parent_span_id"]["type"], "string");
+    assert_eq!(
+        record["attributes"]["parent_span_id"]["value"],
+        PARENT_SPAN_ID
+    );
+    assert_eq!(record["attributes"]["trace.flags"]["type"], "string");
+    assert_eq!(record["attributes"]["trace.flags"]["value"], "01");
     assert_eq!(record["json_payload"]["schema"], "axiom.service.log.v1");
     assert_eq!(
         record["json_payload"]["event"],
         "collection_create_or_extend"
     );
-    assert_eq!(record["json_payload"]["attributes"]["collection_id"], "vat-trace");
+    assert_eq!(
+        record["json_payload"]["attributes"]["collection_id"],
+        "vat-trace"
+    );
     assert_eq!(record["body_text"], record["json_payload"]["message"]);
-    assert!(record["body_text"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(record["body_text"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
 
     let proof = json!({
         "schema": "sift.local-observability-proof.v1",
@@ -268,14 +287,22 @@ async fn wait_for_captured_audit(path: &Path) -> Value {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let source = std::fs::read_to_string(path).unwrap_or_default();
-        if let Some(event) = source.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find(|event| {
-            event["event"] == "collection_create_or_extend"
-                && event["attributes"]["collection_id"] == "vat-trace"
-                && event["trace_id"] == TRACE_ID
-        }) {
+        if let Some(event) = source
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|event| {
+                event["event"] == "collection_create_or_extend"
+                    && event["attributes"]["collection_id"] == "vat-trace"
+                    && event["trace_id"] == TRACE_ID
+            })
+        {
             return event;
         }
-        assert!(Instant::now() < deadline, "missing correlated Lumen audit in {}: {source}", path.display());
+        assert!(
+            Instant::now() < deadline,
+            "missing correlated Lumen audit in {}: {source}",
+            path.display()
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -294,7 +321,11 @@ async fn wait_for_sift_record(client: &reqwest::Client, sift_url: &str) -> Value
             .send()
             .await
             .expect("query real Sift logging API");
-        assert!(response.status().is_success(), "Sift query status {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "Sift query status {}",
+            response.status()
+        );
         let page: Value = response.json().await.unwrap();
         if let Some(record) = page["records"].as_array().and_then(|records| {
             records.iter().find(|record| {
@@ -304,7 +335,10 @@ async fn wait_for_sift_record(client: &reqwest::Client, sift_url: &str) -> Value
         }) {
             return record.clone();
         }
-        assert!(Instant::now() < deadline, "missing correlated Sift record: {page:#}");
+        assert!(
+            Instant::now() < deadline,
+            "missing correlated Sift record: {page:#}"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
