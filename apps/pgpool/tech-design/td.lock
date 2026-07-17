@@ -2,15 +2,21 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T15:43:28.395223+00:00"
-digest = "sha256:c81825c33ae9314a608f40636618b07409a52a0fe7ce0414c27977f3f2cab1e4"
-source_digest = "sha256:c81825c33ae9314a608f40636618b07409a52a0fe7ce0414c27977f3f2cab1e4"
-ir_digest = "sha256:e6bffc190f5637618b8f5d38236d1c96440c13afc29163e006ffc68ba33ffdc2"
+generated_at = "2026-07-17T15:54:13.364492+00:00"
+digest = "sha256:85f1ea2e0ce2fc8a64c0dc204fa9fb23a884d983b0020ce045d28d5cf8ff141b"
+source_digest = "sha256:85f1ea2e0ce2fc8a64c0dc204fa9fb23a884d983b0020ce045d28d5cf8ff141b"
+ir_digest = "sha256:2525e23005c873da1fe8231e5d3d20a120b4bae6231b70546c167ace77b68b6d"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
 digest = "sha256:ca00190c0333553bc7850f461889ef83f445693b067a9845cf02f93a8e66da06"
 ir_digest = "sha256:65a58ffc00bb1e43f87df8b45ffb24732263f83551f98e3a0337a21e52c79a0c"
+section_count = 3
+
+[[files]]
+path = "interfaces/rest/admin-control-plane-hygiene-batch-prometheus-label-escaping-stat.md"
+digest = "sha256:b682fbd1eb68f734965981e96388d37f238c76f6e69127b147aaecc248740c70"
+ir_digest = "sha256:aa17ab15d5675708c01fffb3e4596daf53e3bd7e7b7955121083a42c9fe49a38"
 section_count = 3
 
 [[files]]
