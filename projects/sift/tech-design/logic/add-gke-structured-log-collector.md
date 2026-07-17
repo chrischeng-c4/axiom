@@ -174,43 +174,43 @@ id: gke-cri-collector-adapter-verification
 requirements:
   coexistence:
     id: R5
-    text: "Equivalent CRI and insertId-free Cloud Logging structured events converge on the shared GCP fallback event id and the second real-Sift delivery is counted as duplicate."
+    text: "Equivalent CRI and insertId-free Cloud Logging inputs converge on one event id and real-Sift dual delivery is duplicate-safe."
     kind: compatibility
     risk: high
     verify: cargo test -p sift --test collector_cri
   cri_framing:
     id: R2
-    text: "Real CRI fixtures prove stdout and stderr F records plus contiguous P-to-F assembly, incomplete-partial restart safety, strict envelope rejection, and assembled size bounds."
+    text: "CRI stdout/stderr F records, contiguous P-to-F assembly, incomplete partial replay, malformed envelopes, and assembled bounds are fixture-proven."
     kind: functional
     risk: high
     verify: cargo test -p sift --test collector_cri
   least_privilege_deployment:
     id: R7
-    text: "Offline rendered collector assets use only read-only pod logs and writable state, disable API-token automount, externalize Sift credentials/config, harden the container, and bound CPU/memory without granting Kubernetes API permissions."
+    text: "Rendered assets use read-only pod logs, dedicated writable state, external config/credentials, no API token/permissions, hardening, and bounded resources."
     kind: security
     risk: high
     verify: cargo test -p sift --test deployment_cli
   outage_and_loss:
     id: R6
-    text: "Endpoint outage leaves every CRI offset unchanged; recovery drains the retained file; forced disappearance with observed unread bytes produces durable source_lost quarantine and nonzero loss counters."
+    text: "HTTP outage preserves offsets, recovery drains retained logs, and disappearance with observed unread bytes durably reports source_lost and loss counters."
     kind: resilience
     risk: high
     verify: cargo test -p sift --test collector_cri
   rotation_restart:
     id: R3
-    text: "Device/inode checkpoints resume renamed files, start replacement inodes at zero, survive process restart without replay, and preserve old-before-new handoff."
+    text: "Device/inode checkpoints drain rename rotation, start replacement inodes at zero, and remain idempotent across process restart."
     kind: durability
     risk: high
     verify: cargo test -p sift --test collector_cri
   shared_core:
     id: R1
-    text: "File, stdin, and CRI adapters implement one CollectorSource contract and feed the sole bounded schema-decode, event-map, HTTP batch, retry, quarantine, and acknowledgment-before-checkpoint runtime."
+    text: "All source kinds feed one runtime-owned bounded decoder, mapper, delivery client, retry loop, quarantine order, and acknowledgment-before-commit contract."
     kind: architecture
     risk: high
     verify: cargo test -p sift collector::
   trace_metadata:
     id: R4
-    text: "A Lumen axiom.service.log.v1 record inside a Pod CRI stream is queryable from real Sift by the unchanged W3C trace id with service, Kubernetes, GCP, node, and stream resource identity."
+    text: "A Lumen Pod CRI event reaches real Sift query with unchanged W3C trace id and complete service/Kubernetes/GCP/node/stream identity."
     kind: integration
     risk: high
     verify: cargo test -p sift --test collector_cri
