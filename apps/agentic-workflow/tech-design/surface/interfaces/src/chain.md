@@ -43,7 +43,7 @@ must be resolved from a canonical tracker label before the command is emitted.
 | `ChainBlockerKind` | apps/agentic-workflow/src/cli/chain.rs | enum | pub | 47 |  |
 | `ChainBlocker` | apps/agentic-workflow/src/cli/chain.rs | struct | pub | 75 |  |
 | `validate_aw_command_string` | apps/agentic-workflow/src/cli/chain.rs | function | pub | 142 | validate_aw_command_string(cmd: &str) -> Result<(), ChainBlocker> |
-| `normalize_legacy_next_action` | apps/agentic-workflow/src/cli/chain.rs | function | pub | 1298 | normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> |
+| `normalize_legacy_next_action` | apps/agentic-workflow/src/cli/chain.rs | function | pub | 1390 | normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> |
 
 ## Source
 <!-- type: source lang: rust -->
@@ -384,9 +384,10 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "run.rs:wi_run_command",
-        sample: "aw wi run 915",
-        note: "#917: canonical `aw wi run <id>` replacement for the deprecated \
-               `aw run --wi <id>` / `aw run --root wi:<id>` forms; shared by \
+        sample: "aw goal wi 915",
+        note: "#1899: canonical `aw goal wi <id>` replacement for the retired \
+               `aw wi run <id>` verb (itself #917's replacement for the earlier \
+               `aw run --wi <id>` / `aw run --root wi:<id>` forms); shared by \
                loop_state_envelope, closed_wi_envelope's parent_inspection_command, \
                and project_ready_wi_envelope",
     },
@@ -399,16 +400,19 @@ const EMIT_REGISTRY: &[EmitSite] = &[
     },
     EmitSite {
         source: "run.rs:capability_run_command",
-        sample: "aw capability run work-item-planning --project jet",
-        note: "#917: canonical `aw capability run <capability-id> --project <project>` \
-               replacement for the deprecated `aw run --root capability:<project>:<id>` forms; \
-               Agentic Workflow self-hosting is rejected at admission",
+        sample: "aw goal capability work-item-planning --project jet",
+        note: "#1899: canonical `aw goal capability <capability-id> --project <project>` \
+               replacement for the retired `aw capability run <capability-id> --project \
+               <project>` verb (itself #917's replacement for the earlier `aw run --root \
+               capability:<project>:<id>` forms); Agentic Workflow self-hosting is \
+               rejected at admission",
     },
     EmitSite {
         source: "run.rs:project_capability_rollup_command",
         sample: "aw health --project agentic-workflow claims",
         note: "self-hosting rollup is a read-only health inspection; other projects use the \
-               project-scoped capability loop",
+               project-scoped `aw goal capability --project <project> --non-interactive \
+               --max-ticks 1` rollup form (#1899)",
     },
     EmitSite {
         source: "cb.rs:bare_code_check_guidance_envelope",
@@ -628,9 +632,17 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.run",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
+        // #1899 R3: retired -- `aw goal wi <id>` is the unified re-home. The
+        // clap leaf still parses (so a stale agent gets a structured
+        // `emit_retired_verb_redirect` envelope instead of a bare clap
+        // usage error), but the handler never re-enters the run engine, so
+        // this is no longer a lifecycle-mutating Core verb.
+        class: VerbLifecycleClass::Migration,
+        mutates_lifecycle: false,
+        sunset_criterion: "retires (clap leaf removed) once every EMIT_REGISTRY/loop-state/\
+                            HITL-resumption caller and every persisted `next_action` has been \
+                            observed on `aw goal wi <id>` for a full deploy cycle with no \
+                            remaining `aw wi run` invocations in telemetry",
     },
     VerbLifecycle {
         path: "wi.create",
@@ -756,6 +768,22 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         path: "goal.clear",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    // -- goal (lifecycle root types, #1899: they ARE the loop now) ------
+    // Unlike the ad-hoc goal.* leaves above, `goal.wi`/`goal.capability`
+    // drive the tracked WI/capability lifecycle exactly as the retired
+    // `aw wi run`/`aw capability run` verbs did -- Core, mutating.
+    VerbLifecycle {
+        path: "goal.wi",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.capability",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
         sunset_criterion: "",
     },
     // -- td (core LINEAR lifecycle + read-only/debug support verbs) -----
@@ -939,9 +967,16 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "capability.run",
-        class: VerbLifecycleClass::Core,
-        mutates_lifecycle: true,
-        sunset_criterion: "",
+        // #1899 R3: retired -- `aw goal capability [<cap-id>] --project <p>`
+        // is the unified re-home. The clap leaf still parses (structured
+        // `emit_retired_verb_redirect` envelope instead of a bare clap
+        // usage error) but never re-enters the run engine.
+        class: VerbLifecycleClass::Migration,
+        mutates_lifecycle: false,
+        sunset_criterion: "retires (clap leaf removed) once every EMIT_REGISTRY/loop-state/\
+                            HITL-resumption caller and every persisted `next_action` has been \
+                            observed on `aw goal capability` for a full deploy cycle with no \
+                            remaining `aw capability run` invocations in telemetry",
     },
     VerbLifecycle {
         path: "capability.migrate",
@@ -1331,16 +1366,73 @@ fn normalize_legacy_aw_run_command(cmd: &str) -> Option<Option<String>> {
     None
 }
 
+/// #1899 R4: repair a persisted `next_action` that used the now-retired
+/// `aw wi run <id>` / `aw capability run [<capability-id>] --project
+/// <project>` verb shapes, rewriting it to the equivalent `aw goal wi <id>`
+/// / `aw goal capability [<capability-id>] --project <project>` form. An
+/// in-flight workflow started under the old runner verbs must still
+/// complete post-flip: `aw wi run`/`aw capability run` still parse (clap
+/// leaf kept for the [`emit_retired_verb_redirect`] envelope), so without
+/// this rewrite [`normalize_legacy_next_action`]'s plain chain-validity
+/// pass-through below would hand the old form straight back and dispatch it
+/// into the retired-verb bail instead of the resumed tick. Reuses the same
+/// command-string builders [`run::wi_run_command`] /
+/// [`run::capability_run_command`] / [`run::project_capability_rollup_command`]
+/// (already goal-namespace producers, #1899 R1/R3) so there is exactly one
+/// place that knows what those verbs look like.
+///
+/// Token parsing is the same plain `split_whitespace` scheme as
+/// [`validate_aw_command_string`] (not a shell/shlex split). Returns `None`
+/// when `cmd` isn't one of these two retired verb shapes at all -- the
+/// caller should fall back to its own chain-validity pass-through.
+fn normalize_legacy_wi_capability_run_command(cmd: &str) -> Option<String> {
+    if let Some(rest) = cmd.strip_prefix("aw wi run") {
+        let id = rest.trim().split_whitespace().next()?;
+        return Some(run::wi_run_command(id));
+    }
+    let rest = cmd.strip_prefix("aw capability run")?.trim();
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+    // The capability id, if present, is always the leading positional
+    // (mirrors `capability_run_command`'s own `<capability-id> --project
+    // <project>` shape) -- never treat a later bare token (e.g. the `1` in
+    // `--max-ticks 1`) as a capability id.
+    let capability_id = tokens.first().filter(|t| !t.starts_with("--")).copied();
+    let flags_start = if capability_id.is_some() { 1 } else { 0 };
+    let mut project: Option<&str> = None;
+    let mut i = flags_start;
+    while i < tokens.len() {
+        match tokens[i] {
+            "--project" => {
+                project = tokens.get(i + 1).copied();
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    match (capability_id, project) {
+        (Some(cap_id), Some(p)) => Some(run::capability_run_command(p, cap_id)),
+        (None, Some(p)) => Some(run::project_capability_rollup_command(p)),
+        _ => None,
+    }
+}
+
 /// Normalize a persisted `next_action` string for dispatch.
 ///
 /// - If `cmd` is a legacy `aw run ...` root-selection form (has a
 ///   recognized `--wi`/`--root`/`--capability`/`--project` flag),
 ///   [`normalize_legacy_aw_run_command`] is authoritative: it either
-///   rewrites `cmd` to the current `aw wi run` / `aw capability run` verb,
+///   rewrites `cmd` to the current `aw goal wi` / `aw goal capability` verb,
 ///   or — if the form cannot be repaired (e.g. a capability root with no
 ///   explicit project) — this function returns `None` without falling back
 ///   to the plain chain-validity pass-through below (an `aw run` root form
 ///   is deprecated by definition here even when clap still accepts it).
+/// - If `cmd` is the retired `aw wi run <id>` / `aw capability run
+///   [<capability-id>] --project <project>` form (#1899 R4),
+///   [`normalize_legacy_wi_capability_run_command`] rewrites it to the
+///   equivalent `aw goal wi` / `aw goal capability` form so an in-flight
+///   pre-flip workflow still completes post-flip, rather than falling
+///   through to the pass-through below and dispatching straight into the
+///   retired-verb redirect bail.
 /// - If `cmd` is already chain-valid, it is returned unchanged.
 /// - If `cmd` exactly matches a [`LEGACY_NEXT_ACTION_RULES`] entry, the
 ///   repaired command (with `slug` substituted in) is returned — but only if
@@ -1352,6 +1444,11 @@ pub fn normalize_legacy_next_action(cmd: &str, slug: &str) -> Option<String> {
     let trimmed = cmd.trim();
     if let Some(outcome) = normalize_legacy_aw_run_command(trimmed) {
         return outcome.filter(|candidate| validate_aw_command_string(candidate).is_ok());
+    }
+    if let Some(rewritten) = normalize_legacy_wi_capability_run_command(trimmed) {
+        return validate_aw_command_string(&rewritten)
+            .ok()
+            .map(|_| rewritten);
     }
     if validate_aw_command_string(trimmed).is_ok() {
         return Some(trimmed.to_string());
@@ -1445,7 +1542,8 @@ mod tests {
         let mutating = [
             "new",
             "conf.sync",
-            "wi.run",
+            "goal.wi",
+            "goal.capability",
             "wi.create",
             "wi.update",
             "wi.close",
@@ -1460,7 +1558,6 @@ mod tests {
             "td.code-check",
             "ec.gen",
             "ec.lock",
-            "capability.run",
             "capability.apply-draft",
             "capability.init",
             "capability.migrate",
@@ -1482,6 +1579,12 @@ mod tests {
             "wi.list",
             "wi.show",
             "wi.find",
+            // #1899 R3: retired -- `mutates_lifecycle: false` now (see
+            // VERB_LIFECYCLE_REGISTRY comments above), since these leaves
+            // only ever emit an `emit_retired_verb_redirect` envelope and
+            // never re-enter the run engine.
+            "wi.run",
+            "capability.run",
             "health",
             "llm",
             "upgrade",
@@ -1661,13 +1764,13 @@ mod tests {
         assert_eq!(normalize_legacy_next_action("aw bogus-verb", "915"), None);
     }
 
-    // #917: persisted `aw run --wi <id>` / `aw run --root wi:<id>` strings
-    // repair to the new `aw wi run <id>` verb.
+    // #917/#1899: persisted `aw run --wi <id>` / `aw run --root wi:<id>`
+    // strings repair to the current `aw goal wi <id>` verb.
     #[test]
     fn legacy_aw_run_wi_flag_normalizes_to_wi_run() {
         assert_eq!(
             normalize_legacy_next_action("aw run --wi 915", "irrelevant"),
-            Some("aw wi run 915".to_string())
+            Some("aw goal wi 915".to_string())
         );
     }
 
@@ -1675,13 +1778,13 @@ mod tests {
     fn legacy_aw_run_root_wi_normalizes_to_wi_run() {
         assert_eq!(
             normalize_legacy_next_action("aw run --root wi:915", "irrelevant"),
-            Some("aw wi run 915".to_string())
+            Some("aw goal wi 915".to_string())
         );
     }
 
-    // #917: persisted `aw run --project <p> --root capability:<id>` (or the
-    // deprecated `--capability <id> --project <p>` form) repairs to the new
-    // `aw capability run <id> --project <p>` verb.
+    // #917/#1899: persisted `aw run --project <p> --root capability:<id>`
+    // (or the deprecated `--capability <id> --project <p>` form) repairs to
+    // the current `aw goal capability <id> --project <p>` verb.
     #[test]
     fn legacy_aw_run_root_capability_normalizes_to_capability_run() {
         assert_eq!(
@@ -1689,7 +1792,7 @@ mod tests {
                 "aw run --project agentic-workflow --root capability:work-item-planning",
                 "irrelevant",
             ),
-            Some("aw capability run work-item-planning --project agentic-workflow".to_string())
+            Some("aw goal capability work-item-planning --project agentic-workflow".to_string())
         );
     }
 
@@ -1700,7 +1803,7 @@ mod tests {
                 "aw run --capability work-item-planning --project agentic-workflow",
                 "irrelevant",
             ),
-            Some("aw capability run work-item-planning --project agentic-workflow".to_string())
+            Some("aw goal capability work-item-planning --project agentic-workflow".to_string())
         );
     }
 
@@ -1725,6 +1828,47 @@ mod tests {
                 "irrelevant"
             ),
             None
+        );
+    }
+
+    // #1899 R4: a persisted `next_action` carrying the retired `aw wi run
+    // <id>` verb still repairs to the current `aw goal wi <id>` form, so an
+    // in-flight pre-flip workflow completes post-flip instead of dispatching
+    // straight into the retired-verb redirect bail.
+    #[test]
+    fn legacy_wi_run_next_action_normalizes_to_goal_wi() {
+        assert_eq!(
+            normalize_legacy_next_action("aw wi run 915", "irrelevant"),
+            Some("aw goal wi 915".to_string())
+        );
+    }
+
+    // #1899 R4: a persisted `next_action` carrying the retired `aw
+    // capability run <id> --project <p>` verb still repairs to the current
+    // `aw goal capability <id> --project <p>` form.
+    #[test]
+    fn legacy_capability_run_next_action_normalizes_to_goal_capability() {
+        assert_eq!(
+            normalize_legacy_next_action(
+                "aw capability run work-item-planning --project jet",
+                "irrelevant",
+            ),
+            Some("aw goal capability work-item-planning --project jet".to_string())
+        );
+    }
+
+    // #1899 R4: the bare project-wide `aw capability run --project <p>
+    // --non-interactive --max-ticks 1` form (no capability id) still
+    // repairs to the current `aw goal capability --project <p>
+    // --non-interactive --max-ticks 1` rollup form.
+    #[test]
+    fn legacy_capability_run_project_only_next_action_normalizes_to_goal_capability_rollup() {
+        assert_eq!(
+            normalize_legacy_next_action(
+                "aw capability run --project jet --non-interactive --max-ticks 1",
+                "irrelevant",
+            ),
+            Some("aw goal capability --project jet --non-interactive --max-ticks 1".to_string())
         );
     }
 
@@ -1977,3 +2121,32 @@ changes:
       registry sample with focused verification or read-only health. The
       legacy project-root rewriter now resolves the self project to health
       claims, while ordinary projects retain canonical capability runners.
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899: `aw goal` becomes the single unified loop verb, retiring
+      `aw wi run`/`aw capability run`. EMIT_REGISTRY samples for
+      `run.rs:wi_run_command`, `run.rs:capability_run_command`, and
+      `run.rs:project_capability_rollup_command` now assert `aw goal wi
+      <id>` / `aw goal capability <cap-id> --project <p>` / `aw goal
+      capability --project <p> --non-interactive --max-ticks 1`.
+      VERB_LIFECYCLE_REGISTRY reclassifies `wi.run` and `capability.run`
+      from `Core`/mutating to `Migration`/non-mutating (their clap leaves
+      stay registered but only emit a structured `retired_verb` redirect
+      envelope naming the `aw goal` replacement, per AC2's error-envelope
+      requirement -- a deliberate deviation from full clap removal) with a
+      populated `sunset_criterion`, and adds two new `Core`/mutating
+      entries, `goal.wi` and `goal.capability`, for the re-homed lifecycle
+      root types. `normalize_legacy_wi_capability_run_command` is a new
+      read-time migration interceptor (#1899 R4, the #845 class): it
+      rewrites a persisted `next_action`/HITL `resume_command` still
+      carrying a retired `aw wi run <id>` or `aw capability run [<cap-id>]
+      --project <p>` form into its `aw goal` equivalent before the
+      chain-validity pass-through, so an in-flight pre-flip workflow
+      resumes correctly post-flip instead of hitting the retired-verb
+      redirect bail. It runs after the older `normalize_legacy_aw_run_command`
+      interceptor (which only covers the even-older bare `aw run
+      --wi/--root/--capability/--project` forms) inside
+      `normalize_legacy_next_action`.

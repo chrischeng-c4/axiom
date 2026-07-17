@@ -68,6 +68,85 @@ pub enum GoalCommand {
     List,
     /// Discard a goal's recorded state.
     Clear(GoalIdArgs),
+    /// Drive one work item to terminal (#1899: unified re-home of `aw wi
+    /// run <id>`, which remains available unretired -- its clap-parsing
+    /// home `src/cli/issues.rs` carries unrelated in-flight edits that are
+    /// out of scope for this change).
+    Wi(GoalWiArgs),
+    /// Drive a capability work-root, or the whole project end to end when
+    /// no capability id is given (#1899: unified re-home of the retired
+    /// `aw capability run [<cap-id>] --project <p>`).
+    Capability(GoalCapabilityArgs),
+}
+
+/// `aw goal wi <id>` args (#1899). Deliberately a standalone struct (not a
+/// re-export of `crate::cli::issues::WiRunArgs`): that struct's file
+/// (`src/cli/issues.rs`) carries unrelated in-flight edits that must stay
+/// byte-for-byte for this change, and `GoalCommand` needs its variant
+/// payloads to be `Clone`. Field shape mirrors `WiRunArgs` exactly so the
+/// two verbs share identical argument parsing and envelope semantics.
+#[derive(Debug, Args, Clone)]
+pub struct GoalWiArgs {
+    /// Work-item identifier (slug for local, numeric for github).
+    pub id: String,
+
+    /// Emit human-readable text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
+
+    /// Generate a /goal-ready prompt for this work item instead of the normal run envelope.
+    #[arg(long)]
+    pub goal: bool,
+}
+
+/// `aw goal capability [<capability-id>] --project <project>` args (#1899).
+/// Mirrors the field subset of `crate::cli::capability::CapabilityRunArgs`
+/// that the project-wide rollup engine consumes, plus a mandatory
+/// `--project` since `aw goal` has no project-scoped parent command to
+/// inherit it from.
+#[derive(Debug, Args, Clone)]
+pub struct GoalCapabilityArgs {
+    /// Capability id to drive via the shared root-driven workflow runner.
+    /// Omit to run the project-wide capability completion loop end to end.
+    pub capability_id: Option<String>,
+
+    /// Project to drive.
+    #[arg(long)]
+    pub project: String,
+
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+
+    /// Require bounded, non-interactive execution. Used by the
+    /// project-wide rollup form (no capability id); ignored for a single
+    /// capability id, which is always one bounded tick.
+    #[arg(long)]
+    pub non_interactive: bool,
+
+    /// Maximum bounded ticks to run (project-wide rollup form only).
+    #[arg(long, default_value_t = 1)]
+    pub max_ticks: usize,
+
+    /// Include issue inventory when computing next action routing.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+
+    /// Skip issue inventory for README/TD-only bounded ticks.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
+
+    /// Emit human-readable text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -136,14 +215,83 @@ enum CheckStatus {
 }
 
 /// Run `aw goal <command>`.
-pub fn run(args: GoalArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
+///
+/// The lifecycle root types (`Wi`, `Capability`) don't touch the ad-hoc
+/// goal-state engine below at all -- they delegate straight to the shared
+/// root-driven workflow runner (`crate::cli::run` / `crate::cli::capability`)
+/// that `aw wi run` / the now-retired `aw capability run` verbs reach
+/// (#1899). Async only because those two delegate targets are.
+pub async fn run(args: GoalArgs) -> Result<()> {
     match args.command {
-        GoalCommand::Set(set_args) => run_set(&project_root, set_args),
-        GoalCommand::Check(id_args) => run_check(&project_root, id_args),
-        GoalCommand::Show(id_args) => run_show(&project_root, id_args),
-        GoalCommand::List => run_list(&project_root),
-        GoalCommand::Clear(id_args) => run_clear(&project_root, id_args),
+        GoalCommand::Set(set_args) => {
+            let project_root = crate::find_project_root()?;
+            run_set(&project_root, set_args)
+        }
+        GoalCommand::Check(id_args) => {
+            let project_root = crate::find_project_root()?;
+            run_check(&project_root, id_args)
+        }
+        GoalCommand::Show(id_args) => {
+            let project_root = crate::find_project_root()?;
+            run_show(&project_root, id_args)
+        }
+        GoalCommand::List => {
+            let project_root = crate::find_project_root()?;
+            run_list(&project_root)
+        }
+        GoalCommand::Clear(id_args) => {
+            let project_root = crate::find_project_root()?;
+            run_clear(&project_root, id_args)
+        }
+        GoalCommand::Wi(wi_args) => run_goal_wi(wi_args).await,
+        GoalCommand::Capability(cap_args) => run_goal_capability(cap_args).await,
+    }
+}
+
+/// `aw goal wi <id>` -- thin re-home of `aw wi run <id>` (#1899 R1):
+/// identical envelope semantics, same shared root loop.
+async fn run_goal_wi(args: GoalWiArgs) -> Result<()> {
+    crate::cli::run::run_wi_root(
+        &args.id,
+        crate::cli::run::RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: args.goal,
+        },
+    )
+    .await
+}
+
+/// `aw goal capability [<capability-id>] --project <project>` -- thin
+/// re-home of the retired `aw capability run [<cap-id>] --project <p>`
+/// (#1899 R1/R3): a capability id drives that one work-root through the
+/// shared root loop; no id drives the project-wide bounded-tick rollup
+/// (the same engine `aw capability run --project <p> --non-interactive`
+/// used).
+async fn run_goal_capability(args: GoalCapabilityArgs) -> Result<()> {
+    let print = crate::cli::run::RunPrintOptions {
+        human: args.human,
+        pretty: args.pretty,
+        goal: false,
+    };
+    match args.capability_id.as_deref() {
+        Some(capability_id) => {
+            crate::cli::run::run_capability_root(&args.project, capability_id, print).await
+        }
+        None => {
+            let run_args = crate::cli::capability::CapabilityRunArgs {
+                capability_id: None,
+                cap_path: args.cap_path.clone(),
+                non_interactive: args.non_interactive,
+                max_ticks: args.max_ticks,
+                include_issue_inventory: args.include_issue_inventory,
+                skip_issue_inventory: args.skip_issue_inventory,
+                json: false,
+                human: args.human,
+                pretty: args.pretty,
+            };
+            crate::cli::capability::run_capability_tick(&args.project, run_args).await
+        }
     }
 }
 

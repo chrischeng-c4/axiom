@@ -69,7 +69,7 @@ fn assert_policy_envelope(value: &Value, expected_root_kind: &str) {
         .as_array()
         .is_some_and(|axes| axes.iter().any(|axis| axis == "traceability")));
     assert!(value.get("invoke").is_none());
-    assert!(!value["next"].to_string().contains("aw capability run"));
+    assert!(!value["next"].to_string().contains("aw goal capability"));
 }
 
 fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -104,8 +104,8 @@ fn self_hosting_project_and_capability_roots_are_rejected_before_mutation() {
     let before = tree_snapshot(temp.path());
 
     let project_args = [
+        "goal",
         "capability",
-        "run",
         "--project",
         "agentic-workflow",
         "--non-interactive",
@@ -117,8 +117,8 @@ fn self_hosting_project_and_capability_roots_are_rejected_before_mutation() {
     assert_policy_envelope(&json_output(&project, &project_args), "project");
 
     let capability_args = [
+        "goal",
         "capability",
-        "run",
         "workflow-root-runner",
         "--project",
         "agentic-workflow",
@@ -175,7 +175,7 @@ async fn self_hosting_work_item_root_is_rejected_before_loop_state_or_dispatch()
         .unwrap();
     let before = tree_snapshot(temp.path());
 
-    let args = ["wi", "run", "1501"];
+    let args = ["goal", "wi", "1501"];
     let output = run_aw(temp.path(), &args, true);
     assert!(output.status.success());
     assert_policy_envelope(&json_output(&output, &args), "wi");
@@ -197,7 +197,7 @@ fn self_hosting_health_reports_policy_and_never_points_back_to_root_runner() {
     assert!(value["advisory_axes"]
         .as_array()
         .is_some_and(|axes| axes.iter().any(|axis| axis == "cold_rebuild")));
-    assert!(!value["next"].to_string().contains("aw capability run"));
+    assert!(!value["next"].to_string().contains("aw goal capability"));
 }
 
 // HANDWRITE-END

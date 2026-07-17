@@ -1466,13 +1466,34 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             apply_capability_draft(&project, args)
         }
         CapabilityCommand::Run(args) => {
-            let project = required_capability_project(selected_project.as_deref())?;
-            match args.capability_id.clone() {
-                Some(capability_id) => {
-                    run_capability_root_tick(&project, &capability_id, &args).await
+            // Retired (#1899): `aw goal capability [<cap-id>] --project <p>` is
+            // the canonical re-homed form. This clap path still parses so a
+            // stale agent gets a structured redirect envelope instead of a
+            // bare clap usage error.
+            let print = crate::cli::run::RunPrintOptions {
+                human: args.human,
+                pretty: args.pretty,
+                goal: false,
+            };
+            let replacement = match (selected_project.as_deref(), args.capability_id.as_deref()) {
+                (Some(project), Some(capability_id)) => {
+                    format!("aw goal capability {capability_id} --project {project}")
                 }
-                None => run_capability_tick(&project, args).await,
-            }
+                (Some(project), None) => {
+                    format!(
+                        "aw goal capability --project {project} --non-interactive --max-ticks 1"
+                    )
+                }
+                (None, _) => "aw goal capability [<capability-id>] --project <project>".to_string(),
+            };
+            let root_id = args.capability_id.clone().unwrap_or_default();
+            crate::cli::run::emit_retired_verb_redirect(
+                "aw capability run",
+                "capability",
+                &root_id,
+                &replacement,
+                print,
+            )
         }
         CapabilityCommand::Migrate(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
@@ -3774,7 +3795,7 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
     out.push_str("aw capability apply-draft --project <project> --draft <path> --reviewed\n");
     out.push_str("aw capability check --project <project>\n");
     out.push_str("aw wi plan --project <project>\n");
-    out.push_str("aw capability run --project <project> --non-interactive --max-ticks 1\n");
+    out.push_str("aw goal capability --project <project> --non-interactive --max-ticks 1\n");
     out.push_str("```\n");
     out
 }
@@ -5380,28 +5401,7 @@ fn upsert_capability_field_in_contract_table(
     None
 }
 
-/// `aw capability run <capability-id>` -- thin shell over the shared
-/// root-driven workflow runner (`crate::cli::run`); delegates to the same
-/// loop as `aw wi run` with a `Capability` root instead of duplicating
-/// dispatch here.
-async fn run_capability_root_tick(
-    project: &str,
-    capability_id: &str,
-    args: &CapabilityRunArgs,
-) -> Result<()> {
-    crate::cli::run::run_capability_root(
-        project,
-        capability_id,
-        crate::cli::run::RunPrintOptions {
-            human: args.human,
-            pretty: args.pretty,
-            goal: false,
-        },
-    )
-    .await
-}
-
-async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
+pub(crate) async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
     if crate::cli::run::is_self_hosting_project(project) {
         return crate::cli::run::emit_self_hosting_policy_error(
             project,
@@ -5415,7 +5415,7 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
         );
     }
     if !args.non_interactive {
-        anyhow::bail!("aw capability run requires --non-interactive");
+        anyhow::bail!("aw goal capability requires --non-interactive");
     }
     if args.max_ticks == 0 {
         anyhow::bail!("--max-ticks must be greater than zero");
@@ -7350,7 +7350,7 @@ fn capability_hitl_question(
         question,
         target,
         resume_command: format!(
-            "aw capability run --project {project} --non-interactive --max-ticks 1"
+            "aw goal capability --project {project} --non-interactive --max-ticks 1"
         ),
         interaction: HitlInteraction::user_question(),
         choices,
@@ -7682,7 +7682,7 @@ fn capability_type_hitl_question(
         "service",
     );
     question.resume_command = format!(
-        "aw capability set-type --project {} --capability {} --type <AgentFirst|Service|Devops|DeveloperTool|RuntimeTool|SecurityTool> && aw capability run --project {} --non-interactive --max-ticks 1",
+        "aw capability set-type --project {} --capability {} --type <AgentFirst|Service|Devops|DeveloperTool|RuntimeTool|SecurityTool> && aw goal capability --project {} --non-interactive --max-ticks 1",
         report.project, item.id, report.project
     );
     question
