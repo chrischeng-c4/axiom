@@ -79,6 +79,7 @@ pub fn effective_connection_limit(
         .unwrap_or(runtime_max)
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in discovery.rs is hand-written pending codegen support">
 /// Query the live endpoint. Provider SDK metadata is accepted only as an
 /// advisory cap and never substitutes for this runtime result.
 pub async fn discover_connection_facts(
@@ -135,6 +136,7 @@ pub async fn discover_connection_facts(
         non_pgpool_connections: runtime.non_pgpool_connections(),
     })
 }
+// </HANDWRITE>
 
 fn count_to_u32(value: i64) -> Result<u32, ConnectionDiscoveryError> {
     value

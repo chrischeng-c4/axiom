@@ -479,6 +479,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in pgpool.rs is hand-written pending codegen support">
 /// `serve_entry` in the TD Logic flowchart: build a `TcpServerConfig` from
 /// `RuntimePlan` with NO server-tcp-level `ConnectionBudget` wired in (the
 /// `SessionHandler`/`TransactionHandler` enforce their own admission so a
@@ -658,4 +659,5 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     Ok(())
 }
+// </HANDWRITE>
 // </HANDWRITE>

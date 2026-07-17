@@ -135,6 +135,7 @@ struct ReactorStats {
     idle: AtomicUsize,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in backend_pool.rs is hand-written pending codegen support">
 /// Shared backend-connection pool: idle-reuse-preferring acquire with a
 /// non-blocking liveness peek, always-fresh acquire for the one-time
 /// startup+auth handshake, and a disposition-driven release (Logic
@@ -145,6 +146,7 @@ pub struct BackendPool {
     config: PoolConfig,
     inner: Arc<PoolInner>,
 }
+// </HANDWRITE>
 
 impl BackendPool {
     pub fn new(config: PoolConfig) -> Self {

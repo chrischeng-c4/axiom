@@ -28,6 +28,7 @@ use crate::proxy::error::{ProxyError, RejectionReason, SessionOutcome};
 use crate::proxy::relay::{forward_frontend, read_startup, relay_until_ready, HandshakeOutcome};
 use crate::wire::{FrameReader, FrontendMessage, Role};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in session.rs is hand-written pending codegen support">
 /// Runs one accepted frontend connection through the full session-mode
 /// proxy pipeline to a terminal [`SessionOutcome`]. Never panics: every
 /// error path is turned into an outcome, the admission permit (if any was
@@ -58,6 +59,7 @@ pub async fn run_session(client: TcpStream, config: &SessionProxyConfig) -> Sess
     drop(permit);
     outcome
 }
+// </HANDWRITE>
 
 /// Always a brand-new backend connect (R3), now bounded by the shared
 /// [`BackendPool`]'s capacity (WI #1289) instead of a raw `TcpStream::connect`.

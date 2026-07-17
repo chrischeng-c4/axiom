@@ -1256,6 +1256,7 @@ impl ReactorRuntime {
         }
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn handle_startup_frame(&mut self, id: ClientId, token: Token, frame: WireFrame) {
         match frame.message {
             WireMessage::Frontend(FrontendMessage::Ssl(_)) => self.queue_client(token, b"N"),
@@ -1268,6 +1269,7 @@ impl ReactorRuntime {
             _ => self.close_client(token),
         }
     }
+// </HANDWRITE>
 
     fn handle_client_relay_frame(&mut self, id: ClientId, token: Token, frame: RelayFrame) {
         if matches!(frame.kind, RelayFrameKind::FrontendTerminate) {

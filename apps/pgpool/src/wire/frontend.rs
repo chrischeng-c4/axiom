@@ -139,6 +139,7 @@ fn decode_untagged(
     }))
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in frontend.rs is hand-written pending codegen support">
 /// Untagged startup packet (no leading tag byte): 4-byte length, 4-byte
 /// protocol version, then a null-terminated key/value parameter list
 /// terminated by an empty string.
@@ -155,6 +156,7 @@ pub struct StartupMessage {
     pub protocol_minor: i32,
     pub parameters: Vec<(String, String)>,
 }
+// </HANDWRITE>
 
 impl StartupMessage {
     pub fn encode(&self, buf: &mut BytesMut) {

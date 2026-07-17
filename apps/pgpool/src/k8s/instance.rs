@@ -116,6 +116,7 @@ pub fn spec_for_profile(profile: InstanceProfile) -> PgpoolInstanceSpec {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in instance.rs is hand-written pending codegen support">
 /// Render ServiceAccount, Deployment, client Service, and PDB in apply order.
 pub fn render_manifests(spec: &PgpoolInstanceSpec) -> Vec<Value> {
     let cx = RenderCtx {
@@ -235,6 +236,7 @@ pub fn render_manifests(spec: &PgpoolInstanceSpec) -> Vec<Value> {
         pdb(&cx, &spec.name, component, 1),
     ]
 }
+// </HANDWRITE>
 
 pub fn render_instance_yaml(spec: &PgpoolInstanceSpec) -> String {
     render_manifests(spec)

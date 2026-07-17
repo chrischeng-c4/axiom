@@ -202,6 +202,7 @@ async fn discover_endpoint(
     ))
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in reconcile.rs is hand-written pending codegen support">
 fn plan_capacity(
     instance: &str,
     desired: u32,
@@ -290,6 +291,7 @@ fn plan_capacity(
         },
     )
 }
+// </HANDWRITE>
 
 fn provider(provider: PgpoolEndpointProvider) -> EndpointProvider {
     match provider {

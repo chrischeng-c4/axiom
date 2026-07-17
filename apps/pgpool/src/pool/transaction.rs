@@ -150,6 +150,7 @@ impl TcpHandler for TransactionHandler {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in transaction.rs is hand-written pending codegen support">
 /// One accepted frontend connection's full transaction-mode lifecycle.
 /// Never panics: every rejection/error path writes (or forwards) the
 /// appropriate wire frame, releases the frontend permit, and releases any
@@ -421,6 +422,7 @@ async fn run_transaction_client(
         }
     }
 }
+// </HANDWRITE>
 
 enum TxnLegOutcome {
     /// Backend reported `ReadyForQuery(Idle)`: reset + return to idle, loop
