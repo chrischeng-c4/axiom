@@ -57,7 +57,6 @@ changes:
     impl_mode: hand-written
     anchor: real_postgres_session_connects_queries_and_disconnects_cleanly
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
