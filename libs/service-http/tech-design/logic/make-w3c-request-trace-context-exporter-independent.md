@@ -20,7 +20,7 @@ nodes:
     label: "parse W3C version 00 traceparent without requiring OTLP"
   parent_valid:
     kind: decision
-    label: "version, lengths, lowercase or uppercase hex, and nonzero ids are valid?"
+    label: "version, delimiter positions, lowercase hex lengths, and nonzero ids are valid?"
   child_context:
     kind: process
     label: "preserve upstream trace id and create a distinct local server span id with parent_span_id"
@@ -35,7 +35,7 @@ nodes:
     label: "optional OTLP layer installed?"
   attach_otel_parent:
     kind: process
-    label: "attach the same parsed context to OpenTelemetry without changing ids"
+    label: "attach the same parsed context to OpenTelemetry without changing upstream trace identity"
   route_request:
     kind: terminal
     label: "route request normally; structured logging can read correlation fields"
@@ -53,17 +53,16 @@ edges:
 ---
 flowchart TD
     request[HTTP request] --> parse[parse traceparent without OTLP]
-    parse --> valid{valid version 00 context?}
+    parse --> valid{valid W3C version 00 context?}
     valid -->|yes| child[preserve trace id; create local child span]
     valid -->|no or absent| root[create fresh local root trace/span]
     child --> fields[record canonical correlation fields]
     root --> fields
     fields --> otlp{OTLP layer installed?}
-    otlp -->|yes| attach[attach same parent context]
+    otlp -->|yes| attach[attach same upstream context]
     otlp -->|no| route([route request])
     attach --> route
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
