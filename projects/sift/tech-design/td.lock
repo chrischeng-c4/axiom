@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-17T10:39:50.273753+00:00"
-digest = "sha256:0472b7da97ec90cdb59ca577609b31fba4819ae672521f7995b5b5ad3b84ac74"
-source_digest = "sha256:0472b7da97ec90cdb59ca577609b31fba4819ae672521f7995b5b5ad3b84ac74"
-ir_digest = "sha256:3979a01cac54ba9f9d392f4633f8949cd90140a3fbf94f7b0663da6b5c721a7d"
+generated_at = "2026-07-17T10:41:32.845865+00:00"
+digest = "sha256:6183cab75fd36cd29f6115d912689fe5dfd2d189f0b0721126d8012ac2aabb17"
+source_digest = "sha256:6183cab75fd36cd29f6115d912689fe5dfd2d189f0b0721126d8012ac2aabb17"
+ir_digest = "sha256:a1bd4c545aa7e09ca5ec23f98718cc0dfad7258a33d97fcecc18a2c131958340"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -57,8 +57,8 @@ section_count = 1
 
 [[files]]
 path = "logic/add-gke-structured-log-collector.md"
-digest = "sha256:925c9f6ec86bd6fc037ea271f2c800e912bcf2c94e51c19435b567ade7e80740"
-ir_digest = "sha256:ff5ae5fc2f0ce40c0de5a81ad6ee598c5658c26913225a41270d4cb82f2eb3f3"
+digest = "sha256:862c95127814a48e866151a75e7b194d00ee162f9f4535abda8777621d3ae140"
+ir_digest = "sha256:3bf555a88b5319e5a4229cfc35d0782993874ba4ad9633aa8cadd3f65d17417c"
 section_count = 3
 
 [[files]]
