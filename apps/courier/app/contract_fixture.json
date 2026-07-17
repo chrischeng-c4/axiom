@@ -1,0 +1,58 @@
+{
+  "create": {
+    "repo": "chrischeng-c4/axiom",
+    "client_input": {
+      "title": "Test Issue",
+      "body": "Hello world",
+      "labels": ["bug", "p0"]
+    },
+    "expected_server_payload": {
+      "repo": "chrischeng-c4/axiom",
+      "ops": [
+        {
+          "op": "create",
+          "title": "Test Issue",
+          "body": "Hello world",
+          "labels": ["bug", "p0"],
+          "number": null,
+          "state": null
+        }
+      ]
+    }
+  },
+  "comment": {
+    "repo": "chrischeng-c4/axiom",
+    "number": 123,
+    "body": "This is a comment",
+    "expected_server_payload": {
+      "repo": "chrischeng-c4/axiom",
+      "ops": [
+        {
+          "op": "comment",
+          "number": 123,
+          "body": "This is a comment",
+          "title": null,
+          "labels": null,
+          "state": null
+        }
+      ]
+    }
+  },
+  "reopen": {
+    "repo": "chrischeng-c4/axiom",
+    "number": 123,
+    "expected_server_payload": {
+      "repo": "chrischeng-c4/axiom",
+      "ops": [
+        {
+          "op": "update",
+          "number": 123,
+          "state": "open",
+          "title": null,
+          "body": null,
+          "labels": null
+        }
+      ]
+    }
+  }
+}

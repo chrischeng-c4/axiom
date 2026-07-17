@@ -4,11 +4,10 @@ cap_path = "README.md"
 label = "app:courier"
 
 [capability.profile]
-traits = ["service", "network_exposed", "long_running", "cli_facing"]
+traits = ["network_exposed", "long_running"]
 
 [[workspaces]]
 name = "courier"
 paths = ["**"]
-target = "rust"
-test_cmd = "cargo test -p courier"
-codegen.profile = "rust/score-crate"
+target = "python"
+test_cmd = "python -m pytest"

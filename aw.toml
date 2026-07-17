@@ -142,10 +142,9 @@ label = "app:courier"
 [[projects.workspaces]]
 name = "courier"
 paths = ["apps/courier/**"]
-target = "rust"
-test_cmd = "cargo test -p courier"
-verify_cold = true
-codegen.profile = "rust/score-crate"
+target = "python"
+test_cmd = "python -m pytest"
+verify_cold = false
 
 [[projects]]
 name = "loom"

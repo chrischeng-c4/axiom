@@ -119,6 +119,27 @@ impl Client {
     }
 }
 
+/// Parses the courier batch mutation response, asserting status and extracting the body.
+fn parse_batch_response(results: &serde_json::Value) -> Result<serde_json::Value> {
+    let op_res = results.get(0).context("empty batch response")?;
+    let status = op_res.get("status").and_then(|s| s.as_u64()).unwrap_or(500);
+    if status >= 400 {
+        let err_msg = if let Some(err) = op_res.get("error").and_then(|e| e.as_str()) {
+            err.to_string()
+        } else if let Some(body) = op_res.get("body") {
+            if let Some(s) = body.as_str() {
+                s.to_string()
+            } else {
+                body.to_string()
+            }
+        } else {
+            "unknown error".to_string()
+        };
+        bail!("courier batch op failed (status {status}): {err_msg}");
+    }
+    op_res.get("body").cloned().context("missing body in success response")
+}
+
 #[async_trait::async_trait]
 impl IssueBackend for Client {
     async fn search(&self, repo: &str, state: &str, query: &str, limit: u32) -> Result<serde_json::Value> {
@@ -151,18 +172,25 @@ impl IssueBackend for Client {
     async fn submit_issue(&self, repo: &str, payload: &serde_json::Value) -> Result<String> {
         if let Some(courier_url) = Self::resolve_courier_url() {
             let url = format!("{}/issues", courier_url.trim_end_matches('/'));
+            let title = payload.get("title").and_then(|v| v.as_str()).context("missing title")?;
+            let body = payload.get("body").and_then(|v| v.as_str());
+            let labels = payload.get("labels").and_then(|v| v.as_array());
+
             let batch_payload = json!({
+                "repo": repo,
                 "ops": [
-                    { "method": "create", "repo": repo, "payload": payload }
+                    {
+                        "op": "create",
+                        "title": title,
+                        "body": body,
+                        "labels": labels,
+                        "number": null,
+                        "state": null
+                    }
                 ]
             });
             let results: serde_json::Value = self.courier_post(&url, &batch_payload).await?.json().await?;
-            let status = results.get(0).and_then(|r| r.get("status").and_then(|s| s.as_u64())).unwrap_or(500);
-            if status >= 400 {
-                let err_msg = results.get(0).and_then(|r| r.get("body").and_then(|b| b.as_str())).unwrap_or("unknown error");
-                bail!("courier batch op failed (status {status}): {err_msg}");
-            }
-            let body = results.get(0).and_then(|r| r.get("body")).context("empty batch response")?;
+            let body = parse_batch_response(&results)?;
             Ok(body.get("html_url").and_then(|u| u.as_str()).unwrap_or("(issue created)").to_string())
         } else {
             let url = format!("https://api.github.com/repos/{repo}/issues");
@@ -182,17 +210,20 @@ impl IssueBackend for Client {
         if let Some(courier_url) = Self::resolve_courier_url() {
             let url = format!("{}/issues", courier_url.trim_end_matches('/'));
             let batch_payload = json!({
+                "repo": repo,
                 "ops": [
-                    { "method": "update", "repo": repo, "number": number, "payload": { "state": "open" } }
+                    {
+                        "op": "update",
+                        "number": number,
+                        "state": "open",
+                        "title": null,
+                        "body": null,
+                        "labels": null
+                    }
                 ]
             });
             let results: serde_json::Value = self.courier_post(&url, &batch_payload).await?.json().await?;
-            let status = results.get(0).and_then(|r| r.get("status").and_then(|s| s.as_u64())).unwrap_or(500);
-            if status >= 400 {
-                let err_msg = results.get(0).and_then(|r| r.get("body").and_then(|b| b.as_str())).unwrap_or("unknown error");
-                bail!("courier batch op failed (status {status}): {err_msg}");
-            }
-            let body = results.get(0).and_then(|r| r.get("body")).context("empty batch response")?;
+            let body = parse_batch_response(&results)?;
             Ok(body.get("html_url").and_then(|u| u.as_str()).unwrap_or("(issue reopened)").to_string())
         } else {
             let url = format!("https://api.github.com/repos/{repo}/issues/{number}");
@@ -213,17 +244,20 @@ impl IssueBackend for Client {
         if let Some(courier_url) = Self::resolve_courier_url() {
             let url = format!("{}/issues", courier_url.trim_end_matches('/'));
             let batch_payload = json!({
+                "repo": repo,
                 "ops": [
-                    { "method": "comment", "repo": repo, "number": number, "payload": { "body": body } }
+                    {
+                        "op": "comment",
+                        "number": number,
+                        "body": body,
+                        "title": null,
+                        "labels": null,
+                        "state": null
+                    }
                 ]
             });
             let results: serde_json::Value = self.courier_post(&url, &batch_payload).await?.json().await?;
-            let status = results.get(0).and_then(|r| r.get("status").and_then(|s| s.as_u64())).unwrap_or(500);
-            if status >= 400 {
-                let err_msg = results.get(0).and_then(|r| r.get("body").and_then(|b| b.as_str())).unwrap_or("unknown error");
-                bail!("courier batch op failed (status {status}): {err_msg}");
-            }
-            let res_body = results.get(0).and_then(|r| r.get("body")).context("empty batch response")?;
+            let res_body = parse_batch_response(&results)?;
             Ok(res_body.get("html_url").and_then(|u| u.as_str()).unwrap_or("(comment created)").to_string())
         } else {
             let url = format!("https://api.github.com/repos/{repo}/issues/{number}/comments");
@@ -266,5 +300,144 @@ impl IssueBackend for Client {
 
     fn has_credential(&self) -> bool {
         Self::resolve_courier_token().is_some() || Self::resolve_github_token().is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_contract_fixture_payloads() {
+        let fixture_str = include_str!("../../../apps/courier/app/contract_fixture.json");
+        let fixture: serde_json::Value = serde_json::from_str(fixture_str).unwrap();
+
+        // 1. Test CREATE case
+        let create_case = fixture.get("create").unwrap();
+        let repo = create_case.get("repo").unwrap().as_str().unwrap();
+        let client_input = create_case.get("client_input").unwrap();
+        let expected_server = create_case.get("expected_server_payload").unwrap();
+
+        let title = client_input.get("title").and_then(|v| v.as_str()).unwrap();
+        let body = client_input.get("body").and_then(|v| v.as_str());
+        let labels = client_input.get("labels").and_then(|v| v.as_array());
+
+        let create_payload = json!({
+            "repo": repo,
+            "ops": [
+                {
+                    "op": "create",
+                    "title": title,
+                    "body": body,
+                    "labels": labels,
+                    "number": null,
+                    "state": null
+                }
+            ]
+        });
+        assert_eq!(&create_payload, expected_server);
+
+        // 2. Test COMMENT case
+        let comment_case = fixture.get("comment").unwrap();
+        let number = comment_case.get("number").unwrap().as_u64().unwrap();
+        let body = comment_case.get("body").unwrap().as_str().unwrap();
+        let expected_server = comment_case.get("expected_server_payload").unwrap();
+
+        let comment_payload = json!({
+            "repo": repo,
+            "ops": [
+                {
+                    "op": "comment",
+                    "number": number,
+                    "body": body,
+                    "title": null,
+                    "labels": null,
+                    "state": null
+                }
+            ]
+        });
+        assert_eq!(&comment_payload, expected_server);
+
+        // 3. Test REOPEN case
+        let reopen_case = fixture.get("reopen").unwrap();
+        let number = reopen_case.get("number").unwrap().as_u64().unwrap();
+        let expected_server = reopen_case.get("expected_server_payload").unwrap();
+
+        let reopen_payload = json!({
+            "repo": repo,
+            "ops": [
+                {
+                    "op": "update",
+                    "number": number,
+                    "state": "open",
+                    "title": null,
+                    "body": null,
+                    "labels": null
+                }
+            ]
+        });
+        assert_eq!(&reopen_payload, expected_server);
+    }
+
+    #[test]
+    fn test_parse_batch_response_success() {
+        let success_resp = json!([
+            {
+                "status": 201,
+                "body": {
+                    "html_url": "https://github.com/foo/bar/issues/1"
+                }
+            }
+        ]);
+        let body = parse_batch_response(&success_resp).unwrap();
+        assert_eq!(body.get("html_url").unwrap().as_str().unwrap(), "https://github.com/foo/bar/issues/1");
+    }
+
+    #[test]
+    fn test_parse_batch_response_error_branch() {
+        // Test with "error" key
+        let err_resp = json!([
+            {
+                "status": 400,
+                "error": "missing issue number for comment"
+            }
+        ]);
+        let res = parse_batch_response(&err_resp);
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "courier batch op failed (status 400): missing issue number for comment"
+        );
+
+        // Test with "body" string
+        let err_resp_body_str = json!([
+            {
+                "status": 422,
+                "body": "Validation error"
+            }
+        ]);
+        let res = parse_batch_response(&err_resp_body_str);
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "courier batch op failed (status 422): Validation error"
+        );
+
+        // Test with "body" object
+        let err_resp_body_obj = json!([
+            {
+                "status": 500,
+                "body": {
+                    "message": "GitHub API down"
+                }
+            }
+        ]);
+        let res = parse_batch_response(&err_resp_body_obj);
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "courier batch op failed (status 500): {\"message\":\"GitHub API down\"}"
+        );
     }
 }

@@ -1,21 +1,46 @@
 import os
-import re
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import List, Optional
 import httpx
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, Header, HTTPException, Query, status, Depends
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="courier", description="stateless GitHub issues proxy")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Fail fast at startup if no token is configured
+    if not os.environ.get("COURIER_GITHUB_TOKEN", "").strip():
+        raise RuntimeError("COURIER_GITHUB_TOKEN must be set")
+    yield
 
+app = FastAPI(title="courier", description="stateless GitHub issues proxy", lifespan=lifespan)
+
+# Read variables dynamically or at startup
 GITHUB_TOKEN = os.environ.get("COURIER_GITHUB_TOKEN", "").strip()
 ALLOWED_REPOS = [
     r.strip() for r in os.environ.get("COURIER_ALLOWED_REPOS", "chrischeng-c4/axiom").split(",") if r.strip()
 ]
 
-# Fail fast at startup if no token is configured
-if not GITHUB_TOKEN:
-    raise RuntimeError("COURIER_GITHUB_TOKEN must be set")
+async def verify_auth(authorization: Optional[str] = Header(None)):
+    accepted_tokens = [
+        t.strip() for t in os.environ.get("COURIER_ACCEPTED_TOKENS", "").split(",") if t.strip()
+    ]
+    if not accepted_tokens:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: No accepted tokens configured"
+        )
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Missing or invalid Authorization header"
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    if token not in accepted_tokens:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Invalid token"
+        )
 
 class OpType(str, Enum):
     CREATE = "create"
@@ -54,9 +79,10 @@ async def forward_to_github(
     params: Optional[dict] = None
 ) -> httpx.Response:
     url = f"https://api.github.com{path}"
+    token = os.environ.get("COURIER_GITHUB_TOKEN", "").strip()
     headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "User-Agent": "courier/python"
     }
     resp = await client.request(method, url, headers=headers, json=json_data, params=params)
@@ -67,7 +93,7 @@ async def forward_to_github(
 def health_check():
     return {"status": "ok"}
 
-@app.get("/issues")
+@app.get("/issues", dependencies=[Depends(verify_auth)])
 async def get_issues(
     repo: str = Query(..., description="GitHub repo owner/name"),
     number: Optional[int] = Query(None, description="Issue number for single view"),
@@ -107,7 +133,7 @@ async def get_issues(
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)
             return resp.json()
 
-@app.post("/issues")
+@app.post("/issues", dependencies=[Depends(verify_auth)])
 async def mutate_issues(request: BatchMutationRequest):
     if not is_repo_allowed(request.repo):
         raise HTTPException(

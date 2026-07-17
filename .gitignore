@@ -83,6 +83,7 @@ Thumbs.db
 target/
 # cross-build target dir (Linux), same regenerable build output as target/
 /target-linux/
+*.log
 
 .claude/settings.local.json
 .claude/scheduled_tasks.lock

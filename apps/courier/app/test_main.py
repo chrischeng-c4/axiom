@@ -1,12 +1,19 @@
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
-import pytest
 from app.main import app
 
 client = TestClient(app)
 
+@patch.dict(os.environ, {
+    "COURIER_ACCEPTED_TOKENS": "test-token",
+    "COURIER_GITHUB_TOKEN": "mock-github-token"
+})
 class TestCourierApp(unittest.TestCase):
+    def setUp(self):
+        self.headers = {"Authorization": "Bearer test-token"}
+
     def test_health_checks(self):
         resp = client.get("/healthz")
         self.assertEqual(resp.status_code, 200)
@@ -16,8 +23,21 @@ class TestCourierApp(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"status": "ok"})
 
+    def test_auth_failures(self):
+        # No header
+        resp = client.get("/issues?repo=chrischeng-c4/axiom")
+        self.assertEqual(resp.status_code, 401)
+        
+        # Wrong token
+        resp = client.get("/issues?repo=chrischeng-c4/axiom", headers={"Authorization": "Bearer wrong"})
+        self.assertEqual(resp.status_code, 401)
+
+        # No header on POST
+        resp = client.post("/issues", json={})
+        self.assertEqual(resp.status_code, 401)
+
     def test_get_issues_disallowed_repo(self):
-        resp = client.get("/issues?repo=some/other-repo")
+        resp = client.get("/issues?repo=some/other-repo", headers=self.headers)
         self.assertEqual(resp.status_code, 403)
         self.assertIn("not in COURIER_ALLOWED_REPOS", resp.json()["detail"])
 
@@ -29,7 +49,7 @@ class TestCourierApp(unittest.TestCase):
         mock_response.json.return_value = {"number": 123, "title": "Test Issue"}
         mock_forward.return_value = mock_response
 
-        resp = client.get("/issues?repo=chrischeng-c4/axiom&number=123")
+        resp = client.get("/issues?repo=chrischeng-c4/axiom&number=123", headers=self.headers)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"number": 123, "title": "Test Issue"})
         mock_forward.assert_called_once()
@@ -44,7 +64,7 @@ class TestCourierApp(unittest.TestCase):
         mock_response.json.return_value = {"total_count": 1, "items": [{"number": 123}]}
         mock_forward.return_value = mock_response
 
-        resp = client.get("/issues?repo=chrischeng-c4/axiom&q=query&state=closed")
+        resp = client.get("/issues?repo=chrischeng-c4/axiom&q=query&state=closed", headers=self.headers)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["total_count"], 1)
         mock_forward.assert_called_once()
@@ -88,7 +108,7 @@ class TestCourierApp(unittest.TestCase):
             ]
         }
 
-        resp = client.post("/issues", json=payload)
+        resp = client.post("/issues", json=payload, headers=self.headers)
         self.assertEqual(resp.status_code, 200)
         results = resp.json()
         self.assertEqual(len(results), 2)
@@ -99,3 +119,25 @@ class TestCourierApp(unittest.TestCase):
 
         # Verify call arguments
         self.assertEqual(mock_forward.call_count, 3)
+
+    def test_contract_validation(self):
+        import json
+        from app.main import BatchMutationRequest
+
+        # Load contract_fixture.json relative to this file
+        fixture_path = os.path.join(os.path.dirname(__file__), "contract_fixture.json")
+        with open(fixture_path) as f:
+            fixture = json.load(f)
+
+        for case_name, case_data in fixture.items():
+            expected = case_data["expected_server_payload"]
+            parsed = BatchMutationRequest.model_validate(expected)
+            self.assertEqual(parsed.repo, expected["repo"])
+            self.assertEqual(len(parsed.ops), len(expected["ops"]))
+            for p_op, e_op in zip(parsed.ops, expected["ops"]):
+                self.assertEqual(p_op.op.value, e_op["op"])
+                self.assertEqual(p_op.title, e_op.get("title"))
+                self.assertEqual(p_op.body, e_op.get("body"))
+                self.assertEqual(p_op.labels, e_op.get("labels"))
+                self.assertEqual(p_op.number, e_op.get("number"))
+                self.assertEqual(p_op.state, e_op.get("state"))

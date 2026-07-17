@@ -1,6 +1,0 @@
-refactor(cli-std): decouple CLI from network logic using IssueBackend
-
-- Decouple all CLI tools from hardcoded network logic in `cli_std::issue` by utilizing `IssueBackend`.
-- Introduce `issue-client` dependency into application layers.
-- Inject `issue_client::Client` where necessary across apps (tape, lumen, mamba, agentic-workflow, pgpool, relay, etc.) to ensure applications handle implementation details instead of libraries.
-- Pass `client` explicitly in `cli_std::issue` and `report_issue::run` function signatures.
