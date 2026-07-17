@@ -758,17 +758,6 @@ test_cmd = "cargo test -p cclab-wal"
 verify_cold = false
 
 [[projects]]
-name = "cue"
-path = "projects/cue"
-
-[[projects.workspaces]]
-name = "cue"
-paths = ["projects/cue/**"]
-target = "schemas"
-test_cmd = "true"
-verify_cold = false
-
-[[projects]]
 name = "mamba"
 path = "projects/mamba"
 
