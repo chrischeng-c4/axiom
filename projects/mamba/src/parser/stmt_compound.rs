@@ -317,20 +317,31 @@ impl<'a> Parser<'a> {
         let mut prepends: Vec<Spanned<Stmt>> = Vec::new();
         let mut units: Vec<(Option<Vec<String>>, String, bool)> = Vec::new();
         loop {
-            if self.peek_kind() == Some(TokenKind::LParen) {
+            // A per-unit target group may be written with either delimiter:
+            // `(a, b)` or the equivalent list-display `[a, b]` (#1927) — both
+            // desugar identically via the `__for_target_N_K__` flattening
+            // below, so only the open/close token kinds differ.
+            let group_close = if self.peek_kind() == Some(TokenKind::LParen) {
+                Some(TokenKind::RParen)
+            } else if self.peek_kind() == Some(TokenKind::LBracket) {
+                Some(TokenKind::RBracket)
+            } else {
+                None
+            };
+            if let Some(close_kind) = group_close {
                 let (lp_start, _) = self.advance();
                 let mut group: Vec<String> = Vec::new();
                 let (s, e) = self.expect_name()?;
                 group.push(self.text_at(s, e).to_string());
                 while self.peek_kind() == Some(TokenKind::Comma) {
                     self.advance();
-                    if self.peek_kind() == Some(TokenKind::RParen) {
+                    if self.peek_kind() == Some(close_kind.clone()) {
                         break;
                     }
                     let (s, e) = self.expect_name()?;
                     group.push(self.text_at(s, e).to_string());
                 }
-                self.expect(TokenKind::RParen)?;
+                self.expect(close_kind)?;
                 units.push((
                     Some(group),
                     format!("__for_target_{}_{}__", lp_start, units.len()),
@@ -1202,6 +1213,45 @@ mod tests {
         match parse_stmt("for k, v in items:\n    pass\n") {
             Stmt::For { targets, .. } => {
                 assert_eq!(targets, vec!["k", "v"]);
+            }
+            other => panic!("expected For, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_for_list_display_target() {
+        // #1927 — `[a, b]` is an equally-valid for-target delimiter as
+        // `(a, b)`; as the sole target unit it flattens directly into
+        // `targets`, same as the bare-comma and paren-group forms.
+        match parse_stmt("for [k, v] in items:\n    pass\n") {
+            Stmt::For { targets, .. } => {
+                assert_eq!(targets, vec!["k", "v"]);
+            }
+            other => panic!("expected For, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_for_list_display_target_mixed_with_bare_unit() {
+        // #1927 — a `[...]` group alongside a bare unit exercises the
+        // multi-unit placeholder/prepend desugaring path (same as an
+        // equivalent `(a, b), c` paren-group case), not just the
+        // single-unit direct-flatten path above.
+        match parse_stmt("for [a, b], c in items:\n    pass\n") {
+            Stmt::For { targets, body, .. } => {
+                assert_eq!(targets.len(), 2);
+                assert_eq!(targets[1], "c");
+                assert_eq!(body.len(), 2, "expected a prepended unpack assign + pass");
+                match &body[0].node {
+                    Stmt::Assign { target, .. } => match &target.node {
+                        Expr::TupleLit(elems) => {
+                            assert!(matches!(&elems[0].node, Expr::Ident(n) if n == "a"));
+                            assert!(matches!(&elems[1].node, Expr::Ident(n) if n == "b"));
+                        }
+                        other => panic!("expected TupleLit target, got {other:?}"),
+                    },
+                    other => panic!("expected prepended Assign, got {other:?}"),
+                }
             }
             other => panic!("expected For, got {other:?}"),
         }
