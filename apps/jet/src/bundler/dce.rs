@@ -11,7 +11,7 @@
 //! When slicing the original `&str` we must convert through `byte_offsets` to
 //! avoid panics on multi-byte UTF-8 characters (e.g. `✓`, emoji).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Parser};
 
 /// Build a lookup table: byte_offsets[char_idx] = byte offset in `source`.
@@ -91,11 +91,21 @@ pub fn eliminate_unused_side_effect_free_require_bindings(
         return source.to_string();
     }
 
+    // Build a name -> occurrence-byte-ranges index with a single walk of the
+    // tree, then answer every candidate binding's "referenced outside its
+    // declaration span?" question from the index instead of re-walking the
+    // whole module per binding. On large CJS barrels (e.g.
+    // @mui/icons-material, ~10.6k single-declarator require bindings) the
+    // old per-binding tree walk was O(bindings * AST nodes); this is
+    // O(AST nodes + bindings).
+    let mut identifier_index: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    index_identifier_occurrences(source, root, &mut identifier_index);
+
     let mut edits = Vec::new();
     collect_unused_require_binding_edits(
         source,
         root,
-        root,
+        &identifier_index,
         side_effect_free_module_ids,
         &mut edits,
     );
@@ -126,6 +136,54 @@ pub fn eliminate_unused_side_effect_free_require_bindings(
     }
 
     out
+}
+
+/// Index every `identifier` / `shorthand_property_identifier` occurrence in
+/// the tree by name, recording each occurrence's byte range. Mirrors the
+/// exact node-kind checks and skip-set of `identifier_has_reference_outside`
+/// (does NOT skip `template_string` — substitutions like `${_Foo}` contain
+/// real identifier references) so a single walk can answer every binding's
+/// "referenced outside declaration span?" query afterward.
+fn index_identifier_occurrences<'a>(
+    source: &'a str,
+    node: Node<'_>,
+    index: &mut HashMap<&'a str, Vec<(usize, usize)>>,
+) {
+    if matches!(node.kind(), "identifier" | "shorthand_property_identifier") {
+        let range = node.byte_range();
+        index
+            .entry(&source[range.clone()])
+            .or_default()
+            .push((range.start, range.end));
+    }
+
+    if matches!(
+        node.kind(),
+        "string" | "comment" | "regex" | "regex_pattern"
+    ) {
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        index_identifier_occurrences(source, child, index);
+    }
+}
+
+/// Answer "does any occurrence of `ident` fall outside `excluded`?" from the
+/// index built by `index_identifier_occurrences`. Same rule as the retired
+/// per-binding tree walk: the declaration's own name node is inside
+/// `excluded` and thus never counts as an outside reference.
+fn identifier_referenced_outside_index(
+    index: &HashMap<&str, Vec<(usize, usize)>>,
+    ident: &str,
+    excluded: &std::ops::Range<usize>,
+) -> bool {
+    index.get(ident).is_some_and(|occurrences| {
+        occurrences
+            .iter()
+            .any(|&(start, end)| start < excluded.start || end > excluded.end)
+    })
 }
 
 /// Prune a retained module's lowered re-export glue down to the names the
@@ -952,16 +1010,19 @@ fn eliminate_static_conditionals_syntax_once(source: &str) -> String {
 
 fn collect_unused_require_binding_edits(
     source: &str,
-    root: Node<'_>,
     node: Node<'_>,
+    identifier_index: &HashMap<&str, Vec<(usize, usize)>>,
     side_effect_free_module_ids: &HashSet<usize>,
     edits: &mut Vec<StaticEdit>,
 ) {
     match node.kind() {
         "variable_declaration" | "lexical_declaration" => {
-            if let Some(edit) =
-                unused_require_binding_edit(source, root, node, side_effect_free_module_ids)
-            {
+            if let Some(edit) = unused_require_binding_edit(
+                source,
+                node,
+                identifier_index,
+                side_effect_free_module_ids,
+            ) {
                 edits.push(edit);
                 return;
             }
@@ -974,8 +1035,8 @@ fn collect_unused_require_binding_edits(
     for child in node.children(&mut cursor) {
         collect_unused_require_binding_edits(
             source,
-            root,
             child,
+            identifier_index,
             side_effect_free_module_ids,
             edits,
         );
@@ -1157,8 +1218,8 @@ fn is_object_keys_reexport_statement(text: &str, ident: &str) -> bool {
 
 fn unused_require_binding_edit(
     source: &str,
-    root: Node<'_>,
     declaration: Node<'_>,
+    identifier_index: &HashMap<&str, Vec<(usize, usize)>>,
     side_effect_free_module_ids: &HashSet<usize>,
 ) -> Option<StaticEdit> {
     let mut cursor = declaration.walk();
@@ -1187,7 +1248,7 @@ fn unused_require_binding_edit(
         return None;
     }
 
-    if identifier_has_reference_outside(source, root, ident, declaration.byte_range()) {
+    if identifier_referenced_outside_index(identifier_index, ident, &declaration.byte_range()) {
         return None;
     }
 
@@ -1220,35 +1281,6 @@ fn collect_numeric_require_ids(source: &str, node: Node<'_>, ids: &mut Vec<usize
     for child in node.children(&mut cursor) {
         collect_numeric_require_ids(source, child, ids);
     }
-}
-
-fn identifier_has_reference_outside(
-    source: &str,
-    node: Node<'_>,
-    ident: &str,
-    excluded: std::ops::Range<usize>,
-) -> bool {
-    if matches!(node.kind(), "identifier" | "shorthand_property_identifier")
-        && &source[node.byte_range()] == ident
-        && (node.start_byte() < excluded.start || node.end_byte() > excluded.end)
-    {
-        return true;
-    }
-
-    if matches!(
-        node.kind(),
-        "string" | "comment" | "regex" | "regex_pattern"
-    ) {
-        return false;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if identifier_has_reference_outside(source, child, ident, excluded.clone()) {
-            return true;
-        }
-    }
-    false
 }
 
 fn parse_js(source: &str) -> Option<tree_sitter::Tree> {
@@ -2027,6 +2059,91 @@ const value = 1;"#;
             eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([8usize]));
         assert!(output.contains("init"), "{}", output);
         assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    #[test]
+    fn test_unused_require_binding_referenced_only_in_string_is_removed() {
+        // The binding name appears verbatim inside a string literal, which is
+        // not a real reference: `string` nodes are excluded from the
+        // identifier occurrence index, same as the retired per-binding walk.
+        let input = r#"var _Foo = require(7)["default"] || require(7);
+const label = "_Foo";
+module.exports["label"] = label;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(!output.contains("require(7)"), "{}", output);
+        assert!(!output.contains("var _Foo"), "{}", output);
+        assert!(output.contains("\"_Foo\""), "{}", output);
+    }
+
+    #[test]
+    fn test_require_binding_referenced_in_template_substitution_is_kept_by_index() {
+        let input = r#"var _Foo = require(7)["default"] || require(7);
+const label = `${_Foo}`;
+module.exports["label"] = label;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(output.contains("_Foo"), "{}", output);
+        assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    #[test]
+    fn test_require_binding_referenced_via_shorthand_property_is_kept_by_index() {
+        let input = r#"var _Foo = require(7)["default"] || require(7);
+const bag = { _Foo };
+module.exports["bag"] = bag;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(output.contains("_Foo"), "{}", output);
+        assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    #[test]
+    fn test_mixed_module_keeps_referenced_binding_removes_unreferenced_binding() {
+        let input = r#"var _Used = require(7)["default"] || require(7);
+var _Unused = require(8)["default"] || require(8);
+const value = _Used.thing;
+module.exports["value"] = value;"#;
+        let output = eliminate_unused_side_effect_free_require_bindings(
+            input,
+            &HashSet::from([7usize, 8usize]),
+        );
+        assert!(output.contains("_Used"), "{}", output);
+        assert!(output.contains("require(7)"), "{}", output);
+        assert!(!output.contains("_Unused"), "{}", output);
+        assert!(!output.contains("require(8)"), "{}", output);
+    }
+
+    #[test]
+    fn test_mui_icons_material_shaped_barrel_keeps_every_referenced_binding() {
+        // Mirrors @mui/icons-material's real barrel shape (issue #1894): every
+        // `_IconN` require binding is read back inside its own lazy-getter
+        // `Object.defineProperty` re-export, so the algorithm must keep all
+        // of them even though each is a single-declarator side-effect-free
+        // require binding — the exact shape that made the retired
+        // per-binding O(bindings * AST nodes) walk quadratic.
+        const COUNT: usize = 200;
+        let mut input = String::new();
+        let mut side_effect_free_ids: HashSet<usize> = HashSet::with_capacity(COUNT);
+        for i in 0..COUNT {
+            side_effect_free_ids.insert(i);
+            input.push_str(&format!(
+                "var _Icon{i} = _interopRequireDefault(require({i}));\n"
+            ));
+            input.push_str(&format!(
+                "Object.defineProperty(exports, \"Icon{i}\", {{ get: function () {{ return _Icon{i}.default; }} }});\n"
+            ));
+        }
+
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(&input, &side_effect_free_ids);
+
+        for i in 0..COUNT {
+            assert!(
+                output.contains(&format!("_Icon{i} = _interopRequireDefault(require({i}))")),
+                "binding _Icon{i} must be kept (referenced in its getter)"
+            );
+        }
     }
 
     #[test]
