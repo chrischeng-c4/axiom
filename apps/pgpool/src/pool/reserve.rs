@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::k8s::{ReserveLeaseGrant, ReserveLeaseKey, ReserveLeaseRequest, ReserveLeaseState};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Represent reserve, queue, and idle timeouts as Duration and preserve sub-second elapsed time during local idle release.">
 /// Runtime policy rendered by the operator.  The caller places
 /// `reconcile_once` on a background task; acquire/relay code only calls
 /// `try_spend`, which reads the local cache and never performs control-plane
@@ -17,6 +18,7 @@ pub struct ReserveLeasePolicy {
     pub lease_ttl_seconds: u64,
     pub request_chunk_size: u32,
 }
+// </HANDWRITE>
 
 impl Default for ReserveLeasePolicy {
     fn default() -> Self {

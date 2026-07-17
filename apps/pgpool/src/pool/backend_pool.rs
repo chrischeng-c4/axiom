@@ -362,6 +362,7 @@ impl BackendPool {
         }
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Use the Duration reserve policy directly for normal queue and reserve admission deadlines.">
     async fn acquire_internal(&self, allow_idle_reuse: bool) -> Result<BackendLease, PoolError> {
         let queue_wait_timeout = self
             .inner
@@ -411,6 +412,7 @@ impl BackendPool {
             // Notified (or spuriously woken): loop back and recheck.
         }
     }
+// </HANDWRITE>
 
     fn saturated(&self) -> PoolError {
         self.saturated_after(self.config.acquire_timeout)
