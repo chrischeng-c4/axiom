@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T16:28:11.593379+00:00"
-digest = "sha256:88a0d6517f4c6a64383dda20036208b1552e4a75ed23badd9fe456cd281e38f8"
-source_digest = "sha256:88a0d6517f4c6a64383dda20036208b1552e4a75ed23badd9fe456cd281e38f8"
-ir_digest = "sha256:83b1269cd56427b090c081a5d0ed65e47e49308a6cdb4d01c465ff921648052a"
+generated_at = "2026-07-17T16:35:11.811909+00:00"
+digest = "sha256:f424386d5b662d4140135f8e462542443c7f6251a34212f50affb95348e737e2"
+source_digest = "sha256:f424386d5b662d4140135f8e462542443c7f6251a34212f50affb95348e737e2"
+ir_digest = "sha256:9d355b3b3294dcc2ba731463a21aed70db575bb44ea4fd0c5496f3e2ad9ae45c"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -101,6 +101,12 @@ section_count = 3
 path = "logic/hand-reset-clean-backend-directly-to-a-reusable-waiter.md"
 digest = "sha256:453eb6c4df2286fcc31ab6b36aa910f0e71b0f65d2e63c19371a07d2055233e2"
 ir_digest = "sha256:2de1cf551c83ca5d16ca75c18b6fa25c3a791e715a24a20ee5b2a748bb1364a2"
+section_count = 3
+
+[[files]]
+path = "logic/make-held-backend-discovery-regression-query-ready.md"
+digest = "sha256:2987574837d403d9c825557b8047f7506daf1e6a0bdae78543d21deabf0481d8"
+ir_digest = "sha256:03b793f3cd61631b744a2e294dde25e4114b16c375f6c51a9245897cd406e242"
 section_count = 3
 
 [[files]]
