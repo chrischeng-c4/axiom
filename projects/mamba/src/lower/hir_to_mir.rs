@@ -3831,6 +3831,14 @@ impl<'a> HirToMir<'a> {
                         name: *target,
                         value: boxed,
                     });
+                    // #1794: mirrors the two Assign arms below (:3898-3904,
+                    // :3913-3919) — this write pairs the local Copy with a
+                    // boxed StoreGlobal exactly like they do, so it must join
+                    // global_synced_syms too or a later Any-typed read of
+                    // this same symbol (`HirExpr::Var`, :8918) trusts the
+                    // stale raw-cached vreg instead of safely reloading via
+                    // LoadGlobal.
+                    self.global_synced_syms.insert(target.0);
                 }
             }
             HirStmt::Assign { target, value, .. } => {
