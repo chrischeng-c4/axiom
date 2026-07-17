@@ -189,33 +189,71 @@ impl<'a> Parser<'a> {
     }
 
     /// Lookahead helper used by lambda type-annotation disambiguation
-    /// (#1582). Scan forward from `self.pos` and return true iff a `:`
-    /// appears at depth 0 (relative to current paren/bracket/brace nesting)
-    /// before we close out a paren / hit a newline / hit EOF.
+    /// (#1582). Used to distinguish a typed-lambda continuation
+    /// (`lambda x: T, y: U: body` — a further typed param follows) from a
+    /// lambda whose body is part of an enclosing container
+    /// (`lambda x: x, rest_of_args` in a call/list/dict/tuple — no further
+    /// param follows; the comma belongs to the enclosing container).
     ///
-    /// Used to distinguish a typed-lambda continuation
-    /// (`lambda x: T, y: U: body` — body-`:` exists ahead) from a lambda
-    /// whose body is part of a tuple / call-arg list
-    /// (`lambda x: x, rest_of_args` — no body-`:` ahead).
-    pub(crate) fn has_lambda_body_colon_ahead(&self) -> bool {
-        let mut depth: i32 = 0;
-        for i in self.pos..self.tokens.len() {
-            match &self.tokens[i].kind {
-                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
-                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
-                    depth -= 1;
-                    if depth < 0 {
-                        return false;
-                    }
-                }
-                TokenKind::Colon if depth == 0 => return true,
-                TokenKind::Newline | TokenKind::Semicolon | TokenKind::Eof if depth == 0 => {
+    /// A flat scan for "any depth-0 colon ahead" is not sufficient here
+    /// (#1918): an enclosing dict literal's own sibling entries
+    /// (`{1: lambda x: x, 2: 'next'}`) sit at the same token depth as a
+    /// further lambda parameter would, since the dict's own opening `{`
+    /// was consumed before this scan's start and so never registers as a
+    /// depth-changing token relative to it. The dict's next `2: 'next'`
+    /// entry then looks identical, depth-wise, to a genuine continuing
+    /// param. So instead of hunting for any colon, speculatively parse the
+    /// comma-separated tail as if it really were more
+    /// `name (: type)? (= default)?` parameters, and only confirm when
+    /// that tail is well-formed and lands on the real body-separator `:`.
+    /// Restores `self.pos` unconditionally — this is a pure lookahead.
+    pub(crate) fn has_lambda_body_colon_ahead(&mut self) -> bool {
+        let saved = self.pos;
+        let confirmed = self.scan_further_typed_lambda_params();
+        self.pos = saved;
+        confirmed
+    }
+
+    /// Consumes zero-or-more `, name (: type)? (= default)?` groups from
+    /// the current `,`, returning true iff that chain is immediately
+    /// followed by the lambda's body-separator `:`. Any shape that isn't
+    /// a parameter (e.g. a non-name token right after the comma, as in a
+    /// dict's next key, or a call expression like `R(...)`) returns false
+    /// so the caller backtracks to the body-separator interpretation.
+    fn scan_further_typed_lambda_params(&mut self) -> bool {
+        loop {
+            if self.peek_kind() != Some(TokenKind::Comma) {
+                return false;
+            }
+            self.advance(); // consume ,
+            if matches!(
+                self.peek_kind(),
+                Some(TokenKind::Star) | Some(TokenKind::DoubleStar)
+            ) {
+                self.advance();
+            }
+            if !self.peek_kind().as_ref().map_or(false, Self::is_name_token) {
+                return false;
+            }
+            self.advance(); // consume the name
+            if self.peek_kind() == Some(TokenKind::Colon) {
+                self.advance();
+                if self.parse_type_expr().is_err() {
                     return false;
                 }
-                _ => {}
+            }
+            if self.peek_kind() == Some(TokenKind::Eq) {
+                self.advance();
+                if self.parse_expr().is_err() {
+                    return false;
+                }
+            }
+            match self.peek_kind() {
+                Some(TokenKind::Colon) => return true,
+                Some(TokenKind::Comma) => continue,
+                _ => return false,
             }
         }
-        false
     }
 
     /// Expect a name token (identifier or soft keyword), returning (start, end).
