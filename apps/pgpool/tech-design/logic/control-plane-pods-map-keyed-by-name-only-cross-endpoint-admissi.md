@@ -50,7 +50,6 @@ changes:
     anchor: status_projects_global_budget_and_managed_readiness
     reason: Migrate operator control-plane status coverage to the explicit endpoint-scoped Pod lifecycle API.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
