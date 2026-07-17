@@ -359,7 +359,7 @@ fn validate_extended_query_frame(
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in reader.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1877" reason="logic section in reader.rs is hand-written pending codegen support">
 fn validate_backend_relay(
     frame: &Frame,
     config: &WireCodecConfig,
