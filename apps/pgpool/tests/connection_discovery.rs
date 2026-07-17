@@ -1,9 +1,16 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md#unit-test
 // <HANDWRITE gap="missing-generator:unit-test:pgpool-platform-discovery" tracker="#1570" reason="Real PostgreSQL discovery fixture generation is not available.">
+use std::sync::OnceLock;
+
 use pgpool::platform::{
     discover_connection_facts, discovery_tls_mode, DiscoveryTlsMode, EndpointProvider,
     EndpointRole, ProviderAdvisory, RemoteEndpoint,
 };
+
+fn local_postgres_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 #[test]
 fn managed_provider_selects_tls_discovery() {
@@ -22,6 +29,7 @@ fn managed_provider_selects_tls_discovery() {
 
 #[tokio::test]
 async fn discovers_runtime_limit_from_real_postgres_when_available() {
+    let _local_postgres = local_postgres_test_lock().lock().await;
     let user = std::env::var("USER").unwrap_or_else(|_| "postgres".into());
     let config = format!(
         "host=127.0.0.1 port=5432 user={user} dbname=postgres connect_timeout=2 application_name=pgpool-discovery-test"
@@ -52,6 +60,7 @@ async fn discovers_runtime_limit_from_real_postgres_when_available() {
 // <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Drive the held pgpool backend to query-ready state before observing it through runtime discovery.">
 #[tokio::test]
 async fn pgpool_backend_connections_are_not_foreign_usage() {
+    let _local_postgres = local_postgres_test_lock().lock().await;
     let user = std::env::var("USER").unwrap_or_else(|_| "postgres".into());
     let discovery_config = format!(
         "host=127.0.0.1 port=5432 user={user} dbname=postgres connect_timeout=2 application_name=pgpool-discovery-self-test"
@@ -80,13 +89,16 @@ async fn pgpool_backend_connections_are_not_foreign_usage() {
     )
     .parse::<tokio_postgres::Config>()
     .expect("valid postgres config");
-    let Ok((_held_backend, connection)) = backend_config.connect(tokio_postgres::NoTls).await
-    else {
+    let Ok((held_backend, connection)) = backend_config.connect(tokio_postgres::NoTls).await else {
         return;
     };
-    let _connection = tokio::spawn(async move {
+    let connection_task = tokio::spawn(async move {
         let _ = connection.await;
     });
+    if held_backend.simple_query("SELECT 1").await.is_err() {
+        connection_task.abort();
+        return;
+    }
 
     let mut facts = baseline.clone();
     for _ in 0..20 {
@@ -113,6 +125,8 @@ async fn pgpool_backend_connections_are_not_foreign_usage() {
             .total_connections
             .saturating_sub(facts.runtime.pgpool_connections)
     );
+    drop(held_backend);
+    connection_task.abort();
 }
 // </HANDWRITE>
 
