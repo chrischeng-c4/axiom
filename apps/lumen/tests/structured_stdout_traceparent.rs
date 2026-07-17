@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:0571ffd4" tracker="pending-tracker" reason="Run the real Lumen binary, make valid, invalid, and missing traceparent HTTP writes, capture stdout concurrently, and assert the shared JSONL and correlation contracts."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:0571ffd4" tracker="1871" reason="Run the real Lumen binary, make valid, invalid, and missing traceparent HTTP writes, capture stdout concurrently, and assert the shared JSONL and correlation contracts."
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
@@ -10,8 +10,7 @@ use serde_json::{json, Value};
 
 const TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
 const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";
-const TRACEPARENT: &str =
-    "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01";
+const TRACEPARENT: &str = "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01";
 
 struct LumenProcess {
     child: Child,
