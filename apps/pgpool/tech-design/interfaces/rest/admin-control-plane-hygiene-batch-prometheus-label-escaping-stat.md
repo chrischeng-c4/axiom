@@ -85,7 +85,6 @@ changes:
     anchor: docs_serves_swagger_ui_html_referencing_openapi_json
     reason: Verify docs HTML has no external network dependency.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
