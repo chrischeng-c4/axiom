@@ -90,3 +90,34 @@ flowchart TD
     r2[R2 both planes observe prestart drain] --> cargo_test_p_server_lifecycle_test_drain_prestart_both_plane_signals_observe_prestart_drain[cargo test -p server-lifecycle --test drain_prestart both_plane_signals_observe_prestart_drain]
     r3[R3 admin and cli regressions] --> cargo_test_p_pgpool_test_admin_plane_cargo_test_p_pgpool_test_cli_contract[cargo test -p pgpool --test admin_plane && cargo test -p pgpool --test cli_contract]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: libs/server-lifecycle/src/drain.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: start_drain
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: serve
+  - path: apps/pgpool/src/admin/state.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: AdminState
+  - path: apps/pgpool/src/admin/wiring.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: shutdown_future_resolving_calls_start_drain_on_the_shared_controller
+  - path: libs/server-lifecycle/tests/drain_prestart.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
