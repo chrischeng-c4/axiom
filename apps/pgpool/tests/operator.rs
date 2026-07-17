@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use kube::CustomResourceExt;
-use service_k8s::{ManagedService, ReadyFacts};
 use pgpool::k8s::{
     BackendPoolObservation, EndpointAllocator, EndpointCapacity, GlobalConnectionBudget,
     PgpoolControlPlane, ReserveLeaseRequest,
@@ -12,6 +11,7 @@ use pgpool::operator::{
     self as pgpool_operator, Pgpool, PgpoolEndpointBudgetSpec, PgpoolEndpointProvider,
     PgpoolEndpointRole, PgpoolResources, PgpoolSpec, PgpoolStatus,
 };
+use service_k8s::{ManagedService, ReadyFacts};
 
 fn spec() -> PgpoolSpec {
     PgpoolSpec {

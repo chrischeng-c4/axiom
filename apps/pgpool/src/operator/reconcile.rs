@@ -7,9 +7,9 @@ use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{Pod, Secret};
 use kube::api::ListParams;
 use kube::{Api, Client, ResourceExt};
+use serde_json::json;
 use service_k8s::service::ReconcilePlan;
 use service_k8s::{ManagedService, ReadinessTarget, ReadyFacts};
-use serde_json::json;
 
 use crate::k8s::{
     ControlPlaneStatus, EndpointCapacity, EndpointControlStatus, PodControlPhase, PodControlStatus,

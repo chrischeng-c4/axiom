@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use server_core::{BindConfig, ConnectionBudget};
+use server_lifecycle::{BindConfig, ConnectionBudget};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -244,13 +244,13 @@ async fn spawn_proxy(
         wire: wire(),
         drain_timeout: Duration::from_secs(2),
     });
-    let config = tcp_server::TcpServerConfig::new(BindConfig::localhost(0));
-    let listener = tcp_server::bind(&config)
+    let config = server_tcp::TcpServerConfig::new(BindConfig::localhost(0));
+    let listener = server_tcp::bind(&config)
         .await
         .expect("bind transaction proxy");
     let address = listener.local_addr().expect("transaction proxy address");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(tcp_server::serve(listener, config, handler, async move {
+    let server = tokio::spawn(server_tcp::serve(listener, config, handler, async move {
         let _ = shutdown_rx.await;
     }));
     (address, server, shutdown_tx)

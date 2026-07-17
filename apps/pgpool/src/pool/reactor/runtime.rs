@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use bytes::{Bytes, BytesMut};
 use mio::net::TcpStream as MioTcpStream;
 use mio::{Interest, Poll, Token, Waker};
-use server_core::ConnectionPermit;
+use server_lifecycle::ConnectionPermit;
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::sync::oneshot;
 
@@ -108,7 +108,7 @@ impl TransactionReactor {
 
 impl Drop for TransactionReactor {
     fn drop(&mut self) {
-        // The runtime keeps one ingress Arc. `tcp_server::serve_arc` now
+        // The runtime keeps one ingress Arc. `server_tcp::serve_arc` now
         // retains its handler through drain, so seeing only this final
         // handler plus the runtime means every frontend completion task has
         // finished and the owner can stop without truncating an in-flight

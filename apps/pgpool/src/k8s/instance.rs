@@ -1,12 +1,12 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-stateless-deployment-instance.md#logic
 // <HANDWRITE gap="missing-generator:logic:pgpool-k8s-instance" tracker="#1561" reason="Shared Deployment composition needs a typed Rust generator primitive.">
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use service_k8s::render::common::{
     client_service_with_ports, guaranteed_resources, pdb, service_account, RenderCtx,
     ServicePodTemplate,
 };
 use service_k8s::render::deployment::{service_deployment, ServiceDeployment};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
