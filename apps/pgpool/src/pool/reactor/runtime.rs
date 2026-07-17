@@ -792,6 +792,7 @@ impl ReactorRuntime {
         }
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn read_client(&mut self, token: Token) {
         let close = match self.clients.get_mut(&token) {
             Some(client) => drain_socket(&mut client.stream, &mut client.reader),
@@ -859,6 +860,7 @@ impl ReactorRuntime {
         }
         self.update_client_interest(token);
     }
+// </HANDWRITE>
 
     fn read_backend(&mut self, _token: Token) {
         let token = _token;

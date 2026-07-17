@@ -361,6 +361,7 @@ async fn stop_proxy(
     server.await.expect("proxy server joins");
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
 /// A pipelined implicit next query remains in the client socket while the
 /// first query's backend lease is released and reset. The old backend must
 /// therefore observe `DISCARD ALL` before it can receive the second query.
@@ -555,6 +556,7 @@ async fn backend_first_relay_keeps_pipelined_query_out_of_resetting_backend() {
     drop(pool);
     backend_server.await.expect("backend script joins");
 }
+// </HANDWRITE>
 
 fn backend_key(messages: &[BackendMessage]) -> BackendKeyData {
     messages
