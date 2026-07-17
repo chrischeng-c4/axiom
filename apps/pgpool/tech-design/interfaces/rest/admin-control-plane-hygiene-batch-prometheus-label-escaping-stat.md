@@ -36,7 +36,6 @@ flowchart TD
 ```
 
 Control-plane Prometheus labels use the shared metrics renderer's escaping rule; admin metrics capture each pool's stats exactly once per render. `/docs` is a self-contained offline HTML index to the same `/openapi.json` contract. Completed drain reaps every grant whose key belongs to the drained Pod only after static allocation releases. Static batch admission rejects a duplicate Pod before calculating or inserting allocation state.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
