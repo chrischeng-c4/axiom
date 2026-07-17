@@ -202,3 +202,63 @@ changes:
 ```
 
 No application service or shared log schema target changes: Lumen and every other producer continue to write only `axiom.service.log.v1` JSONL to stdout.
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: gke-cri-collector-adapter-verification
+requirements:
+  coexistence:
+    id: R5
+    text: "Equivalent CRI and insertId-free Cloud Logging structured events converge on the shared GCP fallback event id and the second real-Sift delivery is counted as duplicate."
+    kind: compatibility
+    risk: high
+    verify: cargo test -p sift --test collector_cri
+  cri_framing:
+    id: R2
+    text: "Real CRI fixtures prove stdout and stderr F records plus contiguous P-to-F assembly, incomplete-partial restart safety, strict envelope rejection, and assembled size bounds."
+    kind: functional
+    risk: high
+    verify: cargo test -p sift --test collector_cri
+  least_privilege_deployment:
+    id: R7
+    text: "Offline rendered collector assets use only read-only pod logs and writable state, disable API-token automount, externalize Sift credentials/config, harden the container, and bound CPU/memory without granting Kubernetes API permissions."
+    kind: security
+    risk: high
+    verify: cargo test -p sift --test deployment_cli
+  outage_and_loss:
+    id: R6
+    text: "Endpoint outage leaves every CRI offset unchanged; recovery drains the retained file; forced disappearance with observed unread bytes produces durable source_lost quarantine and nonzero loss counters."
+    kind: resilience
+    risk: high
+    verify: cargo test -p sift --test collector_cri
+  rotation_restart:
+    id: R3
+    text: "Device/inode checkpoints resume renamed files, start replacement inodes at zero, survive process restart without replay, and preserve old-before-new handoff."
+    kind: durability
+    risk: high
+    verify: cargo test -p sift --test collector_cri
+  shared_core:
+    id: R1
+    text: "File, stdin, and CRI adapters implement one CollectorSource contract and feed the sole bounded schema-decode, event-map, HTTP batch, retry, quarantine, and acknowledgment-before-checkpoint runtime."
+    kind: architecture
+    risk: high
+    verify: cargo test -p sift collector::
+  trace_metadata:
+    id: R4
+    text: "A Lumen axiom.service.log.v1 record inside a Pod CRI stream is queryable from real Sift by the unchanged W3C trace id with service, Kubernetes, GCP, node, and stream resource identity."
+    kind: integration
+    risk: high
+    verify: cargo test -p sift --test collector_cri
+---
+flowchart TD
+    r1[R1 shared core] --> cargo_test_p_sift_collector[cargo test -p sift collector::]
+    r2[R2 cri framing] --> cargo_test_p_sift_test_collector_cri[cargo test -p sift --test collector_cri]
+    r3[R3 rotation restart] --> cargo_test_p_sift_test_collector_cri
+    r4[R4 trace metadata] --> cargo_test_p_sift_test_collector_cri
+    r5[R5 coexistence] --> cargo_test_p_sift_test_collector_cri
+    r6[R6 outage and loss] --> cargo_test_p_sift_test_collector_cri
+    r7[R7 least privilege deployment] --> cargo_test_p_sift_test_deployment_cli[cargo test -p sift --test deployment_cli]
+```
