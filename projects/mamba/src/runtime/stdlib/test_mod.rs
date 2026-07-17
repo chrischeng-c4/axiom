@@ -65,6 +65,12 @@ unsafe extern "C" fn dispatch_identity(args_ptr: *const MbValue, nargs: usize) -
     a.get(0).copied().unwrap_or_else(MbValue::none)
 }
 
+unsafe extern "C" fn dispatch_import_deprecated(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { dispatch_args(args_ptr, nargs) };
+    let name = a.get(0).copied().unwrap_or_else(MbValue::none);
+    super::importlib_mod::mb_importlib_import_module(name)
+}
+
 unsafe extern "C" fn dispatch_assert_python_ok(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { dispatch_args(args_ptr, nargs) };
     run_script_helper_python(a, true)
@@ -1609,6 +1615,7 @@ fn register_support_submodules() {
         ("check_no_warnings", noop),
         ("check_no_resource_warning", noop),
         ("ignore_warnings", identity),
+        ("import_deprecated", dispatch_import_deprecated as usize),
     ];
     super::register_module(
         "test.support.warnings_helper",
