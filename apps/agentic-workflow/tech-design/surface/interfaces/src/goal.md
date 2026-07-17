@@ -107,11 +107,40 @@ pub enum GoalCommand {
     Clear(GoalIdArgs),
     /// Drive one work item to terminal (#1899: unified re-home of the
     /// retired `aw wi run <id>`).
-    Wi(crate::cli::issues::WiRunArgs),
+    Wi(GoalWiArgs),
     /// Drive a capability work-root, or the whole project end to end when
     /// no capability id is given (#1899: unified re-home of the retired
     /// `aw capability run [<cap-id>] --project <p>`).
     Capability(GoalCapabilityArgs),
+    /// Tracker-driven drain of every open work item for a project, one WI
+    /// per tick via the same shared engine `aw goal wi <id>` uses; blocked
+    /// WIs are parked (not surfaced) so the drain continues (#1899 R7).
+    Backlog(GoalBacklogArgs),
+}
+
+/// `aw goal wi <id>` args (#1899). Deliberately a standalone struct (not a
+/// re-export of `crate::cli::issues::WiRunArgs`): `GoalCommand` needs its
+/// variant payloads to be `Clone`, and keeping the two structs distinct
+/// means the now-retired `aw wi run <id>` clap leaf (`src/cli/issues.rs`)
+/// can keep parsing for its `emit_retired_verb_redirect` envelope without
+/// this canonical form depending on it. Field shape mirrors the old
+/// `WiRunArgs` exactly so both verbs' argument parsing lines up.
+#[derive(Debug, Args, Clone)]
+pub struct GoalWiArgs {
+    /// Work-item identifier (slug for local, numeric for github).
+    pub id: String,
+
+    /// Emit human-readable text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
+
+    /// Generate a /goal-ready prompt for this work item instead of the normal run envelope.
+    #[arg(long)]
+    pub goal: bool,
 }
 
 /// `aw goal capability [<capability-id>] --project <project>` args (#1899).
@@ -150,6 +179,22 @@ pub struct GoalCapabilityArgs {
     /// Skip issue inventory for README/TD-only bounded ticks.
     #[arg(long = "skip-issue-inventory")]
     pub skip_issue_inventory: bool,
+
+    /// Emit human-readable text instead of the default agent JSON envelope.
+    #[arg(long)]
+    pub human: bool,
+
+    /// Pretty-print the default JSON envelope for debugging.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// `aw goal backlog --project <project>` args (#1899 R7).
+#[derive(Debug, Args, Clone)]
+pub struct GoalBacklogArgs {
+    /// Project whose open work-item backlog to drain.
+    #[arg(long)]
+    pub project: String,
 
     /// Emit human-readable text instead of the default agent JSON envelope.
     #[arg(long)]
@@ -230,8 +275,9 @@ enum CheckStatus {
 /// The lifecycle root types (`Wi`, `Capability`) don't touch the ad-hoc
 /// goal-state engine below at all -- they delegate straight to the shared
 /// root-driven workflow runner (`crate::cli::run` / `crate::cli::capability`)
-/// that used to be reached via the now-retired `aw wi run` / `aw capability
-/// run` verbs (#1899). Async only because those two delegate targets are.
+/// that the now-retired `aw wi run` / `aw capability run` verbs used to
+/// reach directly (#1899). Async only because those two delegate targets
+/// are.
 pub async fn run(args: GoalArgs) -> Result<()> {
     match args.command {
         GoalCommand::Set(set_args) => {
@@ -256,12 +302,13 @@ pub async fn run(args: GoalArgs) -> Result<()> {
         }
         GoalCommand::Wi(wi_args) => run_goal_wi(wi_args).await,
         GoalCommand::Capability(cap_args) => run_goal_capability(cap_args).await,
+        GoalCommand::Backlog(backlog_args) => run_goal_backlog(backlog_args).await,
     }
 }
 
-/// `aw goal wi <id>` -- thin re-home of the retired `aw wi run <id>`
-/// (#1899 R1/R3): identical envelope semantics, same shared root loop.
-async fn run_goal_wi(args: crate::cli::issues::WiRunArgs) -> Result<()> {
+/// `aw goal wi <id>` -- thin re-home of `aw wi run <id>` (#1899 R1):
+/// identical envelope semantics, same shared root loop.
+async fn run_goal_wi(args: GoalWiArgs) -> Result<()> {
     crate::cli::run::run_wi_root(
         &args.id,
         crate::cli::run::RunPrintOptions {
@@ -304,6 +351,20 @@ async fn run_goal_capability(args: GoalCapabilityArgs) -> Result<()> {
             crate::cli::capability::run_capability_tick(&args.project, run_args).await
         }
     }
+}
+
+/// `aw goal backlog --project <project>` -- thin re-home of the
+/// tracker-driven drain engine (#1899 R7).
+async fn run_goal_backlog(args: GoalBacklogArgs) -> Result<()> {
+    crate::cli::run::run_backlog_root(
+        &args.project,
+        crate::cli::run::RunPrintOptions {
+            human: args.human,
+            pretty: args.pretty,
+            goal: false,
+        },
+    )
+    .await
 }
 
 fn run_set(project_root: &Path, args: GoalSetArgs) -> Result<()> {
@@ -1079,11 +1140,15 @@ changes:
     section: source
     description: |
       Issue #1899: `aw goal` becomes the single unified loop verb. Two new
-      `GoalCommand` variants -- `Wi(crate::cli::issues::WiRunArgs)` and
+      `GoalCommand` variants -- `Wi(GoalWiArgs)` and
       `Capability(GoalCapabilityArgs)` -- re-home the retired `aw wi run
       <id>` and `aw capability run [<cap-id>] --project <p>` lifecycle root
       types as `aw goal wi <id>` / `aw goal capability [<cap-id>] --project
-      <p>`. `GoalCapabilityArgs` mirrors the field subset of
+      <p>`. `GoalWiArgs` is a standalone struct (field-shape mirror of the
+      old `crate::cli::issues::WiRunArgs`, not a re-export) so the retired
+      `aw wi run <id>` clap leaf can keep parsing for its
+      `emit_retired_verb_redirect` envelope without depending on this
+      canonical form. `GoalCapabilityArgs` mirrors the field subset of
       `capability::CapabilityRunArgs` the shared engine needs plus a
       mandatory `--project` (no parent command to inherit it from). `run`
       became `pub async fn` and dispatches the two new variants to
@@ -1096,4 +1161,23 @@ changes:
       convention) are unchanged, this is a re-home not a rewrite. The
       pre-existing `set`/`check`/`show`/`list`/`clear` ad-hoc leaves and
       their engine are untouched.
+  - path: apps/agentic-workflow/src/cli/goal.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899 R3+R7 completion. `aw wi run <id>`'s clap leaf
+      (`src/cli/issues.rs`) is now actually retired -- `run_wi_run` calls
+      `crate::cli::run::emit_retired_verb_redirect` naming `aw goal wi <id>`
+      instead of re-entering the run engine, and `wi.run` in
+      `VERB_LIFECYCLE_REGISTRY` (`chain.rs`) is reclassified
+      `Migration`/non-mutating with a sunset criterion; `GoalWiArgs` stays
+      the canonical args struct this slice's redirect target uses. New
+      `GoalCommand::Backlog(GoalBacklogArgs)` variant + `run_goal_backlog`
+      re-home `aw goal backlog --project <p>` (R7): a tracker-driven drain
+      of every open work item for a project, one WI per invocation, handed
+      off via the same `aw goal wi <id>` command the shared engine already
+      emits elsewhere. `run_goal_backlog` is a thin delegate straight into
+      `crate::cli::run::run_backlog_root`; the drain/park/select logic lives
+      there (see `agentic-workflow-cli.md#schema`'s `run.rs` Changes entry).
 ```

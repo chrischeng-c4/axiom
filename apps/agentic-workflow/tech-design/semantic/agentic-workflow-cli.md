@@ -4382,13 +4382,27 @@ changes:
       `aw.cli.v1` envelope naming the exact `aw goal` replacement command in
       `next.command`, then returns an error, so the old verb stays
       registered (never a bare clap "unknown subcommand") but never
-      re-enters the run engine. `aw wi run <id>` is NOT retired by this
-      change: its clap-parsing home, `src/cli/issues.rs`, carries unrelated
-      in-flight edits that are out of scope here, so it remains a
-      fully-functional unretired alias that still calls straight into
-      `run_wi_root` (only the *emitted* `aw goal wi` command strings favor
-      the new form; the old `aw wi run` clap leaf keeps working exactly as
-      before).
+      re-enters the run engine. `aw wi run <id>` was left unretired by this
+      slice pending its clap-parsing home `src/cli/issues.rs` becoming
+      in-scope; the remaining #1899 slice retires it too (see the
+      `src/cli/issues.rs` entry below).
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/issues.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1899 R3 (remaining scope after the above slice): `aw wi run
+      <id>`'s clap leaf (`IssuesCommand::Run` / `run_wi_run`) is retired the
+      same way `aw capability run` already was -- it computes the `aw goal
+      wi <id>` replacement and calls the shared
+      `run::emit_retired_verb_redirect` helper instead of calling straight
+      into `run_wi_root`. `chain.rs`'s `VERB_LIFECYCLE_REGISTRY` reclassifies
+      `wi.run` from `Core`/mutating to `Migration`/non-mutating with a
+      populated `sunset_criterion`, mirroring `capability.run`'s entry.
+      `normalize_legacy_wi_capability_run_command` (added in the prior
+      slice) already rewrites a persisted `aw wi run <id>` `next_action` to
+      `aw goal wi <id>` on read, so in-flight pre-flip workflows resume
+      correctly with no additional chain.rs change needed.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/capability.rs"
     action: modify
@@ -4408,5 +4422,42 @@ changes:
       remediation hints, HITL `resume_command` builders, the
       `--non-interactive` bail message) is replaced with the equivalent `aw
       goal capability ...` form.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/run.rs"
+    action: add
+    section: schema
+    description: |
+      Issue #1899 R7: `aw goal backlog --project <p>` (`goal.rs`'s
+      `run_goal_backlog` thin delegate calls straight into this). New
+      `BacklogState` (workspace-scoped, `goal_state_path(root,
+      "backlog-<project>")`, id `backlog-<project>`) records the `parked`
+      set: WI id -> park reason, so a HITL/hard-blocked WI is not re-probed
+      every tick. `list_open_project_issues` resolves the project's
+      canonical tracker label, lists every open issue via the configured
+      `IssueBackend`, and sorts by the shared
+      `crate::cli::issues::priority_rank` (now `pub(crate)`), then numeric
+      id, then slug, for deterministic drain order.
+      `probe_wi_root_envelope` builds the same `ResolvedRunRoot::Wi`
+      envelope `aw goal wi <id>` would emit, with progress streaming
+      disabled (a silent probe, not a real tick). `run_backlog_root`:
+      short-circuits self-hosting projects via
+      `emit_self_hosting_policy_error`; drops parked entries whose WI
+      closed since the last drain; walks the priority-ordered open list,
+      skipping already-parked ids, probing each candidate, parking (never
+      emitting) any that reports `requires_hitl`/`action == "blocked"` with
+      the envelope's reason text, and selecting the first
+      still-not-terminal, still-not-blocked candidate; persists the updated
+      `BacklogState`; and emits one `WorkflowEnvelope` (`kind: "backlog"`,
+      `id: <project>`) per invocation -- `action: "dispatch"` with
+      `next.command` set to the selected WI's `aw goal wi <id>` (the exact
+      string `wi_run_command` builds, per the new `EMIT_REGISTRY` entry in
+      `chain.rs`) when a candidate was selected, or a terminal `action:
+      "done"` / `completion.workflow_complete: true` envelope reporting the
+      full parked set (id + reason) in `agent_prompt` when every open WI is
+      either closed or parked. One bounded CLI invocation performs at most
+      one probe-and-select tick (never a self-looping multi-WI executor);
+      the host's normal per-WI loop drives the selected WI to its own
+      terminal via the emitted `aw goal wi <id>`, and the next `aw goal
+      backlog` invocation then advances the drain.
     impl_mode: hand-written
 ```

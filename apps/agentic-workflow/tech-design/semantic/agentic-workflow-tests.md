@@ -150,6 +150,9 @@ semantic_domain:
           - name: "fixture_loop_test"
             kind: "module"
             public: false
+          - name: "goal_backlog_test"
+            kind: "module"
+            public: false
           - name: "hook_pretooluse_write_scope"
             kind: "module"
             public: false
@@ -751,6 +754,23 @@ changes:
     description: |
       Issue #1551 registers `wi_close_remote_test`, the isolated real-CLI
       regression suite for configured-backend numeric close rehydration.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/tests/cli_tests.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1899 R7 (AC6) registers the new `goal_backlog_test` module
+      (real-binary fixture proof for `aw goal backlog --project <p>`: a
+      mixed open backlog of one HITL-blocked change WI (project label plus
+      an `<!-- aw:loop-state -->` block with `next_action: None`), one
+      runnable change WI, and one open epic drains deterministically across
+      four invocations -- runnable dispatch, then epic dispatch (both via
+      the same shared `aw goal wi <id>` hand-off, never a candidate's own
+      underlying `next.command`), a terminal report naming the still-parked
+      WI's id and its reason, and a final no-spin/no-premature-completion
+      check), alphabetically between `fixture_loop_test` and
+      `in_place_lifecycle_test` in `tests/cli_tests.rs`'s own registration
+      order.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/tests/codegen_full_test.rs"
     action: modify

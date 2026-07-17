@@ -1,12 +1,10 @@
 // SPEC-MANAGED: apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 // CODEGEN-BEGIN
 //! `aw goal wi` / `aw goal capability` -- root-driven workflow runner envelope
-//! (#1899: re-homed under `aw goal`; the retired `aw capability run` clap
-//! path still parses and redirects here via an error envelope. `aw wi run`
-//! remains a fully-functional unretired alias -- its clap-parsing home,
-//! `src/cli/issues.rs`, carries unrelated in-flight edits that are out of
-//! scope for this change, so it still calls straight into the run engine
-//! rather than redirecting).
+//! (#1899: re-homed under `aw goal`; both the retired `aw wi run <id>` and
+//! `aw capability run [<cap-id>] --project <project>` clap paths still
+//! parse and redirect here via an error envelope rather than calling
+//! straight into the run engine).
 
 #[cfg(test)]
 use crate::cli::capability::HitlInteractionKind;
@@ -24,12 +22,13 @@ use crate::models::artifact_quality::{
 use crate::models::preflight::{
     default_preflight_gates, PreFlightEvidenceKind, PreFlightGateSeverity,
 };
+use crate::shared::workspace::goal_state_path;
 use anyhow::{Context, Result};
-#[cfg(test)]
 use serde::Deserialize;
 use serde::{ser::SerializeStruct, Serialize};
 #[cfg(test)]
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::future::Future;
 #[cfg(test)]
@@ -601,6 +600,261 @@ pub(crate) fn project_capability_rollup_command(project: &str) -> String {
         return format!("aw health --project {project} claims");
     }
     format!("aw goal capability --project {project} --non-interactive --max-ticks 1")
+}
+
+// ---------------------------------------------------------------------------
+// `aw goal backlog --project <p>` (#1899 R7): tracker-driven drain of every
+// open work item for a project.
+// ---------------------------------------------------------------------------
+
+/// Ephemeral, workspace-scoped park state for one project's backlog drain
+/// (issue #1899 R7). Reuses the ad-hoc `aw goal` state directory/path
+/// scheme ([`goal_state_path`]) under a synthetic id derived from the
+/// project name, rather than adding a new `/tmp/aw` surface -- both are
+/// short-lived, host-workspace-scoped drive state, never tracked lifecycle
+/// artifacts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BacklogState {
+    project: String,
+    /// Work-item id -> the reason it was parked (its next envelope tick's
+    /// `next.reason` at park time). A WI that closes is dropped from this
+    /// map on the following tick rather than exiled forever.
+    #[serde(default)]
+    parked: BTreeMap<String, String>,
+}
+
+fn backlog_state_id(project: &str) -> String {
+    format!("backlog-{project}")
+}
+
+fn load_backlog_state(project_root: &Path, project: &str) -> Result<BacklogState> {
+    let path = goal_state_path(project_root, &backlog_state_id(project));
+    if !path.exists() {
+        return Ok(BacklogState {
+            project: project.to_string(),
+            parked: BTreeMap::new(),
+        });
+    }
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("reading backlog state {}", path.display()))?;
+    let state: BacklogState = serde_json::from_str(&content)
+        .with_context(|| format!("backlog state at {} is not valid JSON", path.display()))?;
+    Ok(state)
+}
+
+fn save_backlog_state(project_root: &Path, project: &str, state: &BacklogState) -> Result<()> {
+    let path = goal_state_path(project_root, &backlog_state_id(project));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating backlog state directory {}", parent.display()))?;
+    }
+    let content = serde_json::to_string_pretty(state)?;
+    fs::write(&path, content).with_context(|| format!("writing backlog state {}", path.display()))
+}
+
+/// List every open work item labeled for `project`, in the same
+/// priority-first ordering `aw wi prioritize`/`aw wi plan` use
+/// ([`crate::cli::issues::priority_rank`]), then by numeric id for
+/// determinism.
+async fn list_open_project_issues(project_root: &Path, project_label: &str) -> Result<Vec<Issue>> {
+    let (kind, repo, host) = resolve_default_backend(project_root)?;
+    let backend = make_backend(&kind, project_root, repo, host)?;
+    let filter = crate::issues::IssueFilter {
+        state: Some(IssueState::Open),
+        issue_type: None,
+        label: Some(project_label.to_string()),
+        author: None,
+    };
+    let mut issues = backend.list(&filter).await?;
+    issues.sort_by(|a, b| {
+        (
+            crate::cli::issues::priority_rank(a),
+            a.github_id.or(a.gitlab_id).unwrap_or(u64::MAX),
+            a.slug.clone(),
+        )
+            .cmp(&(
+                crate::cli::issues::priority_rank(b),
+                b.github_id.or(b.gitlab_id).unwrap_or(u64::MAX),
+                b.slug.clone(),
+            ))
+    });
+    Ok(issues)
+}
+
+/// Resolve one work item's next `aw goal wi <id>` envelope without printing
+/// it (#1899 R7): the backlog drain needs to inspect a candidate's
+/// HITL/blocked status before deciding whether to park it and move on, but
+/// only the WI it actually selects should ever surface as backlog's own
+/// emitted tick.
+async fn probe_wi_root_envelope(id: &str) -> WorkflowEnvelope {
+    let root = ResolvedRunRoot::Wi {
+        wi: id.to_string(),
+        command: wi_run_command(id),
+    };
+    let root_command = root.command().to_string();
+    let progress = RunProgressSink::new(&root, false);
+    let mut envelope = match &root {
+        ResolvedRunRoot::Wi { wi, .. } => wi_envelope(wi, &progress).await,
+        ResolvedRunRoot::Capability { .. } => unreachable!("backlog only probes wi roots"),
+    };
+    ensure_hitl_question(&mut envelope, &root_command);
+    apply_artifact_quality_gate(&mut envelope);
+    envelope
+}
+
+/// `aw goal backlog --project <p>` -- tracker-driven drain of every open
+/// work item for a project, one WI per envelope tick via the same shared
+/// engine `aw goal wi <id>` uses (#1899 R7). A candidate whose next
+/// envelope tick is HITL-blocked or hard-blocked is parked (its reason
+/// recorded in the project's ephemeral backlog state) instead of
+/// surfacing the block, and the drain moves on to the next open WI in
+/// priority order. Terminal (`completion.workflow_complete=true`) once
+/// every open WI is either closed or parked; the terminal envelope
+/// reports the parked set for human follow-up. Verifier: zero open
+/// unparked WIs for the project.
+/// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub(crate) async fn run_backlog_root(project: &str, print: RunPrintOptions) -> Result<()> {
+    if is_self_hosting_project(project) {
+        return emit_self_hosting_policy_error(project, "backlog", project, print);
+    }
+    let project_root = crate::find_project_root()?;
+    let project_label = crate::cli::issues::resolve_project_label(&project_root, project)
+        .map_err(|err| anyhow::anyhow!(err.to_envelope_message()))?;
+    let open_issues = list_open_project_issues(&project_root, &project_label).await?;
+
+    let mut state = load_backlog_state(&project_root, project)?;
+    let open_ids: BTreeSet<String> = open_issues.iter().map(issue_cli_ref).collect();
+    // Park reasons are advisory, not a permanent exile: a WI that closed
+    // (or otherwise left the open set) since the last tick is dropped.
+    state.parked.retain(|id, _| open_ids.contains(id));
+
+    let mut selected: Option<(String, String)> = None;
+    for issue in &open_issues {
+        let id = issue_cli_ref(issue);
+        if state.parked.contains_key(&id) {
+            continue;
+        }
+        let envelope = probe_wi_root_envelope(&id).await;
+        if envelope.completion.workflow_complete {
+            continue;
+        }
+        if envelope.requires_hitl || envelope.action == "blocked" {
+            state.parked.insert(id, envelope.next.reason.clone());
+            continue;
+        }
+        selected = Some((id, wi_run_command(&issue_cli_ref(issue))));
+        break;
+    }
+    save_backlog_state(&project_root, project, &state)?;
+
+    let root = WorkflowNode {
+        kind: "backlog".to_string(),
+        id: project.to_string(),
+    };
+    let envelope = match selected {
+        Some((id, command)) => {
+            let remaining = open_ids.len().saturating_sub(state.parked.len());
+            WorkflowEnvelope {
+                action: "dispatch".to_string(),
+                root: root.clone(),
+                current: WorkflowNode {
+                    kind: "change".to_string(),
+                    id: id.clone(),
+                },
+                completed: None,
+                completion: WorkflowCompletion {
+                    root_complete: false,
+                    workflow_complete: false,
+                    criteria: Vec::new(),
+                    missing: vec![format!(
+                        "{remaining} open work item(s) remain for `{project}` \
+                         ({} parked)",
+                        state.parked.len()
+                    )],
+                },
+                next: WorkflowNext {
+                    kind: "run_command".to_string(),
+                    command: command.clone(),
+                    reason: format!("drive open work item {id} to its next lifecycle tick"),
+                    payload_path: None,
+                },
+                invoke: WorkflowInvoke { command },
+                agent_prompt: format!(
+                    "Run the emitted command to drive work item {id} toward terminal, \
+                     then re-run `aw goal backlog --project {project}` to continue the drain."
+                ),
+                requires_hitl: false,
+                artifact_quality_profile: None,
+                hitl_question: None,
+                persistence: None,
+            }
+        }
+        None => {
+            let parked_summary: Vec<String> = state
+                .parked
+                .iter()
+                .map(|(id, reason)| format!("{id}: {reason}"))
+                .collect();
+            let reason = if parked_summary.is_empty() {
+                format!("backlog drained: no open work items remain for `{project}`")
+            } else {
+                format!(
+                    "backlog drained: {} work item(s) parked for human follow-up -- {}",
+                    parked_summary.len(),
+                    parked_summary.join("; ")
+                )
+            };
+            WorkflowEnvelope {
+                action: "done".to_string(),
+                current: root.clone(),
+                completed: Some(root.clone()),
+                completion: WorkflowCompletion {
+                    root_complete: true,
+                    workflow_complete: true,
+                    criteria: vec![format!(
+                        "every open work item for `{project}` is closed or parked"
+                    )],
+                    missing: Vec::new(),
+                },
+                next: WorkflowNext {
+                    kind: "done".to_string(),
+                    command: String::new(),
+                    reason: reason.clone(),
+                    payload_path: None,
+                },
+                invoke: WorkflowInvoke {
+                    command: String::new(),
+                },
+                agent_prompt: if parked_summary.is_empty() {
+                    format!(
+                        "`aw goal backlog --project {project}` is complete: every open \
+                         work item is closed."
+                    )
+                } else {
+                    format!(
+                        "`aw goal backlog --project {project}` is complete: {} work \
+                         item(s) remain parked for human follow-up -- {}.",
+                        parked_summary.len(),
+                        parked_summary.join("; ")
+                    )
+                },
+                requires_hitl: false,
+                artifact_quality_profile: None,
+                hitl_question: None,
+                persistence: None,
+                root,
+            }
+        }
+    };
+
+    if print.human {
+        print_text(&envelope);
+    } else if print.pretty {
+        println!("{}", serde_json::to_string_pretty(&envelope)?);
+    } else {
+        println!("{}", serde_json::to_string(&envelope)?);
+    }
+    Ok(())
 }
 
 struct RunProgressSink {

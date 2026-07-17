@@ -10,6 +10,8 @@ mod cb_namespace_test;
 mod chain_liveness_test;
 #[path = "cli/tests/fixture_loop_test.rs"]
 mod fixture_loop_test;
+#[path = "cli/tests/goal_backlog_test.rs"]
+mod goal_backlog_test;
 #[path = "cli/tests/in_place_lifecycle_test.rs"]
 mod in_place_lifecycle_test;
 #[path = "cli/tests/inplace_mode_test.rs"]
