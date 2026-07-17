@@ -529,7 +529,7 @@ fn transaction_relay_rejects_malformed_ready_for_query_before_lease_state_change
 }
 
 // R4: Parse/Bind/Describe/Execute/Sync extended-query round trip.
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in wire_codec.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1877" reason="unit-test section in wire_codec.rs is hand-written pending codegen support">
 #[test]
 fn frontend_extended_query_round_trip() {
     let config = WireCodecConfig::default();
