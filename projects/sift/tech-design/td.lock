@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-14T09:56:04.217440+00:00"
-digest = "sha256:04b7df510b3053f125472e29f92c11a8e33557103e7a00566b84c023808f20e1"
-source_digest = "sha256:04b7df510b3053f125472e29f92c11a8e33557103e7a00566b84c023808f20e1"
-ir_digest = "sha256:1e888a488c59d45519de930168cab64a5d1d62046beb5c3478ee41c1e35955ae"
+generated_at = "2026-07-17T08:30:46.496347+00:00"
+digest = "sha256:3ce1025d40bf04e42ebb6607c8ccb3732a67d1ddc08256c2f9b4ca2f8c332bd2"
+source_digest = "sha256:3ce1025d40bf04e42ebb6607c8ccb3732a67d1ddc08256c2f9b4ca2f8c332bd2"
+ir_digest = "sha256:dc96f118e26cfe3d803c53fdcc5f5b9bdb21c4e171417b909623078f0880ff58"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -48,6 +48,12 @@ path = "logic/add-gcp-compatible-logging-store.md"
 digest = "sha256:d65d965a392f831f92579c32655ed8b572ffc8c79713ed18eb24ce5def840b8e"
 ir_digest = "sha256:ddff869221c15108b49447dd1bbabf7fd533761b6023abf0b8d9bfea7b3e9165"
 section_count = 5
+
+[[files]]
+path = "logic/add-genai-observations-sessions-cost-and-evaluations.md"
+digest = "sha256:1df6dbdfcaa269edf5b258313fffbcee384243936267d9bf46ecac13e46f2ea4"
+ir_digest = "sha256:5f66f1b8f30c972a89034206b8632b6b6ddd15128c08ee90edbf017e331f98db"
+section_count = 1
 
 [[files]]
 path = "logic/add-immutable-audit-and-change-store.md"
@@ -108,6 +114,12 @@ path = "logic/adopted-td-code-claim-projects-sift.md"
 digest = "sha256:cd37b62312bd1c1c6ee3038678b18f29b5cceec4960742d3a57fe2345283fada"
 ir_digest = "sha256:b63b4378c4ee21ff862195680e65d2aee80814dd9572731a59c2bf0c74c435ee"
 section_count = 2
+
+[[files]]
+path = "logic/follow-shared-library-package-renames-in-workspace-manifest.md"
+digest = "sha256:e70ca443a0dccd479c29113518f14b11b0013c47e94700a7dc0d10073bab646f"
+ir_digest = "sha256:5378383dba11a4339a823d07a3eab1aec95de8aa4aba9de9607c9f3e73217332"
+section_count = 3
 
 [[files]]
 path = "logic/remediate-deployment-guard-hardening-findings.md"
