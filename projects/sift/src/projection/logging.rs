@@ -211,6 +211,7 @@ impl LoggingProjection {
                                 op: MatchOp::And,
                             }),
                             limit: self.max_records.min(u32::MAX as usize) as u32,
+                            offset: 0,
                             cursor: None,
                             routing_key: None,
                             sort: None,

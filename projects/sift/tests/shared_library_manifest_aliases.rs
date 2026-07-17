@@ -11,7 +11,10 @@ fn manifest_uses_current_shared_library_packages() {
         r#"service-metrics = { package = "metrics-prometheus", path = "../../libs/metrics-prometheus" }"#,
         r#"raft-host = { package = "raft-runtime", path = "../../libs/raft-runtime" }"#,
     ] {
-        assert!(manifest.contains(expected), "missing dependency alias: {expected}");
+        assert!(
+            manifest.contains(expected),
+            "missing dependency alias: {expected}"
+        );
     }
 
     for retired_path in [

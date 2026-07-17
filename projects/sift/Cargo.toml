@@ -16,7 +16,7 @@ path = "src/bin/sift.rs"
 
 [dependencies]
 anyhow.workspace = true
-axiom-operator = { package = "operator", path = "../../libs/operator" }
+axiom-operator = { package = "service-k8s", path = "../../libs/service-k8s" }
 axum.workspace = true
 base64 = "0.22"
 bytes.workspace = true
@@ -35,11 +35,11 @@ serde.workspace = true
 serde_json.workspace = true
 service-auth = { path = "../../libs/service-auth" }
 service-backup = { path = "../../libs/service-backup" }
-service-durability = { path = "../../libs/service-durability" }
+service-durability = { package = "storage-durable", path = "../../libs/storage-durable" }
 service-http = { path = "../../libs/service-http" }
-service-metrics = { path = "../../libs/service-metrics" }
+service-metrics = { package = "metrics-prometheus", path = "../../libs/metrics-prometheus" }
 raft-core = { path = "../../libs/raft-core" }
-raft-host = { path = "../../libs/raft-host" }
+raft-host = { package = "raft-runtime", path = "../../libs/raft-runtime" }
 schemars = "0.8"
 sha2 = "0.10"
 tokio.workspace = true
