@@ -92,13 +92,12 @@ The process command passes `--log-format json`, `--wal embedded`, and `--log-lev
 changes:
   - path: apps/lumen/tests/structured_stdout_traceparent.rs
     action: create
-    section: e2e-test
+    section: unit-test
     impl_mode: hand-written
-    description: Spawn the real Lumen binary without OTLP, drive valid, invalid, and missing traceparent requests, drain stdout, and assert versioned JSONL correlation.
+    description: Run the real Lumen binary, make valid, invalid, and missing traceparent HTTP writes, capture stdout concurrently, and assert the shared JSONL and correlation contracts.
 ```
 
-No Lumen-local formatter, collector client, or request middleware is added. The adopter relies on the existing `service_http::init_tracing_with_identity` mapping, outer `service_http::trace_layer()`, and audit event; this WI is a process-level conformance proof for shared WIs #1868 and #1870.
-
+The product source already has the required adopter seams: `serve` maps `--log-format json` into shared `service-http` initialization, `api::router` applies the shared trace layer outside all routes, and the collection handler emits a domain audit event. The bounded change adds executable proof instead of duplicating those shared implementations.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
