@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 use std::io::{self, IoSlice, Write};
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -63,11 +63,15 @@ impl std::fmt::Debug for TransactionReactor {
 }
 
 impl TransactionReactor {
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.">
     /// Starts the dedicated readiness owner. Backend pool configuration and
     /// admin-stat publication are captured here; no transaction socket has
     /// crossed the boundary yet.
     pub(crate) fn start(pool: BackendPool) -> io::Result<Self> {
+        // DNS is resolved on the caller's Tokio worker before the single
+        // readiness owner starts. The address stays cached for this reactor
+        // lifetime; constructing a new handler refreshes it.
+        let backend_address = resolve_backend_address(&pool.reactor_config().endpoint)?;
         let poll = Poll::new()?;
         let wake = Arc::new(Waker::new(poll.registry(), INGRESS_TOKEN)?);
         let ingress = Arc::new(Ingress {
@@ -78,10 +82,12 @@ impl TransactionReactor {
         let thread_ingress = Arc::clone(&ingress);
         thread::Builder::new()
             .name("pgpool-transaction-reactor".to_string())
-            .spawn(move || ReactorRuntime::new(poll, thread_ingress, pool).run())?;
+            .spawn(move || {
+                ReactorRuntime::new(poll, thread_ingress, pool, backend_address).run()
+            })?;
         Ok(Self { ingress })
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     /// Transfers the accepted socket and its frontend budget permit to the
     /// readiness owner. `TcpStream::into_std` preserves nonblocking mode; the
@@ -127,6 +133,7 @@ struct ReactorRuntime {
     ingress: Arc<Ingress>,
     pool: BackendPool,
     config: PoolConfig,
+    backend_address: SocketAddr,
     events: mio::Events,
     ready_events: Vec<(Token, bool, bool)>,
     dirty_client_interests: Vec<Token>,
@@ -356,11 +363,17 @@ struct StartupReplay {
 }
 
 impl ReactorRuntime {
-    fn new(poll: Poll, ingress: Arc<Ingress>, pool: BackendPool) -> Self {
+    fn new(
+        poll: Poll,
+        ingress: Arc<Ingress>,
+        pool: BackendPool,
+        backend_address: SocketAddr,
+    ) -> Self {
         Self {
             poll,
             ingress,
             config: pool.reactor_config(),
+            backend_address,
             pool,
             events: mio::Events::with_capacity(256),
             ready_events: Vec::with_capacity(256),
@@ -1483,14 +1496,7 @@ impl ReactorRuntime {
     }
 
     fn open_backend(&mut self, purpose: ConnectPurpose) -> Option<BackendId> {
-        let address = (
-            self.config.endpoint.host.as_str(),
-            self.config.endpoint.port,
-        )
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut addresses| addresses.next())?;
-        let mut stream = match MioTcpStream::connect(address) {
+        let mut stream = match MioTcpStream::connect(self.backend_address) {
             Ok(stream) => stream,
             Err(_) => return None,
         };
@@ -1501,6 +1507,7 @@ impl ReactorRuntime {
             .register(&mut stream, token, Interest::READABLE | Interest::WRITABLE)
             .is_err()
         {
+            recycle_unregistered_token(&mut self.free_tokens, token);
             return None;
         }
         let id = BackendId(token.0 as u64);
@@ -1660,6 +1667,48 @@ fn client_can_read(mode: &ClientMode) -> bool {
 
 /// Writes until the kernel would block. `true` means EOF/error and asks the
 /// owner to close the complete client/backend state, not merely this socket.
+fn resolve_backend_address(
+    endpoint: &crate::proxy::BackendEndpointConfig,
+) -> io::Result<SocketAddr> {
+    (endpoint.host.as_str(), endpoint.port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "backend hostname resolved no addresses",
+            )
+        })
+}
+
+fn recycle_unregistered_token(free_tokens: &mut Vec<usize>, token: Token) {
+    free_tokens.push(token.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reactor_backend_address_is_cached_before_thread_start() {
+        let endpoint = crate::proxy::BackendEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 5432,
+        };
+        assert_eq!(
+            resolve_backend_address(&endpoint).unwrap(),
+            "127.0.0.1:5432".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn failed_backend_registration_recycles_token() {
+        let mut free_tokens = Vec::new();
+        recycle_unregistered_token(&mut free_tokens, Token(FIRST_SOCKET_TOKEN));
+        assert_eq!(free_tokens.pop(), Some(FIRST_SOCKET_TOKEN));
+    }
+}
+
 fn flush_socket(stream: &mut MioTcpStream, output: &mut OutputQueue) -> bool {
     const MAX_IO_SLICES: usize = 16;
     while !output.is_empty() {
