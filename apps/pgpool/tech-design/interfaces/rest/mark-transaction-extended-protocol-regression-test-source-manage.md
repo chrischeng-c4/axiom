@@ -42,9 +42,8 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: parse_is_rejected_without_hang
-    reason: Add auditable ownership metadata around the existing two-engine extended-protocol regression proof.
+    reason: Give the existing transaction extended-protocol integration proof explicit, auditable ownership without changing behavior.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
