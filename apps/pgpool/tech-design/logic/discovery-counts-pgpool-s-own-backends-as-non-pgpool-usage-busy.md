@@ -36,38 +36,36 @@ flowchart TD
   capacity --> reconcile([unchanged target remains admitted])
 ```
 
-### Backend identity
+### Backend identity contract
 
-`pgpool serve` derives one backend identity, `pgpool-<pod>`, from
-`PGPOOL_POD_NAME`; the Deployment renderer supplies that value through the
-Downward API. Before any data-plane path stores, compares, replays, bootstraps,
-or forwards a `StartupMessage`, it removes every client-supplied
-`application_name` entry and appends that controlled identity. Session mode,
-legacy transaction mode, and the dense-buffer reactor use this same helper.
-The rewritten message, rather than the client-original message, is the exact
-startup-replay key and is the message sent to PostgreSQL, so a cached trust
-reply can never authorize a backend carrying a different identity.
+`pgpool serve` derives the deterministic backend identity `pgpool-<pod>` from
+`PGPOOL_POD_NAME`; Kubernetes supplies the pod component through the Downward
+API and local execution uses a stable non-empty default. The shared startup
+normalizer removes every client-supplied `application_name` parameter, preserves
+the relative order of every other parameter, and appends exactly one controlled
+identity. Session mode, legacy transaction mode, and the dense-buffer reactor
+call that normalizer before retaining or forwarding the startup. Every replay
+lookup, replay publication, and bootstrap connection therefore keys on the
+rewritten startup and every physical backend observes that same identity.
 
-### Runtime discovery and capacity
+### Discovery contract
 
-The discovery query reads `max_connections` and
-`superuser_reserved_connections` and counts only
-`pg_stat_activity.backend_type = 'client backend'`. Its pgpool count is the
-subset whose controlled `application_name` begins `pgpool-`; background workers
-never contribute to either total or foreign usage. The effective allocatable
-limit is the minimum of the raw runtime, configured, and advisory ceilings,
-then reduced by the runtime superuser reservation. Foreign usage is client
-total minus pgpool usage, with saturating arithmetic. The existing endpoint
-reserve and safety headroom remain later capacity deductions.
+One PostgreSQL query returns raw `max_connections`, raw
+`superuser_reserved_connections`, the count of `client backend` sessions, and
+the pgpool subset whose application name begins `pgpool-`. Background workers
+are excluded before total and foreign usage are formed. The effective connection
+limit is `min(runtime_max, configured_ceiling?, advisory_ceiling?) -
+superuser_reserved_connections`, using saturating arithmetic; foreign usage is
+`client_total - pgpool_connections`, also saturating. Endpoint reserve and
+safety headroom remain independent deductions in `EndpointCapacity::usable`.
 
-### Reconcile invariant
+### Reconcile contract
 
-Capacity planning continues to deny a new replica target when its requested
-per-pod quota exceeds this allocatable capacity. With an unchanged target,
-pgpool-held connections are never double-subtracted as foreign usage, so a busy
-pool cannot manufacture a `Blocked` status or freeze reconciliation. Discovery
-errors remain fail-closed for new scale-up.
-
+The reconciler evaluates new desired replicas against this corrected usable
+capacity. It keeps the existing fail-closed rule for an unavailable discovery
+or a genuine scale-out overage. Correctly classified active pgpool backends
+must not turn an unchanged desired/current target into `Blocked`; status then
+continues to describe normal readiness rather than a fabricated capacity fault.
 ## Changes
 <!-- type: changes lang: yaml -->
 
