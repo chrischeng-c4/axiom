@@ -603,14 +603,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
         ),
     };
 
-    // `spawn_signal_task` (TD Logic section): SIGTERM/SIGINT flips the SAME
-    // shared controller `POST /drain` flips, so `/readyz` and the TCP
-    // accept loop react identically to either trigger (R2).
-    tokio::spawn(pgpool::admin::drain_on_shutdown_signal(
-        drain.clone(),
-        server_lifecycle::signal::wait_shutdown_signal(),
-    ));
-
     // `build_admin_router` (TD Logic section): one named pool per process
     // today (R3 Schema note), labeled via `--pool-name`/`PGPOOL_POOL_NAME`.
     let admin_state = pgpool::admin::AdminState::new(
@@ -623,24 +615,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }],
     );
     let admin_router = pgpool::admin::build_router(admin_state);
-    let admin_listener = tokio::net::TcpListener::bind(plan.admin_bind.socket_addr()).await?;
 
-    let listener = server_tcp::bind(&server_config).await?;
-    println!("pgpool serve: listening on {}", listener.local_addr()?);
-    println!(
-        "pgpool serve: backend {}:{}",
-        args.backend_host, args.backend_port
-    );
-    println!(
-        "pgpool serve: admin plane on {}",
-        admin_listener.local_addr()?
-    );
-
-    // `run_both_planes` (TD Logic section): each plane gets its OWN
-    // one-shot shutdown future awaiting `drain.signal().changed()` — safe
-    // and idempotent since both resolve on the exact same shared
-    // controller, whether it was flipped by SIGTERM/SIGINT or `POST
-    // /drain` (R2, AC2).
+    // Subscribe both serving planes before the signal task can publish a
+    // drain. `DrainSignal::changed` also observes an already-published state,
+    // so a drain during either bind below resolves both shutdown futures.
     let tcp_shutdown = {
         let mut signal = drain.signal();
         async move {
@@ -653,6 +631,26 @@ async fn serve(args: ServeArgs) -> Result<()> {
             signal.changed().await;
         }
     };
+
+    // `spawn_signal_task` (TD Logic section): this is deliberately after
+    // AdminState and both plane subscriptions exist, so SIGTERM/SIGINT flips
+    // the same controller every startup participant already observes.
+    tokio::spawn(pgpool::admin::drain_on_shutdown_signal(
+        drain.clone(),
+        server_lifecycle::signal::wait_shutdown_signal(),
+    ));
+    let admin_listener = tokio::net::TcpListener::bind(plan.admin_bind.socket_addr()).await?;
+
+    let listener = server_tcp::bind(&server_config).await?;
+    println!("pgpool serve: listening on {}", listener.local_addr()?);
+    println!(
+        "pgpool serve: backend {}:{}",
+        args.backend_host, args.backend_port
+    );
+    println!(
+        "pgpool serve: admin plane on {}",
+        admin_listener.local_addr()?
+    );
 
     tokio::join!(
         server_tcp::serve(listener, server_config, handler, tcp_shutdown),
