@@ -26,3 +26,34 @@ flowchart TD
   handler --> ready[DrainController flips readiness]
   ready --> done[SIGTERM after drain starts]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/admin/router.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: build_router
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: render_manifests
+  - path: apps/pgpool/src/spec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: openapi_json
+  - path: apps/pgpool/tests/admin_plane.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: served_contract_matches_offline_spec
+  - path: apps/pgpool/tech-design/semantic/pgpool-stateless-deployment-instance.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+```
