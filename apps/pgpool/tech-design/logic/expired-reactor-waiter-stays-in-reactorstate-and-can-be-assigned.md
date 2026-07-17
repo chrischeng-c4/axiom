@@ -75,3 +75,20 @@ flowchart TD
     r1[R1 expired waiter is removed] --> cargo_test_p_pgpool_expired_waiter_removal_prevents_late_assignment_and_accounting_underflow[cargo test -p pgpool expired_waiter_removal_prevents_late_assignment_and_accounting_underflow]
     r2[R2 late removal is accounting safe] --> cargo_test_p_pgpool_expired_waiter_removal_prevents_late_assignment_and_accounting_underflow
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/pool/reactor/runtime.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: expire_waiters
+  - path: apps/pgpool/src/pool/reactor/state.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: disconnected_waiters_do_not_consume_a_clean_backend
+```
