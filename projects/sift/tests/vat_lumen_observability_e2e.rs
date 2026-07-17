@@ -42,9 +42,10 @@ fn architecture_runbook_names_owned_boundaries_and_repro_command() {
         "W3C `traceparent`",
         "VAT_SERVICE_LUMEN_STDOUT_LOG",
         "Sift-owned collector plane",
-        "CRI/GKE adapter (#1675)",
+        "CRI/GKE source adapter",
         "cargo build -p vat -p lumen -p sift --bins",
         "vat_managed_lumen_stdout_reaches_real_sift_query",
+        "cargo test -p sift --test collector_cri",
     ] {
         assert!(runbook.contains(required), "runbook missing {required:?}");
     }
