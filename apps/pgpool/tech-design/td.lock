@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T15:12:27.048953+00:00"
-digest = "sha256:d31615064913e864cb8296d4ceb2f15d342dd590d65ea48395e019d07a213328"
-source_digest = "sha256:d31615064913e864cb8296d4ceb2f15d342dd590d65ea48395e019d07a213328"
-ir_digest = "sha256:48562cbd6dbcc9a6136f71cdae1ec85b3f288019611fc4111162cfe569ad4290"
+generated_at = "2026-07-17T15:22:55.756038+00:00"
+digest = "sha256:af15ef8f4a4e40e09cf3cca18f6968f57ae0e0698e6ee8ef6af3db64e1f68c46"
+source_digest = "sha256:af15ef8f4a4e40e09cf3cca18f6968f57ae0e0698e6ee8ef6af3db64e1f68c46"
+ir_digest = "sha256:52a7077297647fdd6f8e4977f201b9a86ca4aaaaa85d6ba0de7beda6aaa41732"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -59,6 +59,12 @@ section_count = 3
 path = "logic/converge-deployment-provider-and-reconcile-planning-on-service-k.md"
 digest = "sha256:947081b8b8cf129409497fab01f1efb943fc10428d43eef38d9dc1cebb797fcd"
 ir_digest = "sha256:0d81a6729df2f0bb4685c4055bf1c390ec1549c4b12de14a389bfe4843134e36"
+section_count = 3
+
+[[files]]
+path = "logic/cr-status-reports-fabricated-pod-identities-unenacted-drain-phas.md"
+digest = "sha256:bacf944b43c2fb07a9ab54b9a03508caf9ab5c6e0673473a19e7782c94c4ca3a"
+ir_digest = "sha256:060d600d522a7208079f29a41e4e75bdd8b30c53a781a7ba88a8b46c8e9dd53e"
 section_count = 3
 
 [[files]]
