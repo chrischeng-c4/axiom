@@ -61,22 +61,22 @@ changes:
 
 ```mermaid
 ---
-id: pgpool-prestop-get-drain-verification
+id: pgpool-prestop-drain-contract-verification
 requirements:
-  offline_served_contract:
-    id: R2
-    text: "Offline route and OpenAPI surfaces list GET and POST drain methods exactly as the served router does."
-    kind: conformance
-    risk: high
-    verify: cargo test -p pgpool served_contract_matches_offline_spec
-  prestop_get_drain:
+  get_alias:
     id: R1
-    text: "Rendered preStop httpGet reaches a served GET /drain route that starts the shared DrainController before SIGTERM."
+    text: "GET /drain returns the same draining response as POST and flips readiness through the shared controller."
     kind: regression
     risk: high
     verify: cargo test -p pgpool prestop_get_drain
+  rendered_hook:
+    id: R2
+    text: "The rendered Deployment preStop hook invokes GET /drain and the offline contract lists that route."
+    kind: conformance
+    risk: high
+    verify: cargo test -p pgpool served_contract_matches_offline_spec
 ---
 flowchart TD
-    r1[R1 prestop get drain] --> cargo_test_p_pgpool_prestop_get_drain[cargo test -p pgpool prestop_get_drain]
-    r2[R2 offline served contract] --> cargo_test_p_pgpool_served_contract_matches_offline_spec[cargo test -p pgpool served_contract_matches_offline_spec]
+    r1[R1 get alias] --> cargo_test_p_pgpool_prestop_get_drain[cargo test -p pgpool prestop_get_drain]
+    r2[R2 rendered hook] --> cargo_test_p_pgpool_served_contract_matches_offline_spec[cargo test -p pgpool served_contract_matches_offline_spec]
 ```
