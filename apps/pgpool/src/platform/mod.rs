@@ -5,8 +5,8 @@
 mod discovery;
 
 pub use discovery::{
-    discover_connection_facts, effective_connection_limit, ConnectionDiscoveryError,
-    ConnectionFacts, EndpointProvider, EndpointRole, ProviderAdvisory, RemoteEndpoint,
-    RuntimeConnectionFacts,
+    discover_connection_facts, discovery_tls_mode, effective_connection_limit,
+    ConnectionDiscoveryError, ConnectionFacts, DiscoveryTlsMode, EndpointProvider, EndpointRole,
+    ProviderAdvisory, RemoteEndpoint, RuntimeConnectionFacts,
 };
 // </HANDWRITE>

@@ -182,10 +182,9 @@ fn derive_reason(entry: &HandwriteEntry, section_id: Option<&str>, target_path: 
     )
 }
 
-/// Match a candidate `pub fn` / `pub struct` / `pub enum` / `pub trait` /
-/// `impl` line against `anchor_symbol`. The anchor symbol may be a bare
-/// identifier (matches first `pub fn|struct|enum|trait <ident>`) or
-/// `impl Trait for Type` style prefix.
+/// Match a candidate function, type, trait, or `impl` line against
+/// `anchor_symbol`. The anchor symbol may be a bare identifier (including
+/// async functions) or an `impl Trait for Type` style prefix.
 fn line_matches_anchor(line: &str, anchor: &str) -> bool {
     let t = line.trim_start();
     if anchor.starts_with("impl ") {
@@ -195,14 +194,22 @@ fn line_matches_anchor(line: &str, anchor: &str) -> bool {
         format!("pub fn {}", anchor),
         format!("pub fn {}<", anchor),
         format!("pub fn {}(", anchor),
+        format!("pub async fn {}", anchor),
+        format!("pub async fn {}<", anchor),
+        format!("pub async fn {}(", anchor),
         format!("pub struct {}", anchor),
         format!("pub enum {}", anchor),
         format!("pub trait {}", anchor),
         format!("pub(crate) fn {}", anchor),
+        format!("pub(crate) async fn {}", anchor),
+        format!("pub(crate) async fn {}<", anchor),
+        format!("pub(crate) async fn {}(", anchor),
         format!("pub(crate) struct {}", anchor),
         format!("pub(crate) enum {}", anchor),
         format!("fn {}(", anchor),
         format!("fn {}<", anchor),
+        format!("async fn {}(", anchor),
+        format!("async fn {}<", anchor),
     ];
     needles.iter().any(|n| t.starts_with(n))
 }

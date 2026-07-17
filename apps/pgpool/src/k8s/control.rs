@@ -2,6 +2,7 @@
 // <HANDWRITE gap="missing-generator:logic:pgpool-control-plane" tracker="#1573" reason="Reconciliation state-machine and metrics generation are not available.">
 use std::collections::BTreeMap;
 
+use metrics_prometheus::escape_label_value;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -50,6 +51,9 @@ pub struct EndpointControlStatus {
     pub available: u32,
     pub reserve_granted: u32,
     pub reserve_available: u32,
+    /// True only when this status was derived from a reconciled reserve
+    /// ledger, rather than a static capacity plan.
+    pub reserve_accounting_available: bool,
     pub reserve_denials: u64,
     pub allocator_available: bool,
     pub blocked_scale_reason: Option<String>,
@@ -63,10 +67,11 @@ pub struct ControlPlaneStatus {
 }
 
 impl ControlPlaneStatus {
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Escape endpoint and Pod labels and reap Pod-owned reserve grants on completed drain.">
     pub fn prometheus(&self) -> String {
         let mut output = String::new();
         for endpoint in &self.endpoints {
-            let label = format!("endpoint=\"{}\"", endpoint.endpoint);
+            let label = format!("endpoint=\"{}\"", escape_label_value(&endpoint.endpoint));
             for (metric, value) in [
                 ("effective_limit", endpoint.effective_limit),
                 ("reserve", endpoint.reserve),
@@ -85,6 +90,10 @@ impl ControlPlaneStatus {
                 endpoint.reserve_denials
             ));
             output.push_str(&format!(
+                "pgpool_endpoint_reserve_accounting_available{{{label}}} {}\n",
+                u8::from(endpoint.reserve_accounting_available)
+            ));
+            output.push_str(&format!(
                 "pgpool_endpoint_scale_blocked{{{label}}} {}\n",
                 u8::from(endpoint.blocked_scale_reason.is_some())
             ));
@@ -94,7 +103,11 @@ impl ControlPlaneStatus {
             ));
         }
         for pod in &self.pods {
-            let labels = format!("endpoint=\"{}\",pod=\"{}\"", pod.endpoint, pod.pod);
+            let labels = format!(
+                "endpoint=\"{}\",pod=\"{}\"",
+                escape_label_value(&pod.endpoint),
+                escape_label_value(&pod.pod)
+            );
             output.push_str(&format!("pgpool_pod_quota{{{labels}}} {}\n", pod.quota));
             output.push_str(&format!(
                 "pgpool_pod_backend_active{{{labels}}} {}\n",
@@ -111,6 +124,7 @@ impl ControlPlaneStatus {
         }
         output
     }
+    // </HANDWRITE>
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,7 +156,9 @@ pub struct PgpoolControlPlane {
     pub budgets: GlobalConnectionBudget,
     reserve_ledgers: BTreeMap<String, ReserveLeaseLedger>,
     reserve_denials: BTreeMap<String, u64>,
-    pods: BTreeMap<String, PodControlStatus>,
+    /// Pod control records are endpoint-scoped: one Deployment Pod may hold
+    /// independent allocations for more than one remote endpoint.
+    pods: BTreeMap<String, BTreeMap<String, PodControlStatus>>,
 }
 
 impl PgpoolControlPlane {
@@ -168,6 +184,7 @@ impl PgpoolControlPlane {
         }
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1888" reason="Pass outstanding reserve-grant units into static scale admission, reject instead of implicitly reclaiming grants, and cover admit/grant/release sequences.">
     /// Reserve desired and rollout-surge Pods in one transaction. The caller
     /// passes an empty surge set for the default no-surge Deployment policy.
     pub fn admit_scale<I, J, S, T>(
@@ -188,16 +205,26 @@ impl PgpoolControlPlane {
             .map(Into::into)
             .chain(rollout_surge_pods.into_iter().map(Into::into))
             .collect();
+        let outstanding_reserve = self
+            .reserve_ledgers
+            .get(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?
+            .held_reserve();
         {
             let allocator = self
                 .budgets
                 .endpoint_mut(endpoint)
                 .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?;
-            allocator.reserve_many(pods.clone(), quota_per_pod)?;
+            allocator.reserve_many_with_external_held(
+                pods.clone(),
+                quota_per_pod,
+                outstanding_reserve,
+            )?;
         }
         self.refresh_reserve_base(endpoint)?;
+        let endpoint_pods = self.pods.entry(endpoint.into()).or_default();
         for pod in pods {
-            self.pods.insert(
+            endpoint_pods.insert(
                 pod.clone(),
                 PodControlStatus {
                     pod,
@@ -214,14 +241,17 @@ impl PgpoolControlPlane {
         }
         Ok(())
     }
+    // </HANDWRITE>
 
-    pub fn mark_ready(&mut self, pod: &str) -> Result<(), ControlPlaneError> {
-        let endpoint = self.pod(pod)?.endpoint.clone();
+    /// Mark exactly one endpoint allocation for a Pod as ready. The endpoint
+    /// is explicit so a shared Pod name cannot route to the wrong allocator.
+    pub fn mark_ready(&mut self, endpoint: &str, pod: &str) -> Result<(), ControlPlaneError> {
+        self.pod(endpoint, pod)?;
         self.budgets
-            .endpoint_mut(&endpoint)
-            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.clone()))?
+            .endpoint_mut(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?
             .mark_ready(pod)?;
-        let status = self.pod_mut(pod)?;
+        let status = self.pod_mut(endpoint, pod)?;
         status.phase = PodControlPhase::Ready;
         status.ready = true;
         Ok(())
@@ -230,16 +260,17 @@ impl PgpoolControlPlane {
     /// First removes readiness, then records the drain request and deadline.
     pub fn begin_drain(
         &mut self,
+        endpoint: &str,
         pod: &str,
         now_epoch_seconds: u64,
         timeout_seconds: u64,
     ) -> Result<(), ControlPlaneError> {
-        let endpoint = self.pod(pod)?.endpoint.clone();
+        self.pod(endpoint, pod)?;
         self.budgets
-            .endpoint_mut(&endpoint)
-            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.clone()))?
+            .endpoint_mut(endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(endpoint.into()))?
             .begin_drain(pod)?;
-        let status = self.pod_mut(pod)?;
+        let status = self.pod_mut(endpoint, pod)?;
         status.ready = false;
         status.drain_requested = true;
         status.phase = PodControlPhase::Draining;
@@ -250,10 +281,11 @@ impl PgpoolControlPlane {
 
     pub fn observe_pool(
         &mut self,
+        endpoint: &str,
         pod: &str,
         observation: BackendPoolObservation,
     ) -> Result<(), ControlPlaneError> {
-        let status = self.pod_mut(pod)?;
+        let status = self.pod_mut(endpoint, pod)?;
         status.backend_active = observation.active;
         status.backend_idle = observation.idle;
         Ok(())
@@ -261,10 +293,11 @@ impl PgpoolControlPlane {
 
     pub fn reconcile_drain(
         &mut self,
+        endpoint: &str,
         pod: &str,
         now_epoch_seconds: u64,
     ) -> Result<DrainProgress, ControlPlaneError> {
-        let status = self.pod(pod)?.clone();
+        let status = self.pod(endpoint, pod)?.clone();
         if status.phase != PodControlPhase::Draining {
             return Err(ControlPlaneError::InvalidPodPhase {
                 pod: pod.into(),
@@ -283,7 +316,11 @@ impl PgpoolControlPlane {
             .ok_or_else(|| ControlPlaneError::UnknownEndpoint(status.endpoint.clone()))?
             .release_after_drain(pod, true)?;
         self.refresh_reserve_base(&status.endpoint)?;
-        let status = self.pod_mut(pod)?;
+        self.reserve_ledgers
+            .get_mut(&status.endpoint)
+            .ok_or_else(|| ControlPlaneError::UnknownEndpoint(status.endpoint.clone()))?
+            .reap_pod_after_drain(pod);
+        let status = self.pod_mut(&status.endpoint, pod)?;
         status.quota = 0;
         status.phase = PodControlPhase::Released;
         status.backend_active = 0;
@@ -291,6 +328,7 @@ impl PgpoolControlPlane {
         Ok(DrainProgress::Released)
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1890" reason="Distinguish control-plane reserve ledger availability from endpoint discovery availability in the shared status context.">
     pub fn status(&self) -> ControlPlaneStatus {
         let endpoints: Vec<_> = self
             .budgets
@@ -308,6 +346,7 @@ impl PgpoolControlPlane {
                     available: allocator.available_quota(),
                     reserve_granted: reserve.map(ReserveLeaseLedger::held_reserve).unwrap_or(0),
                     reserve_available: reserve.map(ReserveLeaseLedger::available).unwrap_or(0),
+                    reserve_accounting_available: reserve.is_some(),
                     reserve_denials: self.reserve_denials.get(name).copied().unwrap_or(0),
                     allocator_available: reserve.is_some(),
                     blocked_scale_reason: allocator.blocked_reason().map(str::to_owned),
@@ -319,20 +358,31 @@ impl PgpoolControlPlane {
             .find_map(|endpoint| endpoint.blocked_scale_reason.clone());
         ControlPlaneStatus {
             endpoints,
-            pods: self.pods.values().cloned().collect(),
+            pods: self
+                .pods
+                .values()
+                .flat_map(|endpoint_pods| endpoint_pods.values().cloned())
+                .collect(),
             blocked_scale_reason,
         }
     }
+    // </HANDWRITE>
 
-    fn pod(&self, pod: &str) -> Result<&PodControlStatus, ControlPlaneError> {
+    fn pod(&self, endpoint: &str, pod: &str) -> Result<&PodControlStatus, ControlPlaneError> {
         self.pods
-            .get(pod)
+            .get(endpoint)
+            .and_then(|endpoint_pods| endpoint_pods.get(pod))
             .ok_or_else(|| ControlPlaneError::UnknownPod(pod.into()))
     }
 
-    fn pod_mut(&mut self, pod: &str) -> Result<&mut PodControlStatus, ControlPlaneError> {
+    fn pod_mut(
+        &mut self,
+        endpoint: &str,
+        pod: &str,
+    ) -> Result<&mut PodControlStatus, ControlPlaneError> {
         self.pods
-            .get_mut(pod)
+            .get_mut(endpoint)
+            .and_then(|endpoint_pods| endpoint_pods.get_mut(pod))
             .ok_or_else(|| ControlPlaneError::UnknownPod(pod.into()))
     }
 
@@ -398,6 +448,17 @@ mod tests {
         PgpoolControlPlane::new(budgets)
     }
 
+    fn assert_combined_capacity_invariant(control: &PgpoolControlPlane) {
+        let allocator = control.budgets.endpoint("primary").unwrap();
+        let ledger = control.reserve_ledger("primary").unwrap();
+        assert_eq!(ledger.base_held, allocator.held_quota());
+        assert_eq!(
+            ledger.held_total(),
+            ledger.base_held + ledger.held_reserve()
+        );
+        assert!(ledger.held_total() <= allocator.capacity.usable());
+    }
+
     #[test]
     fn desired_and_surge_pods_are_admitted_atomically_before_ready() {
         let mut control = control_plane(60);
@@ -419,22 +480,26 @@ mod tests {
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 20)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         control
-            .observe_pool("pod-0", BackendPoolObservation { active: 2, idle: 3 })
+            .observe_pool(
+                "primary",
+                "pod-0",
+                BackendPoolObservation { active: 2, idle: 3 },
+            )
             .unwrap();
-        control.begin_drain("pod-0", 100, 30).unwrap();
+        control.begin_drain("primary", "pod-0", 100, 30).unwrap();
         assert!(!control.status().pods[0].ready);
         assert_eq!(
-            control.reconcile_drain("pod-0", 120).unwrap(),
+            control.reconcile_drain("primary", "pod-0", 120).unwrap(),
             DrainProgress::Held
         );
         assert_eq!(control.status().endpoints[0].allocated, 20);
         control
-            .observe_pool("pod-0", BackendPoolObservation::default())
+            .observe_pool("primary", "pod-0", BackendPoolObservation::default())
             .unwrap();
         assert_eq!(
-            control.reconcile_drain("pod-0", 121).unwrap(),
+            control.reconcile_drain("primary", "pod-0", 121).unwrap(),
             DrainProgress::Released
         );
         assert_eq!(control.status().endpoints[0].allocated, 0);
@@ -446,13 +511,17 @@ mod tests {
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 10)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         control
-            .observe_pool("pod-0", BackendPoolObservation { active: 1, idle: 0 })
+            .observe_pool(
+                "primary",
+                "pod-0",
+                BackendPoolObservation { active: 1, idle: 0 },
+            )
             .unwrap();
-        control.begin_drain("pod-0", 100, 30).unwrap();
+        control.begin_drain("primary", "pod-0", 100, 30).unwrap();
         assert_eq!(
-            control.reconcile_drain("pod-0", 130).unwrap(),
+            control.reconcile_drain("primary", "pod-0", 130).unwrap(),
             DrainProgress::Released
         );
     }
@@ -463,11 +532,15 @@ mod tests {
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 20)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         control
-            .observe_pool("pod-0", BackendPoolObservation { active: 3, idle: 7 })
+            .observe_pool(
+                "primary",
+                "pod-0",
+                BackendPoolObservation { active: 3, idle: 7 },
+            )
             .unwrap();
-        control.begin_drain("pod-0", 0, 60).unwrap();
+        control.begin_drain("primary", "pod-0", 0, 60).unwrap();
         let status = control.status();
         let metrics = status.prometheus();
         assert_eq!(status.endpoints[0].available, 30);
@@ -477,12 +550,77 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_prometheus_escapes_hostile_labels() {
+        let status = ControlPlaneStatus {
+            endpoints: vec![EndpointControlStatus {
+                endpoint: "primary\"\\\nnext".into(),
+                effective_limit: 1,
+                reserve: 0,
+                non_pgpool_usage: 0,
+                safety_headroom: 0,
+                usable: 1,
+                allocated: 0,
+                available: 1,
+                reserve_granted: 0,
+                reserve_available: 0,
+                reserve_accounting_available: false,
+                reserve_denials: 0,
+                allocator_available: true,
+                blocked_scale_reason: None,
+            }],
+            pods: vec![PodControlStatus {
+                pod: "pod\"\\\nnext".into(),
+                endpoint: "primary\"\\\nnext".into(),
+                quota: 1,
+                phase: PodControlPhase::Pending,
+                ready: false,
+                drain_requested: false,
+                drain_deadline_epoch_seconds: None,
+                backend_active: 0,
+                backend_idle: 0,
+            }],
+            blocked_scale_reason: None,
+        };
+        let rendered = status.prometheus();
+        assert!(rendered.contains("endpoint=\"primary\\\"\\\\\\nnext\""));
+        assert!(rendered.contains("pod=\"pod\\\"\\\\\\nnext\""));
+        assert!(!rendered.contains("primary\"\\\nnext\""));
+    }
+
+    #[test]
+    fn drain_completion_reaps_pod_reserve_grants() {
+        let mut control = control_plane(30);
+        control
+            .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 20)
+            .unwrap();
+        control
+            .grant_reserve(
+                "primary",
+                10,
+                [ReserveLeaseRequest {
+                    pod: "pod-0".into(),
+                    token: "reserve-0".into(),
+                    units: 5,
+                    expires_at_epoch_seconds: 20,
+                }],
+            )
+            .unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
+        control.begin_drain("primary", "pod-0", 10, 0).unwrap();
+        assert_eq!(
+            control.reconcile_drain("primary", "pod-0", 10).unwrap(),
+            DrainProgress::Released
+        );
+        assert_eq!(control.reserve_ledger("primary").unwrap().held_reserve(), 0);
+    }
+
+    #[test]
     fn allocator_and_control_phase_stay_aligned() {
         let mut control = control_plane(10);
         control
             .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 10)
             .unwrap();
-        control.mark_ready("pod-0").unwrap();
+        control.mark_ready("primary", "pod-0").unwrap();
         let allocation = control
             .budgets
             .endpoint("primary")
@@ -491,6 +629,157 @@ mod tests {
             .next()
             .unwrap();
         assert_eq!(allocation.state, crate::k8s::AllocationState::Ready);
+    }
+
+    #[test]
+    fn reserve_aware_static_scale_admission_rejects_overcommit_without_mutation() {
+        let mut control = control_plane(100);
+        control
+            .admit_scale("primary", ["pod-a"], std::iter::empty::<&str>(), 70)
+            .unwrap();
+        let grant = control
+            .grant_reserve(
+                "primary",
+                10,
+                [ReserveLeaseRequest {
+                    pod: "pod-a".into(),
+                    token: "reserve-a".into(),
+                    units: 15,
+                    expires_at_epoch_seconds: 20,
+                }],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        let error = control
+            .admit_scale("primary", ["pod-b"], std::iter::empty::<&str>(), 30)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ControlPlaneError::Allocation(AllocationError::InsufficientCapacity {
+                held: 85,
+                requested: 30,
+                usable: 100,
+                ..
+            })
+        ));
+        assert_eq!(
+            control.budgets.endpoint("primary").unwrap().held_quota(),
+            70
+        );
+        assert_eq!(
+            control.reserve_ledger("primary").unwrap().held_reserve(),
+            15
+        );
+        assert_eq!(
+            control.reserve_ledger("primary").unwrap().grants().count(),
+            1
+        );
+        assert!(control.pod("primary", "pod-b").is_err());
+        assert!(control.status().blocked_scale_reason.is_some());
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .reserve_ledgers
+            .get_mut("primary")
+            .unwrap()
+            .release_after_close(&grant.key)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+    }
+
+    #[test]
+    fn reserve_and_static_sequence_never_exceeds_usable_capacity() {
+        let mut control = control_plane(100);
+        control
+            .admit_scale("primary", ["pod-a"], std::iter::empty::<&str>(), 60)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .grant_reserve(
+                "primary",
+                10,
+                [ReserveLeaseRequest {
+                    pod: "pod-a".into(),
+                    token: "reserve-a".into(),
+                    units: 20,
+                    expires_at_epoch_seconds: 30,
+                }],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+
+        assert!(control
+            .admit_scale("primary", ["pod-b"], std::iter::empty::<&str>(), 30)
+            .is_err());
+        assert_combined_capacity_invariant(&control);
+
+        control.mark_ready("primary", "pod-a").unwrap();
+        control.begin_drain("primary", "pod-a", 20, 0).unwrap();
+        assert_eq!(
+            control.reconcile_drain("primary", "pod-a", 20).unwrap(),
+            DrainProgress::Released
+        );
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .admit_scale("primary", ["pod-b"], std::iter::empty::<&str>(), 70)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+
+        control
+            .admit_scale("primary", ["pod-c"], std::iter::empty::<&str>(), 30)
+            .unwrap();
+        assert_combined_capacity_invariant(&control);
+    }
+
+    #[test]
+    fn endpoint_scoped_pod_lifecycle_releases_cross_endpoint_allocations() {
+        let mut budgets = GlobalConnectionBudget::default();
+        for endpoint in ["primary", "read-pool"] {
+            budgets.insert(EndpointAllocator::new(
+                endpoint,
+                EndpointCapacity {
+                    effective_limit: 40,
+                    reserve: 0,
+                    non_pgpool_usage: 0,
+                    safety_headroom: 0,
+                },
+            ));
+        }
+        let mut control = PgpoolControlPlane::new(budgets);
+        control
+            .admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 20)
+            .unwrap();
+        control
+            .admit_scale("read-pool", ["pod-0"], std::iter::empty::<&str>(), 20)
+            .unwrap();
+        assert!(matches!(
+            control.admit_scale("primary", ["pod-0"], std::iter::empty::<&str>(), 1),
+            Err(ControlPlaneError::Allocation(
+                AllocationError::DuplicatePod { .. }
+            ))
+        ));
+
+        for endpoint in ["primary", "read-pool"] {
+            control.mark_ready(endpoint, "pod-0").unwrap();
+            control.begin_drain(endpoint, "pod-0", 10, 0).unwrap();
+            assert_eq!(
+                control.reconcile_drain(endpoint, "pod-0", 10).unwrap(),
+                DrainProgress::Released
+            );
+            assert_eq!(control.budgets.endpoint(endpoint).unwrap().held_quota(), 0);
+        }
+        assert_eq!(control.status().pods.len(), 2);
+        assert!(control
+            .status()
+            .pods
+            .iter()
+            .all(|pod| pod.phase == PodControlPhase::Released));
     }
 }
 // </HANDWRITE>

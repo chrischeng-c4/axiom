@@ -48,11 +48,12 @@ pub async fn openapi_json() -> Json<serde_json::Value> {
     Json(crate::spec::openapi())
 }
 
-/// `GET /docs` — a minimal Swagger UI page loading `/openapi.json`,
-/// mirroring `libs/service-http`'s `docs_swagger` convention (R6).
+// <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Replace remote Swagger CDN assets with a self-contained offline documentation page.">
+/// `GET /docs` — a self-contained offline index for `/openapi.json`.
 pub async fn docs() -> impl IntoResponse {
     Html(SWAGGER_HTML)
 }
+// </HANDWRITE>
 
 /// `GET /pools` — one `PoolStatsResponse` entry per `AdminState.pools`
 /// member, read live (R3).
@@ -105,27 +106,18 @@ fn pool_mode_str(mode: &PoolMode) -> &'static str {
     }
 }
 
-/// Standalone Swagger UI page that renders whatever `/openapi.json`
-/// returns, matching `libs/service-http/src/probes.rs`'s page.
 const SWAGGER_HTML: &str = r##"<!doctype html>
 <html>
   <head>
     <title>pgpool admin API docs</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
-    <style>body { margin: 0; }</style>
+    <style>body { margin: 2rem; font-family: system-ui, sans-serif; max-width: 48rem; }</style>
   </head>
   <body>
-    <div id="swagger-ui"></div>
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-    <script>
-      window.ui = SwaggerUIBundle({
-        url: "/openapi.json",
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-      });
-    </script>
+    <h1>pgpool admin API</h1>
+    <p>This offline admin documentation page has no external assets.</p>
+    <p><a href="/openapi.json">OpenAPI document (JSON)</a></p>
   </body>
 </html>"##;
 // </HANDWRITE>

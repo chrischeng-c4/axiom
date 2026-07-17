@@ -332,8 +332,9 @@ mod tests {
         assert_eq!(state.clean_idle_len(), 0);
     }
 
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#1879" reason="unit-test section in state.rs is hand-written pending codegen support">
     #[test]
-    fn disconnected_waiters_do_not_consume_a_clean_backend() {
+    fn expired_waiter_removal_prevents_late_assignment_and_accounting_underflow() {
         let client = ClientId(1);
         let backend = BackendId(1);
         let mut state = ReactorState::new();
@@ -344,12 +345,18 @@ mod tests {
         );
         assert_eq!(state.remove_client(client), None);
         assert_eq!(
+            state.remove_client(client),
+            None,
+            "the socket's later close must not decrement waiting_count twice"
+        );
+        assert_eq!(
             state.add_clean_backend(backend),
             TransactionAction::Idle { backend }
         );
         assert_eq!(state.clean_idle_len(), 1);
         assert_eq!(state.waiting_len(), 0);
     }
+    // </HANDWRITE>
 
     #[test]
     fn initial_reset_counts_as_recoverable_capacity() {

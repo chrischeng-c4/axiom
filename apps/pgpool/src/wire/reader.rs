@@ -289,6 +289,7 @@ impl FrameReader {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1876" reason="logic section in reader.rs is hand-written pending codegen support">
 fn validate_frontend_relay(
     frame: &Frame,
     config: &WireCodecConfig,
@@ -304,8 +305,11 @@ fn validate_frontend_relay(
             Cursor::new(&frame.payload).expect_end(Some(TAG_TERMINATE))?;
             Ok(RelayFrameKind::FrontendTerminate)
         }
-        // Extended-query and authentication variants retain the original
-        // decoder until they have a measured hot-path need.
+        Some(tag @ (b'P' | b'B' | b'D' | b'E' | b'H' | b'C' | b'S')) => {
+            validate_extended_query_frame(frame, config)?;
+            debug_assert!(is_extended_query_tag(tag));
+            Ok(RelayFrameKind::Other)
+        }
         _ => {
             let _ = FrontendMessage::decode(frame, config)?;
             Ok(RelayFrameKind::Other)
@@ -313,6 +317,49 @@ fn validate_frontend_relay(
     }
 }
 
+impl RelayFrame {
+    /// Whether this frontend relay frame begins an extended-query exchange.
+    /// Transaction pooling cannot safely relay the exchange until full
+    /// extended-protocol support lands, so both engines reject it before it
+    /// can be queued behind a `ReadyForQuery` lease boundary.
+    pub fn is_extended_query(&self) -> bool {
+        self.bytes
+            .first()
+            .is_some_and(|tag| is_extended_query_tag(*tag))
+    }
+}
+
+fn is_extended_query_tag(tag: u8) -> bool {
+    matches!(tag, b'P' | b'B' | b'D' | b'E' | b'H' | b'C' | b'S')
+}
+
+fn validate_extended_query_frame(
+    frame: &Frame,
+    config: &WireCodecConfig,
+) -> Result<(), FrameError> {
+    match frame.tag {
+        Some(b'H') => Cursor::new(&frame.payload).expect_end(Some(b'H')),
+        Some(b'C') => {
+            let mut cur = Cursor::new(&frame.payload);
+            let target = cur.read_u8(Some(b'C'))?;
+            if !matches!(target, b'S' | b'P') {
+                return Err(FrameError::Malformed {
+                    tag: Some(b'C'),
+                    reason: format!("invalid Close target {target:?}"),
+                });
+            }
+            cur.skip_cstr(Some(b'C'))?;
+            cur.expect_end(Some(b'C'))
+        }
+        _ => {
+            let _ = FrontendMessage::decode(frame, config)?;
+            Ok(())
+        }
+    }
+}
+// </HANDWRITE>
+
+// <HANDWRITE gap="missing-generator:logic" tracker="#1877" reason="logic section in reader.rs is hand-written pending codegen support">
 fn validate_backend_relay(
     frame: &Frame,
     config: &WireCodecConfig,
@@ -387,6 +434,7 @@ fn validate_backend_relay(
         }
     }
 }
+// </HANDWRITE>
 
 fn read_bounded_count(cur: &mut Cursor<'_>, tag: u8, max: usize) -> Result<usize, FrameError> {
     let count = cur.read_i16(Some(tag))?;

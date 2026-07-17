@@ -90,14 +90,10 @@ flowchart TD
 
 ```yaml
 changes:
-  - path: apps/pgpool/src/k8s/mod.rs
-    action: modify
-    impl_mode: hand-written
-    section: logic
-    description: Export endpoint quota allocation models.
   - path: apps/pgpool/src/k8s/budget.rs
     action: create
     impl_mode: hand-written
     section: logic
+    anchor: EndpointAllocator
     description: Implement atomic endpoint reservation and drain-safe release transitions.
 ```

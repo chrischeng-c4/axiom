@@ -135,6 +135,7 @@ struct ReactorStats {
     idle: AtomicUsize,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in backend_pool.rs is hand-written pending codegen support">
 /// Shared backend-connection pool: idle-reuse-preferring acquire with a
 /// non-blocking liveness peek, always-fresh acquire for the one-time
 /// startup+auth handshake, and a disposition-driven release (Logic
@@ -144,7 +145,9 @@ struct ReactorStats {
 pub struct BackendPool {
     config: PoolConfig,
     inner: Arc<PoolInner>,
+    backend_application_name: Option<Arc<str>>,
 }
+// </HANDWRITE>
 
 impl BackendPool {
     pub fn new(config: PoolConfig) -> Self {
@@ -182,6 +185,7 @@ impl BackendPool {
         let max = config.max_backend_connections;
         Self {
             config,
+            backend_application_name: None,
             inner: Arc::new(PoolInner {
                 permits: Arc::new(Semaphore::new(max)),
                 state: Mutex::new(PoolState {
@@ -199,6 +203,27 @@ impl BackendPool {
                     idle: AtomicUsize::new(0),
                 },
             }),
+        }
+    }
+
+    /// Attach the Deployment-scoped identity that pgpool writes into every
+    /// backend StartupMessage. Tests and direct library users remain
+    /// byte-for-byte pass-through until they opt in.
+    pub fn with_backend_application_name(mut self, application_name: impl Into<String>) -> Self {
+        let application_name = application_name.into();
+        self.backend_application_name =
+            (!application_name.is_empty()).then(|| Arc::<str>::from(application_name));
+        self
+    }
+
+    /// Return the startup identity used for a physical backend connection.
+    /// The same normalized value is used by handshake forwarding and replay
+    /// cache keys, so client-supplied application names cannot split cache
+    /// identity from what PostgreSQL observes.
+    pub fn normalize_backend_startup(&self, startup: StartupMessage) -> StartupMessage {
+        match &self.backend_application_name {
+            Some(application_name) => startup.with_application_name(application_name.as_ref()),
+            None => startup,
         }
     }
 
@@ -337,17 +362,20 @@ impl BackendPool {
         }
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1891" reason="Use the Duration reserve policy directly for normal queue and reserve admission deadlines.">
     async fn acquire_internal(&self, allow_idle_reuse: bool) -> Result<BackendLease, PoolError> {
         let queue_wait_timeout = self
             .inner
             .reserve
             .as_ref()
-            .map(|runtime| Duration::from_secs(runtime.config.policy.queue_wait_timeout_seconds))
+            .map(|runtime| runtime.config.policy.queue_wait_timeout)
             .unwrap_or(self.config.acquire_timeout);
         let deadline = Instant::now() + queue_wait_timeout;
-        let reserve_deadline = self.inner.reserve.as_ref().map(|runtime| {
-            Instant::now() + Duration::from_secs(runtime.config.policy.reserve_pool_timeout_seconds)
-        });
+        let reserve_deadline = self
+            .inner
+            .reserve
+            .as_ref()
+            .map(|runtime| Instant::now() + runtime.config.policy.reserve_pool_timeout);
         let mut reserve_demanded = false;
         loop {
             if allow_idle_reuse {
@@ -386,6 +414,7 @@ impl BackendPool {
             // Notified (or spuriously woken): loop back and recheck.
         }
     }
+    // </HANDWRITE>
 
     fn saturated(&self) -> PoolError {
         self.saturated_after(self.config.acquire_timeout)

@@ -45,6 +45,9 @@ pub enum BackendMessage {
     CommandComplete(CommandComplete),
     ErrorResponse(ErrorResponse),
     NoticeResponse(NoticeResponse),
+    /// A length-validated backend frame whose contents are not interpreted by
+    /// pgpool. Session and transaction relay paths preserve its raw bytes.
+    Opaque(OpaqueBackendMessage),
 }
 
 impl BackendMessage {
@@ -66,9 +69,11 @@ impl BackendMessage {
             BackendMessage::CommandComplete(m) => m.encode(buf),
             BackendMessage::ErrorResponse(m) => m.encode(buf),
             BackendMessage::NoticeResponse(m) => m.encode(buf),
+            BackendMessage::Opaque(m) => m.encode(buf),
         }
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1877" reason="logic section in backend.rs is hand-written pending codegen support">
     /// Decodes a fully-buffered `Frame` into a typed `BackendMessage` by tag
     /// byte (and, for tag `'R'`, by the 4-byte authentication sub-code).
     pub fn decode(frame: &Frame, config: &WireCodecConfig) -> Result<BackendMessage, FrameError> {
@@ -100,9 +105,112 @@ impl BackendMessage {
             TAG_NOTICE_RESPONSE => {
                 NoticeResponse::decode(&frame.payload).map(BackendMessage::NoticeResponse)
             }
+            tag if is_opaque_backend_tag(tag) => {
+                validate_opaque_backend(tag, &frame.payload, config)?;
+                Ok(BackendMessage::Opaque(OpaqueBackendMessage {
+                    tag,
+                    payload: frame.payload.clone(),
+                }))
+            }
             other => Err(FrameError::UnknownTag { tag: other }),
         }
     }
+    // </HANDWRITE>
+}
+
+/// Opaque backend frame that has passed the protocol's bounded structural
+/// checks. It is deliberately retained byte-for-byte for relay, not decoded
+/// into a lossy application-specific representation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpaqueBackendMessage {
+    pub tag: u8,
+    pub payload: Bytes,
+}
+
+impl OpaqueBackendMessage {
+    pub fn encode(&self, buf: &mut BytesMut) {
+        write_tagged(buf, self.tag, |buf| buf.extend_from_slice(&self.payload));
+    }
+}
+
+fn is_opaque_backend_tag(tag: u8) -> bool {
+    matches!(
+        tag,
+        b'1' | b'2'
+            | b'3'
+            | b'A'
+            | b'G'
+            | b'H'
+            | b'I'
+            | b'W'
+            | b'c'
+            | b'd'
+            | b'n'
+            | b's'
+            | b't'
+            | b'v'
+    )
+}
+
+fn validate_opaque_backend(
+    tag: u8,
+    payload: &Bytes,
+    config: &WireCodecConfig,
+) -> Result<(), FrameError> {
+    let mut cur = Cursor::new(payload);
+    match tag {
+        b'1' | b'2' | b'3' | b'I' | b'c' | b'n' | b's' => cur.expect_end(Some(tag)),
+        // CopyData has no fields beyond its frame payload; the outer reader
+        // already enforced `max_frame_bytes` before reaching this branch.
+        b'd' => Ok(()),
+        b'G' | b'H' | b'W' => {
+            cur.read_u8(Some(tag))?;
+            let count = bounded_count(&mut cur, tag, config.max_row_columns)?;
+            for _ in 0..count {
+                cur.read_i16(Some(tag))?;
+            }
+            cur.expect_end(Some(tag))
+        }
+        b'A' => {
+            cur.read_i32(Some(tag))?;
+            cur.skip_cstr(Some(tag))?;
+            cur.skip_cstr(Some(tag))?;
+            cur.expect_end(Some(tag))
+        }
+        b't' => {
+            let count = bounded_count(&mut cur, tag, config.max_bind_params)?;
+            for _ in 0..count {
+                cur.read_i32(Some(tag))?;
+            }
+            cur.expect_end(Some(tag))
+        }
+        b'v' => {
+            let count = cur.read_i32(Some(tag))?;
+            if count < 0 || count as usize > config.max_bind_params {
+                return Err(FrameError::Malformed {
+                    tag: Some(tag),
+                    reason: format!("option count {count} exceeds configured maximum"),
+                });
+            }
+            for _ in 0..count {
+                cur.skip_cstr(Some(tag))?;
+                cur.skip_cstr(Some(tag))?;
+            }
+            cur.expect_end(Some(tag))
+        }
+        _ => unreachable!("opaque tag was filtered before validation"),
+    }
+}
+
+fn bounded_count(cur: &mut Cursor<'_>, tag: u8, max: usize) -> Result<usize, FrameError> {
+    let count = cur.read_i16(Some(tag))?;
+    if count < 0 || count as usize > max {
+        return Err(FrameError::Malformed {
+            tag: Some(tag),
+            reason: format!("field count {count} exceeds configured maximum {max}"),
+        });
+    }
+    Ok(count as usize)
 }
 
 fn decode_authentication(payload: &Bytes) -> Result<BackendMessage, FrameError> {

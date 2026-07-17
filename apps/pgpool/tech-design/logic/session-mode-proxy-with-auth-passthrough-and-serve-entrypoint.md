@@ -19,6 +19,26 @@ fill_sections: [logic, state-machine, schema, config, unit-test]
 
 # pgpool session-mode proxy — serve entrypoint, auth passthrough, drain
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/proxy/config.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: SessionProxyConfig
+    reason: Own session-proxy configuration pending a proxy schema generator.
+  - path: apps/pgpool/src/proxy/error.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: ProxyError
+    reason: Own session-proxy error taxonomy pending a proxy schema generator.
+```
+
 ## Logic
 <!-- type: logic lang: mermaid -->
 

@@ -40,9 +40,15 @@ impl DrainController {
         self.state().is_draining()
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1884" reason="logic section in drain.rs is hand-written pending codegen support">
     pub fn start_drain(&self) {
-        let _ = self.tx.send(DrainState::Draining);
+        // `watch::Sender::send` declines to publish when every receiver has
+        // been dropped. Drain is process state, not a best-effort event: a
+        // SIGTERM that arrives before a plane subscribes must still be seen by
+        // that plane when it starts.
+        self.tx.send_replace(DrainState::Draining);
     }
+    // </HANDWRITE>
 }
 
 impl Default for DrainController {
@@ -67,7 +73,12 @@ impl DrainSignal {
     }
 
     pub async fn changed(&mut self) -> DrainState {
-        let _ = self.rx.changed().await;
+        // A receiver subscribed after drain has already begun treats the
+        // current watch value as seen. Check it first so startup shutdown
+        // futures cannot miss an earlier SIGTERM/drain transition.
+        if !self.is_draining() {
+            let _ = self.rx.changed().await;
+        }
         self.state()
     }
 }

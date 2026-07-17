@@ -637,10 +637,11 @@ fn run_apply_inner(
 
         // impl_mode: hand-written — rule 2-2 of the codegen policy. The CLI
         // owns the writable skeleton: a new file gets a whole-file HANDWRITE
-        // marker, while an existing target must name an `anchor:` so generation
-        // can scaffold a bounded marker pair. A markerless existing target is
-        // not a valid lifecycle result: it would let TD generation advance
-        // without an implementation payload for `td fill` to own.
+        // marker, while an existing Rust target must name an `anchor:` so
+        // generation can scaffold a bounded marker pair. Existing non-Rust
+        // targets remain tracked hand-written artifacts: the Rust marker
+        // scaffold cannot safely position a marker in them, so their evidence
+        // is the declared target plus the implementation diff.
         //
         // Regenerable promotion is the exception: a semantic TD may still
         // record the original source as hand-written, but an explicit
@@ -649,6 +650,21 @@ fn run_apply_inner(
         if entry.impl_mode == ImplMode::HandWritten && !handwrite_whole_file_promotion {
             let mut updated = false;
             let mut created = false;
+            if entry.action == "modify" && target_path.exists() && !is_rust_source(&target_path) {
+                apply_diagnostic!(
+                    "[gen apply] HANDWRITE: tracked existing non-Rust target {} (no Rust marker)",
+                    entry.path,
+                );
+                files.push(FileApplyResult {
+                    path: PathBuf::from(&entry.path),
+                    created: false,
+                    updated: false,
+                    blocks_updated: 0,
+                    dry_run,
+                    processed: true,
+                });
+                continue;
+            }
             // Bug 1 fix: `action: create` + `impl_mode: hand-written` previously
             // produced no file. Now scaffold an empty placeholder with a single
             // HANDWRITE-marked region so authors have a starting point and
@@ -6788,6 +6804,54 @@ changes:
             !after.contains("HANDWRITE-BEGIN"),
             "generation must not create an unscoped marker"
         );
+    }
+
+    #[test]
+    fn hand_written_existing_non_rust_target_skips_rust_marker_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let target = root.join("docs/capability.md");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "# Existing capability contract\n").unwrap();
+        let before = std::fs::read_to_string(&target).unwrap();
+
+        let spec_path = root.join("tech-design/logic/documented-change.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: documented-change
+fill_sections: [logic, changes]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: docs/capability.md
+    action: modify
+    impl_mode: hand-written
+    section: logic
+```
+"#,
+        )
+        .unwrap();
+
+        let report = run_apply(&spec_path, root, false).unwrap();
+        assert!(report
+            .files
+            .iter()
+            .any(|file| { file.path == PathBuf::from("docs/capability.md") && file.processed }));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), before);
     }
 
     /// Regression test: extension gate skips non-.rs files instead of blasting Rust into them.

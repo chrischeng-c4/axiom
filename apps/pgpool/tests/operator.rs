@@ -76,6 +76,7 @@ fn crd_is_namespaced_and_carries_endpoint_budget_status() {
         "endpoints:",
         "provider:",
         "configuredCeiling:",
+        "tlsCaSecretRef:",
         "effectiveLimit:",
         "blockedScaleReason:",
         "backendActive:",
@@ -117,6 +118,7 @@ fn cr_renders_owned_stateless_shared_deployment() {
     }
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1889" reason="Migrate operator control-plane status coverage to the explicit endpoint-scoped Pod lifecycle API.">
 #[test]
 fn status_projects_global_budget_and_managed_readiness() {
     let mut budgets = GlobalConnectionBudget::default();
@@ -138,9 +140,10 @@ fn status_projects_global_budget_and_managed_readiness() {
             40,
         )
         .unwrap();
-    control.mark_ready("pool-a").unwrap();
+    control.mark_ready("alloy-primary", "pool-a").unwrap();
     control
         .observe_pool(
+            "alloy-primary",
             "pool-a",
             BackendPoolObservation {
                 active: 11,
@@ -148,7 +151,9 @@ fn status_projects_global_budget_and_managed_readiness() {
             },
         )
         .unwrap();
-    control.begin_drain("pool-a", 100, 60).unwrap();
+    control
+        .begin_drain("alloy-primary", "pool-a", 100, 60)
+        .unwrap();
 
     let status = PgpoolStatus::from_control_plane(&spec(), 7, 1, &control.status());
     assert_eq!(status.phase, "Reconciling");
@@ -171,6 +176,7 @@ fn status_projects_global_budget_and_managed_readiness() {
     assert_eq!(patch["status"]["endpoints"][0]["allocated"], 80);
     assert_eq!(patch["status"]["pods"][0]["drainRequested"], true);
 }
+// </HANDWRITE>
 
 #[test]
 fn operator_assets_are_leader_elected_and_layered() {
@@ -187,6 +193,7 @@ fn operator_assets_are_leader_elected_and_layered() {
     assert!(yaml.contains("namespace: database-system"));
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1890" reason="Preserve coverage for reserve counters when the pure control plane does own a reserve ledger.">
 /// verify: operator::concurrent_pods_cannot_overgrant_reserve_capacity (R4)
 #[test]
 fn concurrent_pods_cannot_overgrant_reserve_capacity() {
@@ -242,7 +249,12 @@ fn concurrent_pods_cannot_overgrant_reserve_capacity() {
     assert!(denied.is_err(), "the concurrent chunk must be atomic");
     let status = control.status();
     assert_eq!(status.endpoints[0].reserve_granted, 20);
+    assert!(status.endpoints[0].reserve_accounting_available);
     assert_eq!(status.endpoints[0].reserve_denials, 1);
+    let cr_status = PgpoolStatus::from_control_plane(&spec(), 1, 0, &status);
+    assert_eq!(cr_status.endpoints[0].reserve_granted, Some(20));
+    assert_eq!(cr_status.endpoints[0].reserve_available, Some(20));
+    assert!(cr_status.endpoints[0].reserve_accounting_available);
     assert_eq!(
         control
             .reserve_ledger("alloy-primary")
@@ -252,4 +264,5 @@ fn concurrent_pods_cannot_overgrant_reserve_capacity() {
         "base allocation plus every granted reserve unit remains capped"
     );
 }
+// </HANDWRITE>
 // </HANDWRITE>

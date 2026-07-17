@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-global-endpoint-quota-allocation.md#logic
 // <HANDWRITE gap="missing-generator:logic:pgpool-endpoint-budget" tracker="#1571" reason="Quota state-machine generation is not available.">
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -111,14 +111,33 @@ impl EndpointAllocator {
         self.blocked_reason.as_deref()
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1888" reason="Admit static Pod quota against the allocator quota plus externally-held reserve capacity, preserving the allocator's atomic error and blocked-scale status behavior.">
     pub fn reserve_many<I, S>(&mut self, pods: I, quota_per_pod: u32) -> Result<(), AllocationError>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        self.reserve_many_with_external_held(pods, quota_per_pod, 0)
+    }
+
+    /// Atomically reserve static Pod quota while accounting for capacity that
+    /// is held outside this allocator, such as outstanding reserve grants.
+    /// The external hold is advisory input from the same control-plane
+    /// transaction; it is never reclaimed as a side effect of static admission.
+    pub fn reserve_many_with_external_held<I, S>(
+        &mut self,
+        pods: I,
+        quota_per_pod: u32,
+        external_held: u32,
+    ) -> Result<(), AllocationError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         let pods: Vec<String> = pods.into_iter().map(Into::into).collect();
+        let mut seen = BTreeSet::new();
         for pod in &pods {
-            if self.allocations.contains_key(pod) {
+            if !seen.insert(pod) || self.allocations.contains_key(pod) {
                 return Err(AllocationError::DuplicatePod {
                     endpoint: self.endpoint.clone(),
                     pod: pod.clone(),
@@ -126,9 +145,9 @@ impl EndpointAllocator {
             }
         }
         let requested = quota_per_pod.saturating_mul(pods.len().try_into().unwrap_or(u32::MAX));
-        let held = self.held_quota();
+        let held = self.held_quota().saturating_add(external_held);
         let usable = self.capacity.usable();
-        if !self.can_hold_additional(requested) {
+        if held.saturating_add(requested) > usable {
             let error = AllocationError::InsufficientCapacity {
                 endpoint: self.endpoint.clone(),
                 held,
@@ -149,9 +168,10 @@ impl EndpointAllocator {
             );
         }
         self.blocked_reason = None;
-        debug_assert!(self.held_quota() <= self.capacity.usable());
+        debug_assert!(self.held_quota().saturating_add(external_held) <= usable);
         Ok(())
     }
+    // </HANDWRITE>
 
     pub fn mark_ready(&mut self, pod: &str) -> Result<(), AllocationError> {
         self.allocation_mut(pod)?.state = AllocationState::Ready;
@@ -250,6 +270,17 @@ mod tests {
         assert_eq!(allocator.held_quota(), 50);
         assert!(allocator.allocations().all(|item| item.pod != "pod-2"));
         assert!(allocator.blocked_reason().is_some());
+    }
+
+    #[test]
+    fn duplicate_pod_batch_is_rejected_atomically() {
+        let mut allocator = allocator();
+        assert!(matches!(
+            allocator.reserve_many(["pod-0", "pod-0"], 10),
+            Err(AllocationError::DuplicatePod { .. })
+        ));
+        assert_eq!(allocator.held_quota(), 0);
+        assert_eq!(allocator.allocations().count(), 0);
     }
 
     #[test]

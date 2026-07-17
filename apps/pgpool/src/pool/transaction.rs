@@ -34,8 +34,8 @@ use crate::proxy::{
     HandshakeOutcome, RejectionReason,
 };
 use crate::wire::{
-    FrameReader, FrontendMessage, RelayFrame, RelayFrameKind, Role, TransactionStatus,
-    WireCodecConfig,
+    BackendMessage, ErrorResponse, FrameReader, FrontendMessage, RelayFrame, RelayFrameKind, Role,
+    TransactionStatus, WireCodecConfig,
 };
 
 /// Full configuration for one `TransactionHandler`, per the TD Schema
@@ -72,12 +72,13 @@ enum TransactionEngine {
 
 impl TransactionHandler {
     // @spec apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md#logic
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1891" reason="Log reserve policy with millisecond values matching the configuration surface.">
     pub fn new(config: TransactionProxyConfig) -> Self {
         if let Some(policy) = config.backend_pool.reserve_policy() {
             tracing::info!(
-                reserve_pool_timeout_seconds = policy.reserve_pool_timeout_seconds,
-                queue_wait_timeout_seconds = policy.queue_wait_timeout_seconds,
-                reserve_idle_timeout_seconds = policy.reserve_idle_timeout_seconds,
+                reserve_pool_timeout_ms = policy.reserve_pool_timeout.as_millis(),
+                queue_wait_timeout_ms = policy.queue_wait_timeout.as_millis(),
+                reserve_idle_timeout_ms = policy.reserve_idle_timeout.as_millis(),
                 "pgpool reserve lease cache enabled; control-plane exchange stays off the relay path"
             );
         }
@@ -97,6 +98,7 @@ impl TransactionHandler {
         };
         Self { config, engine }
     }
+    // </HANDWRITE>
 
     pub fn config(&self) -> &TransactionProxyConfig {
         &self.config
@@ -150,6 +152,7 @@ impl TcpHandler for TransactionHandler {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in transaction.rs is hand-written pending codegen support">
 /// One accepted frontend connection's full transaction-mode lifecycle.
 /// Never panics: every rejection/error path writes (or forwards) the
 /// appropriate wire frame, releases the frontend permit, and releases any
@@ -188,6 +191,7 @@ async fn run_transaction_client(
                 return;
             }
         };
+    let startup = config.backend_pool.normalize_backend_startup(startup);
 
     let mut replay_safe_startup = false;
     match config.backend_pool.acquire_for_startup(&startup).await {
@@ -328,6 +332,12 @@ async fn run_transaction_client(
             },
         };
 
+        if first_frame.is_extended_query() {
+            write_extended_query_rejection(&mut client_write).await;
+            drop(permit);
+            return;
+        }
+
         // Per the Pool Lease State Machine, `acquiring_transaction` has
         // exactly one rejection edge (`rejected_pool_saturated`): any
         // `PoolError` here (saturation timeout, or a fresh-connect failure
@@ -343,14 +353,7 @@ async fn run_transaction_client(
             config.backend_pool.acquire().await
         };
         let lease = match acquisition {
-            Ok(lease) => {
-                config.backend_pool.record_transaction_phase_started(
-                    TransactionPhase::Acquire,
-                    TransactionPhaseOutcome::Success,
-                    acquire_started,
-                );
-                lease
-            }
+            Ok(lease) => lease,
             Err(_) => {
                 config.backend_pool.record_transaction_phase_started(
                     TransactionPhase::Acquire,
@@ -363,6 +366,39 @@ async fn run_transaction_client(
                 return;
             }
         };
+
+        // A non-replay-safe client authenticated only during its initial
+        // admission. A fresh per-transaction socket has not received that
+        // Startup/auth exchange, so forwarding the raw Query would violate
+        // the PostgreSQL protocol. Until credentials can be terminated by
+        // pgpool, close the fresh lease and surface the normal typed pool
+        // rejection instead.
+        if lease.fresh && !replay_safe_startup {
+            config.backend_pool.record_transaction_phase_started(
+                TransactionPhase::Acquire,
+                TransactionPhaseOutcome::Failure,
+                acquire_started,
+            );
+            let BackendLease { id, stream, .. } = lease;
+            let (backend_read, backend_write) = stream.into_split();
+            release_backend(
+                config,
+                id,
+                backend_read,
+                backend_write,
+                LeaseDisposition::Close,
+            )
+            .await;
+            write_pool_rejection(&mut client_write, PoolRejectionReason::BackendPoolSaturated)
+                .await;
+            drop(permit);
+            return;
+        }
+        config.backend_pool.record_transaction_phase_started(
+            TransactionPhase::Acquire,
+            TransactionPhaseOutcome::Success,
+            acquire_started,
+        );
 
         let BackendLease {
             id: txn_id,
@@ -421,6 +457,7 @@ async fn run_transaction_client(
         }
     }
 }
+// </HANDWRITE>
 
 enum TxnLegOutcome {
     /// Backend reported `ReadyForQuery(Idle)`: reset + return to idle, loop
@@ -540,6 +577,10 @@ async fn relay_one_transaction(
             let _ = forward_raw(backend_write, &msg.bytes).await;
             return TxnLegOutcome::Ended;
         }
+        if msg.is_extended_query() {
+            write_extended_query_rejection(client_write).await;
+            return TxnLegOutcome::Ended;
+        }
         if forward_raw(backend_write, &msg.bytes).await.is_err() {
             return TxnLegOutcome::Ended;
         }
@@ -598,6 +639,29 @@ async fn write_pool_rejection(
     let message = reason.synthesized_error_response();
     let mut buf = BytesMut::new();
     message.encode(&mut buf);
+    let _ = write.write_all(&buf).await;
+    let _ = write.shutdown().await;
+}
+
+/// Builds the temporary transaction-pooling boundary response while complete
+/// extended-protocol support remains a separate work item. Both transaction
+/// engines use this exact frame so clients receive one stable diagnostic.
+pub(crate) fn extended_query_rejection() -> BackendMessage {
+    BackendMessage::ErrorResponse(ErrorResponse {
+        fields: vec![
+            (b'S', "FATAL".to_string()),
+            (b'C', "0A000".to_string()),
+            (
+                b'M',
+                "extended query protocol not yet supported in transaction pooling mode".to_string(),
+            ),
+        ],
+    })
+}
+
+async fn write_extended_query_rejection(write: &mut (impl tokio::io::AsyncWrite + Unpin)) {
+    let mut buf = BytesMut::new();
+    extended_query_rejection().encode(&mut buf);
     let _ = write.write_all(&buf).await;
     let _ = write.shutdown().await;
 }

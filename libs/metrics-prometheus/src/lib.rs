@@ -203,6 +203,7 @@ pub fn render(samples: &[Sample<'_>]) -> String {
     out
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Expose the shared Prometheus label-value escaping primitive for custom metric families.">
 /// Render labeled metric families as Prometheus text format 0.0.4.
 ///
 /// Groups and rows preserve caller order. Labels within a row are sorted by
@@ -237,6 +238,15 @@ pub fn render_labeled(groups: &[SampleGroup<'_>]) -> String {
         }
     }
     out
+}
+// </HANDWRITE>
+
+/// Escapes a label value for Prometheus text exposition. Custom metric
+/// families should use this instead of duplicating the escaping rules.
+pub fn escape_label_value(value: &str) -> String {
+    let mut escaped = String::new();
+    write_escaped_label_value(&mut escaped, value);
+    escaped
 }
 
 fn write_escaped_label_value(out: &mut String, value: &str) {

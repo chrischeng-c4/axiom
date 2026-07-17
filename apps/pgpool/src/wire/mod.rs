@@ -20,14 +20,15 @@ pub use backend::{
     AuthenticationCleartextPassword, AuthenticationMd5Password, AuthenticationOk,
     AuthenticationSasl, AuthenticationSaslContinue, AuthenticationSaslFinal, BackendKeyData,
     BackendMessage, CommandComplete, DataRow, ErrorResponse, FieldDescription, NoticeResponse,
-    ParameterStatus, ReadyForQuery, RowDescription, TransactionStatus,
+    OpaqueBackendMessage, ParameterStatus, ReadyForQuery, RowDescription, TransactionStatus,
 };
 pub use config::WireCodecConfig;
 pub use error::FrameError;
 pub use frame::Frame;
 pub use frontend::{
-    Bind, Describe, DescribeTarget, Execute, FrontendMessage, Parse, PasswordMessage, Query,
-    SaslInitialResponse, SaslResponse, SslRequest, StartupMessage, Sync, Terminate,
+    Bind, CancelRequest, Describe, DescribeTarget, Execute, FrontendMessage, OpaqueFrontendMessage,
+    Parse, PasswordMessage, Query, SaslInitialResponse, SaslResponse, SslRequest, StartupMessage,
+    Sync, Terminate,
 };
 pub use reader::{FrameReader, RelayFrame, RelayFrameKind, Role, WireFrame, WireMessage};
 // </HANDWRITE>

@@ -16,14 +16,16 @@ use metrics_prometheus::{render_labeled, Label, LabeledSample, SampleGroup};
 /// Content-type header value the TD's e2e test asserts verbatim.
 pub const CONTENT_TYPE: &str = "text/plain;version=0.0.4";
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Capture one BackendPool stats snapshot per pool per Prometheus render.">
 /// Renders the full Prometheus text-format body for every pool in `state`.
 pub fn render(state: &AdminState) -> String {
-    let frontend_active = pool_samples(state, |pool| pool.budget.active());
-    let backend_active = pool_samples(state, |pool| pool.pool.stats().backend_active);
-    let backend_idle = pool_samples(state, |pool| pool.pool.stats().backend_idle);
-    let reserve_queued = pool_samples(state, |pool| pool.pool.stats().reserve_queued);
-    let reserve_granted = pool_samples(state, |pool| pool.pool.stats().reserve_granted);
-    let reserve_spent = pool_samples(state, |pool| pool.pool.stats().reserve_spent);
+    let snapshots = pool_metric_snapshots(state);
+    let frontend_active = pool_samples(&snapshots, |snapshot| snapshot.frontend_active);
+    let backend_active = pool_samples(&snapshots, |snapshot| snapshot.stats.backend_active);
+    let backend_idle = pool_samples(&snapshots, |snapshot| snapshot.stats.backend_idle);
+    let reserve_queued = pool_samples(&snapshots, |snapshot| snapshot.stats.reserve_queued);
+    let reserve_granted = pool_samples(&snapshots, |snapshot| snapshot.stats.reserve_granted);
+    let reserve_spent = pool_samples(&snapshots, |snapshot| snapshot.stats.reserve_spent);
 
     let mut out = render_labeled(&[
         SampleGroup::new(
@@ -66,6 +68,7 @@ pub fn render(state: &AdminState) -> String {
     out.push_str(&render_transaction_phase_metrics(state));
     out
 }
+// </HANDWRITE>
 
 fn render_transaction_phase_metrics(state: &AdminState) -> String {
     let mut out = String::new();
@@ -102,17 +105,34 @@ fn render_transaction_phase_metrics(state: &AdminState) -> String {
     out
 }
 
-fn pool_samples<'a>(
-    state: &'a AdminState,
-    value_of: impl Fn(&NamedPool) -> usize,
-) -> Vec<LabeledSample<'a>> {
+struct PoolMetricSnapshot<'a> {
+    pool: &'a NamedPool,
+    frontend_active: usize,
+    stats: crate::pool::BackendPoolStats,
+}
+
+fn pool_metric_snapshots(state: &AdminState) -> Vec<PoolMetricSnapshot<'_>> {
     state
         .pools
         .iter()
-        .map(|pool| {
+        .map(|pool| PoolMetricSnapshot {
+            pool,
+            frontend_active: pool.budget.active(),
+            stats: pool.pool.stats(),
+        })
+        .collect()
+}
+
+fn pool_samples<'a>(
+    snapshots: &'a [PoolMetricSnapshot<'a>],
+    value_of: impl Fn(&PoolMetricSnapshot<'_>) -> usize,
+) -> Vec<LabeledSample<'a>> {
+    snapshots
+        .iter()
+        .map(|snapshot| {
             LabeledSample::new(
-                vec![Label::new("pool", pool.name.as_str())],
-                value_of(pool) as u64,
+                vec![Label::new("pool", snapshot.pool.name.as_str())],
+                value_of(snapshot) as u64,
             )
         })
         .collect()
@@ -181,6 +201,15 @@ mod tests {
         let state = one_pool_state("west\"\\edge\nblue");
         let body = render(&state);
         assert!(body.contains("pgpool_frontend_active{pool=\"west\\\"\\\\edge\\nblue\"} 0"));
+    }
+
+    #[test]
+    fn metrics_render_uses_one_snapshot_per_pool() {
+        let state = one_pool_state("default");
+        let snapshots = pool_metric_snapshots(&state);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].stats, state.pools[0].pool.stats());
+        assert!(render(&state).contains("pgpool_reserve_spent{pool=\"default\"} 0"));
     }
 
     #[test]

@@ -19,6 +19,26 @@ fill_sections: [logic, state-machine, schema, config, unit-test, e2e-test]
 
 # pgpool served admin plane — drain-aware readiness
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/admin/state.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: AdminState
+    reason: Own shared admin-plane router state pending an admin schema generator.
+  - path: apps/pgpool/src/admin/types.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: PoolStatsResponse
+    reason: Own admin HTTP response types pending an admin schema generator.
+```
+
 ## Logic
 <!-- type: logic lang: mermaid -->
 

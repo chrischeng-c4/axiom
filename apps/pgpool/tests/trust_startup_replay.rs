@@ -106,10 +106,12 @@ async fn read_backend(stream: &mut TcpStream, reader: &mut FrameReader) -> Optio
 
 async fn authenticate_backend(stream: &mut TcpStream, auth: BackendAuth, connection_id: usize) {
     let mut reader = FrameReader::new(Role::Frontend, &wire());
-    assert!(matches!(
-        read_frontend(stream, &mut reader).await,
-        Some(FrontendMessage::Startup(_))
-    ));
+    let Some(FrontendMessage::Startup(_)) = read_frontend(stream, &mut reader).await else {
+        // A fresh lease rejected before relay is expected to close without
+        // writing a PostgreSQL frame. A raw Query here would prove a protocol
+        // violation, and the client-side regression assertion would fail.
+        return;
+    };
 
     match auth {
         BackendAuth::Trust => {}
@@ -256,6 +258,27 @@ async fn spawn_proxy(
     (address, server, shutdown_tx)
 }
 
+/// Construct one handler through the legacy escape hatch so a regression can
+/// cover the `BackendLease::fresh` branch that production's reactor bypasses.
+/// The variable is read synchronously by `TransactionHandler::new`; restoring
+/// it before the listener begins accepting keeps the override test-local.
+async fn spawn_legacy_proxy(
+    pool: BackendPool,
+) -> (
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let previous = std::env::var_os("PGPOOL_TRANSACTION_ENGINE");
+    std::env::set_var("PGPOOL_TRANSACTION_ENGINE", "legacy");
+    let proxy = spawn_proxy(pool).await;
+    match previous {
+        Some(value) => std::env::set_var("PGPOOL_TRANSACTION_ENGINE", value),
+        None => std::env::remove_var("PGPOOL_TRANSACTION_ENGINE"),
+    }
+    proxy
+}
+
 async fn admit(
     proxy: std::net::SocketAddr,
     startup: StartupMessage,
@@ -320,6 +343,25 @@ async fn simple_query(stream: &mut TcpStream) {
     }
 }
 
+async fn expect_pool_rejection(stream: &mut TcpStream) {
+    write_frontend(
+        stream,
+        &FrontendMessage::Query(Query {
+            sql: "SELECT should_not_reach_unauthenticated_backend".to_string(),
+        }),
+    )
+    .await;
+    let mut reader = FrameReader::new(Role::Backend, &wire());
+    let response = tokio::time::timeout(Duration::from_secs(2), read_backend(stream, &mut reader))
+        .await
+        .expect("fresh lease rejection responds without hanging")
+        .expect("fresh lease rejection remains a PostgreSQL ErrorResponse");
+    assert!(
+        matches!(response, BackendMessage::ErrorResponse(_)),
+        "fresh unauthenticated lease must be rejected before query relay, got {response:?}"
+    );
+}
+
 async fn write_pipelined_queries(stream: &mut TcpStream, sql: &[&str]) {
     let mut bytes = BytesMut::new();
     for statement in sql {
@@ -359,6 +401,207 @@ async fn stop_proxy(
 ) {
     let _ = shutdown.send(());
     server.await.expect("proxy server joins");
+}
+
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1878" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
+async fn write_trust_startup_reply(stream: &mut TcpStream) {
+    write_backend(stream, &BackendMessage::AuthenticationOk(AuthenticationOk)).await;
+    write_backend(
+        stream,
+        &BackendMessage::ParameterStatus(ParameterStatus {
+            name: "client_encoding".to_string(),
+            value: "UTF8".to_string(),
+        }),
+    )
+    .await;
+    write_backend(
+        stream,
+        &BackendMessage::BackendKeyData(BackendKeyData {
+            process_id: 100,
+            secret_key: 200,
+        }),
+    )
+    .await;
+    write_backend(
+        stream,
+        &BackendMessage::ReadyForQuery(ReadyForQuery {
+            status: TransactionStatus::Idle,
+        }),
+    )
+    .await;
+}
+
+async fn reply_idle(stream: &mut TcpStream, tag: &str) {
+    write_backend(
+        stream,
+        &BackendMessage::CommandComplete(CommandComplete {
+            tag: tag.to_string(),
+        }),
+    )
+    .await;
+    write_backend(
+        stream,
+        &BackendMessage::ReadyForQuery(ReadyForQuery {
+            status: TransactionStatus::Idle,
+        }),
+    )
+    .await;
+}
+
+async fn expect_query(stream: &mut TcpStream, reader: &mut FrameReader, expected: &str) {
+    assert!(matches!(
+        read_frontend(stream, reader).await,
+        Some(FrontendMessage::Query(Query { sql })) if sql == expected
+    ));
+}
+
+async fn wait_for_active(pool: &BackendPool) {
+    for _ in 0..100 {
+        if pool.stats().backend_active == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("sole backend never became active: {:?}", pool.stats());
+}
+
+async fn run_saturated_pipeline(statements: &[&str]) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake backend");
+    let backend_port = listener.local_addr().expect("fake backend address").port();
+    let statements: Vec<String> = statements
+        .iter()
+        .map(|statement| (*statement).to_string())
+        .collect();
+    let backend_statements = statements.clone();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let backend_server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept fake backend");
+        let mut reader = FrameReader::new(Role::Frontend, &wire());
+
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Startup(_))
+        ));
+        write_trust_startup_reply(&mut stream).await;
+        expect_query(&mut stream, &mut reader, "DISCARD ALL").await;
+        reply_idle(&mut stream, "DISCARD ALL").await;
+
+        expect_query(&mut stream, &mut reader, "SELECT hold").await;
+        let _ = release_rx.await;
+        reply_idle(&mut stream, "hold").await;
+
+        for statement in backend_statements {
+            expect_query(&mut stream, &mut reader, "DISCARD ALL").await;
+            reply_idle(&mut stream, "DISCARD ALL").await;
+            expect_query(&mut stream, &mut reader, &statement).await;
+            reply_idle(&mut stream, &statement).await;
+        }
+        expect_query(&mut stream, &mut reader, "DISCARD ALL").await;
+        reply_idle(&mut stream, "DISCARD ALL").await;
+    });
+
+    let pool = BackendPool::new(pool_config(backend_port, 1));
+    let (proxy, proxy_server, shutdown) = spawn_proxy(pool.clone()).await;
+    let (mut holder, _) = admit(proxy, startup("pipeline"), false)
+        .await
+        .expect("holder trust startup admits");
+    wait_for_idle(&pool).await;
+    write_frontend(
+        &mut holder,
+        &FrontendMessage::Query(Query {
+            sql: "SELECT hold".to_string(),
+        }),
+    )
+    .await;
+    wait_for_active(&pool).await;
+
+    let (mut pipelined, _) = admit(proxy, startup("pipeline"), false)
+        .await
+        .expect("matching startup replays while the sole backend is active");
+    let expected: Vec<&str> = statements.iter().map(String::as_str).collect();
+    write_pipelined_queries(&mut pipelined, &expected).await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    release_tx
+        .send(())
+        .expect("backend script is still holding the sole lease");
+
+    let mut reader = FrameReader::new(Role::Backend, &wire());
+    let mut completions = Vec::new();
+    let mut ready_count = 0;
+    while completions.len() < expected.len() || ready_count < expected.len() {
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            read_backend(&mut pipelined, &mut reader),
+        )
+        .await
+        .expect("pipelined response must not hang")
+        .expect("pipelined client remains connected")
+        {
+            BackendMessage::CommandComplete(command) => completions.push(command.tag),
+            BackendMessage::ReadyForQuery(_) => ready_count += 1,
+            other => panic!("unexpected pipelined response: {other:?}"),
+        }
+    }
+    assert_eq!(completions, statements);
+    assert_eq!(ready_count, expected.len());
+
+    close_client(pipelined).await;
+    close_client(holder).await;
+    stop_proxy(proxy_server, shutdown).await;
+    drop(pool);
+    backend_server.await.expect("backend script joins");
+}
+
+/// verify: trust_startup_replay::reactor_saturated_pipelined_queries_resume_without_new_socket_read (R1)
+#[tokio::test]
+async fn reactor_saturated_pipelined_queries_resume_without_new_socket_read() {
+    run_saturated_pipeline(&["SELECT two_one", "SELECT two_two"]).await;
+    run_saturated_pipeline(&["SELECT three_one", "SELECT three_two", "SELECT three_three"]).await;
+}
+
+/// verify: trust_startup_replay::reactor_pipelined_startup_and_first_query_complete (R1)
+#[tokio::test]
+async fn reactor_pipelined_startup_and_first_query_complete() {
+    let (backend_port, _, backend_server) = spawn_backend(BackendAuth::Trust).await;
+    let pool = BackendPool::new(pool_config(backend_port, 1));
+    let (proxy, proxy_server, shutdown) = spawn_proxy(pool).await;
+    let mut client = TcpStream::connect(proxy).await.expect("connect proxy");
+    let mut bytes = BytesMut::new();
+    FrontendMessage::Startup(startup("startup-pipeline")).encode(&mut bytes);
+    FrontendMessage::Query(Query {
+        sql: "SELECT startup_pipeline".to_string(),
+    })
+    .encode(&mut bytes);
+    client
+        .write_all(&bytes)
+        .await
+        .expect("write startup and first query in one segment");
+
+    let mut reader = FrameReader::new(Role::Backend, &wire());
+    let mut ready_count = 0;
+    let mut commands = Vec::new();
+    while ready_count < 2 || commands.is_empty() {
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            read_backend(&mut client, &mut reader),
+        )
+        .await
+        .expect("pipelined startup must not hang")
+        .expect("client remains connected after startup pipeline")
+        {
+            BackendMessage::CommandComplete(command) => commands.push(command.tag),
+            BackendMessage::ReadyForQuery(_) => ready_count += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(commands, ["SELECT 1"]);
+    assert_eq!(ready_count, 2);
+
+    close_client(client).await;
+    stop_proxy(proxy_server, shutdown).await;
+    backend_server.abort();
 }
 
 /// A pipelined implicit next query remains in the client socket while the
@@ -555,6 +798,7 @@ async fn backend_first_relay_keeps_pipelined_query_out_of_resetting_backend() {
     drop(pool);
     backend_server.await.expect("backend script joins");
 }
+// </HANDWRITE>
 
 fn backend_key(messages: &[BackendMessage]) -> BackendKeyData {
     messages
@@ -599,6 +843,7 @@ async fn exact_no_challenge_startup_replays_without_a_backend_lease() {
     backend_server.abort();
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1880" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
 /// verify: trust_startup_replay::startup_mismatch_and_auth_challenges_never_replay (R2)
 #[tokio::test]
 async fn startup_mismatch_and_auth_challenges_never_replay() {
@@ -647,6 +892,39 @@ async fn startup_mismatch_and_auth_challenges_never_replay() {
         backend_server.abort();
     }
 }
+
+/// verify: trust_startup_replay::auth_required_fresh_legacy_lease_is_rejected_before_query_relay (R1, R2)
+#[tokio::test]
+async fn auth_required_fresh_legacy_lease_is_rejected_before_query_relay() {
+    let (backend_port, accepted, backend_server) = spawn_backend(BackendAuth::Md5).await;
+    let pool = BackendPool::new(pool_config(backend_port, 2));
+    let (proxy, proxy_server, shutdown) = spawn_legacy_proxy(pool.clone()).await;
+
+    let (mut client, _) = admit(proxy, startup("auth-fresh"), true)
+        .await
+        .expect("initial auth handshake admits the frontend");
+    assert_eq!(
+        pool.startup_replay_count(),
+        0,
+        "md5 authentication must not create a replay-safe startup entry"
+    );
+    wait_for_idle(&pool).await;
+    let occupied = pool
+        .acquire()
+        .await
+        .expect("hold the authenticated idle lease so the client takes a fresh one");
+    expect_pool_rejection(&mut client).await;
+    assert!(
+        accepted.load(Ordering::SeqCst) <= 2,
+        "the rejected fresh lease must not create extra backend connections"
+    );
+
+    close_client(client).await;
+    drop(occupied);
+    stop_proxy(proxy_server, shutdown).await;
+    backend_server.abort();
+}
+// </HANDWRITE>
 
 /// verify: trust_startup_replay::capped_trust_clients_complete_without_startup_rejection (AC1)
 #[tokio::test]

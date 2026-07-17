@@ -3006,6 +3006,7 @@ fn td_section_payload_template(section: &str) -> Result<String> {
             "    action: \"(fill: create|modify)\"\n",
             "    section: \"(fill: artifact-driving section id)\"\n",
             "    impl_mode: \"(fill: codegen|hand-written)\"\n",
+            "    anchor: \"(fill: existing Rust item when modifying a hand-written .rs target)\"\n",
             "```\n",
         )
         .to_string()
@@ -3075,9 +3076,10 @@ pub(crate) struct TdBodySectionPayload {
 fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
     match section {
         "changes" => Some(concat!(
-            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n```\n"}"#,
+            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n    anchor: <existing Rust item when modifying a hand-written .rs target>\n```\n"}"#,
             " — edit the initialized JSON payload and name every concrete target ",
-            "before applying it; `aw td gen` consumes this target plan directly."
+            "before applying it; existing hand-written Rust modify targets require an anchor, ",
+            "and `aw td gen` consumes this target plan directly."
         )),
         "unit-test" => Some(concat!(
             r#"{"id":"<spec-id>-verification","requirements":{"#,
@@ -3119,6 +3121,36 @@ fn attach_json_payload_schema_hint(
         );
     }
     args
+}
+
+/// Reject a markerless existing Rust HANDWRITE target while the TD section is
+/// still being authored, rather than allowing it to fail only at codegen.
+fn validate_handwritten_rust_modify_anchors(
+    spec_content: &str,
+    worktree_root: &std::path::Path,
+) -> Result<()> {
+    for entry in crate::generate::apply::extract_change_entries(spec_content) {
+        let target = worktree_root.join(&entry.path);
+        let is_existing_rust_target = target.is_file()
+            && target
+                .extension()
+                .is_some_and(|extension| extension == "rs");
+        let has_missing_anchor = entry
+            .handwrite_anchor
+            .as_deref()
+            .map_or(true, str::is_empty);
+        let is_markerless_handwrite_modify = entry.action == "modify"
+            && entry.impl_mode == crate::generate::apply::ImplMode::HandWritten
+            && has_missing_anchor;
+
+        if is_existing_rust_target && is_markerless_handwrite_modify {
+            anyhow::bail!(
+                "hand-written Rust modify target '{}' requires `anchor:` during TD authoring; name an existing Rust item, for example `anchor: reconcile`",
+                entry.path
+            );
+        }
+    }
+    Ok(())
 }
 
 /// One requirement row of a `unit-test` JSON payload (#1097).
@@ -4193,6 +4225,17 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
                 );
             }
         };
+
+        if section == "changes" {
+            if let Err(error) = validate_handwritten_rust_modify_anchors(&merged, &worktree_abs) {
+                return td_error(
+                    slug,
+                    artifact
+                        .schema_violation(section, error.to_string())
+                        .to_string(),
+                );
+            }
+        }
 
         let report = validate_new_td_authoring_content(
             &spec_abs,
@@ -6651,6 +6694,33 @@ label = "lib:pg"
         assert!(value
             .body
             .contains("impl_mode: \"(fill: codegen|hand-written)\""));
+        assert!(value.body.contains(
+            "anchor: \"(fill: existing Rust item when modifying a hand-written .rs target)\""
+        ));
+    }
+
+    #[test]
+    fn td_authoring_rejects_markerless_existing_handwritten_rust_modify() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("src/pool.rs");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "pub async fn reconcile() {}\n").unwrap();
+        let spec = "## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/pool.rs\n    action: modify\n    section: logic\n    impl_mode: hand-written\n```\n";
+
+        let error = validate_handwritten_rust_modify_anchors(spec, tmp.path()).unwrap_err();
+        assert!(error.to_string().contains("src/pool.rs"));
+        assert!(error.to_string().contains("anchor:"));
+    }
+
+    #[test]
+    fn td_authoring_accepts_anchor_for_existing_handwritten_rust_modify() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("src/pool.rs");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "pub async fn reconcile() {}\n").unwrap();
+        let spec = "## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/pool.rs\n    action: modify\n    section: logic\n    impl_mode: hand-written\n    anchor: reconcile\n```\n";
+
+        validate_handwritten_rust_modify_anchors(spec, tmp.path()).unwrap();
     }
 
     #[test]
