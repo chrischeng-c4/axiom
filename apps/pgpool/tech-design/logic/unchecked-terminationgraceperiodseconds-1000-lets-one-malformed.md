@@ -36,7 +36,6 @@ changes:
     impl_mode: hand-written
     anchor: render_manifests
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
