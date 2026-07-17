@@ -499,6 +499,26 @@ definitions:
       - title: Transaction
         $ref: "#/definitions/TransactionHandler"
 ```
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/pool/handler.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: PoolHandler
+    reason: Pool-mode dispatch remains hand-written until the backend-pool schema generator can emit its TcpHandler integration.
+  - path: apps/pgpool/src/pool/types.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: PoolConfig
+    reason: Backend-pool Rust types remain hand-written until the schema generator supports lease and wire-domain primitives.
+```
+
 ## Config
 <!-- type: config lang: yaml -->
 
