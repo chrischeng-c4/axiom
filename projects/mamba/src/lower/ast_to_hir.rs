@@ -427,6 +427,7 @@ fn genexpr_body_from_comprehensions(
         let stmt = if gen.is_async {
             ast::Stmt::AsyncFor {
                 targets: gen.targets.clone(),
+                star_index: None,
                 var_ty: None,
                 iter: gen.iter.clone(),
                 body,
@@ -435,6 +436,7 @@ fn genexpr_body_from_comprehensions(
         } else {
             ast::Stmt::For {
                 targets: gen.targets.clone(),
+                star_index: None,
                 var_ty: None,
                 iter: gen.iter.clone(),
                 body,
@@ -6710,6 +6712,7 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Stmt::For {
                 targets,
+                star_index,
                 var_ty,
                 iter,
                 body,
@@ -6717,6 +6720,7 @@ impl<'a> AstLowerer<'a> {
             }
             | ast::Stmt::AsyncFor {
                 targets,
+                star_index,
                 var_ty,
                 iter,
                 body,
@@ -6751,7 +6755,7 @@ impl<'a> AstLowerer<'a> {
                     let unpack_stmt = HirStmt::Assign {
                         target: HirLValue::Unpack {
                             targets: unpack_targets,
-                            star_index: None,
+                            star_index: *star_index,
                         },
                         value: HirExpr::Var(tmp_sym, any_ty),
                         span,
@@ -12287,6 +12291,7 @@ mod tests {
                         }),
                         sp(Stmt::For {
                             targets: vec!["i".to_string()],
+                            star_index: None,
                             var_ty: None,
                             iter: sp(Expr::Call {
                                 func: Box::new(sp(Expr::Ident("range".to_string()))),
@@ -12794,6 +12799,7 @@ mod tests {
     fn test_lower_for_loop() {
         let hir = helper_lower(vec![sp(Stmt::For {
             targets: vec!["i".to_string()],
+            star_index: None,
             var_ty: None,
             iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1))])),
             body: vec![sp(Stmt::Pass)],
@@ -12806,6 +12812,7 @@ mod tests {
     fn test_lower_for_with_else() {
         let hir = helper_lower(vec![sp(Stmt::For {
             targets: vec!["x".to_string()],
+            star_index: None,
             var_ty: None,
             iter: sp(Expr::ListLit(vec![])),
             body: vec![sp(Stmt::Pass)],
@@ -12821,6 +12828,7 @@ mod tests {
     fn test_lower_break_in_for() {
         let hir = helper_lower(vec![sp(Stmt::For {
             targets: vec!["n".to_string()],
+            star_index: None,
             var_ty: None,
             iter: sp(Expr::ListLit(vec![])),
             body: vec![sp(Stmt::Break)],
@@ -12837,6 +12845,7 @@ mod tests {
     fn test_lower_continue_in_for() {
         let hir = helper_lower(vec![sp(Stmt::For {
             targets: vec!["n".to_string()],
+            star_index: None,
             var_ty: None,
             iter: sp(Expr::ListLit(vec![])),
             body: vec![sp(Stmt::Continue)],

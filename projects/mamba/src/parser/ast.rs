@@ -115,6 +115,9 @@ pub enum Stmt {
     /// `for x in iterable: ... else: ...`
     For {
         targets: Vec<Name>,
+        /// PEP 3132: index into `targets` of a starred name (`for a, *b in
+        /// seq:`), if any (#1895). `None` for all pre-existing target lists.
+        star_index: Option<usize>,
         var_ty: Option<Spanned<TypeExpr>>,
         iter: Spanned<Expr>,
         body: Vec<Spanned<Stmt>>,
@@ -123,6 +126,7 @@ pub enum Stmt {
     /// `async for x in iterable: ... else: ...` (#227)
     AsyncFor {
         targets: Vec<Name>,
+        star_index: Option<usize>,
         var_ty: Option<Spanned<TypeExpr>>,
         iter: Spanned<Expr>,
         body: Vec<Spanned<Stmt>>,
