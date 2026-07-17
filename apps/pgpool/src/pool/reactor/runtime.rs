@@ -553,7 +553,7 @@ impl ReactorRuntime {
             .map(|(deadline, _, _)| deadline.saturating_duration_since(now))
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1879" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn expire_waiters(&mut self) {
         let now = Instant::now();
         loop {
@@ -568,11 +568,23 @@ impl ReactorRuntime {
             let token = Token(token_index);
             let epoch = self.next_deadline_epoch;
             self.next_deadline_epoch = self.next_deadline_epoch.wrapping_add(1).max(1);
-            if let Some(client) = self.clients.get_mut(&token) {
+            let expired = if let Some(client) = self.clients.get_mut(&token) {
                 client.wait_deadline = None;
                 client.deadline_epoch = epoch;
                 client.mode = ClientMode::Closing;
+                client.pending_first = None;
+                true
+            } else {
+                false
+            };
+            if !expired {
+                continue;
             }
+            // The socket remains long enough to flush the rejection, but the
+            // scheduler must forget it now. Otherwise a delayed clean-backend
+            // action can resurrect this Closing client and relay its stale
+            // first query after the 53300 error.
+            let _ = self.state.remove_client(ClientId(token.0 as u64));
             let mut error = BytesMut::new();
             crate::pool::PoolRejectionReason::BackendPoolSaturated
                 .synthesized_error_response()
@@ -580,7 +592,7 @@ impl ReactorRuntime {
             self.queue_client_owned(token, error.freeze());
         }
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     fn queue_client(&mut self, token: Token, bytes: impl AsRef<[u8]>) {
         self.queue_client_owned(token, Bytes::copy_from_slice(bytes.as_ref()));
@@ -1511,6 +1523,24 @@ impl ReactorRuntime {
                 else {
                     return;
                 };
+                if self
+                    .clients
+                    .get(&client_token)
+                    .is_some_and(|entry| matches!(entry.mode, ClientMode::Closing))
+                {
+                    // Expiry removes the scheduler entry before it can
+                    // produce an Assign action. If an action was already
+                    // prepared, discard it without dropping the queued
+                    // ErrorResponse; returning the backend to the scheduler
+                    // lets another live waiter use it.
+                    if let Some(entry) = self.clients.get_mut(&client_token) {
+                        entry.pending_first = None;
+                    }
+                    let _ = self.state.remove_backend(backend);
+                    let retry = self.state.add_clean_backend(backend);
+                    self.drive_action(retry);
+                    return;
+                }
                 let first = self
                     .clients
                     .get_mut(&client_token)
