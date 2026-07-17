@@ -1604,18 +1604,23 @@ impl ReactorRuntime {
         self.publish_stats();
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1880" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn close_backend(&mut self, token: Token) {
         let Some(mut backend) = self.backends.remove(&token) else {
             return;
         };
         let direct_client = match &backend.mode {
             BackendMode::Connecting(ConnectPurpose::Initial { client, .. })
-            | BackendMode::Connecting(ConnectPurpose::Bootstrap { client, .. })
             | BackendMode::InitialHandshake { client, .. }
-            | BackendMode::Bootstrap { client, .. }
             | BackendMode::Active { client } => Some(*client),
-            BackendMode::Resetting | BackendMode::Idle => None,
+            // A bootstrap is speculative capacity for a client that remains
+            // Waiting in ReactorState. Auth-required backends cannot accept
+            // it without a frontend password exchange, so discarding this
+            // backend must not disconnect the healthy waiter.
+            BackendMode::Connecting(ConnectPurpose::Bootstrap { .. })
+            | BackendMode::Bootstrap { .. }
+            | BackendMode::Resetting
+            | BackendMode::Idle => None,
         };
         if backend.registered {
             let _ = self.poll.registry().deregister(&mut backend.stream);
@@ -1630,7 +1635,7 @@ impl ReactorRuntime {
         self.retired_tokens.push(token.0);
         self.publish_stats();
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 }
 
 fn client_can_read(mode: &ClientMode) -> bool {
