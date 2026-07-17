@@ -48,7 +48,7 @@ pub async fn openapi_json() -> Json<serde_json::Value> {
     Json(crate::spec::openapi())
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Replace remote Swagger CDN assets with a self-contained offline documentation page.">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Replace remote Swagger CDN assets with a self-contained offline documentation page.">
 /// `GET /docs` — a self-contained offline index for `/openapi.json`.
 pub async fn docs() -> impl IntoResponse {
     Html(SWAGGER_HTML)
