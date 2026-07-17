@@ -152,21 +152,13 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: Prove the rendered collector least-privilege and resource contract.
-  - path: projects/sift/README.md
-    action: modify
-    anchor: GKE Event Collection
-    section: logic
-    impl_mode: hand-written
-    description: Link implemented GKE collection work roots to their verification evidence.
-  - path: projects/sift/observability/structured-stdout.md
-    action: modify
-    anchor: Kubernetes architecture
-    section: logic
-    impl_mode: hand-written
-    description: Document delivered CRI commands, ownership, coexistence, checkpoint, and loss semantics.
 ```
 
-The target list intentionally excludes Lumen and the shared stdout schema: applications continue to emit only `axiom.service.log.v1` JSONL.
+The generated target list intentionally excludes Lumen, the shared stdout schema,
+and explanatory Markdown: applications continue to emit only
+`axiom.service.log.v1` JSONL, while the README capability evidence and
+`observability/structured-stdout.md` runbook are updated through their existing
+document ownership rather than Rust-item code generation.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
