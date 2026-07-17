@@ -67,3 +67,54 @@ per-pod quota exceeds this allocatable capacity. With an unchanged target,
 pgpool-held connections are never double-subtracted as foreign usage, so a busy
 pool cannot manufacture a `Blocked` status or freeze reconciliation. Discovery
 errors remain fail-closed for new scale-up.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/wire/frontend.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/backend_pool.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/proxy/session.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/pool/reactor/runtime.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/bin/pgpool.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/platform/discovery.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/pgpool/src/operator/reconcile.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+  - path: apps/pgpool/tests/connection_discovery.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+  - path: apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+```
