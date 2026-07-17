@@ -400,7 +400,16 @@ pub fn command() -> Command {
                     Arg::new("splitting")
                         .long("splitting")
                         .action(ArgAction::SetTrue)
-                        .help("Enable code splitting at dynamic import() boundaries"),
+                        .help(
+                            "Enable code splitting at dynamic import() boundaries (default for \
+                             web-target builds when the graph has dynamic imports)",
+                        ),
+                )
+                .arg(
+                    Arg::new("no-splitting")
+                        .long("no-splitting")
+                        .action(ArgAction::SetTrue)
+                        .help("Disable code splitting; always emit a single-file bundle"),
                 )
                 .arg(
                     Arg::new("define")
@@ -2352,7 +2361,6 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 "hidden" => crate::bundler::types::SourceMapOption::Hidden,
                 _ => crate::bundler::types::SourceMapOption::External,
             };
-            let splitting = m.get_flag("splitting");
 
             // Parse --define KEY=VALUE pairs
             // GH #3712 — the prior `if let Some(...) = def.split_once('=') {
@@ -2407,6 +2415,9 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
             };
             let resolve_options = browser_production_resolve_options(&root_dir, &build_config);
+            // @issue #1932 — flag > config > target-default precedence; see
+            // `build_splitting_enabled`'s doc comment.
+            let splitting = build_splitting_enabled(m, build_target, build_config.build.splitting);
 
             let bundle_opts = crate::bundler::BundleOptions {
                 entry: entry.clone(),
@@ -2480,7 +2491,22 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             //     the aggregate `chunk_post_process` lap below, just not
             //     per-chunk minify sub-stage laps).
             let stage_dump_active = std::env::var_os("JET_MINIFY_STAGE_DUMP").is_some();
-            let hashed_chunks: Vec<HashedChunk> = if splitting {
+            // `splitting` (WI #1932) may be `true` by default for a web
+            // build whose graph has no dynamic imports at all —
+            // `Bundler::generate_split_bundle`'s emergent fallback already
+            // handled that internally (`result.chunks` stays empty,
+            // `result.code` is the exact single-file bundle); this flag
+            // mirrors that outcome so the chunk-minify/manifest-injection
+            // steps below only run when a real split happened, instead of
+            // assuming `splitting == true` implies a non-empty
+            // `result.chunks` (true pre-#1932, when `--splitting` was
+            // always explicit and every fixture had a dynamic import —
+            // `inject_chunk_manifest` below panics-via-`?` on a graph with
+            // no `__jet__.require(...)` anchor, e.g. scope-hoisted flat
+            // output, if it runs unconditionally).
+            // @issue #1932
+            let did_split = splitting && !result.chunks.is_empty();
+            let hashed_chunks: Vec<HashedChunk> = if did_split {
                 if stage_dump_active {
                     let mut out = Vec::with_capacity(result.chunks.len());
                     for chunk in &result.chunks {
@@ -2522,7 +2548,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // (same treatment as the runtime IIFE already baked into
             // `result.code`). Off path: `raw_entry` equals `result.code`
             // unchanged.
-            let raw_entry = if splitting {
+            let raw_entry = if did_split {
                 let manifest_js = build_chunk_manifest_js(&hashed_chunks);
                 inject_chunk_manifest(&result.code, &manifest_js)
                     .context("Failed to inject code-splitting chunk manifest")?
@@ -5211,6 +5237,41 @@ fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
     !m.get_flag("no-minify")
 }
 
+/// Resolve whether `jet build` attempts code splitting, per WI #1932's
+/// `--no-splitting` > `--splitting` > `[build].splitting` > target-default
+/// precedence (mirrors `build_minify_enabled_from_matches`'s "off flag
+/// always wins" shape — no `conflicts_with` between `--splitting` and
+/// `--no-splitting`):
+///
+/// 1. `--no-splitting` always forces it off.
+/// 2. `--splitting` forces it on.
+/// 3. `[build].splitting` in jet.toml, when the flags above are absent.
+/// 4. Default: on for `BuildTarget::Web`, off for `Desktop`/`Tui` (those
+///    targets keep splitting as an explicit opt-in only).
+///
+/// A `true` result only means the bundler *attempts* a split —
+/// `Bundler::generate_split_bundle` emergently falls back to the
+/// single-file path when the module graph has no dynamic-import
+/// boundaries, so builds with nothing to split stay byte-for-byte
+/// unchanged under the new default.
+/// @issue #1932
+fn build_splitting_enabled(
+    m: &ArgMatches,
+    build_target: crate::build_target::BuildTarget,
+    config_splitting: Option<bool>,
+) -> bool {
+    if m.get_flag("no-splitting") {
+        return false;
+    }
+    if m.get_flag("splitting") {
+        return true;
+    }
+    if let Some(configured) = config_splitting {
+        return configured;
+    }
+    build_target == crate::build_target::BuildTarget::Web
+}
+
 /// Run TypeScript checks for a project or every project in an Nx workspace.
 ///
 /// A standalone project can invoke `tsc --noEmit` from its root. An Nx root
@@ -6499,6 +6560,77 @@ mod build_target_validation_table_tests {
         assert!(
             !build_minify_enabled_from_matches(&explicit_then_disabled),
             "--no-minify must win when both flags are present"
+        );
+    }
+
+    // ── WI #1932: default-on splitting resolution (flag > config > target) ──
+
+    #[test]
+    fn build_splitting_defaults_on_for_web_and_off_for_desktop_and_tui() {
+        let m = run_build(&[]).unwrap();
+        assert!(
+            build_splitting_enabled(&m, BuildTarget::Web, None),
+            "web builds should attempt splitting by default"
+        );
+        assert!(
+            !build_splitting_enabled(&m, BuildTarget::Desktop, None),
+            "desktop builds must keep splitting as an explicit opt-in"
+        );
+        assert!(
+            !build_splitting_enabled(&m, BuildTarget::Tui, None),
+            "tui builds must keep splitting as an explicit opt-in"
+        );
+    }
+
+    #[test]
+    fn build_splitting_no_splitting_is_the_escape_hatch_and_always_wins() {
+        let no_splitting = run_build(&["--no-splitting"]).unwrap();
+        assert!(
+            !build_splitting_enabled(&no_splitting, BuildTarget::Web, None),
+            "--no-splitting must override the web default"
+        );
+
+        let both_flags = run_build(&["--splitting", "--no-splitting"]).unwrap();
+        assert!(
+            !build_splitting_enabled(&both_flags, BuildTarget::Web, Some(true)),
+            "--no-splitting must win over both --splitting and a true config value"
+        );
+    }
+
+    #[test]
+    fn build_splitting_explicit_flag_enables_non_web_targets() {
+        let m = run_build(&["--splitting"]).unwrap();
+        assert!(
+            build_splitting_enabled(&m, BuildTarget::Desktop, None),
+            "--splitting must still opt desktop builds in"
+        );
+    }
+
+    #[test]
+    fn build_splitting_config_value_applies_when_no_flag_is_passed() {
+        let m = run_build(&[]).unwrap();
+        assert!(
+            !build_splitting_enabled(&m, BuildTarget::Web, Some(false)),
+            "[build].splitting = false must override the web default"
+        );
+        assert!(
+            build_splitting_enabled(&m, BuildTarget::Desktop, Some(true)),
+            "[build].splitting = true must override the desktop default"
+        );
+    }
+
+    #[test]
+    fn build_splitting_flags_take_precedence_over_config() {
+        let splitting_flag = run_build(&["--splitting"]).unwrap();
+        assert!(
+            build_splitting_enabled(&splitting_flag, BuildTarget::Web, Some(false)),
+            "--splitting must override a false config value"
+        );
+
+        let no_splitting_flag = run_build(&["--no-splitting"]).unwrap();
+        assert!(
+            !build_splitting_enabled(&no_splitting_flag, BuildTarget::Web, Some(true)),
+            "--no-splitting must override a true config value"
         );
     }
 

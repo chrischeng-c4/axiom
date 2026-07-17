@@ -182,6 +182,19 @@ pub struct JetBuildConfig {
     ///
     /// Example: `out_dir = "../be/static"`.
     pub out_dir: Option<String>,
+
+    /// Enable code splitting at dynamic `import()` boundaries.
+    ///
+    /// `None` (unset) defers to the CLI default: web-target builds split
+    /// automatically when the module graph has dynamic imports (a
+    /// no-dynamic-import graph stays single-file regardless of this
+    /// setting — see `Bundler::generate_split_bundle`'s emergent
+    /// fallback). Explicit `true`/`false` here is overridden by the
+    /// `--splitting`/`--no-splitting` CLI flags when passed.
+    ///
+    /// Example: `splitting = false`.
+    /// @issue #1932
+    pub splitting: Option<bool>,
 }
 
 /// `[lib]` section of `jet.toml` — `jet build --lib` settings.
@@ -597,6 +610,22 @@ out_dir = "../be/static"
 "#;
         let config: JetConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.build.out_dir.as_deref(), Some("../be/static"));
+        assert_eq!(config.build.splitting, None);
+    }
+
+    /// WI #1932 — `[build].splitting` config key parses both explicit
+    /// states; unset stays `None` so the CLI default-resolution can tell
+    /// "not configured" apart from an explicit `false`.
+    #[test]
+    fn test_parse_build_splitting_config() {
+        let enabled: JetConfig = toml::from_str("[build]\nsplitting = true\n").unwrap();
+        assert_eq!(enabled.build.splitting, Some(true));
+
+        let disabled: JetConfig = toml::from_str("[build]\nsplitting = false\n").unwrap();
+        assert_eq!(disabled.build.splitting, Some(false));
+
+        let unset: JetConfig = toml::from_str("[build]\nout_dir = \"dist\"\n").unwrap();
+        assert_eq!(unset.build.splitting, None);
     }
 
     #[test]
@@ -632,6 +661,7 @@ cache = false
         assert!(config.dev.proxy.is_empty());
         assert!(config.alias.is_empty());
         assert!(config.build.out_dir.is_none());
+        assert!(config.build.splitting.is_none());
     }
 
     #[test]

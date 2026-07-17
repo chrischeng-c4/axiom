@@ -1547,16 +1547,28 @@ impl Bundler {
         // the runtime module registry (dynamic imports are chunk
         // boundaries). Returns early so the single-file paths below stay
         // byte-for-byte unchanged when splitting is off.
+        //
+        // `generate_split_bundle` returns `None` when the graph has no
+        // dynamic-import boundaries to split on — the emergent fallback
+        // that makes default-on splitting (WI #1932) safe: callers no
+        // longer need to pre-scan for `import()` before setting
+        // `self.splitting`, since a graph with nothing to split falls
+        // straight through to the exact single-file paths below, so output
+        // stays byte-for-byte identical to `--no-splitting`.
         // @issue #1930
+        // @issue #1932
         if self.splitting {
-            let (entry_code, chunks, preload_hints) = self.generate_split_bundle(&modules)?;
-            return Ok(BundleOutput {
-                code: entry_code,
-                source_map: None,
-                assets: Vec::new(),
-                chunks,
-                preload_hints,
-            });
+            if let Some((entry_code, chunks, preload_hints)) =
+                self.generate_split_bundle(&modules)?
+            {
+                return Ok(BundleOutput {
+                    code: entry_code,
+                    source_map: None,
+                    assets: Vec::new(),
+                    chunks,
+                    preload_hints,
+                });
+            }
         }
 
         // Bundle format selection:
@@ -1654,12 +1666,23 @@ impl Bundler {
     /// values are pre-hash chunk names (e.g. `"assets/shared.js"`); the
     /// caller must remap them to the final content-hashed filename before
     /// emitting HTML.
+    ///
+    /// Returns `Ok(None)` when the partitioned graph has no dynamic-import
+    /// boundaries — `split_chunks_with_config` always emits exactly one
+    /// Entry chunk, and with no split points that Entry chunk is the only
+    /// chunk (every module inlined, same as the single-file path). Signals
+    /// the caller to fall back to the pre-existing single-file assembly
+    /// instead of building a redundant one-chunk split bundle whose runtime
+    /// (`generate_split_runtime`) differs from the legacy
+    /// `generate_runtime`, which would otherwise change output for apps
+    /// with no dynamic imports once splitting defaults on for web builds.
     /// @issue #1930
     /// @issue #1931
+    /// @issue #1932
     fn generate_split_bundle(
         &self,
         modules: &[CompiledModule],
-    ) -> Result<(String, Vec<ChunkArtifact>, Vec<PreloadHint>)> {
+    ) -> Result<Option<(String, Vec<ChunkArtifact>, Vec<PreloadHint>)>> {
         let entry = modules
             .iter()
             .find(|m| m.id == 0)
@@ -1677,6 +1700,19 @@ impl Bundler {
             &all_modules,
             &splitting::ManualChunkConfig::default(),
         );
+
+        // Nothing to split (no dynamic-import boundaries in this graph):
+        // fall through to the single-file path in `generate_bundle`. See
+        // this function's doc comment for why this must be checked before
+        // any entry/chunk assembly work below.
+        // @issue #1932
+        if split_result
+            .chunks
+            .iter()
+            .all(|c| c.chunk_type == splitting::ChunkType::Entry)
+        {
+            return Ok(None);
+        }
 
         let by_path: HashMap<&PathBuf, &CompiledModule> =
             modules.iter().map(|m| (&m.path, m)).collect();
@@ -1730,7 +1766,7 @@ impl Bundler {
 
         let preload_hints = split_result.preload_hints;
 
-        Ok((entry_code, chunks, preload_hints))
+        Ok(Some((entry_code, chunks, preload_hints)))
     }
 }
 
@@ -3013,7 +3049,9 @@ mod gh3821_bundler_edge_kind_extension_warn_tests {
 /// wiring). Transform-level dynamic-import lowering on/off is covered in
 /// `transform::modules`'s test module; the full multi-file on-disk build
 /// (including the OFF-path single-file byte-stability proxy) is covered by
-/// the `tests/build/code_splitting.rs` integration test.
+/// the `tests/build/code_splitting.rs` integration test. WI #1932's
+/// emergent no-dynamic-import fallback (`generate_split_bundle` returning
+/// `None`) is also covered here.
 #[cfg(test)]
 mod code_splitting_tests {
     use super::*;
@@ -3117,6 +3155,7 @@ mod code_splitting_tests {
         bundler
             .generate_split_bundle(&modules)
             .expect("generate_split_bundle should succeed")
+            .expect("fixture has a dynamic import boundary; must not fall back to None")
     }
 
     #[test]
@@ -3187,6 +3226,51 @@ mod code_splitting_tests {
         assert!(
             entry_code.contains("exports.shared = 1;"),
             "entry must inline the only-statically-referenced module: {entry_code}"
+        );
+    }
+
+    // ── WI #1932: emergent no-dynamic-import fallback ────────────────────
+
+    #[test]
+    fn generate_split_bundle_returns_none_when_graph_has_no_dynamic_imports() {
+        // Same shape as `split_bundle_fixture()` but entry only statically
+        // imports shared.js — no dynamic import boundary anywhere in the
+        // graph. `self.splitting = true` (the caller doesn't pre-scan for
+        // import() before enabling splitting under default-on), but there
+        // is nothing to split, so this must return `None` rather than a
+        // one-chunk split bundle.
+        let bundler = Bundler::new(BundleOptions {
+            splitting: true,
+            ..Default::default()
+        })
+        .expect("bundler new");
+
+        {
+            let mut g = bundler.graph.write();
+            let entry = g.add_module(
+                PathBuf::from("/fixture/entry.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            let shared = g.add_module(
+                PathBuf::from("/fixture/shared.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            g.add_dependency(entry, shared, EdgeKind::Import);
+        }
+
+        let modules = vec![
+            compiled(0, "/fixture/entry.js", "__jet__.require(1);"),
+            compiled(1, "/fixture/shared.js", "exports.shared = 1;"),
+        ];
+
+        let result = bundler
+            .generate_split_bundle(&modules)
+            .expect("generate_split_bundle should succeed");
+        assert!(
+            result.is_none(),
+            "graph with no dynamic imports must fall back to None, got: {result:#?}"
         );
     }
 }

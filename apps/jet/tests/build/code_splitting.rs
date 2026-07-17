@@ -247,17 +247,24 @@ fn splitting_flag_emits_chunk_files_with_manifest_and_registered_async_chunks() 
 #[test]
 fn without_splitting_flag_build_stays_single_file_with_legacy_dynamic_import_lowering() -> Result<()>
 {
-    // Default-flags build (minify on, matching a real `jet build` run):
-    // checks the emitted-artifact *shape* — single file, no chunk
-    // directory, none of the new splitting-only runtime tokens leak in.
-    // String literals (the LAZY_*_MARKER exports) survive minification
-    // even though local identifiers get mangled, so those stay checkable
-    // here too.
+    // `--no-splitting`: since WI #1932, a web build with dynamic imports
+    // splits *by default* — this test exercises the escape hatch
+    // explicitly instead of relying on flag-less defaults (see the
+    // `wi_1932_default_on_splitting` tests below for default-on coverage).
+    // Default-flags build (minify on, matching a real `jet build
+    // --no-splitting` run): checks the emitted-artifact *shape* — single
+    // file, no chunk directory, none of the new splitting-only runtime
+    // tokens leak in. String literals (the LAZY_*_MARKER exports) survive
+    // minification even though local identifiers get mangled, so those
+    // stay checkable here too.
     let temp = tempfile::tempdir().context("tempdir")?;
     let fixture = temp.path();
     write_splitting_fixture(fixture);
 
-    require_success(run_jet(fixture, ["build"])?, "build (no --splitting)")?;
+    require_success(
+        run_jet(fixture, ["build", "--no-splitting"])?,
+        "build --no-splitting",
+    )?;
 
     let dist = fixture.join("dist");
     assert!(
@@ -316,8 +323,8 @@ fn without_splitting_flag_build_stays_single_file_with_legacy_dynamic_import_low
     let fixture_raw = temp_raw.path();
     write_splitting_fixture(fixture_raw);
     require_success(
-        run_jet(fixture_raw, ["build", "--no-minify"])?,
-        "build --no-minify (no --splitting)",
+        run_jet(fixture_raw, ["build", "--no-minify", "--no-splitting"])?,
+        "build --no-minify --no-splitting",
     )?;
     let raw_dist = fixture_raw.join("dist");
     let raw_js_files: Vec<PathBuf> = list_files_recursive(&raw_dist)
@@ -1041,5 +1048,373 @@ async fn splitting_lazy_chunk_loads_on_demand_in_real_browser() -> Result<()> {
             ))
         }
     }
+}
+
+// ── WI #1932: splitting default-on for web builds ──────────────────────────
+//
+// Splitting is no longer an explicit-only opt-in: a web-target `jet build`
+// with dynamic imports in its module graph now chunk-splits with NO flags
+// at all (`--splitting` still works as an explicit no-op spelling of the
+// default; `--no-splitting` is the escape hatch). The flag > config >
+// target-default precedence itself is unit-tested directly against
+// `build_splitting_enabled` in `src/cli.rs::build_target_validation_table_tests`;
+// the tests below are the integration-level proof that the resolved value
+// actually reaches a real `jet build` run end to end, plus the emergent
+// "nothing to split" fallback and a large-corpus wall-time/size regression
+// budget (the #1894 quadratic-regression class).
+
+#[test]
+fn default_web_build_splits_automatically_when_graph_has_dynamic_imports() -> Result<()> {
+    // Same fixture/shape assertions as
+    // `splitting_flag_emits_chunk_files_with_manifest_and_registered_async_chunks`,
+    // but with NO `--splitting` flag at all — proving the chunked output is
+    // now the default for a web build whose graph has dynamic imports, not
+    // something that requires opting in.
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_splitting_fixture(fixture);
+
+    require_success(
+        run_jet(fixture, ["build", "--no-minify"])?,
+        "build (default flags, no --splitting)",
+    )?;
+
+    let dist = fixture.join("dist");
+    assert!(
+        dist.join("assets").is_dir(),
+        "default web build must chunk-split when the graph has dynamic imports"
+    );
+
+    let entry_path = list_files_recursive(&dist)
+        .into_iter()
+        .find(|p| {
+            p.parent() == Some(dist.as_path())
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("main.") && n.ends_with(".js"))
+        })
+        .expect("no top-level main.<hash>.js entry file");
+    let entry_code = fs::read_to_string(&entry_path).expect("read entry file");
+
+    assert!(
+        !entry_code.contains("LAZY_ONE_MARKER") && !entry_code.contains("LAZY_TWO_MARKER"),
+        "default-on entry chunk must exclude lazy-loaded source"
+    );
+    assert!(
+        entry_code.contains("__jet__.dynamicImport("),
+        "default-on entry must lower import() to the chunk-aware runtime loader"
+    );
+
+    let manifest = extract_json_assignment(&entry_code, "__jet__.chunkManifest")
+        .expect("entry must carry a parseable __jet__.chunkManifest assignment");
+    let chunks_obj = manifest
+        .get("chunks")
+        .and_then(Value::as_object)
+        .expect("manifest.chunks must be an object");
+    for chunk_name in ["chunk-lazy1", "chunk-lazy2"] {
+        assert!(
+            chunks_obj.contains_key(chunk_name),
+            "manifest.chunks missing {chunk_name:?} under default-on splitting: {chunks_obj:?}"
+        );
+        let chunk_file = chunks_obj[chunk_name]
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("manifest.chunks[{chunk_name:?}].file missing/non-string"));
+        assert!(
+            dist.join(chunk_file).exists(),
+            "manifest names {chunk_file:?} for {chunk_name:?} but no such file was written"
+        );
+    }
+
+    Ok(())
+}
+
+/// Writes a fixture with no dynamic imports at all (only a static import) —
+/// the "nothing to split" case `Bundler::generate_split_bundle`'s emergent
+/// fallback exists for.
+fn write_no_dynamic_import_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { shared } from './shared.js';
+
+console.log('ENTRY_MARKER', shared());
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/shared.js"),
+        "export function shared() { return 'SHARED_MARKER'; }\n",
+    )
+    .expect("write shared");
+}
+
+#[test]
+fn default_web_build_stays_single_file_and_byte_identical_to_no_splitting_when_graph_has_no_dynamic_imports(
+) -> Result<()> {
+    // The emergent fallback: a web build defaults `splitting` on, but
+    // `Bundler::generate_split_bundle` returns `None` when the graph has no
+    // dynamic-import boundaries, so `jet build` (no flags) must fall
+    // through to the exact same single-file path as `--no-splitting` —
+    // byte-for-byte, not just "also happens to be single file".
+    let temp_default = tempfile::tempdir().context("tempdir (default)")?;
+    let fixture_default = temp_default.path();
+    write_no_dynamic_import_fixture(fixture_default);
+    require_success(
+        run_jet(fixture_default, ["build"])?,
+        "build (default flags)",
+    )?;
+
+    let temp_no_splitting = tempfile::tempdir().context("tempdir (--no-splitting)")?;
+    let fixture_no_splitting = temp_no_splitting.path();
+    write_no_dynamic_import_fixture(fixture_no_splitting);
+    require_success(
+        run_jet(fixture_no_splitting, ["build", "--no-splitting"])?,
+        "build --no-splitting",
+    )?;
+
+    let dist_default = fixture_default.join("dist");
+    let dist_no_splitting = fixture_no_splitting.join("dist");
+    assert!(
+        !dist_default.join("assets").exists(),
+        "no-dynamic-import graph must not chunk-split even under the new default"
+    );
+
+    let default_js: Vec<PathBuf> = list_files_recursive(&dist_default)
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("js"))
+        .collect();
+    let no_splitting_js: Vec<PathBuf> = list_files_recursive(&dist_no_splitting)
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("js"))
+        .collect();
+    assert_eq!(
+        default_js.len(),
+        1,
+        "default build must emit exactly one JS file, got {default_js:?}"
+    );
+    assert_eq!(
+        no_splitting_js.len(),
+        1,
+        "--no-splitting build must emit exactly one JS file, got {no_splitting_js:?}"
+    );
+
+    let default_code = fs::read(&default_js[0]).expect("read default entry file");
+    let no_splitting_code = fs::read(&no_splitting_js[0]).expect("read --no-splitting entry file");
+    assert_eq!(
+        default_code, no_splitting_code,
+        "default (splitting attempted, nothing to split) and --no-splitting builds of the same \
+         no-dynamic-import graph must produce byte-identical output"
+    );
+    // The content-hashed filename is derived from these same bytes, so
+    // byte-identical output must also carry the identical filename.
+    assert_eq!(
+        default_js[0].file_name(),
+        no_splitting_js[0].file_name(),
+        "byte-identical output must also produce the identical content-hashed filename"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn build_splitting_config_false_suppresses_the_web_default() -> Result<()> {
+    // `[build].splitting = false` in jet.toml must suppress the new
+    // web-target default, even though the graph has dynamic imports that
+    // would otherwise trigger automatic splitting.
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_splitting_fixture(fixture);
+    fs::write(fixture.join("jet.toml"), "[build]\nsplitting = false\n").expect("write jet.toml");
+
+    require_success(
+        run_jet(fixture, ["build"])?,
+        "build (jet.toml [build].splitting = false)",
+    )?;
+
+    let dist = fixture.join("dist");
+    assert!(
+        !dist.join("assets").exists(),
+        "[build].splitting = false must suppress the web default even with dynamic imports present"
+    );
+    let js_files: Vec<PathBuf> = list_files_recursive(&dist)
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("js"))
+        .collect();
+    assert_eq!(
+        js_files.len(),
+        1,
+        "config-suppressed build must emit exactly one JS bundle, got {js_files:?}"
+    );
+
+    Ok(())
+}
+
+/// Generates a synthetic large-corpus fixture: `count` sibling modules, each
+/// dynamically imported exactly once from the entry, each carrying its own
+/// unique marker string. Script-generated in-test rather than a checked-in
+/// fixture tree, so the corpus size is a single tunable constant instead of
+/// hundreds of files under `tests/fixtures/`.
+fn write_large_dynamic_import_corpus(dir: &Path, count: usize) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    let mut entry = String::new();
+    for i in 0..count {
+        entry.push_str(&format!(
+            "import('./mod{i}.js').then((mod) => mod.default());\n"
+        ));
+        fs::write(
+            dir.join(format!("src/mod{i}.js")),
+            format!("export default function mod{i}() {{ return 'MOD_{i}_MARKER'; }}\n"),
+        )
+        .unwrap_or_else(|e| panic!("write src/mod{i}.js: {e}"));
+    }
+    fs::write(dir.join("src/index.js"), entry).expect("write entry");
+}
+
+#[test]
+fn large_corpus_default_split_stays_within_chunk_count_size_and_wall_time_budgets() -> Result<()> {
+    // Regression coverage for a few hundred dynamic-import boundaries: build
+    // wall-time must not blow up (the #1894 quadratic-regression class) and
+    // the entry chunk must not leak async payloads. 200 modules measured
+    // ~90ms wall-clock locally on a warm run (occasionally ~1.6s on a cold
+    // page-cache/first-exec run), both comfortably under the 20s
+    // anti-stall threshold that would call for dropping to 100 modules
+    // instead. The budget below is a generous ~10s ceiling — >100x the warm
+    // measurement, >6x the observed cold outlier — so this only trips on a
+    // genuine regression, not machine noise.
+    const MODULE_COUNT: usize = 200;
+    const WALL_TIME_BUDGET: Duration = Duration::from_secs(10);
+    // The manifest/runtime-loader overhead for 200 chunk entries is itself
+    // several KB (each `chunks[name] = {file, imports}` entry is ~50-60
+    // bytes of JSON); this ceiling is generous enough to never flake on
+    // that overhead while still catching a real regression (e.g. async
+    // payloads leaking back into the entry).
+    const ENTRY_SIZE_CEILING_BYTES: u64 = 200 * 1024;
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_large_dynamic_import_corpus(fixture, MODULE_COUNT);
+
+    let start = std::time::Instant::now();
+    require_success(
+        run_jet(fixture, ["build"])?,
+        "build (default flags, large corpus)",
+    )?;
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed <= WALL_TIME_BUDGET,
+        "large-corpus default build took {elapsed:?}, budget is {WALL_TIME_BUDGET:?} \
+         (possible quadratic regression, cf. #1894)"
+    );
+
+    let dist = fixture.join("dist");
+    let entry_path = list_files_recursive(&dist)
+        .into_iter()
+        .find(|p| {
+            p.parent() == Some(dist.as_path())
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("main.") && n.ends_with(".js"))
+        })
+        .expect("no top-level main.<hash>.js entry file");
+    let entry_meta = fs::metadata(&entry_path).expect("stat entry file");
+    assert!(
+        entry_meta.len() <= ENTRY_SIZE_CEILING_BYTES,
+        "entry file is {} bytes, ceiling is {ENTRY_SIZE_CEILING_BYTES} bytes (entry must exclude \
+         async chunk payloads)",
+        entry_meta.len()
+    );
+
+    let entry_code = fs::read_to_string(&entry_path).expect("read entry file");
+    for i in 0..MODULE_COUNT {
+        assert!(
+            !entry_code.contains(&format!("MOD_{i}_MARKER")),
+            "entry chunk must exclude the async payload for mod{i}.js (found MOD_{i}_MARKER)"
+        );
+    }
+
+    // Chunk count == boundary count: every module here is dynamically
+    // imported exactly once directly from the entry (no shared-chunk
+    // promotion applies — that only kicks in for modules reachable from
+    // more than one split point), so partitioning must produce exactly
+    // `MODULE_COUNT` chunk files under `dist/assets/` (counted directly by
+    // extension, sidestepping any JSON-manifest minification concerns).
+    let asset_js_files: Vec<PathBuf> = list_files_recursive(&dist.join("assets"))
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("js"))
+        .collect();
+    assert_eq!(
+        asset_js_files.len(),
+        MODULE_COUNT,
+        "expected exactly {MODULE_COUNT} chunk files under dist/assets/, got {}",
+        asset_js_files.len()
+    );
+
+    // Manifest integrity, checked via a second `--no-minify` build of the
+    // identical corpus in its own tempdir (fresh dir so stray files from
+    // the timed build above can't inflate this build's own dist/assets/
+    // listing) — every module id must map to a chunk, and every chunk must
+    // name a file that actually exists on disk.
+    let temp_raw = tempfile::tempdir().context("tempdir (no-minify)")?;
+    let fixture_raw = temp_raw.path();
+    write_large_dynamic_import_corpus(fixture_raw, MODULE_COUNT);
+    require_success(
+        run_jet(fixture_raw, ["build", "--no-minify"])?,
+        "build --no-minify (large corpus, manifest integrity)",
+    )?;
+    let raw_dist = fixture_raw.join("dist");
+    let raw_entry_path = list_files_recursive(&raw_dist)
+        .into_iter()
+        .find(|p| {
+            p.parent() == Some(raw_dist.as_path())
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("main.") && n.ends_with(".js"))
+        })
+        .expect("no top-level main.<hash>.js entry file (no-minify build)");
+    let raw_entry_code = fs::read_to_string(&raw_entry_path).expect("read entry file (no-minify)");
+    let manifest = extract_json_assignment(&raw_entry_code, "__jet__.chunkManifest")
+        .expect("entry must carry a parseable __jet__.chunkManifest assignment");
+    let chunks_obj = manifest
+        .get("chunks")
+        .and_then(Value::as_object)
+        .expect("manifest.chunks must be an object");
+    let module_chunks_obj = manifest
+        .get("moduleChunks")
+        .and_then(Value::as_object)
+        .expect("manifest.moduleChunks must be an object");
+    assert_eq!(
+        chunks_obj.len(),
+        MODULE_COUNT,
+        "expected exactly {MODULE_COUNT} manifest.chunks entries, got {}",
+        chunks_obj.len()
+    );
+    assert_eq!(
+        module_chunks_obj.len(),
+        MODULE_COUNT,
+        "expected exactly {MODULE_COUNT} manifest.moduleChunks entries, got {}",
+        module_chunks_obj.len()
+    );
+    for (chunk_name, chunk_meta) in chunks_obj {
+        let file = chunk_meta
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("manifest.chunks[{chunk_name:?}].file missing/non-string"));
+        assert!(
+            raw_dist.join(file).exists(),
+            "manifest names {file:?} for {chunk_name:?} but no such file exists on disk"
+        );
+    }
+    for (module_id, chunk_name) in module_chunks_obj {
+        let chunk_name_str = chunk_name
+            .as_str()
+            .unwrap_or_else(|| panic!("moduleChunks[{module_id:?}] is not a string"));
+        assert!(
+            chunks_obj.contains_key(chunk_name_str),
+            "moduleChunks[{module_id:?}] = {chunk_name_str:?} has no matching entry in manifest.chunks"
+        );
+    }
+
+    Ok(())
 }
 // HANDWRITE-END
