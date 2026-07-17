@@ -5836,92 +5836,12 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
             return MbValue::none();
         }
         // SAFETY: the function was compiled with the matching arity.
-        // JIT-compiled functions use SystemV/C calling convention and may return
-        // unboxed raw i64 values (CheckedAdd unboxes inline ints for perf),
-        // so we re-box the result via mb_box_int.
-        // REQ: extern "C" ABI required — JIT emits SystemV, not Rust ABI.
-        let raw_result: MbValue = super::closure::with_closure_cells(func, || unsafe {
-            match items.len() {
-                0 => {
-                    let f: extern "C" fn() -> MbValue = std::mem::transmute(raw_addr);
-                    f()
-                }
-                1 => {
-                    let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(raw_addr);
-                    f(items[0])
-                }
-                2 => {
-                    let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1])
-                }
-                3 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2])
-                }
-                4 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2], items[3])
-                }
-                5 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2], items[3], items[4])
-                }
-                6 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(items[0], items[1], items[2], items[3], items[4], items[5])
-                }
-                7 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(
-                        items[0], items[1], items[2], items[3], items[4], items[5], items[6],
-                    )
-                }
-                8 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(
-                        items[0], items[1], items[2], items[3], items[4], items[5], items[6],
-                        items[7],
-                    )
-                }
-                _ => MbValue::none(),
-            }
+        // JIT-compiled functions use SystemV/C calling convention; dispatch_jit_frame
+        // owns the arity-keyed transmute (shared with invoke_args_kwargs) and
+        // re-boxes raw-int returns (CheckedAdd unboxes inline ints for perf).
+        let result = super::closure::with_closure_cells(func, || {
+            dispatch_jit_frame(raw_addr, &items, is_boxed_ret)
         });
-        // Re-box primitive returns through mb_box_int. It preserves real
-        // NaN-boxed values but also correctly boxes raw negative i64 values,
-        // whose high bits otherwise look like a NaN-box prefix.
-        let result = if is_boxed_ret {
-            raw_result
-        } else {
-            mb_box_int(raw_result.to_bits() as i64)
-        };
         if super::stdlib::types_mod::is_coroutine_generator(result) {
             result
         } else {
@@ -5950,16 +5870,24 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
     }
 }
 
-/// Read a kwargs `ObjData::Dict` into ordered (name, value) pairs (Str keys
-/// only — keyword names are always strings).
+/// Read a kwargs `ObjData::Dict` into ordered (name, value) pairs (keyword
+/// names are always strings — CPython raises `TypeError: keywords must be
+/// strings` the moment a `**mapping` spread carries a non-str key, #1754).
+/// Callers that read a fresh, potentially user-supplied dict MUST check
+/// `current_exception_type()` immediately after calling this and bail out
+/// rather than binding against the partial result.
 fn kwargs_dict_pairs(dict: MbValue) -> Vec<(String, MbValue)> {
     let mut out = Vec::new();
     if let Some(ptr) = dict.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 for (k, v) in lock.read().unwrap().iter() {
-                    if let super::dict_ops::DictKey::Str(ref s) = k {
-                        out.push((s.clone(), *v));
+                    match k {
+                        super::dict_ops::DictKey::Str(ref s) => out.push((s.clone(), *v)),
+                        _ => {
+                            raise_type_error("keywords must be strings".to_string());
+                            return out;
+                        }
                     }
                 }
             }
@@ -6361,8 +6289,12 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
 
 /// Dispatch a JIT-compiled function by its exact frame arity (SystemV/C ABI),
 /// reboxing a raw-int return unless the callee is `any`/object-returning.
-/// Shared by the variadic spread + kwargs binding paths so the entry ABI
-/// `f(regular_0, .., args_list, kwargs_dict)` is honoured uniformly.
+/// Shared by the variadic spread + kwargs binding paths (and mb_call_spread_impl's
+/// positional dispatch) so the entry ABI `f(regular_0, .., args_list, kwargs_dict)`
+/// is honoured uniformly. Arity is hardcoded per-arm (0..=16, #1754) because each
+/// arm transmutes to a distinct `extern "C" fn(MbValue, ..)` type; beyond 16 raises
+/// rather than silently returning None (still a hardcoded ceiling, not a real fix
+/// for arbitrary arity — that needs a codegen-side pointer+length entry ABI).
 fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) -> MbValue {
     let raw_result: MbValue = unsafe {
         match items.len() {
@@ -6433,7 +6365,177 @@ fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) ->
                     items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
                 )
             }
-            _ => MbValue::none(),
+            9 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8],
+                )
+            }
+            10 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8], items[9],
+                )
+            }
+            11 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8], items[9], items[10],
+                )
+            }
+            12 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8], items[9], items[10], items[11],
+                )
+            }
+            13 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8], items[9], items[10], items[11], items[12],
+                )
+            }
+            14 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8], items[9], items[10], items[11], items[12], items[13],
+                )
+            }
+            15 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8], items[9], items[10], items[11], items[12], items[13], items[14],
+                )
+            }
+            16 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7],
+                    items[8], items[9], items[10], items[11], items[12], items[13], items[14],
+                    items[15],
+                )
+            }
+            n => {
+                raise_type_error(format!(
+                    "mamba: JIT call frame arity {n} exceeds the supported dispatch ceiling (16 params)"
+                ));
+                MbValue::none()
+            }
         }
     };
     if is_boxed_ret {
@@ -6499,6 +6601,9 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     // passed the kwargs dict as `a` and read garbage for the trailing slots.
     let pos = extract_items(args_list);
     let kw_pairs = kwargs_dict_pairs(kwargs_dict);
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
     if let Some(mut frame) = bind_declared_call_frame(func, &pos, &kw_pairs) {
         if super::exception::current_exception_type().is_some() {
             return MbValue::none();
@@ -6517,9 +6622,7 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     if has_kwargs {
         frame.push(kwargs_dict);
     }
-    super::closure::with_closure_cells(func, || {
-        dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
-    })
+    super::closure::with_closure_cells(func, || dispatch_jit_frame(raw_addr, &frame, is_boxed_ret))
 }
 
 /// Dynamic call with positional args AND keyword args kept structurally
@@ -6565,6 +6668,9 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
         }
     }
     let kw_pairs = kwargs_dict_pairs(kwargs_dict);
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
     // 2. No keywords → plain positional spread.
     if kw_pairs.is_empty() {
         return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(pos)));
