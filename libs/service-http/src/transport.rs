@@ -52,6 +52,7 @@ pub async fn serve(
     server_http::serve_h2c(listener, app, shutdown).await;
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in transport.rs is hand-written pending codegen support">
 /// The standard request-tracing layer: one INFO-level span per HTTP request.
 ///
 /// INFO so the default `info` `EnvFilter` keeps it, and so the spans the OTLP
@@ -72,4 +73,5 @@ pub async fn serve(
 pub fn trace_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, PropagatingMakeSpan> {
     TraceLayer::new_for_http().make_span_with(PropagatingMakeSpan)
 }
+// </HANDWRITE>
 // CODEGEN-END
