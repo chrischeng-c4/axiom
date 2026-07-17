@@ -241,6 +241,14 @@ pub fn render_labeled(groups: &[SampleGroup<'_>]) -> String {
 }
 // </HANDWRITE>
 
+/// Escapes a label value for Prometheus text exposition. Custom metric
+/// families should use this instead of duplicating the escaping rules.
+pub fn escape_label_value(value: &str) -> String {
+    let mut escaped = String::new();
+    write_escaped_label_value(&mut escaped, value);
+    escaped
+}
+
 fn write_escaped_label_value(out: &mut String, value: &str) {
     for character in value.chars() {
         match character {

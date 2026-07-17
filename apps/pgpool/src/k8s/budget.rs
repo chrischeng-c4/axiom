@@ -1,6 +1,6 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-global-endpoint-quota-allocation.md#logic
 // <HANDWRITE gap="missing-generator:logic:pgpool-endpoint-budget" tracker="#1571" reason="Quota state-machine generation is not available.">
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -135,8 +135,9 @@ impl EndpointAllocator {
         S: Into<String>,
     {
         let pods: Vec<String> = pods.into_iter().map(Into::into).collect();
+        let mut seen = BTreeSet::new();
         for pod in &pods {
-            if self.allocations.contains_key(pod) {
+            if !seen.insert(pod) || self.allocations.contains_key(pod) {
                 return Err(AllocationError::DuplicatePod {
                     endpoint: self.endpoint.clone(),
                     pod: pod.clone(),
@@ -269,6 +270,17 @@ mod tests {
         assert_eq!(allocator.held_quota(), 50);
         assert!(allocator.allocations().all(|item| item.pod != "pod-2"));
         assert!(allocator.blocked_reason().is_some());
+    }
+
+    #[test]
+    fn duplicate_pod_batch_is_rejected_atomically() {
+        let mut allocator = allocator();
+        assert!(matches!(
+            allocator.reserve_many(["pod-0", "pod-0"], 10),
+            Err(AllocationError::DuplicatePod { .. })
+        ));
+        assert_eq!(allocator.held_quota(), 0);
+        assert_eq!(allocator.allocations().count(), 0);
     }
 
     #[test]

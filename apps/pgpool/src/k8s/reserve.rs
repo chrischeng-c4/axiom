@@ -205,7 +205,7 @@ impl ReserveLeaseLedger {
             .collect()
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Add endpoint-ledger per-Pod reserve grant reaping after physical drain completion.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Add endpoint-ledger per-Pod reserve grant reaping after physical drain completion.">
     pub fn release_after_close(
         &mut self,
         key: &ReserveLeaseKey,
@@ -217,7 +217,21 @@ impl ReserveLeaseLedger {
                 token: key.token.clone(),
             })
     }
-// </HANDWRITE>
+
+    /// A completed Pod drain proves every backend owned by that Pod is gone,
+    /// so its remaining reserve leases can no longer hold endpoint capacity.
+    pub fn reap_pod_after_drain(&mut self, pod: &str) -> Vec<ReserveLeaseGrant> {
+        let keys: Vec<_> = self
+            .grants
+            .keys()
+            .filter(|key| key.pod == pod)
+            .cloned()
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| self.grants.remove(&key))
+            .collect()
+    }
+    // </HANDWRITE>
 }
 
 #[cfg(test)]
