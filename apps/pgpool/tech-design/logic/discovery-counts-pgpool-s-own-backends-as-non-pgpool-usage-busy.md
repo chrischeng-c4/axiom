@@ -75,42 +75,52 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: StartupMessage
   - path: apps/pgpool/src/pool/backend_pool.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: BackendPool
   - path: apps/pgpool/src/proxy/session.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: run_session
   - path: apps/pgpool/src/pool/transaction.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: run_transaction_client
   - path: apps/pgpool/src/pool/reactor/runtime.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: handle_startup_frame
   - path: apps/pgpool/src/bin/pgpool.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: serve
   - path: apps/pgpool/src/k8s/instance.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: render_manifests
   - path: apps/pgpool/src/platform/discovery.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: discover_connection_facts
   - path: apps/pgpool/src/operator/reconcile.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
+    anchor: plan_capacity
   - path: apps/pgpool/tests/connection_discovery.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
+    anchor: discovers_runtime_limit_from_real_postgres_when_available
   - path: apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md
     action: modify
     section: logic
