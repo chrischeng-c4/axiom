@@ -10,67 +10,81 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: lumen-structured-stdout-traceparent-conformance
-entry: start_lumen
+entry: spawn
 nodes:
-  start_lumen:
+  spawn:
     kind: start
-    label: "spawn real lumen serve with embedded WAL, JSON format, and no OTLP endpoint"
-  ready:
+    label: "reserve a loopback port and spawn CARGO_BIN_EXE_lumen serve with embedded WAL and JSON logs"
+  isolate:
     kind: process
-    label: "wait for shared health endpoint while continuously draining stdout"
-  request_kind:
+    label: "remove RUST_LOG, LUMEN_LOG_FORMAT, and LUMEN_OTLP_ENDPOINT inheritance; set auth off"
+  drain:
+    kind: process
+    label: "drain piped stdout concurrently so startup and request logs cannot block the child"
+  ready:
     kind: decision
-    label: "valid, invalid, or missing traceparent?"
+    label: "healthz ready before deadline and child still running?"
+  fail_start:
+    kind: terminal
+    label: "fail with child status when readiness is not reached"
   valid:
     kind: process
-    label: "PUT a collection with fixed W3C trace and parent span ids"
+    label: "create collection trace-valid with fixed version-00 traceparent"
   invalid:
     kind: process
-    label: "PUT a collection with malformed traceparent"
+    label: "create collection trace-invalid with malformed traceparent"
   missing:
     kind: process
-    label: "PUT a collection without traceparent"
-  audit:
+    label: "create collection trace-missing without traceparent"
+  stop:
     kind: process
-    label: "Lumen collection audit event executes inside the shared request span"
-  capture:
-    kind: process
-    label: "stop process and parse every captured stdout line as axiom.service.log.v1"
+    label: "kill and wait for child, join stdout reader, parse every nonempty line"
+  contract:
+    kind: decision
+    label: "all lines are axiom.service.log.v1 and three audit events exist?"
+  fail_contract:
+    kind: terminal
+    label: "fail on mixed framing, missing audit event, Sift coupling, or exporter requirement"
   assert_valid:
+    kind: process
+    label: "valid audit trace_id equals inbound; parent_span_id equals inbound parent; span_id is valid and distinct"
+  assert_roots:
+    kind: process
+    label: "invalid and missing audits have valid nonzero local trace/span ids and no propagated parent"
+  pass:
     kind: terminal
-    label: "audit event preserves inbound trace id and parent while creating a distinct local span id"
-  assert_local:
-    kind: terminal
-    label: "request succeeds and audit event carries valid locally generated correlation"
+    label: "real Lumen stdout fixture proves exporter-independent request correlation"
 edges:
-  - { from: start_lumen, to: ready }
-  - { from: ready, to: request_kind }
-  - { from: request_kind, to: valid, label: "valid" }
-  - { from: request_kind, to: invalid, label: "invalid" }
-  - { from: request_kind, to: missing, label: "missing" }
-  - { from: valid, to: audit }
-  - { from: invalid, to: audit }
-  - { from: missing, to: audit }
-  - { from: audit, to: capture }
-  - { from: capture, to: assert_valid, label: "valid request" }
-  - { from: capture, to: assert_local, label: "invalid or missing" }
+  - { from: spawn, to: isolate }
+  - { from: isolate, to: drain }
+  - { from: drain, to: ready }
+  - { from: ready, to: fail_start, label: "no" }
+  - { from: ready, to: valid, label: "yes" }
+  - { from: valid, to: invalid }
+  - { from: invalid, to: missing }
+  - { from: missing, to: stop }
+  - { from: stop, to: contract }
+  - { from: contract, to: fail_contract, label: "no" }
+  - { from: contract, to: assert_valid, label: "yes" }
+  - { from: assert_valid, to: assert_roots }
+  - { from: assert_roots, to: pass }
 ---
 flowchart TD
-    start[spawn lumen serve: JSON, embedded WAL, no OTLP] --> ready[wait for health; drain stdout]
-    ready --> request{traceparent case}
-    request -->|valid| valid[fixed trace and parent ids]
-    request -->|invalid| invalid[malformed header]
-    request -->|missing| missing[no header]
-    valid --> audit[Lumen audit event inside request span]
-    invalid --> audit
-    missing --> audit
-    audit --> parse[parse every stdout line]
-    parse --> correlated([valid input preserves trace and parent])
-    parse --> local([invalid or missing gets safe local root])
+    spawn[spawn isolated real Lumen process] --> drain[drain stdout while polling healthz]
+    drain --> ready{ready before deadline?}
+    ready -->|no| fail([startup failure])
+    ready -->|yes| valid[valid fixed traceparent request]
+    valid --> invalid[malformed traceparent request]
+    invalid --> missing[missing traceparent request]
+    missing --> stop[stop process; parse all stdout JSONL]
+    stop --> contract{schema and three audits present?}
+    contract -->|no| failContract([contract failure])
+    contract -->|yes| propagated[assert preserved trace and parent plus local span]
+    propagated --> roots[assert safe local roots]
+    roots --> pass([Lumen conformance proven])
 ```
 
-Lumen remains independent of Sift. The existing outer router owns the shared `service_http::trace_layer()`, and the existing `collection_create_or_extend` audit event provides a real domain event inside that request span. The conformance process explicitly selects collector mode, removes `LUMEN_OTLP_ENDPOINT` and `RUST_LOG`, sends three independent collection requests, and treats any non-JSON stdout line as failure.
-
+The process command passes `--log-format json`, `--wal embedded`, and `--log-level info`; it configures no OTLP endpoint and no Sift address. Readiness traffic may produce events, but every stdout line must independently parse and identify `service.name=lumen`. The three requests use distinct collection ids so each successful request emits exactly one `collection_create_or_extend` audit event from the real handler. The fixed valid header is `00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01`. Invalid and missing cases must still return success, generate nonzero lowercase ids, and carry no propagated parent.
 ## Changes
 <!-- type: changes lang: yaml -->
 
