@@ -9,27 +9,23 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: transaction-extended-protocol-rejection
-entry: frontend_frame
+id: transaction-extended-protocol-error-contract
+entry: extended_frame
 nodes:
-  frontend_frame: { kind: start, label: "transaction-mode frontend frame" }
-  classify: { kind: decision, label: "is Parse Bind Describe Execute Flush Close or Sync" }
-  simple: { kind: process, label: "preserve existing simple-query relay" }
-  reject: { kind: process, label: "encode ErrorResponse and stop this client" }
-  close: { kind: terminal, label: "clean client and lease close" }
+  extended_frame: { kind: start, label: "P B D E H C or S frontend frame" }
+  both_engines: { kind: process, label: "legacy and reactor detect before backend relay" }
+  error: { kind: process, label: "emit FATAL 0A000 ErrorResponse" }
+  flush_close: { kind: terminal, label: "flush error then close client and lease" }
 edges:
-  - { from: frontend_frame, to: classify }
-  - { from: classify, to: simple, label: simple }
-  - { from: classify, to: reject, label: extended }
-  - { from: reject, to: close }
+  - { from: extended_frame, to: both_engines }
+  - { from: both_engines, to: error }
+  - { from: error, to: flush_close }
 ---
 flowchart TD
-  frontend_frame[transaction frontend frame] --> classify{extended protocol tag?}
-  classify -->|no| simple[preserve simple relay]
-  classify -->|yes| reject[ErrorResponse unsupported]
-  reject --> close[clean close]
+  extended_frame[extended frontend tag] --> both_engines[detect in legacy and reactor]
+  both_engines --> error[FATAL 0A000 unsupported message]
+  error --> flush_close[flush then close]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
