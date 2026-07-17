@@ -592,6 +592,19 @@ impl ReactorRuntime {
         self.update_client_interest(token);
     }
 
+    /// Queues the transaction-mode protocol stopgap response before closing.
+    /// `Closing` disables reads while the writable interest flushes the error
+    /// to the frontend, so a rejected client observes ErrorResponse then EOF.
+    fn reject_extended_query(&mut self, token: Token) {
+        if let Some(client) = self.clients.get_mut(&token) {
+            client.mode = ClientMode::Closing;
+            client.wait_deadline = None;
+        }
+        let mut error = BytesMut::new();
+        crate::pool::transaction::extended_query_rejection().encode(&mut error);
+        self.queue_client_owned(token, error.freeze());
+    }
+
     fn queue_backend(&mut self, token: Token, bytes: impl AsRef<[u8]>) {
         self.queue_backend_owned(token, Bytes::copy_from_slice(bytes.as_ref()));
     }
@@ -1275,6 +1288,10 @@ impl ReactorRuntime {
     fn handle_client_relay_frame(&mut self, id: ClientId, token: Token, frame: RelayFrame) {
         if matches!(frame.kind, RelayFrameKind::FrontendTerminate) {
             self.close_client(token);
+            return;
+        }
+        if frame.is_extended_query() {
+            self.reject_extended_query(token);
             return;
         }
         let mode = self.clients.get(&token).map(|client| match &client.mode {

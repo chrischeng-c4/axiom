@@ -290,7 +290,6 @@ impl FrameReader {
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#1876" reason="logic section in reader.rs is hand-written pending codegen support">
-<!-- aw:adopt-existing -->
 fn validate_frontend_relay(
     frame: &Frame,
     config: &WireCodecConfig,
@@ -334,7 +333,10 @@ fn is_extended_query_tag(tag: u8) -> bool {
     matches!(tag, b'P' | b'B' | b'D' | b'E' | b'H' | b'C' | b'S')
 }
 
-fn validate_extended_query_frame(frame: &Frame, config: &WireCodecConfig) -> Result<(), FrameError> {
+fn validate_extended_query_frame(
+    frame: &Frame,
+    config: &WireCodecConfig,
+) -> Result<(), FrameError> {
     match frame.tag {
         Some(b'H') => Cursor::new(&frame.payload).expect_end(Some(b'H')),
         Some(b'C') => {

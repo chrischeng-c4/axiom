@@ -34,8 +34,8 @@ use crate::proxy::{
     HandshakeOutcome, RejectionReason,
 };
 use crate::wire::{
-    FrameReader, FrontendMessage, RelayFrame, RelayFrameKind, Role, TransactionStatus,
-    WireCodecConfig,
+    BackendMessage, ErrorResponse, FrameReader, FrontendMessage, RelayFrame, RelayFrameKind, Role,
+    TransactionStatus, WireCodecConfig,
 };
 
 /// Full configuration for one `TransactionHandler`, per the TD Schema
@@ -330,6 +330,12 @@ async fn run_transaction_client(
             },
         };
 
+        if first_frame.is_extended_query() {
+            write_extended_query_rejection(&mut client_write).await;
+            drop(permit);
+            return;
+        }
+
         // Per the Pool Lease State Machine, `acquiring_transaction` has
         // exactly one rejection edge (`rejected_pool_saturated`): any
         // `PoolError` here (saturation timeout, or a fresh-connect failure
@@ -543,6 +549,10 @@ async fn relay_one_transaction(
             let _ = forward_raw(backend_write, &msg.bytes).await;
             return TxnLegOutcome::Ended;
         }
+        if msg.is_extended_query() {
+            write_extended_query_rejection(client_write).await;
+            return TxnLegOutcome::Ended;
+        }
         if forward_raw(backend_write, &msg.bytes).await.is_err() {
             return TxnLegOutcome::Ended;
         }
@@ -601,6 +611,29 @@ async fn write_pool_rejection(
     let message = reason.synthesized_error_response();
     let mut buf = BytesMut::new();
     message.encode(&mut buf);
+    let _ = write.write_all(&buf).await;
+    let _ = write.shutdown().await;
+}
+
+/// Builds the temporary transaction-pooling boundary response while complete
+/// extended-protocol support remains a separate work item. Both transaction
+/// engines use this exact frame so clients receive one stable diagnostic.
+pub(crate) fn extended_query_rejection() -> BackendMessage {
+    BackendMessage::ErrorResponse(ErrorResponse {
+        fields: vec![
+            (b'S', "FATAL".to_string()),
+            (b'C', "0A000".to_string()),
+            (
+                b'M',
+                "extended query protocol not yet supported in transaction pooling mode".to_string(),
+            ),
+        ],
+    })
+}
+
+async fn write_extended_query_rejection(write: &mut (impl tokio::io::AsyncWrite + Unpin)) {
+    let mut buf = BytesMut::new();
+    extended_query_rejection().encode(&mut buf);
     let _ = write.write_all(&buf).await;
     let _ = write.shutdown().await;
 }

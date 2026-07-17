@@ -1,7 +1,3 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:71b7d926" tracker="pending-tracker" reason="scaffold for apps/pgpool/tests/transaction_extended_protocol.rs — fill in by hand and update tracker when codegen is ready"
-(fill)
-
-<!-- marker: missing-generator:unit-test:71b7d926 path: apps/pgpool/tests/transaction_extended_protocol.rs reason: scaffold for apps/pgpool/tests/transaction_extended_protocol.rs — fill in by hand and update tracker when codegen is ready -->
 //! Regression coverage for transaction pooling's explicit extended-protocol
 //! stopgap. It uses a real local Postgres for startup/auth and skips when that
 //! service is unavailable, matching the app's integration-test convention.
@@ -117,12 +113,16 @@ async fn parse_is_rejected_without_hang() {
         let error = tokio::time::timeout(Duration::from_secs(2), client.query_one("SELECT 1", &[]))
             .await
             .unwrap_or_else(|_| panic!("{label} Parse must receive an error instead of hanging"))
-            .expect_err("transaction pooling must reject Parse until extended protocol is supported");
-        assert!(
-            error
-                .to_string()
-                .contains("extended query protocol not yet supported in transaction pooling mode"),
-            "{label} must expose the synthesized extended-protocol diagnostic: {error}"
+            .expect_err(
+                "transaction pooling must reject Parse until extended protocol is supported",
+            );
+        let db_error = error
+            .as_db_error()
+            .unwrap_or_else(|| panic!("{label} must receive a PostgreSQL ErrorResponse: {error}"));
+        assert_eq!(db_error.code().code(), "0A000");
+        assert_eq!(
+            db_error.message(),
+            "extended query protocol not yet supported in transaction pooling mode"
         );
 
         drop(client);
@@ -131,4 +131,3 @@ async fn parse_is_rejected_without_hang() {
         server.await.expect("transaction proxy server task joins");
     }
 }
-// HANDWRITE-END
