@@ -1604,6 +1604,7 @@ impl ReactorRuntime {
         self.publish_stats();
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn close_backend(&mut self, token: Token) {
         let Some(mut backend) = self.backends.remove(&token) else {
             return;
@@ -1629,6 +1630,7 @@ impl ReactorRuntime {
         self.retired_tokens.push(token.0);
         self.publish_stats();
     }
+// </HANDWRITE>
 }
 
 fn client_can_read(mode: &ClientMode) -> bool {

@@ -801,6 +801,7 @@ async fn exact_no_challenge_startup_replays_without_a_backend_lease() {
     backend_server.abort();
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
 /// verify: trust_startup_replay::startup_mismatch_and_auth_challenges_never_replay (R2)
 #[tokio::test]
 async fn startup_mismatch_and_auth_challenges_never_replay() {
@@ -849,6 +850,7 @@ async fn startup_mismatch_and_auth_challenges_never_replay() {
         backend_server.abort();
     }
 }
+// </HANDWRITE>
 
 /// verify: trust_startup_replay::capped_trust_clients_complete_without_startup_rejection (AC1)
 #[tokio::test]
