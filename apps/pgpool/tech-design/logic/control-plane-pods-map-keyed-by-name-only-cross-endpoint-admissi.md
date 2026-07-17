@@ -31,7 +31,6 @@ flowchart TD
 ```
 
 A Pod name is reusable across endpoints because a single Deployment Pod may serve several remote endpoints. `PgpoolControlPlane` therefore keys its internal control record by `(endpoint, pod)`, and every Pod lifecycle API accepts that composite identity. Same-endpoint re-admission remains an `AllocationError::DuplicatePod`; cross-endpoint admission is intentional. The control plane never searches by Pod name alone, so drain and release target exactly the allocator that admitted the allocation.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
