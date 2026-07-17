@@ -1,5 +1,6 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:d2043dd3" tracker="pending-tracker" reason="Prove valid parent preservation, local id generation, malformed and zero-id fallback, request routing, and no-OTLP behavior."
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
@@ -9,14 +10,14 @@ use axum::Router;
 use service_http::trace_layer;
 use tower::ServiceExt as _;
 use tracing::field::{Field, Visit};
-use tracing::{Id, Subscriber};
-use tracing_subscriber::layer::{Context, SubscriberExt as _};
-use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::Layer;
+use tracing::span::{Attributes, Record};
+use tracing::subscriber::Interest;
+use tracing::{Event, Id, Metadata, Subscriber};
 
 #[derive(Clone, Default)]
 struct SpanCapture {
     fields: Arc<Mutex<HashMap<u64, HashMap<String, String>>>>,
+    next_id: Arc<AtomicU64>,
 }
 
 impl SpanCapture {
@@ -25,42 +26,49 @@ impl SpanCapture {
             .lock()
             .expect("capture lock")
             .values()
-            .find(|fields| fields.get("span.name").is_some_and(|name| name == "request"))
+            .find(|fields| {
+                fields
+                    .get("span.name")
+                    .is_some_and(|name| name == "request")
+            })
             .cloned()
             .expect("request span fields")
     }
 }
 
-impl<S> Layer<S> for SpanCapture
-where
-    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
-{
-    fn on_new_span(
-        &self,
-        attrs: &tracing::span::Attributes<'_>,
-        id: &Id,
-        _ctx: Context<'_, S>,
-    ) {
-        let mut values = HashMap::from([(
-            "span.name".to_string(),
-            attrs.metadata().name().to_string(),
-        )]);
+impl Subscriber for SpanCapture {
+    fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, attrs: &Attributes<'_>) -> Id {
+        let id = Id::from_u64(self.next_id.fetch_add(1, Ordering::Relaxed) + 1);
+        let mut values =
+            HashMap::from([("span.name".to_string(), attrs.metadata().name().to_string())]);
         attrs.record(&mut FieldVisitor(&mut values));
         self.fields
             .lock()
             .expect("capture lock")
             .insert(id.into_u64(), values);
+        id
     }
 
-    fn on_record(
-        &self,
-        id: &Id,
-        values: &tracing::span::Record<'_>,
-        _ctx: Context<'_, S>,
-    ) {
+    fn record(&self, id: &Id, values: &Record<'_>) {
         let mut spans = self.fields.lock().expect("capture lock");
         let fields = spans.entry(id.into_u64()).or_default();
         values.record(&mut FieldVisitor(fields));
+    }
+
+    fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+    fn event(&self, _event: &Event<'_>) {}
+
+    fn enter(&self, _span: &Id) {}
+
+    fn exit(&self, _span: &Id) {}
+
+    fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
+        Interest::always()
     }
 }
 
@@ -79,8 +87,7 @@ impl Visit for FieldVisitor<'_> {
 
 async fn request_fields(traceparent: Option<&str>) -> (StatusCode, HashMap<String, String>) {
     let capture = SpanCapture::default();
-    let subscriber = tracing_subscriber::registry().with(capture.clone());
-    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let _subscriber = tracing::subscriber::set_default(capture.clone());
 
     let app = Router::new()
         .route("/test", get(|| async { StatusCode::NO_CONTENT }))
@@ -98,7 +105,9 @@ async fn request_fields(traceparent: Option<&str>) -> (StatusCode, HashMap<Strin
 fn assert_nonzero_lower_hex(value: &str, len: usize) {
     assert_eq!(value.len(), len, "unexpected id length: {value}");
     assert!(
-        value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
         "id is not lowercase hex: {value}"
     );
     assert!(value.bytes().any(|byte| byte != b'0'), "id must be nonzero");
