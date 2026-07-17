@@ -1256,11 +1256,12 @@ impl ReactorRuntime {
         }
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn handle_startup_frame(&mut self, id: ClientId, token: Token, frame: WireFrame) {
         match frame.message {
             WireMessage::Frontend(FrontendMessage::Ssl(_)) => self.queue_client(token, b"N"),
             WireMessage::Frontend(FrontendMessage::Startup(startup)) => {
+                let startup = self.pool.normalize_backend_startup(startup);
                 if let Some(client) = self.clients.get_mut(&token) {
                     client.startup = Some(startup);
                 }
