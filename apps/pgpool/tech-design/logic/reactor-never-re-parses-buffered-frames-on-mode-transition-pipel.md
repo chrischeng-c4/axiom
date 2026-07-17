@@ -56,7 +56,7 @@ changes:
 
 ```mermaid
 ---
-id: reactor-buffered-frame-resume-verification
+id: reactor-buffered-frame-resume-contract-verification
 requirements:
   backpressure_preserved:
     id: R2
