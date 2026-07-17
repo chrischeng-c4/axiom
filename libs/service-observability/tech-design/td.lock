@@ -2,13 +2,13 @@ version = 2
 project = "service-observability"
 ir_kind = "td"
 td_path = "libs/service-observability/tech-design"
-generated_at = "2026-07-17T08:50:52.115106+00:00"
-digest = "sha256:3d571708dea3a2196204ad58d8a7bb72b78f29dff6f47e86878c2f37f6a514bc"
-source_digest = "sha256:3d571708dea3a2196204ad58d8a7bb72b78f29dff6f47e86878c2f37f6a514bc"
-ir_digest = "sha256:b64994163190a4ace6e76e30350178d42387f8e7001cf4d5f0b8be4204bacbfe"
+generated_at = "2026-07-17T08:52:01.713568+00:00"
+digest = "sha256:db6dce0723e2745a882989e0c8be6dddbef39e65092a0fff234414ab9861f6dc"
+source_digest = "sha256:db6dce0723e2745a882989e0c8be6dddbef39e65092a0fff234414ab9861f6dc"
+ir_digest = "sha256:891f887f3b00b9d239dad76f1b20aa3d05151378afc469f2b84b0e39dd2300c5"
 
 [[files]]
 path = "logic/standardize-versioned-jsonl-stdout-correlation.md"
-digest = "sha256:c1a7ccb435290243fd031dffc469c74f2d03ea47406a0044b1b52aa12a604f76"
-ir_digest = "sha256:2ff5b388668ef0bafc181ef0d4c2b3660743fae9eccb84f65c084f3d712eaeb5"
+digest = "sha256:c49361dfe6210cb407023d2a03f9317c96ae2cea896c8fe8c7f05a3032d92aed"
+ir_digest = "sha256:01396405451c972bd6b856f9181d0ec3cfcea1cb899ef693661dd72bdfb595d1"
 section_count = 3
