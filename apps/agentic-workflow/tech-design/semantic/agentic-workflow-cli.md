@@ -4215,4 +4215,35 @@ changes:
       writer both route through `src/cli/issues.rs`, which is off-limits to
       this change per a concurrent in-flight edit.
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1847 (R3, second slice): `choose_next_action`'s open-gap
+      scheduling branch now resolves tracker-side first. A new
+      `tracker_open_evidence` lookup finds an OPEN `CapabilityWiEvidence`
+      entry for the gap's id inside `item.wi_evidence` -- which already
+      covers both doc-stored `active_wi` refs AND R2's WI-body derived
+      provenance (`wi_derived_capability_evidence`) -- and, when found, wins
+      over the doc-stored `gap.active_wi` cell for both the epic-vs-bounded
+      branch and the `lifecycle_action_for_work_item` dispatch (`active_ref`
+      prefers `tracker_open_evidence.reference`, falling back to
+      `gap.active_wi` only when the tracker has no open match). This closes
+      the R3 gap: previously a gap whose doc row carried no WI cell but was
+      already served by an open WI (declared only in that WI's own body)
+      fell through to `CreateWi`/`aw wi plan`, silently proposing duplicate
+      work. The doc-stored ref remains the fallback input for both the
+      epic-rollup path and the advisory `ReconcileWiRefs` degradation when a
+      doc ref is stale (points at a closed/unknown/nonexistent issue) and no
+      other open tracker evidence exists for the gap -- so the jet-class
+      fictitious-ref and #1801-class malformed-row failure modes still
+      degrade to advisory action, never a hard error. New focused tests on
+      `choose_next_action`: `next_action_schedules_tracker_open_wi_found_via_body_ref_without_doc_ref`
+      (open WI found only via body ref -> scheduled, not re-created),
+      `next_action_routes_red_gate_with_no_tracker_wi_to_creation` (no doc
+      ref, no tracker WI -> `CreateWi`), and
+      `next_action_degrades_stale_doc_ref_with_no_open_tracker_wi_to_advisory`
+      (stale doc ref, no open tracker WI -> `ReconcileWiRefs` advisory, not
+      an error).
+    impl_mode: hand-written
 ```
