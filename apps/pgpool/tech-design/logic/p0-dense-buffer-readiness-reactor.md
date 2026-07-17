@@ -156,21 +156,25 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
+    anchor: TransactionReactor
     reason: Own mio readiness, token slots, monotonic deadlines, reusable buffers, vectored output, optimistic flush, startup replay, and drain lifetimes.
   - path: apps/pgpool/src/pool/transaction.rs
     action: update
     section: logic
     impl_mode: hand-written
+    anchor: TransactionHandler
     reason: Make the reactor the transaction-mode default while retaining an explicit legacy rollback.
   - path: apps/pgpool/src/wire/reader.rs
     action: update
     section: logic
     impl_mode: hand-written
+    anchor: FrameReader
     reason: Read a synchronous nonblocking socket directly into the bounded parser buffer.
   - path: apps/pgpool/src/pool/backend_pool.rs
     action: update
     section: logic
     impl_mode: hand-written
+    anchor: BackendPool
     reason: Publish reactor-owned active and idle counts through the existing pool stats API.
   - path: libs/tcp-server/src/lib.rs
     action: update
@@ -181,11 +185,13 @@ changes:
     action: update
     section: unit-test
     impl_mode: hand-written
+    anchor: transaction_mode_reuses_backend_connections_across_sequential_transactions
     reason: Preserve backend reuse, contention, saturation, stats, and reset-isolation coverage on the default reactor, and prove failed backend connects release frontend capacity.
   - path: apps/pgpool/tests/pgbouncer_benchmark.rs
     action: update
     section: unit-test
     impl_mode: hand-written
+    anchor: runner_is_syntax_valid_and_dry_run_is_hermetic
     reason: Pin the host-level serialization rule alongside the immutable counterbalanced profile contract.
   - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/README.md
     action: update
