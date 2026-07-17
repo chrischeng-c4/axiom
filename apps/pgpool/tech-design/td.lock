@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T14:20:39.739963+00:00"
-digest = "sha256:d54e8ed16bfe11a5eb208257205b03e00a0d8c29884bd3ca8b75d9058c8b985c"
-source_digest = "sha256:d54e8ed16bfe11a5eb208257205b03e00a0d8c29884bd3ca8b75d9058c8b985c"
-ir_digest = "sha256:26a8ce3f7ce73390a70ab88e037b29ed8247f9a5ba03cbb5ef073c6e91060016"
+generated_at = "2026-07-17T14:37:51.633985+00:00"
+digest = "sha256:57bee3abcccae3da1095030c43273d89a610aaea83e2a262ff78dca7f81254b9"
+source_digest = "sha256:57bee3abcccae3da1095030c43273d89a610aaea83e2a262ff78dca7f81254b9"
+ir_digest = "sha256:517fc0eaa6822773f3b9f7ddbaf3460176278f15877a4cca6e43eb4c2b2dbb65"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -257,6 +257,12 @@ section_count = 5
 path = "logic/trust-startup-replay-for-capped-transaction-pooling.md"
 digest = "sha256:9f97de95769d3529cfa74dbe485b6fe99beb315d78088a657b699d776476a993"
 ir_digest = "sha256:069859cd4402a4b551cc4d40df2e0c5641d938c9d9a3f00718d6a20b4bdb9ce6"
+section_count = 3
+
+[[files]]
+path = "logic/unchecked-terminationgraceperiodseconds-1000-lets-one-malformed.md"
+digest = "sha256:1846b1bfbd2c17a76116d3894ffa8976a1617968924d00a6f10786c40aa80496"
+ir_digest = "sha256:5727e50ca37bda54e3b6468b355113a18f44bb6ddd367253cd96f669bdf5ab4e"
 section_count = 3
 
 [[files]]
