@@ -2,10 +2,10 @@ version = 2
 project = "sift"
 ir_kind = "td"
 td_path = "projects/sift/tech-design"
-generated_at = "2026-07-17T08:30:46.496347+00:00"
-digest = "sha256:3ce1025d40bf04e42ebb6607c8ccb3732a67d1ddc08256c2f9b4ca2f8c332bd2"
-source_digest = "sha256:3ce1025d40bf04e42ebb6607c8ccb3732a67d1ddc08256c2f9b4ca2f8c332bd2"
-ir_digest = "sha256:dc96f118e26cfe3d803c53fdcc5f5b9bdb21c4e171417b909623078f0880ff58"
+generated_at = "2026-07-17T08:41:33.547012+00:00"
+digest = "sha256:ded7ea2c4560601a54daaad722802ad0d0883efa1d0085089230d0bff6afe7ff"
+source_digest = "sha256:ded7ea2c4560601a54daaad722802ad0d0883efa1d0085089230d0bff6afe7ff"
+ir_digest = "sha256:cf3caad4c06fa85a081b944a941fe2fe227e8dc31585828e0ee8970e8b14975f"
 
 [[files]]
 path = "interfaces/rest/adopt-shared-runtime-security-and-agent-interface.md"
@@ -117,8 +117,8 @@ section_count = 2
 
 [[files]]
 path = "logic/follow-shared-library-package-renames-in-workspace-manifest.md"
-digest = "sha256:e70ca443a0dccd479c29113518f14b11b0013c47e94700a7dc0d10073bab646f"
-ir_digest = "sha256:5378383dba11a4339a823d07a3eab1aec95de8aa4aba9de9607c9f3e73217332"
+digest = "sha256:de37f3be1e155a1a3f2918558c32e412cab852d84d59ea1d5619bd7796cfc9b5"
+ir_digest = "sha256:976449de06d91540f37ff2c393d6dd265e94ad46d67d340e72ed79637b31e4c9"
 section_count = 3
 
 [[files]]
