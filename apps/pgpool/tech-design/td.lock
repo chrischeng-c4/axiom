@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T16:35:11.811909+00:00"
-digest = "sha256:f424386d5b662d4140135f8e462542443c7f6251a34212f50affb95348e737e2"
-source_digest = "sha256:f424386d5b662d4140135f8e462542443c7f6251a34212f50affb95348e737e2"
-ir_digest = "sha256:9d355b3b3294dcc2ba731463a21aed70db575bb44ea4fd0c5496f3e2ad9ae45c"
+generated_at = "2026-07-17T16:46:24.620940+00:00"
+digest = "sha256:de986ba5477135d4ffe695a0d20aeeb2e5a04c5fd3532a019f17122d3cdafa38"
+source_digest = "sha256:de986ba5477135d4ffe695a0d20aeeb2e5a04c5fd3532a019f17122d3cdafa38"
+ir_digest = "sha256:cd5108140d0864da0ecdbf0e652b8df1c2ac82ca0a950f1f217d45bae6babe1b"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -57,9 +57,9 @@ section_count = 3
 
 [[files]]
 path = "logic/backend-pool-connection-reuse-and-transaction-session-pool-modes.md"
-digest = "sha256:f48b51f6d9c4ded801b3165e7871d7170e8e56f72f2f7461230396f334efafa0"
-ir_digest = "sha256:f2556fdaf924fc7be335d64f0c2378be45dfd3284c45e948201a45592d51d358"
-section_count = 5
+digest = "sha256:71c7c41a4e40939d83f0ccfce30da3f801d1f0921cc56c9d3183ecccb41603b3"
+ir_digest = "sha256:390a2958590dd786acc5e1a6735b388a46b141d395a65a752097715ec8d16d2b"
+section_count = 6
 
 [[files]]
 path = "logic/control-plane-pods-map-keyed-by-name-only-cross-endpoint-admissi.md"
