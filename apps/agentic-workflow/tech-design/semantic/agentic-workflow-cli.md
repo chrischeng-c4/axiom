@@ -4158,4 +4158,61 @@ changes:
       responsible for broad destructive-command control. Symbol inventory and
       focused guard coverage now include the new policy, bypass, and AGY paths.
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1847: doc-stored WI ids on capability work roots become
+      optional-deprecated, derived provenance instead of a readiness
+      precondition or parse requirement -- the reference direction is
+      one-way (WI -> durable doc), never the reverse. The private
+      `MarkdownWorkRootIndices.wi` column index becomes `Option<usize>`
+      (`markdown_work_root_indices` no longer requires a `WI`/`WorkItem`
+      header to exist at all); `upsert_work_root_wi_cell` (the `set-wi-ref`
+      writer) becomes a no-op for a matched row that has no WI column instead
+      of panicking on an out-of-bounds index. R4: the four
+      `validate_work_root_kind/impl/verification/maturity` cell validators
+      change from `Result<()>` (`anyhow::bail!`, propagated through
+      `parse_markdown_capability_block`/`parse_markdown_table_capability_sections`
+      via `?` and surfaced as a hard `parse_capability_document` error) to
+      `Option<String>` advisory findings folded into the existing
+      `CapabilityDocument.findings` bucket with `aw capability check
+      --project <project>` remediation text -- a single malformed legacy cell
+      (e.g. the historical `Kind bug` #1801 row) can no longer break
+      `aw capability report`/`run`/`check` for the whole document; the row's
+      other fields still parse and render. R2: `capability_wi_evidence` now
+      additionally calls a new `wi_derived_capability_evidence` helper (after
+      resolving all doc-stored `active_wi` refs, tracked via a
+      `seen_references: BTreeSet<String>` dedup set) that scans every
+      candidate issue's body for a `## Capability Alignment` section (new
+      `wi_body_capability_alignment_ids`, bounded to the next `\n## ` heading
+      or EOF, backtick-quoted ids extracted via the existing
+      `extract_backtick_values` + `slugify`) and, when a WI declares the
+      capability or one of its gap ids there, appends it as additional
+      `CapabilityWiEvidence` -- additive and read-only, never required for a
+      work-root row to be valid, and never gating readiness. Readiness
+      (`capability_claim_reports`/`capability_gap_status_from_table`) was
+      already computed purely from verification gates/fixtures and
+      Implementation/Verification cells, not from the WI column, confirming
+      R1 structurally: a work-root row (or an entire table) with no WI
+      column at all is fully valid and its claims verify/fail solely from
+      their own gates and fixtures. `CAPABILITIES.md`'s pre-existing `Shell
+      text-source-unit cold replay | bug | #1801` row (the reproduction case
+      for this issue) had its Kind cell corrected to `change` as migration
+      proof (AC4); the row still parses/renders under the new advisory path
+      regardless. New focused tests:
+      `markdown_work_root_table_degrades_invalid_enums_to_advisory_findings`
+      (renamed from `_rejects_invalid_enums`),
+      `work_root_table_without_wi_column_parses_and_computes_readiness`,
+      `zero_wi_ref_readiness_spans_verified_red_gate_and_unmapped_claims`,
+      `capability_wi_evidence_resolves_from_wi_body_without_doc_stored_ref`,
+      and `fictitious_doc_wi_ref_degrades_to_advisory_evidence` (the
+      jet-#818/#819-class fictitious-ref scenario, AC3). Deferred out of this
+      change: R3 (rewriting `aw capability run` scheduling to query the WI
+      tracker directly instead of doc rows), full R5 (retiring/repurposing
+      `aw capability set-wi-ref` to write WI-side state), and R6 (CLAUDE.md/
+      AGENTS.md self-hosting-gate prose) -- R6's prose files and R5's WI-body
+      writer both route through `src/cli/issues.rs`, which is off-limits to
+      this change per a concurrent in-flight edit.
+    impl_mode: hand-written
 ```
