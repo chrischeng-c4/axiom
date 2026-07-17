@@ -4246,4 +4246,42 @@ changes:
       (stale doc ref, no open tracker WI -> `ReconcileWiRefs` advisory, not
       an error).
     impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1847 (R5, second slice): `aw capability set-wi-ref` is
+      repurposed to write the WI side instead of the doc side. `set_capability_wi_ref`
+      becomes `async` (dispatched via `.await` from `run()`); its primary
+      effect is now, for each `--wi` id, resolving the issue through
+      `crate::issues::{resolve_default_backend, make_backend}` and, when the
+      backend is writable and the issue resolves, calling the new
+      `ensure_wi_body_capability_alignment_ref` helper (idempotent: inserts
+      `Capability: \`<id>\`` / `Capability Gap: \`<id>\`` lines into the WI
+      body's own `## Capability Alignment` section -- creating the section
+      if absent, leaving the rest of the body untouched, no-op if both ids
+      already declared) and persisting via `IssueBackend::update` with an
+      `IssuePatch { body: Some(updated), .. }`. The legacy README/CAPABILITIES
+      work-root `WI` cell rewrite (`upsert_capability_wi_ref_in_readme`) is
+      kept only as a deprecated best-effort compatibility path: a row with no
+      WI column, or any doc-side mismatch, now surfaces as a
+      `doc_cell_warning` in the JSON payload instead of a hard `bail!` --
+      doc-stored WI refs are advisory, not the contract, so this verb must
+      not fail the (now-primary) WI-side write over a doc-side row shape it
+      no longer requires. Payload gains `wi_side_updated`/`wi_side_warnings`/
+      `doc_cell_updated`/`doc_cell_warning`/`notice` fields; the `notice`
+      text names the doc-cell path as deprecated in every invocation's
+      output. New `normalize_wi_ref_ids` (bare-digit variant of
+      `normalize_wi_ref_values`, for `IssueBackend::get`/`update` keys, which
+      take numeric id or slug, not the `#<n>` display form). No `src/cli/
+      issues.rs` (the `aw wi` CLI file, off-limits to this change) or
+      `VERB_LIFECYCLE_REGISTRY` edit was needed: the write goes through
+      `crate::issues::{IssueBackend, IssuePatch}` (the backend engine module,
+      already imported here), and `capability.set-wi-ref` keeps its existing
+      `Core`/`mutates_lifecycle: true` classification since it still mutates
+      tracked lifecycle state, now on the WI side. New focused tests:
+      `ensure_wi_body_capability_alignment_ref_creates_section_when_absent`,
+      `ensure_wi_body_capability_alignment_ref_adds_missing_id_to_existing_section`,
+      and `ensure_wi_body_capability_alignment_ref_is_a_noop_when_both_ids_already_present`.
+    impl_mode: hand-written
 ```

@@ -74,7 +74,10 @@ pub enum CapabilityCommand {
     SetSurface(CapabilitySetSurfaceArgs),
     /// Upsert an EC dimension into the README contract.
     SetEcDimension(CapabilitySetEcDimensionArgs),
-    /// Rewrite a claim's Active WI reference cell in the README work-root table.
+    /// Write a capability/claim reference into the WI's own body (#1847 R5).
+    /// The README work-root WI cell is a deprecated compatibility write, not
+    /// the primary target: capability/claim WI linkage is derived
+    /// provenance resolved from the WI side, never a doc-stored requirement.
     SetWiRef(CapabilitySetWiRefArgs),
 }
 
@@ -409,8 +412,18 @@ pub struct CapabilitySetEcDimensionArgs {
 }
 
 /// A claim id is the README work-root row id (`slugify(work_root)`, the same
-/// id space as `CapabilityGap.id`/`CapabilityClaim.id`): `--claim` targets one
-/// work-root row and this verb rewrites that row's `WI` cell.
+/// id space as `CapabilityGap.id`/`CapabilityClaim.id`).
+///
+/// #1847 R5: the reference direction is one-way (WI -> durable doc), so this
+/// verb's primary effect is writing the capability/claim ref into each
+/// `--wi` issue's own body (`## Capability Alignment` section), via the
+/// issues backend, so the WI-body derived-provenance scan
+/// (`wi_derived_capability_evidence`) picks it up. It also still performs
+/// the legacy README work-root `WI` cell rewrite when that row happens to
+/// carry a WI column, for backward compatibility with existing doc-side
+/// readers -- but that write is a DEPRECATED compatibility path, not the
+/// contract: doc rows are not required to carry a WI cell at all, and new
+/// rows should not add one.
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args, Clone)]
 pub struct CapabilitySetWiRefArgs {
@@ -420,8 +433,8 @@ pub struct CapabilitySetWiRefArgs {
     /// Claim id (the README work-root row id) to update.
     #[arg(long)]
     pub claim: String,
-    /// Replacement WI reference(s). Accepts `#<n>` or bare `<n>`; repeat for a
-    /// claim row that tracks more than one WI reference.
+    /// WI reference(s) whose own body should declare this capability/claim.
+    /// Accepts `#<n>` or bare `<n>`; repeat for more than one WI.
     #[arg(long = "wi")]
     pub wi: Vec<String>,
     /// Pretty-print the JSON result.
@@ -1518,7 +1531,7 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
         }
         CapabilityCommand::SetWiRef(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
-            set_capability_wi_ref(&project, args)
+            set_capability_wi_ref(&project, args).await
         }
     }
 }
@@ -4615,58 +4628,138 @@ fn validate_ec_dimension_backfill_slot(dimension: &CapabilityEcDimension) -> Res
     Ok(())
 }
 
-fn set_capability_wi_ref(project: &str, args: CapabilitySetWiRefArgs) -> Result<()> {
+/// #1847 R5: the reference direction is one-way (WI -> durable doc), so this
+/// verb's primary write target is now each `--wi` issue's own body -- not the
+/// README work-root `WI` cell. The doc-cell rewrite is kept only as a
+/// deprecated compatibility path for rows that still carry a legacy WI
+/// column; a row with no WI column (or any other doc-side mismatch) is never
+/// a hard error here, since the doc side is advisory, not the contract.
+async fn set_capability_wi_ref(project: &str, args: CapabilitySetWiRefArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let cap_path = resolve_capability_path(&project_root, project, None)?;
     let content = std::fs::read_to_string(&cap_path)
         .with_context(|| format!("read capability map {}", cap_path.display()))?;
+    let wi_ids = normalize_wi_ref_ids(&args.wi)?;
     let wi_value = normalize_wi_ref_values(&args.wi)?;
 
     let document = parse_capability_document(&content, &cap_path)
         .with_context(|| format!("parse capability map {}", cap_path.display()))?;
     resolve_capability_and_claim_ids(&document, &args.capability, &args.claim)?;
 
-    let updated =
-        upsert_capability_wi_ref_in_readme(&content, &args.capability, &args.claim, &wi_value)
-            .with_context(|| format!("update capability WI reference in {}", cap_path.display()))?;
-
-    // Never write a table this verb cannot itself read back: re-run the same
-    // scan `aw capability report` uses and confirm the claim row now carries
-    // the requested value before persisting.
-    let reparsed = parse_capability_document(&updated, &cap_path).with_context(|| {
-        format!(
-            "re-parse capability map {} after WI reference update",
-            cap_path.display()
-        )
-    })?;
-    let confirmed_wi = reparsed
-        .capabilities
-        .iter()
-        .find(|capability| capability.id == args.capability)
-        .and_then(|capability| {
-            capability
-                .work_roots
-                .iter()
-                .find(|work_root| work_root.id == args.claim)
-        })
-        .map(|work_root| work_root.wi.as_str());
-    if confirmed_wi != Some(wi_value.as_str()) {
-        anyhow::bail!(
-            "internal error: {} did not re-parse the updated WI reference for claim `{}`",
-            cap_path.display(),
-            args.claim
-        );
+    // WI-side write (primary, #1847 R5): ensure each referenced WI's own
+    // body declares this capability/claim under `## Capability Alignment`,
+    // via the issues backend, so `wi_derived_capability_evidence` resolves
+    // it as tracker-side provenance with no doc-stored ref required at all.
+    let (kind, repo, host) = resolve_default_backend(&project_root)?;
+    let backend =
+        make_backend(&kind, &project_root, repo, host).context("Failed to create backend")?;
+    let mut wi_side_updated = Vec::new();
+    let mut wi_side_warnings = Vec::new();
+    if backend.is_writable() {
+        for wi_id in &wi_ids {
+            match backend
+                .get(wi_id)
+                .await
+                .with_context(|| format!("look up WI #{wi_id} on {} backend", backend.name()))?
+            {
+                Some(issue) => {
+                    let (updated_body, changed) = ensure_wi_body_capability_alignment_ref(
+                        &issue.body,
+                        &args.capability,
+                        &args.claim,
+                    );
+                    if changed {
+                        backend
+                            .update(
+                                wi_id,
+                                &crate::issues::IssuePatch {
+                                    body: Some(updated_body),
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                            .with_context(|| {
+                                format!("write capability alignment ref into WI #{wi_id} body")
+                            })?;
+                        wi_side_updated.push(format!("#{wi_id}"));
+                    }
+                }
+                None => {
+                    wi_side_warnings.push(format!(
+                        "WI #{wi_id} not found on {} backend; capability alignment ref not written to its body",
+                        backend.name()
+                    ));
+                }
+            }
+        }
+    } else {
+        wi_side_warnings.push(format!(
+            "{} backend is read-only; capability alignment ref not written to any WI body",
+            backend.name()
+        ));
     }
 
-    std::fs::write(&cap_path, &updated)
-        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    // Doc-cell write (deprecated compatibility path): best-effort only. A
+    // row with no WI column, or any other doc-side mismatch, is advisory --
+    // never a hard error -- since doc-stored WI refs are no longer the
+    // contract (#1847 R1-R4).
+    let mut doc_cell_updated = false;
+    let mut doc_cell_warning: Option<String> = None;
+    match upsert_capability_wi_ref_in_readme(&content, &args.capability, &args.claim, &wi_value) {
+        Ok(updated) => {
+            let reparsed_ok = parse_capability_document(&updated, &cap_path)
+                .ok()
+                .and_then(|reparsed| {
+                    reparsed
+                        .capabilities
+                        .iter()
+                        .find(|capability| capability.id == args.capability)
+                        .and_then(|capability| {
+                            capability
+                                .work_roots
+                                .iter()
+                                .find(|work_root| work_root.id == args.claim)
+                        })
+                        .map(|work_root| work_root.wi == wi_value)
+                })
+                .unwrap_or(false);
+            if reparsed_ok {
+                std::fs::write(&cap_path, &updated)
+                    .with_context(|| format!("write capability map {}", cap_path.display()))?;
+                doc_cell_updated = true;
+            } else {
+                doc_cell_warning = Some(format!(
+                    "deprecated doc-cell write to {} did not re-parse cleanly; left the file \
+                     unchanged (doc-stored WI refs are advisory, not the contract)",
+                    cap_path.display()
+                ));
+            }
+        }
+        Err(_) => {
+            doc_cell_warning = Some(format!(
+                "claim `{}` has no WI column in {} (deprecated doc-cell path skipped; \
+                 capability/claim WI linkage is derived provenance from the WI side now)",
+                args.claim,
+                cap_path.display()
+            ));
+        }
+    }
+
     let payload = serde_json::json!({
         "action": "set_capability_wi_ref",
         "project": project,
         "capability_id": args.capability,
         "claim_id": args.claim,
         "wi": wi_value,
+        "wi_side_updated": wi_side_updated,
+        "wi_side_warnings": wi_side_warnings,
         "cap_path": cap_path.display().to_string(),
+        "doc_cell_updated": doc_cell_updated,
+        "doc_cell_warning": doc_cell_warning,
+        "notice": "the README/CAPABILITIES work-root WI cell is a DEPRECATED compatibility \
+                    write path (#1847 R5); capability/claim WI linkage is derived provenance \
+                    resolved from each WI's own `## Capability Alignment` body section, never a \
+                    doc-stored requirement -- this verb now writes there primarily.",
     });
     if args.pretty {
         print_json_output(&payload, true)?;
@@ -4674,6 +4767,60 @@ fn set_capability_wi_ref(project: &str, args: CapabilitySetWiRefArgs) -> Result<
         print_json_output(&payload, false)?;
     }
     Ok(())
+}
+
+/// Idempotently ensure a WI body's own `## Capability Alignment` section
+/// declares this capability/claim id in backticks (#1847 R5), so
+/// `wi_body_capability_alignment_ids`/`wi_derived_capability_evidence`
+/// resolve it as tracker-side provenance. Returns `(updated_body, changed)`;
+/// `changed` is `false` when the section already declares both ids.
+fn ensure_wi_body_capability_alignment_ref(
+    body: &str,
+    capability_id: &str,
+    claim_id: &str,
+) -> (String, bool) {
+    let existing = wi_body_capability_alignment_ids(body);
+    let needs_capability = !existing.contains(capability_id);
+    let needs_claim = !existing.contains(claim_id);
+    if !needs_capability && !needs_claim {
+        return (body.to_string(), false);
+    }
+
+    let mut addition = String::new();
+    if needs_capability {
+        addition.push_str(&format!("Capability: `{capability_id}`\n"));
+    }
+    if needs_claim {
+        addition.push_str(&format!("Capability Gap: `{claim_id}`\n"));
+    }
+
+    let Some(section_start) = body.find("## Capability Alignment") else {
+        let mut updated = body.trim_end().to_string();
+        if !updated.is_empty() {
+            updated.push_str("\n\n");
+        }
+        updated.push_str("## Capability Alignment\n\n");
+        updated.push_str(&addition);
+        return (updated, true);
+    };
+
+    // Section exists: insert the addition right after the heading line (and
+    // the blank line conventionally following it, if present), leaving the
+    // rest of the section's existing content untouched.
+    let heading_end = body[section_start..]
+        .find('\n')
+        .map(|offset| section_start + offset + 1)
+        .unwrap_or(body.len());
+    let insert_at = if body[heading_end..].starts_with('\n') {
+        heading_end + 1
+    } else {
+        heading_end
+    };
+    let mut updated = String::with_capacity(body.len() + addition.len());
+    updated.push_str(&body[..insert_at]);
+    updated.push_str(&addition);
+    updated.push_str(&body[insert_at..]);
+    (updated, true)
 }
 
 /// Resolve `capability_id`/`claim_id` against an already-parsed capability
@@ -4727,6 +4874,19 @@ fn normalize_wi_ref_values(values: &[String]) -> Result<String> {
         .map(|value| normalize_wi_ref_value(value))
         .collect::<Result<Vec<_>>>()?;
     Ok(normalized.join(", "))
+}
+
+/// Like [`normalize_wi_ref_values`], but returns bare digit ids (no `#`
+/// prefix) suitable for `IssueBackend::get`/`update`, which key by numeric
+/// id or slug rather than the `#<n>` display form.
+fn normalize_wi_ref_ids(values: &[String]) -> Result<Vec<String>> {
+    if values.is_empty() {
+        anyhow::bail!("`--wi` requires at least one value");
+    }
+    values
+        .iter()
+        .map(|value| normalize_wi_ref_value(value).map(|v| v.trim_start_matches('#').to_string()))
+        .collect()
 }
 
 fn normalize_wi_ref_value(value: &str) -> Result<String> {
@@ -15615,6 +15775,59 @@ Required Verification: smoke, conformance
         assert!(err
             .to_string()
             .contains("capability `not-a-real-capability` not found"));
+    }
+
+    /// R5 (#1847): `ensure_wi_body_capability_alignment_ref` is the WI-side
+    /// write primitive `set_capability_wi_ref` now uses -- verify it is
+    /// idempotent and additive, never touching unrelated body content.
+    #[test]
+    fn ensure_wi_body_capability_alignment_ref_creates_section_when_absent() {
+        let body = "Some WI prose with no capability section yet.\n";
+        let (updated, changed) = ensure_wi_body_capability_alignment_ref(
+            body,
+            "package-manager",
+            "package-manager-readiness",
+        );
+
+        assert!(changed);
+        assert!(updated.contains("Some WI prose with no capability section yet."));
+        assert!(updated.contains("## Capability Alignment"));
+        assert!(updated.contains("Capability: `package-manager`"));
+        assert!(updated.contains("Capability Gap: `package-manager-readiness`"));
+
+        let ids = wi_body_capability_alignment_ids(&updated);
+        assert!(ids.contains("package-manager"));
+        assert!(ids.contains("package-manager-readiness"));
+    }
+
+    #[test]
+    fn ensure_wi_body_capability_alignment_ref_adds_missing_id_to_existing_section() {
+        let body = "## Capability Alignment\n\nCapability: `package-manager`\n\n## Scope\n\nBounded work.\n";
+        let (updated, changed) = ensure_wi_body_capability_alignment_ref(
+            body,
+            "package-manager",
+            "package-manager-readiness",
+        );
+
+        assert!(changed);
+        // Existing capability declaration is preserved exactly once, and the
+        // `## Scope` section (and everything else) is untouched.
+        assert_eq!(updated.matches("Capability: `package-manager`").count(), 1);
+        assert!(updated.contains("Capability Gap: `package-manager-readiness`"));
+        assert!(updated.contains("## Scope\n\nBounded work."));
+    }
+
+    #[test]
+    fn ensure_wi_body_capability_alignment_ref_is_a_noop_when_both_ids_already_present() {
+        let body = "## Capability Alignment\n\nCapability: `package-manager`\nCapability Gap: `package-manager-readiness`\n\n## Scope\n\nBounded work.\n";
+        let (updated, changed) = ensure_wi_body_capability_alignment_ref(
+            body,
+            "package-manager",
+            "package-manager-readiness",
+        );
+
+        assert!(!changed);
+        assert_eq!(updated, body);
     }
 
     #[test]
