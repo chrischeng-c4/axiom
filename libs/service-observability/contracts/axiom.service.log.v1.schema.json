@@ -1,3 +1,102 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:01a501b9" tracker="pending-tracker" reason="Define the machine-readable required, optional, nested service, correlation-pattern, attribute-bound, and additional-property rules."
-// TODO: hand-write content for `libs/service-observability/contracts/axiom.service.log.v1.schema.json`.
-// HANDWRITE-END
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axiom.local/contracts/axiom.service.log.v1.schema.json",
+  "title": "Axiom service structured stdout event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "timestamp",
+    "severity",
+    "service",
+    "event",
+    "message",
+    "attributes"
+  ],
+  "properties": {
+    "schema": {
+      "const": "axiom.service.log.v1"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "event": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "span_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "parent_span_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "trace_flags": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{2}$"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "attributes": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "maxLength": 128
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "maxLength": 4096
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    }
+  }
+}
+
+<!-- marker: missing-generator:logic:01a501b9 path: libs/service-observability/contracts/axiom.service.log.v1.schema.json reason: Define the machine-readable required, optional, nested service, correlation-pattern, attribute-bound, and additional-property rules. -->
