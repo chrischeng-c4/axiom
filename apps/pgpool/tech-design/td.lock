@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T09:36:05.718855+00:00"
-digest = "sha256:9d84229c528bf0e7d64c67b42072c5754cef2f4007b4d4b17988ed7c9fd1b1bf"
-source_digest = "sha256:9d84229c528bf0e7d64c67b42072c5754cef2f4007b4d4b17988ed7c9fd1b1bf"
-ir_digest = "sha256:0a5321454296b5f66d021fd26daf8640c50c4f376f68ff225941532be7f72032"
+generated_at = "2026-07-17T10:25:02.042584+00:00"
+digest = "sha256:573eb36ca03a0ad8ccef6de7579157cc1443d622c9bfe0353bbf1906e9a1e99d"
+source_digest = "sha256:573eb36ca03a0ad8ccef6de7579157cc1443d622c9bfe0353bbf1906e9a1e99d"
+ir_digest = "sha256:41c427f89dea33873ef340ac95bf1c815049d8c263d710b4eba2c0b745cc1106"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -182,6 +182,12 @@ ir_digest = "sha256:1acc7692a35dd52bfd64d608619871874b972781ad9f529a6de107de3825
 section_count = 3
 
 [[files]]
+path = "logic/prestop-hook-uses-httpget-against-post-only-drain-drain-before-s.md"
+digest = "sha256:a7b9ddce6cab92b63641d1524ca3d3fc60bd98f62b5a2d85f93f6c59e033386b"
+ir_digest = "sha256:497b507db36cee472a7bd81285bf2dafcdfb0ba4fc37071a82a1de7dce1800ed"
+section_count = 3
+
+[[files]]
 path = "logic/relay-transaction-backend-frames-opaque-except-readyforquery.md"
 digest = "sha256:a1655e444e3435f280bfa59e24901ec9a021e89304f5efb8492bc1b036ad8aa6"
 ir_digest = "sha256:e222eb7d8fa40710829200c58bbd7912155697e95b3cafc138d1538da11427b6"
@@ -237,8 +243,8 @@ section_count = 3
 
 [[files]]
 path = "semantic/pgpool-runtime-connection-limit-discovery.md"
-digest = "sha256:4c79d399fbe846bfe1094a5ebbbe69d200821415de048e0c27896df492e4e863"
-ir_digest = "sha256:6e52f915cc0481b962b87d4804e9be723cbc02eecb3eb03353b96acb86751f2d"
+digest = "sha256:e421582f34aeddffdf815f1093fe3c1994e4763bf611885c143f026f97119cf8"
+ir_digest = "sha256:275d8ddae0e7f0d65dac3a639505ec882bdea8f3c33a49068460cb3f77efc50e"
 section_count = 3
 
 [[files]]
