@@ -203,7 +203,7 @@ pub fn render(samples: &[Sample<'_>]) -> String {
     out
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Expose the shared Prometheus label-value escaping primitive for custom metric families.">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1892" reason="Expose the shared Prometheus label-value escaping primitive for custom metric families.">
 /// Render labeled metric families as Prometheus text format 0.0.4.
 ///
 /// Groups and rows preserve caller order. Labels within a row are sorted by
