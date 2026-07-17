@@ -64,7 +64,7 @@ changes:
 
 ```mermaid
 ---
-id: serve-startup-drain-publication-verification
+id: serve-startup-drain-publication-contract-verification
 requirements:
   admin_and_cli_regressions:
     id: R3
