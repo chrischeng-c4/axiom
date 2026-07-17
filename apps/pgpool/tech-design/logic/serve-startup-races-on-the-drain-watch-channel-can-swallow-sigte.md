@@ -9,29 +9,26 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: serve-startup-drain-publication
+id: serve-startup-drain-publication-contract
 entry: serve_startup
 nodes:
-  receivers: { kind: process, label: "construct admin and both plane drain receivers" }
-  signal_task: { kind: process, label: "spawn SIGTERM/SIGINT watcher after receiver construction" }
-  publish: { kind: process, label: "send_replace Draining even with no receiver" }
-  wait: { kind: decision, label: "shutdown observes current Draining or waits for transition" }
-  stopped: { kind: terminal, label: "both planes stop before serving new work" }
+  subscriptions: { kind: process, label: "AdminState, TCP, and admin subscriptions exist before signal task" }
+  durable_publish: { kind: process, label: "DrainController send_replace persists Draining without receivers" }
+  tolerant_wait: { kind: decision, label: "shutdown checks current state before waiting for changed" }
+  shutdown: { kind: terminal, label: "both serving planes terminate their shutdown futures" }
 edges:
-  - { from: serve_startup, to: receivers }
-  - { from: receivers, to: signal_task }
-  - { from: signal_task, to: publish, label: signal or drain route }
-  - { from: publish, to: wait }
-  - { from: wait, to: stopped }
+  - { from: serve_startup, to: subscriptions }
+  - { from: subscriptions, to: durable_publish, label: signal or POST drain }
+  - { from: durable_publish, to: tolerant_wait }
+  - { from: tolerant_wait, to: shutdown }
 ---
 flowchart TD
-  start["serve startup"] --> receivers["construct admin + TCP + admin receivers"]
-  receivers --> signal["spawn signal watcher"]
-  signal --> publish["send_replace Draining"]
-  publish --> wait{"shutdown sees current drain?"}
-  wait -->|yes or changed| stop["both planes stop"]
+  startup["serve startup"] --> receivers["construct all drain receivers"]
+  receivers --> publish["send_replace Draining"]
+  publish --> wait{"currently draining?"}
+  wait -->|yes| shutdown["both planes stop"]
+  wait -->|no then changed| shutdown
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
