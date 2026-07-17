@@ -75,3 +75,29 @@ flowchart TD
     r1[R1 error then close] --> cargo_test_p_pgpool_test_transaction_extended_protocol_parse_is_rejected_without_hang[cargo test -p pgpool --test transaction_extended_protocol parse_is_rejected_without_hang]
     r2[R2 simple query compatibility] --> cargo_test_p_pgpool_test_pool_modes_transaction_mode_reuses_backend_for_simple_queries[cargo test -p pgpool --test pool_modes transaction_mode_reuses_backend_for_simple_queries]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/wire/reader.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: validate_frontend_relay
+  - path: apps/pgpool/src/pool/transaction.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: run_transaction_client
+  - path: apps/pgpool/src/pool/reactor/runtime.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: handle_client_relay_frame
+  - path: apps/pgpool/tests/transaction_extended_protocol.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
