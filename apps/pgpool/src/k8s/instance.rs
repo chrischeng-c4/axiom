@@ -116,7 +116,7 @@ pub fn spec_for_profile(profile: InstanceProfile) -> PgpoolInstanceSpec {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in instance.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in instance.rs is hand-written pending codegen support">
 /// Render ServiceAccount, Deployment, client Service, and PDB in apply order.
 pub fn render_manifests(spec: &PgpoolInstanceSpec) -> Vec<Value> {
     let cx = RenderCtx {
@@ -161,6 +161,7 @@ pub fn render_manifests(spec: &PgpoolInstanceSpec) -> Vec<Value> {
                 json!({ "name": "PGPOOL_RESERVE_LEASE_TTL_SECONDS", "value": spec.reserve_lease_ttl_seconds.to_string() }),
                 json!({ "name": "PGPOOL_RESERVE_REQUEST_CHUNK_SIZE", "value": spec.reserve_request_chunk_size.to_string() }),
                 json!({ "name": "PGPOOL_RESERVE_POD", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
+                json!({ "name": "PGPOOL_POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
                 json!({ "name": "PGPOOL_DRAIN_TIMEOUT_MS", "value": (spec.termination_grace_period_seconds * 1000).to_string() }),
             ],
             env_from: vec![],
