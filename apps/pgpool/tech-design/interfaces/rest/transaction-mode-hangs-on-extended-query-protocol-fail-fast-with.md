@@ -101,3 +101,28 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: transaction-extended-protocol-rejection-verification
+requirements:
+  extended_parse_rejected:
+    id: R1
+    text: "Both transaction engines synthesize the unsupported-extended-protocol ErrorResponse then close when a client sends Parse, rather than waiting for ReadyForQuery."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test transaction_extended_protocol parse_is_rejected_without_hang
+  simple_protocol_preserved:
+    id: R2
+    text: "Existing simple-query transaction traffic remains supported after the extended-protocol boundary check."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool --test pool_modes transaction_mode_reuses_backend_for_simple_queries
+---
+flowchart TD
+    r1[R1 extended parse rejected] --> cargo_test_p_pgpool_test_transaction_extended_protocol_parse_is_rejected_without_hang[cargo test -p pgpool --test transaction_extended_protocol parse_is_rejected_without_hang]
+    r2[R2 simple protocol preserved] --> cargo_test_p_pgpool_test_pool_modes_transaction_mode_reuses_backend_for_simple_queries[cargo test -p pgpool --test pool_modes transaction_mode_reuses_backend_for_simple_queries]
+```
