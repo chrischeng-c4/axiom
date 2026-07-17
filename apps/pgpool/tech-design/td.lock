@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T15:03:11.611251+00:00"
-digest = "sha256:380c57e94c1958b3d267643484a81d4528a7d2370bf92af073ccc0a15d465de7"
-source_digest = "sha256:380c57e94c1958b3d267643484a81d4528a7d2370bf92af073ccc0a15d465de7"
-ir_digest = "sha256:232e3c9a9578a516869e1621c660d3c8d437827772a178440a522fcbc7a58044"
+generated_at = "2026-07-17T15:04:09.869002+00:00"
+digest = "sha256:eb3a00686544400d4244a729917e6f28c60b26ec4f8202e3d317b59b72587e1d"
+source_digest = "sha256:eb3a00686544400d4244a729917e6f28c60b26ec4f8202e3d317b59b72587e1d"
+ir_digest = "sha256:bb4705857d789d0368a27875d8cf36c812b520c1edca380885dd69ede2aa93e4"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -33,8 +33,8 @@ section_count = 3
 
 [[files]]
 path = "logic/admit-scale-ignores-outstanding-reserve-grants-static-reserve-ca.md"
-digest = "sha256:f021d0011bd28a627d39d82a27ad9df06e37e5d74fc85de248436970fe4847aa"
-ir_digest = "sha256:eb3a6b52d6382361233053a656a14302ffd2dadfb153015a48aa39cb8746ae32"
+digest = "sha256:5aae9b6d1dbdf92bdd80e935b20937d03529df7638c172ea81a3333c78e688a5"
+ir_digest = "sha256:bf6a8586a6369d50d95320e0dfeccab9c24eaec9b60bc68d13edc10c9fa77ad3"
 section_count = 3
 
 [[files]]
