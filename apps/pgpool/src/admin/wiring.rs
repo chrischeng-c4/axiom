@@ -60,6 +60,7 @@ mod tests {
         assert!(config.drain.is_draining());
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in wiring.rs is hand-written pending codegen support">
     /// verify: admin::signal_task_calls_start_drain_on_the_shared_controller (R7)
     #[tokio::test]
     async fn shutdown_future_resolving_calls_start_drain_on_the_shared_controller() {
@@ -75,5 +76,6 @@ mod tests {
 
         assert!(drain.is_draining());
     }
+// </HANDWRITE>
 }
 // </HANDWRITE>

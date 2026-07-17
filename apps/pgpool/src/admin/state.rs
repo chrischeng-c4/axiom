@@ -36,6 +36,7 @@ pub struct NamedPool {
     pub pool: BackendPool,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in state.rs is hand-written pending codegen support">
 /// axum shared state for the admin `Router` (via `axum::extract::State`),
 /// constructed once in `serve()` alongside the TCP frontend's
 /// `TcpServerConfig` so both planes hold clones of the identical
@@ -65,6 +66,7 @@ pub struct AdminState {
     /// `POST /drain` correct on its own (R2, R7).
     _drain_signal: DrainSignal,
 }
+// </HANDWRITE>
 
 impl AdminState {
     pub fn new(drain: DrainController, pools: Vec<NamedPool>) -> Self {

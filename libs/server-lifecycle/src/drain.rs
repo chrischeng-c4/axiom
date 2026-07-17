@@ -40,9 +40,11 @@ impl DrainController {
         self.state().is_draining()
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in drain.rs is hand-written pending codegen support">
     pub fn start_drain(&self) {
         let _ = self.tx.send(DrainState::Draining);
     }
+// </HANDWRITE>
 }
 
 impl Default for DrainController {
