@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T13:52:35.557086+00:00"
-digest = "sha256:449015ce73a359215b68c449f63608d82e55c6ef3c3cd23c5859956a22d6e2ad"
-source_digest = "sha256:449015ce73a359215b68c449f63608d82e55c6ef3c3cd23c5859956a22d6e2ad"
-ir_digest = "sha256:1cd14419fb7ecaa45be0864b20cc651d86d2404e75f114c7e777ba03e22e0a3b"
+generated_at = "2026-07-17T14:11:19.856713+00:00"
+digest = "sha256:081fd42231afba844d1a3009b8d3e5b2de7c8bc0efe91ed4137ad7dddc831225"
+source_digest = "sha256:081fd42231afba844d1a3009b8d3e5b2de7c8bc0efe91ed4137ad7dddc831225"
+ir_digest = "sha256:d605096edb14d5205057a4aecd4523c32106550e32c82668a1b73be6b09bf9ca"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -47,6 +47,12 @@ section_count = 3
 path = "logic/discovery-counts-pgpool-s-own-backends-as-non-pgpool-usage-busy.md"
 digest = "sha256:a94ba4a126ff599009276ba1fb343ec1a804c0a16585e61ffd307f454a2acc19"
 ir_digest = "sha256:ff4830e0468eebbc85ddbc81e113528999f7abfccda839455f4057e472d661a0"
+section_count = 3
+
+[[files]]
+path = "logic/expired-reactor-waiter-stays-in-reactorstate-and-can-be-assigned.md"
+digest = "sha256:e7162c0dac14c14466d810b41877017a220818bc6b7a5609e884d92597fbeef3"
+ir_digest = "sha256:44d543abbc5979482b1c45ffe7510d868edd297f88fc084684eb8f818648e144"
 section_count = 3
 
 [[files]]
