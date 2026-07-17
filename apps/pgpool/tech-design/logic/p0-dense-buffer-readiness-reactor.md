@@ -194,12 +194,12 @@ changes:
     anchor: runner_is_syntax_valid_and_dry_run_is_hermetic
     reason: Pin the host-level serialization rule alongside the immutable counterbalanced profile contract.
   - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/README.md
-    action: update
+    action: modify
     section: e2e-test
     impl_mode: hand-written
     reason: Document that a peer verdict requires the serialized, uncontended runner rather than overlapping host load.
   - path: apps/pgpool/benchmarks/pgbouncer-transaction-pooling/run.sh
-    action: update
+    action: modify
     section: e2e-test
     impl_mode: hand-written
     reason: Keep the fixed counterbalanced PgBouncer comparison contract while serializing peer runs so competing host workloads cannot invalidate a release verdict.

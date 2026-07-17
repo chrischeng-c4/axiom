@@ -13,6 +13,44 @@ fill_sections: [logic, state-machine, schema, config, unit-test]
 
 # pgpool wire codec — frontend/backend PostgreSQL protocol 3.0 frames
 
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: apps/pgpool/src/wire/backend.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: BackendMessage
+    reason: Own the PostgreSQL backend-message representation pending a codec schema generator.
+  - path: apps/pgpool/src/wire/config.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: WireCodecConfig
+    reason: Own codec bounds and decoding configuration pending a codec schema generator.
+  - path: apps/pgpool/src/wire/error.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: FrameError
+    reason: Own typed wire decode errors pending a codec schema generator.
+  - path: apps/pgpool/src/wire/frame.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: Frame
+    reason: Own the raw wire-frame envelope pending a codec schema generator.
+  - path: apps/pgpool/src/wire/frontend.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    anchor: FrontendMessage
+    reason: Own the PostgreSQL frontend-message representation pending a codec schema generator.
+```
+
 ## Logic
 <!-- type: logic lang: mermaid -->
 

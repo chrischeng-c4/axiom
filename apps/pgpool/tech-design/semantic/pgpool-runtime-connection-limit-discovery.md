@@ -13,17 +13,6 @@ capability_refs:
 
 ## Logic
 <!-- type: logic lang: mermaid -->
-
-### Runtime accounting invariants
-
-Discovery counts only `pg_stat_activity` rows whose `backend_type` is
-`client backend`. A data-plane pgpool process replaces every client-provided
-startup `application_name` with `pgpool-<pod>`, so its held remote sessions
-are attributed to pgpool rather than foreign usage. The effective capacity is
-the lowest runtime/configured/advisory ceiling minus
-`superuser_reserved_connections`; PostgreSQL background workers are neither
-allocatable capacity nor client demand.
-
 ```mermaid
 ---
 id: pgpool-runtime-connection-limit-discovery
@@ -46,6 +35,16 @@ flowchart TD
   runtime --> effective[min runtime configured advisory]
   effective --> facts([effective capacity and usage facts])
 ```
+
+### Runtime accounting invariants
+
+Discovery counts only `pg_stat_activity` rows whose `backend_type` is
+`client backend`. A data-plane pgpool process replaces every client-provided
+startup `application_name` with `pgpool-<pod>`, so its held remote sessions
+are attributed to pgpool rather than foreign usage. The effective capacity is
+the lowest runtime/configured/advisory ceiling minus
+`superuser_reserved_connections`; PostgreSQL background workers are neither
+allocatable capacity nor client demand.
 
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -96,24 +95,16 @@ changes:
     impl_mode: hand-written
     section: logic
     description: Promote tokio-postgres to a runtime dependency for live endpoint discovery.
-  - path: apps/pgpool/src/lib.rs
-    action: modify
-    impl_mode: hand-written
-    section: logic
-    description: Export the provider adapter boundary.
-  - path: apps/pgpool/src/platform/mod.rs
-    action: create
-    impl_mode: hand-written
-    section: logic
-    description: Publish remote endpoint discovery models.
   - path: apps/pgpool/src/platform/discovery.rs
     action: create
     impl_mode: hand-written
     section: logic
+    anchor: discover_connection_facts
     description: Query runtime connection facts and apply advisory caps.
   - path: apps/pgpool/tests/connection_discovery.rs
     action: create
     impl_mode: hand-written
     section: unit-test
+    anchor: discovers_runtime_limit_from_real_postgres_when_available
     description: Exercise the real PostgreSQL discovery path when available.
 ```
