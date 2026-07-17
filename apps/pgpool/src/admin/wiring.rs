@@ -43,11 +43,6 @@ mod tests {
     #[test]
     fn server_tcp_config_carries_the_shared_drain_controller_not_a_fresh_one() {
         let drain = DrainController::new();
-        // Keep a receiver alive: `tokio::sync::watch::Sender::send` is a
-        // silent no-op with zero live receivers (mirrors production, where
-        // `TcpServerConfig`'s own accept loop always holds one via
-        // `config.drain.signal()`).
-        let _signal = drain.signal();
         let config = TcpServerConfig::new(BindConfig::localhost(0));
         let config = wire_server_tcp_drain(config, &drain);
 
@@ -60,14 +55,13 @@ mod tests {
         assert!(config.drain.is_draining());
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in wiring.rs is hand-written pending codegen support">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1884" reason="logic section in wiring.rs is hand-written pending codegen support">
+    /// `send_replace` must persist the drain even before a serving plane has
+    /// subscribed, which is the signal-task race this seam protects.
     /// verify: admin::signal_task_calls_start_drain_on_the_shared_controller (R7)
     #[tokio::test]
     async fn shutdown_future_resolving_calls_start_drain_on_the_shared_controller() {
         let drain = DrainController::new();
-        // See the sibling test's comment: hold a receiver alive so
-        // `start_drain()` inside `drain_on_shutdown_signal` isn't a no-op.
-        let _signal = drain.signal();
         assert!(!drain.is_draining());
 
         // Test seam substituting for `server_lifecycle::signal::wait_shutdown_signal()`:
@@ -76,6 +70,6 @@ mod tests {
 
         assert!(drain.is_draining());
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 }
 // </HANDWRITE>
