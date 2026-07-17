@@ -545,13 +545,13 @@ async fn serve(args: ServeArgs) -> Result<()> {
             pgpool::pool::ReserveLeaseRuntimeConfig {
                 endpoint: args.reserve_endpoint.clone(),
                 pod: args.reserve_pod.clone(),
-                policy: pgpool::pool::ReserveLeasePolicy {
-                    reserve_pool_timeout_seconds: args.reserve_pool_timeout_ms / 1000,
-                    queue_wait_timeout_seconds: args.queue_wait_timeout_ms / 1000,
-                    reserve_idle_timeout_seconds: args.reserve_idle_timeout_ms / 1000,
-                    lease_ttl_seconds: args.reserve_lease_ttl_seconds,
-                    request_chunk_size: args.reserve_request_chunk_size,
-                },
+                policy: pgpool::pool::ReserveLeasePolicy::from_millis(
+                    args.reserve_pool_timeout_ms,
+                    args.queue_wait_timeout_ms,
+                    args.reserve_idle_timeout_ms,
+                    args.reserve_lease_ttl_seconds,
+                    args.reserve_request_chunk_size,
+                ),
             },
         )
     })

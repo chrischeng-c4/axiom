@@ -143,7 +143,7 @@ struct ReactorRuntime {
 }
 
 impl ReactorRuntime {
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Use the Duration queue policy directly in reactor wait deadlines.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Use the Duration queue policy directly in reactor wait deadlines.">
     /// The reactor owns FIFO deadlines. When reserve leasing is configured,
     /// its queueWaitTimeout replaces the historical local acquire timeout;
     /// reserve grants are still consumed only from the background-updated
@@ -151,10 +151,10 @@ impl ReactorRuntime {
     fn queue_wait_timeout(&self) -> Duration {
         self.pool
             .reserve_policy()
-            .map(|policy| Duration::from_secs(policy.queue_wait_timeout_seconds))
+            .map(|policy| policy.queue_wait_timeout)
             .unwrap_or(self.config.acquire_timeout)
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 }
 
 struct TokenSlots<T> {

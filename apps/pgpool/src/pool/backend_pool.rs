@@ -211,8 +211,8 @@ impl BackendPool {
     /// byte-for-byte pass-through until they opt in.
     pub fn with_backend_application_name(mut self, application_name: impl Into<String>) -> Self {
         let application_name = application_name.into();
-        self.backend_application_name = (!application_name.is_empty())
-            .then(|| Arc::<str>::from(application_name));
+        self.backend_application_name =
+            (!application_name.is_empty()).then(|| Arc::<str>::from(application_name));
         self
     }
 
@@ -362,18 +362,20 @@ impl BackendPool {
         }
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Use the Duration reserve policy directly for normal queue and reserve admission deadlines.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Use the Duration reserve policy directly for normal queue and reserve admission deadlines.">
     async fn acquire_internal(&self, allow_idle_reuse: bool) -> Result<BackendLease, PoolError> {
         let queue_wait_timeout = self
             .inner
             .reserve
             .as_ref()
-            .map(|runtime| Duration::from_secs(runtime.config.policy.queue_wait_timeout_seconds))
+            .map(|runtime| runtime.config.policy.queue_wait_timeout)
             .unwrap_or(self.config.acquire_timeout);
         let deadline = Instant::now() + queue_wait_timeout;
-        let reserve_deadline = self.inner.reserve.as_ref().map(|runtime| {
-            Instant::now() + Duration::from_secs(runtime.config.policy.reserve_pool_timeout_seconds)
-        });
+        let reserve_deadline = self
+            .inner
+            .reserve
+            .as_ref()
+            .map(|runtime| Instant::now() + runtime.config.policy.reserve_pool_timeout);
         let mut reserve_demanded = false;
         loop {
             if allow_idle_reuse {
@@ -412,7 +414,7 @@ impl BackendPool {
             // Notified (or spuriously woken): loop back and recheck.
         }
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     fn saturated(&self) -> PoolError {
         self.saturated_after(self.config.acquire_timeout)

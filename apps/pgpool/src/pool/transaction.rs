@@ -72,13 +72,13 @@ enum TransactionEngine {
 
 impl TransactionHandler {
     // @spec apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md#logic
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Log reserve policy with millisecond values matching the configuration surface.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Log reserve policy with millisecond values matching the configuration surface.">
     pub fn new(config: TransactionProxyConfig) -> Self {
         if let Some(policy) = config.backend_pool.reserve_policy() {
             tracing::info!(
-                reserve_pool_timeout_seconds = policy.reserve_pool_timeout_seconds,
-                queue_wait_timeout_seconds = policy.queue_wait_timeout_seconds,
-                reserve_idle_timeout_seconds = policy.reserve_idle_timeout_seconds,
+                reserve_pool_timeout_ms = policy.reserve_pool_timeout.as_millis(),
+                queue_wait_timeout_ms = policy.queue_wait_timeout.as_millis(),
+                reserve_idle_timeout_ms = policy.reserve_idle_timeout.as_millis(),
                 "pgpool reserve lease cache enabled; control-plane exchange stays off the relay path"
             );
         }
@@ -98,7 +98,7 @@ impl TransactionHandler {
         };
         Self { config, engine }
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     pub fn config(&self) -> &TransactionProxyConfig {
         &self.config

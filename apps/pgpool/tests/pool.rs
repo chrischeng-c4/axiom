@@ -955,9 +955,9 @@ async fn reserve_admission_waits_before_opening_reserve_backend() {
             endpoint: "primary".into(),
             pod: "pod-a".into(),
             policy: ReserveLeasePolicy {
-                reserve_pool_timeout_seconds: 0,
-                queue_wait_timeout_seconds: 0,
-                reserve_idle_timeout_seconds: 1,
+                reserve_pool_timeout: Duration::ZERO,
+                queue_wait_timeout: Duration::ZERO,
+                reserve_idle_timeout: Duration::from_secs(1),
                 lease_ttl_seconds: 10,
                 request_chunk_size: 1,
             },
