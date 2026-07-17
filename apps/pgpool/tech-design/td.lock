@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T15:22:55.756038+00:00"
-digest = "sha256:af15ef8f4a4e40e09cf3cca18f6968f57ae0e0698e6ee8ef6af3db64e1f68c46"
-source_digest = "sha256:af15ef8f4a4e40e09cf3cca18f6968f57ae0e0698e6ee8ef6af3db64e1f68c46"
-ir_digest = "sha256:52a7077297647fdd6f8e4977f201b9a86ca4aaaaa85d6ba0de7beda6aaa41732"
+generated_at = "2026-07-17T15:33:50.088355+00:00"
+digest = "sha256:4e8b01f63450dbb9fecc384908b40a30741fab7ccd031c2cf2bc10836fa42bbb"
+source_digest = "sha256:4e8b01f63450dbb9fecc384908b40a30741fab7ccd031c2cf2bc10836fa42bbb"
+ir_digest = "sha256:e934cf1010a5ec2849567ea65fabee993dbb54f62780197cd012f253594d5a00"
 
 [[files]]
 path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
@@ -227,6 +227,12 @@ section_count = 5
 path = "logic/pgbouncer-transaction-pooling-benchmark.md"
 digest = "sha256:b8670766ddd9428292ac8b3abcd8e4cf5682c94fbd65907093c8166f793131d6"
 ir_digest = "sha256:1acc7692a35dd52bfd64d608619871874b972781ad9f529a6de107de3825575e"
+section_count = 3
+
+[[files]]
+path = "logic/pgpool-reserve-ms-flags-floor-divide-to-seconds-500ms-silently-b.md"
+digest = "sha256:c3982964d134de87cfcf590da6f58e6ab08d0253710deb6ec7a5d7de41709796"
+ir_digest = "sha256:44703ec11acca3edecb1140bdba8719e8924fff1da78e935401e672ec4156a8b"
 section_count = 3
 
 [[files]]
