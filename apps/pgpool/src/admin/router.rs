@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(offline_routes, served_routes);
     }
 
-    // <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Verify docs HTML has no external network dependency.">
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#1892" reason="Verify docs HTML has no external network dependency.">
     /// verify: admin::docs_serves_offline_openapi_index (R6)
     #[tokio::test]
     async fn docs_serves_offline_openapi_index() {
