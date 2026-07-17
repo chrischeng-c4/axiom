@@ -361,7 +361,207 @@ async fn stop_proxy(
     server.await.expect("proxy server joins");
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1878" reason="unit-test section in trust_startup_replay.rs is hand-written pending codegen support">
+async fn write_trust_startup_reply(stream: &mut TcpStream) {
+    write_backend(stream, &BackendMessage::AuthenticationOk(AuthenticationOk)).await;
+    write_backend(
+        stream,
+        &BackendMessage::ParameterStatus(ParameterStatus {
+            name: "client_encoding".to_string(),
+            value: "UTF8".to_string(),
+        }),
+    )
+    .await;
+    write_backend(
+        stream,
+        &BackendMessage::BackendKeyData(BackendKeyData {
+            process_id: 100,
+            secret_key: 200,
+        }),
+    )
+    .await;
+    write_backend(
+        stream,
+        &BackendMessage::ReadyForQuery(ReadyForQuery {
+            status: TransactionStatus::Idle,
+        }),
+    )
+    .await;
+}
+
+async fn reply_idle(stream: &mut TcpStream, tag: &str) {
+    write_backend(
+        stream,
+        &BackendMessage::CommandComplete(CommandComplete {
+            tag: tag.to_string(),
+        }),
+    )
+    .await;
+    write_backend(
+        stream,
+        &BackendMessage::ReadyForQuery(ReadyForQuery {
+            status: TransactionStatus::Idle,
+        }),
+    )
+    .await;
+}
+
+async fn expect_query(stream: &mut TcpStream, reader: &mut FrameReader, expected: &str) {
+    assert!(matches!(
+        read_frontend(stream, reader).await,
+        Some(FrontendMessage::Query(Query { sql })) if sql == expected
+    ));
+}
+
+async fn wait_for_active(pool: &BackendPool) {
+    for _ in 0..100 {
+        if pool.stats().backend_active == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("sole backend never became active: {:?}", pool.stats());
+}
+
+async fn run_saturated_pipeline(statements: &[&str]) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake backend");
+    let backend_port = listener.local_addr().expect("fake backend address").port();
+    let statements: Vec<String> = statements
+        .iter()
+        .map(|statement| (*statement).to_string())
+        .collect();
+    let backend_statements = statements.clone();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let backend_server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept fake backend");
+        let mut reader = FrameReader::new(Role::Frontend, &wire());
+
+        assert!(matches!(
+            read_frontend(&mut stream, &mut reader).await,
+            Some(FrontendMessage::Startup(_))
+        ));
+        write_trust_startup_reply(&mut stream).await;
+        expect_query(&mut stream, &mut reader, "DISCARD ALL").await;
+        reply_idle(&mut stream, "DISCARD ALL").await;
+
+        expect_query(&mut stream, &mut reader, "SELECT hold").await;
+        let _ = release_rx.await;
+        reply_idle(&mut stream, "hold").await;
+
+        for statement in backend_statements {
+            expect_query(&mut stream, &mut reader, "DISCARD ALL").await;
+            reply_idle(&mut stream, "DISCARD ALL").await;
+            expect_query(&mut stream, &mut reader, &statement).await;
+            reply_idle(&mut stream, &statement).await;
+        }
+        expect_query(&mut stream, &mut reader, "DISCARD ALL").await;
+        reply_idle(&mut stream, "DISCARD ALL").await;
+    });
+
+    let pool = BackendPool::new(pool_config(backend_port, 1));
+    let (proxy, proxy_server, shutdown) = spawn_proxy(pool.clone()).await;
+    let (mut holder, _) = admit(proxy, startup("pipeline"), false)
+        .await
+        .expect("holder trust startup admits");
+    wait_for_idle(&pool).await;
+    write_frontend(
+        &mut holder,
+        &FrontendMessage::Query(Query {
+            sql: "SELECT hold".to_string(),
+        }),
+    )
+    .await;
+    wait_for_active(&pool).await;
+
+    let (mut pipelined, _) = admit(proxy, startup("pipeline"), false)
+        .await
+        .expect("matching startup replays while the sole backend is active");
+    let expected: Vec<&str> = statements.iter().map(String::as_str).collect();
+    write_pipelined_queries(&mut pipelined, &expected).await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    release_tx
+        .send(())
+        .expect("backend script is still holding the sole lease");
+
+    let mut reader = FrameReader::new(Role::Backend, &wire());
+    let mut completions = Vec::new();
+    let mut ready_count = 0;
+    while completions.len() < expected.len() || ready_count < expected.len() {
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            read_backend(&mut pipelined, &mut reader),
+        )
+        .await
+        .expect("pipelined response must not hang")
+        .expect("pipelined client remains connected")
+        {
+            BackendMessage::CommandComplete(command) => completions.push(command.tag),
+            BackendMessage::ReadyForQuery(_) => ready_count += 1,
+            other => panic!("unexpected pipelined response: {other:?}"),
+        }
+    }
+    assert_eq!(completions, statements);
+    assert_eq!(ready_count, expected.len());
+
+    close_client(pipelined).await;
+    close_client(holder).await;
+    stop_proxy(proxy_server, shutdown).await;
+    drop(pool);
+    backend_server.await.expect("backend script joins");
+}
+
+/// verify: trust_startup_replay::reactor_saturated_pipelined_queries_resume_without_new_socket_read (R1)
+#[tokio::test]
+async fn reactor_saturated_pipelined_queries_resume_without_new_socket_read() {
+    run_saturated_pipeline(&["SELECT two_one", "SELECT two_two"]).await;
+    run_saturated_pipeline(&["SELECT three_one", "SELECT three_two", "SELECT three_three"]).await;
+}
+
+/// verify: trust_startup_replay::reactor_pipelined_startup_and_first_query_complete (R1)
+#[tokio::test]
+async fn reactor_pipelined_startup_and_first_query_complete() {
+    let (backend_port, _, backend_server) = spawn_backend(BackendAuth::Trust).await;
+    let pool = BackendPool::new(pool_config(backend_port, 1));
+    let (proxy, proxy_server, shutdown) = spawn_proxy(pool).await;
+    let mut client = TcpStream::connect(proxy).await.expect("connect proxy");
+    let mut bytes = BytesMut::new();
+    FrontendMessage::Startup(startup("startup-pipeline")).encode(&mut bytes);
+    FrontendMessage::Query(Query {
+        sql: "SELECT startup_pipeline".to_string(),
+    })
+    .encode(&mut bytes);
+    client
+        .write_all(&bytes)
+        .await
+        .expect("write startup and first query in one segment");
+
+    let mut reader = FrameReader::new(Role::Backend, &wire());
+    let mut ready_count = 0;
+    let mut commands = Vec::new();
+    while ready_count < 2 || commands.is_empty() {
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            read_backend(&mut client, &mut reader),
+        )
+        .await
+        .expect("pipelined startup must not hang")
+        .expect("client remains connected after startup pipeline")
+        {
+            BackendMessage::CommandComplete(command) => commands.push(command.tag),
+            BackendMessage::ReadyForQuery(_) => ready_count += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(commands, ["SELECT 1"]);
+    assert_eq!(ready_count, 2);
+
+    close_client(client).await;
+    stop_proxy(proxy_server, shutdown).await;
+    backend_server.abort();
+}
+
 /// A pipelined implicit next query remains in the client socket while the
 /// first query's backend lease is released and reset. The old backend must
 /// therefore observe `DISCARD ALL` before it can receive the second query.
