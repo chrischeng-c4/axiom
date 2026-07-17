@@ -2,10 +2,10 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-17T08:14:41.201720+00:00"
-digest = "sha256:6db299cea2a28740da4d8b51602db6cd2253996dcfa80aeefad8490bb0332c40"
-source_digest = "sha256:6db299cea2a28740da4d8b51602db6cd2253996dcfa80aeefad8490bb0332c40"
-ir_digest = "sha256:61b6f9494e88ec8c8cd1c088c782f0a029cf86787befff92122278332f043309"
+generated_at = "2026-07-17T08:17:11.632244+00:00"
+digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
+source_digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
+ir_digest = "sha256:54e9c6fba4bb68ab977a994ac4984c937be11f2d0b11f6066ea9898944cb17d6"
 
 [[files]]
 path = "interfaces/rest/extract-protocol-neutral-service-observability-integration.md"
@@ -27,8 +27,8 @@ section_count = 3
 
 [[files]]
 path = "logic/make-w3c-request-trace-context-exporter-independent.md"
-digest = "sha256:835902e740f37d696a7bc061c797ec969d878323aa89178aa0e4821c063d666d"
-ir_digest = "sha256:aed5f0140c3a71aea3cd36be632e6205ba5529e0e61c291b182dba356b586a33"
+digest = "sha256:7d1e9083175fde129f336bb9d9e26761428ccc315b2bf502872a5ab3f57bc338"
+ir_digest = "sha256:4920177adfc84ebb4a9df9a33a20221477db5ddeb2582bb7399aaf02595cf78f"
 section_count = 3
 
 [[files]]
