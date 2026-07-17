@@ -46,6 +46,7 @@ pub fn instance_yaml(profile: InstanceProfile) -> String {
                 database: None,
                 user: None,
                 password_secret_ref: None,
+                tls_ca_secret_ref: None,
                 reserve: deployment.max_backend_connections,
                 safety_headroom: deployment.max_backend_connections / 2,
                 configured_ceiling: None,

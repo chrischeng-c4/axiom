@@ -22,6 +22,7 @@ pub const TAG_TERMINATE: u8 = b'X';
 const STARTUP_PROTOCOL_MAJOR: i32 = 3;
 const STARTUP_PROTOCOL_MINOR: i32 = 0;
 const SSL_REQUEST_CODE: i32 = 80_877_103;
+const CANCEL_REQUEST_CODE: i32 = 80_877_102;
 
 /// Client-to-server message variants this slice decodes/encodes.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +39,13 @@ pub enum FrontendMessage {
     Execute(Execute),
     Sync(Sync),
     Terminate(Terminate),
+    /// Parsed so cancellation is an explicit server-policy branch rather
+    /// than an untagged-frame decoder failure. Pgpool does not yet route it
+    /// to a leased backend.
+    Cancel(CancelRequest),
+    /// A length-validated frontend frame that pgpool relays verbatim without
+    /// interpreting its workload-specific payload.
+    Opaque(OpaqueFrontendMessage),
 }
 
 impl FrontendMessage {
@@ -57,9 +65,12 @@ impl FrontendMessage {
             FrontendMessage::Execute(m) => m.encode(buf),
             FrontendMessage::Sync(m) => m.encode(buf),
             FrontendMessage::Terminate(m) => m.encode(buf),
+            FrontendMessage::Cancel(m) => m.encode(buf),
+            FrontendMessage::Opaque(m) => m.encode(buf),
         }
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1877" reason="logic section in frontend.rs is hand-written pending codegen support">
     /// Decodes a fully-buffered `Frame` into a typed `FrontendMessage` by
     /// tag byte (or, untagged, by protocol version code for
     /// StartupMessage/SSLRequest).
@@ -90,9 +101,17 @@ impl FrontendMessage {
                 Cursor::new(&frame.payload).expect_end(Some(TAG_TERMINATE))?;
                 Ok(FrontendMessage::Terminate(Terminate))
             }
+            Some(tag) if is_opaque_frontend_tag(tag) => {
+                validate_opaque_frontend(tag, &frame.payload, config)?;
+                Ok(FrontendMessage::Opaque(OpaqueFrontendMessage {
+                    tag,
+                    payload: frame.payload.clone(),
+                }))
+            }
             Some(other) => Err(FrameError::UnknownTag { tag: other }),
         }
     }
+    // </HANDWRITE>
 }
 
 fn decode_untagged(
@@ -104,6 +123,15 @@ fn decode_untagged(
     if code == SSL_REQUEST_CODE {
         cur.expect_end(None)?;
         return Ok(FrontendMessage::Ssl(SslRequest));
+    }
+    if code == CANCEL_REQUEST_CODE {
+        let process_id = cur.read_i32(None)?;
+        let secret_key = cur.read_i32(None)?;
+        cur.expect_end(None)?;
+        return Ok(FrontendMessage::Cancel(CancelRequest {
+            process_id,
+            secret_key,
+        }));
     }
     let major = (code >> 16) & 0xFFFF;
     let minor = code & 0xFFFF;
@@ -139,6 +167,93 @@ fn decode_untagged(
     }))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CancelRequest {
+    pub process_id: i32,
+    pub secret_key: i32,
+}
+
+impl CancelRequest {
+    pub fn encode(&self, buf: &mut BytesMut) {
+        use bytes::BufMut;
+        write_untagged(buf, |buf| {
+            buf.put_i32(CANCEL_REQUEST_CODE);
+            buf.put_i32(self.process_id);
+            buf.put_i32(self.secret_key);
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpaqueFrontendMessage {
+    pub tag: u8,
+    pub payload: Bytes,
+}
+
+impl OpaqueFrontendMessage {
+    pub fn encode(&self, buf: &mut BytesMut) {
+        write_tagged(buf, self.tag, |buf| buf.extend_from_slice(&self.payload));
+    }
+}
+
+fn is_opaque_frontend_tag(tag: u8) -> bool {
+    matches!(tag, b'C' | b'F' | b'H' | b'c' | b'd' | b'f')
+}
+
+fn validate_opaque_frontend(
+    tag: u8,
+    payload: &Bytes,
+    config: &WireCodecConfig,
+) -> Result<(), FrameError> {
+    let mut cur = Cursor::new(payload);
+    match tag {
+        b'C' => {
+            let target = cur.read_u8(Some(tag))?;
+            if !matches!(target, b'S' | b'P') {
+                return Err(FrameError::Malformed {
+                    tag: Some(tag),
+                    reason: format!("invalid Close target {target:?}"),
+                });
+            }
+            cur.skip_cstr(Some(tag))?;
+            cur.expect_end(Some(tag))
+        }
+        b'H' | b'c' => cur.expect_end(Some(tag)),
+        b'd' => Ok(()),
+        b'f' => {
+            cur.skip_cstr(Some(tag))?;
+            cur.expect_end(Some(tag))
+        }
+        b'F' => {
+            cur.read_i32(Some(tag))?;
+            cur.read_i16(Some(tag))?;
+            let count = cur.read_i16(Some(tag))?;
+            if count < 0 || count as usize > config.max_bind_params {
+                return Err(FrameError::Malformed {
+                    tag: Some(tag),
+                    reason: format!("function argument count {count} exceeds configured maximum"),
+                });
+            }
+            for _ in 0..count {
+                let length = cur.read_i32(Some(tag))?;
+                if length < -1 {
+                    return Err(FrameError::Malformed {
+                        tag: Some(tag),
+                        reason: format!("invalid function argument length {length}"),
+                    });
+                }
+                if length >= 0 {
+                    cur.read_exact(length as usize, Some(tag))?;
+                }
+            }
+            cur.read_i16(Some(tag))?;
+            cur.expect_end(Some(tag))
+        }
+        _ => unreachable!("opaque tag was filtered before validation"),
+    }
+}
+
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in frontend.rs is hand-written pending codegen support">
 /// Untagged startup packet (no leading tag byte): 4-byte length, 4-byte
 /// protocol version, then a null-terminated key/value parameter list
 /// terminated by an empty string.
@@ -155,8 +270,20 @@ pub struct StartupMessage {
     pub protocol_minor: i32,
     pub parameters: Vec<(String, String)>,
 }
+// </HANDWRITE>
 
 impl StartupMessage {
+    /// Replace all client-supplied application-name parameters with the
+    /// pgpool-controlled identity for a physical backend connection. Other
+    /// parameters retain their original order, while the resulting value is
+    /// also the exact startup identity used by transaction replay caches.
+    pub fn with_application_name(mut self, application_name: impl Into<String>) -> Self {
+        self.parameters.retain(|(key, _)| key != "application_name");
+        self.parameters
+            .push(("application_name".to_string(), application_name.into()));
+        self
+    }
+
     pub fn encode(&self, buf: &mut BytesMut) {
         use bytes::BufMut;
         write_untagged(buf, |buf| {
@@ -536,3 +663,32 @@ fn read_bounded_count(
     Ok(count)
 }
 // </HANDWRITE>
+
+#[cfg(test)]
+mod tests {
+    use super::StartupMessage;
+
+    #[test]
+    fn backend_startup_identity_overrides_client_application_name() {
+        let startup = StartupMessage {
+            protocol_major: 3,
+            protocol_minor: 0,
+            parameters: vec![
+                ("user".into(), "app".into()),
+                ("application_name".into(), "client-one".into()),
+                ("database".into(), "inventory".into()),
+                ("application_name".into(), "client-two".into()),
+            ],
+        }
+        .with_application_name("pgpool-pool-7d9f");
+
+        assert_eq!(
+            startup.parameters,
+            vec![
+                ("user".into(), "app".into()),
+                ("database".into(), "inventory".into()),
+                ("application_name".into(), "pgpool-pool-7d9f".into()),
+            ]
+        );
+    }
+}

@@ -42,6 +42,9 @@ pub struct PgpoolEndpointBudgetSpec {
     pub user: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_secret_ref: Option<PgpoolSecretKeyRef>,
+    /// Optional PEM CA bundle for the control-plane discovery TLS client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_ca_secret_ref: Option<PgpoolSecretKeyRef>,
     #[serde(default)]
     pub reserve: u32,
     #[serde(default)]
@@ -83,6 +86,7 @@ impl Default for PgpoolEndpointBudgetSpec {
             database: None,
             user: None,
             password_secret_ref: None,
+            tls_ca_secret_ref: None,
             reserve: 10,
             safety_headroom: 10,
             configured_ceiling: None,
@@ -156,10 +160,12 @@ pub struct PgpoolEndpointBudgetStatus {
     pub usable: u32,
     pub allocated: u32,
     pub available: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_granted: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_available: Option<u32>,
     #[serde(default)]
-    pub reserve_granted: u32,
-    #[serde(default)]
-    pub reserve_available: u32,
+    pub reserve_accounting_available: bool,
     #[serde(default)]
     pub reserve_denials: u64,
     #[serde(default)]
@@ -205,6 +211,7 @@ pub struct PgpoolStatus {
 }
 
 impl PgpoolStatus {
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1890" reason="Omit reserve counters when no live reserve ledger exists and expose whether reserve accounting is available.">
     pub fn from_control_plane(
         spec: &PgpoolSpec,
         observed_generation: i64,
@@ -235,8 +242,13 @@ impl PgpoolStatus {
                     usable: item.usable,
                     allocated: item.allocated,
                     available: item.available,
-                    reserve_granted: item.reserve_granted,
-                    reserve_available: item.reserve_available,
+                    reserve_granted: item
+                        .reserve_accounting_available
+                        .then_some(item.reserve_granted),
+                    reserve_available: item
+                        .reserve_accounting_available
+                        .then_some(item.reserve_available),
+                    reserve_accounting_available: item.reserve_accounting_available,
                     reserve_denials: item.reserve_denials,
                     allocator_available: item.allocator_available,
                     blocked_scale_reason: item.blocked_scale_reason.clone(),
@@ -279,6 +291,7 @@ impl PgpoolStatus {
             message: format!("{ready_replicas}/{desired_replicas} pgpool pods ready"),
         }
     }
+    // </HANDWRITE>
 }
 
 fn pod_phase(phase: PodControlPhase) -> &'static str {

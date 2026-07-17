@@ -3,9 +3,10 @@
 //! Builds the admin `axum::Router` against `AdminState` (TD Logic section
 //! `build_admin_router` node): `/healthz`, `/readyz`, `/metrics`,
 //! `/openapi.json`, `/docs`, `GET /pools`, `GET /pools/{pool}/stats`,
-//! `POST /drain` (R1, R3).
+//! `GET`/`POST /drain` (R1, R3). Kubernetes lifecycle `httpGet` is always a
+//! GET request, so the GET form is the preStop-compatible drain entrypoint.
 
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 
 use crate::admin::handlers;
@@ -22,9 +23,11 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/docs"),
     ("GET", "/pools"),
     ("GET", "/pools/{pool}/stats"),
+    ("GET", "/drain"),
     ("POST", "/drain"),
 ];
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1883" reason="logic section in router.rs is hand-written pending codegen support">
 /// Builds the admin `Router` from `AdminState` (R1, R3): registers exactly
 /// the routes in [`ADMIN_ROUTES`], nothing more.
 pub fn build_router(state: AdminState) -> Router {
@@ -36,9 +39,10 @@ pub fn build_router(state: AdminState) -> Router {
         .route("/docs", get(handlers::docs))
         .route("/pools", get(handlers::pools))
         .route("/pools/{pool}/stats", get(handlers::pool_stats))
-        .route("/drain", post(handlers::drain))
+        .route("/drain", get(handlers::drain).post(handlers::drain))
         .with_state(state)
 }
+// </HANDWRITE>
 
 #[cfg(test)]
 mod tests {
@@ -168,6 +172,21 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    /// verify: admin::prestop_get_drain_flips_shared_drain_controller (R2)
+    #[tokio::test]
+    async fn prestop_get_drain_flips_shared_drain_controller() {
+        let drain = DrainController::new();
+        let router = build_router(test_state(drain.clone()));
+
+        let (status, body) = call(&router, "GET", "/drain").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("\"draining\":true"));
+        assert!(drain.is_draining());
+
+        let (status, _) = call(&router, "GET", "/readyz").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
     /// verify: admin::repeated_post_drain_is_idempotent (R2)
     #[tokio::test]
     async fn repeated_post_drain_is_idempotent() {
@@ -251,14 +270,17 @@ mod tests {
         assert_eq!(offline_routes, served_routes);
     }
 
-    /// verify: admin::docs_serves_swagger_ui_html_referencing_openapi_json (R6)
+    // <HANDWRITE gap="missing-generator:unit-test" tracker="#1892" reason="Verify docs HTML has no external network dependency.">
+    /// verify: admin::docs_serves_offline_openapi_index (R6)
     #[tokio::test]
-    async fn docs_serves_swagger_ui_html_referencing_openapi_json() {
+    async fn docs_serves_offline_openapi_index() {
         let router = build_router(test_state(DrainController::new()));
         let (status, body) = call(&router, "GET", "/docs").await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body.contains("swagger-ui"));
         assert!(body.contains("/openapi.json"));
+        assert!(!body.contains("https://"));
+        assert!(!body.contains("<script"));
     }
+    // </HANDWRITE>
 }
 // </HANDWRITE>

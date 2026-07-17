@@ -95,35 +95,42 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: RuntimePlan
     description: "Export the Pgpool operator module alongside the existing platform and Kubernetes control-plane modules."
   - path: apps/pgpool/src/operator/mod.rs
     action: create
     section: logic
     impl_mode: hand-written
+    anchor: crd_yaml
     description: "Export Pgpool CRD, render, reconcile, CRD YAML normalization, and operator deployment-manifest rendering."
   - path: apps/pgpool/src/operator/crd.rs
     action: create
     section: logic
     impl_mode: hand-written
+    anchor: PgpoolSpec
     description: "Define the namespaced Pgpool custom resource, provider/role endpoint budgets, optional database/user/password Secret discovery credentials, and readiness plus connection-budget status schema."
   - path: apps/pgpool/src/operator/render.rs
     action: create
     section: logic
     impl_mode: hand-written
+    anchor: render
     description: "Purely render a Pgpool CR through the shared stateless Deployment/common Service modules and attach owner references."
   - path: apps/pgpool/src/operator/reconcile.rs
     action: create
     section: logic
     impl_mode: hand-written
+    anchor: "impl ManagedService for Pgpool"
     description: "Implement the async ManagedService plan: inspect current Deployment/Pods, query every live endpoint, reserve desired quotas before scale-out, retain quota for terminating Pods on scale-in, render only admitted replicas, and project contextual status; expose the shared operator run loop."
   - path: apps/pgpool/src/bin/pgpool.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: main
     description: "Add layered k8s crd render and operator render/run commands while keeping instance render as the app-namespace layer."
   - path: apps/pgpool/tests/operator.rs
     action: create
     section: unit-test
     impl_mode: hand-written
+    anchor: crd_is_namespaced_and_carries_endpoint_budget_status
     description: "Verify CRD schema, stateless owned rendering, ManagedService readiness, and rich control-plane status projection."
 ```

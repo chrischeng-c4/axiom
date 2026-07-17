@@ -19,11 +19,13 @@ use crate::issues::{IssueBackend, IssuePatch, LocalBackend};
 use anyhow::{Context, Result};
 use globset::{Glob, GlobSetBuilder};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::cli::cb::CbFillArgs;
 use crate::cli::remote_push::maybe_push_remote;
+
+const ADOPT_EXISTING_PAYLOAD: &str = "<!-- aw:adopt-existing -->";
 
 // A single open HANDWRITE block discovered in the worktree.
 ///
@@ -46,6 +48,11 @@ pub struct HandwriteMarkerEntry {
     /// Optional `@spec` reference associated with this block.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spec_ref: Option<String>,
+    /// True only for an XML marker generator-scaffolded around a real,
+    /// pre-existing implementation. Its fill payload adopts that body instead
+    /// of replacing it with a generic placeholder.
+    #[serde(skip)]
+    adopt_existing: bool,
 }
 
 // Extract every unfilled HANDWRITE marker from a single file's content,
@@ -72,7 +79,9 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
     let path_str = path.to_string_lossy().to_string();
     if let Ok(markers) = parse_handwrite_markers(&content, &path_str) {
         for m in markers {
-            if !marker_body_is_unfilled(&content, m.line_start, m.line_end) {
+            let adopt_existing = m.tracker == crate::generate::handwrite_scaffold::PENDING_TRACKER
+                && !marker_body_is_unfilled(&content, m.line_start, m.line_end);
+            if !adopt_existing && !marker_body_is_unfilled(&content, m.line_start, m.line_end) {
                 continue;
             }
             let rel = path
@@ -87,6 +96,7 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
                 end_line: m.line_end,
                 reason: m.reason,
                 spec_ref: None,
+                adopt_existing,
             });
         }
     }
@@ -109,6 +119,7 @@ fn collect_markers_from_file(worktree: &Path, path: &Path, out: &mut Vec<Handwri
             end_line: m.end_line,
             reason: m.reason,
             spec_ref: m.spec_ref,
+            adopt_existing: false,
         });
     }
 }
@@ -245,6 +256,9 @@ fn td_code_check_command(slug: &str) -> String {
 }
 
 fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
+    if marker.adopt_existing {
+        return format!("{ADOPT_EXISTING_PAYLOAD}\n");
+    }
     format!(
         "(fill)\n\n<!-- marker: {} path: {} reason: {} -->\n",
         marker.id, marker.source_path, marker.reason
@@ -441,7 +455,6 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 async fn run_brief(args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = args.slug.clone();
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
@@ -465,6 +478,12 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
             }
         };
     let spec_path = spec_path.unwrap_or_default();
+    let allowed_dirty_paths = brief_allowed_dirty_paths(&markers, change_paths.as_deref());
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &allowed_dirty_paths,
+    )?;
 
     if markers.is_empty() {
         // A TD may legitimately generate no HANDWRITE blocks, or a caller may
@@ -472,12 +491,10 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
         // transition was recorded. Verify the scoped marker gate and record
         // the normal post-fill phase rather than stranding the WI at
         // `cb_genned` with no legal `--apply --marker` command.
-        if issue.as_ref().is_some_and(|issue| {
-            issue
-                .phase
-                .as_deref()
-                .is_some_and(crate::issues::types::td_phase::is_post_gen)
-        }) {
+        if issue
+            .as_ref()
+            .is_some_and(|issue| marker_free_fill_can_commit_evidence(issue.phase.as_deref()))
+        {
             let scope = change_paths.as_deref().unwrap_or_default();
             if let Err(message) = run_cb_check_gate_scoped(&worktree_abs, scope).await {
                 emit_error(
@@ -582,6 +599,31 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
     Ok(())
 }
 
+/// While a marker is pending, brief mode must begin from a clean tree so its
+/// payload dispatch names an unambiguous source snapshot. Once the active TD
+/// has no markers left, its declared Changes paths are the only legitimate
+/// marker-free evidence that may be staged by the terminal Cb-Fill commit.
+fn brief_allowed_dirty_paths<'a>(
+    markers: &[HandwriteMarkerEntry],
+    change_paths: Option<&'a [String]>,
+) -> Vec<&'a str> {
+    if markers.is_empty() {
+        return change_paths
+            .unwrap_or_default()
+            .iter()
+            .map(String::as_str)
+            .collect();
+    }
+    Vec::new()
+}
+
+fn marker_free_fill_can_commit_evidence(phase: Option<&str>) -> bool {
+    phase.is_some_and(|phase| {
+        crate::issues::types::td_phase::is_post_gen(phase)
+            || phase == crate::issues::types::td_phase::CB_FILLED
+    })
+}
+
 fn resolve_active_spec_path(
     args: &CbFillArgs,
     issue: Option<&crate::issues::Issue>,
@@ -632,7 +674,42 @@ fn markers_for_active_td(
         }
         None => (markers_for_td_changes(worktree_abs, None), None),
     };
-    Ok((markers_and_changes.0, markers_and_changes.1, spec_path))
+    Ok((
+        disambiguate_marker_ids(markers_and_changes.0),
+        markers_and_changes.1,
+        spec_path,
+    ))
+}
+
+/// Fill payload paths are keyed by marker id, while the gap remains the shared
+/// generator-taxonomy value. Scope-local duplicate gaps therefore need a
+/// deterministic location suffix before the queue can route them one at a
+/// time.
+fn disambiguate_marker_ids(mut markers: Vec<HandwriteMarkerEntry>) -> Vec<HandwriteMarkerEntry> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for marker in &markers {
+        *counts.entry(marker.id.clone()).or_default() += 1;
+    }
+    for marker in &mut markers {
+        if counts.get(&marker.id).copied().unwrap_or_default() > 1 {
+            marker.id = format!("{}--{}", marker.id, marker_location_hash(marker));
+        }
+    }
+    markers
+}
+
+fn marker_location_hash(marker: &HandwriteMarkerEntry) -> String {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in marker
+        .source_path
+        .bytes()
+        .chain(b":".iter().copied())
+        .chain(marker.start_line.to_string().bytes())
+    {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    format!("{hash:08x}")
 }
 
 // Extract repo-relative path entries from a TD `## Changes` YAML block.
@@ -788,7 +865,6 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         }
     };
     let project_root = crate::find_project_root()?;
-    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(&project_root, &slug, &[])?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
 
     if !worktree_abs.exists() {
@@ -844,6 +920,16 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         }
     };
 
+    // The active marker's file is the only source path a fill application may
+    // carry: an adoption payload must preserve its existing body while
+    // committing the author's bounded implementation edit and tracker update
+    // together. All unrelated dirty paths remain a hard preflight failure.
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &[target.source_path.as_str()],
+    )?;
+
     // Read the payload.
     let payload_abs = cb_marker_payload_path(&project_root, &slug, &marker_id);
     let payload_body = match std::fs::read_to_string(&payload_abs) {
@@ -857,25 +943,12 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         }
     };
 
-    // Replace the targeted block.
+    // Replace a generated empty marker, or explicitly adopt a generated XML
+    // marker that already wraps existing implementation.
     let source_abs = worktree_abs.join(&target.source_path);
     let original = std::fs::read_to_string(&source_abs)
         .with_context(|| format!("reading source {}", source_abs.display()))?;
-    let new_content = replace_block_body_for_path(
-        &original,
-        target.start_line,
-        target.end_line,
-        &payload_body,
-        &target.source_path,
-    )
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "could not locate marker block at lines {}..{} in {}",
-            target.start_line,
-            target.end_line,
-            source_abs.display()
-        )
-    })?;
+    let new_content = apply_marker_payload(&original, &target, &payload_body, &slug)?;
     std::fs::write(&source_abs, &new_content)
         .with_context(|| format!("writing source {}", source_abs.display()))?;
     // Re-enumerate against the same active TD scope. A foreign marker must
@@ -1032,6 +1105,91 @@ fn replace_block_body_for_path(
         return replace_block_body(src, start_line, end_line, payload);
     }
     replace_block_and_markers(src, start_line, end_line, payload)
+}
+
+/// XML-form markers scaffolded around existing source carry the pending
+/// sentinel until their first fill. Promote that sentinel to the work-item
+/// reference after a successful body replacement so the marker leaves the
+/// pending queue and becomes valid managed-source ownership.
+fn mark_pending_xml_marker_filled(src: &str, start_line: usize, slug: &str) -> String {
+    let mut lines: Vec<String> = src.lines().map(str::to_string).collect();
+    let Some(line) = lines.get_mut(start_line.saturating_sub(1)) else {
+        return src.to_string();
+    };
+    if line.contains("<HANDWRITE")
+        && line.contains(&format!(
+            "tracker=\"{}\"",
+            crate::generate::handwrite_scaffold::PENDING_TRACKER
+        ))
+    {
+        *line = line.replacen(
+            &format!(
+                "tracker=\"{}\"",
+                crate::generate::handwrite_scaffold::PENDING_TRACKER
+            ),
+            &format!("tracker=\"#{slug}\""),
+            1,
+        );
+        let mut normalized = lines.join("\n");
+        if src.ends_with('\n') {
+            normalized.push('\n');
+        }
+        return normalized;
+    }
+    src.to_string()
+}
+
+fn pending_xml_marker_has_existing_body(src: &str, start_line: usize, end_line: usize) -> bool {
+    let Some(line) = src.lines().nth(start_line.saturating_sub(1)) else {
+        return false;
+    };
+    line.contains("<HANDWRITE")
+        && line.contains(&format!(
+            "tracker=\"{}\"",
+            crate::generate::handwrite_scaffold::PENDING_TRACKER
+        ))
+        && !marker_body_is_unfilled(src, start_line, end_line)
+}
+
+fn apply_marker_payload(
+    original: &str,
+    target: &HandwriteMarkerEntry,
+    payload: &str,
+    slug: &str,
+) -> Result<String> {
+    if payload.trim() == ADOPT_EXISTING_PAYLOAD {
+        if !pending_xml_marker_has_existing_body(original, target.start_line, target.end_line) {
+            anyhow::bail!(
+                "{} may only adopt a pending XML marker that already contains implementation",
+                ADOPT_EXISTING_PAYLOAD
+            );
+        }
+        return Ok(mark_pending_xml_marker_filled(
+            original,
+            target.start_line,
+            slug,
+        ));
+    }
+    let replaced = replace_block_body_for_path(
+        original,
+        target.start_line,
+        target.end_line,
+        payload,
+        &target.source_path,
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not locate marker block at lines {}..{} in {}",
+            target.start_line,
+            target.end_line,
+            target.source_path
+        )
+    })?;
+    Ok(mark_pending_xml_marker_filled(
+        &replaced,
+        target.start_line,
+        slug,
+    ))
 }
 
 fn should_preserve_handwrite_markers(source_path: &str) -> bool {
@@ -1426,6 +1584,7 @@ mod tests {
             end_line: 14,
             reason: "missing deterministic generator".to_string(),
             spec_ref: Some("spec.md#logic".to_string()),
+            adopt_existing: false,
         }
     }
 
@@ -1436,6 +1595,31 @@ mod tests {
             Some("hello-world".to_string())
         );
         assert_eq!(slugify_short(""), None);
+    }
+
+    #[test]
+    fn marker_free_brief_allows_only_declared_evidence_paths() {
+        let paths = vec![
+            "apps/pgpool/tests/connection_discovery.rs".to_string(),
+            "apps/pgpool/tech-design/semantic/discovery.md".to_string(),
+        ];
+        assert_eq!(
+            brief_allowed_dirty_paths(&[], Some(&paths)),
+            vec![
+                "apps/pgpool/tests/connection_discovery.rs",
+                "apps/pgpool/tech-design/semantic/discovery.md",
+            ]
+        );
+        assert!(brief_allowed_dirty_paths(&[marker("pending")], Some(&paths)).is_empty());
+    }
+
+    #[test]
+    fn marker_free_fill_reenters_for_the_terminal_cb_filled_phase() {
+        assert!(marker_free_fill_can_commit_evidence(Some("cb_genned")));
+        assert!(marker_free_fill_can_commit_evidence(Some("cb_filled")));
+        assert!(!marker_free_fill_can_commit_evidence(Some(
+            "td_contract_in_progress"
+        )));
     }
 
     #[test]
@@ -1495,6 +1679,102 @@ mod tests {
         let markers = enumerate_worktree_markers(tmp.path());
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].id, "missing-generator:component");
+    }
+
+    #[test]
+    fn pending_xml_handwrite_marker_is_queued_despite_existing_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let source = "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn existing() {}\n\
+// </HANDWRITE>\n";
+        let source_path = src_dir.join("demo.rs");
+        std::fs::write(&source_path, source).unwrap();
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].id, "missing-generator:logic");
+
+        let filled = mark_pending_xml_marker_filled(source, 1, "1882");
+        std::fs::write(&source_path, filled).unwrap();
+        assert!(enumerate_worktree_markers(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn pending_xml_existing_body_initializes_an_adopt_payload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            src_dir.join("demo.rs"),
+            "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn existing() {}\n\
+// </HANDWRITE>\n",
+        )
+        .unwrap();
+
+        let marker = enumerate_worktree_markers(tmp.path()).pop().unwrap();
+        assert!(marker.adopt_existing);
+        let (path, created) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
+        assert!(created);
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            format!("{ADOPT_EXISTING_PAYLOAD}\n")
+        );
+    }
+
+    #[test]
+    fn adopt_existing_payload_preserves_body_and_binds_tracker() {
+        let src = "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn existing() { 42; }\n\
+// </HANDWRITE>\n";
+        let target = HandwriteMarkerEntry {
+            id: "missing-generator:logic".to_string(),
+            source_path: "src/demo.rs".to_string(),
+            start_line: 1,
+            end_line: 3,
+            reason: "fixture".to_string(),
+            spec_ref: None,
+            adopt_existing: true,
+        };
+        let filled = apply_marker_payload(src, &target, ADOPT_EXISTING_PAYLOAD, "1882").unwrap();
+        assert!(filled.contains("pub fn existing() { 42; }"));
+        assert!(filled.contains("tracker=\"#1882\""));
+        assert!(filled.contains("</HANDWRITE>"));
+    }
+
+    #[test]
+    fn xml_handwrite_marker_ids_are_disambiguated_within_one_queue() {
+        let markers = vec![
+            HandwriteMarkerEntry {
+                id: "missing-generator:logic".to_string(),
+                source_path: "apps/pgpool/src/a.rs".to_string(),
+                start_line: 10,
+                end_line: 12,
+                reason: "a".to_string(),
+                spec_ref: None,
+                adopt_existing: false,
+            },
+            HandwriteMarkerEntry {
+                id: "missing-generator:logic".to_string(),
+                source_path: "apps/pgpool/src/b.rs".to_string(),
+                start_line: 20,
+                end_line: 22,
+                reason: "b".to_string(),
+                spec_ref: None,
+                adopt_existing: false,
+            },
+        ];
+
+        let ids = disambiguate_marker_ids(markers)
+            .into_iter()
+            .map(|marker| marker.id)
+            .collect::<Vec<_>>();
+        assert_ne!(ids[0], ids[1]);
+        assert!(ids
+            .iter()
+            .all(|id| id.starts_with("missing-generator:logic--")));
     }
 
     #[test]
@@ -1686,6 +1966,42 @@ mod tests {
         assert!(!out.contains("stub"));
         assert!(out.contains("fn before"));
         assert!(out.contains("fn after"));
+    }
+
+    #[test]
+    fn xml_handwrite_marker_fill_preserves_pair_and_binds_tracker() {
+        let src = "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn before() {}\n\
+// </HANDWRITE>\n";
+        let replaced = replace_block_body(src, 1, 3, "pub fn after() {}").unwrap();
+        let filled = mark_pending_xml_marker_filled(&replaced, 1, "1882");
+        assert!(filled.contains("<HANDWRITE"));
+        assert!(filled.contains("</HANDWRITE>"));
+        assert!(filled.contains("tracker=\"#1882\""));
+        assert!(filled.contains("pub fn after() {}"));
+        assert!(!filled.contains("pub fn before() {}"));
+    }
+
+    #[test]
+    fn adopt_existing_payload_rejects_an_empty_or_comment_marker() {
+        let src = format!(
+            "{}\n// TODO: hand-write content for `src/demo.rs`.\n{}\n",
+            handwrite_begin("gap=\"missing-generator:logic\" reason=\"fixture\""),
+            handwrite_end(),
+        );
+        let target = HandwriteMarkerEntry {
+            id: "missing-generator:logic".to_string(),
+            source_path: "src/demo.rs".to_string(),
+            start_line: 1,
+            end_line: 3,
+            reason: "fixture".to_string(),
+            spec_ref: None,
+            adopt_existing: false,
+        };
+        let error = apply_marker_payload(&src, &target, ADOPT_EXISTING_PAYLOAD, "1882")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("may only adopt"));
     }
 
     #[test]

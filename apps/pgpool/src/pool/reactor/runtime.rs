@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 use std::io::{self, IoSlice, Write};
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -63,10 +63,15 @@ impl std::fmt::Debug for TransactionReactor {
 }
 
 impl TransactionReactor {
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1881" reason="Resolve the backend endpoint before spawning the readiness thread, cache its SocketAddr, and recycle tokens after failed Mio registration.">
     /// Starts the dedicated readiness owner. Backend pool configuration and
     /// admin-stat publication are captured here; no transaction socket has
     /// crossed the boundary yet.
     pub(crate) fn start(pool: BackendPool) -> io::Result<Self> {
+        // DNS is resolved on the caller's Tokio worker before the single
+        // readiness owner starts. The address stays cached for this reactor
+        // lifetime; constructing a new handler refreshes it.
+        let backend_address = resolve_backend_address(&pool.reactor_config().endpoint)?;
         let poll = Poll::new()?;
         let wake = Arc::new(Waker::new(poll.registry(), INGRESS_TOKEN)?);
         let ingress = Arc::new(Ingress {
@@ -77,9 +82,12 @@ impl TransactionReactor {
         let thread_ingress = Arc::clone(&ingress);
         thread::Builder::new()
             .name("pgpool-transaction-reactor".to_string())
-            .spawn(move || ReactorRuntime::new(poll, thread_ingress, pool).run())?;
+            .spawn(move || {
+                ReactorRuntime::new(poll, thread_ingress, pool, backend_address).run()
+            })?;
         Ok(Self { ingress })
     }
+    // </HANDWRITE>
 
     /// Transfers the accepted socket and its frontend budget permit to the
     /// readiness owner. `TcpStream::into_std` preserves nonblocking mode; the
@@ -125,6 +133,7 @@ struct ReactorRuntime {
     ingress: Arc<Ingress>,
     pool: BackendPool,
     config: PoolConfig,
+    backend_address: SocketAddr,
     events: mio::Events,
     ready_events: Vec<(Token, bool, bool)>,
     dirty_client_interests: Vec<Token>,
@@ -143,6 +152,7 @@ struct ReactorRuntime {
 }
 
 impl ReactorRuntime {
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1891" reason="Use the Duration queue policy directly in reactor wait deadlines.">
     /// The reactor owns FIFO deadlines. When reserve leasing is configured,
     /// its queueWaitTimeout replaces the historical local acquire timeout;
     /// reserve grants are still consumed only from the background-updated
@@ -150,9 +160,10 @@ impl ReactorRuntime {
     fn queue_wait_timeout(&self) -> Duration {
         self.pool
             .reserve_policy()
-            .map(|policy| Duration::from_secs(policy.queue_wait_timeout_seconds))
+            .map(|policy| policy.queue_wait_timeout)
             .unwrap_or(self.config.acquire_timeout)
     }
+    // </HANDWRITE>
 }
 
 struct TokenSlots<T> {
@@ -352,11 +363,17 @@ struct StartupReplay {
 }
 
 impl ReactorRuntime {
-    fn new(poll: Poll, ingress: Arc<Ingress>, pool: BackendPool) -> Self {
+    fn new(
+        poll: Poll,
+        ingress: Arc<Ingress>,
+        pool: BackendPool,
+        backend_address: SocketAddr,
+    ) -> Self {
         Self {
             poll,
             ingress,
             config: pool.reactor_config(),
+            backend_address,
             pool,
             events: mio::Events::with_capacity(256),
             ready_events: Vec::with_capacity(256),
@@ -553,6 +570,7 @@ impl ReactorRuntime {
             .map(|(deadline, _, _)| deadline.saturating_duration_since(now))
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1879" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn expire_waiters(&mut self) {
         let now = Instant::now();
         loop {
@@ -567,11 +585,23 @@ impl ReactorRuntime {
             let token = Token(token_index);
             let epoch = self.next_deadline_epoch;
             self.next_deadline_epoch = self.next_deadline_epoch.wrapping_add(1).max(1);
-            if let Some(client) = self.clients.get_mut(&token) {
+            let expired = if let Some(client) = self.clients.get_mut(&token) {
                 client.wait_deadline = None;
                 client.deadline_epoch = epoch;
                 client.mode = ClientMode::Closing;
+                client.pending_first = None;
+                true
+            } else {
+                false
+            };
+            if !expired {
+                continue;
             }
+            // The socket remains long enough to flush the rejection, but the
+            // scheduler must forget it now. Otherwise a delayed clean-backend
+            // action can resurrect this Closing client and relay its stale
+            // first query after the 53300 error.
+            let _ = self.state.remove_client(ClientId(token.0 as u64));
             let mut error = BytesMut::new();
             crate::pool::PoolRejectionReason::BackendPoolSaturated
                 .synthesized_error_response()
@@ -579,6 +609,7 @@ impl ReactorRuntime {
             self.queue_client_owned(token, error.freeze());
         }
     }
+    // </HANDWRITE>
 
     fn queue_client(&mut self, token: Token, bytes: impl AsRef<[u8]>) {
         self.queue_client_owned(token, Bytes::copy_from_slice(bytes.as_ref()));
@@ -590,6 +621,19 @@ impl ReactorRuntime {
         };
         client.output.push(bytes);
         self.update_client_interest(token);
+    }
+
+    /// Queues the transaction-mode protocol stopgap response before closing.
+    /// `Closing` disables reads while the writable interest flushes the error
+    /// to the frontend, so a rejected client observes ErrorResponse then EOF.
+    fn reject_extended_query(&mut self, token: Token) {
+        if let Some(client) = self.clients.get_mut(&token) {
+            client.mode = ClientMode::Closing;
+            client.wait_deadline = None;
+        }
+        let mut error = BytesMut::new();
+        crate::pool::transaction::extended_query_rejection().encode(&mut error);
+        self.queue_client_owned(token, error.freeze());
     }
 
     fn queue_backend(&mut self, token: Token, bytes: impl AsRef<[u8]>) {
@@ -779,6 +823,7 @@ impl ReactorRuntime {
         }
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1878" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn read_client(&mut self, token: Token) {
         let close = match self.clients.get_mut(&token) {
             Some(client) => drain_socket(&mut client.stream, &mut client.reader),
@@ -788,6 +833,24 @@ impl ReactorRuntime {
             self.close_client(token);
             return;
         }
+        self.drain_buffered_client_frames(token);
+    }
+
+    /// Re-drives complete frames that were already read from the socket before
+    /// a transition made this client readable again. The caller must have
+    /// changed the mode first; this helper never reads the socket itself, so it
+    /// cannot bypass the wait/pending backpressure boundary.
+    fn resume_buffered_client_frames(&mut self, token: Token) {
+        if self
+            .clients
+            .get(&token)
+            .is_some_and(|client| client_can_read(&client.mode))
+        {
+            self.drain_buffered_client_frames(token);
+        }
+    }
+
+    fn drain_buffered_client_frames(&mut self, token: Token) {
         let id = ClientId(token.0 as u64);
 
         loop {
@@ -846,6 +909,7 @@ impl ReactorRuntime {
         }
         self.update_client_interest(token);
     }
+    // </HANDWRITE>
 
     fn read_backend(&mut self, _token: Token) {
         let token = _token;
@@ -1058,7 +1122,7 @@ impl ReactorRuntime {
                     awaiting_auth: true,
                 };
             }
-            self.update_client_interest(client_token);
+            self.resume_buffered_client_frames(client_token);
             return;
         }
         if !is_ready {
@@ -1109,7 +1173,7 @@ impl ReactorRuntime {
         self.state.add_resetting_backend(BackendId(token.0 as u64));
         self.queue_backend(token, DISCARD_ALL_QUERY_FRAME);
         self.serve_startup_waiters();
-        self.update_client_interest(client_token);
+        self.resume_buffered_client_frames(client_token);
     }
 
     fn handle_bootstrap_backend_frame(&mut self, token: Token, client: ClientId, frame: WireFrame) {
@@ -1201,7 +1265,11 @@ impl ReactorRuntime {
                 .state
                 .transaction_ready_idle(client, backend, has_pending);
             self.drive_action(action);
-            self.update_client_interest(client_token);
+            if has_pending {
+                self.update_client_interest(client_token);
+            } else {
+                self.resume_buffered_client_frames(client_token);
+            }
         } else if let Some(next) = self.clients.get_mut(&client_token).and_then(|entry| {
             if let ClientMode::Active { pending_next, .. } = &mut entry.mode {
                 pending_next.take()
@@ -1252,14 +1320,17 @@ impl ReactorRuntime {
                 Some(ClientMode::StartupWaiting)
             ) {
                 self.admit_startup(client);
+                self.resume_buffered_client_frames(token);
             }
         }
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn handle_startup_frame(&mut self, id: ClientId, token: Token, frame: WireFrame) {
         match frame.message {
             WireMessage::Frontend(FrontendMessage::Ssl(_)) => self.queue_client(token, b"N"),
             WireMessage::Frontend(FrontendMessage::Startup(startup)) => {
+                let startup = self.pool.normalize_backend_startup(startup);
                 if let Some(client) = self.clients.get_mut(&token) {
                     client.startup = Some(startup);
                 }
@@ -1268,10 +1339,15 @@ impl ReactorRuntime {
             _ => self.close_client(token),
         }
     }
+    // </HANDWRITE>
 
     fn handle_client_relay_frame(&mut self, id: ClientId, token: Token, frame: RelayFrame) {
         if matches!(frame.kind, RelayFrameKind::FrontendTerminate) {
             self.close_client(token);
+            return;
+        }
+        if frame.is_extended_query() {
+            self.reject_extended_query(token);
             return;
         }
         let mode = self.clients.get(&token).map(|client| match &client.mode {
@@ -1420,14 +1496,7 @@ impl ReactorRuntime {
     }
 
     fn open_backend(&mut self, purpose: ConnectPurpose) -> Option<BackendId> {
-        let address = (
-            self.config.endpoint.host.as_str(),
-            self.config.endpoint.port,
-        )
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut addresses| addresses.next())?;
-        let mut stream = match MioTcpStream::connect(address) {
+        let mut stream = match MioTcpStream::connect(self.backend_address) {
             Ok(stream) => stream,
             Err(_) => return None,
         };
@@ -1438,6 +1507,7 @@ impl ReactorRuntime {
             .register(&mut stream, token, Interest::READABLE | Interest::WRITABLE)
             .is_err()
         {
+            recycle_unregistered_token(&mut self.free_tokens, token);
             return None;
         }
         let id = BackendId(token.0 as u64);
@@ -1464,6 +1534,24 @@ impl ReactorRuntime {
                 else {
                     return;
                 };
+                if self
+                    .clients
+                    .get(&client_token)
+                    .is_some_and(|entry| matches!(entry.mode, ClientMode::Closing))
+                {
+                    // Expiry removes the scheduler entry before it can
+                    // produce an Assign action. If an action was already
+                    // prepared, discard it without dropping the queued
+                    // ErrorResponse; returning the backend to the scheduler
+                    // lets another live waiter use it.
+                    if let Some(entry) = self.clients.get_mut(&client_token) {
+                        entry.pending_first = None;
+                    }
+                    let _ = self.state.remove_backend(backend);
+                    let retry = self.state.add_clean_backend(backend);
+                    self.drive_action(retry);
+                    return;
+                }
                 let first = self
                     .clients
                     .get_mut(&client_token)
@@ -1485,6 +1573,7 @@ impl ReactorRuntime {
                 }
                 self.queue_backend_owned(backend_token, first.bytes);
                 self.update_client_interest(client_token);
+                self.resume_buffered_client_frames(client_token);
                 self.publish_stats();
             }
             TransactionAction::Reset { backend } => {
@@ -1526,17 +1615,23 @@ impl ReactorRuntime {
         self.publish_stats();
     }
 
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1880" reason="logic section in runtime.rs is hand-written pending codegen support">
     fn close_backend(&mut self, token: Token) {
         let Some(mut backend) = self.backends.remove(&token) else {
             return;
         };
         let direct_client = match &backend.mode {
             BackendMode::Connecting(ConnectPurpose::Initial { client, .. })
-            | BackendMode::Connecting(ConnectPurpose::Bootstrap { client, .. })
             | BackendMode::InitialHandshake { client, .. }
-            | BackendMode::Bootstrap { client, .. }
             | BackendMode::Active { client } => Some(*client),
-            BackendMode::Resetting | BackendMode::Idle => None,
+            // A bootstrap is speculative capacity for a client that remains
+            // Waiting in ReactorState. Auth-required backends cannot accept
+            // it without a frontend password exchange, so discarding this
+            // backend must not disconnect the healthy waiter.
+            BackendMode::Connecting(ConnectPurpose::Bootstrap { .. })
+            | BackendMode::Bootstrap { .. }
+            | BackendMode::Resetting
+            | BackendMode::Idle => None,
         };
         if backend.registered {
             let _ = self.poll.registry().deregister(&mut backend.stream);
@@ -1551,6 +1646,7 @@ impl ReactorRuntime {
         self.retired_tokens.push(token.0);
         self.publish_stats();
     }
+    // </HANDWRITE>
 }
 
 fn client_can_read(mode: &ClientMode) -> bool {
@@ -1571,6 +1667,48 @@ fn client_can_read(mode: &ClientMode) -> bool {
 
 /// Writes until the kernel would block. `true` means EOF/error and asks the
 /// owner to close the complete client/backend state, not merely this socket.
+fn resolve_backend_address(
+    endpoint: &crate::proxy::BackendEndpointConfig,
+) -> io::Result<SocketAddr> {
+    (endpoint.host.as_str(), endpoint.port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "backend hostname resolved no addresses",
+            )
+        })
+}
+
+fn recycle_unregistered_token(free_tokens: &mut Vec<usize>, token: Token) {
+    free_tokens.push(token.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reactor_backend_address_is_cached_before_thread_start() {
+        let endpoint = crate::proxy::BackendEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 5432,
+        };
+        assert_eq!(
+            resolve_backend_address(&endpoint).unwrap(),
+            "127.0.0.1:5432".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn failed_backend_registration_recycles_token() {
+        let mut free_tokens = Vec::new();
+        recycle_unregistered_token(&mut free_tokens, Token(FIRST_SOCKET_TOKEN));
+        assert_eq!(free_tokens.pop(), Some(FIRST_SOCKET_TOKEN));
+    }
+}
+
 fn flush_socket(stream: &mut MioTcpStream, output: &mut OutputQueue) -> bool {
     const MAX_IO_SLICES: usize = 16;
     while !output.is_empty() {

@@ -9,6 +9,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use futures_util::{pin_mut, stream, SinkExt, StreamExt};
 use server_lifecycle::{BindConfig, ConnectionBudget};
 use tokio::io::AsyncBufReadExt;
 
@@ -140,6 +141,7 @@ async fn spawn_proxy(
     (proxy_addr, server, shutdown_tx)
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1877" reason="unit-test section in session_proxy.rs is hand-written pending codegen support">
 /// verify: session_proxy::real_postgres_session_connects_queries_and_disconnects_cleanly (AC1)
 #[tokio::test]
 async fn real_postgres_session_connects_queries_and_disconnects_cleanly() {
@@ -172,6 +174,78 @@ async fn real_postgres_session_connects_queries_and_disconnects_cleanly() {
         .expect("connection task joined")
         .expect("connection driver ended cleanly");
 
+    let _ = shutdown_tx.send(());
+    server.await.expect("proxy server task");
+}
+// </HANDWRITE>
+
+/// verify: session_proxy::session_mode_relays_extended_copy_notify_and_empty_query (R1/R2)
+#[tokio::test]
+async fn session_mode_relays_extended_copy_notify_and_empty_query() {
+    let Some((backend_addr, user)) = real_backend_ready().await else {
+        eprintln!(
+            "skipping session_mode_relays_extended_copy_notify_and_empty_query: \
+             no reachable local Postgres at 127.0.0.1:5432 for user {:?}",
+            backend_user()
+        );
+        return;
+    };
+
+    let (proxy_addr, server, shutdown_tx) = spawn_proxy(backend_addr, 10).await;
+    let dsn = proxy_dsn(proxy_addr, &user);
+    let (client, connection) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .expect("connect through pgpool to real Postgres");
+    let connection_task = tokio::spawn(connection);
+
+    // `query_one` uses Parse/Bind/Describe/Execute/Sync and receives their
+    // completion frames, proving session mode no longer tears down extended
+    // query traffic on an unknown backend tag.
+    let row = client
+        .query_one("SELECT 1 AS one", &[])
+        .await
+        .expect("extended query round-trips through session pool");
+    assert_eq!(row.get::<_, i32>("one"), 1);
+
+    client
+        .simple_query("")
+        .await
+        .expect("EmptyQueryResponse relays without disconnecting");
+    client
+        .batch_execute("CREATE TEMP TABLE pgpool_wire_1877(value text); LISTEN pgpool_wire_1877; NOTIFY pgpool_wire_1877, 'ok';")
+        .await
+        .expect("NotificationResponse relays without disconnecting");
+
+    let input = stream::iter(vec![Ok::<_, tokio_postgres::Error>(
+        bytes::Bytes::from_static(b"copy-row\n"),
+    )]);
+    pin_mut!(input);
+    let sink = client
+        .copy_in::<_, bytes::Bytes>("COPY pgpool_wire_1877 FROM STDIN")
+        .await
+        .expect("COPY IN starts through session pool");
+    pin_mut!(sink);
+    sink.send_all(&mut input)
+        .await
+        .expect("CopyData relays through session pool");
+    assert_eq!(sink.finish().await.expect("CopyDone relays"), 1);
+
+    let output = client
+        .copy_out("COPY pgpool_wire_1877 TO STDOUT")
+        .await
+        .expect("COPY OUT starts through session pool");
+    pin_mut!(output);
+    let mut copied = Vec::new();
+    while let Some(chunk) = output.next().await {
+        copied.extend_from_slice(&chunk.expect("CopyData relays from backend"));
+    }
+    assert_eq!(copied, b"copy-row\n");
+
+    drop(client);
+    connection_task
+        .await
+        .expect("connection task joined")
+        .expect("connection driver ended cleanly");
     let _ = shutdown_tx.send(());
     server.await.expect("proxy server task");
 }

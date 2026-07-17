@@ -28,8 +28,9 @@ fn instance() -> Pgpool {
     instance
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1890" reason="Verify CR status omits unsupported reserve counters and exposes unavailable reserve accounting.">
 #[test]
-fn context_aware_status_projects_capacity_plan() {
+fn context_aware_status_omits_unreconciled_reserve_counters() {
     let service = instance();
     let blocked = "endpoint primary scale blocked: requested=120, usable=80, held=80";
     let context = serde_json::to_value(ControlPlaneStatus {
@@ -44,6 +45,7 @@ fn context_aware_status_projects_capacity_plan() {
             available: 0,
             reserve_granted: 0,
             reserve_available: 0,
+            reserve_accounting_available: false,
             reserve_denials: 0,
             allocator_available: true,
             blocked_scale_reason: Some(blocked.into()),
@@ -63,6 +65,13 @@ fn context_aware_status_projects_capacity_plan() {
     assert_eq!(patch["status"]["desiredReplicas"], 3);
     assert_eq!(patch["status"]["endpoints"][0]["usable"], 80);
     assert_eq!(patch["status"]["endpoints"][0]["allocated"], 80);
+    assert_eq!(
+        patch["status"]["endpoints"][0]["reserveAccountingAvailable"],
+        false
+    );
+    assert!(patch["status"]["endpoints"][0]["reserveGranted"].is_null());
+    assert!(patch["status"]["endpoints"][0]["reserveAvailable"].is_null());
     assert_eq!(patch["status"]["blockedScaleReason"], blocked);
 }
+// </HANDWRITE>
 // HANDWRITE-END

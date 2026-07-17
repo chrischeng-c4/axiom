@@ -22,6 +22,7 @@ pub fn routes_json() -> String {
             {"method": "GET", "path": "/docs", "purpose": "Swagger UI"},
             {"method": "GET", "path": "/pools", "purpose": "list backend pools"},
             {"method": "GET", "path": "/pools/{pool}/stats", "purpose": "pool saturation and reuse stats"},
+            {"method": "GET", "path": "/drain", "purpose": "enter graceful drain from Kubernetes preStop"},
             {"method": "POST", "path": "/drain", "purpose": "enter graceful drain before pod shutdown"}
         ],
         "tcp": [
@@ -75,7 +76,7 @@ HTTP/1.1+h2c and carries standard service endpoints plus pool/drain operations:
 - `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs`
 - `GET /pools`
 - `GET /pools/{pool}/stats`
-- `POST /drain`
+- `GET /drain` (Kubernetes preStop) and `POST /drain`
 
 Use `pgpool spec --format routes` for the current inventory.
 "#
@@ -113,7 +114,10 @@ pub fn openapi() -> Value {
                     "responses": ok_schema("PoolStats")
                 }
             },
-            "/drain": {"post": {"summary": "Enter graceful drain", "responses": ok_schema("DrainState")}}
+            "/drain": {
+                "get": {"summary": "Enter graceful drain for Kubernetes preStop", "responses": ok_schema("DrainState")},
+                "post": {"summary": "Enter graceful drain", "responses": ok_schema("DrainState")}
+            }
         },
         "components": {"schemas": schemas()}
     })

@@ -37,6 +37,14 @@ flowchart TD
   reject_stateful --> done([deterministic stateless instance artifacts])
 ```
 
+### preStop drain compatibility
+
+The Deployment uses Kubernetes `lifecycle.preStop.httpGet` for `/drain` on the
+admin port. Kubernetes lifecycle HTTP hooks always issue GET requests, so the
+admin contract exposes `GET /drain` as the same idempotent transition as the
+operator-facing `POST /drain`. Both forms start the shared drain controller
+before SIGTERM, allowing readiness to withdraw before process termination.
+
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
@@ -86,29 +94,22 @@ changes:
     impl_mode: hand-written
     section: logic
     description: Depend on the shared operator renderer crate.
-  - path: apps/pgpool/src/lib.rs
-    action: modify
-    impl_mode: hand-written
-    section: logic
-    description: Export the Pgpool Kubernetes composition module.
-  - path: apps/pgpool/src/k8s/mod.rs
-    action: create
-    impl_mode: hand-written
-    section: logic
-    description: Publish typed Pgpool Kubernetes instance rendering.
   - path: apps/pgpool/src/k8s/instance.rs
     action: create
     impl_mode: hand-written
     section: logic
+    anchor: render_manifests
     description: Compose common Service and Deployment primitives with the stateless Pgpool Pod contract.
   - path: apps/pgpool/src/bin/pgpool.rs
     action: modify
     impl_mode: hand-written
     section: logic
+    anchor: main
     description: Add pgpool k8s instance render profile and output handling.
   - path: apps/pgpool/tests/cli_contract.rs
     action: modify
     impl_mode: hand-written
     section: unit-test
+    anchor: k8s_instance_render_is_operator_consumed_custom_resource
     description: Verify the CLI emits Deployment artifacts without stateful or sticky-session fields.
 ```

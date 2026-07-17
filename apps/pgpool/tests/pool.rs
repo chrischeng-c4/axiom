@@ -943,6 +943,7 @@ async fn dropped_lease_without_explicit_release_does_not_leak_capacity_slot() {
     drop(second);
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1891" reason="Update explicit policy fixtures to Duration values.">
 /// verify: pool::reserve_admission_waits_before_opening_reserve_backend (R2)
 #[tokio::test]
 async fn reserve_admission_waits_before_opening_reserve_backend() {
@@ -954,9 +955,9 @@ async fn reserve_admission_waits_before_opening_reserve_backend() {
             endpoint: "primary".into(),
             pod: "pod-a".into(),
             policy: ReserveLeasePolicy {
-                reserve_pool_timeout_seconds: 0,
-                queue_wait_timeout_seconds: 0,
-                reserve_idle_timeout_seconds: 1,
+                reserve_pool_timeout: Duration::ZERO,
+                queue_wait_timeout: Duration::ZERO,
+                reserve_idle_timeout: Duration::from_secs(1),
                 lease_ttl_seconds: 10,
                 request_chunk_size: 1,
             },
@@ -974,4 +975,5 @@ async fn reserve_admission_waits_before_opening_reserve_backend() {
         "a queued demand cannot create a physical backend without an allocator grant"
     );
 }
+// </HANDWRITE>
 // </HANDWRITE>

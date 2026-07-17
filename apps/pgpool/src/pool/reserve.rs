@@ -2,28 +2,49 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::k8s::{ReserveLeaseGrant, ReserveLeaseKey, ReserveLeaseRequest, ReserveLeaseState};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1891" reason="Represent reserve, queue, and idle timeouts as Duration and preserve sub-second elapsed time during local idle release.">
 /// Runtime policy rendered by the operator.  The caller places
 /// `reconcile_once` on a background task; acquire/relay code only calls
 /// `try_spend`, which reads the local cache and never performs control-plane
 /// I/O.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReserveLeasePolicy {
-    pub reserve_pool_timeout_seconds: u64,
-    pub queue_wait_timeout_seconds: u64,
-    pub reserve_idle_timeout_seconds: u64,
+    pub reserve_pool_timeout: Duration,
+    pub queue_wait_timeout: Duration,
+    pub reserve_idle_timeout: Duration,
     pub lease_ttl_seconds: u64,
     pub request_chunk_size: u32,
+}
+// </HANDWRITE>
+
+impl ReserveLeasePolicy {
+    pub fn from_millis(
+        reserve_pool_timeout_ms: u64,
+        queue_wait_timeout_ms: u64,
+        reserve_idle_timeout_ms: u64,
+        lease_ttl_seconds: u64,
+        request_chunk_size: u32,
+    ) -> Self {
+        Self {
+            reserve_pool_timeout: Duration::from_millis(reserve_pool_timeout_ms),
+            queue_wait_timeout: Duration::from_millis(queue_wait_timeout_ms),
+            reserve_idle_timeout: Duration::from_millis(reserve_idle_timeout_ms),
+            lease_ttl_seconds,
+            request_chunk_size,
+        }
+    }
 }
 
 impl Default for ReserveLeasePolicy {
     fn default() -> Self {
         Self {
-            reserve_pool_timeout_seconds: 1,
-            queue_wait_timeout_seconds: 5,
-            reserve_idle_timeout_seconds: 30,
+            reserve_pool_timeout: Duration::from_secs(1),
+            queue_wait_timeout: Duration::from_secs(5),
+            reserve_idle_timeout: Duration::from_secs(30),
             lease_ttl_seconds: 60,
             request_chunk_size: 1,
         }
@@ -74,7 +95,7 @@ pub struct ReserveLeaseClientStats {
 struct CachedGrant {
     grant: ReserveLeaseGrant,
     spent_tokens: BTreeSet<u64>,
-    idle_since_epoch_seconds: Option<u64>,
+    idle_since: Option<Duration>,
 }
 
 #[derive(Debug, Default)]
@@ -126,7 +147,7 @@ impl ReserveLeaseClient {
     /// Take one endpoint-local chunk for a background control-plane request.
     /// Requests are bounded and get stable tokens before dispatch, so a retry
     /// can be idempotent at the operator.
-    pub fn take_next_batch(&self, now_epoch_seconds: u64) -> Option<ReserveLeaseBatch> {
+    pub fn take_next_batch(&self, now: Duration) -> Option<ReserveLeaseBatch> {
         let mut state = self.state.lock().expect("reserve lease state lock");
         let ((endpoint, pod), requested_units) = state
             .queued
@@ -147,7 +168,8 @@ impl ReserveLeaseClient {
                 pod,
                 token: format!("reserve-{}", state.next_token),
                 units,
-                expires_at_epoch_seconds: now_epoch_seconds
+                expires_at_epoch_seconds: now
+                    .as_secs()
                     .saturating_add(self.policy.lease_ttl_seconds.max(1)),
             }],
         })
@@ -157,16 +179,12 @@ impl ReserveLeaseClient {
     /// to the caller's background worker.  No state lock crosses `.await`,
     /// and a transport failure requeues the exact batch instead of allowing a
     /// speculative local grant.
-    pub async fn reconcile_once<F, Fut, E>(
-        &self,
-        now_epoch_seconds: u64,
-        dispatch: F,
-    ) -> Result<usize, E>
+    pub async fn reconcile_once<F, Fut, E>(&self, now: Duration, dispatch: F) -> Result<usize, E>
     where
         F: FnOnce(ReserveLeaseBatch) -> Fut,
         Fut: Future<Output = Result<Vec<ReserveLeaseGrant>, E>>,
     {
-        let Some(batch) = self.take_next_batch(now_epoch_seconds) else {
+        let Some(batch) = self.take_next_batch(now) else {
             return Ok(0);
         };
         let retry = batch.clone();
@@ -192,27 +210,27 @@ impl ReserveLeaseClient {
             cached.entry(grant.key.clone()).or_insert(CachedGrant {
                 grant,
                 spent_tokens: BTreeSet::new(),
-                idle_since_epoch_seconds: None,
+                idle_since: None,
             });
         }
     }
 
     /// Hot-path lookup: returns one cached, unexpired grant unit or None.  It
     /// never refreshes, requests, or releases a Kubernetes resource.
-    pub fn try_spend(&self, endpoint: &str, now_epoch_seconds: u64) -> Option<ReserveLeaseUse> {
+    pub fn try_spend(&self, endpoint: &str, now: Duration) -> Option<ReserveLeaseUse> {
         let mut state = self.state.lock().expect("reserve lease state lock");
         state.next_spend_token = state.next_spend_token.saturating_add(1);
         let spend_token = state.next_spend_token;
         let grants = state.grants.get_mut(endpoint)?;
         for (key, cached) in grants.iter_mut() {
-            if cached.grant.expires_at_epoch_seconds <= now_epoch_seconds
+            if cached.grant.expires_at_epoch_seconds <= now.as_secs()
                 || cached.grant.state == ReserveLeaseState::Expired
                 || cached.spent_tokens.len() >= cached.grant.units as usize
             {
                 continue;
             }
             cached.spent_tokens.insert(spend_token);
-            cached.idle_since_epoch_seconds = None;
+            cached.idle_since = None;
             cached.grant.state = ReserveLeaseState::Connecting;
             return Some(ReserveLeaseUse {
                 endpoint: endpoint.into(),
@@ -239,7 +257,7 @@ impl ReserveLeaseClient {
     /// A close, failed connect, or failed reset returns the locally spent unit
     /// once.  Idle timeout collection may later return the whole unused grant
     /// to the operator.
-    pub fn return_spend(&self, lease: &ReserveLeaseUse, now_epoch_seconds: u64) -> bool {
+    pub fn return_spend(&self, lease: &ReserveLeaseUse, now: Duration) -> bool {
         let mut state = self.state.lock().expect("reserve lease state lock");
         let Some(cached) = state
             .grants
@@ -253,9 +271,7 @@ impl ReserveLeaseClient {
         }
         if cached.spent_tokens.is_empty() {
             cached.grant.state = ReserveLeaseState::Idle;
-            cached
-                .idle_since_epoch_seconds
-                .get_or_insert(now_epoch_seconds);
+            cached.idle_since.get_or_insert(now);
         } else {
             cached.grant.state = ReserveLeaseState::Active;
         }
@@ -264,12 +280,12 @@ impl ReserveLeaseClient {
 
     /// Mark expired cache records unavailable to the data plane, but retain
     /// their accounting record for the background worker to safely reconcile.
-    pub fn expire(&self, now_epoch_seconds: u64) -> Vec<(String, ReserveLeaseKey)> {
+    pub fn expire(&self, now: Duration) -> Vec<(String, ReserveLeaseKey)> {
         let mut state = self.state.lock().expect("reserve lease state lock");
         let mut expired = Vec::new();
         for (endpoint, grants) in &mut state.grants {
             for (key, cached) in grants {
-                if cached.grant.expires_at_epoch_seconds <= now_epoch_seconds
+                if cached.grant.expires_at_epoch_seconds <= now.as_secs()
                     && cached.grant.state != ReserveLeaseState::Expired
                 {
                     cached.grant.state = ReserveLeaseState::Expired;
@@ -283,7 +299,7 @@ impl ReserveLeaseClient {
 
     /// Remove only an unused and idle cached grant after the configured TTL;
     /// the caller sends the resulting key to the allocator asynchronously.
-    pub fn collect_idle_releases(&self, now_epoch_seconds: u64) -> Vec<(String, ReserveLeaseKey)> {
+    pub fn collect_idle_releases(&self, now: Duration) -> Vec<(String, ReserveLeaseKey)> {
         let mut state = self.state.lock().expect("reserve lease state lock");
         let mut releases = Vec::new();
         for (endpoint, grants) in &mut state.grants {
@@ -291,10 +307,8 @@ impl ReserveLeaseClient {
                 .iter()
                 .filter_map(|(key, cached)| {
                     (cached.spent_tokens.is_empty()
-                        && cached.idle_since_epoch_seconds.is_some_and(|idle_since| {
-                            now_epoch_seconds
-                                >= idle_since
-                                    .saturating_add(self.policy.reserve_idle_timeout_seconds)
+                        && cached.idle_since.is_some_and(|idle_since| {
+                            now.saturating_sub(idle_since) >= self.policy.reserve_idle_timeout
                         }))
                     .then(|| key.clone())
                 })
@@ -378,11 +392,15 @@ mod tests {
             pod: "pod-a".into(),
             units: 3,
         });
-        let batch = client.take_next_batch(10).unwrap();
+        let batch = client.take_next_batch(Duration::from_secs(10)).unwrap();
         assert_eq!(batch.requests[0].units, 2);
-        assert!(client.try_spend("primary", 10).is_none());
+        assert!(client
+            .try_spend("primary", Duration::from_secs(10))
+            .is_none());
         client.install_grants("primary", vec![grant("g", 1, 20)]);
-        assert!(client.try_spend("primary", 10).is_some());
+        assert!(client
+            .try_spend("primary", Duration::from_secs(10))
+            .is_some());
         assert_eq!(client.stats().queued_units, 1);
     }
 
@@ -390,27 +408,62 @@ mod tests {
     fn expiration_fails_closed_and_close_returns_spent_unit_once() {
         let client = ReserveLeaseClient::new(ReserveLeasePolicy::default());
         client.install_grants("primary", vec![grant("g", 1, 20)]);
-        let lease = client.try_spend("primary", 10).unwrap();
-        assert!(client.return_spend(&lease, 11));
-        assert!(!client.return_spend(&lease, 11));
-        assert_eq!(client.collect_idle_releases(41).len(), 1);
+        let lease = client
+            .try_spend("primary", Duration::from_secs(10))
+            .unwrap();
+        assert!(client.return_spend(&lease, Duration::from_secs(11)));
+        assert!(!client.return_spend(&lease, Duration::from_secs(11)));
+        assert_eq!(
+            client.collect_idle_releases(Duration::from_secs(41)).len(),
+            1
+        );
         client.install_grants("primary", vec![grant("expired", 1, 20)]);
-        assert_eq!(client.expire(20).len(), 1);
-        assert!(client.try_spend("primary", 20).is_none());
+        assert_eq!(client.expire(Duration::from_secs(20)).len(), 1);
+        assert!(client
+            .try_spend("primary", Duration::from_secs(20))
+            .is_none());
     }
 
     #[test]
     fn each_spend_has_a_distinct_return_token() {
         let client = ReserveLeaseClient::new(ReserveLeasePolicy::default());
         client.install_grants("primary", vec![grant("g", 2, 20)]);
-        let first = client.try_spend("primary", 10).unwrap();
-        let second = client.try_spend("primary", 10).unwrap();
+        let first = client
+            .try_spend("primary", Duration::from_secs(10))
+            .unwrap();
+        let second = client
+            .try_spend("primary", Duration::from_secs(10))
+            .unwrap();
 
-        assert!(client.return_spend(&first, 11));
-        assert!(!client.return_spend(&first, 11));
+        assert!(client.return_spend(&first, Duration::from_secs(11)));
+        assert!(!client.return_spend(&first, Duration::from_secs(11)));
         assert_eq!(client.stats().spent_units, 1);
-        assert!(client.return_spend(&second, 11));
+        assert!(client.return_spend(&second, Duration::from_secs(11)));
         assert_eq!(client.stats().spent_units, 0);
+    }
+
+    #[test]
+    fn millisecond_policy_preserves_all_subsecond_values() {
+        let policy = ReserveLeasePolicy::from_millis(500, 500, 500, 60, 1);
+        assert_eq!(policy.reserve_pool_timeout, Duration::from_millis(500));
+        assert_eq!(policy.queue_wait_timeout, Duration::from_millis(500));
+        assert_eq!(policy.reserve_idle_timeout, Duration::from_millis(500));
+
+        let client = ReserveLeaseClient::new(policy);
+        client.install_grants("primary", vec![grant("g", 1, 20)]);
+        let lease = client
+            .try_spend("primary", Duration::ZERO)
+            .expect("unexpired grant is spendable");
+        assert!(client.return_spend(&lease, Duration::ZERO));
+        assert!(client
+            .collect_idle_releases(Duration::from_millis(499))
+            .is_empty());
+        assert_eq!(
+            client
+                .collect_idle_releases(Duration::from_millis(500))
+                .len(),
+            1
+        );
     }
 }
 

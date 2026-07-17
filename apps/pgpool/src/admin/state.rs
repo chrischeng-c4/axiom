@@ -36,6 +36,7 @@ pub struct NamedPool {
     pub pool: BackendPool,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1884" reason="logic section in state.rs is hand-written pending codegen support">
 /// axum shared state for the admin `Router` (via `axum::extract::State`),
 /// constructed once in `serve()` alongside the TCP frontend's
 /// `TcpServerConfig` so both planes hold clones of the identical
@@ -54,17 +55,13 @@ pub struct AdminState {
     /// single-pool-per-process); `GET /pools` iterates this, `GET
     /// /pools/{pool}/stats` looks up by name (R3).
     pub pools: Arc<Vec<NamedPool>>,
-    /// A held-open subscription on `drain`, never read directly. Exists
-    /// solely to keep `tokio::sync::watch::Sender::send` from no-op'ing:
-    /// with zero live receivers, `DrainController::start_drain()` silently
-    /// fails to update the shared state (tokio's watch channel treats a
-    /// receiver-less send as a hint and drops it). In production a
-    /// receiver is always kept alive by the TCP frontend's
-    /// `TcpServerConfig` and the SIGTERM/SIGINT signal task, but the admin
-    /// plane must not depend on that external wiring order to make
-    /// `POST /drain` correct on its own (R2, R7).
+    /// A held subscription that makes the admin plane an explicit startup
+    /// participant in the shared drain channel. `DrainController::start_drain`
+    /// uses durable publication, so correctness no longer relies on this
+    /// receiver surviving a particular serve-startup ordering.
     _drain_signal: DrainSignal,
 }
+// </HANDWRITE>
 
 impl AdminState {
     pub fn new(drain: DrainController, pools: Vec<NamedPool>) -> Self {

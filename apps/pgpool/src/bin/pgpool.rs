@@ -116,6 +116,11 @@ struct ServeArgs {
     /// supplies this from metadata.name through the Downward API.
     #[arg(long, env = "PGPOOL_RESERVE_POD", default_value = "")]
     reserve_pod: String,
+    /// Stable pod identity used to identify every physical PostgreSQL backend
+    /// connection opened by this pgpool process. The Deployment renderer
+    /// supplies metadata.name through the Downward API.
+    #[arg(long, env = "PGPOOL_POD_NAME", default_value = "local")]
+    pod_name: String,
     /// Normal-pool wait before a saturated transaction is allowed to signal
     /// a background reserve-grant request.
     #[arg(long, env = "PGPOOL_RESERVE_POOL_TIMEOUT_MS", default_value_t = 1000)]
@@ -479,6 +484,7 @@ async fn issue(args: IssueArgs) -> Result<()> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in pgpool.rs is hand-written pending codegen support">
 /// `serve_entry` in the TD Logic flowchart: build a `TcpServerConfig` from
 /// `RuntimePlan` with NO server-tcp-level `ConnectionBudget` wired in (the
 /// `SessionHandler`/`TransactionHandler` enforce their own admission so a
@@ -530,7 +536,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         backend_connect_timeout,
         wire,
     };
-    let backend_pool = if args.reserve_endpoint.is_empty() || args.reserve_pod.is_empty() {
+    let backend_application_name = format!("pgpool-{}", args.pod_name);
+    let backend_pool = (if args.reserve_endpoint.is_empty() || args.reserve_pod.is_empty() {
         pgpool::pool::BackendPool::new(pool_config)
     } else {
         pgpool::pool::BackendPool::new_with_reserve(
@@ -538,16 +545,17 @@ async fn serve(args: ServeArgs) -> Result<()> {
             pgpool::pool::ReserveLeaseRuntimeConfig {
                 endpoint: args.reserve_endpoint.clone(),
                 pod: args.reserve_pod.clone(),
-                policy: pgpool::pool::ReserveLeasePolicy {
-                    reserve_pool_timeout_seconds: args.reserve_pool_timeout_ms / 1000,
-                    queue_wait_timeout_seconds: args.queue_wait_timeout_ms / 1000,
-                    reserve_idle_timeout_seconds: args.reserve_idle_timeout_ms / 1000,
-                    lease_ttl_seconds: args.reserve_lease_ttl_seconds,
-                    request_chunk_size: args.reserve_request_chunk_size,
-                },
+                policy: pgpool::pool::ReserveLeasePolicy::from_millis(
+                    args.reserve_pool_timeout_ms,
+                    args.queue_wait_timeout_ms,
+                    args.reserve_idle_timeout_ms,
+                    args.reserve_lease_ttl_seconds,
+                    args.reserve_request_chunk_size,
+                ),
             },
         )
-    };
+    })
+    .with_backend_application_name(backend_application_name);
     let admin_backend_pool = backend_pool.clone();
 
     // Called exactly once: the SAME `ConnectionBudget` is shared into
@@ -595,14 +603,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
         ),
     };
 
-    // `spawn_signal_task` (TD Logic section): SIGTERM/SIGINT flips the SAME
-    // shared controller `POST /drain` flips, so `/readyz` and the TCP
-    // accept loop react identically to either trigger (R2).
-    tokio::spawn(pgpool::admin::drain_on_shutdown_signal(
-        drain.clone(),
-        server_lifecycle::signal::wait_shutdown_signal(),
-    ));
-
     // `build_admin_router` (TD Logic section): one named pool per process
     // today (R3 Schema note), labeled via `--pool-name`/`PGPOOL_POOL_NAME`.
     let admin_state = pgpool::admin::AdminState::new(
@@ -615,24 +615,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }],
     );
     let admin_router = pgpool::admin::build_router(admin_state);
-    let admin_listener = tokio::net::TcpListener::bind(plan.admin_bind.socket_addr()).await?;
 
-    let listener = server_tcp::bind(&server_config).await?;
-    println!("pgpool serve: listening on {}", listener.local_addr()?);
-    println!(
-        "pgpool serve: backend {}:{}",
-        args.backend_host, args.backend_port
-    );
-    println!(
-        "pgpool serve: admin plane on {}",
-        admin_listener.local_addr()?
-    );
-
-    // `run_both_planes` (TD Logic section): each plane gets its OWN
-    // one-shot shutdown future awaiting `drain.signal().changed()` — safe
-    // and idempotent since both resolve on the exact same shared
-    // controller, whether it was flipped by SIGTERM/SIGINT or `POST
-    // /drain` (R2, AC2).
+    // Subscribe both serving planes before the signal task can publish a
+    // drain. `DrainSignal::changed` also observes an already-published state,
+    // so a drain during either bind below resolves both shutdown futures.
     let tcp_shutdown = {
         let mut signal = drain.signal();
         async move {
@@ -646,6 +632,26 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     };
 
+    // `spawn_signal_task` (TD Logic section): this is deliberately after
+    // AdminState and both plane subscriptions exist, so SIGTERM/SIGINT flips
+    // the same controller every startup participant already observes.
+    tokio::spawn(pgpool::admin::drain_on_shutdown_signal(
+        drain.clone(),
+        server_lifecycle::signal::wait_shutdown_signal(),
+    ));
+    let admin_listener = tokio::net::TcpListener::bind(plan.admin_bind.socket_addr()).await?;
+
+    let listener = server_tcp::bind(&server_config).await?;
+    println!("pgpool serve: listening on {}", listener.local_addr()?);
+    println!(
+        "pgpool serve: backend {}:{}",
+        args.backend_host, args.backend_port
+    );
+    println!(
+        "pgpool serve: admin plane on {}",
+        admin_listener.local_addr()?
+    );
+
     tokio::join!(
         server_tcp::serve(listener, server_config, handler, tcp_shutdown),
         server_http::serve_h2c_with_options(
@@ -658,4 +664,5 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     Ok(())
 }
+// </HANDWRITE>
 // </HANDWRITE>

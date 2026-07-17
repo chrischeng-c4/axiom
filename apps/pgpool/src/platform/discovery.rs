@@ -1,7 +1,10 @@
 // SPEC-MANAGED: apps/pgpool/tech-design/semantic/pgpool-runtime-connection-limit-discovery.md#logic
 // <HANDWRITE gap="missing-generator:logic:pgpool-platform-discovery" tracker="#1570" reason="Live PostgreSQL system-view discovery needs an async adapter primitive.">
+use std::sync::Once;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -9,6 +12,21 @@ pub enum EndpointProvider {
     PlainPostgres,
     CloudSql,
     AlloyDb,
+}
+
+/// Transport selected only for control-plane connection discovery. Pgpool's
+/// PostgreSQL wire data plane remains independent of this policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiscoveryTlsMode {
+    NoTls,
+    SystemRoots,
+}
+
+pub const fn discovery_tls_mode(provider: EndpointProvider) -> DiscoveryTlsMode {
+    match provider {
+        EndpointProvider::PlainPostgres => DiscoveryTlsMode::NoTls,
+        EndpointProvider::CloudSql | EndpointProvider::AlloyDb => DiscoveryTlsMode::SystemRoots,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +42,9 @@ pub struct RemoteEndpoint {
     pub provider: EndpointProvider,
     pub role: EndpointRole,
     pub configured_ceiling: Option<u32>,
+    /// Optional PEM root bundle loaded from an operator-managed Secret for a
+    /// managed PostgreSQL endpoint with a private CA.
+    pub tls_ca_pem: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +56,7 @@ pub struct ProviderAdvisory {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConnectionFacts {
     pub max_connections: u32,
+    pub superuser_reserved_connections: u32,
     pub total_connections: u32,
     pub pgpool_connections: u32,
 }
@@ -57,12 +79,16 @@ pub struct ConnectionFacts {
 
 #[derive(Debug, Error)]
 pub enum ConnectionDiscoveryError {
+    #[error("failed to configure discovery TLS: {0}")]
+    TlsConfiguration(String),
     #[error("failed to connect to remote PostgreSQL endpoint: {0}")]
     Connect(#[source] tokio_postgres::Error),
     #[error("remote PostgreSQL discovery query failed: {0}")]
     Query(#[source] tokio_postgres::Error),
     #[error("remote max_connections value is not a positive integer: {0}")]
     InvalidMaxConnections(String),
+    #[error("remote superuser_reserved_connections value is not a non-negative integer: {0}")]
+    InvalidSuperuserReservedConnections(String),
     #[error("remote connection count is outside the supported u32 range: {0}")]
     InvalidConnectionCount(i64),
 }
@@ -79,6 +105,17 @@ pub fn effective_connection_limit(
         .unwrap_or(runtime_max)
 }
 
+fn allocatable_connection_limit(
+    runtime_max: u32,
+    configured_ceiling: Option<u32>,
+    advisory_max: Option<u32>,
+    superuser_reserved_connections: u32,
+) -> u32 {
+    effective_connection_limit(runtime_max, configured_ceiling, advisory_max)
+        .saturating_sub(superuser_reserved_connections)
+}
+
+// <HANDWRITE gap="missing-generator:logic" tracker="#1882" reason="logic section in discovery.rs is hand-written pending codegen support">
 /// Query the live endpoint. Provider SDK metadata is accepted only as an
 /// advisory cap and never substitutes for this runtime result.
 pub async fn discover_connection_facts(
@@ -86,21 +123,42 @@ pub async fn discover_connection_facts(
     postgres: tokio_postgres::Config,
     advisory: ProviderAdvisory,
 ) -> Result<ConnectionFacts, ConnectionDiscoveryError> {
-    let (client, connection) = postgres
-        .connect(tokio_postgres::NoTls)
-        .await
-        .map_err(ConnectionDiscoveryError::Connect)?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::warn!(%error, "remote PostgreSQL discovery connection ended");
+    let client = match discovery_tls_mode(endpoint.provider) {
+        DiscoveryTlsMode::NoTls => {
+            let (client, connection) = postgres
+                .connect(tokio_postgres::NoTls)
+                .await
+                .map_err(ConnectionDiscoveryError::Connect)?;
+            tokio::spawn(async move {
+                if let Err(error) = connection.await {
+                    tracing::warn!(%error, "remote PostgreSQL discovery connection ended");
+                }
+            });
+            client
         }
-    });
+        DiscoveryTlsMode::SystemRoots => {
+            let tls =
+                MakeRustlsConnect::new(discovery_rustls_config(endpoint.tls_ca_pem.as_deref())?);
+            let (client, connection) = postgres
+                .connect(tls)
+                .await
+                .map_err(ConnectionDiscoveryError::Connect)?;
+            tokio::spawn(async move {
+                if let Err(error) = connection.await {
+                    tracing::warn!(%error, "remote PostgreSQL TLS discovery connection ended");
+                }
+            });
+            client
+        }
+    };
 
     let row = client
         .query_one(
             "SELECT current_setting('max_connections') AS max_connections, \
-                    count(*)::bigint AS total_connections, \
-                    count(*) FILTER (WHERE application_name LIKE 'pgpool%')::bigint \
+                    current_setting('superuser_reserved_connections') AS superuser_reserved_connections, \
+                    count(*) FILTER (WHERE backend_type = 'client backend')::bigint AS total_connections, \
+                    count(*) FILTER (WHERE backend_type = 'client backend' \
+                        AND application_name LIKE 'pgpool-%')::bigint \
                         AS pgpool_connections \
              FROM pg_stat_activity",
             &[],
@@ -114,17 +172,23 @@ pub async fn discover_connection_facts(
         .ok()
         .filter(|value| *value > 0)
         .ok_or_else(|| ConnectionDiscoveryError::InvalidMaxConnections(runtime_max_raw))?;
+    let superuser_reserved_raw: String = row.get("superuser_reserved_connections");
+    let superuser_reserved_connections = superuser_reserved_raw.parse::<u32>().map_err(|_| {
+        ConnectionDiscoveryError::InvalidSuperuserReservedConnections(superuser_reserved_raw)
+    })?;
     let total_connections = count_to_u32(row.get("total_connections"))?;
     let pgpool_connections = count_to_u32(row.get("pgpool_connections"))?;
     let runtime = RuntimeConnectionFacts {
         max_connections: runtime_max,
+        superuser_reserved_connections,
         total_connections,
         pgpool_connections,
     };
-    let effective_max_connections = effective_connection_limit(
+    let effective_max_connections = allocatable_connection_limit(
         runtime.max_connections,
         endpoint.configured_ceiling,
         advisory.max_connections,
+        runtime.superuser_reserved_connections,
     );
 
     Ok(ConnectionFacts {
@@ -134,6 +198,51 @@ pub async fn discover_connection_facts(
         effective_max_connections,
         non_pgpool_connections: runtime.non_pgpool_connections(),
     })
+}
+// </HANDWRITE>
+
+fn discovery_rustls_config(
+    tls_ca_pem: Option<&[u8]>,
+) -> Result<rustls::ClientConfig, ConnectionDiscoveryError> {
+    static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
+    INSTALL_CRYPTO_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+    let certificates = rustls_native_certs::load_native_certs();
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in certificates.certs {
+        roots.add(certificate).map_err(|error| {
+            ConnectionDiscoveryError::TlsConfiguration(format!("add system root: {error}"))
+        })?;
+    }
+    if let Some(pem) = tls_ca_pem {
+        let mut reader = std::io::Cursor::new(pem);
+        let mut added = 0;
+        for certificate in rustls_pemfile::certs(&mut reader) {
+            let certificate = certificate.map_err(|error| {
+                ConnectionDiscoveryError::TlsConfiguration(format!(
+                    "read configured CA PEM: {error}"
+                ))
+            })?;
+            roots.add(certificate).map_err(|error| {
+                ConnectionDiscoveryError::TlsConfiguration(format!("add configured CA: {error}"))
+            })?;
+            added += 1;
+        }
+        if added == 0 {
+            return Err(ConnectionDiscoveryError::TlsConfiguration(
+                "configured TLS CA Secret contains no PEM certificates".into(),
+            ));
+        }
+    }
+    if roots.is_empty() {
+        return Err(ConnectionDiscoveryError::TlsConfiguration(
+            "no system trust roots available for managed PostgreSQL discovery".into(),
+        ));
+    }
+    Ok(rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth())
 }
 
 fn count_to_u32(value: i64) -> Result<u32, ConnectionDiscoveryError> {
@@ -161,12 +270,14 @@ mod tests {
             provider: EndpointProvider::AlloyDb,
             role: EndpointRole::Primary,
             configured_ceiling: None,
+            tls_ca_pem: None,
         };
         let read_pool = RemoteEndpoint {
             name: "alloy-read-pool".into(),
             provider: EndpointProvider::AlloyDb,
             role: EndpointRole::ReadPool,
             configured_ceiling: None,
+            tls_ca_pem: None,
         };
         assert_ne!(primary, read_pool);
         assert_eq!(primary.provider, EndpointProvider::AlloyDb);
@@ -176,6 +287,7 @@ mod tests {
     fn non_pgpool_usage_is_saturating() {
         let facts = RuntimeConnectionFacts {
             max_connections: 100,
+            superuser_reserved_connections: 3,
             total_connections: 12,
             pgpool_connections: 5,
         };
@@ -188,6 +300,13 @@ mod tests {
             .non_pgpool_connections(),
             0
         );
+    }
+
+    #[test]
+    fn effective_capacity_excludes_superuser_reserved_slots() {
+        assert_eq!(allocatable_connection_limit(100, None, None, 3), 97);
+        assert_eq!(allocatable_connection_limit(100, Some(90), Some(95), 3), 87);
+        assert_eq!(allocatable_connection_limit(2, None, None, 3), 0);
     }
 }
 // </HANDWRITE>
