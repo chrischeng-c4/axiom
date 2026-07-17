@@ -20,6 +20,7 @@ pub mod drift;
 pub mod ec;
 pub mod fillback;
 pub mod generator;
+pub mod goal;
 pub mod guard;
 pub mod guard_sanction;
 pub mod hook;

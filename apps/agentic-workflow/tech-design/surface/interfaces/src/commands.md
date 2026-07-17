@@ -39,6 +39,7 @@ use crate::cli::conf;
 use crate::cli::drift;
 use crate::cli::ec;
 use crate::cli::generator;
+use crate::cli::goal;
 use crate::cli::guard;
 use crate::cli::init;
 use crate::cli::issues;
@@ -65,8 +66,11 @@ pub enum Commands {
     /// Generator gap request surface after takeover readiness.
     Generator(generator::GeneratorArgs),
 
-    /// Agent-runtime direct edit/create guard for Codex and Claude Code.
+    /// Agent-runtime direct edit/create guard for Codex, Claude Code, and AGY.
     Guard(guard::GuardArgs),
+
+    /// Ad-hoc CLI-owned verifiable-condition loop for bounded work outside the WI lifecycle.
+    Goal(goal::GoalArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
     Conf(conf::ConfArgs),
@@ -121,6 +125,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Guard(args) => {
             guard::run(args).await?;
+        }
+        Commands::Goal(args) => {
+            goal::run(args)?;
         }
         Commands::Conf(args) => {
             conf::run(args)?;
@@ -224,4 +231,13 @@ changes:
       (`-dev.<sha>`) binary builds are never behind (per #1309's existing
       `is_behind` semver-core compare), so a fresh in-checkout debug build
       never refuses.
+  - path: apps/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1897: adds the `goal` module import and a `Commands::Goal(goal::GoalArgs)`
+      variant (support CLI, next to `Guard`) plus its synchronous
+      `goal::run(args)?` dispatch arm for the new `aw goal` ad-hoc
+      verifiable-condition-loop verb family.
 ```

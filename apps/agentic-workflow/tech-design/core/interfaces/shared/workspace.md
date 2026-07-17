@@ -25,6 +25,7 @@ Public API manifest for `apps/agentic-workflow/src/shared/workspace.rs` generate
 | `AW_TMP_ROOT` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 45 |  |
 | `CHANGES_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 48 |  |
 | `CONFIG_FILE` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 19 |  |
+| `GOALS_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 328 |  |
 | `ISSUES_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 33 |  |
 | `PAYLOADS_DIR` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 42 |  |
 | `SYNC_BEGIN_MARKER` | apps/agentic-workflow/src/shared/workspace.rs | constant | pub | 23 |  |
@@ -38,6 +39,8 @@ Public API manifest for `apps/agentic-workflow/src/shared/workspace.rs` generate
 | `change_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 302 | change_path(project_root: &Path, change_id: &str) -> PathBuf |
 | `changes_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 293 | changes_path(project_root: &Path) -> PathBuf |
 | `config_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 76 | config_path(project_root: &Path) -> PathBuf |
+| `goal_state_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 340 | goal_state_path(project_root: &Path, goal_id: &str) -> PathBuf |
+| `goals_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 333 | goals_path(project_root: &Path) -> PathBuf |
 | `issues_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 157 | issues_path(project_root: &Path) -> PathBuf |
 | `payloads_path` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 176 | payloads_path(project_root: &Path) -> PathBuf |
 | `project_root_for_change_dir` | apps/agentic-workflow/src/shared/workspace.rs | function | pub | 277 | project_root_for_change_dir(change_dir: &Path) -> Option<PathBuf> |
@@ -380,6 +383,23 @@ pub fn worktree_path(project_root: &Path, change_id: &str) -> PathBuf {
     worktrees_path(project_root).join(change_id)
 }
 
+/// Ad-hoc goal-loop state directory (issue #1897).
+pub const GOALS_DIR: &str = "goals";
+
+/// Path to the ad-hoc goal-loop state directory:
+/// `/tmp/aw/workspaces/<workspace>/goals`.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn goals_path(project_root: &Path) -> PathBuf {
+    workspace_runtime_path(project_root).join(GOALS_DIR)
+}
+
+/// Path to a specific `aw goal` state file:
+/// `/tmp/aw/workspaces/<workspace>/goals/{goal_id}.json`.
+/// @spec apps/agentic-workflow/tech-design/core/interfaces/shared/workspace.md#source
+pub fn goal_state_path(project_root: &Path, goal_id: &str) -> PathBuf {
+    goals_path(project_root).join(format!("{goal_id}.json"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,6 +462,20 @@ mod tests {
         assert_eq!(archive.parent(), issues_path(root).parent());
         assert_eq!(worktrees.parent(), issues_path(root).parent());
     }
+
+    #[test]
+    fn goal_state_path_lives_under_workspace_runtime_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let goals = goals_path(root);
+        assert!(goals.starts_with(aw_tmp_path().join("workspaces")));
+        assert_eq!(goals.file_name().unwrap(), GOALS_DIR);
+        assert_eq!(goals.parent(), issues_path(root).parent());
+
+        let goal_file = goal_state_path(root, "abc123");
+        assert_eq!(goal_file, goals.join("abc123.json"));
+    }
 }
 
 // CODEGEN-END
@@ -458,4 +492,7 @@ changes:
     impl_mode: codegen
     description: |
       Source template owns the complete shared workspace constants and helpers.
+      #1897: added `GOALS_DIR`/`goals_path`/`goal_state_path` for the new `aw
+      goal` verb family's workspace-scoped state file
+      (`/tmp/aw/workspaces/<workspace>/goals/{goal_id}.json`).
 ```

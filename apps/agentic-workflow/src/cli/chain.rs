@@ -364,6 +364,13 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                `aw health` drift/marker axis instead of running the retired whole-tree audit \
                walker (the #844 livelock class) itself",
     },
+    EmitSite {
+        source: "goal.rs:print_check_outcome (blocked self-loop)",
+        sample: "aw goal check a1b2c3d4",
+        note: "#1897: `aw goal check`'s red-gate report loops back on itself with the \
+               resolved goal id until every recorded gate is green or the goal's budget/\
+               24h expiry ceiling is exhausted",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -659,6 +666,41 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "issue.comment",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    // -- goal (support: ad-hoc verifiable-condition loop, #1897) --------
+    // Goal state is workspace-scoped ephemeral `/tmp/aw` JSON, explicitly
+    // outside the WI/TD/EC tracked-lifecycle surface `mutates_lifecycle`
+    // documents above, so every `goal.*` leaf is `false` here regardless
+    // of whether it writes its own state file.
+    VerbLifecycle {
+        path: "goal.set",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.check",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.show",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.list",
+        class: VerbLifecycleClass::Utility,
+        mutates_lifecycle: false,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.clear",
         class: VerbLifecycleClass::Utility,
         mutates_lifecycle: false,
         sunset_criterion: "",

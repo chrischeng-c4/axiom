@@ -25,6 +25,7 @@ const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
 const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
 const SKILL_GUARD: &str = include_str!("../../templates/cli/mainthread/skills/aw-guard/SKILL.md");
+const SKILL_GOAL: &str = include_str!("../../templates/cli/mainthread/skills/aw-goal/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/scripts/release.sh");
 // @spec apps/agentic-workflow/tech-design/surface/specs/init-command.md#R15
@@ -1000,6 +1001,7 @@ fn aw_skill_entries() -> Vec<(&'static str, &'static str)> {
         ("aw-build-release", SKILL_BUILD_RELEASE),
         ("aw-health", SKILL_HEALTH),
         ("aw-guard", SKILL_GUARD),
+        ("aw-goal", SKILL_GOAL),
     ]
 }
 
@@ -1124,6 +1126,11 @@ fn deprecated_skill_names() -> Vec<&'static str> {
         "aw-codex-review",
         "aw-gemini-explore-codebase",
         "aw-gemini-explore-specs",
+        // #1897: the generic Stop-hook goal-loop skill (never reliably
+        // fired, see its own "Known gaps") is retired in favor of the
+        // CLI-owned `aw goal` verifiable-condition loop + thin `aw-goal`
+        // dispatcher skill.
+        "goal-loop",
     ]
 }
 
@@ -2910,6 +2917,50 @@ auth_method = "cli"
                     skill
                 );
             }
+        }
+    }
+
+    // #1897: the generic Stop-hook `goal-loop` skill is retired in favor of
+    // the CLI-owned `aw goal` verifiable-condition loop; both skill-tree
+    // installers must prune it if found on disk from a previous install.
+    #[test]
+    fn test_install_skills_prunes_goal_loop() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            let retired = skills_dir.join("goal-loop");
+            fs::create_dir_all(&retired).unwrap();
+            fs::write(retired.join("SKILL.md"), "# retired goal-loop").unwrap();
+
+            install(&skills_dir).unwrap();
+
+            assert!(
+                !retired.exists(),
+                "removed goal-loop skill should be pruned"
+            );
+        }
+    }
+
+    // #1897: the new `aw-goal` skill projects into both skill trees.
+    #[test]
+    fn test_install_skills_projects_aw_goal() {
+        for install in [
+            install_claude_skills as fn(&Path) -> Result<()>,
+            install_agents_skills as fn(&Path) -> Result<()>,
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let skills_dir = tmp.path().join("skills");
+            fs::create_dir_all(&skills_dir).unwrap();
+
+            install(&skills_dir).unwrap();
+
+            let skill_path = skills_dir.join("aw-goal").join("SKILL.md");
+            assert!(skill_path.exists(), "aw-goal skill should be installed");
+            let content = fs::read_to_string(&skill_path).unwrap();
+            assert!(content.contains("aw goal set"));
         }
     }
 
