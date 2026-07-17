@@ -77,3 +77,35 @@ changes:
     anchor: reserve_admission_waits_before_opening_reserve_backend
     reason: Update explicit policy fixtures to Duration values.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-millisecond-reserve-policy-verification
+requirements:
+  duration_consumers:
+    id: R2
+    text: "Queue, reserve admission, reactor, and idle release consumers use the Duration policy rather than seconds conversion."
+    kind: functional
+    risk: high
+    verify: millisecond_policy_preserves_all_subsecond_values
+  flag_and_env_alignment:
+    id: R3
+    text: "The *_MS CLI and rendered environment surface feeds the same millisecond-granular runtime policy."
+    kind: integration
+    risk: medium
+    verify: reserve_admission_waits_before_opening_reserve_backend
+  subsecond_policy_is_preserved:
+    id: R1
+    text: "All three millisecond timeout inputs construct exact Duration values without floor division to zero."
+    kind: regression
+    risk: high
+    verify: millisecond_policy_preserves_all_subsecond_values
+---
+flowchart TD
+    r1[R1 subsecond policy is preserved] --> millisecond_policy_preserves_all_subsecond_values[millisecond_policy_preserves_all_subsecond_values]
+    r2[R2 duration consumers] --> millisecond_policy_preserves_all_subsecond_values
+    r3[R3 flag and env alignment] --> reserve_admission_waits_before_opening_reserve_backend[reserve_admission_waits_before_opening_reserve_backend]
+```
