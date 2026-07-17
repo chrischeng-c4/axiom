@@ -118,6 +118,7 @@ fn cr_renders_owned_stateless_shared_deployment() {
     }
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Migrate operator control-plane status coverage to the explicit endpoint-scoped Pod lifecycle API.">
 #[test]
 fn status_projects_global_budget_and_managed_readiness() {
     let mut budgets = GlobalConnectionBudget::default();
@@ -172,6 +173,7 @@ fn status_projects_global_budget_and_managed_readiness() {
     assert_eq!(patch["status"]["endpoints"][0]["allocated"], 80);
     assert_eq!(patch["status"]["pods"][0]["drainRequested"], true);
 }
+// </HANDWRITE>
 
 #[test]
 fn operator_assets_are_leader_elected_and_layered() {
