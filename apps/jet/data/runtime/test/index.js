@@ -91,6 +91,8 @@ import {
   toHaveAccessibleName,
   toHaveRole,
   matchObject,
+  setDefaultAssertionTimeout,
+  DEFAULT_ASSERTION_TIMEOUT_MS,
 } from "./matchers.js";
 
 // ── Default fixture registry ───────────────────────────────────────────────
@@ -1537,8 +1539,9 @@ function __expectBase(actual) {
       // Old page-selector form: expect(page).toBeVisible(selector, opts)
       const options = opts ?? {};
       const pageId = (actual && actual.__jet_page_id) ?? "default";
-      const timeout = options.timeout ?? 5000;
+      const timeout = options.timeout ?? DEFAULT_ASSERTION_TIMEOUT_MS;
       const start = __realNow();
+      let lastVisible = null;
       let lastError = null;
       while (true) {
         try {
@@ -1547,6 +1550,7 @@ function __expectBase(actual) {
             page_id: pageId,
             selector: selectorOrOpts,
           });
+          lastVisible = res.visible;
           if (res.visible) return;
         } catch (err) {
           lastError = err;
@@ -1554,8 +1558,11 @@ function __expectBase(actual) {
         if (__realNow() - start >= timeout) {
           const msg = lastError
             ? `toBeVisible(${JSON.stringify(selectorOrOpts)}): ${lastError.message ?? String(lastError)}`
-            : `Expected ${selectorOrOpts} to be visible within ${timeout}ms`;
-          throw new AssertionError(msg);
+            : `Expected ${selectorOrOpts} to be visible within ${timeout}ms, got ${JSON.stringify(lastVisible)}`;
+          throw new AssertionError(
+            msg,
+            `- expected: true\n+ actual:   ${JSON.stringify(lastVisible)}`,
+          );
         }
         await __sleep(100);
       }
@@ -1620,7 +1627,7 @@ function __expectBase(actual) {
       // Page-selector form (Phase 3 backward compat): actual is a page object.
       const options = opts ?? {};
       const pageId = (actual && actual.__jet_page_id) ?? "default";
-      const timeout = options.timeout ?? 5000;
+      const timeout = options.timeout ?? DEFAULT_ASSERTION_TIMEOUT_MS;
       const start = __realNow();
       let lastText = null;
       let lastError = null;
@@ -1900,6 +1907,11 @@ export async function __jetRun(opts) {
   globalThis.afterAll = afterAll;
   globalThis.beforeEach = beforeEach;
   globalThis.afterEach = afterEach;
+  // Thread the resolved assertion poll timeout (RunnerConfig.expect_timeout_ms
+  // — CLI --expect-timeout or jet.toml, default 5000ms) into matchers.js so
+  // every locator/page matcher's default (absent a per-call opts.timeout)
+  // reflects the run's configured value. #1908
+  setDefaultAssertionTimeout(opts && opts.jetConfig && opts.jetConfig.expectTimeoutMs);
   // Anchor `jest.requireActual("./relative")` at the source spec path even
   // though ESM source is emitted into the worker's temporary module graph.
   __setJestRequireForSpec(opts.file);

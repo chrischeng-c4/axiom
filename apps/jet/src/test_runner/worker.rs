@@ -3265,6 +3265,9 @@ fn normalize_jet_test_virtual_imports(source: String) -> String {
 ///
 /// `jetConfig` is forwarded to the fixture registry so the default `page`
 /// fixture can read `baseURL` and `headless` from the active project config.
+/// `expectTimeoutMs` is consumed once at startup by
+/// `matchers.js::setDefaultAssertionTimeout` (#1908) to set the default poll
+/// timeout for async locator/page assertions.
 ///
 // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R3
 // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
@@ -3309,7 +3312,7 @@ await __jetRun({{
   file: {file},
   timeoutMs: {timeout},
   grep: {grep},
-  jetConfig: {{ baseURL: {base_url}, headless: {headless} }},
+  jetConfig: {{ baseURL: {base_url}, headless: {headless}, expectTimeoutMs: {expect_timeout} }},
   autoArtifacts: {auto_artifacts},
   artifactsDir: {artifacts_dir},
   liveControl: {live_control},
@@ -3321,6 +3324,7 @@ await __jetRun({{
         grep = grep_js,
         base_url = base_url_js,
         headless = headless_js,
+        expect_timeout = config.expect_timeout_ms,
         auto_artifacts = auto_artifacts_js,
         artifacts_dir = artifacts_dir_js,
         live_control = live_control_js,

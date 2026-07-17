@@ -779,6 +779,15 @@ pub fn command() -> Command {
                         .help("Per-test timeout in ms (default 30000)"),
                 )
                 .arg(
+                    // #1908: default poll timeout for async locator/page
+                    // assertions (expect(locator).toBeVisible() and the
+                    // rest) — distinct from the whole-test --timeout above.
+                    Arg::new("expect-timeout")
+                        .long("expect-timeout")
+                        .value_parser(clap::value_parser!(u64))
+                        .help("Default poll timeout in ms for async assertions (default 5000)"),
+                )
+                .arg(
                     // @spec enhancement-html-reporter-for-native-test-runner-spec#R5
                     Arg::new("reporter")
                         .long("reporter")
@@ -2934,6 +2943,10 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             }
             if let Some(&timeout) = m.get_one::<u64>("timeout") {
                 cfg.timeout_ms = timeout;
+            }
+            // #1908
+            if let Some(&expect_timeout) = m.get_one::<u64>("expect-timeout") {
+                cfg.expect_timeout_ms = expect_timeout;
             }
             // @spec enhancement-html-reporter-for-native-test-runner-spec#R5
             if let Some(reporter_str) = m.get_one::<String>("reporter") {

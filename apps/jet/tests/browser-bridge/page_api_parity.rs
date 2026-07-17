@@ -1564,4 +1564,227 @@ test('#1907: page.url() reflects the post-goto() URL, still a primitive string',
     );
     assert_eq!(summary.failed, 0);
 }
+
+// ── #1908 — locator assertions auto-wait with poll-until-timeout ─────────────
+//
+// All four tests reuse the #1907 fake-wire-channel pattern above: `Page` and
+// `Locator` are constructed directly against a hand-rolled `sendRequest`
+// closure, so no CDP/Chromium round trip is needed. Every `Locator` read
+// method used by the async matchers (`isVisible`, `isChecked`, `innerText`,
+// ...) routes through a single `{ kind: "evaluate" }` wire request, so the
+// fake responder only needs to branch on that one kind and can return a
+// different answer on each successive poll (call-count-gated, not wall-clock
+// sleeps) to simulate delayed/never-appearing elements deterministically.
+
+/// #1908 AC1: a locator that starts unsatisfied and becomes visible after a
+/// few polls passes with *no* explicit wait call anywhere in the spec —
+/// `expect(locator).toBeVisible()` alone must retry until the fake wire
+/// channel flips to `true`.
+// REQ: #1908 AC1
+#[tokio::test]
+async fn test_1908_delayed_visible_locator_passes_with_no_explicit_wait() {
+    if !node_available() {
+        eprintln!("skipping #1908 AC1: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+// Fake wire channel: the 3rd `evaluate` call (and beyond) reports the
+// element as visible; the first two report it missing.
+function makeDelayedVisibleSend(satisfyAfterCall) {
+  let calls = 0;
+  return async (req) => {
+    if (req.kind === 'evaluate') {
+      calls += 1;
+      return { kind: 'ok', value: calls >= satisfyAfterCall };
+    }
+    return { kind: 'ok' };
+  };
+}
+
+test('#1908: toBeVisible() retries until a delayed element appears', async () => {
+  const page = new Page('fake-page-id', makeDelayedVisibleSend(3), '');
+  const loc = page.locator('#late');
+  await expect(loc).toBeVisible({ timeout: 500 });
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(
+        summary.passed, 1,
+        "#1908 AC1 delayed-visible spec should pass"
+    );
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1908 AC2: a locator that never satisfies the predicate fails once the
+/// timeout elapses, and the thrown `AssertionError` carries a `diff`
+/// reporting the *last observed* value — not a bare generic timeout message.
+// REQ: #1908 AC2
+#[tokio::test]
+async fn test_1908_never_visible_locator_fails_with_last_observed_diff() {
+    if !node_available() {
+        eprintln!("skipping #1908 AC2: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+function makeNeverVisibleSend() {
+  return async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: false };
+    return { kind: 'ok' };
+  };
+}
+
+test('#1908: toBeVisible() times out with a last-observed-state diff', async () => {
+  const page = new Page('fake-page-id', makeNeverVisibleSend(), '');
+  const loc = page.locator('#never');
+  let thrown = null;
+  try {
+    await expect(loc).toBeVisible({ timeout: 250 });
+  } catch (err) {
+    thrown = err;
+  }
+  if (!thrown) {
+    throw new Error('expected toBeVisible({ timeout: 250 }) to throw once never satisfied');
+  }
+  if (!thrown.diff || !thrown.diff.includes('actual:   false')) {
+    throw new Error(`expected a last-observed-state diff, got diff=${JSON.stringify(thrown.diff)} message=${thrown.message}`);
+  }
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(
+        summary.passed, 1,
+        "#1908 AC2 never-visible spec should pass"
+    );
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1908 AC3 (per-call half): a small per-call `{ timeout }` override takes
+/// effect even when the configured default is much larger — proves the
+/// override, not the config default, wins for that call.
+// REQ: #1908 AC3
+#[tokio::test]
+async fn test_1908_per_call_timeout_override_takes_effect() {
+    if !node_available() {
+        eprintln!("skipping #1908 AC3 (per-call override): node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+function makeNeverVisibleSend() {
+  return async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: false };
+    return { kind: 'ok' };
+  };
+}
+
+test('#1908: a small per-call timeout overrides a much larger configured default', async () => {
+  const page = new Page('fake-page-id', makeNeverVisibleSend(), '');
+  const loc = page.locator('#never');
+  const start = Date.now();
+  let thrown = null;
+  try {
+    await expect(loc).toBeVisible({ timeout: 200 });
+  } catch (err) {
+    thrown = err;
+  }
+  const elapsed = Date.now() - start;
+  if (!thrown) throw new Error('expected the 200ms override to time out and throw');
+  if (elapsed > 1000) {
+    throw new Error(`expected the 200ms override to win over the configured 2000ms default, took ${elapsed}ms`);
+  }
+});
+"#;
+
+    let summary = match run_spec_str(spec, |cfg| {
+        // Configured default is deliberately much larger than the per-call
+        // override so a passing test proves the override actually won.
+        cfg.expect_timeout_ms = 2_000;
+    })
+    .await
+    {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(
+        summary.passed, 1,
+        "#1908 AC3 per-call-override spec should pass"
+    );
+    assert_eq!(summary.failed, 0);
+}
+
+/// #1908 AC3 (config-default half): the configured default
+/// (`RunnerConfig::expect_timeout_ms`, threaded through
+/// `worker::build_boot`'s `jetConfig.expectTimeoutMs` into
+/// `matchers.js::setDefaultAssertionTimeout`) takes effect for a call that
+/// omits `opts.timeout` entirely — proves the config plumbing, not just the
+/// matcher's own hardcoded fallback, is live end-to-end.
+// REQ: #1908 AC3
+#[tokio::test]
+async fn test_1908_config_default_timeout_takes_effect() {
+    if !node_available() {
+        eprintln!("skipping #1908 AC3 (config default): node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+function makeNeverVisibleSend() {
+  return async (req) => {
+    if (req.kind === 'evaluate') return { kind: 'ok', value: false };
+    return { kind: 'ok' };
+  };
+}
+
+test('#1908: expect(locator).toBeVisible() with no opts.timeout uses the configured default', async () => {
+  const page = new Page('fake-page-id', makeNeverVisibleSend(), '');
+  const loc = page.locator('#never');
+  const start = Date.now();
+  let thrown = null;
+  try {
+    await expect(loc).toBeVisible(); // no per-call override
+  } catch (err) {
+    thrown = err;
+  }
+  const elapsed = Date.now() - start;
+  if (!thrown) throw new Error('expected toBeVisible() to time out and throw');
+  // RunnerConfig.expect_timeout_ms is set to 300ms below; a hang anywhere
+  // near the matcher's hardcoded 5000ms fallback means the config never
+  // threaded through jetConfig.expectTimeoutMs -> setDefaultAssertionTimeout.
+  if (elapsed > 2000) {
+    throw new Error(`expected the configured 300ms default to apply, took ${elapsed}ms`);
+  }
+});
+"#;
+
+    let summary = match run_spec_str(spec, |cfg| {
+        cfg.expect_timeout_ms = 300;
+    })
+    .await
+    {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(
+        summary.passed, 1,
+        "#1908 AC3 config-default spec should pass"
+    );
+    assert_eq!(summary.failed, 0);
+}
 // CODEGEN-END

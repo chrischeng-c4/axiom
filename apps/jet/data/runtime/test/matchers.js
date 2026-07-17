@@ -3,7 +3,10 @@
 // Polling expect matchers for the jet native test runner.
 //
 // Each matcher polls its probe function at 100ms intervals until the predicate
-// holds or the timeout (default 5000ms) elapses, then throws AssertionError.
+// holds or the timeout (default 5000ms, see DEFAULT_ASSERTION_TIMEOUT_MS)
+// elapses, then throws AssertionError. The default is overridable globally
+// (jet.toml / --expect-timeout, threaded through setDefaultAssertionTimeout)
+// and per-call via each matcher's `opts.timeout` argument, which always wins.
 //
 // Shared helper: pollUntil(probe, predicate, timeout, buildError)
 //
@@ -87,6 +90,24 @@ function describeLocator(locator) {
   return "locator";
 }
 
+// ── Configuration ────────────────────────────────────────────────────────────
+
+// Default poll timeout (ms) applied when a matcher call omits `opts.timeout`.
+// Mirrors Playwright's 5000ms web-first-assertion default. Mutated in place
+// (ES module live binding) so index.js's `setDefaultAssertionTimeout()` call
+// during __jetRun() startup is observed by every matcher below.
+export let DEFAULT_ASSERTION_TIMEOUT_MS = 5000;
+
+// Sets the process-wide default assertion poll timeout. Called once from
+// __jetRun() with the resolved RunnerConfig.expect_timeout_ms (CLI
+// --expect-timeout or jet.toml default 5000). Ignores non-finite/non-positive
+// values so a malformed config falls back to the built-in default.
+export function setDefaultAssertionTimeout(ms) {
+  if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
+    DEFAULT_ASSERTION_TIMEOUT_MS = ms;
+  }
+}
+
 // ── Page matchers ────────────────────────────────────────────────────────────
 
 /**
@@ -95,7 +116,7 @@ function describeLocator(locator) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R20
  */
 export async function toHaveTitle(page, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => page.title(),
     (title) => matchesPattern(title, expected),
@@ -115,7 +136,7 @@ export async function toHaveTitle(page, expected, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R21
  */
 export async function toHaveURL(page, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => page.url(),
     (url) => matchesPattern(url, expected),
@@ -137,16 +158,16 @@ export async function toHaveURL(page, expected, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R22
  */
 export async function toBeVisibleLocator(locator, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.isVisible(),
     (v) => v === true,
     timeout,
-    (_lastValue, lastError) => {
+    (lastValue, lastError) => {
       const msg = lastError
         ? `toBeVisible: ${lastError.message ?? String(lastError)}`
-        : `Expected ${describeLocator(locator)} to be visible within ${timeout}ms`;
-      return new AssertionError(msg);
+        : `Expected ${describeLocator(locator)} to be visible within ${timeout}ms, got ${JSON.stringify(lastValue)}`;
+      return new AssertionError(msg, `- expected: true\n+ actual:   ${JSON.stringify(lastValue)}`);
     },
   );
 }
@@ -157,16 +178,16 @@ export async function toBeVisibleLocator(locator, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R22
  */
 export async function toBeHidden(locator, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.isVisible(),
     (v) => v === false,
     timeout,
-    (_lastValue, lastError) => {
+    (lastValue, lastError) => {
       const msg = lastError
         ? `toBeHidden: ${lastError.message ?? String(lastError)}`
-        : `Expected element to be hidden within ${timeout}ms`;
-      return new AssertionError(msg);
+        : `Expected element to be hidden within ${timeout}ms, got visible=${JSON.stringify(lastValue)}`;
+      return new AssertionError(msg, `- expected: false\n+ actual:   ${JSON.stringify(lastValue)}`);
     },
   );
 }
@@ -177,7 +198,7 @@ export async function toBeHidden(locator, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R23
  */
 export async function toHaveTextLocator(locator, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.innerText(),
     (text) => matchesPattern(text, expected),
@@ -195,7 +216,7 @@ export async function toHaveTextLocator(locator, expected, opts) {
  * expect(locator).toContainText(string|regex, opts?) — polls locator.innerText().
  */
 export async function toContainTextLocator(locator, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.innerText(),
     (text) => containsPattern(text, expected),
@@ -215,7 +236,7 @@ export async function toContainTextLocator(locator, expected, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R24
  */
 export async function toHaveValue(locator, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.inputValue(),
     (value) => value === expected,
@@ -235,7 +256,7 @@ export async function toHaveValue(locator, expected, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R25
  */
 export async function toHaveCount(locator, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.count(),
     (count) => count === expected,
@@ -255,7 +276,7 @@ export async function toHaveCount(locator, expected, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R26
  */
 export async function toHaveClass(locator, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   const probe = async () => {
     // Use getAttribute("class") via the existing getAttribute method.
     const cls = await locator.getAttribute("class");
@@ -285,7 +306,7 @@ export async function toHaveClass(locator, expected, opts) {
  * @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R27
  */
 export async function toHaveAttribute(locator, name, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.getAttribute(name),
     (value) => matchesPattern(value, expected),
@@ -306,14 +327,15 @@ export async function toHaveAttribute(locator, name, expected, opts) {
  * @spec .aw/tech-design/projects/jet/logic/matchers-state-value-a11y.md#M1
  */
 export async function toBeChecked(locator, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.isChecked(),
     (v) => v === true,
     timeout,
-    (_l, lastError) => new AssertionError(
+    (lastValue, lastError) => new AssertionError(
       lastError ? `toBeChecked: ${lastError.message ?? String(lastError)}`
-                : `Expected element to be checked within ${timeout}ms`,
+                : `Expected element to be checked within ${timeout}ms, got ${JSON.stringify(lastValue)}`,
+      `- expected: true\n+ actual:   ${JSON.stringify(lastValue)}`,
     ),
   );
 }
@@ -323,14 +345,15 @@ export async function toBeChecked(locator, opts) {
  * @spec matchers-state-value-a11y#M2
  */
 export async function toBeDisabled(locator, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.isDisabled(),
     (v) => v === true,
     timeout,
-    (_l, lastError) => new AssertionError(
+    (lastValue, lastError) => new AssertionError(
       lastError ? `toBeDisabled: ${lastError.message ?? String(lastError)}`
-                : `Expected element to be disabled within ${timeout}ms`,
+                : `Expected element to be disabled within ${timeout}ms, got ${JSON.stringify(lastValue)}`,
+      `- expected: true\n+ actual:   ${JSON.stringify(lastValue)}`,
     ),
   );
 }
@@ -340,14 +363,15 @@ export async function toBeDisabled(locator, opts) {
  * @spec matchers-state-value-a11y#M3
  */
 export async function toBeEnabled(locator, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.isEnabled(),
     (v) => v === true,
     timeout,
-    (_l, lastError) => new AssertionError(
+    (lastValue, lastError) => new AssertionError(
       lastError ? `toBeEnabled: ${lastError.message ?? String(lastError)}`
-                : `Expected element to be enabled within ${timeout}ms`,
+                : `Expected element to be enabled within ${timeout}ms, got ${JSON.stringify(lastValue)}`,
+      `- expected: true\n+ actual:   ${JSON.stringify(lastValue)}`,
     ),
   );
 }
@@ -357,14 +381,15 @@ export async function toBeEnabled(locator, opts) {
  * @spec matchers-state-value-a11y#M4
  */
 export async function toBeFocused(locator, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.isFocused(),
     (v) => v === true,
     timeout,
-    (_l, lastError) => new AssertionError(
+    (lastValue, lastError) => new AssertionError(
       lastError ? `toBeFocused: ${lastError.message ?? String(lastError)}`
-                : `Expected element to be focused within ${timeout}ms`,
+                : `Expected element to be focused within ${timeout}ms, got ${JSON.stringify(lastValue)}`,
+      `- expected: true\n+ actual:   ${JSON.stringify(lastValue)}`,
     ),
   );
 }
@@ -374,7 +399,7 @@ export async function toBeFocused(locator, opts) {
  * @spec matchers-state-value-a11y#M5
  */
 export async function toHaveCSS(locator, name, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.computedStyle(name),
     (v) => matchesPattern(v, expected),
@@ -392,7 +417,7 @@ export async function toHaveCSS(locator, name, expected, opts) {
  * @spec matchers-state-value-a11y#M6
  */
 export async function toHaveAccessibleName(locator, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.accessibleName(),
     (v) => matchesPattern(v, expected),
@@ -410,7 +435,7 @@ export async function toHaveAccessibleName(locator, expected, opts) {
  * @spec matchers-state-value-a11y#M7
  */
 export async function toHaveRole(locator, expected, opts) {
-  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : DEFAULT_ASSERTION_TIMEOUT_MS;
   return pollUntil(
     () => locator.role(),
     (v) => v === expected,

@@ -17,6 +17,14 @@ pub struct RunnerConfig {
     pub test_match: Vec<String>,
     pub test_ignore: Vec<String>,
     pub timeout_ms: u64,
+    /// Default poll timeout (ms) for async locator/page assertions
+    /// (`expect(locator).toBeVisible()` and the rest) that lack a per-call
+    /// `{ timeout }` override. Distinct from `timeout_ms` (the whole-test
+    /// timeout). Mirrors Playwright's 5000ms web-first-assertion default;
+    /// forwarded to the JS runtime via `jetConfig.expectTimeoutMs` in
+    /// `worker::build_boot` and consumed by
+    /// `matchers.js::setDefaultAssertionTimeout`. #1908
+    pub expect_timeout_ms: u64,
     /// Number of parallel spec workers. 1 = serial (default).
     /// Activated from stub — now wired to WorkerPool.
     // @spec enhancement-parallel-test-execution-sharding-for-native-test-r-spec#R1
@@ -232,6 +240,8 @@ impl RunnerConfig {
                 "**/.git/**".to_string(),
             ],
             timeout_ms: 30_000,
+            // Playwright web-first-assertion default (#1908).
+            expect_timeout_ms: 5_000,
             // Default to logical CPU count; fall back to 1 if unavailable.
             // @spec enhancement-parallel-test-execution-sharding-for-native-test-r-spec#R1
             workers: std::thread::available_parallelism()
@@ -357,6 +367,9 @@ mod tests {
         assert!(cfg.test_ignore.iter().any(|p| p.contains("node_modules")));
         assert!(cfg.test_ignore.iter().any(|p| p.contains(".jet-test-")));
         assert_eq!(cfg.timeout_ms, 30_000);
+        // #1908: assertion poll timeout defaults to Playwright's 5000ms and
+        // is distinct from the whole-test timeout_ms above.
+        assert_eq!(cfg.expect_timeout_ms, 5_000);
         assert!(cfg.workers >= 1);
     }
 
