@@ -28,6 +28,12 @@ struct EndpointObservation {
     error: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObservedPod {
+    name: String,
+    ready: bool,
+}
+
 impl ManagedService for Pgpool {
     const MANAGER: &'static str = "pgpool-operator";
 
@@ -110,7 +116,9 @@ async fn build_reconcile_plan(instance: Pgpool, client: Client) -> anyhow::Resul
         .list(&ListParams::default().labels(&selector))
         .await?
         .items
-        .len() as u32;
+        .iter()
+        .filter_map(observed_pod)
+        .collect::<Vec<_>>();
 
     let mut observations = Vec::with_capacity(instance.spec.endpoints.len());
     for endpoint in &instance.spec.endpoints {
@@ -139,10 +147,9 @@ async fn build_reconcile_plan(instance: Pgpool, client: Client) -> anyhow::Resul
     }
 
     let (applied_replicas, status) = plan_capacity(
-        &name,
         instance.spec.replicas,
         current_target,
-        actual_pods,
+        &actual_pods,
         &observations,
     );
     let mut admitted = instance;
@@ -151,6 +158,20 @@ async fn build_reconcile_plan(instance: Pgpool, client: Client) -> anyhow::Resul
         children: render::render(&admitted),
         context: serde_json::to_value(status)?,
     })
+}
+
+fn observed_pod(pod: &Pod) -> Option<ObservedPod> {
+    let name = pod.metadata.name.clone()?;
+    let ready = pod
+        .status
+        .as_ref()
+        .and_then(|status| status.conditions.as_ref())
+        .is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+        });
+    Some(ObservedPod { name, ready })
 }
 
 async fn discover_endpoint(
@@ -229,10 +250,9 @@ async fn discover_endpoint(
 
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#1882" reason="unit-test section in reconcile.rs is hand-written pending codegen support">
 fn plan_capacity(
-    instance: &str,
     desired: u32,
     current_target: u32,
-    actual_pods: u32,
+    actual_pods: &[ObservedPod],
     observations: &[EndpointObservation],
 ) -> (u32, ControlPlaneStatus) {
     let requested_fits = observations.iter().all(|item| {
@@ -250,7 +270,8 @@ fn plan_capacity(
     } else {
         desired
     };
-    let held_pods = actual_pods.max(current_target).max(applied);
+    let observed_pod_count = u32::try_from(actual_pods.len()).unwrap_or(u32::MAX);
+    let held_pods = observed_pod_count.max(current_target).max(applied);
     let endpoints: Vec<_> = observations
         .iter()
         .map(|item| {
@@ -282,7 +303,8 @@ fn plan_capacity(
                 allocated,
                 available: capacity.usable().saturating_sub(allocated),
                 reserve_granted: 0,
-                reserve_available: capacity.usable().saturating_sub(allocated),
+                reserve_available: 0,
+                reserve_accounting_available: false,
                 reserve_denials: 0,
                 allocator_available: item.capacity.is_some(),
                 blocked_scale_reason,
@@ -292,17 +314,17 @@ fn plan_capacity(
     let pods = observations
         .iter()
         .flat_map(|endpoint| {
-            (0..held_pods).map(move |index| PodControlStatus {
-                pod: format!("{instance}-{index}@{}", endpoint.spec.name),
+            actual_pods.iter().map(move |pod| PodControlStatus {
+                pod: pod.name.clone(),
                 endpoint: endpoint.spec.name.clone(),
                 quota: endpoint.spec.per_pod_quota,
-                phase: if index >= applied {
-                    PodControlPhase::Draining
+                phase: if pod.ready {
+                    PodControlPhase::Ready
                 } else {
                     PodControlPhase::Pending
                 },
-                ready: false,
-                drain_requested: index >= applied,
+                ready: pod.ready,
+                drain_requested: false,
                 drain_deadline_epoch_seconds: None,
                 backend_active: 0,
                 backend_idle: 0,
@@ -358,9 +380,18 @@ mod tests {
         }
     }
 
+    fn observed_pods(count: usize) -> Vec<ObservedPod> {
+        (0..count)
+            .map(|index| ObservedPod {
+                name: format!("pool-{index}"),
+                ready: false,
+            })
+            .collect()
+    }
+
     #[test]
     fn scale_out_is_admitted_before_deployment_target_changes() {
-        let (applied, status) = plan_capacity("pool", 3, 1, 1, &[observation(120)]);
+        let (applied, status) = plan_capacity(3, 1, &observed_pods(1), &[observation(120)]);
         assert_eq!(applied, 3);
         assert_eq!(status.endpoints[0].allocated, 120);
         assert!(status.blocked_scale_reason.is_none());
@@ -368,7 +399,7 @@ mod tests {
 
     #[test]
     fn scale_above_live_capacity_keeps_current_target_and_reports_blocked() {
-        let (applied, status) = plan_capacity("pool", 4, 2, 2, &[observation(120)]);
+        let (applied, status) = plan_capacity(4, 2, &observed_pods(2), &[observation(120)]);
         assert_eq!(applied, 2);
         assert_eq!(status.endpoints[0].allocated, 80);
         assert!(status.blocked_scale_reason.is_some());
@@ -376,28 +407,58 @@ mod tests {
 
     #[test]
     fn busy_pool_usage_does_not_block_an_unchanged_target() {
-        let (applied, status) = plan_capacity("pool", 2, 2, 2, &[observation(60)]);
+        let (applied, status) = plan_capacity(2, 2, &observed_pods(2), &[observation(60)]);
         assert_eq!(applied, 2);
         assert!(status.blocked_scale_reason.is_none());
         assert!(status.endpoints[0].blocked_scale_reason.is_none());
     }
 
     #[test]
-    fn scale_in_holds_quota_for_terminating_pods_until_they_disappear() {
-        let (applied, draining) = plan_capacity("pool", 1, 3, 3, &[observation(120)]);
+    fn scale_in_holds_quota_for_observed_pods_until_they_disappear() {
+        let (applied, draining) = plan_capacity(1, 3, &observed_pods(3), &[observation(120)]);
         assert_eq!(applied, 1);
         assert_eq!(draining.endpoints[0].allocated, 120);
+        assert!(draining
+            .pods
+            .iter()
+            .all(|pod| pod.phase != PodControlPhase::Draining && !pod.drain_requested));
+
+        let (_, released) = plan_capacity(1, 1, &observed_pods(1), &[observation(120)]);
+        assert_eq!(released.endpoints[0].allocated, 40);
+    }
+
+    #[test]
+    fn plan_capacity_projects_only_observed_pod_names_and_readiness() {
+        let observed = vec![
+            ObservedPod {
+                name: "pool-a-6f7d8c9b5-abcde".into(),
+                ready: true,
+            },
+            ObservedPod {
+                name: "pool-a-6f7d8c9b5-fghij".into(),
+                ready: false,
+            },
+        ];
+        let (_, status) = plan_capacity(1, 3, &observed, &[observation(120)]);
         assert_eq!(
-            draining
+            status
                 .pods
                 .iter()
-                .filter(|pod| pod.phase == PodControlPhase::Draining)
-                .count(),
-            2
+                .map(|pod| pod.pod.as_str())
+                .collect::<Vec<_>>(),
+            ["pool-a-6f7d8c9b5-abcde", "pool-a-6f7d8c9b5-fghij"]
         );
-
-        let (_, released) = plan_capacity("pool", 1, 1, 1, &[observation(120)]);
-        assert_eq!(released.endpoints[0].allocated, 40);
+        assert_eq!(status.pods[0].phase, PodControlPhase::Ready);
+        assert!(status.pods[0].ready);
+        assert_eq!(status.pods[1].phase, PodControlPhase::Pending);
+        assert!(!status.pods[1].ready);
+        assert!(status
+            .pods
+            .iter()
+            .all(|pod| pod.phase != PodControlPhase::Draining && !pod.drain_requested));
+        assert!(!status.endpoints[0].reserve_accounting_available);
+        assert_eq!(status.endpoints[0].reserve_granted, 0);
+        assert_eq!(status.endpoints[0].reserve_available, 0);
     }
 
     #[test]
@@ -407,7 +468,7 @@ mod tests {
             capacity: None,
             error: Some("discovery unavailable".into()),
         };
-        let (applied, status) = plan_capacity("pool", 3, 0, 0, &[failed]);
+        let (applied, status) = plan_capacity(3, 0, &[], &[failed]);
         assert_eq!(applied, 0);
         assert!(status.blocked_scale_reason.is_some());
     }

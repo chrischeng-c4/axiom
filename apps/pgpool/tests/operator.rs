@@ -249,7 +249,12 @@ fn concurrent_pods_cannot_overgrant_reserve_capacity() {
     assert!(denied.is_err(), "the concurrent chunk must be atomic");
     let status = control.status();
     assert_eq!(status.endpoints[0].reserve_granted, 20);
+    assert!(status.endpoints[0].reserve_accounting_available);
     assert_eq!(status.endpoints[0].reserve_denials, 1);
+    let cr_status = PgpoolStatus::from_control_plane(&spec(), 1, 0, &status);
+    assert_eq!(cr_status.endpoints[0].reserve_granted, Some(20));
+    assert_eq!(cr_status.endpoints[0].reserve_available, Some(20));
+    assert!(cr_status.endpoints[0].reserve_accounting_available);
     assert_eq!(
         control
             .reserve_ledger("alloy-primary")

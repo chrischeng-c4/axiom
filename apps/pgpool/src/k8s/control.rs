@@ -50,6 +50,9 @@ pub struct EndpointControlStatus {
     pub available: u32,
     pub reserve_granted: u32,
     pub reserve_available: u32,
+    /// True only when this status was derived from a reconciled reserve
+    /// ledger, rather than a static capacity plan.
+    pub reserve_accounting_available: bool,
     pub reserve_denials: u64,
     pub allocator_available: bool,
     pub blocked_scale_reason: Option<String>,
@@ -83,6 +86,10 @@ impl ControlPlaneStatus {
             output.push_str(&format!(
                 "pgpool_endpoint_reserve_denials{{{label}}} {}\n",
                 endpoint.reserve_denials
+            ));
+            output.push_str(&format!(
+                "pgpool_endpoint_reserve_accounting_available{{{label}}} {}\n",
+                u8::from(endpoint.reserve_accounting_available)
             ));
             output.push_str(&format!(
                 "pgpool_endpoint_scale_blocked{{{label}}} {}\n",
@@ -310,7 +317,7 @@ impl PgpoolControlPlane {
         Ok(DrainProgress::Released)
     }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Distinguish control-plane reserve ledger availability from endpoint discovery availability in the shared status context.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Distinguish control-plane reserve ledger availability from endpoint discovery availability in the shared status context.">
     pub fn status(&self) -> ControlPlaneStatus {
         let endpoints: Vec<_> = self
             .budgets
@@ -328,6 +335,7 @@ impl PgpoolControlPlane {
                     available: allocator.available_quota(),
                     reserve_granted: reserve.map(ReserveLeaseLedger::held_reserve).unwrap_or(0),
                     reserve_available: reserve.map(ReserveLeaseLedger::available).unwrap_or(0),
+                    reserve_accounting_available: reserve.is_some(),
                     reserve_denials: self.reserve_denials.get(name).copied().unwrap_or(0),
                     allocator_available: reserve.is_some(),
                     blocked_scale_reason: allocator.blocked_reason().map(str::to_owned),
@@ -347,7 +355,7 @@ impl PgpoolControlPlane {
             blocked_scale_reason,
         }
     }
-// </HANDWRITE>
+    // </HANDWRITE>
 
     fn pod(&self, endpoint: &str, pod: &str) -> Result<&PodControlStatus, ControlPlaneError> {
         self.pods
