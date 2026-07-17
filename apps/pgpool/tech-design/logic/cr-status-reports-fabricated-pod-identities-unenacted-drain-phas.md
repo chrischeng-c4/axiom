@@ -39,7 +39,6 @@ flowchart TD
 ```
 
 Reconcile status is observational: only Pods returned by the Deployment selector are named in status, and a Pod is `Ready` only when its Kubernetes Ready condition is true; all other observed Pods are `Pending`. The capacity plan continues to hold quota for the current target and observed Pods during a scale-in, but it no longer fabricates per-index Pod records or claims a `Draining` phase without runtime confirmation. The live operator has no reserve-ledger reconciliation yet, so CR reserve counters are omitted and `reserveAccountingAvailable` is false. The pure control-plane model remains able to project real reserve values when it owns a ledger.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
