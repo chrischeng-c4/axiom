@@ -15,7 +15,7 @@ use jet::e2e::{
 };
 use std::path::PathBuf;
 
-fn cue_step(id: &str, title: &str, status: &str, duration_ms: u64) -> E2eProductStep {
+fn step(id: &str, title: &str, status: &str, duration_ms: u64) -> E2eProductStep {
     E2eProductStep {
         id: id.to_string(),
         title: title.to_string(),
@@ -26,11 +26,11 @@ fn cue_step(id: &str, title: &str, status: &str, duration_ms: u64) -> E2eProduct
     }
 }
 
-fn cue_artifact_studio_bundle(mode: E2eMode) -> E2eEvidenceBundle {
+fn artifact_studio_bundle(mode: E2eMode) -> E2eEvidenceBundle {
     E2eEvidenceBundle {
         schema_version: EVIDENCE_SCHEMA_VERSION.to_string(),
         mode,
-        run_id: "cue-studio-run".to_string(),
+        run_id: "artifact-studio-run".to_string(),
         started_at_ms: 100,
         finished_at_ms: 900,
         summary: E2eSummary {
@@ -43,14 +43,14 @@ fn cue_artifact_studio_bundle(mode: E2eMode) -> E2eEvidenceBundle {
         cases: vec![
             E2eCaseEvidence {
                 id: "case-0001".to_string(),
-                title: "Cue Artifact Studio > creates a project".to_string(),
-                file: PathBuf::from("examples/jet-e2e-demo/cue-artifact-studio.spec.js"),
+                title: "Artifact Studio > creates a project".to_string(),
+                file: PathBuf::from("examples/jet-e2e-demo/artifact-studio.spec.js"),
                 outcome: "passed".to_string(),
                 duration_ms: 300,
                 steps: vec![
-                    cue_step("step-0001", "product.step: open studio", "passed", 100),
-                    cue_step("step-0002", "product.step: create project", "passed", 100),
-                    cue_step(
+                    step("step-0001", "product.step: open studio", "passed", 100),
+                    step("step-0002", "product.step: create project", "passed", 100),
+                    step(
                         "step-0003",
                         "product.step: verify work item visible",
                         "passed",
@@ -60,13 +60,13 @@ fn cue_artifact_studio_bundle(mode: E2eMode) -> E2eEvidenceBundle {
             },
             E2eCaseEvidence {
                 id: "case-0002".to_string(),
-                title: "Cue Artifact Studio > promotes a work item".to_string(),
-                file: PathBuf::from("examples/jet-e2e-demo/cue-artifact-studio.spec.js"),
+                title: "Artifact Studio > promotes a work item".to_string(),
+                file: PathBuf::from("examples/jet-e2e-demo/artifact-studio.spec.js"),
                 outcome: "failed".to_string(),
                 duration_ms: 500,
                 steps: vec![
-                    cue_step("step-0001", "product.step: open studio", "passed", 80),
-                    cue_step(
+                    step("step-0001", "product.step: open studio", "passed", 80),
+                    step(
                         "step-0002",
                         "product.step: promote work item",
                         "passed",
@@ -96,7 +96,7 @@ fn cue_artifact_studio_bundle(mode: E2eMode) -> E2eEvidenceBundle {
 
 #[test]
 fn dogfood_case_uses_named_product_steps() {
-    let bundle = cue_artifact_studio_bundle(E2eMode::Run);
+    let bundle = artifact_studio_bundle(E2eMode::Run);
     for case in &bundle.cases {
         assert!(
             case.steps.len() >= 2,
@@ -115,7 +115,7 @@ fn dogfood_case_uses_named_product_steps() {
 
 #[test]
 fn evidence_carries_ordered_step_records() {
-    let bundle = cue_artifact_studio_bundle(E2eMode::Run);
+    let bundle = artifact_studio_bundle(E2eMode::Run);
 
     let case2 = &bundle.cases[1];
     let titles: Vec<&str> = case2.steps.iter().map(|s| s.title.as_str()).collect();
@@ -133,16 +133,14 @@ fn evidence_carries_ordered_step_records() {
 
 #[test]
 fn open_mode_timeline_consumes_same_step_records_as_run_mode() {
-    let run_events: Vec<&'static str> =
-        events_for_bundle(&cue_artifact_studio_bundle(E2eMode::Run))
-            .iter()
-            .map(kind)
-            .collect();
-    let open_events: Vec<&'static str> =
-        events_for_bundle(&cue_artifact_studio_bundle(E2eMode::Open))
-            .iter()
-            .map(kind)
-            .collect();
+    let run_events: Vec<&'static str> = events_for_bundle(&artifact_studio_bundle(E2eMode::Run))
+        .iter()
+        .map(kind)
+        .collect();
+    let open_events: Vec<&'static str> = events_for_bundle(&artifact_studio_bundle(E2eMode::Open))
+        .iter()
+        .map(kind)
+        .collect();
     assert_eq!(run_events, open_events);
 
     let step_starts = run_events.iter().filter(|k| **k == "step_started").count();
@@ -153,7 +151,7 @@ fn open_mode_timeline_consumes_same_step_records_as_run_mode() {
 
 #[test]
 fn step_events_carry_start_end_duration_and_failure_context() {
-    let bundle = cue_artifact_studio_bundle(E2eMode::Run);
+    let bundle = artifact_studio_bundle(E2eMode::Run);
     let events = events_for_bundle(&bundle);
 
     let mut saw_start = false;

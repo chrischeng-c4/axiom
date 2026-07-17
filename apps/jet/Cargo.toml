@@ -178,8 +178,8 @@ path = "tests/browser-bridge/browser_context.rs"
 name = "browser_install"
 path = "tests/browser-bridge/browser_install.rs"
 [[test]]
-name = "cue_artifact_studio_dogfood"
-path = "tests/browser-bridge/cue_artifact_studio_dogfood.rs"
+name = "artifact_studio_dogfood"
+path = "tests/browser-bridge/artifact_studio_dogfood.rs"
 [[test]]
 name = "e2e_playwright_residue"
 path = "tests/browser-bridge/e2e_playwright_residue.rs"

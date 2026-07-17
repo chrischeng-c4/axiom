@@ -5975,7 +5975,7 @@ mod e2e_command_contract_tests {
                 "--serve",
                 "dev",
                 "--json",
-                "flows/cue-artifact-studio.spec.ts",
+                "flows/artifact-studio.spec.ts",
             ])
             .unwrap();
         let (_, e2e) = run_matches.subcommand().unwrap();
@@ -5997,7 +5997,7 @@ mod e2e_command_contract_tests {
                 "run",
                 "--base-url",
                 "http://127.0.0.1:43127/",
-                "flows/cue-artifact-studio.spec.ts",
+                "flows/artifact-studio.spec.ts",
             ])
             .unwrap();
         let (_, e2e) = base_url_matches.subcommand().unwrap();

@@ -40,7 +40,7 @@ the comparison target, never the executor.
 - Trace and evidence: `trace_capture.rs`, `trace_viewer.rs`,
   `auto_artifacts_tests.rs`, `product_step_timeline.rs`,
   `pm_report_acceptance.rs`, `pm_report_static_smoke.rs`,
-  `cue_artifact_studio_dogfood.rs`
+  `artifact_studio_dogfood.rs`
 
 Compat-corpus fixtures: `../fixtures/playwright-compat/`.
 

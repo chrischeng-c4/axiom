@@ -2,7 +2,7 @@
 
 Minimal product-flow E2E demo for `jet e2e run` and `jet e2e open`.
 
-The spec models the Cue Artifact Studio flow in a real Jet Browser page without starting a backend:
+The spec models the Artifact Studio flow in a real Jet Browser page without starting a backend:
 
 1. create a project
 2. promote a work item through implementation
@@ -11,7 +11,7 @@ The spec models the Cue Artifact Studio flow in a real Jet Browser page without 
 Run agent/CI mode:
 
 ```bash
-cargo run -p jet -- e2e run examples/jet-e2e-demo/cue-artifact-studio.spec.js \
+cargo run -p jet -- e2e run examples/jet-e2e-demo/artifact-studio.spec.js \
   --evidence-dir examples/jet-e2e-demo/test-results/run \
   --json
 ```
@@ -19,7 +19,7 @@ cargo run -p jet -- e2e run examples/jet-e2e-demo/cue-artifact-studio.spec.js \
 Export human review mode without launching the desktop-style review shell:
 
 ```bash
-cargo run -p jet -- e2e open examples/jet-e2e-demo/cue-artifact-studio.spec.js \
+cargo run -p jet -- e2e open examples/jet-e2e-demo/artifact-studio.spec.js \
   --evidence-dir examples/jet-e2e-demo/test-results/open \
   --no-open
 ```
@@ -29,7 +29,7 @@ command log, and replay controls while the AUT runs in a separate visible
 controlled Jet Browser target:
 
 ```bash
-cargo run -p jet -- e2e open examples/jet-e2e-demo/cue-artifact-studio.spec.js \
+cargo run -p jet -- e2e open examples/jet-e2e-demo/artifact-studio.spec.js \
   --evidence-dir examples/jet-e2e-demo/test-results/open-live
 ```
 

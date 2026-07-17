@@ -30,8 +30,8 @@ fn pm_fixture_bundle() -> E2eEvidenceBundle {
         cases: vec![
             E2eCaseEvidence {
                 id: "case-0001".to_string(),
-                title: "Cue Artifact Studio > creates a project".to_string(),
-                file: PathBuf::from("examples/jet-e2e-demo/cue-artifact-studio.spec.js"),
+                title: "Artifact Studio > creates a project".to_string(),
+                file: PathBuf::from("examples/jet-e2e-demo/artifact-studio.spec.js"),
                 outcome: "passed".to_string(),
                 duration_ms: 400,
                 steps: vec![E2eProductStep {
@@ -45,8 +45,8 @@ fn pm_fixture_bundle() -> E2eEvidenceBundle {
             },
             E2eCaseEvidence {
                 id: "case-0002".to_string(),
-                title: "Cue Artifact Studio > promotes a work item".to_string(),
-                file: PathBuf::from("examples/jet-e2e-demo/cue-artifact-studio.spec.js"),
+                title: "Artifact Studio > promotes a work item".to_string(),
+                file: PathBuf::from("examples/jet-e2e-demo/artifact-studio.spec.js"),
                 outcome: "failed".to_string(),
                 duration_ms: 1_100,
                 steps: vec![E2eProductStep {
@@ -56,7 +56,7 @@ fn pm_fixture_bundle() -> E2eEvidenceBundle {
                     duration_ms: 900,
                     assertion: Some(E2eAssertionDetail {
                         message: "Expected work-state 'shipped', got 'reviewing'".to_string(),
-                        stack: Some("at e2e/cue.spec.js:60:5".to_string()),
+                        stack: Some("at e2e/artifact-studio.spec.js:60:5".to_string()),
                         diff: Some("- shipped\n+ reviewing".to_string()),
                     }),
                     context: E2eStepContext {
