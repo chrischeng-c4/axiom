@@ -100,3 +100,35 @@ flowchart TD
     r2[R2 session end to end] --> cargo_test_p_pgpool_test_session_proxy_session_mode_relays_extended_copy_notify_and_empty_query[cargo test -p pgpool --test session_proxy session_mode_relays_extended_copy_notify_and_empty_query]
     r3[R3 invalid rejected] --> cargo_test_p_pgpool_test_wire_codec_relay_rejects_malformed_covered_frames[cargo test -p pgpool --test wire_codec relay_rejects_malformed_covered_frames]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/wire/backend.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: BackendMessage::decode
+  - path: apps/pgpool/src/wire/frontend.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: FrontendMessage::decode
+  - path: apps/pgpool/src/wire/reader.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: validate_backend_relay
+  - path: apps/pgpool/tests/wire_codec.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: frontend_extended_query_round_trip
+  - path: apps/pgpool/tests/session_proxy.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: real_postgres_session_connects_queries_and_disconnects_cleanly
+```
