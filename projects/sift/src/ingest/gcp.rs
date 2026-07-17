@@ -199,6 +199,7 @@ fn trace_id(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in gcp.rs is hand-written pending codegen support">
 fn stable_id(project: &str, resource_type: &str, timestamp: &str, payload: &Value) -> String {
     let mut digest = Sha256::new();
     digest.update(project.as_bytes());
@@ -210,6 +211,7 @@ fn stable_id(project: &str, resource_type: &str, timestamp: &str, payload: &Valu
     digest.update(serde_json::to_vec(payload).unwrap_or_default());
     format!("gcp-log-{}", hex::encode(&digest.finalize()[..16]))
 }
+// </HANDWRITE>
 
 fn scalar(value: &Value) -> Option<String> {
     match value {

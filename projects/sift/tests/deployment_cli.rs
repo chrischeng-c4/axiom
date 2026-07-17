@@ -10,6 +10,7 @@ fn sift(args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("utf-8 deployment output")
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in deployment_cli.rs is hand-written pending codegen support">
 #[test]
 fn layered_deployment_cli_renders_all_artifact_planes() {
     let dockerfile = sift(&["dockerfile", "render", "--variant", "source"]);
@@ -32,5 +33,6 @@ fn layered_deployment_cli_renders_all_artifact_planes() {
     assert!(instance.contains("replicasPerShard: 1"));
     assert!(instance.contains("sift:0.1.0"));
 }
+// </HANDWRITE>
 
 // HANDWRITE-END

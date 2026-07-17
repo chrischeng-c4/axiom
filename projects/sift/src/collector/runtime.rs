@@ -9,6 +9,7 @@ use super::client::CollectorClient;
 use super::model::decode_service_log;
 use super::{CollectorConfig, CollectorSummary, SourceSpec};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in runtime.rs is hand-written pending codegen support">
 pub async fn run(config: CollectorConfig) -> Result<CollectorSummary> {
     let checkpoint = CollectorCheckpoint::load(&config.checkpoint_path, &config.source_id)?;
     let client = CollectorClient::new(
@@ -49,6 +50,7 @@ pub async fn run(config: CollectorConfig) -> Result<CollectorSummary> {
         }
     }
 }
+// </HANDWRITE>
 
 async fn collect_reader<R: BufRead>(
     reader: &mut R,

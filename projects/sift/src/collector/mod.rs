@@ -19,11 +19,13 @@ pub const DEFAULT_MAX_LINE_BYTES: usize = 512 * 1024;
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_MAX_RETRIES: usize = 3;
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceSpec {
     File(PathBuf),
     Stdin,
 }
+// </HANDWRITE>
 
 #[derive(Clone, Debug)]
 pub struct CollectorConfig {

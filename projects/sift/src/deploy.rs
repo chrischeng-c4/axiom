@@ -41,6 +41,7 @@ pub fn crd_yaml() -> String {
     strip_ownership_markers(include_str!("../k8s/crd/sift.yaml"))
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in deploy.rs is hand-written pending codegen support">
 pub fn operator_yaml(namespace: &str) -> Result<String> {
     if namespace.trim().is_empty() {
         bail!("operator namespace must not be empty");
@@ -50,6 +51,7 @@ pub fn operator_yaml(namespace: &str) -> Result<String> {
             .replace("namespace: sift-system", &format!("namespace: {namespace}")),
     )
 }
+// </HANDWRITE>
 
 pub fn instance_yaml(profile: InstanceProfile) -> String {
     match profile {

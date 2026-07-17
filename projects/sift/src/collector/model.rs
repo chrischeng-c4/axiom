@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{AttributeValue, InstrumentationScope, OperationalEventV2, SignalKind};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in model.rs is hand-written pending codegen support">
 pub fn decode_service_log(
     raw_line: &[u8],
     source_id: &str,
@@ -83,6 +84,7 @@ pub fn decode_service_log(
     event.validate()?;
     Ok(event)
 }
+// </HANDWRITE>
 
 fn validate(log: &ServiceLogEventV1) -> Result<()> {
     if log.schema != SERVICE_LOG_SCHEMA_V1 {
