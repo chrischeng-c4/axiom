@@ -70,3 +70,17 @@ flowchart TD
 ```
 
 Lumen remains independent of Sift. The existing outer router owns the shared `service_http::trace_layer()`, and the existing `collection_create_or_extend` audit event provides a real domain event inside that request span. The conformance process explicitly selects collector mode, removes `LUMEN_OTLP_ENDPOINT` and `RUST_LOG`, sends three independent collection requests, and treats any non-JSON stdout line as failure.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/lumen/tests/structured_stdout_traceparent.rs
+    action: create
+    section: e2e-test
+    impl_mode: hand-written
+    description: Spawn the real Lumen binary without OTLP, drive valid, invalid, and missing traceparent requests, drain stdout, and assert versioned JSONL correlation.
+```
+
+No Lumen-local formatter, collector client, or request middleware is added. The adopter relies on the existing `service_http::init_tracing_with_identity` mapping, outer `service_http::trace_layer()`, and audit event; this WI is a process-level conformance proof for shared WIs #1868 and #1870.
