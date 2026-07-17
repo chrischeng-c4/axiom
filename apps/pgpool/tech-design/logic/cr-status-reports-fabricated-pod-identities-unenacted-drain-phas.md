@@ -76,7 +76,6 @@ changes:
     anchor: concurrent_pods_cannot_overgrant_reserve_capacity
     reason: Preserve coverage for reserve counters when the pure control plane does own a reserve ledger.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
