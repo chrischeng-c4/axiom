@@ -2,10 +2,16 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T14:11:19.856713+00:00"
-digest = "sha256:081fd42231afba844d1a3009b8d3e5b2de7c8bc0efe91ed4137ad7dddc831225"
-source_digest = "sha256:081fd42231afba844d1a3009b8d3e5b2de7c8bc0efe91ed4137ad7dddc831225"
-ir_digest = "sha256:d605096edb14d5205057a4aecd4523c32106550e32c82668a1b73be6b09bf9ca"
+generated_at = "2026-07-17T14:20:39.739963+00:00"
+digest = "sha256:d54e8ed16bfe11a5eb208257205b03e00a0d8c29884bd3ca8b75d9058c8b985c"
+source_digest = "sha256:d54e8ed16bfe11a5eb208257205b03e00a0d8c29884bd3ca8b75d9058c8b985c"
+ir_digest = "sha256:26a8ce3f7ce73390a70ab88e037b29ed8247f9a5ba03cbb5ef073c6e91060016"
+
+[[files]]
+path = "interfaces/cli/reactor-bootstrap-failure-disconnects-waiting-clients-legacy-eng.md"
+digest = "sha256:ca00190c0333553bc7850f461889ef83f445693b067a9845cf02f93a8e66da06"
+ir_digest = "sha256:65a58ffc00bb1e43f87df8b45ffb24732263f83551f98e3a0337a21e52c79a0c"
+section_count = 3
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
