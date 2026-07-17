@@ -1491,4 +1491,77 @@ test('T34: expect(locator).toHaveAttribute() passes when attribute matches', asy
     assert_eq!(summary.passed, 1, "T34 should pass");
     assert_eq!(summary.failed, 0);
 }
+
+// ── #1907 — page.url() returns a primitive string synchronously ──────────────
+
+/// #1907: Playwright's `page.url()` is a synchronous method returning
+/// `string` (not `Promise<string>`) — a spec written Playwright-idiomatically
+/// as `page.url().includes(...)` (no `await`) threw a TypeError against
+/// jet's old async round-trip implementation, since `Promise` has no
+/// `.includes`. Constructs `Page` directly (bypassing the `page` fixture, so
+/// no CDP/Chromium round trip is needed — see the runner-path pattern used
+/// by `test_baseurl_resolution_relative_path` in page_fixture_auto_inject.rs)
+/// with a fake `sendRequest`, then asserts `typeof page.url()` is `"string"`
+/// both before any navigation (cached "about:blank" default) and after
+/// `goto()` refreshes the cache.
+// REQ: #1907
+#[tokio::test]
+async fn test_1907_page_url_returns_primitive_string_synchronously() {
+    if !node_available() {
+        eprintln!("skipping #1907 url() regression: node not on PATH");
+        return;
+    }
+
+    let spec = r#"
+import { test, expect, Page } from '@jet/test';
+
+// Fake wire channel — no CDP/browser involved. Mirrors the shape of
+// PageResponse::Ok / PageResponse::StringResult from page_binding.rs.
+function makeFakeSend(urlAfterGoto) {
+  return async (req) => {
+    if (req.kind === 'goto') return { kind: 'ok' };
+    if (req.kind === 'url') return { kind: 'string_result', value: urlAfterGoto };
+    return { kind: 'ok' };
+  };
+}
+
+test('#1907: page.url() is a synchronous primitive string before navigation', () => {
+  const page = new Page('fake-page-id', makeFakeSend('unused'), '');
+  const result = page.url();
+  if (typeof result !== 'string') {
+    throw new Error(`expected typeof "string", got ${typeof result} (${JSON.stringify(result)})`);
+  }
+  if (result !== 'about:blank') {
+    throw new Error(`expected initial cached url "about:blank", got ${JSON.stringify(result)}`);
+  }
+});
+
+test('#1907: page.url() reflects the post-goto() URL, still a primitive string', async () => {
+  const page = new Page('fake-page-id', makeFakeSend('http://example.com/after-goto'), '');
+  await page.goto('http://example.com/after-goto');
+  const result = page.url();
+  if (typeof result !== 'string') {
+    throw new Error(`expected typeof "string" after goto(), got ${typeof result}`);
+  }
+  if (result !== 'http://example.com/after-goto') {
+    throw new Error(`expected refreshed url, got ${JSON.stringify(result)}`);
+  }
+  // The original #1907 repro: chaining a String.prototype method directly
+  // onto the un-awaited call must not throw.
+  if (!page.url().includes('after-goto')) {
+    throw new Error('page.url().includes(...) must work without throwing');
+  }
+});
+"#;
+
+    let summary = match run_spec_str(spec, |_| {}).await {
+        Some(s) => s,
+        None => return,
+    };
+    assert_eq!(
+        summary.passed, 2,
+        "#1907 url() regression specs should pass"
+    );
+    assert_eq!(summary.failed, 0);
+}
 // CODEGEN-END

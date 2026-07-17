@@ -35,6 +35,12 @@ export class Page {
     this._send = sendRequest; // async (req) => response
     this._baseURL = baseURL || "";
     this._closed = false;
+    // Cached current URL backing the synchronous url() method — refreshed
+    // by _refreshUrl() after every tracked navigation action. Seeded to
+    // "about:blank" to match the real CDP target's initial navigation state
+    // (browser::context::new_page always creates the target at about:blank).
+    // #1907
+    this._url = "about:blank";
     // Event listener map: keyed by event name, value is array of handlers.
     // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R5
     this._eventListeners = {};
@@ -68,6 +74,9 @@ export class Page {
     if (res.kind === "error") {
       throw new Error(res.message);
     }
+    // #1907 — refresh the url() cache so it reflects the post-navigation
+    // (post-redirect) address, not just the requested target.
+    await this._refreshUrl();
   }
 
   // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R3
@@ -86,6 +95,7 @@ export class Page {
     this._assertOpen();
     const res = await this._send({ kind: "go_back", page_id: this.__jet_page_id });
     if (res.kind === "error") throw new Error(res.message);
+    await this._refreshUrl(); // #1907
   }
 
   // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R6
@@ -93,6 +103,7 @@ export class Page {
     this._assertOpen();
     const res = await this._send({ kind: "go_forward", page_id: this.__jet_page_id });
     if (res.kind === "error") throw new Error(res.message);
+    await this._refreshUrl(); // #1907
   }
 
   // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R6
@@ -100,16 +111,47 @@ export class Page {
     this._assertOpen();
     const res = await this._send({ kind: "reload", page_id: this.__jet_page_id });
     if (res.kind === "error") throw new Error(res.message);
+    await this._refreshUrl(); // #1907
   }
 
   // ── Queries ─────────────────────────────────────────────────────────────────
 
   // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
-  async url() {
+  //
+  // #1907 — Playwright's `page.url()` is a SYNCHRONOUS method returning
+  // `string` (not `Promise<string>`); a spec written Playwright-idiomatically
+  // as `page.url().includes(...)` (no `await`) threw a TypeError against the
+  // old async round-trip implementation (Promise has no `.includes`). Return
+  // the cached value synchronously instead — `await page.url()` still works
+  // for existing specs since `await` on a non-Promise value resolves
+  // immediately.
+  url() {
     this._assertOpen();
-    const res = await this._send({ kind: "url", page_id: this.__jet_page_id });
-    if (res.kind === "error") throw new Error(res.message);
-    return res.value;
+    return this._url;
+  }
+
+  // Internal: re-fetch `window.location.href` from the browser and refresh
+  // the cache backing url(). Called after every tracked navigation action
+  // (goto/goBack/goForward/reload) so url() itself can stay synchronous.
+  // Best-effort — a failed refresh keeps the previous cached value rather
+  // than failing the calling navigation action.
+  //
+  // Known limitation (#1907 follow-up): a URL change NOT driven through one
+  // of the four tracked navigation calls — e.g. a same-tab navigation
+  // triggered by page.click() on a plain <a href>, or in-page
+  // history.pushState()/replaceState() — is not reflected until the next
+  // tracked navigation runs. Playwright avoids this gap by mirroring CDP
+  // frame-navigation events continuously; jet does not currently subscribe
+  // to those events for every page.
+  async _refreshUrl() {
+    try {
+      const res = await this._send({ kind: "url", page_id: this.__jet_page_id });
+      if (res.kind !== "error" && typeof res.value === "string") {
+        this._url = res.value;
+      }
+    } catch {
+      // Best-effort — keep the previous cached value.
+    }
   }
 
   // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R1
