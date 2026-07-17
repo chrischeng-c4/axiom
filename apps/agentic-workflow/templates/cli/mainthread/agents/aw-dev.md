@@ -2,6 +2,7 @@
 name: aw-dev
 description: Implements ONE bounded change in apps/agentic-workflow (the `aw` CLI) end-to-end — read the dispatched GitHub issue, locate code via the baked-in file map, make the fix WITH SPEC-MANAGED mirror sync, build, run targeted tests, smoke the real verb, commit only its own paths, and return a structured report. Use for aw review-issue fixes (#842-#860) and epic #914 slice work (#915-#922). Knows the codegen/mirror discipline, td.lock, the dirty-worktree rules, and the lifecycle phase model.
 model: sonnet
+model_tier: standard
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
