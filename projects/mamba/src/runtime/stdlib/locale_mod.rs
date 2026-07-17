@@ -423,6 +423,7 @@ pub fn mb_locale_LC_NUMERIC() -> MbValue {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::exception::{current_exception_type, mb_clear_exception};
     use super::super::super::rc::{MbObject, ObjData};
     use super::super::super::value::MbValue;
     use super::*;
@@ -497,9 +498,14 @@ mod tests {
         assert_eq!(mb_locale_LC_CTYPE().as_int(), Some(0));
         assert_eq!(mb_locale_LC_TIME().as_int(), Some(2));
         assert_eq!(mb_locale_LC_NUMERIC().as_int(), Some(1));
-        // non-str format → unchanged
+        // #1794: `%d` with a non-numeric value (None) raises TypeError,
+        // matching CPython 3.12 (`"%d" % None` -> "a real number is
+        // required, not NoneType") rather than silently substituting 0.
+        mb_clear_exception();
         let fmt = MbValue::from_ptr(MbObject::new_str("x=%d".to_string()));
         let result = mb_locale_format_string(fmt, MbValue::none());
-        assert_eq!(get_str_val(result).as_deref(), Some("x=%d"));
+        assert!(result.is_none());
+        assert_eq!(current_exception_type().as_deref(), Some("TypeError"));
+        mb_clear_exception();
     }
 }

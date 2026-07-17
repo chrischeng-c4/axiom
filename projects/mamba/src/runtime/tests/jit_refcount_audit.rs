@@ -798,6 +798,8 @@ def f() -> int:
     x: list = [10, 20, 30]
     y: int = 42
     return y
+
+f()
 "#;
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
@@ -874,14 +876,14 @@ fn test_conformance_with_refcount_basic() {
 
     // Test 1: Simple arithmetic
     assert_eq!(
-        jit_run_locked("def f() -> int:\n    return 1 + 2\n", &guard),
+        jit_run_locked("def f() -> int:\n    return 1 + 2\n\nf()\n", &guard),
         3
     );
 
     // Test 2: Variable reassignment
     assert_eq!(
         jit_run_locked(
-            "def f() -> int:\n    x: int = 10\n    x = 20\n    return x\n",
+            "def f() -> int:\n    x: int = 10\n    x = 20\n    return x\n\nf()\n",
             &guard
         ),
         20
@@ -889,14 +891,14 @@ fn test_conformance_with_refcount_basic() {
 
     // Test 3: Loop with accumulator
     assert_eq!(jit_run_locked(
-        "def f() -> int:\n    s: int = 0\n    i: int = 0\n    while i < 10:\n        s = s + i\n        i = i + 1\n    return s\n",
+        "def f() -> int:\n    s: int = 0\n    i: int = 0\n    while i < 10:\n        s = s + i\n        i = i + 1\n    return s\n\nf()\n",
         &guard
     ), 45);
 
     // Test 4: List creation (exercises heap allocation with refcount)
     assert_eq!(
         jit_run_locked(
-            "def f() -> int:\n    x: list = [1, 2, 3]\n    return 100\n",
+            "def f() -> int:\n    x: list = [1, 2, 3]\n    return 100\n\nf()\n",
             &guard
         ),
         100
@@ -905,7 +907,7 @@ fn test_conformance_with_refcount_basic() {
     // Test 5: String literals (immortal refcount)
     assert_eq!(
         jit_run_locked(
-            "def f() -> int:\n    x: str = \"hello\"\n    y: str = \"world\"\n    return 77\n",
+            "def f() -> int:\n    x: str = \"hello\"\n    y: str = \"world\"\n    return 77\n\nf()\n",
             &guard
         ),
         77
@@ -913,7 +915,7 @@ fn test_conformance_with_refcount_basic() {
 
     // Test 6: Multiple locals released at return
     assert_eq!(jit_run_locked(
-        "def f() -> int:\n    a: int = 1\n    b: int = 2\n    c: int = 3\n    return a + b + c\n",
+        "def f() -> int:\n    a: int = 1\n    b: int = 2\n    c: int = 3\n    return a + b + c\n\nf()\n",
         &guard
     ), 6);
 }
