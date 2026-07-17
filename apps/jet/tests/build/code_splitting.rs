@@ -10,12 +10,26 @@
 //! marker string so chunk membership is verifiable by substring/manifest
 //! inspection instead of parsing minified JS output.
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use anyhow::{anyhow, Context, Result};
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header, HeaderValue, StatusCode, Uri},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use serde_json::Value;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::Duration;
+use tokio::sync::oneshot;
 
 fn run_jet<I, S>(fixture: &Path, args: I) -> Result<Output>
 where
@@ -345,5 +359,687 @@ fn splitting_flag_no_longer_warns() -> Result<()> {
     );
 
     Ok(())
+}
+
+// ── WI #1931: per-chunk sourcemaps (AC1) ────────────────────────────────────
+
+#[test]
+fn splitting_external_sourcemap_emits_per_chunk_map_files_with_bare_basename_url() -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_splitting_fixture(fixture);
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting", "--sourcemap", "external"])?,
+        "build --splitting --sourcemap external",
+    )?;
+
+    let dist = fixture.join("dist");
+    let chunk_js_files: Vec<PathBuf> = list_files_recursive(&dist.join("assets"))
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("js")
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("chunk-"))
+        })
+        .collect();
+    assert_eq!(
+        chunk_js_files.len(),
+        2,
+        "expected exactly 2 async chunk JS files, got {chunk_js_files:?}"
+    );
+
+    for chunk_js in &chunk_js_files {
+        let code =
+            fs::read_to_string(chunk_js).with_context(|| format!("read {}", chunk_js.display()))?;
+        let basename = chunk_js
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("chunk file has a name");
+
+        let bare_comment = format!("//# sourceMappingURL={basename}.map");
+        assert!(
+            code.contains(&bare_comment),
+            "chunk {basename} must carry a bare-basename sourceMappingURL comment; code tail={:?}",
+            &code[code.len().saturating_sub(200)..]
+        );
+        assert!(
+            !code.contains(&format!("sourceMappingURL=assets/{basename}.map")),
+            "chunk {basename} sourceMappingURL must not double-prefix assets/ \
+             (browsers resolve it relative to the chunk file's own directory)"
+        );
+
+        let map_path = chunk_js.with_extension("js.map");
+        assert!(
+            map_path.exists(),
+            "expected sibling map file {}",
+            map_path.display()
+        );
+        let map_json: Value = serde_json::from_str(&fs::read_to_string(&map_path)?)
+            .with_context(|| format!("parse {} as JSON", map_path.display()))?;
+        assert_eq!(
+            map_json.get("file").and_then(Value::as_str),
+            Some(basename),
+            "map file's \"file\" field must match the chunk's bare basename"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn splitting_sourcemap_modes_inline_hidden_none_match_flag_semantics() -> Result<()> {
+    fn chunk_js_files(dist: &Path) -> Vec<PathBuf> {
+        list_files_recursive(&dist.join("assets"))
+            .into_iter()
+            .filter(|p| {
+                p.extension().and_then(|e| e.to_str()) == Some("js")
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("chunk-"))
+            })
+            .collect()
+    }
+    fn no_map_files(dist: &Path) -> bool {
+        list_files_recursive(dist)
+            .iter()
+            .all(|p| p.extension().and_then(|e| e.to_str()) != Some("map"))
+    }
+
+    // Inline: no separate .map files anywhere; base64 data URL embedded in
+    // each chunk's own code.
+    {
+        let temp = tempfile::tempdir().context("tempdir (inline)")?;
+        let fixture = temp.path();
+        write_splitting_fixture(fixture);
+        require_success(
+            run_jet(fixture, ["build", "--splitting", "--sourcemap", "inline"])?,
+            "build --splitting --sourcemap inline",
+        )?;
+        let dist = fixture.join("dist");
+        assert!(
+            no_map_files(&dist),
+            "inline mode must not write any .map files"
+        );
+        let chunks = chunk_js_files(&dist);
+        assert_eq!(
+            chunks.len(),
+            2,
+            "expected 2 async chunk files, got {chunks:?}"
+        );
+        for chunk_js in &chunks {
+            let code = fs::read_to_string(chunk_js)?;
+            assert!(
+                code.contains("sourceMappingURL=data:application/json;base64,"),
+                "inline mode chunk must carry a base64 data-URL source map: {}",
+                chunk_js.display()
+            );
+        }
+    }
+
+    // Hidden: .map file IS written, but the chunk code omits the
+    // sourceMappingURL comment (mirrors bundler/lib_build.rs's
+    // apply_library_sourcemap reference Hidden-mode behavior).
+    {
+        let temp = tempfile::tempdir().context("tempdir (hidden)")?;
+        let fixture = temp.path();
+        write_splitting_fixture(fixture);
+        require_success(
+            run_jet(fixture, ["build", "--splitting", "--sourcemap", "hidden"])?,
+            "build --splitting --sourcemap hidden",
+        )?;
+        let dist = fixture.join("dist");
+        let chunks = chunk_js_files(&dist);
+        assert_eq!(
+            chunks.len(),
+            2,
+            "expected 2 async chunk files, got {chunks:?}"
+        );
+        for chunk_js in &chunks {
+            let map_path = chunk_js.with_extension("js.map");
+            assert!(
+                map_path.exists(),
+                "hidden mode must still write {}",
+                map_path.display()
+            );
+            let code = fs::read_to_string(chunk_js)?;
+            assert!(
+                !code.contains("sourceMappingURL"),
+                "hidden mode chunk must omit the sourceMappingURL comment: {}",
+                chunk_js.display()
+            );
+        }
+    }
+
+    // None: no map artifacts and no sourceMappingURL comment anywhere.
+    {
+        let temp = tempfile::tempdir().context("tempdir (none)")?;
+        let fixture = temp.path();
+        write_splitting_fixture(fixture);
+        require_success(
+            run_jet(fixture, ["build", "--splitting", "--sourcemap", "none"])?,
+            "build --splitting --sourcemap none",
+        )?;
+        let dist = fixture.join("dist");
+        assert!(
+            no_map_files(&dist),
+            "none mode must not write any .map files"
+        );
+        let chunks = chunk_js_files(&dist);
+        assert_eq!(
+            chunks.len(),
+            2,
+            "expected 2 async chunk files, got {chunks:?}"
+        );
+        for chunk_js in &chunks {
+            let code = fs::read_to_string(chunk_js)?;
+            assert!(
+                !code.contains("sourceMappingURL"),
+                "none mode chunk must not carry a sourceMappingURL comment: {}",
+                chunk_js.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+// ── WI #1931: preload hints in index.html (AC2) ─────────────────────────────
+
+/// Writes a fixture shaped like `bundler::splitting`'s own
+/// "diamond dynamic boundary" coverage (`test_diamond_dynamic_boundary_shared`
+/// / `test_preload_hints_multi_chunk`): the entry AND one of the two lazy
+/// chunks both statically import `common.js`, so it crosses the 2+-chunk
+/// reachability threshold and gets promoted to a real `"shared"` chunk —
+/// unlike `write_splitting_fixture`'s `shared.js`, which only the entry ever
+/// imports and therefore never promotes (kept that way deliberately so the
+/// existing manifest tests stay a minimal 2-async-chunk fixture).
+fn write_shared_promotion_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { common } from './common.js';
+
+console.log('ENTRY_MARKER', common());
+
+import('./lazy1.js').then((mod) => mod.default());
+import('./lazy2.js').then((mod) => mod.default());
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/common.js"),
+        "export function common() { return 'COMMON_MARKER'; }\n",
+    )
+    .expect("write common");
+    fs::write(
+        dir.join("src/lazy1.js"),
+        r#"import { common } from './common.js';
+
+export default function lazy1() { return 'LAZY_ONE_MARKER:' + common(); }
+"#,
+    )
+    .expect("write lazy1");
+    fs::write(
+        dir.join("src/lazy2.js"),
+        "export default function lazy2() { return 'LAZY_TWO_MARKER'; }\n",
+    )
+    .expect("write lazy2");
+}
+
+#[test]
+fn splitting_preload_hints_cover_shared_chunk_and_exclude_async_chunks_in_index_html() -> Result<()>
+{
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_shared_promotion_fixture(fixture);
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting"])?,
+        "build --splitting",
+    )?;
+
+    let dist = fixture.join("dist");
+    let shared_js = list_files_recursive(&dist.join("assets"))
+        .into_iter()
+        .find(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("js")
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("shared."))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a promoted shared.<hash>.js chunk under {}",
+                dist.join("assets").display()
+            )
+        });
+    let shared_basename = shared_js
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("shared chunk file has a name")
+        .to_string();
+
+    let html = fs::read_to_string(dist.join("index.html")).context("read dist/index.html")?;
+
+    let expected_tag =
+        format!(r#"<link rel="preload" as="script" href="assets/{shared_basename}">"#);
+    assert!(
+        html.contains(&expected_tag),
+        "index.html must preload the shared chunk with a classic-script hint: \
+         expected {expected_tag:?}; html={html}"
+    );
+    assert!(
+        !html.contains("chunk-lazy1") && !html.contains("chunk-lazy2"),
+        "index.html must not preload either async chunk: html={html}"
+    );
+    assert!(
+        !html.contains("modulepreload"),
+        "code-split chunks load via classic <script> injection, not ESM import; \
+         index.html must not use rel=\"modulepreload\": html={html}"
+    );
+
+    Ok(())
+}
+
+// ── WI #1931: parallel-tail wall-time sanity (scope item 5) ────────────────
+
+/// Log-only wall-time comparison between the parallel per-chunk minify tail
+/// (default) and the serial fallback path (`JET_MINIFY_STAGE_DUMP` set —
+/// see the `hashed_chunks` construction in `cli.rs`).
+///
+/// Not an assertion on timing: `write_splitting_fixture` only has 2 tiny
+/// chunks, so real per-chunk work is a handful of milliseconds — well
+/// inside the noise floor of process spawn + rayon thread-pool-first-use
+/// overhead on a shared dev/CI machine. A strict `parallel <= serial * K`
+/// assertion on a fixture this small would be a coin flip more often than a
+/// real regression signal, so this logs both durations and only asserts the
+/// correctness invariant that matters: both paths must still produce the
+/// same chunk set.
+#[test]
+fn splitting_parallel_chunk_tail_wall_time_sanity() -> Result<()> {
+    fn chunk_names(dist: &Path) -> Vec<String> {
+        let mut names: Vec<String> = list_files_recursive(&dist.join("assets"))
+            .into_iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .filter(|n| n.starts_with("chunk-") && n.ends_with(".js"))
+            .map(|n| n.split('.').next().unwrap_or_default().to_string())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    let temp_parallel = tempfile::tempdir().context("tempdir (parallel)")?;
+    let fixture_parallel = temp_parallel.path();
+    write_splitting_fixture(fixture_parallel);
+    let start_parallel = std::time::Instant::now();
+    require_success(
+        run_jet(fixture_parallel, ["build", "--splitting"])?,
+        "build --splitting (parallel tail)",
+    )?;
+    let parallel_duration = start_parallel.elapsed();
+
+    let temp_serial = tempfile::tempdir().context("tempdir (serial)")?;
+    let fixture_serial = temp_serial.path();
+    write_splitting_fixture(fixture_serial);
+    let dump_dir = fixture_serial.join(".stage-dump");
+    let start_serial = std::time::Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_jet"))
+        .args(["build", "--splitting"])
+        .current_dir(fixture_serial)
+        .env("JET_MINIFY_STAGE_DUMP", &dump_dir)
+        .output()
+        .context("run jet build --splitting (serial tail via JET_MINIFY_STAGE_DUMP)")?;
+    let serial_duration = start_serial.elapsed();
+    require_success(
+        output,
+        "build --splitting (serial tail via JET_MINIFY_STAGE_DUMP)",
+    )?;
+
+    eprintln!(
+        "[wall-time] splitting chunk tail: parallel={parallel_duration:?} serial={serial_duration:?}"
+    );
+
+    assert_eq!(
+        chunk_names(&fixture_parallel.join("dist")),
+        chunk_names(&fixture_serial.join("dist")),
+        "parallel and serial chunk tails must produce the same chunk set"
+    );
+
+    Ok(())
+}
+
+// ── WI #1931: real-browser lazy-load smoke (AC3) ────────────────────────────
+//
+// Serves a `--splitting` build's `dist/` over local HTTP and drives real
+// Chromium through the `jet browser launch/eval/shutdown` CLI (a session
+// file at `.jet/browser-session.json`, not an in-process CDP client) —
+// the exact pattern already proven in
+// `tests/build/production_build_regression.rs::production_build_regression_fixture_boots_in_browser`,
+// duplicated here (rather than extracted into a shared helper) since that
+// file is otherwise unrelated to code splitting and extraction would be its
+// own out-of-scope refactor. Skips (does not fail) when Chromium isn't
+// available, matching `tests/browser-bridge/page_api_parity.rs`'s
+// skip-and-return pattern so CI without Chromium stays green.
+
+struct StaticDistServer {
+    url: String,
+    shutdown: Option<oneshot::Sender<()>>,
+}
+
+impl StaticDistServer {
+    async fn spawn(fixture: &Path) -> Result<Self> {
+        let dist = fixture.join("dist");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("bind static dist server")?;
+        let addr = listener
+            .local_addr()
+            .context("read static dist server addr")?;
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let app = Router::new()
+            .fallback(get(serve_static_dist_request))
+            .with_state(StaticDistState { dist });
+
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
+        });
+
+        Ok(Self {
+            url: format!("http://{addr}/"),
+            shutdown: Some(shutdown_tx),
+        })
+    }
+
+    fn url(&self) -> String {
+        self.url.clone()
+    }
+}
+
+impl Drop for StaticDistServer {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+}
+
+#[derive(Clone)]
+struct StaticDistState {
+    dist: PathBuf,
+}
+
+async fn serve_static_dist_request(State(state): State<StaticDistState>, uri: Uri) -> Response {
+    let path = uri
+        .path()
+        .split('?')
+        .next()
+        .unwrap_or(uri.path())
+        .trim_start_matches('/');
+
+    if path.contains("..") || path.starts_with('/') {
+        return (StatusCode::BAD_REQUEST, "Bad request").into_response();
+    }
+
+    let rel = if path.is_empty() { "index.html" } else { path };
+    let file = state.dist.join(rel);
+    match tokio::fs::read(&file).await {
+        Ok(body) => {
+            let mut response = Response::new(Body::from(body));
+            response.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(content_type(&file)),
+            );
+            response
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            (StatusCode::NOT_FOUND, "Not found").into_response()
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to read {}: {err}", file.display()),
+        )
+            .into_response(),
+    }
+}
+
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "application/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+fn spawn_jet_browser(fixture: &Path, url: &str) -> Result<Child> {
+    Command::new(env!("CARGO_BIN_EXE_jet"))
+        .args(["browser", "launch", url])
+        .current_dir(fixture)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawn jet browser launch")
+}
+
+async fn wait_for_browser_session(fixture: &Path) -> Result<()> {
+    let session = fixture.join(".jet/browser-session.json");
+    for _ in 0..150 {
+        if session.exists() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(anyhow!(
+        "jet browser launch did not write {}",
+        session.display()
+    ))
+}
+
+fn read_child_stderr(child: &mut Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    stderr
+}
+
+fn wait_child_exit(child: &mut Child, context: &str) -> Result<String> {
+    for _ in 0..120 {
+        if let Some(status) = child.try_wait()? {
+            let stderr = read_child_stderr(child);
+            if status.success() {
+                return Ok(stderr);
+            }
+            return Err(anyhow!("{context} exited with {status}\nstderr={stderr}"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(anyhow!("{context} did not exit after shutdown request"))
+}
+
+fn browser_eval_json(fixture: &Path, expression: &str) -> Result<Value> {
+    let output = require_success(
+        run_jet(fixture, ["browser", "eval", expression])?,
+        "browser eval",
+    )?;
+    serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parse browser eval output for {expression:?}"))
+}
+
+fn shutdown_browser(fixture: &Path, child: &mut Child) -> Result<String> {
+    require_success(
+        run_jet(fixture, ["browser", "shutdown"])?,
+        "browser shutdown",
+    )?;
+    wait_child_exit(child, "jet browser launch")
+}
+
+/// Writes a fixture where clicking a button triggers a dynamic `import()`
+/// for the first time, so a real browser can prove the chunk file is not
+/// requested until the click happens. Mounts into the default HTML
+/// template's `#root` div (`frontend::default_index_html`).
+fn write_lazy_click_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"document.getElementById('root').innerHTML =
+  '<button id="load-btn">Load</button><div id="output"></div>';
+
+document.getElementById('load-btn').addEventListener('click', () => {
+  import('./lazy.js').then((mod) => {
+    document.getElementById('output').textContent = mod.default();
+  });
+});
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/lazy.js"),
+        "export default function lazy() { return 'LAZY_LOADED_MARKER'; }\n",
+    )
+    .expect("write lazy");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn splitting_lazy_chunk_loads_on_demand_in_real_browser() -> Result<()> {
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping splitting_lazy_chunk_loads_on_demand_in_real_browser: no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_lazy_click_fixture(fixture);
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting"])?,
+        "build --splitting",
+    )?;
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "splitting build must emit dist/index.html"
+    );
+
+    // Hard bound so a stuck CDP round-trip fails the test instead of
+    // hanging the run (WI #1931's explicit anti-hang requirement). Every
+    // inner wait loop below is already independently bounded (session-file
+    // poll <=15s, each readiness poll <=12s); this is defense in depth
+    // around the whole sequence, generous enough for a cold Chromium
+    // launch.
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut booted = false;
+        for _ in 0..120 {
+            let ready = browser_eval_json(fixture, "document.getElementById('load-btn') !== null")
+                .unwrap_or(Value::Bool(false));
+            if ready.as_bool() == Some(true) {
+                booted = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(booted, "fixture page did not boot (no #load-btn found)");
+
+        let before = browser_eval_json(
+            fixture,
+            "performance.getEntriesByType('resource').map((e) => e.name)",
+        )
+        .context("read pre-click resource timing")?;
+        let before_names: Vec<String> = before
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            !before_names.iter().any(|n| n.contains("chunk-lazy")),
+            "lazy chunk must not be requested before the click: {before_names:?}"
+        );
+
+        // Deterministic trigger via the bridge: run the click itself as a
+        // page-context JS expression rather than a synthetic CDP mouse
+        // event — no coordinate/layout dependency.
+        browser_eval_json(
+            fixture,
+            "(() => { document.getElementById('load-btn').click(); return true; })()",
+        )
+        .context("click #load-btn")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(fixture, "document.getElementById('output').textContent")
+                .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                if text == "LAZY_LOADED_MARKER" {
+                    output_text = Some(text.to_string());
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            output_text.as_deref(),
+            Some("LAZY_LOADED_MARKER"),
+            "clicking #load-btn must render the lazily-imported module's output"
+        );
+
+        let after = browser_eval_json(
+            fixture,
+            "performance.getEntriesByType('resource').map((e) => e.name)",
+        )
+        .context("read post-click resource timing")?;
+        let after_names: Vec<String> = after
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            after_names.iter().any(|n| n.contains("chunk-lazy")),
+            "lazy chunk must be requested after the click: {after_names:?}"
+        );
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(inner) => inner,
+        Err(_) => {
+            // Best-effort cleanup: the spawned `jet browser launch` child
+            // is otherwise orphaned once the timeout drops this future.
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            Err(anyhow!(
+                "splitting_lazy_chunk_loads_on_demand_in_real_browser timed out after 60s"
+            ))
+        }
+    }
 }
 // HANDWRITE-END

@@ -417,6 +417,49 @@ pub fn generate_preload_tags(hints: &[PreloadHint]) -> String {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn inject_preload_hints(html: &str, hints: &[PreloadHint]) -> String {
     let tags = generate_preload_tags(hints);
+    inject_tags_into_head(html, &tags)
+}
+
+/// Generate `<link rel="preload" as="script">` tags from preload hints.
+///
+/// Code-split chunks load via classic `<script>` tag injection
+/// (`generate_split_runtime`'s `loadChunk`, not an ES module `import`), so
+/// their preload relation is `preload`/`as="script"` rather than
+/// `modulepreload` (`generate_preload_tags` above stays unchanged and keeps
+/// serving any ESM-import caller). Only static chunk dependencies are
+/// included; async chunks are excluded since they load on demand.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+/// @issue #1931
+pub fn generate_script_preload_tags(hints: &[PreloadHint]) -> String {
+    let mut tags = String::new();
+    for hint in hints {
+        if hint.is_static {
+            tags.push_str(&format!(
+                "<link rel=\"preload\" as=\"script\" href=\"{}\">\n",
+                hint.href
+            ));
+        }
+    }
+    tags
+}
+
+/// Inject classic-script preload hint tags into an HTML string's `<head>`
+/// section. Same head-insertion/prepend-fallback behavior as
+/// `inject_preload_hints`, using `generate_script_preload_tags` instead of
+/// `generate_preload_tags`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+/// @issue #1931
+pub fn inject_script_preload_hints(html: &str, hints: &[PreloadHint]) -> String {
+    let tags = generate_script_preload_tags(hints);
+    inject_tags_into_head(html, &tags)
+}
+
+/// Shared head-insertion helper for `inject_preload_hints` /
+/// `inject_script_preload_hints`: insert `tags` right after `<head>`
+/// (case-insensitive search), or prepend to `html` when no `<head>` is
+/// found. No-op (returns `html` unchanged) when `tags` is empty.
+/// @issue #1931
+fn inject_tags_into_head(html: &str, tags: &str) -> String {
     if tags.is_empty() {
         return html.to_string();
     }
@@ -428,7 +471,7 @@ pub fn inject_preload_hints(html: &str, hints: &[PreloadHint]) -> String {
         let mut result = String::with_capacity(html.len() + tags.len() + 1);
         result.push_str(&html[..insert_pos]);
         result.push('\n');
-        result.push_str(&tags);
+        result.push_str(tags);
         result.push_str(&html[insert_pos..]);
         result
     } else {
@@ -1494,6 +1537,7 @@ impl Bundler {
                 source_map: None,
                 assets: Vec::new(),
                 chunks: Vec::new(),
+                preload_hints: Vec::new(),
             });
         }
 
@@ -1505,12 +1549,13 @@ impl Bundler {
         // byte-for-byte unchanged when splitting is off.
         // @issue #1930
         if self.splitting {
-            let (entry_code, chunks) = self.generate_split_bundle(&modules)?;
+            let (entry_code, chunks, preload_hints) = self.generate_split_bundle(&modules)?;
             return Ok(BundleOutput {
                 code: entry_code,
                 source_map: None,
                 assets: Vec::new(),
                 chunks,
+                preload_hints,
             });
         }
 
@@ -1583,6 +1628,7 @@ impl Bundler {
             source_map: None,
             assets: Vec::new(),
             chunks: Vec::new(),
+            preload_hints: Vec::new(),
         })
     }
 
@@ -1602,11 +1648,18 @@ impl Bundler {
     /// caller (`cli.rs`'s build handler) has minified and hashed each
     /// `ChunkArtifact`; that caller injects the manifest object literal into
     /// this entry code before running it through the same minify tail.
+    ///
+    /// Also returns the entry chunk's static preload hints
+    /// (`splitting::generate_preload_hints`'s result, unmodified). `href`
+    /// values are pre-hash chunk names (e.g. `"assets/shared.js"`); the
+    /// caller must remap them to the final content-hashed filename before
+    /// emitting HTML.
     /// @issue #1930
+    /// @issue #1931
     fn generate_split_bundle(
         &self,
         modules: &[CompiledModule],
-    ) -> Result<(String, Vec<ChunkArtifact>)> {
+    ) -> Result<(String, Vec<ChunkArtifact>, Vec<PreloadHint>)> {
         let entry = modules
             .iter()
             .find(|m| m.id == 0)
@@ -1675,7 +1728,9 @@ impl Bundler {
             })
             .collect();
 
-        Ok((entry_code, chunks))
+        let preload_hints = split_result.preload_hints;
+
+        Ok((entry_code, chunks, preload_hints))
     }
 }
 
@@ -3025,7 +3080,7 @@ mod code_splitting_tests {
     /// entry.js statically imports shared.js and dynamically imports
     /// lazy1.js. Mirrors the shape of the integration fixture in
     /// `tests/build/code_splitting.rs` at unit-test scale.
-    fn split_bundle_fixture() -> (String, Vec<ChunkArtifact>) {
+    fn split_bundle_fixture() -> (String, Vec<ChunkArtifact>, Vec<PreloadHint>) {
         let bundler = Bundler::new(BundleOptions {
             splitting: true,
             ..Default::default()
@@ -3066,7 +3121,7 @@ mod code_splitting_tests {
 
     #[test]
     fn entry_code_contains_dynamic_import_and_chunk_manifest_reference() {
-        let (entry_code, _chunks) = split_bundle_fixture();
+        let (entry_code, _chunks, _preload_hints) = split_bundle_fixture();
         assert!(
             entry_code.contains("dynamicImport"),
             "entry runtime must expose dynamicImport: {entry_code}"
@@ -3085,7 +3140,7 @@ mod code_splitting_tests {
         // wrapped in that call — even though its own runtime DEFINES the
         // registerChunk capability (a bare `registerChunk: registerChunk`
         // property) for other chunks to call into once loaded.
-        let (entry_code, _chunks) = split_bundle_fixture();
+        let (entry_code, _chunks, _preload_hints) = split_bundle_fixture();
         assert!(
             !entry_code.contains("__jet__.registerChunk("),
             "entry code must not call __jet__.registerChunk(...): {entry_code}"
@@ -3098,7 +3153,7 @@ mod code_splitting_tests {
 
     #[test]
     fn async_chunk_files_call_register_chunk_with_their_own_name() {
-        let (_entry_code, chunks) = split_bundle_fixture();
+        let (_entry_code, chunks, _preload_hints) = split_bundle_fixture();
         let lazy_chunk = chunks
             .iter()
             .find(|c| c.name == "chunk-lazy1")
@@ -3124,7 +3179,7 @@ mod code_splitting_tests {
         // reachable from the lazy split point in this fixture), so
         // `split_chunks_with_config`'s shared-module detection (referenced
         // by 2+ chunks) must NOT carve it into a separate "shared" chunk.
-        let (entry_code, chunks) = split_bundle_fixture();
+        let (entry_code, chunks, _preload_hints) = split_bundle_fixture();
         assert!(
             !chunks.iter().any(|c| c.name == "shared"),
             "single-reference module must not produce a shared chunk: {chunks:#?}"

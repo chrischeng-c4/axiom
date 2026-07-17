@@ -208,6 +208,14 @@ pub struct BundleOutput {
     /// consumers that only read `code`/`source_map`/`assets` are unaffected.
     /// @issue #1930
     pub chunks: Vec<ChunkArtifact>,
+
+    /// Preload hints for the entry chunk's static (non-async) chunk
+    /// dependencies, populated only when `BundleOptions::splitting` is
+    /// `true`. Always empty when splitting is off. `href` values name the
+    /// pre-hash chunk (e.g. `"assets/shared.js"`); callers must remap to
+    /// the final content-hashed filename before emitting HTML.
+    /// @issue #1931
+    pub preload_hints: Vec<PreloadHint>,
 }
 
 /// A single non-entry chunk produced by code splitting (async or shared).

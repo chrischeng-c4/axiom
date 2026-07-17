@@ -2454,31 +2454,63 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
             };
 
-            // --splitting: minify + content-hash each async/shared chunk
-            // BEFORE the entry, so the runtime manifest injected into the
-            // entry below can name final hashed filenames (WI #1930). Off
-            // path leaves `hashed_chunks` empty and every step below
-            // byte-identical to pre-#1930 behavior (AC2).
+            // --splitting: minify + content-hash + sourcemap each
+            // async/shared chunk BEFORE the entry, so the runtime manifest
+            // injected into the entry below can name final hashed
+            // filenames (WI #1930). Off path leaves `hashed_chunks` empty
+            // and every step below byte-identical to pre-#1930 behavior
+            // (AC2).
+            //
+            // Chunks are independent — `build_hashed_chunk` only reads its
+            // own `ChunkArtifact` and does no I/O — so multi-chunk builds
+            // minify+sourcemap them in parallel via rayon (WI #1931), the
+            // same `par_iter()` pattern already used for per-module
+            // parsing/transforms elsewhere in the bundler (tree-sitter/oxc
+            // both allocate fresh parser/allocator state per call; nothing
+            // in the minify/mangle/dce/scope-hoist chain is
+            // `thread_local!`/global mutable state). Two things are NOT
+            // parallel-safe and gate this back to the pre-#1931 serial
+            // loop when active:
+            //   • `JET_MINIFY_STAGE_DUMP=<dir>` writes fixed per-stage
+            //     filenames inside `run_bundle_post_process_tail` —
+            //     concurrent chunks would race on the same paths.
+            //   • the outer `lap` closure captures `&mut Instant`, which
+            //     is `!Sync`; parallel chunks get a no-op lap instead
+            //     (`JET_BUNDLE_TIMING` keeps working for the entry and for
+            //     the aggregate `chunk_post_process` lap below, just not
+            //     per-chunk minify sub-stage laps).
+            let stage_dump_active = std::env::var_os("JET_MINIFY_STAGE_DUMP").is_some();
             let hashed_chunks: Vec<HashedChunk> = if splitting {
-                let mut out = Vec::with_capacity(result.chunks.len());
-                for chunk in &result.chunks {
-                    let processed = run_bundle_post_process_tail(
-                        &chunk.code,
-                        &defines,
-                        minify,
-                        &drops,
-                        &mut lap,
-                    );
-                    let chunk_hash = content_hash_prefix(&processed);
-                    out.push(HashedChunk {
-                        name: chunk.name.clone(),
-                        filename: format!("assets/{}.{}.js", chunk.name, chunk_hash),
-                        code: processed,
-                        imports: chunk.imports.clone(),
-                        module_ids: chunk.module_ids.clone(),
-                    });
+                if stage_dump_active {
+                    let mut out = Vec::with_capacity(result.chunks.len());
+                    for chunk in &result.chunks {
+                        let processed = run_bundle_post_process_tail(
+                            &chunk.code,
+                            &defines,
+                            minify,
+                            &drops,
+                            &mut lap,
+                        );
+                        out.push(build_hashed_chunk(chunk, processed, &sourcemap_mode));
+                    }
+                    out
+                } else {
+                    use rayon::prelude::*;
+                    result
+                        .chunks
+                        .par_iter()
+                        .map(|chunk| {
+                            let processed = run_bundle_post_process_tail(
+                                &chunk.code,
+                                &defines,
+                                minify,
+                                &drops,
+                                |_stage: &str| {},
+                            );
+                            build_hashed_chunk(chunk, processed, &sourcemap_mode)
+                        })
+                        .collect()
                 }
-                out
             } else {
                 Vec::new()
             };
@@ -2563,16 +2595,31 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
                 std::fs::write(&chunk_path, &chunk.code)
                     .with_context(|| format!("Failed to write chunk {}", chunk.filename))?;
+                if let Some(map_json) = &chunk.map_json {
+                    let map_filename = format!("{}.map", chunk.filename);
+                    crate::bundler::sourcemap::write_external_map(
+                        &output_dir,
+                        &map_filename,
+                        map_json,
+                    )
+                    .with_context(|| format!("Failed to write chunk source map {map_filename}"))?;
+                }
             }
+            lap("chunk_sourcemap_write");
             let css_filenames = write_bundle_assets(&output_dir, &result.assets)
                 .context("Failed to write bundle assets")?;
             copy_public_dir(&root_dir, &output_dir).context("Failed to copy public assets")?;
+            // Remap pre-hash chunk preload hints (`splitting::SplitResult`,
+            // threaded through `BundleOutput::preload_hints`) to the final
+            // content-hashed filenames just written above (WI #1931).
+            let preload_hints = hash_preload_hints(&result.preload_hints, &hashed_chunks);
             emit_build_index_html(
                 &output_dir,
                 &frontend.html_template,
                 &frontend.entry,
                 &out_filename,
                 &css_filenames,
+                &preload_hints,
             )
             .context("Failed to write index.html")?;
 
@@ -3795,6 +3842,7 @@ async fn run_nx_build(
             &frontend.entry,
             &out_filename,
             &css_filenames,
+            &[],
         )
         .with_context(|| format!("Failed to write index.html for '{}'", project_name))?;
 
@@ -4808,6 +4856,10 @@ struct HashedChunk {
     /// Output-relative filename, e.g. "assets/chunk-lazy1.abcd1234.js".
     filename: String,
     /// Post-processed (minified if enabled) chunk code, ready to write.
+    /// Already carries the `//# sourceMappingURL=` comment in `External`
+    /// mode (matching the entry's ordering: the content hash above is
+    /// computed BEFORE this comment is appended, so the comment itself
+    /// never perturbs the chunk's own filename).
     code: String,
     /// Names of other chunks this chunk depends on (loaded first by
     /// `__jet__.loadChunk`).
@@ -4815,6 +4867,11 @@ struct HashedChunk {
     /// Compiled-module ids this chunk owns, for the manifest's
     /// `moduleChunks: { id: name }` reverse index.
     module_ids: Vec<usize>,
+    /// External/Hidden-mode source map JSON, written to
+    /// `<filename>.map` in the "Write output" loop. `None` for
+    /// `Inline` (embedded directly into `code`) and `None`-mode builds.
+    /// @issue #1931
+    map_json: Option<String>,
 }
 
 /// Build the `__jet__.chunkManifest = {...};` statement from already-hashed
@@ -4874,6 +4931,90 @@ fn content_hash_prefix(content: &str) -> String {
     hasher.update(content.as_bytes());
     let hex = format!("{:x}", hasher.finalize());
     hex[..8].to_string()
+}
+
+/// Content-hash a post-processed chunk and apply the build's sourcemap
+/// mode, producing the finished `HashedChunk` ready for the "Write output"
+/// loop. Pure/no I/O (safe to call from a rayon `par_iter` closure): the
+/// external-map JSON is returned via `HashedChunk::map_json` for the
+/// caller to write once the `assets/` directory is guaranteed to exist.
+///
+/// Mirrors the entry bundle's own sourcemap handling (same coarse
+/// single-source `generate_source_map` shape, content hash computed BEFORE
+/// any `//# sourceMappingURL=` comment is appended) with one necessary
+/// difference: chunks live under `assets/`, so the embedded comment must
+/// reference the map's bare filename (relative to the chunk's own
+/// directory), while the map is written to disk at the chunk's full
+/// `assets/`-relative path. `Hidden` mode follows `lib_build.rs`'s
+/// `apply_library_sourcemap` reference behavior (external map written,
+/// comment omitted) — @issue #1931
+fn build_hashed_chunk(
+    chunk: &crate::bundler::types::ChunkArtifact,
+    processed: String,
+    sourcemap_mode: &crate::bundler::types::SourceMapOption,
+) -> HashedChunk {
+    let chunk_hash = content_hash_prefix(&processed);
+    let basename = format!("{}.{}.js", chunk.name, chunk_hash);
+    let filename = format!("assets/{basename}");
+
+    let (code, map_json) = match sourcemap_mode {
+        crate::bundler::types::SourceMapOption::External => {
+            let map_basename = format!("{basename}.map");
+            let sources = vec![(chunk.name.clone(), chunk.code.clone())];
+            let map =
+                crate::bundler::sourcemap::generate_source_map(&basename, &sources, &processed);
+            let code = crate::bundler::sourcemap::append_source_map_url(&processed, &map_basename);
+            (code, Some(map.json))
+        }
+        crate::bundler::types::SourceMapOption::Hidden => {
+            let sources = vec![(chunk.name.clone(), chunk.code.clone())];
+            let map =
+                crate::bundler::sourcemap::generate_source_map(&basename, &sources, &processed);
+            (processed, Some(map.json))
+        }
+        crate::bundler::types::SourceMapOption::Inline => {
+            let sources = vec![(chunk.name.clone(), chunk.code.clone())];
+            let map =
+                crate::bundler::sourcemap::generate_source_map(&basename, &sources, &processed);
+            let code = crate::bundler::sourcemap::inline_source_map(&processed, &map.json);
+            (code, None)
+        }
+        crate::bundler::types::SourceMapOption::None => (processed, None),
+    };
+
+    HashedChunk {
+        name: chunk.name.clone(),
+        filename,
+        code,
+        imports: chunk.imports.clone(),
+        module_ids: chunk.module_ids.clone(),
+        map_json,
+    }
+}
+
+/// Remap pre-hash chunk preload hints (`href: "assets/<name>.js"`, from
+/// `splitting::generate_preload_hints` via `BundleOutput::preload_hints`)
+/// to the final content-hashed filenames written to disk. A hint whose
+/// chunk isn't found in `hashed_chunks` is dropped rather than emitted
+/// with a broken href — not expected in practice (every entry-imported
+/// non-async chunk name in a `--splitting` build has a matching
+/// `HashedChunk`), but keeps HTML emission total instead of panicking.
+/// @issue #1931
+fn hash_preload_hints(
+    hints: &[crate::bundler::types::PreloadHint],
+    hashed_chunks: &[HashedChunk],
+) -> Vec<crate::bundler::types::PreloadHint> {
+    hints
+        .iter()
+        .filter_map(|hint| {
+            let chunk_name = hint.href.strip_prefix("assets/")?.strip_suffix(".js")?;
+            let hashed = hashed_chunks.iter().find(|c| c.name == chunk_name)?;
+            Some(crate::bundler::types::PreloadHint {
+                href: hashed.filename.clone(),
+                is_static: hint.is_static,
+            })
+        })
+        .collect()
 }
 
 fn write_bundle_assets(
@@ -5012,8 +5153,22 @@ fn emit_build_index_html(
     entry: &Path,
     js_filename: &str,
     css_filenames: &[String],
+    preload_hints: &[crate::bundler::types::PreloadHint],
 ) -> Result<()> {
     let html = render_build_index_html(&template, entry, js_filename, css_filenames);
+    // Code-split chunks load via classic `<script>` tag injection
+    // (`generate_split_runtime`'s `loadChunk`), not an ES module `import`,
+    // so preload hints use `<link rel="preload" as="script">`
+    // (`inject_script_preload_hints`) rather than `<link
+    // rel="modulepreload">` (`inject_preload_hints`, unused here — kept
+    // for any future ESM-import caller). No-op when `preload_hints` is
+    // empty (non-splitting builds and splitting builds with no static
+    // chunk deps to preload). @issue #1931
+    let html = if preload_hints.is_empty() {
+        html
+    } else {
+        crate::bundler::inject_script_preload_hints(&html, preload_hints)
+    };
     std::fs::write(output_dir.join("index.html"), html)?;
     Ok(())
 }
