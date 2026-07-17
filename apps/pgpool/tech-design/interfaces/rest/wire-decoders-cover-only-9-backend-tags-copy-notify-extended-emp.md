@@ -110,12 +110,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: BackendMessage::decode
+    anchor: decode
   - path: apps/pgpool/src/wire/frontend.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: FrontendMessage::decode
+    anchor: decode
   - path: apps/pgpool/src/wire/reader.rs
     action: modify
     section: logic
