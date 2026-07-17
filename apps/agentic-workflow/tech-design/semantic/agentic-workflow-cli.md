@@ -3558,6 +3558,24 @@ changes:
       absent from `aw.toml`) is unchanged: `review_mode` normalizes to
       `"blocking"`, so a missing/stale review still blocks exactly as
       before #1828.
+      #1859: the unconfigured/mistyped-key `ec_review_backing` default flips
+      from `"human"` to `"either"` (agent-first) — `resolve_ec_project_context`
+      now falls back to `EC_REVIEW_BACKING_EITHER` instead of
+      `EC_REVIEW_BACKING_HUMAN` when `Project.ec_review_backing` is absent,
+      and `normalize_review_backing` gained an explicit `"human"` match arm
+      (preserving that literal exactly) while its catch-all for any other
+      unrecognized value also becomes `EC_REVIEW_BACKING_EITHER`. No routing
+      logic changed: `run_review`'s existing `ec_review_backing_allows(&ctx
+      .review_backing, "agent")` check (already gating the non-blocking
+      `pending_agent_review` envelope vs. the blocking human HITL) picks up
+      the new default automatically, so an unconfigured project now emits
+      `pending_agent_review` where it previously emitted a blocking HITL
+      question; explicit `ec_review_backing = "human"` continues to
+      reproduce the pre-#1859 blocking-HITL/agent-evidence-rejected behavior
+      byte-for-byte (R2/AC2). All other invariants (author-identity
+      independence, digest binding, `needs_revision` routing, human-audit
+      reopen of an agent-accepted EC, `ec_review_mode = "deferred"`
+      semantics) are unchanged (R3).
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify
