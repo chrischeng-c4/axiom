@@ -1,6 +1,6 @@
 ---
 id: aw-goal-condition-loop
-summary: CLI-owned verifiable-condition loop (`aw goal`) for bounded work outside the WI/TD/EC lifecycle, replacing the generic prompt-only goal-loop skill.
+summary: CLI-owned verifiable-condition loop (`aw goal`) for bounded work outside the WI/TD/EC lifecycle, replacing the generic prompt-only goal-loop skill. #1899 folded the lifecycle root types (wi/capability/backlog) into the same `aw goal` namespace as one coherent loop verb; see aw-goal-unified-loop-verb for the runner re-homing contract.
 fill_sections: [scenarios, cli, unit-test, changes]
 capability_refs:
   - id: aw-core-client-model-workitem-first-artifact-lifecycle
@@ -13,6 +13,39 @@ capability_refs:
 <!-- HANDWRITE-BEGIN gap="missing-generator:schema:aw-goal-condition-loop" tracker="#1897" reason="Bounded ad-hoc verifiable-condition loop verb family; state model and gate semantics are hand-authored contract, not a generated CRUD surface." -->
 
 # AW Goal Condition Loop
+
+## Unified Namespace (#1899)
+<!-- type: doc lang: markdown -->
+
+`aw goal` is aw's single loop verb. It has a closed four-leaf root-type
+enum, not just the ad-hoc form this spec originally covered; the runner
+re-homing map, envelope-parity contract, verb retirement, and read-time
+migration for the two lifecycle leaves live in
+`aw-goal-unified-loop-verb.md`. This spec keeps ownership of the `adhoc`
+leaf's state model and gate semantics (Scenarios/CLI/Unit Test/Changes
+below); this section documents only the namespace-level contract every
+leaf shares.
+
+One-verifier mental model: every `aw goal` invocation names a root and a
+verifier. Lifecycle roots use the EC/terminal/rollup verifier chain
+already owned by `aw wi`/`aw td`/`aw ec`; the `adhoc` root uses one or more
+machine-runnable gate commands recorded with `aw goal set`. No leaf is
+ever "done" without its own verifier's terminal signal.
+
+Skill dispatch table (the `/aw:goal` skill's decision tree, evaluated in
+order — first match wins):
+
+| # | Match condition | Leaf | CLI form |
+|---|---|---|---|
+| 1 | Names a specific issue/WI id | `wi` | `aw goal wi <id>` |
+| 2 | Names a capability id, or asks for a product promise / production readiness for a project | `capability` | `aw goal capability [<cap-id>] --project <p>` |
+| 3 | Asks to finish/clear/drain ALL open issues/backlog of a project | `backlog` | `aw goal backlog --project <p>` |
+| 4 | States a condition with a derivable, machine-runnable check | `adhoc` | `aw goal set --gate "<cmd>" <intent>` -> `aw goal check` |
+| 5 | None of 1-4 match unambiguously | -- | ask ONE clarifying question offering the four kinds; never guess |
+
+The leaf set is closed: new phrasing patterns extend the decision tree's
+match rules, never the leaf set. A genuinely new behavior is a CLI product
+change (a new `aw goal` subcommand), not a skill edit.
 
 ## Scenarios
 <!-- type: scenarios lang: yaml -->
@@ -274,5 +307,15 @@ changes:
     section: unit-test
     impl_mode: hand-written
     description: "Traceability edge for the CAPABILITIES.md aw-goal-verifiable-condition-loop work root."
+  - path: apps/agentic-workflow/tech-design/surface/specs/aw-goal-condition-loop.md
+    action: modify
+    section: scenarios
+    impl_mode: hand-written
+    description: "#1899: add the Unified Namespace section (one-verifier mental model, skill dispatch table) documenting that the closed four-leaf root-type enum now shares this namespace; lifecycle-leaf detail moved to the new aw-goal-unified-loop-verb.md."
+  - path: apps/agentic-workflow/tech-design/surface/specs/aw-goal-unified-loop-verb.md
+    action: create
+    section: scenarios
+    impl_mode: hand-written
+    description: "#1899: runner re-homing map, envelope-parity contract, verb retirement + read-time migration, self-hosting parity for the wi/capability/backlog goal leaves."
 ```
 <!-- HANDWRITE-END -->

@@ -63,11 +63,17 @@ flowchart TD
     focused --> health[Run self-health verification]
 ```
 
-`aw capability run --project agentic-workflow`, its capability-scoped form,
-and `aw wi run <id>` for a WI labelled `project:`, `app:`, or `lib:`
-`agentic-workflow` stop at admission before they can execute a lifecycle tick.
-Self-AW rollup uses `aw health --project agentic-workflow claims`; health never
-emits the forbidden root-runner command for the self project.
+`aw goal capability --project agentic-workflow` (and its capability-scoped
+form), `aw goal wi <id>` for a WI labelled `project:`, `app:`, or `lib:`
+`agentic-workflow`, and `aw goal backlog --project agentic-workflow` all stop
+at admission before they can execute a lifecycle tick — the #1899 re-homing
+onto `aw goal` root types carried this rejection over unchanged. The retired
+`aw wi run` / `aw capability run` clap paths no longer reach the lifecycle
+engine at all: they emit an unconditional `emit_retired_verb_redirect`
+envelope naming the exact `aw goal` replacement, so self-hosting admission
+happens only once the agent runs that replacement command. Self-AW rollup
+uses `aw health --project agentic-workflow claims`; health never emits the
+forbidden root-runner command for the self project.
 
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -129,6 +135,10 @@ changes:
   - path: apps/agentic-workflow/src/cli/chain.rs
     action: modify
     impl_mode: hand-written
+  - path: apps/agentic-workflow/src/cli/goal.rs
+    action: modify
+    impl_mode: hand-written
+    description: "#1899: aw goal wi/capability/backlog thin shells delegate into run_wi_root/run_capability_root/run_backlog_root, so this policy's admission check runs for every goal-namespace root exactly as it did for the retired runner verbs."
   - path: apps/agentic-workflow/tests/self_hosting_runner_policy_cli_test.rs
     action: create
     impl_mode: hand-written
