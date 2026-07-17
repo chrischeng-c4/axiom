@@ -39,6 +39,20 @@ pub struct PgpoolInstanceSpec {
     pub termination_grace_period_seconds: u64,
 }
 
+/// Leave Kubernetes a fixed window to deliver SIGKILL after pgpool stops
+/// admitting traffic and drains current sessions. The final conversion is
+/// saturating because this value is CR-supplied and must never crash-loop the
+/// shared operator on an oversized grace period.
+const DRAIN_SIGKILL_HEADROOM_SECONDS: u64 = 5;
+const MIN_DRAIN_TIMEOUT_SECONDS: u64 = 1;
+
+fn drain_timeout_ms(termination_grace_period_seconds: u64) -> u64 {
+    termination_grace_period_seconds
+        .saturating_sub(DRAIN_SIGKILL_HEADROOM_SECONDS)
+        .max(MIN_DRAIN_TIMEOUT_SECONDS)
+        .saturating_mul(1_000)
+}
+
 pub fn spec_for_profile(profile: InstanceProfile) -> PgpoolInstanceSpec {
     match profile {
         InstanceProfile::Dev => PgpoolInstanceSpec {
@@ -162,7 +176,7 @@ pub fn render_manifests(spec: &PgpoolInstanceSpec) -> Vec<Value> {
                 json!({ "name": "PGPOOL_RESERVE_REQUEST_CHUNK_SIZE", "value": spec.reserve_request_chunk_size.to_string() }),
                 json!({ "name": "PGPOOL_RESERVE_POD", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
                 json!({ "name": "PGPOOL_POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
-                json!({ "name": "PGPOOL_DRAIN_TIMEOUT_MS", "value": (spec.termination_grace_period_seconds * 1000).to_string() }),
+                json!({ "name": "PGPOOL_DRAIN_TIMEOUT_MS", "value": drain_timeout_ms(spec.termination_grace_period_seconds).to_string() }),
             ],
             env_from: vec![],
             resources: guaranteed_resources(&spec.cpu, &spec.memory),
@@ -297,6 +311,33 @@ mod tests {
         assert_eq!(dev.replicas, 1);
         assert_eq!(prod.replicas, 3);
         assert!(prod.max_backend_connections > dev.max_backend_connections);
+    }
+
+    #[test]
+    fn drain_timeout_saturates_and_reserves_sigkill_headroom() {
+        assert_eq!(drain_timeout_ms(60), 55_000);
+        assert_eq!(
+            drain_timeout_ms(3),
+            1_000,
+            "very small grace periods retain the documented minimum drain window"
+        );
+        assert_eq!(
+            drain_timeout_ms(u64::MAX),
+            u64::MAX,
+            "a malformed CR must saturate rather than overflow the operator"
+        );
+
+        let mut malformed = spec_for_profile(InstanceProfile::Prod);
+        malformed.termination_grace_period_seconds = u64::MAX;
+        let manifests = render_manifests(&malformed);
+        let env = manifests[1]["spec"]["template"]["spec"]["containers"][0]["env"]
+            .as_array()
+            .expect("deployment environment is an array");
+        let drain = env
+            .iter()
+            .find(|entry| entry["name"] == "PGPOOL_DRAIN_TIMEOUT_MS")
+            .expect("drain timeout is rendered");
+        assert_eq!(drain["value"], u64::MAX.to_string());
     }
 }
 // </HANDWRITE>
