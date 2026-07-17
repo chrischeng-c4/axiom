@@ -4278,9 +4278,12 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     }
                     // Exception classes default to `ClassName(repr(args[0]))`
                     // when no custom __repr__ is defined — mirrors CPython's
-                    // BaseException.__repr__.
+                    // BaseException.__repr__. Checked against "BaseException"
+                    // (not "Exception") so bare-BaseException-only classes
+                    // like KeyboardInterrupt/SystemExit/GeneratorExit and
+                    // BaseExceptionGroup also get this repr format (#1522).
                     let is_exception_class =
-                        super::exception::is_subclass_of(class_name, "Exception")
+                        super::exception::is_subclass_of(class_name, "BaseException")
                             || class_name == "BaseException";
                     // __repr__ dunder dispatch
                     let repr_method = super::class::lookup_method(class_name, "__repr__");
@@ -4449,8 +4452,13 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                                 let msg_r = repr_s(msg_v);
                                 let kids: Vec<String> =
                                     children.iter().map(|c| repr_s(*c)).collect();
+                                // Resolved to the class's display name, not the
+                                // raw CLASS_REGISTRY key, so user-defined
+                                // BaseExceptionGroup/ExceptionGroup subclasses
+                                // repr under their own short name (#1522).
+                                let display_name = super::class::class_display_name(class_name);
                                 return MbValue::from_ptr(MbObject::new_str(format!(
-                                    "{class_name}({msg_r}, [{}])",
+                                    "{display_name}({msg_r}, [{}])",
                                     kids.join(", ")
                                 )));
                             }
@@ -4461,6 +4469,10 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         // over the full `args` tuple. Falls back to the
                         // legacy `message` path when `args` isn't present
                         // (defensive — exception.rs always populates it). (#1652)
+                        // Resolved to the class's display name, not the raw
+                        // CLASS_REGISTRY key, so user-defined exception
+                        // subclasses repr under their own short name (#1522).
+                        let display_name = super::class::class_display_name(class_name);
                         let guard = fields.read().unwrap();
                         let args_val = guard.get("args").copied();
                         let msg_val = guard.get("message").copied();
@@ -4476,7 +4488,7 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         if let Some(items) = arg_items {
                             if items.is_empty() {
                                 return MbValue::from_ptr(MbObject::new_str(format!(
-                                    "{class_name}()"
+                                    "{display_name}()"
                                 )));
                             }
                             let parts: Vec<String> = items
@@ -4495,7 +4507,7 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                                 })
                                 .collect();
                             return MbValue::from_ptr(MbObject::new_str(format!(
-                                "{class_name}({})",
+                                "{display_name}({})",
                                 parts.join(", ")
                             )));
                         }
@@ -4504,12 +4516,12 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             if let Some(ptr) = inner.as_ptr() {
                                 if let ObjData::Str(ref s) = (*ptr).data {
                                     return MbValue::from_ptr(MbObject::new_str(format!(
-                                        "{class_name}({s})"
+                                        "{display_name}({s})"
                                     )));
                                 }
                             }
                         }
-                        return MbValue::from_ptr(MbObject::new_str(format!("{class_name}()")));
+                        return MbValue::from_ptr(MbObject::new_str(format!("{display_name}()")));
                     }
                     // functools.partial repr: `functools.partial(func, a, b, k=v)`.
                     if class_name == "functools.partial" {
