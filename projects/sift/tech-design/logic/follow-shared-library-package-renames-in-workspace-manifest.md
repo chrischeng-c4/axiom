@@ -44,3 +44,17 @@ flowchart TD
     aliases --> metadata
     metadata --> ready([workspace can build])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/sift/tests/shared_library_manifest_aliases.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Lock the four current package names and paths while proving the legacy Rust dependency aliases remain stable.
+```
+
+The bounded implementation also corrects the four corresponding dependency entries in `projects/sift/Cargo.toml`. Cargo manifests are declarative build inputs rather than Rust codegen targets; the generated regression test is the executable drift gate for that hand-authored manifest change.
