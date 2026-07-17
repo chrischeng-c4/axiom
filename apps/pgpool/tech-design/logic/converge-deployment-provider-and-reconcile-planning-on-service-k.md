@@ -88,7 +88,8 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    reason: Convert the monolithic compatibility surface into the semantic render module root and preserve deliberate root-level re-exports for existing StatefulSet consumers.
+    anchor: RenderCtx
+    reason: Expose semantic common and Deployment submodules while preserving the monolithic root compatibility surface for existing StatefulSet consumers in this first landing.
   - path: libs/service-k8s/src/render/common.rs
     action: create
     section: logic
@@ -99,51 +100,28 @@ changes:
     section: logic
     impl_mode: hand-written
     reason: Own ServiceDeployment and service_deployment with replicas and caller-supplied rollout fields while emitting no stateful or sticky-session contract.
-  - path: libs/service-k8s/src/render/statefulset.rs
-    action: create
-    section: logic
-    impl_mode: hand-written
-    reason: Retain headless Service, WorkloadVolumeClaim, stable identity, downward-API topology, ServiceStatefulSet, and ShardedStatefulSet behavior outside Deployment composition.
   - path: libs/service-k8s/src/service.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: ManagedService
     reason: Add ReconcilePlan plus backwards-compatible default reconcile_plan and status_patch_with_context hooks to ManagedService.
   - path: libs/service-k8s/src/controller.rs
     action: modify
     section: logic
     impl_mode: hand-written
+    anchor: reconcile
     reason: Execute plan, apply children, observe readiness, and project status from the same context; surface unrecoverable planning errors through the existing requeue policy.
-  - path: libs/service-k8s/src/lib.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: Export ReconcilePlan and retain the existing controller, stateful planning, and render compatibility API.
   - path: libs/service-k8s/README.md
     action: modify
     section: logic
     impl_mode: hand-written
     reason: Document common, StatefulSet, and Deployment workload profiles plus the optional asynchronous planning seam.
-  - path: apps/pgpool/Cargo.toml
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: Consume semantic service-k8s, server-lifecycle, server-tcp, server-http, metrics-prometheus, and transport-h2c identities with no legacy operator/server aliases.
-  - path: apps/pgpool/src/k8s/instance.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: Compose the shared common and Deployment modules while retaining Pgpool-owned maxSurge zero, probes, preStop drain, security, resources, and remote endpoint settings.
-  - path: apps/pgpool/src/operator/reconcile.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    reason: Implement the service-k8s planning/context hooks while keeping live PostgreSQL discovery, safe replica admission, quotas, and blocked status app-owned.
-  - path: apps/pgpool/tests/operator.rs
-    action: modify
+  - path: apps/pgpool/tests/reconcile_planning.rs
+    action: create
     section: unit-test
     impl_mode: hand-written
-    reason: Verify default and context-aware provider contracts plus Pgpool safe-hold behavior and Deployment-only output.
+    reason: Verify that Pgpool projects opaque plan capacity context after shared readiness while the existing operator and reconcile unit tests continue covering Deployment-only output and safe capacity holds.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
