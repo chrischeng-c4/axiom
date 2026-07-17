@@ -3383,9 +3383,19 @@ mod tests {
         assert!(json["advisory_axes"]
             .as_array()
             .is_some_and(|axes| axes.iter().any(|axis| axis == "traceability")));
-        assert!(!serde_json::to_string(&envelope)
-            .unwrap()
-            .contains("aw goal capability"));
+        // Policy prose may legitimately name the rejected goal root forms;
+        // the gate is structural — no executable retry command anywhere in
+        // the envelope, not a prose-substring ban.
+        fn has_command_key(value: &serde_json::Value) -> bool {
+            match value {
+                serde_json::Value::Object(map) => map
+                    .iter()
+                    .any(|(key, child)| key == "command" || has_command_key(child)),
+                serde_json::Value::Array(items) => items.iter().any(has_command_key),
+                _ => false,
+            }
+        }
+        assert!(!has_command_key(&json));
     }
 
     #[test]
