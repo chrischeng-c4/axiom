@@ -9,26 +9,25 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: pgpool-held-backend-query-ready
-entry: connect
+id: pgpool-held-backend-query-ready-contract
+entry: driver
 nodes:
-  connect: { kind: start, label: "Open pgpool-named backend and spawn its connection driver." }
-  query: { kind: process, label: "Execute SELECT 1 to prove the backend is query-ready." }
-  poll: { kind: process, label: "Poll runtime discovery until pgpool connection count includes the held backend." }
-  classify: { kind: terminal, label: "Assert owned backend is excluded from foreign usage." }
+  driver: { kind: start, label: "Spawn the held backend connection driver." }
+  ready_query: { kind: process, label: "Await SELECT 1 on the held Client." }
+  poll: { kind: process, label: "Sample discovery until the held application_name is counted." }
+  assert: { kind: terminal, label: "Assert pgpool count increases and non-pgpool usage remains derived correctly." }
 edges:
-  - { from: connect, to: query }
-  - { from: query, to: poll }
-  - { from: poll, to: classify }
+  - { from: driver, to: ready_query }
+  - { from: ready_query, to: poll }
+  - { from: poll, to: assert }
 ---
 flowchart LR
-    connect([Connect held pgpool backend]) --> query[Run SELECT 1]
-    query --> poll[Poll discovery]
-    poll --> classify([Owned backend is not foreign usage])
+    driver([Driver running]) --> ready_query[SELECT 1 succeeds]
+    ready_query --> poll[Discovery polls]
+    poll --> assert([Classification invariant])
 ```
 
-The test driver must run before the readiness query. A successful query creates an observable client-backend session while retaining the `Client` for the polling interval; discovery then measures a real held connection rather than an asynchronous connection attempt.
-
+The query-ready step is deliberately before the polling loop. If startup/auth cannot complete, the existing integration convention skips rather than treating a missing local database as a classification failure. Once the query succeeds, the held client remains alive through the observation loop.
 ## Changes
 <!-- type: changes lang: yaml -->
 
