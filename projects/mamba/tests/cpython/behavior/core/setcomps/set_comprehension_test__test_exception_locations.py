@@ -12,6 +12,7 @@
 # mem_carveout = ""
 # source = "Lib/test/test_setcomps.py"
 # status = "filled"
+# xfail = "set-comp outer iterable ctor exception not propagated; mamba must propagate an exception raised evaluating the comprehension's outermost iterable expression (e.g. a raising __init__) to the enclosing scope instead of returning None (#1944)"
 # ///
 # Auto-ported from CPython 3.12 test_setcomps.py::SetComprehensionTest::test_exception_locations
 """Auto-ported test: SetComprehensionTest::test_exception_locations."""
