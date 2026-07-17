@@ -147,42 +147,41 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    description: Define public collector configuration, source mode, summary, defaults, and the reusable run entrypoint.
+    description: Own CollectorConfig, SourceSpec, CollectorSummary, validation defaults, module exports, and run_collector.
   - path: projects/sift/src/collector/model.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: Validate axiom.service.log.v1, derive deterministic source-offset ids, and map the shared wire event into OperationalEventV2.
+    description: Decode and strictly validate ServiceLogEventV1, convert bounded primitive attributes, preserve payload, validate correlation, and derive stable ids.
   - path: projects/sift/src/collector/checkpoint.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: Load and atomically fsync source-bound byte/line checkpoints and append bounded structured quarantine diagnostics.
+    description: Persist collector.checkpoint.v1 by atomic fsynced replace and collector.rejection.v1 by bounded append diagnostics.
   - path: projects/sift/src/collector/client.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: Deliver bounded EventWriteRequest batches through the existing authenticated HTTP ingest endpoint with accepted/duplicate accounting and bounded retries.
+    description: POST canonical batches with x-sift-project and optional bearer, classify retryable failures, reject partial terminal outcomes, and count accepted versus duplicate.
   - path: projects/sift/src/collector/runtime.rs
     action: create
     section: logic
     impl_mode: hand-written
-    description: Share one byte-offset window pipeline across seekable files, appended-file follow mode, and stdin resume/discard mode.
+    description: Open/seek/discard file or stdin sources and run the bounded window, quarantine, delivery, checkpoint, one-shot, and follow loop.
   - path: projects/sift/src/bin/sift.rs
     action: modify
     anchor: append_event
     section: logic
     impl_mode: hand-written
-    description: Register sift collect with file/stdin, source identity, endpoint/token, project/environment, checkpoint/quarantine, batch/retry, and follow flags.
+    description: Expose sift collect flags and machine-readable one-shot terminal summary while follow stays attached.
   - path: projects/sift/tests/structured_stdout_collector_e2e.rs
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Run real Sift serve and collect processes over Lumen JSONL, query the logging projection, replay the checkpoint, and prove quarantine continuation.
+    description: Start real Sift, collect a Lumen JSONL file containing an invalid line and valid correlated events, query logs, and prove checkpoint replay idempotency.
 ```
 
-The implementation also exports the collector module from the already-standardized Sift crate root and adds direct workspace `reqwest` plus shared `service-observability` dependencies in `projects/sift/Cargo.toml`. Neither declarative file needs a new nested ownership region.
-
+The existing standardized crate root exports `pub mod collector`. The manifest adds direct `reqwest.workspace = true` and `service-observability = { path = "../../libs/service-observability" }`; these declarative seams let the collector own HTTP delivery and consume the producer-neutral schema without importing Lumen.
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
