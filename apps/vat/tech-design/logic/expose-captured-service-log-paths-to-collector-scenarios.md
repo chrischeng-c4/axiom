@@ -41,3 +41,19 @@ flowchart TD
     wait_ready --> start_runner[start trusted same-run runner]
     start_runner --> done([runner follows captured stdout])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: run_configured
+  - path: apps/vat/tests/active_run_service_log_paths.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
