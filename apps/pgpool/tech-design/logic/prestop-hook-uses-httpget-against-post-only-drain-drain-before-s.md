@@ -80,3 +80,34 @@ flowchart TD
     r1[R1 get alias] --> cargo_test_p_pgpool_prestop_get_drain[cargo test -p pgpool prestop_get_drain]
     r2[R2 rendered hook] --> cargo_test_p_pgpool_served_contract_matches_offline_spec[cargo test -p pgpool served_contract_matches_offline_spec]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/pgpool/src/admin/router.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: build_router
+  - path: apps/pgpool/src/k8s/instance.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: render_manifests
+  - path: apps/pgpool/src/spec.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: openapi_json
+  - path: apps/pgpool/tests/admin_plane.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: served_contract_matches_offline_spec
+  - path: apps/pgpool/tech-design/semantic/pgpool-stateless-deployment-instance.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+```
