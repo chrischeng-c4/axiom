@@ -510,7 +510,7 @@ fn build_compiles_scss_side_effect_imports_to_static_css() {
 }
 
 #[test]
-// @spec projects/jet/tech-design/logic/jet-stories-build-png-now-fixed-svg-partially-fixed-barrel-re-ex.md#unit-test
+// @spec apps/jet/tech-design/logic/jet-stories-build-png-now-fixed-svg-partially-fixed-barrel-re-ex.md#unit-test
 fn build_compiles_bare_specifier_css_import_to_static_css() {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();
@@ -576,7 +576,7 @@ fn build_compiles_bare_specifier_css_import_to_static_css() {
 }
 
 #[test]
-// @spec projects/jet/tech-design/logic/jet-stories-build-png-now-fixed-svg-partially-fixed-barrel-re-ex.md#unit-test
+// @spec apps/jet/tech-design/logic/jet-stories-build-png-now-fixed-svg-partially-fixed-barrel-re-ex.md#unit-test
 fn build_compiles_bare_specifier_scss_import_via_css_pipeline() {
     let dir = TempDir::new().expect("temp dir");
     let root = dir.path();

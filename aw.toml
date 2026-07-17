@@ -283,6 +283,21 @@ codegen.profile = "rust/score-crate"
 
 
 [[projects]]
+name = "meter"
+path = "apps/meter"
+td_path = "apps/meter/tech-design"
+cap_path = "apps/meter/README.md"
+label = "app:meter"
+
+[[projects.workspaces]]
+name = "meter"
+paths = ["apps/meter/**"]
+target = "rust"
+test_cmd = "cargo test -p meter -p meter-cli"
+verify_cold = false
+
+
+[[projects]]
 name = "mamba"
 path = "projects/mamba"
 td_path = "projects/mamba/tech-design"
@@ -743,12 +758,12 @@ test_cmd = "cargo test -p cclab-wal"
 verify_cold = false
 
 [[projects]]
-name = "jet"
-path = "projects/jet"
+name = "cue"
+path = "projects/cue"
 
 [[projects.workspaces]]
-name = "jet"
-paths = ["projects/jet/**"]
+name = "cue"
+paths = ["projects/cue/**"]
 target = "schemas"
 test_cmd = "true"
 verify_cold = false
@@ -761,17 +776,6 @@ path = "projects/mamba"
 paths = ["projects/mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p mamba"
-verify_cold = false
-
-[[projects]]
-name = "meter"
-path = "projects/meter"
-
-[[projects.workspaces]]
-name = "meter"
-paths = ["projects/meter/**"]
-target = "schemas"
-test_cmd = "true"
 verify_cold = false
 
 [[projects]]
