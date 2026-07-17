@@ -4824,11 +4824,17 @@ fn upsert_work_root_wi_cell(
                 if is_empty_table_value(&work_root) || slugify(&work_root) != claim_id {
                     continue;
                 }
+                let Some(wi_idx) = indices.wi else {
+                    // No WI column on this legacy row (#1847: WI columns are
+                    // optional-deprecated). Nothing to upsert in the doc; WI
+                    // linkage is derived-provenance from the WI side.
+                    continue;
+                };
                 let mut updated_row = row.clone();
                 while updated_row.len() < headers.len() {
                     updated_row.push(String::new());
                 }
-                updated_row[indices.wi] = wi_value.to_string();
+                updated_row[wi_idx] = wi_value.to_string();
                 replacements.push((
                     cursor + 2 + row_offset,
                     format!(
@@ -6403,6 +6409,7 @@ fn capability_wi_evidence(
     issues: &[Issue],
 ) -> Vec<CapabilityWiEvidence> {
     let mut evidence = Vec::new();
+    let mut seen_references = BTreeSet::new();
     for gap in &capability.gaps {
         let Some(active_wi) = gap.active_wi.as_deref() else {
             continue;
@@ -6413,6 +6420,7 @@ fn capability_wi_evidence(
                 .find(|issue| issue.github_id.or(issue.gitlab_id) == Some(number))
             {
                 let projection = workflow_guard::parse_projection(&issue.body);
+                seen_references.insert(issue_ref(issue));
                 evidence.push(CapabilityWiEvidence {
                     reference: issue_ref(issue),
                     gap_id: gap.id.clone(),
@@ -6429,6 +6437,7 @@ fn capability_wi_evidence(
                     title: issue.title.clone(),
                 });
             } else {
+                seen_references.insert(format!("#{number}"));
                 evidence.push(CapabilityWiEvidence {
                     reference: format!("#{number}"),
                     gap_id: gap.id.clone(),
@@ -6441,7 +6450,90 @@ fn capability_wi_evidence(
             }
         }
     }
+    evidence.extend(wi_derived_capability_evidence(
+        capability,
+        issues,
+        &seen_references,
+    ));
     evidence
+}
+
+/// #1847 (R2): resolve WI-side derived provenance — which WIs declare (in
+/// their own `## Capability Alignment` body section) that they deliver or
+/// serve this capability/gap — independent of any doc-stored WI ref. This is
+/// the read side of the one-way reference direction: WIs reference durable
+/// capabilities, never the reverse, so this evidence is additive/read-only
+/// and never required for a work-root row to be valid.
+fn wi_derived_capability_evidence(
+    capability: &CapabilitySection,
+    issues: &[Issue],
+    already_referenced: &BTreeSet<String>,
+) -> Vec<CapabilityWiEvidence> {
+    let mut candidate_ids = BTreeSet::new();
+    candidate_ids.insert(capability.id.clone());
+    for gap in &capability.gaps {
+        candidate_ids.insert(gap.id.clone());
+    }
+    let mut evidence = Vec::new();
+    for issue in issues {
+        let reference = issue_ref(issue);
+        if already_referenced.contains(&reference) {
+            continue;
+        }
+        let declared = wi_body_capability_alignment_ids(&issue.body);
+        if declared.is_disjoint(&candidate_ids) {
+            continue;
+        }
+        let gap_id = capability
+            .gaps
+            .iter()
+            .find(|gap| declared.contains(&gap.id))
+            .map(|gap| gap.id.clone())
+            .unwrap_or_else(|| capability.id.clone());
+        let projection = workflow_guard::parse_projection(&issue.body);
+        evidence.push(CapabilityWiEvidence {
+            reference,
+            gap_id,
+            issue_type: issue.issue_type.as_str().to_string(),
+            state: issue.state.as_str().to_string(),
+            phase: issue.phase.clone().or_else(|| {
+                projection
+                    .as_ref()
+                    .and_then(|projection| projection.active_phase.clone())
+            }),
+            expected_command: projection
+                .as_ref()
+                .and_then(|projection| projection.expected_command.clone()),
+            title: issue.title.clone(),
+        });
+    }
+    evidence
+}
+
+/// Backticked capability/gap ids declared under a WI's own
+/// `## Capability Alignment` body section (see the WI authoring template),
+/// slugified for comparison against capability/gap ids. Used only to
+/// resolve read-only WI-side provenance (#1847 R2) — never to gate
+/// readiness.
+fn wi_body_capability_alignment_ids(body: &str) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    let Some(section_start) = body.find("## Capability Alignment") else {
+        return ids;
+    };
+    let rest = &body[section_start..];
+    let section_end = rest
+        .get(1..)
+        .and_then(|tail| tail.find("\n## "))
+        .map(|offset| offset + 1)
+        .unwrap_or(rest.len());
+    let section = &rest[..section_end];
+    for value in extract_backtick_values(section) {
+        let slug = slugify(&value);
+        if !slug.is_empty() {
+            ids.insert(slug);
+        }
+    }
+    ids
 }
 
 fn derive_report_ec_dimensions(
@@ -7585,8 +7677,9 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
 
 /// @spec apps/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<CapabilityDocument> {
-    let mut findings = Vec::new();
-    let markdown_capabilities = parse_markdown_table_capability_sections(body)?;
+    let (markdown_capabilities, markdown_work_root_findings) =
+        parse_markdown_table_capability_sections(body)?;
+    let mut findings = markdown_work_root_findings;
     let needs_canonicalization = markdown_capability_document_needs_canonicalization(body);
     let yaml_capabilities = parse_h2_capability_sections(body)?;
     let legacy_rows = parse_legacy_capability_table(body);
@@ -9398,10 +9491,13 @@ fn markdown_field_value_contract_has_id(headers: &[String], rows: &[Vec<String>]
     })
 }
 
-fn parse_markdown_table_capability_sections(body: &str) -> Result<Vec<CapabilitySection>> {
+fn parse_markdown_table_capability_sections(
+    body: &str,
+) -> Result<(Vec<CapabilitySection>, Vec<String>)> {
     let lines = body.lines().collect::<Vec<_>>();
     let fenced = markdown_fenced_line_mask(&lines);
     let mut sections = Vec::new();
+    let mut findings = Vec::new();
     let mut idx = 0;
     while idx < lines.len() {
         if fenced[idx] {
@@ -9421,16 +9517,17 @@ fn parse_markdown_table_capability_sections(body: &str) -> Result<Vec<Capability
         }
 
         let block_end = next_capability_heading(&lines, idx + 1, level).unwrap_or(lines.len());
-        if let Some(section) =
+        if let Some((section, block_findings)) =
             parse_markdown_capability_block(&lines, idx, block_end, title.clone())?
         {
             sections.push(section);
+            findings.extend(block_findings);
             idx = block_end;
         } else {
             idx += 1;
         }
     }
-    Ok(sections)
+    Ok((sections, findings))
 }
 
 fn parse_markdown_capability_block(
@@ -9438,7 +9535,11 @@ fn parse_markdown_capability_block(
     heading_idx: usize,
     block_end: usize,
     title: String,
-) -> Result<Option<CapabilitySection>> {
+) -> Result<Option<(CapabilitySection, Vec<String>)>> {
+    // #1847: malformed legacy work-root cells (invalid Kind/Impl/Verification/
+    // Maturity) degrade to advisory findings instead of a parse error — a
+    // durable doc row must never hard-block `aw capability report`/`check`.
+    let mut block_findings = Vec::new();
     let mut contract = parse_markdown_field_capability_contract(lines, heading_idx, block_end);
     let mut work_roots = Vec::new();
     let mut surfaces = Vec::new();
@@ -9528,14 +9629,27 @@ fn parse_markdown_capability_block(
                 continue;
             }
             let kind = table_cell(&row, work_indices.kind);
-            validate_work_root_kind(&title, &work_root, &kind)?;
-            let wi = table_cell(&row, work_indices.wi);
+            if let Some(finding) = validate_work_root_kind(&title, &work_root, &kind) {
+                block_findings.push(finding);
+            }
+            let wi = work_indices
+                .wi
+                .map(|idx| table_cell(&row, idx))
+                .unwrap_or_else(|| "-".to_string());
             let implementation = table_cell(&row, work_indices.implementation);
-            validate_work_root_impl(&title, &work_root, &implementation)?;
+            if let Some(finding) = validate_work_root_impl(&title, &work_root, &implementation) {
+                block_findings.push(finding);
+            }
             let verification_state = table_cell(&row, work_indices.verification);
-            validate_work_root_verification(&title, &work_root, &verification_state)?;
+            if let Some(finding) =
+                validate_work_root_verification(&title, &work_root, &verification_state)
+            {
+                block_findings.push(finding);
+            }
             let maturity_cell = table_cell(&row, work_indices.maturity);
-            validate_work_root_maturity(&title, &work_root, &maturity_cell)?;
+            if let Some(finding) = validate_work_root_maturity(&title, &work_root, &maturity_cell) {
+                block_findings.push(finding);
+            }
             let gate_evidence = table_cell(&row, work_indices.gate_evidence);
             let gap_id = slugify(&work_root);
             let active_wi = if is_empty_table_value(&wi) {
@@ -9609,37 +9723,40 @@ fn parse_markdown_capability_block(
             None
         };
 
-    Ok(Some(CapabilitySection {
-        title,
-        id,
-        status,
-        prelude,
-        postlude,
-        index_summary: None,
-        capability_type,
-        surfaces,
-        ec_dimensions,
-        promise,
-        current_state: if is_empty_table_value(&gate_inventory) {
-            format!("Root WI: {root_wi}")
-        } else {
-            format!("Root WI: {root_wi}; Gate inventory: {gate_inventory}")
+    Ok(Some((
+        CapabilitySection {
+            title,
+            id,
+            status,
+            prelude,
+            postlude,
+            index_summary: None,
+            capability_type,
+            surfaces,
+            ec_dimensions,
+            promise,
+            current_state: if is_empty_table_value(&gate_inventory) {
+                format!("Root WI: {root_wi}")
+            } else {
+                format!("Root WI: {root_wi}; Gate inventory: {gate_inventory}")
+            },
+            gaps,
+            work_roots: work_root_rows,
+            verification_contract,
+            evidence: CapabilityEvidence {
+                source: Vec::new(),
+                td: Vec::new(),
+                cb: Vec::new(),
+                verification,
+            },
+            done_when: Vec::new(),
+            out_of_scope: Vec::new(),
+            release_scope: false,
+            dependencies,
+            line: heading_idx + 1,
         },
-        gaps,
-        work_roots: work_root_rows,
-        verification_contract,
-        evidence: CapabilityEvidence {
-            source: Vec::new(),
-            td: Vec::new(),
-            cb: Vec::new(),
-            verification,
-        },
-        done_when: Vec::new(),
-        out_of_scope: Vec::new(),
-        release_scope: false,
-        dependencies,
-        line: heading_idx + 1,
-    }))
+        block_findings,
+    )))
 }
 
 struct MarkdownCapabilityContract {
@@ -10569,7 +10686,12 @@ fn parse_dependency_list(cell: &str) -> Vec<String> {
 struct MarkdownWorkRootIndices {
     work_root: usize,
     kind: usize,
-    wi: usize,
+    /// #1847: the WI column is optional-deprecated. WIs reference durable
+    /// capability/claim ids (one-way, short-lived -> durable); a durable
+    /// work-root row never needs a doc-stored WI column to be valid. When
+    /// absent, WI provenance is resolved from the WI side instead (see
+    /// `wi_derived_capability_refs`).
+    wi: Option<usize>,
     implementation: usize,
     verification: usize,
     maturity: usize,
@@ -10580,7 +10702,7 @@ fn markdown_work_root_indices(cells: &[String]) -> Option<MarkdownWorkRootIndice
     Some(MarkdownWorkRootIndices {
         work_root: find_table_column(cells, &["workroot", "capability", "root"])?,
         kind: find_table_column(cells, &["kind", "type"])?,
-        wi: find_table_column(cells, &["wi", "workitem"])?,
+        wi: find_table_column(cells, &["wi", "workitem"]),
         implementation: find_table_column(cells, &["impl", "implementation"])?,
         verification: find_table_column(cells, &["verification"])?,
         maturity: find_table_column(cells, &["maturity"])?,
@@ -10640,62 +10762,58 @@ fn parse_first_maturity(cell: &str) -> Option<CapabilityMaturity> {
     }
 }
 
-fn validate_work_root_kind(capability: &str, work_root: &str, value: &str) -> Result<()> {
+/// #1847 (R4): malformed legacy work-root cells degrade to an advisory
+/// finding with remediation instead of a hard parse error — a single bad
+/// row (e.g. the historical `Kind bug` #1801 row) must never break
+/// `aw capability report`/`check` for the whole document.
+fn validate_work_root_kind(capability: &str, work_root: &str, value: &str) -> Option<String> {
     let token = normalize_table_token(value);
     if token.is_empty() || token == "epic" || token == "subepic" || token == "change" {
-        return Ok(());
+        return None;
     }
-    anyhow::bail!(
-        "capability `{}` work root `{}` has invalid Kind `{}`; expected epic, subepic, or change",
-        capability,
-        work_root,
-        value
-    )
+    Some(format!(
+        "capability `{capability}` work root `{work_root}` has invalid Kind `{value}`; expected epic, subepic, or change — fix the Kind cell (`aw capability check --project <project>` for remediation guidance)"
+    ))
 }
 
-fn validate_work_root_impl(capability: &str, work_root: &str, value: &str) -> Result<()> {
+fn validate_work_root_impl(capability: &str, work_root: &str, value: &str) -> Option<String> {
     let token = normalize_table_token(value);
     if matches!(
         token.as_str(),
         "planned" | "partial" | "implemented" | "blocked" | "outofscope"
     ) {
-        return Ok(());
+        return None;
     }
-    anyhow::bail!(
-        "capability `{}` work root `{}` has invalid Impl `{}`; expected planned, partial, implemented, blocked, or out_of_scope",
-        capability,
-        work_root,
-        value
-    )
+    Some(format!(
+        "capability `{capability}` work root `{work_root}` has invalid Impl `{value}`; expected planned, partial, implemented, blocked, or out_of_scope — fix the Impl cell (`aw capability check --project <project>` for remediation guidance)"
+    ))
 }
 
-fn validate_work_root_verification(capability: &str, work_root: &str, value: &str) -> Result<()> {
+fn validate_work_root_verification(
+    capability: &str,
+    work_root: &str,
+    value: &str,
+) -> Option<String> {
     let token = normalize_table_token(value);
     if matches!(
         token.as_str(),
         "none" | "planned" | "failing" | "passing" | "verified" | "blocked"
     ) {
-        return Ok(());
+        return None;
     }
-    anyhow::bail!(
-        "capability `{}` work root `{}` has invalid Verification `{}`; expected none, planned, failing, passing, verified, or blocked",
-        capability,
-        work_root,
-        value
-    )
+    Some(format!(
+        "capability `{capability}` work root `{work_root}` has invalid Verification `{value}`; expected none, planned, failing, passing, verified, or blocked — fix the Verification cell (`aw capability check --project <project>` for remediation guidance)"
+    ))
 }
 
-fn validate_work_root_maturity(capability: &str, work_root: &str, value: &str) -> Result<()> {
+fn validate_work_root_maturity(capability: &str, work_root: &str, value: &str) -> Option<String> {
     let token = normalize_table_token(value);
     if token == "none" || parse_first_maturity(value).is_some() {
-        return Ok(());
+        return None;
     }
-    anyhow::bail!(
-        "capability `{}` work root `{}` has invalid Maturity `{}`; expected none, smoke, conformance, corpus, negative, or dogfood",
-        capability,
-        work_root,
-        value
-    )
+    Some(format!(
+        "capability `{capability}` work root `{work_root}` has invalid Maturity `{value}`; expected none, smoke, conformance, corpus, negative, or dogfood — fix the Maturity cell (`aw capability check --project <project>` for remediation guidance)"
+    ))
 }
 
 fn capability_gap_status_from_table(
@@ -16138,14 +16256,32 @@ Gate Inventory:
     }
 
     #[test]
-    fn markdown_work_root_table_rejects_invalid_enums() {
+    fn markdown_work_root_table_degrades_invalid_enums_to_advisory_findings() {
+        // #1847 R4/AC3: a malformed legacy row (e.g. the #1801-class `Kind
+        // bug` row) must degrade to an advisory finding with remediation,
+        // never a parse error that breaks the whole document.
         let body = one_markdown_capability().replace("| partial |", "| doing |");
-        let err = parse_capability_document(&body, Path::new("README.md")).unwrap_err();
-        assert!(err.to_string().contains("invalid Impl"));
+        let doc = parse_capability_document(&body, Path::new("README.md")).unwrap();
+        assert!(doc
+            .findings
+            .iter()
+            .any(|f| f.contains("invalid Impl")
+                && f.contains("aw capability check --project <project>")));
+        assert_eq!(doc.capabilities.len(), 1);
 
         let body = one_markdown_capability().replace("| epic |", "| task |");
-        let err = parse_capability_document(&body, Path::new("README.md")).unwrap_err();
-        assert!(err.to_string().contains("invalid Kind"));
+        let doc = parse_capability_document(&body, Path::new("README.md")).unwrap();
+        assert!(doc
+            .findings
+            .iter()
+            .any(|f| f.contains("invalid Kind")
+                && f.contains("aw capability check --project <project>")));
+        assert_eq!(doc.capabilities.len(), 1);
+
+        // The malformed row itself still parses (rendered as-is) rather than
+        // being dropped, so its other columns remain visible for migration.
+        let work_root = &doc.capabilities[0].work_roots[0];
+        assert_eq!(work_root.kind, "task");
     }
 
     #[test]
@@ -16658,6 +16794,216 @@ evidence:
 
         assert_eq!(claims.len(), 1);
         assert!(!claims[0].verified);
+    }
+
+    /// #1847 AC1: a work-root table with no `WI` column at all still parses
+    /// and computes readiness purely from gates/fixtures — the WI column is
+    /// optional-deprecated, never a parse or readiness precondition.
+    #[test]
+    fn work_root_table_without_wi_column_parses_and_computes_readiness() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("evidence.md"), "verified evidence").unwrap();
+        let body = r#"# Demo
+
+## Capability One
+
+| Field | Value |
+|---|---|
+| ID | capability-one |
+| Status | verified |
+| Promise | Demonstrate WI-column-free readiness. |
+| Required Verification | smoke |
+| Gate Inventory | evidence.md |
+
+| Work Root | Kind | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---|---|---|---|
+| Fixture backed claim | epic | implemented | verified | smoke | evidence.md |
+"#;
+        let doc = cap_doc(body);
+        assert_eq!(doc.capabilities[0].work_roots.len(), 1);
+        assert_eq!(doc.capabilities[0].work_roots[0].wi, "-");
+        let claims = capability_claim_reports(&doc.capabilities[0], tmp.path(), true);
+
+        assert_eq!(claims.len(), 1);
+        assert!(claims[0].verified);
+    }
+
+    /// #1847 AC1: a red gate (missing fixture) and an unmapped claim (no
+    /// gates/fixtures declared) must not corrupt readiness for the rest of
+    /// the document — each claim's `verified` is computed independently from
+    /// its own gates/fixtures, never from any doc-stored WI ref.
+    #[test]
+    fn zero_wi_ref_readiness_spans_verified_red_gate_and_unmapped_claims() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("verified.md"), "verified evidence").unwrap();
+        let body = r#"# Demo
+
+## Capability: Demo
+<!-- type: capability lang: yaml -->
+
+```yaml
+id: demo
+status: auditing
+promise: "Zero-WI-ref readiness."
+current_state: "Mixed claim states."
+verification_contract:
+  required_maturity: [smoke]
+  claims:
+    - id: verified-claim
+      user_story: "As an agent, I want a fixture-backed claim to verify."
+      maturity: smoke
+      oracle: "fixture"
+      fixtures:
+        - "verified.md"
+      gates:
+        - id: verified-gate
+          command: "test -f verified.md"
+          proves: "verified.md exists"
+    - id: red-gate-claim
+      user_story: "As an agent, I want a missing fixture to stay unverified."
+      maturity: smoke
+      oracle: "fixture"
+      fixtures:
+        - "missing.md"
+      gates:
+        - id: red-gate
+          command: "test -f missing.md"
+          proves: "missing.md exists"
+    - id: unmapped-claim
+      user_story: "As an agent, I want a claim with no gates to stay unverified."
+      maturity: smoke
+      oracle: "none"
+evidence:
+  source:
+    - "apps/demo/**"
+done_when:
+  - "all claims verify"
+out_of_scope: []
+```
+"#;
+        let doc = cap_doc(body);
+        assert!(doc.capabilities[0].work_roots.is_empty());
+        let claims = capability_claim_reports(&doc.capabilities[0], tmp.path(), true);
+        assert_eq!(claims.len(), 3);
+        let verified = claims.iter().find(|c| c.id == "verified-claim").unwrap();
+        let red_gate = claims.iter().find(|c| c.id == "red-gate-claim").unwrap();
+        let unmapped = claims.iter().find(|c| c.id == "unmapped-claim").unwrap();
+        assert!(verified.verified);
+        assert!(!red_gate.verified);
+        assert!(!unmapped.verified);
+    }
+
+    fn wi_issue(number: u64, title: &str, body: &str) -> Issue {
+        Issue {
+            issue_type: IssueType::Enhancement,
+            title: title.to_string(),
+            state: IssueState::Open,
+            id: None,
+            github_id: Some(number),
+            gitlab_id: None,
+            url: None,
+            author: None,
+            labels: vec![],
+            created_at: None,
+            updated_at: None,
+            slug: title.to_string(),
+            body: body.to_string(),
+            related: vec![],
+            implements: vec![],
+            phase: None,
+            branch: None,
+            target_branch: None,
+            git_workflow: None,
+            change_id: None,
+            iteration: None,
+            current_task_id: None,
+            impl_spec_phase: None,
+            task_revisions: None,
+            revision_counts: None,
+            last_action: None,
+            session_id: None,
+            validation_errors: vec![],
+            review_count: None,
+            flagged_sections: None,
+            fill_retry_count: None,
+            ship_status: None,
+            ship_commit: None,
+            regen_verified_at: None,
+        }
+    }
+
+    /// #1847 AC2/R2: a WI that declares `## Capability Alignment` in its own
+    /// body resolves as derived-provenance evidence even when the doc stores
+    /// no WI ref at all (`Root WI: -`) — the reference direction is WI ->
+    /// durable doc, never the reverse.
+    #[test]
+    fn capability_wi_evidence_resolves_from_wi_body_without_doc_stored_ref() {
+        let body = r#"# Demo
+
+## Capability One
+
+| Field | Value |
+|---|---|
+| ID | capability-one |
+| Root WI | - |
+| Status | verified |
+| Promise | Demonstrate derived WI provenance. |
+| Required Verification | smoke |
+| Gate Inventory | evidence.md |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Fixture backed claim | epic | - | implemented | verified | smoke | evidence.md |
+"#;
+        let doc = cap_doc(body);
+        let issue = wi_issue(
+            4242,
+            "Deliver capability one",
+            "## Capability Alignment\nCapability: Capability One (`capability-one`)\nCapability Gap: none\n\n## Scope\n- n/a\n",
+        );
+        let evidence = capability_wi_evidence(&doc.capabilities[0], &[issue]);
+
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].reference, "#4242");
+        assert_eq!(evidence[0].title, "Deliver capability one");
+    }
+
+    /// #1847 AC3 (jet-class): a doc-stored WI ref that does not resolve to
+    /// any known issue must degrade to advisory evidence (`issue_type =
+    /// "unknown"`), never a parse/report failure, and must not affect
+    /// readiness for the rest of the capability.
+    #[test]
+    fn fictitious_doc_wi_ref_degrades_to_advisory_evidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("evidence.md"), "verified evidence").unwrap();
+        let body = r#"# Demo
+
+## Capability One
+
+| Field | Value |
+|---|---|
+| ID | capability-one |
+| Root WI | #999999 |
+| Status | verified |
+| Promise | Demonstrate fictitious-ref tolerance. |
+| Required Verification | smoke |
+| Gate Inventory | evidence.md |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Fixture backed claim | epic | #999999 | implemented | verified | smoke | evidence.md |
+"#;
+        let doc = cap_doc(body);
+        let evidence = capability_wi_evidence(&doc.capabilities[0], &[]);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].issue_type, "unknown");
+        assert_eq!(evidence[0].reference, "#999999");
+
+        // Readiness is unaffected by the fictitious doc-stored ref: the
+        // fixture-backed claim still verifies purely from gates/fixtures.
+        let claims = capability_claim_reports(&doc.capabilities[0], tmp.path(), true);
+        assert_eq!(claims.len(), 1);
+        assert!(claims[0].verified);
     }
 
     #[test]
