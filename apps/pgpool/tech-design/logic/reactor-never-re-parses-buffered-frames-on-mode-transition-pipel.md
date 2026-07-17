@@ -51,7 +51,6 @@ changes:
     impl_mode: hand-written
     anchor: backend_first_relay_keeps_pipelined_query_out_of_resetting_backend
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
