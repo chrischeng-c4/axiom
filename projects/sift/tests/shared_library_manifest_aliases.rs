@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:89dfd718" tracker="pending-tracker" reason="Lock the four current package names and paths while proving the legacy Rust dependency aliases remain stable."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:89dfd718" tracker="1887" reason="Lock the four current package names and paths while proving the legacy Rust dependency aliases remain stable."
 #[test]
 fn manifest_uses_current_shared_library_packages() {
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
