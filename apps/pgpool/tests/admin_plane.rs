@@ -213,7 +213,7 @@ fn unreachable_backend() -> SocketAddr {
 async fn all_routes_respond_on_h2c_and_http1() {
     let get_routes: Vec<String> = pgpool::admin::ADMIN_ROUTES
         .iter()
-        .filter(|(method, _)| *method == "GET")
+        .filter(|(method, path)| *method == "GET" && *path != "/drain")
         .map(|(_, path)| path.replace("{pool}", "default"))
         .collect();
 
@@ -397,7 +397,7 @@ async fn drain_flips_readyz_and_process_exits_cleanly() {
     );
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in admin_plane.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1883" reason="unit-test section in admin_plane.rs is hand-written pending codegen support">
 /// verify: admin::served_contract_matches_offline_spec (AC3, R4/R5)
 ///
 /// Diffs the live process's served `/openapi.json` and route set against
@@ -449,8 +449,8 @@ async fn served_contract_matches_offline_spec() {
     );
 
     for (method, path) in &offline_routes {
-        if method == "POST" {
-            continue; // POST /drain exercised last, below.
+        if path == "/drain" {
+            continue; // Drain is terminal for this process; exercise GET last.
         }
         let concrete = path.replace("{pool}", "default");
         let response = client
@@ -476,11 +476,12 @@ async fn served_contract_matches_offline_spec() {
     assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
 
     let response = client
-        .post(serve.admin_url("/drain"))
+        .get(serve.admin_url("/drain"))
         .send()
         .await
-        .expect("POST /drain");
-    assert_ne!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        .expect("GET /drain");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<serde_json::Value>().await.unwrap()["draining"], true);
 
     let _ = serve.child.start_kill();
     let _ = serve.child.wait().await;
