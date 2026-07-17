@@ -3760,11 +3760,9 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                         String::new()
                     };
                     (prefix, digits)
-                } else {
-                    let v = val
-                        .and_then(|a| a.as_float())
-                        .map(|f| f as i64)
-                        .unwrap_or(0);
+                } else if let Some(f) = val.and_then(|a| a.as_float()) {
+                    // CPython accepts float for %d/%i (truncates toward 0).
+                    let v = f as i64;
                     let prefix = if v < 0 {
                         "-".to_string()
                     } else if sign_plus {
@@ -3775,6 +3773,20 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                         String::new()
                     };
                     (prefix, v.unsigned_abs().to_string())
+                } else if let Some(v) = val {
+                    // #1794: an argument WAS supplied (`val` is Some) but it's
+                    // neither int-like nor float-like (e.g. str/list/dict/
+                    // None) — CPython raises TypeError here rather than
+                    // silently substituting 0. `val: None` (no argument
+                    // supplied at all — arg_slots exhausted) is a separate,
+                    // out-of-scope "not enough arguments" path and keeps the
+                    // old fallback below.
+                    return raise_type_error(format!(
+                        "%{conv} format: a real number is required, not {}",
+                        super::builtins::value_type_name(v)
+                    ));
+                } else {
+                    (String::new(), "0".to_string())
                 }
             }
             'f' | 'F' => {

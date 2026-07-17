@@ -2509,10 +2509,23 @@ mod tests {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
-                    let class = map.get("__class__").copied().and_then(|v| extract_str(v));
+                    // `DictKey::Str` hashes in the Python-semantic domain, not
+                    // Rust's native `str` Hash — a raw `.get(&str)` silently
+                    // misses present keys (#1794). Route through the
+                    // hash-domain-safe helper, same fix as wave 1.
+                    let class = crate::runtime::dict_ops::dict_get_exact_str(&map, "__class__")
+                        .and_then(|v| extract_str(v));
                     assert_eq!(class, Some("TestCase".to_string()));
-                    assert_eq!(map.get("_failures").and_then(|v| v.as_int()), Some(0));
-                    assert_eq!(map.get("_successes").and_then(|v| v.as_int()), Some(0));
+                    assert_eq!(
+                        crate::runtime::dict_ops::dict_get_exact_str(&map, "_failures")
+                            .and_then(|v| v.as_int()),
+                        Some(0)
+                    );
+                    assert_eq!(
+                        crate::runtime::dict_ops::dict_get_exact_str(&map, "_successes")
+                            .and_then(|v| v.as_int()),
+                        Some(0)
+                    );
                 }
             }
         }
