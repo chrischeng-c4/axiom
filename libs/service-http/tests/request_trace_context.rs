@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:unit-test:d2043dd3" tracker="pending-tracker" reason="Prove valid parent preservation, local id generation, malformed and zero-id fallback, request routing, and no-OTLP behavior."
+// HANDWRITE-BEGIN gap="missing-generator:unit-test:d2043dd3" tracker="1870" reason="Prove valid parent preservation, local id generation, malformed and zero-id fallback, request routing, and no-OTLP behavior."
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
