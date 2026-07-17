@@ -51,3 +51,28 @@ changes:
     anchor: status_projects_global_budget_and_managed_readiness
     reason: Migrate operator control-plane status coverage to the explicit endpoint-scoped Pod lifecycle API.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: pgpool-endpoint-scoped-pod-control-verification
+requirements:
+  cross_endpoint_pod_drain_and_release:
+    id: R1
+    text: "A Pod name admitted on two endpoints can be drained and released from both endpoint allocators without orphaned quota."
+    kind: regression
+    risk: high
+    verify: endpoint_scoped_pod_lifecycle_releases_cross_endpoint_allocations
+  duplicate_semantics_are_deliberate:
+    id: R2
+    text: "Same-endpoint re-admission remains duplicate while cross-endpoint admission uses distinct control keys."
+    kind: functional
+    risk: medium
+    verify: endpoint_scoped_pod_lifecycle_releases_cross_endpoint_allocations
+---
+flowchart TD
+    r1[R1 cross endpoint pod drain and release] --> endpoint_scoped_pod_lifecycle_releases_cross_endpoint_allocations[endpoint_scoped_pod_lifecycle_releases_cross_endpoint_allocations]
+    r2[R2 duplicate semantics are deliberate] --> endpoint_scoped_pod_lifecycle_releases_cross_endpoint_allocations
+```
