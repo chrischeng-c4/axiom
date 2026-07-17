@@ -39,3 +39,21 @@ changes:
     impl_mode: hand-written
     anchor: render_manifests
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: drain-timeout-headroom-verification
+requirements:
+  overflow_saturates_and_preserves_headroom:
+    id: R1
+    text: "u64::MAX grace renders without overflow while normal and tiny grace periods reserve documented drain headroom before SIGKILL."
+    kind: regression
+    risk: high
+    verify: cargo test -p pgpool k8s::instance::tests::drain_timeout_saturates_and_reserves_sigkill_headroom
+---
+flowchart TD
+    r1[R1 overflow saturates and preserves headroom] --> cargo_test_p_pgpool_k8s_instance_tests_drain_timeout_saturates_and_reserves_sigkill_headroom[cargo test -p pgpool k8s::instance::tests::drain_timeout_saturates_and_reserves_sigkill_headroom]
+```
