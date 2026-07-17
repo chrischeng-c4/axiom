@@ -428,6 +428,14 @@ const EMIT_REGISTRY: &[EmitSite] = &[
                resolved goal id until every recorded gate is green or the goal's budget/\
                24h expiry ceiling is exhausted",
     },
+    EmitSite {
+        source: "run.rs:run_backlog_root (selected WI hand-off)",
+        sample: "aw goal wi 915",
+        note: "#1899 R7: `aw goal backlog --project <p>` selects the next unparked open WI \
+               in priority order and hands it to the host via the same `aw goal wi <id>` \
+               command `wi_run_command` builds elsewhere; a blocked/HITL candidate is \
+               parked (never emitted) and the drain moves to the next one",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -632,17 +640,16 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "wi.run",
-        // #1899 R3: retired -- `aw goal wi <id>` is the unified re-home. The
-        // clap leaf still parses (so a stale agent gets a structured
-        // `emit_retired_verb_redirect` envelope instead of a bare clap
-        // usage error), but the handler never re-enters the run engine, so
-        // this is no longer a lifecycle-mutating Core verb.
+        // #1899 R3: retired -- `aw goal wi <id>` is the unified re-home.
+        // The clap leaf still parses (structured `emit_retired_verb_redirect`
+        // envelope instead of a bare clap usage error) but never re-enters
+        // the run engine.
         class: VerbLifecycleClass::Migration,
         mutates_lifecycle: false,
         sunset_criterion: "retires (clap leaf removed) once every EMIT_REGISTRY/loop-state/\
                             HITL-resumption caller and every persisted `next_action` has been \
-                            observed on `aw goal wi <id>` for a full deploy cycle with no \
-                            remaining `aw wi run` invocations in telemetry",
+                            observed on `aw goal wi` for a full deploy cycle with no remaining \
+                            `aw wi run` invocations in telemetry",
     },
     VerbLifecycle {
         path: "wi.create",
@@ -771,9 +778,10 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
         sunset_criterion: "",
     },
     // -- goal (lifecycle root types, #1899: they ARE the loop now) ------
-    // Unlike the ad-hoc goal.* leaves above, `goal.wi`/`goal.capability`
-    // drive the tracked WI/capability lifecycle exactly as the retired
-    // `aw wi run`/`aw capability run` verbs did -- Core, mutating.
+    // Unlike the ad-hoc goal.* leaves above, `goal.wi`/`goal.capability`/
+    // `goal.backlog` drive the tracked WI/capability lifecycle exactly as
+    // the retired `aw wi run`/`aw capability run` verbs did -- Core,
+    // mutating.
     VerbLifecycle {
         path: "goal.wi",
         class: VerbLifecycleClass::Core,
@@ -782,6 +790,14 @@ const VERB_LIFECYCLE_REGISTRY: &[VerbLifecycle] = &[
     },
     VerbLifecycle {
         path: "goal.capability",
+        class: VerbLifecycleClass::Core,
+        mutates_lifecycle: true,
+        sunset_criterion: "",
+    },
+    VerbLifecycle {
+        path: "goal.backlog",
+        // #1899 R7: tracker-driven drain root type -- drives the tracked WI
+        // lifecycle one open WI at a time via the shared `goal.wi` engine.
         class: VerbLifecycleClass::Core,
         mutates_lifecycle: true,
         sunset_criterion: "",
@@ -1544,6 +1560,7 @@ mod tests {
             "conf.sync",
             "goal.wi",
             "goal.capability",
+            "goal.backlog",
             "wi.create",
             "wi.update",
             "wi.close",
@@ -1579,7 +1596,7 @@ mod tests {
             "wi.list",
             "wi.show",
             "wi.find",
-            // #1899 R3: retired -- `mutates_lifecycle: false` now (see
+            // #1899 R3: both retired -- `mutates_lifecycle: false` now (see
             // VERB_LIFECYCLE_REGISTRY comments above), since these leaves
             // only ever emit an `emit_retired_verb_redirect` envelope and
             // never re-enter the run engine.
@@ -2150,3 +2167,33 @@ changes:
       interceptor (which only covers the even-older bare `aw run
       --wi/--root/--capability/--project` forms) inside
       `normalize_legacy_next_action`.
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899 R3 (remaining scope): the `wi.run` `VERB_LIFECYCLE_REGISTRY`
+      entry actually flips from `Core`/mutating to `Migration`/non-mutating
+      now that `src/cli/issues.rs`'s `run_wi_run` calls
+      `emit_retired_verb_redirect` (the prior slice's Changes entry above
+      already described this end state, but the code itself still kept
+      `wi.run` Core/mutating pending `issues.rs` coming into scope). The
+      `mutates_lifecycle_classification_matches_1417_design` test moves
+      `"wi.run"` from the `mutating` list to `read_only`, alongside
+      `"capability.run"`.
+  - path: apps/agentic-workflow/src/cli/chain.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899 R7: new `Core`/mutating `VERB_LIFECYCLE_REGISTRY` entry
+      `goal.backlog` for `aw goal backlog --project <p>` (tracker-driven
+      open-WI drain, one WI per invocation, engine in
+      `run.rs::run_backlog_root`). `mutates_lifecycle_classification_matches_1417_design`
+      adds `"goal.backlog"` to the `mutating` list. New `EMIT_REGISTRY`
+      entry for `run.rs::run_backlog_root`'s selected-WI hand-off, sample
+      `aw goal wi 915` -- the drain reuses the exact same `aw goal wi <id>`
+      command `wi_run_command` builds elsewhere; a blocked/HITL candidate is
+      parked (its `next.command` never emitted) and the drain advances to
+      the next open WI.
+```

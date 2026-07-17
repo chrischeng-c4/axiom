@@ -69,9 +69,10 @@ pub enum Commands {
     /// Agent-runtime direct edit/create guard for Codex, Claude Code, and AGY.
     Guard(guard::GuardArgs),
 
-    /// Unified loop verb: lifecycle root types (`wi`, `capability`) plus the
-    /// ad-hoc CLI-owned verifiable-condition loop for bounded work outside
-    /// the WI lifecycle (`set`/`check`/`show`/`list`/`clear`).
+    /// Unified loop verb: lifecycle root types (`wi`, `capability`,
+    /// `backlog`) plus the ad-hoc CLI-owned verifiable-condition loop for
+    /// bounded work outside the WI lifecycle
+    /// (`set`/`check`/`show`/`list`/`clear`).
     Goal(goal::GoalArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
@@ -171,6 +172,15 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
 
 ```yaml
 changes:
+  - path: apps/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899 R7: `Commands::Goal`'s doc comment (the `aw goal` line in
+      top-level `aw --help`) now names `backlog` alongside `wi`/`capability`
+      as a unified-loop root type, matching the new `aw goal backlog
+      --project <p>` root added in `goal.rs`.
   - path: apps/agentic-workflow/src/cli/commands.rs
     action: modify
     impl_mode: codegen

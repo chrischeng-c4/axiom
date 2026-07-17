@@ -143,7 +143,8 @@ pub enum IssuesCommand {
     List(ListArgs),
     /// Show a single work-item by slug or numeric id.
     Show(ShowArgs),
-    /// Drive one work-item to its next lifecycle command (root-driven runner).
+    /// Retired (#1899): emits a structured redirect to `aw goal wi <id>`,
+    /// the unified re-home of the root-driven work-item runner.
     Run(WiRunArgs),
     /// Create a new work-item.
     Create(CreateArgs),
@@ -1649,19 +1650,23 @@ async fn run_show(args: ShowArgs) -> Result<()> {
     Ok(())
 }
 
-// `aw wi run <id>` -- thin shell over the shared root-driven workflow runner
-// (`crate::cli::run`); consumes/updates the work item's loop-state exactly as
-// the deprecated `aw run --wi <id>` does today.
+// `aw wi run <id>` -- retired (#1899 R3): `aw goal wi <id>` is the unified
+// re-home. This clap leaf still parses (a stale agent gets a structured
+// `emit_retired_verb_redirect` envelope instead of a bare clap usage error)
+// but never re-enters the run engine.
 async fn run_wi_run(args: WiRunArgs) -> Result<()> {
-    crate::cli::run::run_wi_root(
+    let replacement = format!("aw goal wi {}", args.id);
+    crate::cli::run::emit_retired_verb_redirect(
+        "aw wi run",
+        "wi",
         &args.id,
+        &replacement,
         crate::cli::run::RunPrintOptions {
             human: args.human,
             pretty: args.pretty,
             goal: args.goal,
         },
     )
-    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -3764,7 +3769,11 @@ fn sort_work_items_for_planning(issues: &mut [Issue]) {
     });
 }
 
-fn priority_rank(issue: &Issue) -> u8 {
+// #1899 R7: `pub(crate)` so `aw goal backlog`'s priority-first WI ordering
+// (`crate::cli::run::list_open_project_issues`) shares the exact same rank
+// function `aw wi prioritize`/`aw wi plan` use, instead of a second copy
+// that could silently drift.
+pub(crate) fn priority_rank(issue: &Issue) -> u8 {
     for label in &issue.labels {
         match label.as_str() {
             "priority:p0" => return 0,
@@ -7986,5 +7995,18 @@ changes:
       rehydration, idempotent remote mutation, and backend/repository-specific
       recovery diagnostics; #1583 is duplicate reproduction evidence. Issue
       #1519 hardens the registered-row boundary so the WI `--project` producer
-      never emits a retired `project:` label.
+      never emits a retired `project:` label. Issue #1899 R3 retires `aw wi
+      run <id>`: its clap leaf now emits the shared
+      `run::emit_retired_verb_redirect` envelope naming `aw goal wi <id>`
+      instead of re-entering `run_wi_root` directly.
+  - path: apps/agentic-workflow/src/cli/issues.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Issue #1899 R7: `priority_rank` widens from private to `pub(crate)` so
+      `aw goal backlog`'s priority-first open-WI ordering
+      (`run.rs::list_open_project_issues`) shares the exact same rank
+      function `aw wi prioritize`/`aw wi plan` use, instead of a second copy
+      that could silently drift.
 ```

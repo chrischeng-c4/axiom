@@ -38,9 +38,10 @@ pub enum Commands {
     /// Agent-runtime direct edit/create guard for Codex, Claude Code, and AGY.
     Guard(guard::GuardArgs),
 
-    /// Unified loop verb: lifecycle root types (`wi`, `capability`) plus the
-    /// ad-hoc CLI-owned verifiable-condition loop for bounded work outside
-    /// the WI lifecycle (`set`/`check`/`show`/`list`/`clear`).
+    /// Unified loop verb: lifecycle root types (`wi`, `capability`,
+    /// `backlog`) plus the ad-hoc CLI-owned verifiable-condition loop for
+    /// bounded work outside the WI lifecycle
+    /// (`set`/`check`/`show`/`list`/`clear`).
     Goal(goal::GoalArgs),
 
     /// Manage `aw.toml` and Agentic Workflow configuration producers.
