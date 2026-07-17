@@ -2,10 +2,10 @@ version = 2
 project = "pgpool"
 ir_kind = "td"
 td_path = "apps/pgpool/tech-design"
-generated_at = "2026-07-17T09:15:00.279647+00:00"
-digest = "sha256:a88172436038ea90353e32637c1a3eea2ae0e8600a08410a9f0ec457ec3e01af"
-source_digest = "sha256:a88172436038ea90353e32637c1a3eea2ae0e8600a08410a9f0ec457ec3e01af"
-ir_digest = "sha256:3277f78f8bbfa7826926fb7a9abab2d2eca8b8758fc10693dbd2cbde62b52118"
+generated_at = "2026-07-17T09:36:05.718855+00:00"
+digest = "sha256:9d84229c528bf0e7d64c67b42072c5754cef2f4007b4d4b17988ed7c9fd1b1bf"
+source_digest = "sha256:9d84229c528bf0e7d64c67b42072c5754cef2f4007b4d4b17988ed7c9fd1b1bf"
+ir_digest = "sha256:0a5321454296b5f66d021fd26daf8640c50c4f376f68ff225941532be7f72032"
 
 [[files]]
 path = "interfaces/rest/p0-make-pgbouncer-reset-benchmark-contract-executable.md"
@@ -33,8 +33,8 @@ section_count = 3
 
 [[files]]
 path = "logic/discovery-counts-pgpool-s-own-backends-as-non-pgpool-usage-busy.md"
-digest = "sha256:bb372fde1d4b603f16283eff9c8ad68915c8d91680ff128a37c2040431ce7626"
-ir_digest = "sha256:a986f3f33105164aa9619c1d23e159e2bc747f72a9e7c1646c6c0bd1814d148e"
+digest = "sha256:a94ba4a126ff599009276ba1fb343ec1a804c0a16585e61ffd307f454a2acc19"
+ir_digest = "sha256:ff4830e0468eebbc85ddbc81e113528999f7abfccda839455f4057e472d661a0"
 section_count = 3
 
 [[files]]
