@@ -72,7 +72,7 @@ enum TransactionEngine {
 
 impl TransactionHandler {
     // @spec apps/pgpool/tech-design/logic/p0-dense-buffer-readiness-reactor.md#logic
-    // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="Log reserve policy with millisecond values matching the configuration surface.">
+    // <HANDWRITE gap="missing-generator:logic" tracker="#1891" reason="Log reserve policy with millisecond values matching the configuration surface.">
     pub fn new(config: TransactionProxyConfig) -> Self {
         if let Some(policy) = config.backend_pool.reserve_policy() {
             tracing::info!(
