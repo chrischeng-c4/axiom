@@ -560,6 +560,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in sift.rs is hand-written pending codegen support">
 fn append_event(args: EventArgs) -> Result<()> {
     match args.command {
         EventCommand::Write(args) => {
@@ -573,6 +574,7 @@ fn append_event(args: EventArgs) -> Result<()> {
         EventCommand::Import(args) => import_events(args),
     }
 }
+// </HANDWRITE>
 
 fn import_events(args: EventImportArgs) -> Result<()> {
     let source = std::fs::read(&args.file)
