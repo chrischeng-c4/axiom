@@ -1578,6 +1578,18 @@ struct HirToMir<'a> {
     /// (#1794). Loop/comprehension-internal bindings that share
     /// `sym_to_vreg` but never pair with StoreGlobal are NOT in this set.
     global_synced_syms: HashSet<u32>,
+    /// True while lowering the body of a module-scope loop (while/for/
+    /// async for) that is suppressing the per-iteration StoreGlobal for
+    /// plain reassignments — a perf optimization that is safe exactly
+    /// when every read of the written symbol goes through the fast
+    /// `orig_vreg` path. An Any-typed symbol already in
+    /// `global_synced_syms` breaks that assumption: `HirExpr::Var`'s
+    /// #1794 reload rule makes an Any-typed read bypass the vreg and
+    /// reload from the (otherwise stale) global instead, so `Assign`
+    /// consults this flag to re-enable just that narrow case's
+    /// StoreGlobal — every concretely-typed write still gets the full
+    /// suppression (mamba#1982).
+    module_scope_sync_suppressed: bool,
     /// Block IDs for break/continue targets
     loop_exit: Option<BlockId>,
     loop_header: Option<BlockId>,
@@ -1865,6 +1877,7 @@ impl<'a> HirToMir<'a> {
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
             global_synced_syms: HashSet::new(),
+            module_scope_sync_suppressed: false,
             loop_exit: None,
             loop_header: None,
             current_block_id: None,
@@ -2179,6 +2192,7 @@ impl<'a> HirToMir<'a> {
             current_stmts: Vec::new(),
             sym_to_vreg: HashMap::new(),
             global_synced_syms: HashSet::new(),
+            module_scope_sync_suppressed: false,
             loop_exit: None,
             loop_header: None,
             current_block_id: None,
@@ -2275,6 +2289,7 @@ impl<'a> HirToMir<'a> {
         self.current_stmts.clear();
         self.sym_to_vreg.clear();
         self.global_synced_syms.clear();
+        self.module_scope_sync_suppressed = false;
         self.class_method_callable_values.clear();
         self.loop_exit = None;
         self.loop_header = None;
@@ -3910,6 +3925,31 @@ impl<'a> HirToMir<'a> {
                                         value: boxed,
                                     });
                                     self.global_synced_syms.insert(sym.0);
+                                } else if self.module_scope_sync_suppressed
+                                    && val_ty == self.tcx.any()
+                                    && self.global_synced_syms.contains(&sym.0)
+                                {
+                                    // mamba#1982: the loop-body StoreGlobal suppression above
+                                    // (in_module_scope forced false while lowering a loop body —
+                                    // see lower_while/lower_for_range/lower_for/lower_async_for)
+                                    // assumes every read of this symbol goes through the fast
+                                    // `orig_vreg` path, which holds for concretely-typed
+                                    // accumulators (the common case the optimization targets)
+                                    // but NOT for Any-typed ones: HirExpr::Var's #1794 reload
+                                    // rule makes an Any-typed read of a `global_synced_syms`
+                                    // member bypass the vreg and reload from the (otherwise
+                                    // stale, frozen-at-pre-loop-value) global instead. Left
+                                    // unsynced, every write here lands only in `orig_vreg`
+                                    // while every read — same-iteration or post-loop — fetches
+                                    // the global's stale value (observed as e.g. `acc=0`
+                                    // instead of the true accumulated count). Re-sync for just
+                                    // this narrow case; concretely-typed writes are unaffected
+                                    // and keep the full per-iteration StoreGlobal suppression.
+                                    let boxed = self.box_operand(orig_vreg, val_ty);
+                                    self.current_stmts.push(MirInst::StoreGlobal {
+                                        name: *sym,
+                                        value: boxed,
+                                    });
                                 }
                             } else {
                                 // First assignment — treat as definition.
@@ -6604,11 +6644,14 @@ impl<'a> HirToMir<'a> {
         let old_header = self.loop_header.replace(header);
         let was_module_scope = self.in_module_scope;
         self.in_module_scope = false;
+        let outer_sync_suppressed = self.module_scope_sync_suppressed;
+        self.module_scope_sync_suppressed = outer_sync_suppressed || was_module_scope;
         self.start_block(body_block);
         for s in body {
             self.lower_stmt(s);
         }
         self.in_module_scope = was_module_scope;
+        self.module_scope_sync_suppressed = outer_sync_suppressed;
         // If we're inside a try block, emit an exception check at the end of
         // the loop body so that exceptions raised during the iteration
         // (e.g. StopIteration from next()) propagate to the try handler
@@ -6870,6 +6913,8 @@ impl<'a> HirToMir<'a> {
         let old_header = self.loop_header.replace(latch_block);
         let was_module_scope = self.in_module_scope;
         self.in_module_scope = false;
+        let outer_sync_suppressed = self.module_scope_sync_suppressed;
+        self.module_scope_sync_suppressed = outer_sync_suppressed || was_module_scope;
         self.start_block(body_block);
         // Expose current counter value as the user-visible loop variable.
         // This is a no-op for non-nested loops (var_vreg == start_raw, same
@@ -6882,6 +6927,7 @@ impl<'a> HirToMir<'a> {
             self.lower_stmt(s);
         }
         self.in_module_scope = was_module_scope;
+        self.module_scope_sync_suppressed = outer_sync_suppressed;
         self.finish_block(Terminator::Goto(latch_block));
 
         // Latch: increment private counter, then jump back to header.
@@ -7001,8 +7047,10 @@ impl<'a> HirToMir<'a> {
         let old_exit = self.loop_exit.replace(cleanup_block);
         let old_header = self.loop_header.replace(header);
         let was_module_scope = self.in_module_scope;
+        let outer_sync_suppressed = self.module_scope_sync_suppressed;
         if !self.module_has_closures {
             self.in_module_scope = false;
+            self.module_scope_sync_suppressed = outer_sync_suppressed || was_module_scope;
         }
         self.start_block(body_block);
         let (bound_next, bound_ty) = self.coerce_loop_binding_value(var, next_val);
@@ -7035,6 +7083,7 @@ impl<'a> HirToMir<'a> {
             self.lower_stmt(s);
         }
         self.in_module_scope = was_module_scope;
+        self.module_scope_sync_suppressed = outer_sync_suppressed;
         self.finish_block(Terminator::Goto(header));
         self.loop_exit = old_exit;
         self.loop_header = old_header;
@@ -7114,6 +7163,8 @@ impl<'a> HirToMir<'a> {
         let old_header = self.loop_header.replace(header);
         let was_module_scope = self.in_module_scope;
         self.in_module_scope = false;
+        let outer_sync_suppressed = self.module_scope_sync_suppressed;
+        self.module_scope_sync_suppressed = outer_sync_suppressed || was_module_scope;
         self.start_block(body_block);
         let (bound_next, bound_ty) = self.coerce_loop_binding_value(var, next_val);
         if let Some(&orig) = self.sym_to_vreg.get(&var) {
@@ -7133,6 +7184,7 @@ impl<'a> HirToMir<'a> {
             self.lower_stmt(s);
         }
         self.in_module_scope = was_module_scope;
+        self.module_scope_sync_suppressed = outer_sync_suppressed;
         self.finish_block(Terminator::Goto(header));
         self.loop_exit = old_exit;
         self.loop_header = old_header;
