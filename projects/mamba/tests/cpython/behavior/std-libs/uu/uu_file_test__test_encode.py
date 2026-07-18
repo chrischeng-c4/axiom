@@ -9,12 +9,11 @@
 # case = "uu_file_test__test_encode"
 # subject = "cpython.test_uu.UUFileTest.test_encode"
 # kind = "semantic"
-# xfail = "auto-ported CPython test; mamba promotion pending"
+# xfail = ""
 # mem_carveout = ""
 # source = "Lib/test/test_uu.py"
 # status = "filled"
 # ///
-# mamba-xfail: auto-ported CPython test; mamba promotion pending
 # Auto-ported from CPython 3.12 test_uu.py::UUFileTest::test_encode
 """Auto-ported test: UUFileTest::test_encode (CPython 3.12 oracle)."""
 
