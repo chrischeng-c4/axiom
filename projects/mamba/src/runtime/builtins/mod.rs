@@ -1964,7 +1964,10 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
     if raise_datetime_op_type_error("-", a, b) {
         return MbValue::none();
     }
-    if !a.is_none() && !b.is_none() {
+    // #1962: don't clobber a pending exception from an earlier operand
+    // evaluation with a fresh operand-type TypeError — mirrors the #1547
+    // mb_value_cmp / #1938 mb_add guard.
+    if !a.is_none() && !b.is_none() && !super::exception::has_current_exception() {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
@@ -2030,10 +2033,14 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
             } else {
                 matches!(&(*pa).data, ObjData::Instance { .. })
             };
+            // #1962: don't clobber a pending exception from an earlier
+            // operand evaluation with a fresh operand-type TypeError —
+            // mirrors the #1547 mb_value_cmp / #1938 mb_add guard.
             if (a_is_setlike || b_is_setlike)
                 && !other_is_instance
                 && !super::stdlib::collections_mod::is_counter_instance(a)
                 && !super::stdlib::collections_mod::is_counter_instance(b)
+                && !super::exception::has_current_exception()
             {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -2052,12 +2059,16 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
     match mb_bitor_type_union(a, b) {
         TypeUnionBuild::Value(union) => return union,
         TypeUnionBuild::InvalidOperand => {
-            super::exception::mb_raise(
-                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "unsupported operand type(s) for |".to_string(),
-                )),
-            );
+            // #1962: same pending-exception guard as the set-mismatch raise
+            // above.
+            if !super::exception::has_current_exception() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "unsupported operand type(s) for |".to_string(),
+                    )),
+                );
+            }
             return MbValue::none();
         }
         TypeUnionBuild::NotUnion => {}
@@ -2125,10 +2136,14 @@ pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
             } else {
                 matches!(&(*pa).data, ObjData::Instance { .. })
             };
+            // #1962: don't clobber a pending exception from an earlier
+            // operand evaluation with a fresh operand-type TypeError —
+            // mirrors the #1547 mb_value_cmp / #1938 mb_add guard.
             if (a_is_setlike || b_is_setlike)
                 && !other_is_instance
                 && !super::stdlib::collections_mod::is_counter_instance(a)
                 && !super::stdlib::collections_mod::is_counter_instance(b)
+                && !super::exception::has_current_exception()
             {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -2192,7 +2207,13 @@ pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
             } else {
                 matches!(&(*pa).data, ObjData::Instance { .. })
             };
-            if (a_is_setlike || b_is_setlike) && !other_is_instance {
+            // #1962: don't clobber a pending exception from an earlier
+            // operand evaluation with a fresh operand-type TypeError —
+            // mirrors the #1547 mb_value_cmp / #1938 mb_add guard.
+            if (a_is_setlike || b_is_setlike)
+                && !other_is_instance
+                && !super::exception::has_current_exception()
+            {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!(
@@ -2388,14 +2409,20 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
                     } else {
                         None
                     };
+                    // #1962: don't clobber a pending exception from an
+                    // earlier operand evaluation with a fresh operand-type
+                    // TypeError — mirrors the #1547 mb_value_cmp / #1938
+                    // mb_add guard.
                     if let Some(other) = other {
-                        super::exception::mb_raise(
-                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(format!(
-                                "can't multiply sequence by non-int of type '{}'",
-                                value_type_name(other)
-                            ))),
-                        );
+                        if !super::exception::has_current_exception() {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(format!(
+                                    "can't multiply sequence by non-int of type '{}'",
+                                    value_type_name(other)
+                                ))),
+                            );
+                        }
                     }
                     MbValue::none()
                 }
@@ -3559,6 +3586,15 @@ fn values_lt_fallback(a: MbValue, b: MbValue) -> bool {
                 }
             }
         }
+    }
+    // #1962: don't clobber a pending exception from an earlier operand
+    // evaluation with a fresh operand-type TypeError — mirrors the #1547
+    // mb_value_cmp / #1938 mb_add guard. `mb_gt`/`mb_le`/`mb_ge` all compose
+    // through this same fallback (via `mb_lt(b, a)`), so this one guard
+    // covers all four comparison operators for the non-Instance operand
+    // case.
+    if super::exception::has_current_exception() {
+        return false;
     }
     raise_type_error(format!(
         "'<' not supported between instances of '{}' and '{}'",
