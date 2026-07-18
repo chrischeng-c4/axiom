@@ -1797,22 +1797,27 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                         }
                     }
                     // Genuinely unsupported operand pair (e.g. `1.0 + "x"`):
-                    // CPython raises TypeError. Preserve the None fallback when
-                    // an operand is a user Instance (whose __add__/__radd__ is
-                    // resolved by the binop dispatcher — None = "not handled")
-                    // OR None: mamba's `__file__`/missing-attr values surface as
-                    // None and several stdlib paths (os.path.join(None,...),
-                    // linecache) lean on `None + str` staying lenient until that
-                    // is fixed properly.
-                    let a_inst = a.is_none()
-                        || a.as_ptr().map_or(false, |p| {
-                            matches!(unsafe { &(*p).data }, ObjData::Instance { .. })
-                        });
-                    let b_inst = b.is_none()
-                        || b.as_ptr().map_or(false, |p| {
-                            matches!(unsafe { &(*p).data }, ObjData::Instance { .. })
-                        });
-                    if !a_inst && !b_inst {
+                    // CPython raises TypeError. Preserve the None fallback only
+                    // when an operand is a user Instance (whose __add__/__radd__
+                    // is resolved by the binop dispatcher — None = "not
+                    // handled"). A bare None operand (module-attr, unannotated
+                    // param) no longer gets its own leniency carve-out here
+                    // (#1938) — os.path.join routes through its own Rust-native
+                    // join (never reaches mb_add) and linecache.__file__ is now
+                    // a real path string instead of None (#1961), so neither
+                    // depends on this path staying lenient.
+                    let a_inst = a.as_ptr().map_or(false, |p| {
+                        matches!(unsafe { &(*p).data }, ObjData::Instance { .. })
+                    });
+                    let b_inst = b.as_ptr().map_or(false, |p| {
+                        matches!(unsafe { &(*p).data }, ObjData::Instance { .. })
+                    });
+                    // #1962: if operand evaluation already raised (e.g. the left
+                    // operand's own constructor/subscript raised before
+                    // reaching this dispatcher), don't clobber that pending
+                    // exception with a fresh operand-type TypeError — mirrors
+                    // the #1547 mb_value_cmp guard (~line 3869 this file).
+                    if !a_inst && !b_inst && !super::exception::has_current_exception() {
                         // A list/tuple on the left with a non-matching right
                         // operand gets CPython's sequence-specific message
                         // ("can only concatenate list (not \"str\") to list")
