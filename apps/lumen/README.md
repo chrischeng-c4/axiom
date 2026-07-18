@@ -361,6 +361,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | bm25-ranking-and-analyzers | epic | - | implemented | passing | conformance | apps/lumen/tests/perf_gate_vs_db.rs<br>apps/lumen/src/storage.rs |
+| jieba-fallback-cjk-bigram | change | 1975 | planned | planned | conformance | apps/lumen/src/tokenize.rs |
 
 ### Exact & Filter Search
 
