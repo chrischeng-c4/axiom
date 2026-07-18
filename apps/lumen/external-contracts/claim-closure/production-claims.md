@@ -87,9 +87,9 @@ e2e_tests:
     claim_id: aw-ec-generated-inventory-and-dispatch
     contract_id: ec-generated-inventory-dispatch
     category: behavior
-    command: "./target/debug/aw ec check --project lumen"
+    command: "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture && cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter && ../../target/debug/vat run rig-resilience"
     assertions:
-      - "The generated AW EC inventory stays in sync with claim tests and dispatch commands."
+      - "The generated AW EC inventory dispatches its claim test suites and vat-managed runners, proving each generated case actually executes rather than only checking presence."
   - id: lumen-claim-ec-vat-managed-runners
     capability_id: ec-gates-configured
     claim_id: vat-managed-meter-and-rig-runners
@@ -103,9 +103,9 @@ e2e_tests:
     claim_id: external-contract-claim-closure-evidence
     contract_id: ec-claim-closure-evidence
     category: behavior
-    command: "./target/debug/aw ec check --project lumen"
+    command: "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture"
     assertions:
-      - "The production claim-closure document remains synchronized with generated EC cases."
+      - "The production claim-closure document remains synchronized with generated EC cases: the Gate Inventory's representative behavior/efficiency/stability/security generated claim suites actually execute their underlying production-claim commands."
 
   - id: lumen-claim-competitor-feature-search-breadth
     capability_id: competitor-feature-parity

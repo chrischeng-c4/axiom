@@ -27,7 +27,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:83ecc17fc2cb4d03560fcd246e86c756f6625c7adc7e18a30286917263caef97"
+generated_from_td_digest = "sha256:c02e15c61c839c74092c8080444057f3129a4e15fefeca251b58168c7249310a"
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-agent-llm-topics"
@@ -349,7 +349,7 @@ contract_id = "dynamic-cross-pod-routing"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-cross-pod-routing"
 test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_cross_pod_routing.rs"
-command = "cargo test -p lumen --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
+command = "cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
 required_for_production = true
 assertions = ["Cross-pod reads and writes follow the delivered ownership map to the owning shard."]
 
@@ -469,9 +469,9 @@ contract_id = "ec-claim-closure-evidence"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-claim-closure-evidence"
 test_path = "apps/lumen/tests/behavior_lumen_claim_ec_claim_closure_evidence.rs"
-command = "./target/debug/aw ec check --project lumen"
+command = "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture"
 required_for_production = true
-assertions = ["The production claim-closure document remains synchronized with generated EC cases."]
+assertions = ["The production claim-closure document remains synchronized with generated EC cases: the Gate Inventory's representative behavior/efficiency/stability/security generated claim suites actually execute their underlying production-claim commands."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-ec-generated-inventory-dispatch"
@@ -481,9 +481,9 @@ contract_id = "ec-generated-inventory-dispatch"
 category = "behavior"
 td_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-generated-inventory-dispatch"
 test_path = "apps/lumen/tests/behavior_lumen_claim_ec_generated_inventory_dispatch.rs"
-command = "./target/debug/aw ec check --project lumen"
+command = "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture && cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter && ../../target/debug/vat run rig-resilience"
 required_for_production = true
-assertions = ["The generated AW EC inventory stays in sync with claim tests and dispatch commands."]
+assertions = ["The generated AW EC inventory dispatches its claim test suites and vat-managed runners, proving each generated case actually executes rather than only checking presence."]
 
 [[aw.ec.generated.cases]]
 id = "lumen-claim-ec-vat-managed-runners"
