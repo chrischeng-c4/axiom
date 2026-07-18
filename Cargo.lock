@@ -7768,6 +7768,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mesh"
+version = "0.4.8"
+dependencies = [
+ "anyhow",
+ "build-stamp",
+ "clap",
+ "cli-std",
+ "tokio",
+]
+
+[[package]]
 name = "metal"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

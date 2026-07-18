@@ -99,6 +99,7 @@ members = [
     "crates/cclab-ctx-inf-db",
     "apps/lumen",
     "apps/keep",
+    "apps/mesh",
     "examples/client-transport-policy",
 ]
 resolver = "2"
