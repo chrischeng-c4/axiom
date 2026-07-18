@@ -219,7 +219,8 @@ Reference instantiations: **`keep`** (KV / claim-check store), **`relay`**
 (broker), **`lumen`** (search / dedup index), and **`loom`** (workflow
 scheduler). Planned service placeholders follow the same archetype:
 **`tape`** (topic replay journal), **`defer`** (delayed task dispatch),
-**`cube`** (OLAP service), and **`beam`** (GPU vector database).
+**`cube`** (OLAP service), **`beam`** (GPU vector database), and **`mesh`**
+(property-graph service).
 
 Use these portfolio boundaries when creating TDs or assigning agents:
 
@@ -233,6 +234,7 @@ Use these portfolio boundaries when creating TDs or assigning agents:
 | `cube` | columnar facts, OLAP scan/filter/group-by/aggregate, rollups, partitions | search ranking, vector ANN, KV payload storage |
 | `beam` | GPU vector indexes, vector ingest/rebuild, nearest-neighbor query | lexical/perceptual/duplicate search, OLAP aggregation |
 | `lumen` | exact/lexical/semantic/perceptual/duplicate search in one service | OLAP aggregation, vector-only GPU DB ownership |
+| `mesh` | typed node/edge property graph storage, traversal/path query, log-replicated derived index | vector ANN, OLAP aggregation, broker delivery, lexical/semantic search |
 
 Capability-profile traits (`[capability.profile].traits` in a project's
 `aw.toml`) derive a baseline of required capabilities from this archetype.

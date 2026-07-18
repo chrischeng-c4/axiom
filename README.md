@@ -19,6 +19,7 @@ details.
 | [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed push-queue dispatch service in the Axiom stack. |
 | [cube](apps/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
 | [beam](apps/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
+| [mesh](apps/mesh/README.md) | Mesh is the relationship/property-graph service in the Axiom service stack. |
 | [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
 | [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |
 | [rig](apps/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
@@ -89,6 +90,7 @@ an installer yet are marked _coming soon_.
 | [defer](apps/defer/README.md) | `defer` | _coming soon_ |
 | [keep](apps/keep/README.md) | `keep` | _coming soon_ |
 | [loom](apps/loom/README.md) | `loom` | _coming soon_ |
+| [mesh](apps/mesh/README.md) | `mesh` | _coming soon_ |
 | [lumen](apps/lumen/README.md) | `lumen` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/lumen/install.sh \| sh` |
 | [mamba](projects/mamba/README.md) | `mamba` | _coming soon_ |
 | [meter](apps/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/meter/install.sh \| sh` |

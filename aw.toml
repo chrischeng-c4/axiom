@@ -233,6 +233,19 @@ paths = ["apps/beam/**"]
 target = "schemas"
 test_cmd = "true"
 
+[[projects]]
+name = "mesh"
+path = "apps/mesh"
+td_path = "apps/mesh/tech-design"
+cap_path = "apps/mesh/CAPABILITIES.md"
+label = "app:mesh"
+
+[[projects.workspaces]]
+name = "mesh"
+paths = ["apps/mesh/**"]
+target = "schemas"
+test_cmd = "true"
+
 
 [[projects]]
 name = "arena"
