@@ -1318,6 +1318,15 @@ pub fn mb_traceback_frame_summary_new(args: &[MbValue]) -> MbValue {
         ("_line", line),
     ];
     if !line.is_none() {
+        // `line` is already stored once above under "_line"; make_instance
+        // stores each (k, v) pair as-is with no implicit retain, so a second
+        // map entry aliasing the same pointer needs its own retain here.
+        // Without it, `release_contained_values` (rc.rs) walks every field
+        // and releases this pointer twice on teardown — a double-free that
+        // corrupts the allocator's freelist (#1978).
+        unsafe {
+            super::super::rc::retain_if_ptr(line);
+        }
         fields.push(("line", line));
     }
     make_instance("FrameSummary", fields)
@@ -1393,10 +1402,30 @@ unsafe extern "C" fn fs_getattr(self_v: MbValue, attr_v: MbValue) -> MbValue {
             )
         };
         if !existing.is_none() {
+            // Cached value is already owned by the "_line" map entry; the
+            // __getattr__ dispatcher (class/mod.rs) calls this function
+            // pointer directly and returns our result with no retain of
+            // its own, so we must hand back an independently-owned
+            // reference here too (#1978).
+            super::super::rc::retain_if_ptr(existing);
             return existing;
         }
         let line = frame_summary_line_from_linecache(filename, lineno);
         if !line.is_none() {
+            // `line` ends up with THREE independent owners: the "line"
+            // map entry, the "_line" map entry, and the value we return
+            // to our caller (see the __getattr__ dispatch note above —
+            // the caller performs no retain of its own on our return
+            // value). We start from exactly one owned reference (fresh
+            // out of frame_summary_line_from_linecache), so two retains
+            // are needed to back the two EXTRA owners beyond that first
+            // one. Without both, one of the three eventually releases a
+            // reference nothing retained, dropping the shared object's
+            // refcount to zero while the remaining owners still hold
+            // live pointers to it — a premature free that corrupts the
+            // allocator's freelist (#1978).
+            super::super::rc::retain_if_ptr(line);
+            super::super::rc::retain_if_ptr(line);
             let mut f = fields.write().unwrap();
             f.insert("line".to_string(), line);
             f.insert("_line".to_string(), line);
@@ -1415,7 +1444,13 @@ unsafe extern "C" fn fs_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let items = frame_summary_tuple_items(self_v).unwrap_or_default();
     let n = items.len() as i64;
     let i = if idx < 0 { idx + n } else { idx };
-    items.get(i as usize).copied().unwrap_or_else(MbValue::none)
+    let val = items.get(i as usize).copied().unwrap_or_else(MbValue::none);
+    // `items` is borrowed from self_v's own `fields` map (frame_summary_tuple_items
+    // does a plain `.copied()` read, no retain); the caller receives this as an
+    // owned return value while the FrameSummary instance keeps its own reference
+    // to the same pointer, so this call site must retain its own copy (#1978).
+    super::super::rc::retain_if_ptr(val);
+    val
 }
 
 /// len(FrameSummary) == 4 (filename, lineno, name, line).
@@ -1546,10 +1581,16 @@ unsafe extern "C" fn ss_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let entries = stack_entries(self_v);
     let n = entries.len() as i64;
     let i = if idx < 0 { idx + n } else { idx };
-    entries
+    let val = entries
         .get(i as usize)
         .copied()
-        .unwrap_or_else(MbValue::none)
+        .unwrap_or_else(MbValue::none);
+    // `entries` is borrowed from self_v's own "entries" List (stack_entries does
+    // a plain `.to_vec()` read, no retain); the caller receives this as an owned
+    // return value while the StackSummary's entries list keeps its own reference
+    // to the same pointer, so this call site must retain its own copy (#1978).
+    super::super::rc::retain_if_ptr(val);
+    val
 }
 
 unsafe extern "C" fn ss_setitem(self_v: MbValue, args: MbValue) -> MbValue {
@@ -2474,6 +2515,12 @@ fn stack_summary_entries_with_source_lines_from_pairs(
             MbValue::from_ptr(MbObject::new_str(filename.clone())),
             lineno,
         );
+        // Stored under both "line" and "_line" below; each map entry is
+        // released independently on teardown, so the second store needs
+        // its own retain to avoid a double-free (#1978).
+        unsafe {
+            super::super::rc::retain_if_ptr(line);
+        }
         entries.push(make_instance(
             "FrameSummary",
             vec![
