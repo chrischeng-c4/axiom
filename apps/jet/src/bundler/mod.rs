@@ -555,6 +555,17 @@ pub struct Bundler {
     /// Keyed by the canonical module path. Empty for any module not safe to
     /// reuse (TS/TSX/JSX), or when the graph cache short-circuits a module.
     parsed_trees: Mutex<HashMap<PathBuf, tree_sitter::Tree>>,
+    /// Final accumulated per-barrel demand from the lazy crawl
+    /// (`prefetch_graph_modules_lazy`), restricted to confirmed pure
+    /// barrels. `transform_modules` consults this to prune a barrel's own
+    /// unrequested re-export lines from its source before codegen, so the
+    /// bundle output matches what an eager crawl + tree-shake would have
+    /// produced — tree-shake itself cannot make this call, since it never
+    /// sees a graph edge for a leaf the crawl deliberately never fetched.
+    /// Empty whenever `JET_EAGER_BARRELS` is set or no pure barrel was
+    /// detected.
+    /// @issue #1991
+    barrel_demand: Mutex<HashMap<PathBuf, BarrelDemand>>,
     /// When true, use Phase 2 flat bundle in `generate_bundle`.
     ///
     /// Phase 2 (`generate_flattened_bundle`) merges all module bodies into a
@@ -648,6 +659,7 @@ impl Bundler {
             base_url,
             unresolved_deps: Mutex::new(Vec::new()),
             parsed_trees: Mutex::new(HashMap::new()),
+            barrel_demand: Mutex::new(HashMap::new()),
             splitting,
             manual_chunks,
         })
@@ -763,7 +775,49 @@ impl Bundler {
     /// order is untouched. Resolution results are stored as
     /// `Result<PathBuf, String>` so the replay can preserve the original
     /// warn / external-module branches verbatim.
-    fn prefetch_graph_modules(&self, entry_abs: &Path) -> HashMap<PathBuf, PrefetchedModule> {
+    ///
+    /// Returns the memo alongside a *lazy barrel skip set* (#1991): the
+    /// resolved path of every re-export leaf a pure barrel deliberately
+    /// never fetched because no importer demanded it. [`Self::build_graph`]'s
+    /// serial replay independently re-walks every module's own
+    /// `static_imports`/`dynamic_imports` (so it can preserve its warn /
+    /// external-module branches verbatim), and a barrel's own resolution
+    /// memo always contains every leaf it re-exports regardless of demand
+    /// — the skip set is what lets that replay tell "never fetched on
+    /// purpose" apart from "not yet in the memo, read it fresh", so the
+    /// leaves this function skips stay skipped instead of being
+    /// synchronously re-read one at a time by the replay.
+    ///
+    /// Delegates to [`Self::prefetch_graph_modules_lazy`] by default; with
+    /// `JET_EAGER_BARRELS` set, delegates instead to
+    /// [`Self::prefetch_graph_modules_eager`], which reproduces the
+    /// pre-#1991 crawl byte-for-byte (unconditional expansion of every
+    /// resolved edge, empty skip set). The escape hatch exists for
+    /// bisection and for the lazy-vs-eager output-identity test.
+    fn prefetch_graph_modules(
+        &self,
+        entry_abs: &Path,
+    ) -> (
+        HashMap<PathBuf, PrefetchedModule>,
+        HashSet<PathBuf>,
+        HashMap<PathBuf, BarrelDemand>,
+    ) {
+        if std::env::var_os("JET_EAGER_BARRELS").is_some() {
+            return (
+                self.prefetch_graph_modules_eager(entry_abs),
+                HashSet::new(),
+                HashMap::new(),
+            );
+        }
+        self.prefetch_graph_modules_lazy(entry_abs)
+    }
+
+    /// Pre-#1991 crawl: every specifier a module resolves is pushed onto
+    /// the next wave's frontier unconditionally, including a pure
+    /// re-export barrel's own leaves regardless of whether any importer
+    /// actually requested them. Kept verbatim as the `JET_EAGER_BARRELS`
+    /// escape hatch.
+    fn prefetch_graph_modules_eager(&self, entry_abs: &Path) -> HashMap<PathBuf, PrefetchedModule> {
         use rayon::prelude::*;
 
         let mut prefetched: HashMap<PathBuf, PrefetchedModule> = HashMap::new();
@@ -793,6 +847,249 @@ impl Bundler {
         }
 
         prefetched
+    }
+
+    /// Lazy pure-barrel expansion (#1991): a *pure re-export barrel* — a
+    /// module whose only content is `export { ... } from '...'` /
+    /// `export * from '...'` lines plus comments/whitespace/`'use
+    /// strict'` (see [`is_pure_barrel_source`]) — has its own outgoing
+    /// edges pushed onto the crawl frontier only for the barrel-exposed
+    /// names some already-discovered importer actually demands. A
+    /// barrel's own file is always read (it is a real, direct
+    /// dependency reached like any other module); only its *unrequested
+    /// leaves* are skipped, so this returns a strict subset of what
+    /// [`Self::prefetch_graph_modules_eager`] would prefetch, plus the skip
+    /// set [`Self::build_graph`] needs to keep those leaves out of the
+    /// final graph.
+    ///
+    /// Two-phase per wave, to make the "two importers of the same barrel
+    /// land in the same wave" race safe: phase 1 (borrowing this wave's
+    /// modules) records every resolved edge's demand into `barrel_demand`
+    /// — skipping a wave module's own resolutions when that module is
+    /// itself a confirmed pure barrel, since a barrel's re-export lines
+    /// are not ordinary "this module imports names" edges — so a
+    /// same-wave importer's request is never missed before any of this
+    /// wave's own barrels are evaluated for expansion. Phase 2 (after the
+    /// wave is absorbed into `prefetched`) walks every path touched this
+    /// wave — newly-discovered targets and modules just absorbed — and,
+    /// for each confirmed pure barrel among them, expands exactly the
+    /// leaves its accumulated demand covers. `expanded_from` remembers
+    /// which targets have already been queued from a given module so a
+    /// later wave's incremental expansion (a fresh importer requesting
+    /// more names from an already-partially-expanded barrel) only queues
+    /// the newly-due leaves.
+    ///
+    /// Fallback to full expansion (matching [`Self::prefetch_graph_modules_eager`]
+    /// for that one edge) whenever demand can't be proven narrow: a
+    /// namespace import (`import * as ns`), a dynamic `import()`, a bare
+    /// (non-property) CJS `require()` use, a star re-export target
+    /// (leaf-side names unknown without reading the target — this covers
+    /// both a star line inside a pure barrel and `export *` from a barrel
+    /// into another module; #1991 does not implement the issue's optional
+    /// single-hop pure-barrel-chain narrowing, see the module doc), a
+    /// requested name with no matching entry in the barrel's own parsed
+    /// re-export map (a safety net against this line-scanner
+    /// under-parsing an unusual barrel shape), or a resolved specifier
+    /// this scan can't account for in the source text at all (same
+    /// safety net, for the importer side).
+    fn prefetch_graph_modules_lazy(
+        &self,
+        entry_abs: &Path,
+    ) -> (
+        HashMap<PathBuf, PrefetchedModule>,
+        HashSet<PathBuf>,
+        HashMap<PathBuf, BarrelDemand>,
+    ) {
+        use rayon::prelude::*;
+
+        let mut prefetched: HashMap<PathBuf, PrefetchedModule> = HashMap::new();
+        let mut frontier: Vec<PathBuf> = vec![entry_abs.to_path_buf()];
+
+        // Accumulated per-barrel demand (grows monotonically; `Full` once
+        // anything can't be narrowed) and, per expanding module, which of
+        // its targets have already been queued (so re-visiting a barrel
+        // across waves only queues newly-due leaves).
+        let mut barrel_demand: HashMap<PathBuf, BarrelDemand> = HashMap::new();
+        let mut expanded_from: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+        let mut barrels_detected: HashSet<PathBuf> = HashSet::new();
+
+        while !frontier.is_empty() {
+            let wave: Vec<(PathBuf, PrefetchedModule)> = frontier
+                .par_iter()
+                .map(|path| (path.clone(), self.prefetch_one_module(path)))
+                .collect();
+
+            // Phase 1: record every edge's demand before any of this
+            // wave's own targets are evaluated for expansion.
+            let mut touched: Vec<PathBuf> = wave.iter().map(|(path, _)| path.clone()).collect();
+            for (_path, module) in &wave {
+                let Ok(imports) = &module.imports else {
+                    continue;
+                };
+                let Ok(src) = &module.source else {
+                    continue;
+                };
+                if is_pure_barrel_source(src) {
+                    // This wave module is itself a confirmed pure barrel:
+                    // its resolutions are re-export edges, handled by
+                    // phase 2's barrel branch below, not ordinary demand.
+                    continue;
+                }
+                for (spec, res) in &module.resolutions {
+                    let Ok(target) = res else { continue };
+                    let is_dynamic = imports.dynamic_imports.iter().any(|d| d == spec);
+                    let demand = barrel_demand_for_specifier(src, spec, is_dynamic);
+                    merge_barrel_demand(&mut barrel_demand, target, demand);
+                    touched.push(target.clone());
+                }
+            }
+
+            for (path, module) in wave {
+                prefetched.insert(path, module);
+            }
+
+            // Phase 2: expand every touched confirmed-pure barrel by its
+            // accumulated demand; everything else behaves exactly like
+            // the eager crawl.
+            touched.sort_unstable();
+            touched.dedup();
+
+            let mut next: Vec<PathBuf> = Vec::new();
+            for target in touched {
+                let Some(module) = prefetched.get(&target) else {
+                    next.push(target.clone());
+                    continue;
+                };
+                let Ok(src) = &module.source else { continue };
+                if !is_pure_barrel_source(src) {
+                    // Not a pure barrel: every resolution this module
+                    // makes is a real dependency, exactly like the eager
+                    // crawl. `expanded_from` doubles as a general
+                    // "already queued from here" memo so a repeat visit
+                    // is a no-op.
+                    let pushed = expanded_from.entry(target.clone()).or_default();
+                    for res in module.resolutions.values() {
+                        if let Ok(dep) = res {
+                            if pushed.insert(dep.clone()) && !prefetched.contains_key(dep) {
+                                next.push(dep.clone());
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                barrels_detected.insert(target.clone());
+                let entries = tree_shake::extract_reexport_specifiers(src);
+                let known_names: HashSet<&str> = entries
+                    .iter()
+                    .filter_map(|(_, kind)| match kind {
+                        tree_shake::ReexportKind::Named(pairs) => {
+                            Some(pairs.iter().map(|(_, barrel_name)| barrel_name.as_str()))
+                        }
+                        tree_shake::ReexportKind::Star => None,
+                    })
+                    .flatten()
+                    .collect();
+                let demand = barrel_demand
+                    .get(&target)
+                    .cloned()
+                    .unwrap_or(BarrelDemand::Full);
+                let effective_full = match &demand {
+                    BarrelDemand::Full => true,
+                    // A requested name with no home in the barrel's own
+                    // parsed map is "any doubt → eager": either a
+                    // genuinely broken import (harmless to over-expand)
+                    // or this line-scanner missed an unusual shape.
+                    BarrelDemand::Names(names) => {
+                        names.iter().any(|n| !known_names.contains(n.as_str()))
+                    }
+                };
+
+                let pushed = expanded_from.entry(target.clone()).or_default();
+                for (spec, kind) in &entries {
+                    let Some(Ok(leaf_target)) = module.resolutions.get(spec) else {
+                        continue;
+                    };
+                    let leaf_names: Option<Vec<String>> = match kind {
+                        tree_shake::ReexportKind::Star => None, // always full — see fn doc.
+                        tree_shake::ReexportKind::Named(pairs) => {
+                            if effective_full {
+                                Some(pairs.iter().map(|(leaf, _)| leaf.clone()).collect())
+                            } else if let BarrelDemand::Names(names) = &demand {
+                                let matched: Vec<String> = pairs
+                                    .iter()
+                                    .filter(|(_, barrel_name)| names.contains(barrel_name))
+                                    .map(|(leaf, _)| leaf.clone())
+                                    .collect();
+                                if matched.is_empty() {
+                                    continue; // nothing demanded from this entry yet.
+                                }
+                                Some(matched)
+                            } else {
+                                continue; // unreachable: effective_full covers BarrelDemand::Full.
+                            }
+                        }
+                    };
+                    merge_barrel_demand(&mut barrel_demand, leaf_target, leaf_names);
+                    if pushed.insert(leaf_target.clone()) && !prefetched.contains_key(leaf_target) {
+                        next.push(leaf_target.clone());
+                    }
+                }
+            }
+
+            next.sort_unstable();
+            next.dedup();
+            next.retain(|p| !prefetched.contains_key(p));
+            frontier = next;
+        }
+
+        // Final derivation pass: any re-export entry on a confirmed
+        // barrel whose resolved target never made it into `prefetched`
+        // was deliberately skipped — this is exactly what
+        // `Self::build_graph`'s replay must exclude instead of
+        // synchronously reading fresh.
+        let mut skipped: HashSet<PathBuf> = HashSet::new();
+        for barrel_path in &barrels_detected {
+            let Some(module) = prefetched.get(barrel_path) else {
+                continue;
+            };
+            let Ok(src) = &module.source else { continue };
+            for (spec, kind) in tree_shake::extract_reexport_specifiers(src) {
+                if matches!(kind, tree_shake::ReexportKind::Star) {
+                    continue;
+                }
+                if let Some(Ok(leaf_target)) = module.resolutions.get(&spec) {
+                    if !prefetched.contains_key(leaf_target) {
+                        skipped.insert(leaf_target.clone());
+                    }
+                }
+            }
+        }
+
+        if std::env::var_os("JET_BUNDLE_TIMING").is_some() {
+            eprintln!(
+                "[bundle-timing] lazy-barrels: {} barrel(s) detected, {} leaf(ves) skipped",
+                barrels_detected.len(),
+                skipped.len()
+            );
+        }
+        tracing::debug!(
+            barrels_detected = barrels_detected.len(),
+            leaves_skipped = skipped.len(),
+            "lazy pure-barrel expansion (#1991)"
+        );
+
+        // Restrict to confirmed pure barrels: `barrel_demand` also carries
+        // entries for ordinary (non-barrel) targets touched during Phase 1
+        // demand recording, which `transform_modules` must never prune
+        // against — only a module `is_pure_barrel_source` independently
+        // reconfirms at transform time is eligible.
+        let confirmed_demand: HashMap<PathBuf, BarrelDemand> = barrel_demand
+            .into_iter()
+            .filter(|(path, _)| barrels_detected.contains(path))
+            .collect();
+
+        (prefetched, skipped, confirmed_demand)
     }
 
     /// The pure per-module slice of `build_graph`'s loop body: read the
@@ -861,7 +1158,244 @@ impl Bundler {
             tree,
         }
     }
+}
 
+/// Accumulated demand on a pure barrel's own re-exported names, across
+/// however many importers/waves reference it (#1991). Monotonic: once
+/// `Full`, stays `Full`; `Names` only grows via [`merge_barrel_demand`].
+#[derive(Debug, Clone)]
+enum BarrelDemand {
+    Names(HashSet<String>),
+    Full,
+}
+
+/// Merge a newly-discovered demand onto `target`'s accumulated entry in
+/// `demand_map`, in place. `new_names = None` means the edge that produced
+/// this demand could not be narrowed (one of #1991's fallback cases) and
+/// escalates the whole barrel to [`BarrelDemand::Full`]; `Some(names)`
+/// (possibly empty, e.g. a bare side-effect import) extends the
+/// accumulated name set unless it is already `Full`.
+fn merge_barrel_demand(
+    demand_map: &mut HashMap<PathBuf, BarrelDemand>,
+    target: &Path,
+    new_names: Option<Vec<String>>,
+) {
+    let entry = demand_map
+        .entry(target.to_path_buf())
+        .or_insert_with(|| BarrelDemand::Names(HashSet::new()));
+    if matches!(entry, BarrelDemand::Full) {
+        return;
+    }
+    match new_names {
+        None => *entry = BarrelDemand::Full,
+        Some(names) => {
+            if let BarrelDemand::Names(existing) = entry {
+                existing.extend(names);
+            }
+        }
+    }
+}
+
+/// Pure re-export barrel detector (#1991): true only when every statement
+/// in `source` is a named/star re-export (`export { a, b } from '...'` /
+/// `export * from '...'`), blank, a `//` or `/* ... */` comment, or a
+/// `'use strict'` / `"use strict"` directive. Any other statement — a real
+/// export declaration (`export function`, `export const`, `export
+/// default`, ...), a plain `import`, or any executable code — makes the
+/// module NOT pure, and its outgoing edges expand eagerly for that one
+/// module (this function only decides purity; the crawl in
+/// [`Bundler::prefetch_graph_modules_lazy`] does the actual gating).
+///
+/// The final `export_from_lines == extract_reexport_specifiers(..).len()`
+/// check catches an export-from-shaped line that fails
+/// `tree_shake::classify_reexport_line`'s stricter parse (e.g. an
+/// unbalanced brace group) — if the cheap textual scan and the real
+/// classifier disagree on how many re-export lines exist, this
+/// conservatively reports NOT a pure barrel rather than trusting the
+/// looser count.
+fn is_pure_barrel_source(source: &str) -> bool {
+    let mut in_block_comment = false;
+    let mut export_from_lines = 0usize;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if in_block_comment {
+            if trimmed.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        if trimmed.starts_with("/*") {
+            if !trimmed.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if trimmed == "'use strict';"
+            || trimmed == "\"use strict\";"
+            || trimmed == "'use strict'"
+            || trimmed == "\"use strict\""
+        {
+            continue;
+        }
+        if trimmed.starts_with("export ") && trimmed.contains(" from ") {
+            export_from_lines += 1;
+            continue;
+        }
+        return false;
+    }
+
+    export_from_lines > 0
+        && export_from_lines == tree_shake::extract_reexport_specifiers(source).len()
+}
+
+/// Prunes a confirmed pure barrel's own source, dropping named re-export
+/// lines (`export { a, b as c } from '...'`) whose barrel-exposed names are
+/// all absent from `demand` (#1991). Star re-export lines (`export * from
+/// '...'`) are always kept — their leaf names are unknown without reading
+/// the target, matching the "star always expands" fallback the crawl
+/// itself already applies — as is any line the same-shaped scan in
+/// [`is_pure_barrel_source`] wouldn't classify as a bare re-export (there
+/// shouldn't be any in a confirmed-pure source, but leaving anything
+/// unrecognized untouched is the conservative choice).
+///
+/// Only called with `BarrelDemand::Names(..)`; a `Full` demand means every
+/// leaf was already crawled, so the barrel's original source is already
+/// byte-for-byte what the eager crawl would transform and must not be
+/// touched. Line-granularity only (a multi-name line survives whole if any
+/// one of its names is demanded) — matches [`is_pure_barrel_source`]'s own
+/// line-oriented scan, and real-world barrels (e.g. `@mui/icons-material`)
+/// are one name per line.
+fn prune_barrel_source_to_demand(source: &str, demand: &HashSet<String>) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut in_block_comment = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if in_block_comment {
+            if trimmed.contains("*/") {
+                in_block_comment = false;
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if trimmed.starts_with("/*") && !trimmed.contains("*/") {
+            in_block_comment = true;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        if let Some((_spec, kind)) = tree_shake::classify_reexport_line(trimmed) {
+            match kind {
+                tree_shake::ReexportKind::Star => {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                tree_shake::ReexportKind::Named(pairs) => {
+                    if pairs
+                        .iter()
+                        .any(|(_, barrel_name)| demand.contains(barrel_name))
+                    {
+                        out.push_str(line);
+                        out.push('\n');
+                    }
+                    // else: every name this line exposes is undemanded —
+                    // drop it, matching what tree-shake would have pruned
+                    // had the leaf been crawled and found unused.
+                }
+            }
+            continue;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    out
+}
+
+/// Demand a single resolved specifier's import site(s) in `source` place
+/// on its target, for lazy pure-barrel expansion (#1991). `None` means
+/// the specifier could not be proven narrow — the caller must fall back
+/// to full/eager expansion for that edge, matching the issue's fallback
+/// list: namespace import (`import * as ns`), dynamic `import()` (handled
+/// by the caller via `is_dynamic` before this scan runs), bare
+/// (non-property) CJS `require()` use, or a specifier this text scan
+/// can't otherwise account for at all (defensive — the AST-derived
+/// resolver found it, so an unrecognized shape here means this
+/// line-scanner under-parsed it, not that nothing imports it; this is
+/// also why a re-export-from line, e.g. `export { a } from spec` or
+/// `export * from spec`, in a non-barrel module always falls back to
+/// full here — narrowing through those is out of scope for #1991).
+///
+/// Reuses `tree_shake`'s existing line-oriented CJS analysis
+/// (`scan_require_call`, `extract_destructured_names`,
+/// `extract_require_local_binding`, `scan_require_binding_property_accesses`)
+/// rather than `tree_shake::extract_cjs_require_bindings`, whose
+/// resolve-via-lookup-first short-circuit is a deliberate hot-loop
+/// optimization (#1947 round 2) that must stay lookup-driven; this
+/// function instead runs lookup-free, before a `ModuleLookup` exists, and
+/// is scoped to one already-resolved specifier.
+fn barrel_demand_for_specifier(source: &str, spec: &str, is_dynamic: bool) -> Option<Vec<String>> {
+    if is_dynamic {
+        return None; // dynamic import() of a barrel: fall back to full.
+    }
+
+    let mut names: Vec<String> = Vec::new();
+    let mut matched = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("import ") && tree_shake::extract_specifier(trimmed) == spec {
+            matched = true;
+            let imported = tree_shake::extract_imported_names(trimmed);
+            if imported.iter().any(|n| n == "*") {
+                return None; // namespace import — fall back to full.
+            }
+            names.extend(imported); // may be empty (side-effect-only import).
+            continue;
+        }
+
+        if let Some((req_source, accessed)) = tree_shake::scan_require_call(trimmed) {
+            if req_source != spec {
+                continue;
+            }
+            matched = true;
+            let destructured = tree_shake::extract_destructured_names(trimmed);
+            if destructured.is_empty() && accessed.is_empty() {
+                if let Some(binding) = tree_shake::extract_require_local_binding(trimmed) {
+                    if let Some(props) = tree_shake::scan_require_binding_property_accesses(
+                        source, trimmed, &binding,
+                    ) {
+                        names.extend(props);
+                        continue;
+                    }
+                }
+                // Bare require use (no destructure, no property access
+                // found anywhere in the module) — fall back to full.
+                return None;
+            }
+            names.extend(destructured);
+            names.extend(accessed);
+        }
+    }
+
+    if matched {
+        Some(names)
+    } else {
+        None // this text scan couldn't account for the resolved specifier at all.
+    }
+}
+
+impl Bundler {
     /// Remove TypeScript imports that the existing transform erases before
     /// runtime code generation. Graph construction happens first, so treating
     /// those declarations as dependencies would incorrectly resolve a
@@ -912,7 +1446,17 @@ impl Bundler {
         // walk below replays over these memos, so module-id assignment
         // order — and therefore bundle bytes — stay identical to the
         // sequential traversal while the dominant costs run across cores.
-        let mut prefetched = self.prefetch_graph_modules(&entry_abs);
+        // `barrel_skipped_leaves` (#1991) names every pure-barrel leaf the
+        // prefetch deliberately never fetched because no importer demanded
+        // it — the replay below must exclude those rather than resolve
+        // them via a barrel's own (always-complete) resolution memo and
+        // silently read them fresh one at a time.
+        let (mut prefetched, barrel_skipped_leaves, barrel_demand) =
+            self.prefetch_graph_modules(&entry_abs);
+        // `transform_modules` prunes a confirmed barrel's own unrequested
+        // re-export lines against this map before codegen (#1991) — see
+        // `Bundler::barrel_demand`'s doc comment.
+        *self.barrel_demand.lock() = barrel_demand;
 
         let mut queue: Vec<(PathBuf, Option<ModuleId>, Option<graph::EdgeKind>)> =
             vec![(entry_abs, None, None)];
@@ -942,6 +1486,15 @@ impl Bundler {
             }
 
             let prefetch = prefetched.get(&module_path);
+            if prefetch.is_none() && barrel_skipped_leaves.contains(&module_path) {
+                // #1991: a pure-barrel leaf that no importer demanded —
+                // the lazy crawl deliberately never read it. Exclude it
+                // from the graph instead of falling back to the
+                // synchronous read below, which would silently defeat
+                // the optimization by re-fetching every skipped leaf one
+                // at a time on this single-threaded replay.
+                continue;
+            }
             let source = match prefetch.map(|p| &p.source) {
                 Some(Ok(s)) => s.clone(),
                 Some(Err(e)) => {
@@ -1253,6 +1806,26 @@ impl Bundler {
                             node.path
                         )));
                     }
+                };
+                // #1991: a confirmed pure barrel's own body still lists
+                // every leaf it re-exports, including names the lazy
+                // crawl never fetched (they have no graph edge for
+                // tree-shake to prune against). Strip those lines here,
+                // before codegen sees them, so output matches an eager
+                // crawl + tree-shake byte-for-byte. Discard any
+                // tree-sitter parse cached for this path during the crawl
+                // (built against the original, un-pruned source): its
+                // node byte-offsets no longer match the shortened text,
+                // so it must not be reused below — a cache miss here
+                // falls back to a fresh parse, the same as any TS/TSX/JSX
+                // module already takes.
+                let source = match self.barrel_demand.lock().get(&node.path) {
+                    Some(BarrelDemand::Names(names)) => {
+                        let pruned = prune_barrel_source_to_demand(&source, names);
+                        self.parsed_trees.lock().remove(&node.path);
+                        pruned
+                    }
+                    _ => source,
                 };
 
                 let result = match node.kind {
@@ -3620,6 +4193,537 @@ mod code_splitting_tests {
         assert!(
             !entry_code.contains("chunk-lazy1"),
             "async chunk name must not be eagerly loaded in the entry bootstrap: {entry_code}"
+        );
+    }
+}
+
+/// Unit coverage for #1991 (lazy pure-barrel expansion): the pure-barrel
+/// detector, per-specifier demand narrowing, demand accumulation, and the
+/// wave-parallel crawl's actual skip/expand behavior via
+/// `Bundler::build_graph`. The 1,000-leaf/3-used AC1 fixture and the
+/// byte-identical lazy-vs-eager output comparison live in
+/// `tests/build/lazy_barrel_expansion.rs` (integration-level; they need a
+/// real `jet build` subprocess to compare final bundle output).
+#[cfg(test)]
+mod lazy_barrel_expansion_tests {
+    use super::*;
+
+    // ── is_pure_barrel_source: positive cases ───────────────────────────
+
+    #[test]
+    fn is_pure_barrel_source_all_named_reexports_is_pure() {
+        let src = "export { IconA } from './IconA.js';\nexport { IconB } from './IconB.js';\n";
+        assert!(is_pure_barrel_source(src));
+    }
+
+    #[test]
+    fn is_pure_barrel_source_all_star_reexports_is_pure() {
+        let src = "export * from './a.js';\nexport * from './b.js';\n";
+        assert!(is_pure_barrel_source(src));
+    }
+
+    #[test]
+    fn is_pure_barrel_source_mixed_named_and_star_with_trivia_is_pure() {
+        let src = "'use strict';\n// a leading comment\n/* a block comment\nspanning lines */\nexport { IconA } from './IconA.js';\n\nexport * from './extra.js';\n";
+        assert!(is_pure_barrel_source(src));
+    }
+
+    // ── is_pure_barrel_source: negative cases ───────────────────────────
+
+    #[test]
+    fn is_pure_barrel_source_one_real_statement_is_not_pure() {
+        // The exact "one real statement" negative the issue calls out: an
+        // otherwise-barrel-shaped file with a single non-reexport line mixed
+        // in must NOT be treated as pure.
+        let src = "export { IconA } from './IconA.js';\nconst x = 1;\nexport { IconB } from './IconB.js';\n";
+        assert!(!is_pure_barrel_source(src));
+    }
+
+    #[test]
+    fn is_pure_barrel_source_export_default_is_not_pure() {
+        let src = "export { IconA } from './IconA.js';\nexport default IconA;\n";
+        assert!(!is_pure_barrel_source(src));
+    }
+
+    #[test]
+    fn is_pure_barrel_source_plain_import_is_not_pure() {
+        let src = "import './side-effect.js';\nexport { IconA } from './IconA.js';\n";
+        assert!(!is_pure_barrel_source(src));
+    }
+
+    #[test]
+    fn is_pure_barrel_source_empty_or_all_trivia_file_is_not_pure() {
+        let src = "// nothing here\n'use strict';\n\n";
+        assert!(
+            !is_pure_barrel_source(src),
+            "zero re-export lines must not count as a pure barrel"
+        );
+    }
+
+    // ── barrel_demand_for_specifier: ESM shapes ─────────────────────────
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_named_import_returns_requested_names() {
+        let src = "import { IconA, IconB } from '@lib/barrel';\nconsole.log(IconA, IconB);\n";
+        let mut names = barrel_demand_for_specifier(src, "@lib/barrel", false)
+            .expect("named import must narrow, not fall back to full");
+        names.sort();
+        assert_eq!(names, vec!["IconA".to_string(), "IconB".to_string()]);
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_namespace_import_falls_back_to_full() {
+        let src = "import * as icons from '@lib/barrel';\nconsole.log(icons.IconA);\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            None,
+            "namespace import must escalate to full expansion"
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_default_import_returns_default() {
+        let src = "import Default from '@lib/barrel';\nconsole.log(Default);\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            Some(vec!["default".to_string()])
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_side_effect_import_returns_empty_names() {
+        // `import '@lib/barrel';` binds no name at all — unlike the CJS bare
+        // `require('pkg');` fallback (whose return value could be used in an
+        // unpredictable way not visible to line scanning), ESM side-effect
+        // imports are syntactically guaranteed to read nothing, so narrowing
+        // to zero demanded names (not falling back to full) is correct.
+        let src = "import '@lib/barrel';\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_dynamic_import_falls_back_to_full() {
+        // A source that would otherwise narrow cleanly still escalates once
+        // the caller marks the edge dynamic.
+        let src = "import { IconA } from '@lib/barrel';\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", true),
+            None,
+            "dynamic import() of a barrel must always fall back to full"
+        );
+    }
+
+    // ── barrel_demand_for_specifier: CJS shapes ─────────────────────────
+
+    #[test]
+    fn barrel_demand_for_specifier_cjs_destructured_returns_names() {
+        let src = "const { a, b } = require('@lib/barrel');\n";
+        let mut names = barrel_demand_for_specifier(src, "@lib/barrel", false)
+            .expect("destructured require must narrow");
+        names.sort();
+        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_cjs_direct_property_access_returns_names() {
+        let src = "const a = require('@lib/barrel').IconA;\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            Some(vec!["IconA".to_string()])
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_cjs_bound_then_later_property_access_returns_names() {
+        let src = "const m = require('@lib/barrel');\nconsole.log(m.IconB);\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            Some(vec!["IconB".to_string()])
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_cjs_bare_require_falls_back_to_full() {
+        let src = "require('@lib/barrel');\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            None,
+            "a require() return value that is never bound or accessed must fall back to full"
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_cjs_bound_but_never_used_falls_back_to_full() {
+        let src = "const m = require('@lib/barrel');\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            None,
+            "a bound-but-unread require() target must fall back to full, not zero names"
+        );
+    }
+
+    // ── barrel_demand_for_specifier: defensive fallback ──────────────────
+
+    #[test]
+    fn barrel_demand_for_specifier_unmatched_specifier_returns_none() {
+        let src = "import { Other } from '@lib/other';\n";
+        assert_eq!(
+            barrel_demand_for_specifier(src, "@lib/barrel", false),
+            None,
+            "a specifier this text scan never actually saw referenced must not claim zero demand"
+        );
+    }
+
+    // ── merge_barrel_demand / BarrelDemand ───────────────────────────────
+
+    #[test]
+    fn merge_barrel_demand_extends_names_across_calls() {
+        let mut map: HashMap<PathBuf, BarrelDemand> = HashMap::new();
+        let target = PathBuf::from("/fixture/icons/index.js");
+        merge_barrel_demand(&mut map, &target, Some(vec!["IconA".to_string()]));
+        merge_barrel_demand(&mut map, &target, Some(vec!["IconB".to_string()]));
+        match map.get(&target) {
+            Some(BarrelDemand::Names(names)) => {
+                assert_eq!(names.len(), 2);
+                assert!(names.contains("IconA") && names.contains("IconB"));
+            }
+            other => panic!("expected accumulated Names, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_barrel_demand_none_escalates_to_full() {
+        let mut map: HashMap<PathBuf, BarrelDemand> = HashMap::new();
+        let target = PathBuf::from("/fixture/icons/index.js");
+        merge_barrel_demand(&mut map, &target, Some(vec!["IconA".to_string()]));
+        merge_barrel_demand(&mut map, &target, None);
+        assert!(
+            matches!(map.get(&target), Some(BarrelDemand::Full)),
+            "None must escalate an existing Names entry to Full"
+        );
+    }
+
+    #[test]
+    fn merge_barrel_demand_full_is_sticky_against_further_names() {
+        let mut map: HashMap<PathBuf, BarrelDemand> = HashMap::new();
+        let target = PathBuf::from("/fixture/icons/index.js");
+        merge_barrel_demand(&mut map, &target, None);
+        merge_barrel_demand(&mut map, &target, Some(vec!["IconA".to_string()]));
+        assert!(
+            matches!(map.get(&target), Some(BarrelDemand::Full)),
+            "Full must stay Full even after a later Names merge"
+        );
+    }
+
+    // ── crawl-level: Bundler::build_graph over real fixtures ─────────────
+
+    fn write_fixture(tmp: &std::path::Path, rel: &str, contents: &str) {
+        let path = tmp.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create fixture dir");
+        }
+        std::fs::write(&path, contents).expect("write fixture file");
+    }
+
+    async fn crawl(tmp: &std::path::Path, entry_rel: &str) -> Bundler {
+        let entry = tmp.join(entry_rel);
+        let bundler = Bundler::new(BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.join("dist"),
+            ..Default::default()
+        })
+        .expect("Bundler::new");
+        bundler
+            .build_graph(&entry)
+            .await
+            .expect("build_graph must succeed");
+        bundler
+    }
+
+    fn crawled(bundler: &Bundler, tmp: &std::path::Path, rel: &str) -> bool {
+        let path = std::fs::canonicalize(tmp.join(rel)).expect("fixture file must exist on disk");
+        bundler.graph.read().get_module(&path).is_some()
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_skips_unrequested_leaves() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "import { IconB } from './icons/index.js';\nconsole.log(IconB);\n",
+        );
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconA } from './IconA.js';\nexport { IconB } from './IconB.js';\nexport { IconC } from './IconC.js';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(dir, "icons/IconB.js", "export const IconB = 'B';\n");
+        write_fixture(dir, "icons/IconC.js", "export const IconC = 'C';\n");
+
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(
+            crawled(&bundler, dir, "icons/index.js"),
+            "the barrel itself must always be crawled"
+        );
+        assert!(
+            crawled(&bundler, dir, "icons/IconB.js"),
+            "IconB is demanded by name and must be crawled"
+        );
+        assert!(
+            !crawled(&bundler, dir, "icons/IconA.js"),
+            "IconA is never demanded and must be skipped"
+        );
+        assert!(
+            !crawled(&bundler, dir, "icons/IconC.js"),
+            "IconC is never demanded and must be skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_same_wave_multi_importer_union_demand() {
+        // entry.js imports the barrel directly AND imports mid1.js in the
+        // same statement list, so the barrel and mid1.js land in the SAME
+        // wave-parallel BFS wave together — mid1.js's demand must still be
+        // recorded onto the barrel before that wave's expansion runs.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "import { IconDirect } from './icons/index.js';\nimport { A } from './mid1.js';\nconsole.log(IconDirect, A());\n",
+        );
+        write_fixture(
+            dir,
+            "mid1.js",
+            "import { IconA } from './icons/index.js';\nexport function A() { return IconA; }\n",
+        );
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconDirect } from './IconDirect.js';\nexport { IconA } from './IconA.js';\nexport { IconUnused } from './IconUnused.js';\n",
+        );
+        write_fixture(
+            dir,
+            "icons/IconDirect.js",
+            "export const IconDirect = 'D';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(
+            dir,
+            "icons/IconUnused.js",
+            "export const IconUnused = 'U';\n",
+        );
+
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(crawled(&bundler, dir, "icons/IconDirect.js"));
+        assert!(crawled(&bundler, dir, "icons/IconA.js"));
+        assert!(
+            !crawled(&bundler, dir, "icons/IconUnused.js"),
+            "same-wave multi-importer union must not over-include an undemanded leaf"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_incremental_expansion_across_waves() {
+        // mid1.js demands IconA at wave depth 2 (the barrel's first
+        // expansion); a second, much deeper importer chain
+        // (mid2 -> mid3 -> mid4) demands IconB only after the barrel has
+        // already been partially expanded once. The later demand must still
+        // incrementally expand IconB without re-pushing IconA and without
+        // pulling in IconUnused.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "import { A } from './mid1.js';\nimport { B } from './deep/d2/mid2.js';\nconsole.log(A(), B());\n",
+        );
+        write_fixture(
+            dir,
+            "mid1.js",
+            "import { IconA } from './icons/index.js';\nexport function A() { return IconA; }\n",
+        );
+        write_fixture(
+            dir,
+            "deep/d2/mid2.js",
+            "import { fromMid3 } from '../d3/mid3.js';\nexport function B() { return fromMid3(); }\n",
+        );
+        write_fixture(
+            dir,
+            "deep/d3/mid3.js",
+            "import { fromMid4 } from '../d4/mid4.js';\nexport function fromMid3() { return fromMid4(); }\n",
+        );
+        write_fixture(
+            dir,
+            "deep/d4/mid4.js",
+            "import { IconB } from '../../icons/index.js';\nexport function fromMid4() { return IconB; }\n",
+        );
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconA } from './IconA.js';\nexport { IconB } from './IconB.js';\nexport { IconUnused } from './IconUnused.js';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(dir, "icons/IconB.js", "export const IconB = 'B';\n");
+        write_fixture(
+            dir,
+            "icons/IconUnused.js",
+            "export const IconUnused = 'U';\n",
+        );
+
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(
+            crawled(&bundler, dir, "icons/IconA.js"),
+            "first-wave demand must expand"
+        );
+        assert!(
+            crawled(&bundler, dir, "icons/IconB.js"),
+            "later-wave demand must incrementally expand the already-visited barrel"
+        );
+        assert!(!crawled(&bundler, dir, "icons/IconUnused.js"));
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_namespace_import_fallback_expands_full() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "import * as icons from './icons/index.js';\nconsole.log(icons.IconA, icons.IconB, icons.IconC);\n",
+        );
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconA } from './IconA.js';\nexport { IconB } from './IconB.js';\nexport { IconC } from './IconC.js';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(dir, "icons/IconB.js", "export const IconB = 'B';\n");
+        write_fixture(dir, "icons/IconC.js", "export const IconC = 'C';\n");
+
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(crawled(&bundler, dir, "icons/IconA.js"));
+        assert!(crawled(&bundler, dir, "icons/IconB.js"));
+        assert!(
+            crawled(&bundler, dir, "icons/IconC.js"),
+            "namespace import must force full expansion of every leaf"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_star_reexport_inside_barrel_always_expands() {
+        // The barrel's star entry (-> extra.js) must always expand, even
+        // though nothing ever demands a name through it; its sibling named
+        // entry (IconUnused) must stay excluded since nothing demands it.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "import { IconA } from './icons/index.js';\nconsole.log(IconA);\n",
+        );
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconA } from './IconA.js';\nexport { IconUnused } from './IconUnused.js';\nexport * from './extra.js';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(
+            dir,
+            "icons/IconUnused.js",
+            "export const IconUnused = 'U';\n",
+        );
+        write_fixture(
+            dir,
+            "icons/extra.js",
+            "export const EXTRA_MARKER = 'EXTRA';\n",
+        );
+
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(
+            crawled(&bundler, dir, "icons/IconA.js"),
+            "demanded named entry"
+        );
+        assert!(
+            crawled(&bundler, dir, "icons/extra.js"),
+            "a star re-export inside a pure barrel must always expand (v1 unconditional rule)"
+        );
+        assert!(
+            !crawled(&bundler, dir, "icons/IconUnused.js"),
+            "an undemanded named entry must stay excluded even though a sibling star entry expanded"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_export_star_from_another_module_expands_full() {
+        // other.js is itself a (single-entry, star) pure barrel over the
+        // original icons barrel — `export * from` a barrel into another
+        // module must fully expand the target regardless of which specific
+        // names other.js's own importers request.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "import { IconA, IconB } from './other.js';\nconsole.log(IconA, IconB);\n",
+        );
+        write_fixture(dir, "other.js", "export * from './icons/index.js';\n");
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconA } from './IconA.js';\nexport { IconB } from './IconB.js';\nexport { IconC } from './IconC.js';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(dir, "icons/IconB.js", "export const IconB = 'B';\n");
+        write_fixture(dir, "icons/IconC.js", "export const IconC = 'C';\n");
+
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(crawled(&bundler, dir, "icons/IconA.js"));
+        assert!(crawled(&bundler, dir, "icons/IconB.js"));
+        assert!(
+            crawled(&bundler, dir, "icons/IconC.js"),
+            "export * from the barrel into another module must expand it fully, including a leaf (IconC) nobody ever names"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_unresolvable_name_escalates_to_full() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "import { IconA, ThisNameDoesNotExist } from './icons/index.js';\nconsole.log(IconA, ThisNameDoesNotExist);\n",
+        );
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconA } from './IconA.js';\nexport { IconB } from './IconB.js';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(dir, "icons/IconB.js", "export const IconB = 'B';\n");
+
+        // Must not error — a requested name that doesn't match any of the
+        // barrel's own known export names is a resolver-failure-shaped
+        // fallback, not a crawl failure.
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(crawled(&bundler, dir, "icons/IconA.js"));
+        assert!(
+            crawled(&bundler, dir, "icons/IconB.js"),
+            "an unresolvable requested name must escalate the whole barrel to full, not silently drop the other leaves"
         );
     }
 }

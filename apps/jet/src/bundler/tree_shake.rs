@@ -815,8 +815,12 @@ a.elementAcceptingRef();
 }
 
 /// Classification of an `export ... from '...'` re-export line.
+///
+/// `pub(crate)` (not private): `bundler::mod::prefetch_graph_modules`
+/// reuses this at graph-crawl time for lazy pure-barrel expansion
+/// (#1991) — see [`extract_reexport_specifiers`].
 #[derive(Debug, Clone)]
-enum ReexportKind {
+pub(crate) enum ReexportKind {
     /// `export * from './y'` — re-export every named export of `y`
     /// (except `default`, per the ES2015+ spec).
     Star,
@@ -826,6 +830,87 @@ enum ReexportKind {
     /// `c`. The barrel side is what consumers can "mark used", so
     /// we propagate only when the barrel name is in the used set.
     Named(Vec<(String, String)>),
+}
+
+/// Classify a single trimmed `export ... from '...'` line (already known
+/// to start with `"export "` and contain `" from "`) into its raw
+/// specifier text and re-export shape. Returns `None` for a line with
+/// neither a `*` nor a parseable `{ ... }` clause.
+///
+/// Factored out of [`extract_reexport_bindings`] so [`extract_reexport_specifiers`]
+/// can reuse the exact same per-line classification without a
+/// [`ModuleLookup`] (#1991).
+///
+/// `pub(crate)`: also reused by `bundler::mod::is_pure_barrel_source` so
+/// the purity detector rejects a line that merely *looks*
+/// export-from-shaped but doesn't actually parse as one (#1991).
+pub(crate) fn classify_reexport_line(trimmed: &str) -> Option<(String, ReexportKind)> {
+    let specifier = extract_specifier(trimmed);
+    if specifier.is_empty() {
+        return None;
+    }
+
+    // `export * from '...'` — wildcard re-export. The `as ns` variant
+    // (`export * as ns from '...'`) is a *namespace* re-export: the
+    // barrel exposes one symbol `ns` whose value is the leaf's
+    // namespace. We treat it the same as `*` here because we don't
+    // track namespace-property usage statically.
+    let after_export = &trimmed["export ".len()..];
+    if after_export.trim_start().starts_with('*') {
+        return Some((specifier, ReexportKind::Star));
+    }
+
+    // `export { a, b as c } from '...'` — named re-export.
+    let brace_start = trimmed.find('{')?;
+    let brace_end = trimmed.find('}')?;
+    if brace_start >= brace_end {
+        return None;
+    }
+    let inner = &trimmed[brace_start + 1..brace_end];
+    let mut pairs = Vec::new();
+    for item in inner.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let (leaf, barrel) = if let Some((orig, alias)) = item.split_once(" as ") {
+            (orig.trim().to_string(), alias.trim().to_string())
+        } else {
+            (item.to_string(), item.to_string())
+        };
+        if !leaf.is_empty() && !barrel.is_empty() {
+            pairs.push((leaf, barrel));
+        }
+    }
+    if pairs.is_empty() {
+        return None;
+    }
+    Some((specifier, ReexportKind::Named(pairs)))
+}
+
+/// Lookup-free variant of [`extract_reexport_bindings`]: extracts every
+/// `export ... from '...'` re-export line in `source` as a raw
+/// `(specifier, kind)` pair, without resolving the specifier to a module
+/// path.
+///
+/// Used at graph-crawl time (`bundler::mod::prefetch_graph_modules`,
+/// #1991) where a full [`ModuleLookup`] over the crawled module set does
+/// not exist yet — the caller resolves each specifier itself (via the
+/// crawl's own per-module resolution cache) and decides whether/when to
+/// follow it, instead of every re-export edge being expanded
+/// unconditionally.
+pub(crate) fn extract_reexport_specifiers(source: &str) -> Vec<(String, ReexportKind)> {
+    let mut results = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("export ") || !trimmed.contains(" from ") {
+            continue;
+        }
+        if let Some(entry) = classify_reexport_line(trimmed) {
+            results.push(entry);
+        }
+    }
+    results
 }
 
 /// Extract ESM re-export bindings: `export { ... } from '...'` and
@@ -841,67 +926,14 @@ fn extract_reexport_bindings(
     source: &str,
     lookup: &ModuleLookup<'_>,
 ) -> Vec<(PathBuf, ReexportKind)> {
-    let mut results = Vec::new();
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("export ") {
-            continue;
-        }
-        // Must be a re-export (has `from`) — otherwise it's a local export.
-        if !trimmed.contains(" from ") {
-            continue;
-        }
-
-        let specifier = extract_specifier(trimmed);
-        if specifier.is_empty() {
-            continue;
-        }
-        let target = match lookup.find(&specifier, importer) {
-            Some(t) => t,
-            None => continue,
-        };
-
-        // `export * from '...'` — wildcard re-export. The `as ns`
-        // variant (`export * as ns from '...'`) is a *namespace*
-        // re-export: the barrel exposes one symbol `ns` whose value
-        // is the leaf's namespace. We treat it the same as `*` here
-        // because we don't track namespace-property usage statically.
-        let after_export = &trimmed["export ".len()..];
-        if after_export.trim_start().starts_with('*') {
-            results.push((target.0.clone(), ReexportKind::Star));
-            continue;
-        }
-
-        // `export { a, b as c } from '...'` — named re-export.
-        if let Some(brace_start) = trimmed.find('{') {
-            if let Some(brace_end) = trimmed.find('}') {
-                if brace_start < brace_end {
-                    let inner = &trimmed[brace_start + 1..brace_end];
-                    let mut pairs = Vec::new();
-                    for item in inner.split(',') {
-                        let item = item.trim();
-                        if item.is_empty() {
-                            continue;
-                        }
-                        let (leaf, barrel) = if let Some((orig, alias)) = item.split_once(" as ") {
-                            (orig.trim().to_string(), alias.trim().to_string())
-                        } else {
-                            (item.to_string(), item.to_string())
-                        };
-                        if !leaf.is_empty() && !barrel.is_empty() {
-                            pairs.push((leaf, barrel));
-                        }
-                    }
-                    if !pairs.is_empty() {
-                        results.push((target.0.clone(), ReexportKind::Named(pairs)));
-                    }
-                }
-            }
-        }
-    }
-
-    results
+    extract_reexport_specifiers(source)
+        .into_iter()
+        .filter_map(|(specifier, kind)| {
+            lookup
+                .find(&specifier, importer)
+                .map(|target| (target.0.clone(), kind))
+        })
+        .collect()
 }
 
 /// Extract dynamic-import (`import(...)`) call-expression targets.
@@ -1186,7 +1218,10 @@ fn extract_cjs_require_bindings(
 /// already handled by `extract_destructured_names`) and for anything that
 /// isn't a plain identifier assignment (the shapes `extract_cjs_export_names`
 /// et al. don't otherwise recognize).
-fn extract_require_local_binding(line: &str) -> Option<String> {
+///
+/// `pub(crate)`: reused by `bundler::mod::prefetch_graph_modules` for CJS
+/// barrel-demand narrowing at graph-crawl time (#1991).
+pub(crate) fn extract_require_local_binding(line: &str) -> Option<String> {
     for keyword in ["const ", "let ", "var "] {
         let Some(rest) = line.strip_prefix(keyword) else {
             continue;
@@ -1224,7 +1259,10 @@ fn extract_require_local_binding(line: &str) -> Option<String> {
 /// whole-module wildcard. No property access at all also returns `None` —
 /// there is nothing to narrow to, and an unused binding is a
 /// require-for-side-effects case the wildcard already handles correctly.
-fn scan_require_binding_property_accesses(
+///
+/// `pub(crate)`: reused by `bundler::mod::prefetch_graph_modules` for CJS
+/// barrel-demand narrowing at graph-crawl time (#1991).
+pub(crate) fn scan_require_binding_property_accesses(
     source: &str,
     require_line: &str,
     binding: &str,
@@ -1321,7 +1359,10 @@ fn extract_require_specifier(line: &str) -> Option<String> {
 /// additional combined entry point used only by
 /// `extract_cjs_require_bindings`'s hot loop, where both results are always
 /// needed together and re-finding "require(" a second time is pure waste.
-fn scan_require_call(line: &str) -> Option<(&str, Vec<String>)> {
+///
+/// `pub(crate)`: also reused by `bundler::mod::prefetch_graph_modules` for
+/// CJS barrel-demand narrowing at graph-crawl time (#1991).
+pub(crate) fn scan_require_call(line: &str) -> Option<(&str, Vec<String>)> {
     let require_pos = line.find("require(")?;
     let after = &line[require_pos + 8..]; // skip "require("
     let quote = after.chars().next()?;
@@ -1335,7 +1376,10 @@ fn scan_require_call(line: &str) -> Option<(&str, Vec<String>)> {
 }
 
 /// Extract destructured property names from `const { a, b } = require(...)`.
-fn extract_destructured_names(line: &str) -> Vec<String> {
+///
+/// `pub(crate)`: also reused by `bundler::mod::prefetch_graph_modules` for
+/// CJS barrel-demand narrowing at graph-crawl time (#1991).
+pub(crate) fn extract_destructured_names(line: &str) -> Vec<String> {
     let mut names = Vec::new();
 
     if let Some(brace_start) = line.find('{') {

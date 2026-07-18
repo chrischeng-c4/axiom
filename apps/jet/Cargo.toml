@@ -260,6 +260,9 @@ path = "tests/build/tree_shaking.rs"
 [[test]]
 name = "code_splitting"
 path = "tests/build/code_splitting.rs"
+[[test]]
+name = "lazy_barrel_expansion"
+path = "tests/build/lazy_barrel_expansion.rs"
 
 # tests/stories/ — jet stories: CSF story discovery + parse (Storybook replacement)
 [[test]]
