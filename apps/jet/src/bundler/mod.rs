@@ -587,6 +587,11 @@ pub struct Bundler {
     /// `false` keeps the existing single-file output unchanged.
     /// @issue #1930
     splitting: bool,
+    /// `[build.manual_chunks]` routing table, cloned from
+    /// `BundleOptions::manual_chunks`. Consulted only by
+    /// `generate_split_bundle` (i.e. only when `splitting` is also `true`).
+    /// @issue #1948
+    manual_chunks: HashMap<String, Vec<String>>,
 }
 
 /// Compilation cache for incremental builds
@@ -614,6 +619,7 @@ impl Bundler {
         let minify = options.minify;
         let defines = options.defines.clone();
         let splitting = options.splitting;
+        let manual_chunks = options.manual_chunks.clone();
         let mut resolve_options = options.resolve_options;
         // WI #1305: retain a copy of the already-loaded alias table before
         // `resolve_options` moves into `ModuleResolver::new` below, so the
@@ -643,6 +649,7 @@ impl Bundler {
             unresolved_deps: Mutex::new(Vec::new()),
             parsed_trees: Mutex::new(HashMap::new()),
             splitting,
+            manual_chunks,
         })
     }
 
@@ -1736,11 +1743,14 @@ impl Bundler {
             split_edges_from_graph(&graph, modules)
         };
 
+        let manual_chunk_config = splitting::ManualChunkConfig {
+            entries: self.manual_chunks.clone(),
+        };
         let split_result = splitting::split_chunks_with_config(
             entry.id,
             &edges,
             &all_module_ids,
-            &splitting::ManualChunkConfig::default(),
+            &manual_chunk_config,
             &id_to_path,
         );
 

@@ -650,6 +650,267 @@ fn splitting_preload_hints_cover_shared_chunk_and_exclude_async_chunks_in_index_
     Ok(())
 }
 
+// ── #1948: [build.manual_chunks] config plumbing ────────────────────────────
+//
+// `write_manual_chunks_fixture` writes a real npm-style `node_modules/`
+// package directory (bare-specifier-resolvable with no `jet install` step —
+// same technique as `write_symlink_and_alias_fixture`'s `shared-dep`, minus
+// the pnpm-symlink indirection this doesn't need) statically imported once
+// by the entry, plus two unrelated dynamic imports. It does NOT write a
+// `jet.toml` itself, so the exact same source proves both "configured" (AC1)
+// and "absent" (AC2) from one fixture.
+
+/// Writes `node_modules/fakepkg/{package.json,index.js}` plus a `src/` entry
+/// that statically imports it (single-reference, so nothing but explicit
+/// `manual_chunks` routing could ever pull it out of the entry chunk) and
+/// dynamically imports two sibling modules, to prove manual-chunk routing
+/// leaves unrelated async chunks untouched.
+fn write_manual_chunks_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("node_modules/fakepkg")).expect("create node_modules/fakepkg");
+    fs::write(
+        dir.join("node_modules/fakepkg/package.json"),
+        r#"{"name":"fakepkg","version":"1.0.0","main":"index.js"}"#,
+    )
+    .expect("write fakepkg package.json");
+    fs::write(
+        dir.join("node_modules/fakepkg/index.js"),
+        "export function fakepkg() { return 'FAKEPKG_MARKER'; }\n",
+    )
+    .expect("write fakepkg index.js");
+
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { fakepkg } from 'fakepkg';
+
+console.log('ENTRY_MARKER', fakepkg());
+
+import('./lazy1.js').then((mod) => mod.default());
+import('./lazy2.js').then((mod) => mod.default());
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/lazy1.js"),
+        "export default function lazy1() { return 'LAZY_ONE_MARKER'; }\n",
+    )
+    .expect("write lazy1");
+    fs::write(
+        dir.join("src/lazy2.js"),
+        "export default function lazy2() { return 'LAZY_TWO_MARKER'; }\n",
+    )
+    .expect("write lazy2");
+}
+
+/// Locates the single top-level `main.<hash>.js` entry file under `dist/`.
+fn find_entry_file(dist: &Path) -> PathBuf {
+    list_files_recursive(dist)
+        .into_iter()
+        .find(|p| {
+            p.parent() == Some(dist)
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("main.") && n.ends_with(".js"))
+        })
+        .expect("no top-level main.<hash>.js entry file")
+}
+
+/// #1948 AC1 — `[build.manual_chunks]` in `jet.toml` routes a glob-matched
+/// module (a statically-imported, single-reference npm package — the exact
+/// vendor-splitting shape from the issue) into its own named
+/// `ChunkType::Shared` chunk: excluded from the entry, carried by the named
+/// chunk file, earning a preload hint (via the entry-imports wiring added
+/// alongside this config plumbing), and leaving the unrelated lazy chunks
+/// untouched.
+///
+/// Deliberately does NOT drive this fixture through a real-browser
+/// `jet browser launch/eval` round-trip the way
+/// `splitting_lazy_chunk_loads_on_demand_in_real_browser` does for plain
+/// async chunks. Doing so during development of this change surfaced a
+/// pre-existing runtime-loader gap (not introduced here — see the section
+/// header above this test): a `ChunkType::Shared` chunk that is a *static*
+/// dependency of the entry throws `Uncaught Error: Module not found: <id>`
+/// in a real page, because the entry bootstrap ends in a bare synchronous
+/// `__jet__.require(entry.id)` (see the `__jet__.chunkManifest = ...;
+/// __jet__.require(0);` tail `Bundler::generate_split_bundle` /
+/// `cli.rs::inject_chunk_manifest` emit) and nothing ever calls
+/// `__jet__.loadChunk` for a shared/manual chunk ahead of that — the only
+/// reference emitted anywhere is the non-executing `<link rel="preload">`
+/// hint this test itself asserts on below. This reproduces for the
+/// already-shipped auto-detected `shared` chunk too (WI #1930/#1931), not
+/// just manual chunks; it is the exact "manual chunks don't flow through the
+/// #1931 emission path cleanly" seam issue #1948's own STOP clause
+/// anticipates, and is out of scope for this change (see #1948's final
+/// report for the proposed fix shape).
+#[test]
+fn splitting_manual_chunks_config_routes_glob_matched_module_into_named_chunk_excluded_from_entry(
+) -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_manual_chunks_fixture(fixture);
+    fs::write(
+        fixture.join("jet.toml"),
+        "[build.manual_chunks]\nvendor = [\"**/node_modules/fakepkg/**\"]\n",
+    )
+    .expect("write jet.toml");
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting", "--no-minify"])?,
+        "build --splitting --no-minify (manual_chunks fixture)",
+    )?;
+
+    let dist = fixture.join("dist");
+    let assets = list_files_recursive(&dist.join("assets"));
+
+    let vendor_js = assets
+        .iter()
+        .find(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("js")
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("vendor."))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a vendor.<hash>.js manual chunk under {}: found {:?}",
+                dist.join("assets").display(),
+                assets
+            )
+        });
+    let vendor_basename = vendor_js
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("vendor chunk file has a name")
+        .to_string();
+    let vendor_code = fs::read_to_string(vendor_js).context("read vendor chunk")?;
+    assert!(
+        vendor_code.contains("FAKEPKG_MARKER"),
+        "vendor chunk must carry the routed module's code: {vendor_code}"
+    );
+
+    let entry_path = find_entry_file(&dist);
+    let entry_code = fs::read_to_string(&entry_path).context("read entry file")?;
+    assert!(
+        entry_code.contains("ENTRY_MARKER"),
+        "entry must still contain its own source: {entry_code}"
+    );
+    assert!(
+        !entry_code.contains("FAKEPKG_MARKER"),
+        "entry must exclude the manually-chunked module's code: {entry_code}"
+    );
+
+    // App-level (lazy) chunks are unaffected by manual-chunk routing.
+    for (marker, prefix) in [
+        ("LAZY_ONE_MARKER", "chunk-lazy1."),
+        ("LAZY_TWO_MARKER", "chunk-lazy2."),
+    ] {
+        let lazy_js = assets
+            .iter()
+            .find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(prefix))
+            })
+            .unwrap_or_else(|| panic!("expected a {prefix}<hash>.js chunk: found {assets:?}"));
+        let lazy_code = fs::read_to_string(lazy_js).context("read lazy chunk")?;
+        assert!(
+            lazy_code.contains(marker),
+            "{prefix}*.js must still carry its own marker unchanged: {lazy_code}"
+        );
+    }
+
+    let html = fs::read_to_string(dist.join("index.html")).context("read dist/index.html")?;
+    let expected_tag =
+        format!(r#"<link rel="preload" as="script" href="assets/{vendor_basename}">"#);
+    assert!(
+        html.contains(&expected_tag),
+        "index.html must preload the manual vendor chunk: expected {expected_tag:?}; html={html}"
+    );
+
+    Ok(())
+}
+
+/// #1948 AC2 — identical fixture, no `jet.toml` at all: behavior must be
+/// identical to pre-#1948 `--splitting` output. The single-reference
+/// `fakepkg` import stays inlined in the entry (nothing promotes it — it's
+/// imported only once, by the entry itself) and no `vendor` chunk is ever
+/// produced.
+#[test]
+fn splitting_manual_chunks_config_absent_leaves_entry_unchanged() -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_manual_chunks_fixture(fixture);
+    // Deliberately no jet.toml.
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting", "--no-minify"])?,
+        "build --splitting --no-minify (no manual_chunks config)",
+    )?;
+
+    let dist = fixture.join("dist");
+    let assets = list_files_recursive(&dist.join("assets"));
+    assert!(
+        !assets.iter().any(|p| p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("vendor."))),
+        "no manual_chunks config must mean no vendor chunk: found {assets:?}"
+    );
+
+    let entry_path = find_entry_file(&dist);
+    let entry_code = fs::read_to_string(&entry_path).context("read entry file")?;
+    assert!(
+        entry_code.contains("FAKEPKG_MARKER"),
+        "no config: fakepkg must stay inlined in the entry exactly like pre-#1948 \
+         --splitting output: {entry_code}"
+    );
+
+    Ok(())
+}
+
+/// #1948 — GH #3300's invalid-glob warn-and-drop contract, reached starting
+/// from `jet.toml` instead of calling `split_chunks_with_config` directly
+/// (already covered at the unit level by
+/// `bundler::splitting::manual_chunks_all_invalid_patterns_does_not_break_sibling_chunks`).
+/// A syntactically-broken pattern must not fail the build or panic; it
+/// degrades to the same output as AC2 (no config at all), since an
+/// all-invalid-patterns chunk matches zero modules.
+#[test]
+fn splitting_manual_chunks_config_invalid_glob_does_not_fail_build() -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_manual_chunks_fixture(fixture);
+    fs::write(
+        fixture.join("jet.toml"),
+        "[build.manual_chunks]\nvendor = [\"node_modules/fakepkg/{\"]\n",
+    )
+    .expect("write jet.toml with an unclosed-brace glob");
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting", "--no-minify"])?,
+        "build --splitting --no-minify (invalid manual_chunks glob must warn, not fail)",
+    )?;
+
+    let dist = fixture.join("dist");
+    let assets = list_files_recursive(&dist.join("assets"));
+    assert!(
+        !assets.iter().any(|p| p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("vendor."))),
+        "an all-invalid-patterns chunk must match zero modules: found {assets:?}"
+    );
+
+    let entry_path = find_entry_file(&dist);
+    let entry_code = fs::read_to_string(&entry_path).context("read entry file")?;
+    assert!(
+        entry_code.contains("FAKEPKG_MARKER"),
+        "invalid glob must degrade gracefully, leaving fakepkg inlined: {entry_code}"
+    );
+
+    Ok(())
+}
+
 // ── WI #1931: parallel-tail wall-time sanity (scope item 5) ────────────────
 
 /// Log-only wall-time comparison between the parallel per-chunk minify tail

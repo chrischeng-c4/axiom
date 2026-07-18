@@ -84,6 +84,18 @@ pub struct BundleOptions {
     /// keeps the existing single-file output byte-for-byte unchanged.
     /// @issue #1930
     pub splitting: bool,
+
+    /// Manual chunk definitions: chunk name → glob patterns
+    /// (`[build.manual_chunks]` in jet.toml, vite `manualChunks`-style).
+    /// Modules whose glob matches are routed into that named
+    /// `ChunkType::Shared` chunk instead of the entry/auto-shared chunk.
+    /// Patterns match each module's absolute filesystem path (the same
+    /// `id_to_path` values `splitting::split_chunks_with_config` already
+    /// glob-matches against), not a project-root-relative path. Ignored
+    /// unless `splitting` is also enabled. Default empty leaves
+    /// `--splitting` output unchanged.
+    /// @issue #1948
+    pub manual_chunks: HashMap<String, Vec<String>>,
 }
 
 /// Production build configuration.
@@ -289,6 +301,7 @@ impl Default for BundleOptions {
             preserve_modules: false,
             declaration: false,
             splitting: false,
+            manual_chunks: HashMap::new(),
         }
     }
 }

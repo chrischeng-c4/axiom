@@ -242,10 +242,18 @@ pub fn split_chunks(
 /// Split modules into chunks with manual chunk routing and preload hint generation.
 ///
 /// Enhanced version of `split_chunks` that supports:
-/// - Manual chunks: modules matching glob patterns are routed to named chunks
-/// - Preload hints: returns metadata for `<link rel="modulepreload">` generation
+/// - Manual chunks: modules matching glob patterns are routed to named chunks.
+///   Patterns are matched against each module's `id_to_path` string form —
+///   in real builds (`Bundler::generate_split_bundle`) this is the module's
+///   absolute filesystem path (`CompiledModule::path`), not a path relative
+///   to the project root.
+/// - Preload hints: returns metadata for `<link rel="modulepreload">`
+///   generation. Every manual chunk is declared on the entry chunk's
+///   `imports` (same treatment as the auto-detected `shared` chunk), so it
+///   always earns a preload hint.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 /// @issue #1941
+/// @issue #1948
 pub fn split_chunks_with_config(
     entry: usize,
     edges: &[SplitEdgeId],
@@ -347,6 +355,18 @@ pub fn split_chunks_with_config(
             modules,
             imports: Vec::new(),
         });
+
+        // Manual chunks ride the same path as the auto-detected `shared`
+        // chunk (both are `ChunkType::Shared`): declare them on the entry
+        // chunk's `imports` so `generate_preload_hints` below emits a
+        // `<link rel="preload">` for them, matching `split_chunks`'s
+        // unconditional `entry_imports.insert(0, "shared")` once any
+        // shared chunk exists. Without this a manual chunk is produced but
+        // never referenced anywhere in entry metadata, and would never earn
+        // a preload hint. @issue #1948
+        if let Some(entry_chunk) = chunks.iter_mut().find(|c| c.chunk_type == ChunkType::Entry) {
+            entry_chunk.imports.push(name);
+        }
     }
 
     // Generate preload hints: trace static deps of entry chunks
@@ -638,6 +658,66 @@ mod tests {
         assert!(
             !entry_chunk.modules.contains(&REACT_DOM),
             "React-DOM should NOT be in entry chunk"
+        );
+    }
+
+    /// @issue #1948 — a manual chunk (like the auto `shared` chunk in
+    /// `split_chunks`) must be declared on the entry chunk's `imports` so
+    /// `generate_preload_hints` emits a `<link rel="preload">` for it.
+    /// Before this fix manual chunks were appended to `SplitResult::chunks`
+    /// without ever touching the entry chunk's `imports`, so
+    /// `generate_preload_hints` — which only reads entry `imports` — never
+    /// saw them and emitted zero hints for any manual chunk.
+    #[test]
+    fn test_manual_chunks_declared_on_entry_imports_and_earn_preload_hint() {
+        const ENTRY: usize = 0;
+        const REACT: usize = 1;
+        const UTIL: usize = 2;
+        let id_to_path = id_map(&[
+            (ENTRY, "main.js"),
+            (REACT, "node_modules/react/index.js"),
+            (UTIL, "src/util.js"),
+        ]);
+
+        let edges = vec![
+            SplitEdgeId {
+                from: ENTRY,
+                to: REACT,
+                is_dynamic: false,
+            },
+            SplitEdgeId {
+                from: ENTRY,
+                to: UTIL,
+                is_dynamic: false,
+            },
+        ];
+        let all = vec![ENTRY, REACT, UTIL];
+
+        let mut manual_entries = HashMap::new();
+        manual_entries.insert(
+            "vendor".to_string(),
+            vec!["node_modules/react/**".to_string()],
+        );
+        let manual_config = ManualChunkConfig {
+            entries: manual_entries,
+        };
+
+        let result = split_chunks_with_config(ENTRY, &edges, &all, &manual_config, &id_to_path);
+
+        let entry_chunk = result.chunks.iter().find(|c| c.name == "main").unwrap();
+        assert!(
+            entry_chunk.imports.contains(&"vendor".to_string()),
+            "entry chunk must declare the manual chunk as an import: {:?}",
+            entry_chunk.imports
+        );
+
+        assert!(
+            result
+                .preload_hints
+                .iter()
+                .any(|h| h.href == "assets/vendor.js" && h.is_static),
+            "manual chunk must earn a static preload hint: {:?}",
+            result.preload_hints
         );
     }
 

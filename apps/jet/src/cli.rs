@@ -2435,6 +2435,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 },
                 defines: defines.clone(),
                 splitting,
+                // #1948 — `[build.manual_chunks]` config-only surface (no
+                // CLI flag): threads straight into the previously-dormant
+                // `splitting::ManualChunkConfig` the partitioner already
+                // supports. Absent config keeps this empty, matching
+                // today's `--splitting` output exactly (AC2).
+                manual_chunks: build_config.build.manual_chunks.clone().unwrap_or_default(),
                 ..Default::default()
             };
 

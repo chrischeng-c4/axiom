@@ -152,10 +152,30 @@
       "description": "Production build configuration block. @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema",
       "type": "object",
       "properties": {
+        "manual_chunks": {
+          "description": "Manual chunk routing: chunk name → glob patterns (vite `manualChunks`-style vendor splitting). Modules whose path matches any pattern in a chunk's list are routed into that named chunk instead of the entry bundle or the auto-detected shared chunk. `None`/absent (the default) leaves `--splitting` output unchanged.\n\nPatterns match each module's **absolute filesystem path**, not a path relative to the project root — the same string `bundler::splitting::split_chunks_with_config` already glob-matches against via its `id_to_path` table. A pattern like `\"**/node_modules/react/**\"` (leading `**/`) matches regardless of where the project root sits on disk; an anchored pattern like `\"node_modules/react/**\"` (no leading `**/`) will not match an absolute path.\n\nA chunk name whose glob patterns fail to compile is dropped with a `tracing::warn!` (GH #3300); a single invalid pattern within an otherwise-valid chunk is dropped the same way and the chunk's remaining valid patterns still apply.\n\nExample: ```toml [build.manual_chunks] vendor = [\"**/node_modules/react/**\", \"**/node_modules/react-dom/**\"] ``` @issue #1948",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
         "out_dir": {
           "description": "Output directory for production build (relative to project root).\n\nExample: `out_dir = \"../be/static\"`.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "splitting": {
+          "description": "Enable code splitting at dynamic `import()` boundaries.\n\n`None` (unset) defers to the CLI default: web-target builds split automatically when the module graph has dynamic imports (a no-dynamic-import graph stays single-file regardless of this setting — see `Bundler::generate_split_bundle`'s emergent fallback). Explicit `true`/`false` here is overridden by the `--splitting`/`--no-splitting` CLI flags when passed.\n\nExample: `splitting = false`. @issue #1932",
+          "type": [
+            "boolean",
             "null"
           ]
         }

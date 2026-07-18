@@ -195,6 +195,34 @@ pub struct JetBuildConfig {
     /// Example: `splitting = false`.
     /// @issue #1932
     pub splitting: Option<bool>,
+
+    /// Manual chunk routing: chunk name → glob patterns (vite
+    /// `manualChunks`-style vendor splitting). Modules whose path matches
+    /// any pattern in a chunk's list are routed into that named chunk
+    /// instead of the entry bundle or the auto-detected shared chunk.
+    /// `None`/absent (the default) leaves `--splitting` output unchanged.
+    ///
+    /// Patterns match each module's **absolute filesystem path**, not a
+    /// path relative to the project root — the same string
+    /// `bundler::splitting::split_chunks_with_config` already glob-matches
+    /// against via its `id_to_path` table. A pattern like
+    /// `"**/node_modules/react/**"` (leading `**/`) matches regardless of
+    /// where the project root sits on disk; an anchored pattern like
+    /// `"node_modules/react/**"` (no leading `**/`) will not match an
+    /// absolute path.
+    ///
+    /// A chunk name whose glob patterns fail to compile is dropped with a
+    /// `tracing::warn!` (GH #3300); a single invalid pattern within an
+    /// otherwise-valid chunk is dropped the same way and the chunk's
+    /// remaining valid patterns still apply.
+    ///
+    /// Example:
+    /// ```toml
+    /// [build.manual_chunks]
+    /// vendor = ["**/node_modules/react/**", "**/node_modules/react-dom/**"]
+    /// ```
+    /// @issue #1948
+    pub manual_chunks: Option<HashMap<String, Vec<String>>>,
 }
 
 /// `[lib]` section of `jet.toml` — `jet build --lib` settings.
@@ -628,6 +656,64 @@ out_dir = "../be/static"
         assert_eq!(unset.build.splitting, None);
     }
 
+    /// #1948 — `[build.manual_chunks]` config key round-trips a chunk-name
+    /// → glob-pattern-list map; unset stays `None` so
+    /// `Bundler::generate_split_bundle` can tell "not configured" apart
+    /// from an explicit empty table.
+    #[test]
+    fn test_parse_build_manual_chunks_config() {
+        let toml_str = r#"
+[build.manual_chunks]
+vendor = ["**/node_modules/react/**", "**/node_modules/react-dom/**"]
+utils = ["**/src/lib/**"]
+"#;
+        let config: JetConfig = toml::from_str(toml_str).unwrap();
+        let manual_chunks = config
+            .build
+            .manual_chunks
+            .as_ref()
+            .expect("manual_chunks must be Some when the section is present");
+        assert_eq!(manual_chunks.len(), 2);
+        assert_eq!(
+            manual_chunks.get("vendor").map(Vec::as_slice),
+            Some(
+                [
+                    "**/node_modules/react/**".to_string(),
+                    "**/node_modules/react-dom/**".to_string(),
+                ]
+                .as_slice()
+            )
+        );
+        assert_eq!(
+            manual_chunks.get("utils").map(Vec::as_slice),
+            Some(["**/src/lib/**".to_string()].as_slice())
+        );
+
+        let unset: JetConfig = toml::from_str("[build]\nout_dir = \"dist\"\n").unwrap();
+        assert!(unset.build.manual_chunks.is_none());
+    }
+
+    /// #1948 GH #3300 — the config layer must not validate/reject
+    /// malformed glob strings itself; an invalid pattern still parses and
+    /// round-trips unchanged into `JetBuildConfig::manual_chunks`, so the
+    /// warn-and-drop contract already covered by
+    /// `bundler::splitting::split_chunks_with_config`'s GH #3300 tests is
+    /// reachable starting from `jet.toml`.
+    #[test]
+    fn test_parse_build_manual_chunks_config_accepts_syntactically_invalid_glob() {
+        let toml_str = r#"
+[build.manual_chunks]
+broken = ["node_modules/{"]
+"#;
+        let config: JetConfig = toml::from_str(toml_str).unwrap();
+        let manual_chunks = config.build.manual_chunks.expect("manual_chunks present");
+        assert_eq!(
+            manual_chunks.get("broken").map(Vec::as_slice),
+            Some(["node_modules/{".to_string()].as_slice()),
+            "config parsing must not glob-validate patterns; that is splitting.rs's job"
+        );
+    }
+
     #[test]
     fn test_parse_pipeline_hook_with_command() {
         let toml_str = r#"
@@ -662,6 +748,7 @@ cache = false
         assert!(config.alias.is_empty());
         assert!(config.build.out_dir.is_none());
         assert!(config.build.splitting.is_none());
+        assert!(config.build.manual_chunks.is_none());
     }
 
     #[test]
