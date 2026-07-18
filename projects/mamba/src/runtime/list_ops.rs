@@ -1226,6 +1226,18 @@ pub fn mb_list_insert(list: MbValue, index: MbValue, item: MbValue) {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
                 if let Some(idx) = index.as_int() {
+                    // `item` is a borrowed reference from the caller (same
+                    // convention as mb_list_append/mb_list_extend/
+                    // mb_list_setitem, all of which call store_owned before
+                    // persisting a value into the list). Without this retain,
+                    // the list gains a phantom (unowned) pointer: the
+                    // caller's own release of its temporary drops the
+                    // refcount to zero while the list's backing vec still
+                    // holds the now-dangling pointer, a premature free whose
+                    // freed address can later be reused by an unrelated
+                    // allocation — surfacing as transient id()/`is` identity
+                    // collisions between logically distinct objects (#1844).
+                    super::rc::store_owned(item);
                     let mut items = lock.write().unwrap();
                     let len = items.len() as i64;
                     let actual = normalize_index(idx, len) as usize;
