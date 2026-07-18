@@ -12,6 +12,7 @@
 //! the static code analysis would otherwise conservatively keep them.
 
 use anyhow::Result;
+use dashmap::DashMap;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -131,35 +132,44 @@ pub fn analyze_used_exports_from(
         .or_default()
         .insert("*".to_string());
 
-    // Step 1: Collect all exports per module (ESM + CJS). Per-module extraction
-    // is pure byte-scanning with no shared state — parallel across the corpus.
-    // On barrel-heavy bundles (MUI/antd, hundreds of modules) the sequential
-    // extraction dominated tree shaking; rayon cuts it near-linearly.
-    let all_exports: HashMap<PathBuf, Vec<String>> = modules
+    // Steps 1+2+3 (WI #1947 fix 2): compute every per-module fact — ESM +
+    // CJS exports, static import/require edges, and dynamic-import targets
+    // — in ONE par_iter pass over the corpus instead of 3 separate
+    // corpus-wide par_iter sweeps. Each sweep previously re-touched every
+    // module's full source independently, so a 12.5k-module graph paid
+    // rayon dispatch/collect overhead 3× and re-pulled cold module source
+    // bytes into cache 3×; `compute_module_facts` does all of a module's
+    // scans back-to-back while its source is still hot. `lookup` is
+    // read-only and `Sync` (and now internally memoized — WI #1947 fix 3).
+    let facts: HashMap<&Path, ModuleFacts> = modules
         .par_iter()
-        .map(|(path, source)| {
-            let mut exports = extract_export_names(source, is_ts(path));
-            exports.extend(extract_cjs_export_names(source));
+        .map(|(path, source)| (path.as_path(), compute_module_facts(path, source, &lookup)))
+        .collect();
+
+    let all_exports: HashMap<PathBuf, Vec<String>> = modules
+        .iter()
+        .map(|(path, _)| {
+            let f = &facts[path.as_path()];
+            let mut exports = f.exports.clone();
+            exports.extend(f.cjs_exports.iter().cloned());
             (path.clone(), exports)
         })
         .collect();
-
-    // Steps 2+3: extract every module's outgoing edges once (also parallel;
-    // `lookup` is read-only and `Sync`).
     let static_edges: HashMap<&Path, Vec<(PathBuf, Vec<String>)>> = modules
-        .par_iter()
-        .map(|(path, source)| {
-            let mut edges = extract_import_bindings(path, source, &lookup);
-            edges.extend(extract_cjs_require_bindings(path, source, &lookup));
+        .iter()
+        .map(|(path, _)| {
+            let f = &facts[path.as_path()];
+            let mut edges = f.static_edges.clone();
+            edges.extend(f.cjs_edges.iter().cloned());
             (path.as_path(), edges)
         })
         .collect();
     let dynamic_edges: HashMap<&Path, Vec<PathBuf>> = modules
-        .par_iter()
-        .map(|(path, source)| {
+        .iter()
+        .map(|(path, _)| {
             (
                 path.as_path(),
-                extract_dynamic_import_targets_from(path, source, &lookup),
+                facts[path.as_path()].dynamic_targets.clone(),
             )
         })
         .collect();
@@ -217,10 +227,13 @@ pub fn analyze_used_exports_from(
     // Re-export bindings are pure in (path, source) — extract once, not
     // once per fixed-point round. Re-extracting every module's bindings
     // each round made this phase O(rounds × modules × source) and
-    // dominated tree shaking on barrel-heavy corpora like MUI.
+    // dominated tree shaking on barrel-heavy corpora like MUI. WI #1947
+    // fix 2: already computed by `compute_module_facts` above (in the
+    // same per-module pass as exports/edges), so this is now a cheap
+    // re-derivation from `facts` rather than another corpus scan.
     let reexport_bindings: Vec<(&PathBuf, Vec<(PathBuf, ReexportKind)>)> = modules
-        .par_iter()
-        .map(|(path, source)| (path, extract_reexport_bindings(path, source, &lookup)))
+        .iter()
+        .map(|(path, _)| (path, facts[path.as_path()].reexports.clone()))
         .collect();
     loop {
         let mut changed = false;
@@ -487,6 +500,11 @@ fn extract_import_bindings(
     lookup: &ModuleLookup<'_>,
 ) -> Vec<(PathBuf, Vec<String>)> {
     let mut results = Vec::new();
+    // WI #1947 fix 1: built lazily (only if any import line has narrowable
+    // names) and reused across every import line in this module, instead of
+    // each `filter_referenced_import_names` call re-scanning the whole
+    // module source with a fresh `find` per candidate name.
+    let mut word_index: Option<HashMap<&str, usize>> = None;
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -514,7 +532,7 @@ fn extract_import_bindings(
             // its own import statement (so a short or coincidentally-matching
             // name is always kept). `*` namespace imports and bare
             // side-effect imports are never narrowed.
-            let names = filter_referenced_import_names(trimmed, source, names);
+            let names = filter_referenced_import_names(trimmed, source, names, &mut word_index);
             results.push((target_path.clone(), names));
         }
     }
@@ -527,22 +545,32 @@ fn extract_import_bindings(
 /// binding's name occurs anywhere else (even inside a string or a longer
 /// token we don't perfectly tokenize), it is retained — only a name that
 /// appears *exclusively* in its import statement is dropped.
-fn filter_referenced_import_names(
+///
+/// WI #1947 fix 1: `total` used to be `count_word_occurrences(source,
+/// &binding)` — a fresh whole-source `str::find` scan per candidate name.
+/// On a barrel with hundreds of named imports that was O(names ×
+/// source_len) per module. `word_index` (built once per module by
+/// `index_word_occurrences`, on first use, and reused for every import
+/// line) turns the same lookup into a single hash probe; see the
+/// equivalence proof on `index_word_occurrences`.
+fn filter_referenced_import_names<'s>(
     import_line: &str,
-    source: &str,
+    source: &'s str,
     names: Vec<String>,
+    word_index: &mut Option<HashMap<&'s str, usize>>,
 ) -> Vec<String> {
     // `*` (namespace) and empty (bare side-effect import) are never narrowed.
     if names.iter().any(|n| n == "*") || names.is_empty() {
         return names;
     }
+    let index = word_index.get_or_insert_with(|| index_word_occurrences(source));
     names
         .into_iter()
         .filter(|imported| {
             let binding = local_binding_for(import_line, imported);
             // Total whole-word occurrences across the module, minus the one
             // declaration in the import line. >0 means a real reference.
-            let total = count_word_occurrences(source, &binding);
+            let total = index.get(binding.as_str()).copied().unwrap_or(0);
             let in_import = count_word_occurrences(import_line, &binding);
             total > in_import
         })
@@ -593,7 +621,7 @@ mod binding_usage_tests {
         let src = "import { used, unused } from 'm';\nconsole.log(used);\n";
         let line = "import { used, unused } from 'm';";
         let names = vec!["used".to_string(), "unused".to_string()];
-        let kept = filter_referenced_import_names(line, src, names);
+        let kept = filter_referenced_import_names(line, src, names, &mut None);
         assert_eq!(kept, vec!["used".to_string()]);
     }
 
@@ -603,8 +631,12 @@ mod binding_usage_tests {
         let line = "import D, { a as b } from 'm';";
         assert_eq!(local_binding_for(line, "a"), "b");
         assert_eq!(local_binding_for(line, "default"), "D");
-        let kept =
-            filter_referenced_import_names(line, src, vec!["a".to_string(), "default".to_string()]);
+        let kept = filter_referenced_import_names(
+            line,
+            src,
+            vec!["a".to_string(), "default".to_string()],
+            &mut None,
+        );
         assert_eq!(kept.len(), 2);
     }
 
@@ -612,7 +644,12 @@ mod binding_usage_tests {
     fn never_narrows_namespace_or_substring() {
         let names = vec!["*".to_string()];
         assert_eq!(
-            filter_referenced_import_names("import * as ns from 'm';", "ns.x", names.clone()),
+            filter_referenced_import_names(
+                "import * as ns from 'm';",
+                "ns.x",
+                names.clone(),
+                &mut None
+            ),
             names
         );
         assert_eq!(
@@ -647,6 +684,134 @@ fn count_word_occurrences(text: &str, word: &str) -> usize {
         from = start + 1;
     }
     count
+}
+
+/// Build a whole-source index of identifier-shaped word → occurrence count
+/// in ONE linear pass, for `word`s that are themselves identifier-shaped
+/// (every byte is ASCII alphanumeric, `_`, or `$` — exactly what
+/// `local_binding_for` ever produces).
+///
+/// WI #1947 fix 1: replaces per-name calls to `count_word_occurrences`
+/// (each a whole-source `str::find` loop) with one tokenizing pass whose
+/// result is reused for every name. Equivalence: `count_word_occurrences`
+/// finds every occurrence of the literal substring `word` and keeps it
+/// only when the byte before and the byte after are *not* identifier
+/// bytes — i.e. exactly the occurrences where `word` stands alone as a
+/// maximal run of identifier bytes. This function instead walks `source`
+/// once, splitting it into maximal identifier-byte runs, and counts how
+/// many times each run's text repeats. For any identifier-shaped `word`,
+/// both procedures count the same set of positions: a `word`-occurrence
+/// survives `count_word_occurrences`'s boundary check iff it *is* one of
+/// the maximal identifier runs this function tokenizes, because `word`
+/// itself contains no non-identifier byte (so the run it sits in can be
+/// neither longer — the boundary check forbids identifier bytes on either
+/// side — nor shorter — `word`'s own bytes are all identifier bytes, so a
+/// run can't end partway through it). See `word_index_1947_tests` below
+/// for boundary-case proof (start/end of source, adjacent identifiers,
+/// `$`/`_`/digits, non-identifier-shaped needles).
+fn index_word_occurrences(source: &str) -> HashMap<&str, usize> {
+    let mut index: HashMap<&str, usize> = HashMap::new();
+    let bytes = source.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if is_id(bytes[i]) {
+            let start = i;
+            while i < bytes.len() && is_id(bytes[i]) {
+                i += 1;
+            }
+            // Every byte in [start, i) is ASCII, so this slice always
+            // lands on a char boundary — safe to index `source` directly.
+            *index.entry(&source[start..i]).or_insert(0) += 1;
+        } else {
+            i += 1;
+        }
+    }
+    index
+}
+
+#[cfg(test)]
+mod word_index_1947_tests {
+    use super::{count_word_occurrences, index_word_occurrences};
+
+    /// Assert `index_word_occurrences(source)[word]` (or 0 if absent)
+    /// equals `count_word_occurrences(source, word)` — the property the
+    /// whole fix rests on.
+    fn assert_equiv(source: &str, word: &str) {
+        let indexed = index_word_occurrences(source)
+            .get(word)
+            .copied()
+            .unwrap_or(0);
+        let scanned = count_word_occurrences(source, word);
+        assert_eq!(
+            indexed, scanned,
+            "index_word_occurrences/count_word_occurrences diverged for word={word:?} source={source:?}"
+        );
+    }
+
+    #[test]
+    fn word_at_very_start_of_source() {
+        assert_equiv("used;\nconsole.log(used)", "used");
+    }
+
+    #[test]
+    fn word_at_very_end_of_source() {
+        assert_equiv("console.log(used);\nused", "used");
+    }
+
+    #[test]
+    fn word_is_the_entire_source() {
+        assert_equiv("used", "used");
+    }
+
+    #[test]
+    fn word_adjacent_to_longer_identifier_is_not_counted() {
+        // "used" is a strict substring of "unused"/"usedThing" but never
+        // stands alone — both sides must report 0.
+        assert_equiv("unused usedThing", "used");
+    }
+
+    #[test]
+    fn word_back_to_back_with_punctuation_boundaries() {
+        assert_equiv("a.used(),used[used]={used};used", "used");
+    }
+
+    #[test]
+    fn word_with_dollar_and_underscore_and_digits() {
+        assert_equiv("const $_used1 = $_used1 + 1; // $_used1", "$_used1");
+    }
+
+    #[test]
+    fn empty_source_and_repeated_word_only() {
+        assert_equiv("", "used");
+        assert_equiv("used used used", "used");
+    }
+
+    #[test]
+    fn word_absent_entirely() {
+        assert_equiv("import { other } from 'm';", "used");
+    }
+
+    #[test]
+    fn every_binding_name_across_a_realistic_module_body() {
+        let source = r#"
+import { used, unused, elementAcceptingRef } from 'm';
+function usedThing() { return used + 1; }
+class UsedClass {}
+const obj = { used: 1, notused: 2 };
+a.elementAcceptingRef();
+"#;
+        for word in [
+            "used",
+            "unused",
+            "elementAcceptingRef",
+            "usedThing",
+            "UsedClass",
+            "notused",
+        ] {
+            assert_equiv(source, word);
+        }
+    }
 }
 
 /// Classification of an `export ... from '...'` re-export line.
@@ -1067,6 +1232,142 @@ fn extract_string_value(s: &str) -> Option<String> {
 
 // --- Shared utilities ---
 
+/// Every fact `analyze_used_exports_from` needs from one module, computed by
+/// `compute_module_facts` in a single per-module pass.
+///
+/// WI #1947 fix 2: `analyze_used_exports_from` used to run 4 independent
+/// `modules.par_iter()` sweeps (exports, static+cjs edges, dynamic targets,
+/// re-export bindings) — each one a full corpus-wide dispatch that re-reads
+/// every module's source from scratch. `ModuleFacts` groups the equivalent
+/// per-module outputs so the corpus is only dispatched across rayon once;
+/// each worker computes every fact for its module while the source bytes
+/// are still hot, instead of the whole corpus paying dispatch/collect
+/// overhead (and cold source re-reads) 4 times over.
+#[derive(Debug, Clone)]
+struct ModuleFacts {
+    /// ESM export names (`extract_export_names`).
+    exports: Vec<String>,
+    /// CJS export names (`extract_cjs_export_names`).
+    cjs_exports: Vec<String>,
+    /// ESM static import edges (`extract_import_bindings`).
+    static_edges: Vec<(PathBuf, Vec<String>)>,
+    /// CJS require edges (`extract_cjs_require_bindings`).
+    cjs_edges: Vec<(PathBuf, Vec<String>)>,
+    /// Dynamic `import(...)` targets (`extract_dynamic_import_targets_from`).
+    dynamic_targets: Vec<PathBuf>,
+    /// `export ... from '...'` re-export bindings (`extract_reexport_bindings`).
+    reexports: Vec<(PathBuf, ReexportKind)>,
+}
+
+/// Compute one module's `ModuleFacts` by calling each existing extractor
+/// once. Extractor internals are untouched by this merge (WI #1947 fix 2
+/// only changes how many times the corpus is dispatched across rayon, not
+/// what each extractor does or how many times it scans its own module's
+/// source) — the only extractor whose *internals* changed for WI #1947 is
+/// `extract_import_bindings`'s callee `filter_referenced_import_names`
+/// (fix 1's word index), which is unrelated to this merge.
+fn compute_module_facts(path: &Path, source: &str, lookup: &ModuleLookup<'_>) -> ModuleFacts {
+    ModuleFacts {
+        exports: extract_export_names(source, is_ts(path)),
+        cjs_exports: extract_cjs_export_names(source),
+        static_edges: extract_import_bindings(path, source, lookup),
+        cjs_edges: extract_cjs_require_bindings(path, source, lookup),
+        dynamic_targets: extract_dynamic_import_targets_from(path, source, lookup),
+        reexports: extract_reexport_bindings(path, source, lookup),
+    }
+}
+
+#[cfg(test)]
+mod module_facts_1947_tests {
+    use super::*;
+
+    /// `compute_module_facts` must produce exactly what calling each
+    /// extractor individually produces — the WI #1947 fix 2 merge only
+    /// changes the *dispatch* shape (one per-module call site instead of 4
+    /// corpus-wide sweeps), never the extractors' own outputs.
+    fn assert_facts_match_individual_extractors(
+        modules: &[(PathBuf, String)],
+        path: &Path,
+        source: &str,
+    ) {
+        let lookup = ModuleLookup::new(modules);
+        let facts = compute_module_facts(path, source, &lookup);
+
+        assert_eq!(
+            facts.exports,
+            extract_export_names(source, is_ts(path)),
+            "exports mismatch for {path:?}"
+        );
+        assert_eq!(
+            facts.cjs_exports,
+            extract_cjs_export_names(source),
+            "cjs_exports mismatch for {path:?}"
+        );
+        assert_eq!(
+            facts.static_edges,
+            extract_import_bindings(path, source, &lookup),
+            "static_edges mismatch for {path:?}"
+        );
+        assert_eq!(
+            facts.cjs_edges,
+            extract_cjs_require_bindings(path, source, &lookup),
+            "cjs_edges mismatch for {path:?}"
+        );
+        assert_eq!(
+            facts.dynamic_targets,
+            extract_dynamic_import_targets_from(path, source, &lookup),
+            "dynamic_targets mismatch for {path:?}"
+        );
+        // `ReexportKind` derives `Debug, Clone` but not `PartialEq` (no
+        // production code needs to compare re-export bindings by value);
+        // comparing Debug output instead of adding a derive-only-for-tests
+        // impl keeps this test from nudging production type shape.
+        assert_eq!(
+            format!("{:?}", facts.reexports),
+            format!("{:?}", extract_reexport_bindings(path, source, &lookup)),
+            "reexports mismatch for {path:?}"
+        );
+    }
+
+    #[test]
+    fn matches_individual_extractors_on_an_esm_barrel() {
+        let modules = vec![
+            (PathBuf::from("/proj/barrel.js"), String::new()),
+            (PathBuf::from("/proj/leaf.js"), String::new()),
+            (PathBuf::from("/proj/dyn.js"), String::new()),
+        ];
+        let source = r#"
+import { used, unused } from './leaf';
+export { used };
+export * from './leaf';
+export const local = 1;
+const p = import('./dyn');
+"#;
+        assert_facts_match_individual_extractors(&modules, Path::new("/proj/barrel.js"), source);
+    }
+
+    #[test]
+    fn matches_individual_extractors_on_a_cjs_module() {
+        let modules = vec![
+            (PathBuf::from("/proj/cjs.js"), String::new()),
+            (PathBuf::from("/proj/dep.js"), String::new()),
+        ];
+        let source = r#"
+const { a, b } = require('./dep');
+const whole = require('./dep');
+exports.foo = 1;
+module.exports = { a, b };
+"#;
+        assert_facts_match_individual_extractors(&modules, Path::new("/proj/cjs.js"), source);
+    }
+
+    #[test]
+    fn matches_individual_extractors_on_an_empty_module() {
+        let modules = vec![(PathBuf::from("/proj/empty.js"), String::new())];
+        assert_facts_match_individual_extractors(&modules, Path::new("/proj/empty.js"), "");
+    }
+}
+
 /// Find a module in the module list by matching specifier against paths.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn find_module_by_specifier<'a>(
@@ -1087,6 +1388,22 @@ struct ModuleLookup<'a> {
     /// those edges starved the demand-driven liveness walk and shook
     /// genuinely-used modules out of the bundle.
     resolver: Option<&'a (dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
+    /// WI #1947 fix 3: memoizes `find`'s result per (specifier,
+    /// importer-directory). `find` is called from parallel per-module
+    /// extraction (`Sync` required, hence a concurrent map rather than a
+    /// `RefCell`). The same bare specifiers (`react`, `clsx`, `prop-types`,
+    /// ...) repeat across thousands of importers in a node_modules-heavy
+    /// graph, and every uncached call allocates several candidate
+    /// strings/paths and does multiple hash-map probes.
+    ///
+    /// Keyed by directory, not the full importer path: every branch of
+    /// `find_uncached` (the relative-specifier join, the bare-specifier
+    /// candidate list, and the external `resolver` callback) only ever
+    /// reads `importer.parent()`, never the importer's own file name — two
+    /// sibling files resolving the same specifier always resolve to the
+    /// same target, so directory-level keys are both correct and the
+    /// coarsest granularity that's still exact (not an approximation).
+    resolution_memo: DashMap<(String, PathBuf), Option<usize>>,
 }
 
 impl<'a> ModuleLookup<'a> {
@@ -1107,6 +1424,7 @@ impl<'a> ModuleLookup<'a> {
             by_path,
             by_specifier,
             resolver: None,
+            resolution_memo: DashMap::new(),
         }
     }
 
@@ -1120,17 +1438,38 @@ impl<'a> ModuleLookup<'a> {
     }
 
     fn find(&self, specifier: &str, importer: &Path) -> Option<&'a (PathBuf, String)> {
+        self.find_index(specifier, importer)
+            .and_then(|idx| self.modules.get(idx))
+    }
+
+    /// Memoized wrapper around `find_index_uncached` — see
+    /// `resolution_memo`'s doc comment for the cache-key correctness
+    /// argument.
+    fn find_index(&self, specifier: &str, importer: &Path) -> Option<usize> {
+        let cache_key = (
+            specifier.to_string(),
+            importer.parent().unwrap_or(importer).to_path_buf(),
+        );
+        if let Some(cached) = self.resolution_memo.get(&cache_key) {
+            return *cached;
+        }
+        let resolved = self.find_index_uncached(specifier, importer);
+        self.resolution_memo.insert(cache_key, resolved);
+        resolved
+    }
+
+    fn find_index_uncached(&self, specifier: &str, importer: &Path) -> Option<usize> {
         if specifier.starts_with('.') {
             if let Some(importer_dir) = importer.parent() {
                 let target = normalize_tree_shake_path(importer_dir.join(specifier));
-                if let Some(found) = self.find_exact_candidate(&target) {
-                    return Some(found);
+                if let Some(idx) = self.find_exact_candidate_index(&target) {
+                    return Some(idx);
                 }
             }
         }
 
         if let Some(idx) = self.by_specifier.get(specifier) {
-            return self.modules.get(*idx);
+            return Some(*idx);
         }
 
         let bare = specifier.strip_prefix("./").unwrap_or(specifier);
@@ -1145,7 +1484,7 @@ impl<'a> ModuleLookup<'a> {
             format!("{bare}/index.tsx"),
         ] {
             if let Some(idx) = self.by_specifier.get(&candidate) {
-                return self.modules.get(*idx);
+                return Some(*idx);
             }
         }
 
@@ -1153,7 +1492,7 @@ impl<'a> ModuleLookup<'a> {
             if let Some(resolved) = resolver(specifier, importer) {
                 let normalized = normalize_tree_shake_path(&resolved);
                 if let Some(idx) = self.by_path.get(&normalized) {
-                    return self.modules.get(*idx);
+                    return Some(*idx);
                 }
             }
         }
@@ -1161,19 +1500,19 @@ impl<'a> ModuleLookup<'a> {
         None
     }
 
-    fn find_exact_candidate(&self, target: &Path) -> Option<&'a (PathBuf, String)> {
+    fn find_exact_candidate_index(&self, target: &Path) -> Option<usize> {
         const EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs"];
         for candidate in exact_candidate_paths(target) {
             if let Some(idx) = self.by_path.get(&candidate) {
-                return self.modules.get(*idx);
+                return Some(*idx);
             }
             for ext in EXTENSIONS {
                 if let Some(idx) = self.by_path.get(&candidate.with_extension(ext)) {
-                    return self.modules.get(*idx);
+                    return Some(*idx);
                 }
                 let index = normalize_tree_shake_path(candidate.join(format!("index.{ext}")));
                 if let Some(idx) = self.by_path.get(&index) {
-                    return self.modules.get(*idx);
+                    return Some(*idx);
                 }
             }
         }
