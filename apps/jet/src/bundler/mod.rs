@@ -912,6 +912,11 @@ impl Bundler {
         let mut barrel_demand: HashMap<PathBuf, BarrelDemand> = HashMap::new();
         let mut expanded_from: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
         let mut barrels_detected: HashSet<PathBuf> = HashSet::new();
+        // Diagnostics only (#1991 round 2): the first escalation reason
+        // recorded per barrel, for `JET_BUNDLE_TIMING`'s
+        // `lazy-barrels escalated-full:` report. Never consulted by the
+        // crawl's own fallback-to-full decisions.
+        let mut escalation_reasons: HashMap<PathBuf, EscalationReason> = HashMap::new();
 
         while !frontier.is_empty() {
             let wave: Vec<(PathBuf, PrefetchedModule)> = frontier
@@ -938,7 +943,14 @@ impl Bundler {
                 for (spec, res) in &module.resolutions {
                     let Ok(target) = res else { continue };
                     let is_dynamic = imports.dynamic_imports.iter().any(|d| d == spec);
-                    let demand = barrel_demand_for_specifier(src, spec, is_dynamic);
+                    let demand =
+                        match barrel_demand_for_specifier_with_reason(src, spec, is_dynamic) {
+                            Ok(names) => Some(names),
+                            Err(reason) => {
+                                escalation_reasons.entry(target.clone()).or_insert(reason);
+                                None
+                            }
+                        };
                     merge_barrel_demand(&mut barrel_demand, target, demand);
                     touched.push(target.clone());
                 }
@@ -1001,7 +1013,13 @@ impl Bundler {
                     // genuinely broken import (harmless to over-expand)
                     // or this line-scanner missed an unusual shape.
                     BarrelDemand::Names(names) => {
-                        names.iter().any(|n| !known_names.contains(n.as_str()))
+                        let unresolvable = names.iter().any(|n| !known_names.contains(n.as_str()));
+                        if unresolvable {
+                            escalation_reasons
+                                .entry(target.clone())
+                                .or_insert(EscalationReason::UnresolvableName);
+                        }
+                        unresolvable
                     }
                 };
 
@@ -1011,7 +1029,12 @@ impl Bundler {
                         continue;
                     };
                     let leaf_names: Option<Vec<String>> = match kind {
-                        tree_shake::ReexportKind::Star => None, // always full — see fn doc.
+                        tree_shake::ReexportKind::Star => {
+                            escalation_reasons
+                                .entry(leaf_target.clone())
+                                .or_insert(EscalationReason::ExportStarChain);
+                            None // always full — see fn doc.
+                        }
                         tree_shake::ReexportKind::Named(pairs) => {
                             if effective_full {
                                 Some(pairs.iter().map(|(leaf, _)| leaf.clone()).collect())
@@ -1072,6 +1095,7 @@ impl Bundler {
                 barrels_detected.len(),
                 skipped.len()
             );
+            print_barrel_escalation_report(&barrels_detected, &escalation_reasons, &prefetched);
         }
         tracing::debug!(
             barrels_detected = barrels_detected.len(),
@@ -1192,6 +1216,56 @@ fn merge_barrel_demand(
             if let BarrelDemand::Names(existing) = entry {
                 existing.extend(names);
             }
+        }
+    }
+}
+
+/// Why a barrel's demand could not be narrowed and escalated to
+/// [`BarrelDemand::Full`] (#1991 round 2 diagnostics — see
+/// [`barrel_demand_for_specifier_with_reason`] and
+/// [`print_barrel_escalation_report`]). Purely informational: the crawl's
+/// correctness contract (demand uncertainty -> Full, never drop a used
+/// leaf) does not depend on this classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscalationReason {
+    /// `import * as ns from '<barrel>'` — every leaf may be referenced via
+    /// the namespace object, so nothing can be narrowed.
+    NamespaceImport,
+    /// `require('<barrel>')` bound to an identifier whose properties are
+    /// never scanned back to a finite set (no destructure, no discoverable
+    /// `.prop`/`['prop']` access anywhere in the module).
+    BareCjsUse,
+    /// `import('<barrel>')` — a dynamic import target is never narrowed.
+    DynamicImport,
+    /// `export ... from '<barrel>'` (star or named) re-export chains the
+    /// barrel into another module instead of a leaf consumer using it
+    /// directly; the chain is not followed for narrowing.
+    ExportStarChain,
+    /// A requested name has no home in the barrel's own parsed re-export
+    /// map — either a genuinely broken import or a shape this line
+    /// scanner missed; any doubt escalates to full.
+    UnresolvableName,
+    /// An `import` statement referencing the barrel could not be scanned
+    /// to a specifier/name list at all (e.g. an unterminated multi-line
+    /// statement with no `from '<spec>'` before EOF).
+    UnparseableImport,
+    /// The resolved specifier never matched any import/require line this
+    /// scanner recognizes in the importer's source — the crawl still saw
+    /// the edge (via AST-based resolution), but this text scan could not
+    /// account for it.
+    NoDemandRecorded,
+}
+
+impl EscalationReason {
+    fn label(self) -> &'static str {
+        match self {
+            EscalationReason::NamespaceImport => "namespace-import",
+            EscalationReason::BareCjsUse => "bare-cjs-use",
+            EscalationReason::DynamicImport => "dynamic-import",
+            EscalationReason::ExportStarChain => "export-star-chain",
+            EscalationReason::UnresolvableName => "unresolvable-name",
+            EscalationReason::UnparseableImport => "unparseable-import",
+            EscalationReason::NoDemandRecorded => "no-demand-recorded",
         }
     }
 }
@@ -1321,19 +1395,41 @@ fn prune_barrel_source_to_demand(source: &str, demand: &HashSet<String>) -> Stri
     out
 }
 
-/// Demand a single resolved specifier's import site(s) in `source` place
-/// on its target, for lazy pure-barrel expansion (#1991). `None` means
-/// the specifier could not be proven narrow — the caller must fall back
-/// to full/eager expansion for that edge, matching the issue's fallback
-/// list: namespace import (`import * as ns`), dynamic `import()` (handled
-/// by the caller via `is_dynamic` before this scan runs), bare
-/// (non-property) CJS `require()` use, or a specifier this text scan
-/// can't otherwise account for at all (defensive — the AST-derived
-/// resolver found it, so an unrecognized shape here means this
-/// line-scanner under-parsed it, not that nothing imports it; this is
-/// also why a re-export-from line, e.g. `export { a } from spec` or
-/// `export * from spec`, in a non-barrel module always falls back to
-/// full here — narrowing through those is out of scope for #1991).
+/// Demand a single resolved specifier's import site(s) in `source` place on
+/// its target, for lazy pure-barrel expansion (#1991). Thin `Option`
+/// wrapper over [`barrel_demand_for_specifier_with_reason`] for callers
+/// that don't need the escalation reason; see that function for the full
+/// contract. Production crawl code (`prefetch_graph_modules_lazy`) calls
+/// `barrel_demand_for_specifier_with_reason` directly to record escalation
+/// diagnostics (#1991 round 2) — this wrapper is kept `#[cfg(test)]`-only
+/// so the round-1 test suite's existing `Option`-shaped call sites stay
+/// green unmodified.
+#[cfg(test)]
+fn barrel_demand_for_specifier(source: &str, spec: &str, is_dynamic: bool) -> Option<Vec<String>> {
+    barrel_demand_for_specifier_with_reason(source, spec, is_dynamic).ok()
+}
+
+/// Demand a single resolved specifier's import site(s) in `source` place on
+/// its target, for lazy pure-barrel expansion (#1991). `Err(reason)` means
+/// the specifier could not be proven narrow — the caller must fall back to
+/// full/eager expansion for that edge, matching the issue's fallback list:
+/// namespace import (`import * as ns`), dynamic `import()` (handled by the
+/// caller via `is_dynamic` before this scan runs), bare (non-property) CJS
+/// `require()` use, or a specifier this text scan can't otherwise account
+/// for at all (defensive — the AST-derived resolver found it, so an
+/// unrecognized shape here means this line-scanner under-parsed it, not
+/// that nothing imports it; see [`classify_unmatched_barrel_specifier`] for
+/// that last case's `reason`). `reason` is diagnostics only (#1991 round 2
+/// — see [`EscalationReason`]) and never changes the fallback contract.
+///
+/// Scans [`tree_shake::logical_import_lines`] rather than `source.lines()`
+/// directly, so a multi-line `import { ... } from '...'` statement —
+/// prettier's default wrapping for 3+ named imports, whose binding list and
+/// `from` clause never share a physical line — narrows exactly like its
+/// single-line-equivalent form instead of silently escalating the barrel to
+/// full (#1991 round 2; matches the join/scan approach
+/// [`tree_shake::extract_import_bindings`] now also uses, rather than a
+/// second, divergent parser).
 ///
 /// Reuses `tree_shake`'s existing line-oriented CJS analysis
 /// (`scan_require_call`, `extract_destructured_names`,
@@ -1343,22 +1439,29 @@ fn prune_barrel_source_to_demand(source: &str, demand: &HashSet<String>) -> Stri
 /// optimization (#1947 round 2) that must stay lookup-driven; this
 /// function instead runs lookup-free, before a `ModuleLookup` exists, and
 /// is scoped to one already-resolved specifier.
-fn barrel_demand_for_specifier(source: &str, spec: &str, is_dynamic: bool) -> Option<Vec<String>> {
+fn barrel_demand_for_specifier_with_reason(
+    source: &str,
+    spec: &str,
+    is_dynamic: bool,
+) -> std::result::Result<Vec<String>, EscalationReason> {
     if is_dynamic {
-        return None; // dynamic import() of a barrel: fall back to full.
+        return Err(EscalationReason::DynamicImport);
     }
 
     let mut names: Vec<String> = Vec::new();
     let mut matched = false;
 
-    for line in source.lines() {
+    for line in tree_shake::logical_import_lines(source) {
         let trimmed = line.trim();
 
-        if trimmed.starts_with("import ") && tree_shake::extract_specifier(trimmed) == spec {
+        if trimmed.starts_with("import ") {
+            if tree_shake::extract_specifier(trimmed) != spec {
+                continue;
+            }
             matched = true;
             let imported = tree_shake::extract_imported_names(trimmed);
             if imported.iter().any(|n| n == "*") {
-                return None; // namespace import — fall back to full.
+                return Err(EscalationReason::NamespaceImport);
             }
             names.extend(imported); // may be empty (side-effect-only import).
             continue;
@@ -1381,7 +1484,7 @@ fn barrel_demand_for_specifier(source: &str, spec: &str, is_dynamic: bool) -> Op
                 }
                 // Bare require use (no destructure, no property access
                 // found anywhere in the module) — fall back to full.
-                return None;
+                return Err(EscalationReason::BareCjsUse);
             }
             names.extend(destructured);
             names.extend(accessed);
@@ -1389,9 +1492,91 @@ fn barrel_demand_for_specifier(source: &str, spec: &str, is_dynamic: bool) -> Op
     }
 
     if matched {
-        Some(names)
+        return Ok(names);
+    }
+    Err(classify_unmatched_barrel_specifier(source, spec))
+}
+
+/// Classifies why [`barrel_demand_for_specifier_with_reason`] found no
+/// import/require line accounting for `spec` at all — diagnostics only
+/// (#1991 round 2), consulted after the main scan already failed to match.
+/// Distinguishes an unterminated multi-line `import` statement (no `from
+/// '<spec>'` before EOF — [`EscalationReason::UnparseableImport`]) and an
+/// `export ... from '<spec>'` re-export chain
+/// ([`EscalationReason::ExportStarChain`], covering both star and named
+/// shapes) from the default catch-all
+/// ([`EscalationReason::NoDemandRecorded`]): the AST-derived resolver found
+/// this edge, so a truly unrecognized shape here means this line scanner
+/// under-parsed it, not that nothing imports it.
+fn classify_unmatched_barrel_specifier(source: &str, spec: &str) -> EscalationReason {
+    let mut saw_incomplete_import = false;
+    for line in tree_shake::logical_import_lines(source) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ") && tree_shake::extract_specifier(trimmed).is_empty() {
+            saw_incomplete_import = true;
+            continue;
+        }
+        if trimmed.starts_with("export ") && trimmed.contains(" from ") {
+            if let Some((re_spec, _kind)) = tree_shake::classify_reexport_line(trimmed) {
+                if re_spec == spec {
+                    return EscalationReason::ExportStarChain;
+                }
+            }
+        }
+    }
+    if saw_incomplete_import {
+        EscalationReason::UnparseableImport
     } else {
-        None // this text scan couldn't account for the resolved specifier at all.
+        EscalationReason::NoDemandRecorded
+    }
+}
+
+/// Top 5 Full-escalated barrels by leaf (re-export) count, largest first,
+/// for [`print_barrel_escalation_report`] (#1991 round 2). A barrel with no
+/// recorded [`EscalationReason`] narrowed cleanly and is excluded — the
+/// smell this instrumentation exists to surface is
+/// [`EscalationReason::NoDemandRecorded`] firing for a barrel with known
+/// consumers.
+fn top_barrel_escalations<'a>(
+    barrels_detected: &'a HashSet<PathBuf>,
+    escalation_reasons: &HashMap<PathBuf, EscalationReason>,
+    prefetched: &HashMap<PathBuf, PrefetchedModule>,
+) -> Vec<(&'a PathBuf, EscalationReason, usize)> {
+    let mut escalated: Vec<(&PathBuf, EscalationReason, usize)> = barrels_detected
+        .iter()
+        .filter_map(|path| {
+            let reason = *escalation_reasons.get(path)?;
+            let leaf_count = prefetched
+                .get(path)
+                .and_then(|module| module.source.as_ref().ok())
+                .map(|src| tree_shake::extract_reexport_specifiers(src).len())
+                .unwrap_or(0);
+            Some((path, reason, leaf_count))
+        })
+        .collect();
+    escalated.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(b.0)));
+    escalated.truncate(5);
+    escalated
+}
+
+/// Prints the top 5 Full-escalated barrels (see [`top_barrel_escalations`])
+/// as sibling `JET_BUNDLE_TIMING` lines to the existing `lazy-barrels:`
+/// summary line (#1991 round 2). No-op (prints nothing) when no barrel
+/// escalated to full.
+fn print_barrel_escalation_report(
+    barrels_detected: &HashSet<PathBuf>,
+    escalation_reasons: &HashMap<PathBuf, EscalationReason>,
+    prefetched: &HashMap<PathBuf, PrefetchedModule>,
+) {
+    for (path, reason, leaf_count) in
+        top_barrel_escalations(barrels_detected, escalation_reasons, prefetched)
+    {
+        eprintln!(
+            "[bundle-timing] lazy-barrels escalated-full: {} ({} leaf(ves)) reason={}",
+            path.display(),
+            leaf_count,
+            reason.label()
+        );
     }
 }
 
@@ -4316,6 +4501,67 @@ mod lazy_barrel_expansion_tests {
         );
     }
 
+    // ── barrel_demand_for_specifier: multi-line ESM shapes (#1991 round 2) ──
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_multiline_named_import_returns_requested_names() {
+        // The real-corpus shape the round-2 evidence comment calls out:
+        // prettier's default wrapping for 3+ named imports puts the
+        // binding list and `from` clause on different physical lines.
+        let src =
+            "import {\n  IconA,\n  IconB,\n} from '@lib/barrel';\nconsole.log(IconA, IconB);\n";
+        let mut names = barrel_demand_for_specifier(src, "@lib/barrel", false)
+            .expect("multi-line named import must narrow, not fall back to full");
+        names.sort();
+        assert_eq!(names, vec!["IconA".to_string(), "IconB".to_string()]);
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_multiline_trailing_comma_returns_requested_names() {
+        let src = "import {\n  IconA,\n  IconB,\n} from '@lib/barrel';\n";
+        let mut names = barrel_demand_for_specifier(src, "@lib/barrel", false)
+            .expect("trailing comma before the closing brace must still narrow");
+        names.sort();
+        assert_eq!(names, vec!["IconA".to_string(), "IconB".to_string()]);
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_multiline_inline_comment_does_not_corrupt_names() {
+        let src = "import {\n  IconA, // used on the dashboard\n  IconB,\n} from '@lib/barrel';\n";
+        let mut names = barrel_demand_for_specifier(src, "@lib/barrel", false)
+            .expect("an inline comment inside the brace list must still narrow");
+        names.sort();
+        assert_eq!(names, vec!["IconA".to_string(), "IconB".to_string()]);
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_multiline_mixed_default_and_named_returns_both() {
+        let src = "import Default, {\n  IconA,\n  IconB,\n} from '@lib/barrel';\n";
+        let mut names = barrel_demand_for_specifier(src, "@lib/barrel", false)
+            .expect("mixed default+named across lines must still narrow");
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "IconA".to_string(),
+                "IconB".to_string(),
+                "default".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_esm_single_line_regression_unchanged() {
+        // #1991 round 2 regression guard: a single-line import — the common
+        // case, and every pre-round-2 test's shape — must keep resolving
+        // through the exact same path.
+        let src = "import { IconA, IconB } from '@lib/barrel';\nconsole.log(IconA, IconB);\n";
+        let mut names = barrel_demand_for_specifier(src, "@lib/barrel", false)
+            .expect("single-line named import must narrow");
+        names.sort();
+        assert_eq!(names, vec!["IconA".to_string(), "IconB".to_string()]);
+    }
+
     // ── barrel_demand_for_specifier: CJS shapes ─────────────────────────
 
     #[test]
@@ -4377,6 +4623,75 @@ mod lazy_barrel_expansion_tests {
         );
     }
 
+    // ── barrel_demand_for_specifier_with_reason: EscalationReason (#1991 round 2) ──
+
+    #[test]
+    fn barrel_demand_for_specifier_with_reason_namespace_import_is_namespace_import() {
+        let src = "import * as icons from '@lib/barrel';\nconsole.log(icons.IconA);\n";
+        assert_eq!(
+            barrel_demand_for_specifier_with_reason(src, "@lib/barrel", false),
+            Err(EscalationReason::NamespaceImport)
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_with_reason_dynamic_import_is_dynamic_import() {
+        let src = "import { IconA } from '@lib/barrel';\n";
+        assert_eq!(
+            barrel_demand_for_specifier_with_reason(src, "@lib/barrel", true),
+            Err(EscalationReason::DynamicImport)
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_with_reason_bare_cjs_use_is_bare_cjs_use() {
+        let src = "require('@lib/barrel');\n";
+        assert_eq!(
+            barrel_demand_for_specifier_with_reason(src, "@lib/barrel", false),
+            Err(EscalationReason::BareCjsUse)
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_with_reason_export_star_chain_for_star_reexport_line() {
+        let src = "export * from '@lib/barrel';\n";
+        assert_eq!(
+            barrel_demand_for_specifier_with_reason(src, "@lib/barrel", false),
+            Err(EscalationReason::ExportStarChain)
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_with_reason_export_star_chain_for_named_reexport_line() {
+        // A named re-export-from line is bucketed under the same
+        // export-star-chain reason as a star re-export — both chain the
+        // barrel into another module rather than a leaf consumer using it
+        // directly, and #1991's enum vocabulary has one bucket for both.
+        let src = "export { IconA } from '@lib/barrel';\n";
+        assert_eq!(
+            barrel_demand_for_specifier_with_reason(src, "@lib/barrel", false),
+            Err(EscalationReason::ExportStarChain)
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_with_reason_unmatched_specifier_is_no_demand_recorded() {
+        let src = "import { Other } from '@lib/other';\n";
+        assert_eq!(
+            barrel_demand_for_specifier_with_reason(src, "@lib/barrel", false),
+            Err(EscalationReason::NoDemandRecorded)
+        );
+    }
+
+    #[test]
+    fn barrel_demand_for_specifier_with_reason_truncated_multiline_import_is_unparseable_import() {
+        let src = "import {\n  IconA,\n  IconB,\n";
+        assert_eq!(
+            barrel_demand_for_specifier_with_reason(src, "@lib/barrel", false),
+            Err(EscalationReason::UnparseableImport)
+        );
+    }
+
     // ── merge_barrel_demand / BarrelDemand ───────────────────────────────
 
     #[test]
@@ -4415,6 +4730,75 @@ mod lazy_barrel_expansion_tests {
         assert!(
             matches!(map.get(&target), Some(BarrelDemand::Full)),
             "Full must stay Full even after a later Names merge"
+        );
+    }
+
+    // ── top_barrel_escalations (#1991 round 2) ───────────────────────────
+
+    fn fixture_barrel_module(leaf_count: usize) -> PrefetchedModule {
+        let src: String = (0..leaf_count)
+            .map(|n| format!("export {{ N{n} }} from './n{n}.js';\n"))
+            .collect();
+        PrefetchedModule {
+            source: Ok(src),
+            imports: Err("not a script module".to_string()),
+            resolutions: HashMap::new(),
+            tree: None,
+        }
+    }
+
+    #[test]
+    fn top_barrel_escalations_sorts_by_leaf_count_desc_and_truncates_to_five() {
+        let mut barrels_detected: HashSet<PathBuf> = HashSet::new();
+        let mut escalation_reasons: HashMap<PathBuf, EscalationReason> = HashMap::new();
+        let mut prefetched: HashMap<PathBuf, PrefetchedModule> = HashMap::new();
+
+        let reasons = [
+            EscalationReason::NamespaceImport,
+            EscalationReason::BareCjsUse,
+            EscalationReason::DynamicImport,
+            EscalationReason::ExportStarChain,
+            EscalationReason::UnresolvableName,
+            EscalationReason::UnparseableImport,
+            EscalationReason::NoDemandRecorded,
+        ];
+        for (i, reason) in reasons.iter().enumerate() {
+            let path = PathBuf::from(format!("/fixture/barrel{i}.js"));
+            // barrel0 has 1 leaf, barrel6 has 7 leaves — descending sort
+            // must put the biggest barrel first.
+            let leaf_count = i + 1;
+            barrels_detected.insert(path.clone());
+            escalation_reasons.insert(path.clone(), *reason);
+            prefetched.insert(path, fixture_barrel_module(leaf_count));
+        }
+
+        let top = top_barrel_escalations(&barrels_detected, &escalation_reasons, &prefetched);
+
+        assert_eq!(top.len(), 5, "must truncate to the top 5");
+        let leaf_counts: Vec<usize> = top.iter().map(|(_, _, count)| *count).collect();
+        assert_eq!(
+            leaf_counts,
+            vec![7, 6, 5, 4, 3],
+            "must sort by leaf count descending, largest barrel first"
+        );
+        assert_eq!(top[0].1, EscalationReason::NoDemandRecorded);
+        assert_eq!(top[4].1, EscalationReason::DynamicImport);
+    }
+
+    #[test]
+    fn top_barrel_escalations_excludes_non_escalated_barrels() {
+        let mut barrels_detected: HashSet<PathBuf> = HashSet::new();
+        let escalation_reasons: HashMap<PathBuf, EscalationReason> = HashMap::new();
+        let mut prefetched: HashMap<PathBuf, PrefetchedModule> = HashMap::new();
+
+        let path = PathBuf::from("/fixture/clean_barrel.js");
+        barrels_detected.insert(path.clone());
+        prefetched.insert(path, fixture_barrel_module(1));
+
+        let top = top_barrel_escalations(&barrels_detected, &escalation_reasons, &prefetched);
+        assert!(
+            top.is_empty(),
+            "a barrel with no recorded escalation reason must not appear in the report"
         );
     }
 
@@ -4724,6 +5108,52 @@ mod lazy_barrel_expansion_tests {
         assert!(
             crawled(&bundler, dir, "icons/IconB.js"),
             "an unresolvable requested name must escalate the whole barrel to full, not silently drop the other leaves"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_graph_lazy_barrel_cjs_property_accesses_spanning_many_later_lines() {
+        // #1991 round 2: the CJS narrowing path
+        // (`scan_require_binding_property_accesses`) already scans the
+        // WHOLE module source for later-line property accesses regardless
+        // of how far they sit from the `require()` call — round 1 only
+        // unit-covered the underlying tree_shake helpers, so this proves
+        // it end to end at the graph level, matching the round-2 evidence
+        // comment's CJS shim shape: bound once, then accessed many lines
+        // later.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        write_fixture(
+            dir,
+            "entry.js",
+            "const icons = require('./icons/index.js');\n\
+             function noop1() {}\nfunction noop2() {}\nfunction noop3() {}\n\
+             function noop4() {}\nfunction noop5() {}\nfunction noop6() {}\n\
+             function noop7() {}\nfunction noop8() {}\nfunction noop9() {}\n\
+             console.log(icons.IconA);\nconsole.log(icons.IconB);\n",
+        );
+        write_fixture(
+            dir,
+            "icons/index.js",
+            "export { IconA } from './IconA.js';\nexport { IconB } from './IconB.js';\nexport { IconC } from './IconC.js';\n",
+        );
+        write_fixture(dir, "icons/IconA.js", "export const IconA = 'A';\n");
+        write_fixture(dir, "icons/IconB.js", "export const IconB = 'B';\n");
+        write_fixture(dir, "icons/IconC.js", "export const IconC = 'C';\n");
+
+        let bundler = crawl(dir, "entry.js").await;
+
+        assert!(
+            crawled(&bundler, dir, "icons/IconA.js"),
+            "property access many lines after the require() binding must still narrow demand"
+        );
+        assert!(
+            crawled(&bundler, dir, "icons/IconB.js"),
+            "property access many lines after the require() binding must still narrow demand"
+        );
+        assert!(
+            !crawled(&bundler, dir, "icons/IconC.js"),
+            "an undemanded leaf must stay excluded even with many intervening lines"
         );
     }
 }

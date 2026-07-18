@@ -324,4 +324,214 @@ fn lazy_and_eager_crawl_agree_on_used_module_output() -> Result<()> {
 
     Ok(())
 }
+
+/// Writes the corpus-shape fixture that round 2 exists to catch: a pure
+/// barrel reached only through consumers whose import syntax spans multiple
+/// physical lines or crosses the ESM/CJS boundary — the exact shape the
+/// round-2 evidence comment's real-corpus audit found (prettier's default
+/// multi-line wrapping for 3+ named imports; a CJS `require()` shim with
+/// later-line property accesses). Reuses the same
+/// `src/icons/{index,Icon<n>}.js` barrel shape as `write_barrel_fixture`,
+/// but with two separate consumer modules instead of one flat `src/index.js`
+/// import list:
+///
+/// - `src/consumers/esm.js`: a multi-line named `import { ... } from '...'`
+///   requesting `esm_used`'s names, with a trailing comma before the
+///   closing brace and an inline `//` comment on one binding line.
+/// - `src/consumers/cjs.js`: `const icons = require('...');` followed by
+///   several unrelated statements, then property accesses
+///   (`icons.Icon<n>`) requesting `cjs_used`'s names many lines after the
+///   binding.
+///
+/// `src/index.js` reaches both consumers via plain side-effect imports.
+fn write_multiconsumer_barrel_fixture(
+    dir: &Path,
+    leaf_count: usize,
+    esm_used: &[usize],
+    cjs_used: &[usize],
+) {
+    let icons_dir = dir.join("src/icons");
+    fs::create_dir_all(&icons_dir).expect("create src/icons dir");
+    for i in 0..leaf_count {
+        fs::write(
+            icons_dir.join(format!("Icon{i}.js")),
+            format!("export const Icon{i} = 'ICON_{i}_MARKER';\n"),
+        )
+        .unwrap_or_else(|e| panic!("write Icon{i}.js: {e}"));
+    }
+    let barrel: String = (0..leaf_count)
+        .map(|i| format!("export {{ Icon{i} }} from './Icon{i}.js';\n"))
+        .collect();
+    fs::write(icons_dir.join("index.js"), barrel).expect("write icons/index.js");
+
+    let consumers_dir = dir.join("src/consumers");
+    fs::create_dir_all(&consumers_dir).expect("create src/consumers dir");
+
+    let mut esm_body = "import {\n".to_string();
+    for (idx, i) in esm_used.iter().enumerate() {
+        if idx == 1 {
+            esm_body.push_str(&format!("  Icon{i}, // used across the dashboard\n"));
+        } else {
+            esm_body.push_str(&format!("  Icon{i},\n"));
+        }
+    }
+    esm_body.push_str("} from '../icons/index.js';\n\nconsole.log(");
+    esm_body.push_str(
+        &esm_used
+            .iter()
+            .map(|i| format!("Icon{i}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    esm_body.push_str(");\n");
+    fs::write(consumers_dir.join("esm.js"), esm_body).expect("write consumers/esm.js");
+
+    let mut cjs_body = "const icons = require('../icons/index.js');\n".to_string();
+    for n in 1..=9 {
+        cjs_body.push_str(&format!("function noop{n}() {{}}\n"));
+    }
+    for i in cjs_used {
+        cjs_body.push_str(&format!("console.log(icons.Icon{i});\n"));
+    }
+    fs::write(consumers_dir.join("cjs.js"), cjs_body).expect("write consumers/cjs.js");
+
+    fs::write(
+        dir.join("src/index.js"),
+        "import './consumers/esm.js';\nimport './consumers/cjs.js';\n",
+    )
+    .expect("write src/index.js");
+}
+
+/// #1991 round 2 corpus-shape regression: the real-corpus import shape
+/// round 1 missed. A 500-leaf pure barrel is reached only through (a) a
+/// multi-line named ESM import (trailing comma + inline comment) demanding
+/// 3 names, and (b) a CJS `require()` consumer whose property accesses sit
+/// many lines after the binding, demanding 2 more — 5 demanded names total,
+/// 495 undemanded leaves. Before this fix, `barrel_demand_for_specifier`
+/// scanned `source.lines()` directly and found no specifier match at all on
+/// the multi-line import's own physical lines, escalating the whole barrel
+/// to full (0 skipped, not 495).
+#[test]
+fn lazy_crawl_handles_multiline_and_cjs_consumers_corpus_shape() -> Result<()> {
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let dir = tmp.path();
+    let leaf_count = 500;
+    let esm_used = [0usize, 1, 2];
+    let cjs_used = [3usize, 4];
+    write_multiconsumer_barrel_fixture(dir, leaf_count, &esm_used, &cjs_used);
+
+    let output = run_build(dir, &[("JET_BUNDLE_TIMING", "1")])?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let timing_line = stderr
+        .lines()
+        .find(|l| l.contains("lazy-barrels:"))
+        .unwrap_or_else(|| panic!("no lazy-barrels timing line in stderr:\n{stderr}"));
+    let skipped: usize = timing_line
+        .rsplit_once("detected, ")
+        .and_then(|(_, tail)| tail.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("could not parse skipped-leaf count from: {timing_line}"));
+
+    let expected_skipped = leaf_count - esm_used.len() - cjs_used.len();
+    assert_eq!(
+        skipped, expected_skipped,
+        "expected exactly {expected_skipped} skipped barrel leaves (leaf_count \
+         {leaf_count} - 5 demanded), got {skipped} from timing line: {timing_line}"
+    );
+
+    // The smell this round fixes: a barrel with known consumers must never
+    // report `no-demand-recorded` in the escalation-reason instrumentation.
+    assert!(
+        !stderr.contains("no-demand-recorded"),
+        "barrel with real, demand-recorded consumers must not show \
+         no-demand-recorded in the escalation report:\n{stderr}"
+    );
+
+    let dist = dir.join("dist");
+    let entry_path = find_entry_file(&dist);
+    let entry_js = fs::read_to_string(&entry_path)
+        .with_context(|| format!("read entry file {entry_path:?}"))?;
+    let expected: BTreeSet<usize> = esm_used.iter().chain(cjs_used.iter()).copied().collect();
+    let markers = find_icon_marker_indices(&entry_js);
+    assert_eq!(
+        markers, expected,
+        "built entry must contain exactly the 5 demanded markers, no more, no fewer"
+    );
+
+    Ok(())
+}
+
+/// Lazy/eager agreement for the same multi-consumer corpus shape (round-1's
+/// comparison style — see `lazy_and_eager_crawl_agree_on_used_module_output`
+/// above for why whole-file byte equality is not the right bar in general).
+///
+/// Unlike the AC1 fixture above, this shape's lazy and eager entries land on
+/// the *same* byte count rather than lazy being strictly smaller: with only
+/// 5 used leaves out of 500, `apply_tree_shaking`'s reachability-from-entry
+/// pass (walking pruned `require()` edges) already discards every
+/// un-demanded leaf module eager crawled but never referenced post-pruning,
+/// so both modes converge on an identical surviving-module set and stub
+/// layout for this particular used/leaf-count shape — a case of AC3's own
+/// "entry bytes unchanged ... or better" bar landing on "unchanged" rather
+/// than "better". That's a downstream tree-shaking characteristic, not a
+/// round-2 regression: the crawl-time savings this round adds are proven by
+/// the skip-count/no-demand-recorded assertions in the sibling test above,
+/// and by the used/marker-set and per-leaf content agreement asserted below.
+#[test]
+fn lazy_and_eager_agree_on_multiline_and_cjs_consumer_corpus_shape() -> Result<()> {
+    let leaf_count = 500;
+    let esm_used = [0usize, 1, 2];
+    let cjs_used = [3usize, 4];
+
+    let lazy_tmp = tempfile::tempdir().context("tempdir (lazy)")?;
+    write_multiconsumer_barrel_fixture(lazy_tmp.path(), leaf_count, &esm_used, &cjs_used);
+    run_build(lazy_tmp.path(), &[])?;
+
+    let eager_tmp = tempfile::tempdir().context("tempdir (eager)")?;
+    write_multiconsumer_barrel_fixture(eager_tmp.path(), leaf_count, &esm_used, &cjs_used);
+    run_build(eager_tmp.path(), &[("JET_EAGER_BARRELS", "1")])?;
+
+    let lazy_entry_path = find_entry_file(&lazy_tmp.path().join("dist"));
+    let eager_entry_path = find_entry_file(&eager_tmp.path().join("dist"));
+    let lazy_js = fs::read_to_string(&lazy_entry_path)
+        .with_context(|| format!("read lazy entry {lazy_entry_path:?}"))?;
+    let eager_js = fs::read_to_string(&eager_entry_path)
+        .with_context(|| format!("read eager entry {eager_entry_path:?}"))?;
+
+    let expected: BTreeSet<usize> = esm_used.iter().chain(cjs_used.iter()).copied().collect();
+    let lazy_markers = find_icon_marker_indices(&lazy_js);
+    let eager_markers = find_icon_marker_indices(&eager_js);
+    assert_eq!(
+        lazy_markers, expected,
+        "lazy crawl entry output has the wrong marker set"
+    );
+    assert_eq!(
+        eager_markers, expected,
+        "eager crawl entry output has the wrong marker set"
+    );
+
+    for i in expected {
+        let leaf_line =
+            format!("const Icon{i} = 'ICON_{i}_MARKER';; module.exports[\"Icon{i}\"] = Icon{i};");
+        assert!(
+            lazy_js.contains(&leaf_line),
+            "lazy entry missing expected Icon{i} transformed code line: {leaf_line}"
+        );
+        assert!(
+            eager_js.contains(&leaf_line),
+            "eager entry missing expected Icon{i} transformed code line: {leaf_line}"
+        );
+    }
+
+    assert!(
+        lazy_js.len() <= eager_js.len(),
+        "expected lazy entry ({} bytes) to be no larger than eager entry ({} bytes) \
+         for a 500-leaf/5-used multi-consumer barrel (AC3: unchanged-or-better)",
+        lazy_js.len(),
+        eager_js.len()
+    );
+
+    Ok(())
+}
 // HANDWRITE-END

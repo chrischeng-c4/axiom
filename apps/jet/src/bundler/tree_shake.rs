@@ -493,7 +493,81 @@ fn extract_single_export_name(line: &str) -> Option<String> {
     None
 }
 
+/// Strips a trailing `//` line comment from `line`, honoring single- and
+/// double-quoted string literals so a `//` inside a specifier string (e.g.
+/// `from 'https://example.com/x'`) is never mistaken for a comment start.
+/// Only used while [`logical_import_lines`] accumulates a still-open
+/// multi-line import statement (#1991 round 2) — a physical line's own
+/// trailing comment (`  IconC, // used across the dashboard`) must not glue
+/// onto the next accumulated binding with no separator.
+fn strip_line_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'/' if !in_single && !in_double && i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                return &line[..i];
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    line
+}
+
+/// Re-groups `source` into logical import lines: a single-line statement (or
+/// any non-`import` line) passes through borrowed and unchanged, but an
+/// `import` line whose binding list and `from '<specifier>'` clause are
+/// split across physical lines (prettier's default wrapping for 3+ named
+/// imports — `import {\n  A,\n  B,\n} from '...';`) is joined into one
+/// owned logical line before [`extract_specifier`]/[`extract_imported_names`]
+/// ever see it (#1991 round 2). Accumulation stops as soon as
+/// [`extract_specifier`] finds a quoted specifier, so it uses the exact same
+/// "last quoted substring on the line" termination signal the two extractors
+/// already rely on. An unterminated/truncated statement (no `from '<spec>'`
+/// before EOF) yields one specifier-less logical line instead of looping
+/// forever, leaving classification of that shape to the caller.
+pub(crate) fn logical_import_lines(source: &str) -> Vec<std::borrow::Cow<'_, str>> {
+    use std::borrow::Cow;
+
+    let mut out: Vec<Cow<'_, str>> = Vec::new();
+    let mut lines = source.lines();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("import ") || !extract_specifier(trimmed).is_empty() {
+            out.push(Cow::Borrowed(line));
+            continue;
+        }
+
+        let mut joined = strip_line_comment(line).trim().to_string();
+        while extract_specifier(&joined).is_empty() {
+            let Some(next_line) = lines.next() else {
+                break;
+            };
+            let next_trimmed = strip_line_comment(next_line).trim();
+            if !next_trimmed.is_empty() {
+                joined.push(' ');
+                joined.push_str(next_trimmed);
+            }
+        }
+        out.push(Cow::Owned(joined));
+    }
+
+    out
+}
+
 /// Extract ESM import bindings: returns (target_module_path, imported names).
+///
+/// Scans [`logical_import_lines`] rather than `source.lines()` directly so a
+/// multi-line `import { ... } from '...'` statement — whose binding names
+/// never share a physical line with the `from` clause — still resolves to
+/// its specifier and names instead of being silently skipped (#1991 round
+/// 2).
 fn extract_import_bindings(
     importer: &Path,
     source: &str,
@@ -506,7 +580,7 @@ fn extract_import_bindings(
     // module source with a fresh `find` per candidate name.
     let mut word_index: Option<HashMap<&str, usize>> = None;
 
-    for line in source.lines() {
+    for line in logical_import_lines(source) {
         let trimmed = line.trim();
         if !trimmed.starts_with("import ") {
             continue;
@@ -660,6 +734,112 @@ mod binding_usage_tests {
             count_word_occurrences("a.elementAcceptingRef()", "elementAcceptingRef"),
             1
         );
+    }
+}
+
+/// #1991 round 2: multi-line ESM import statements — prettier's default
+/// wrapping for 3+ named imports puts the binding list and the `from`
+/// clause on different physical lines, and neither the crawl-time barrel
+/// demand scanner (`bundler::barrel_demand_for_specifier`) nor
+/// [`extract_import_bindings`] handled that before this fix.
+#[cfg(test)]
+mod multiline_import_1991_tests {
+    use super::{extract_imported_names, extract_specifier, logical_import_lines};
+
+    #[test]
+    fn multiline_named_import_joins_into_one_logical_line() {
+        let src =
+            "import {\n  IconA,\n  IconB,\n} from '@lib/barrel';\nconsole.log(IconA, IconB);\n";
+        let lines = logical_import_lines(src);
+        let import_line = lines
+            .iter()
+            .find(|l| l.trim_start().starts_with("import "))
+            .expect("no logical import line found");
+        assert_eq!(extract_specifier(import_line), "@lib/barrel");
+        let mut names = extract_imported_names(import_line);
+        names.sort();
+        assert_eq!(names, vec!["IconA".to_string(), "IconB".to_string()]);
+    }
+
+    #[test]
+    fn multiline_named_import_trailing_comma_drops_empty_token() {
+        let src = "import {\n  IconA,\n  IconB,\n} from '@lib/barrel';\n";
+        let lines = logical_import_lines(src);
+        let names = extract_imported_names(&lines[0]);
+        assert_eq!(
+            names,
+            vec!["IconA".to_string(), "IconB".to_string()],
+            "trailing comma before the closing brace must not produce an empty name"
+        );
+    }
+
+    #[test]
+    fn multiline_named_import_inline_comment_does_not_corrupt_next_name() {
+        let src = "import {\n  IconA, // used on the dashboard\n  IconB,\n} from '@lib/barrel';\n";
+        let lines = logical_import_lines(src);
+        let mut names = extract_imported_names(&lines[0]);
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["IconA".to_string(), "IconB".to_string()],
+            "an inline comment on a binding line must not glue onto the next binding"
+        );
+    }
+
+    #[test]
+    fn multiline_mixed_default_and_named_import_returns_both() {
+        let src = "import Default, {\n  IconA,\n  IconB,\n} from '@lib/barrel';\n";
+        let lines = logical_import_lines(src);
+        let mut names = extract_imported_names(&lines[0]);
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "IconA".to_string(),
+                "IconB".to_string(),
+                "default".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn single_line_import_is_borrowed_unchanged() {
+        let src = "import { IconA, IconB } from '@lib/barrel';\nconsole.log(IconA, IconB);\n";
+        let lines = logical_import_lines(src);
+        assert_eq!(lines.len(), 2, "single-line source must not be re-joined");
+        assert!(
+            matches!(lines[0], std::borrow::Cow::Borrowed(_)),
+            "a single-line import must stay zero-copy borrowed"
+        );
+        assert_eq!(
+            lines[0].as_ref(),
+            "import { IconA, IconB } from '@lib/barrel';"
+        );
+        assert_eq!(lines[1].as_ref(), "console.log(IconA, IconB);");
+    }
+
+    #[test]
+    fn require_call_line_is_never_treated_as_multiline() {
+        // A `require(...)` line never starts with `import `, so it must
+        // always pass straight through — proves the multi-line
+        // accumulation is scoped to `import ` lines only.
+        let src = "const icons = require('@lib/barrel');\nconsole.log(icons.IconA);\n";
+        let lines = logical_import_lines(src);
+        assert_eq!(lines.len(), 2);
+        assert!(matches!(lines[0], std::borrow::Cow::Borrowed(_)));
+        assert_eq!(lines[0].as_ref(), "const icons = require('@lib/barrel');");
+    }
+
+    #[test]
+    fn unterminated_multiline_import_yields_specifier_less_logical_line() {
+        // A malformed/truncated statement (no terminating `from '<spec>'`
+        // before EOF) must not panic or infinite-loop — it yields one
+        // logical line whose specifier is empty, for the caller's own
+        // fallback classification (#1991 round 2's `UnparseableImport`).
+        let src = "import {\n  IconA,\n  IconB,\n";
+        let lines = logical_import_lines(src);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(extract_specifier(&lines[0]), "");
     }
 }
 
@@ -2583,6 +2763,56 @@ const internal = 2;
         assert!(
             result.eliminated_modules.contains(&unused),
             "sideEffects:false package metadata must allow unused module elimination"
+        );
+    }
+
+    #[test]
+    fn test_analyze_multiline_named_import_marks_leaf_exports_used() {
+        // #1991 round 2: a multi-line `import { ... } from '...'`
+        // (prettier's default wrapping for 3+ named imports) must mark its
+        // target leaf modules' exports as used exactly like the
+        // single-line-equivalent form. Before this fix,
+        // `extract_import_bindings` scanned `source.lines()` directly and
+        // silently produced zero edges for a specifier whose binding list
+        // and `from` clause never share a physical line — wrongly treating
+        // a barrel (and its whole leaf subtree) as unreached from a real,
+        // multi-line-only consumer.
+        let entry = PathBuf::from("/fixture/entry.js");
+        let barrel = PathBuf::from("/fixture/barrel.js");
+        let leaf_a = PathBuf::from("/fixture/leaf_a.js");
+        let leaf_b = PathBuf::from("/fixture/leaf_b.js");
+        let modules = vec![
+            (
+                entry.clone(),
+                "import {\n  LeafA,\n  LeafB,\n} from './barrel.js';\nconsole.log(LeafA, LeafB);\n"
+                    .to_string(),
+            ),
+            (
+                barrel.clone(),
+                "export { LeafA } from './leaf_a.js';\nexport { LeafB } from './leaf_b.js';\n"
+                    .to_string(),
+            ),
+            (leaf_a.clone(), "export const LeafA = 'A';\n".to_string()),
+            (leaf_b.clone(), "export const LeafB = 'B';\n".to_string()),
+        ];
+
+        let result = analyze_used_exports_from(&modules, &entry, None).unwrap();
+
+        assert!(
+            result
+                .used_exports
+                .get(&leaf_a)
+                .is_some_and(|names| names.contains("LeafA")),
+            "multi-line-imported LeafA must be marked used, got: {:?}",
+            result.used_exports.get(&leaf_a)
+        );
+        assert!(
+            result
+                .used_exports
+                .get(&leaf_b)
+                .is_some_and(|names| names.contains("LeafB")),
+            "multi-line-imported LeafB must be marked used, got: {:?}",
+            result.used_exports.get(&leaf_b)
         );
     }
 
