@@ -145,3 +145,27 @@ flowchart TD
     r3[R3 single char and empty edge cases] --> cargo_test_p_lumen_lib_tokenize_tests_jieba_fallback_single_cjk_char[cargo test -p lumen --lib tokenize::tests::jieba_fallback_single_cjk_char]
     r4[R4 other analyzers unaffected] --> cargo_test_p_lumen_lib_tokenize[cargo test -p lumen --lib tokenize]
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: jieba-bigram-fallback-cjk-match
+    name: "jieba no-feature CJK bigram match e2e"
+    runner: cargo
+    path: apps/lumen/tests/jieba_bigram_fallback_e2e.rs
+    command: "cargo test -p lumen --test jieba_bigram_fallback_e2e -- --nocapture"
+    verifies:
+      - "Default build (jieba feature OFF): create a collection with a text field declared analyzer: jieba."
+      - "Index a document whose value is 北京大學 into that field."
+      - "A match query for 北京 over the HTTP API returns the indexed document (AC5) — fails before this change since the old whole-string fallback only matched the exact string."
+      - "A match query for the full 北京大學 string still returns the document (whole-value bigram coverage, no regression)."
+  - id: jieba-bigram-fallback-regression
+    name: "lumen package regression under default (jieba-off) feature set"
+    runner: cargo
+    path: apps/lumen
+    command: "cargo test -p lumen"
+    verifies:
+      - "The package compiles and the full Lumen regression suite (including WhitespaceLower, Ngram, and jieba-off fallback tests) stays green under the default feature set."
+```
