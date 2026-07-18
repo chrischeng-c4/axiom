@@ -178,6 +178,68 @@ macro_rules! icf_guard {
 
 // ── Module Management ──
 
+/// Native modules that CPython itself exposes with NO `__file__` attribute
+/// (frozen/statically-linked builtins — `hasattr(sys, '__file__')` is False
+/// in real CPython 3.12). Verified via a live python3.12.11 survey of every
+/// name mamba registers natively (#1961). Every other Rust-native module
+/// gets a stable synthetic `__file__` string from `default_native_module_file`
+/// instead, so `type(mod.__file__)` matches CPython even though mamba
+/// doesn't vendor real source for it.
+const NATIVE_MODULES_WITHOUT_FILE: &[&str] = &[
+    "_codecs",
+    "_operator",
+    "_thread",
+    "_weakref",
+    "atexit",
+    "builtins",
+    "errno",
+    "faulthandler",
+    "gc",
+    "itertools",
+    "marshal",
+    "posix",
+    "pwd",
+    "sys",
+    "time",
+    // `__main__` isn't a real stdlib module: this registry entry
+    // (main_mod.rs) is a static placeholder disconnected from whatever
+    // script is actually running — the live entry script's `__name__` /
+    // `__file__` globals are seeded separately in driver/mod.rs. A
+    // synthetic path here would assert a fixed file regardless of the real
+    // script, so it stays None like an unexecuted module.
+    "__main__",
+];
+
+/// Default `__file__` string for a natively (Rust-)implemented stdlib module
+/// that doesn't already set its own explicit `__file__` in `attrs` (a few
+/// modules — e.g. idlelib, doctest — do; `mb_module_register` never
+/// overwrites an explicit value already present in `attrs`).
+///
+/// CPython parity: most stdlib modules, even C-accelerated ones, have a
+/// real `__file__` str; only the curated `NATIVE_MODULES_WITHOUT_FILE` set
+/// omits it entirely. mamba can't report a real on-disk path for a module
+/// it reimplements natively, so it fabricates a stable, guaranteed
+/// nonexistent-on-disk `.py` path — enough to satisfy `str(mod.__file__)` /
+/// `os.path.dirname(...)` / concatenation idioms.
+///
+/// Deliberately surfaced only through `attrs["__file__"]`, NEVER wired into
+/// `MbModule.file`: that field pulls double duty as "this module is
+/// reloadable from disk" (`mb_import`'s cache-hit path evicts+re-`find_module`s
+/// a cached entry iff `file.is_some()` and the name was dropped from
+/// `sys.modules`; `module_package_dirs` walks `file`'s parent as a package
+/// search root). Native modules have no real file to reload from or search
+/// under, so `file` must stay `None` regardless of what `__file__` reports
+/// (#1961 — an earlier attempt at this fix wired the synthetic path into
+/// `file` directly and broke first-import of every native module via that
+/// eviction path: `ModuleNotFoundError` on `import re`/etc.).
+fn default_native_module_file(name: &str) -> Option<String> {
+    if NATIVE_MODULES_WITHOUT_FILE.contains(&name) {
+        None
+    } else {
+        Some(format!("/mamba-stdlib/{}.py", name.replace('.', "/")))
+    }
+}
+
 /// Register a module in the global registry.
 ///
 /// Dotted module names (`email.message`, `xml.sax.handler`) also propagate a
@@ -185,7 +247,7 @@ macro_rules! icf_guard {
 /// `email.message` resolves cleanly through attribute access. CPython's
 /// import machinery does this automatically when the submodule loads; here
 /// we mirror it because the stdlib stubs register the dotted names eagerly.
-pub fn mb_module_register(name: &str, attrs: HashMap<String, MbValue>) {
+pub fn mb_module_register(name: &str, mut attrs: HashMap<String, MbValue>) {
     // Register native module functions' __name__ / __module__ so introspection
     // works: time.time.__name__ == "time", time.time.__module__ == "time".
     // (For a top-level module function __qualname__ == __name__, handled by the
@@ -200,6 +262,17 @@ pub fn mb_module_register(name: &str, attrs: HashMap<String, MbValue>) {
             super::closure::mb_func_set_module(
                 *val,
                 MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+        }
+    }
+    // #1961: give every native module a CPython-shaped `__file__` (str, not
+    // None) unless it's a curated omit-case or the module already set its
+    // own explicit value (idlelib, doctest).
+    if !attrs.contains_key("__file__") {
+        if let Some(path) = default_native_module_file(name) {
+            attrs.insert(
+                "__file__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(path)),
             );
         }
     }
@@ -238,13 +311,27 @@ fn propagate_submodule_to_parents(full_name: &str) {
             let mut map = mods.borrow_mut();
             // Auto-create the parent as a package if it doesn't exist yet —
             // some stdlib stubs register only the leaf (`email.mime.text`)
-            // without explicitly registering every intermediate.
-            map.entry(parent.clone()).or_insert_with(|| MbModule {
-                name: parent.clone(),
-                file: None,
-                attrs: HashMap::new(),
-                is_package: true,
-                cached_value: None,
+            // without explicitly registering every intermediate. Gets the
+            // same synthetic `__file__` default as an explicit registration
+            // (#1961) — an explicit later `register_module(parent, ...)`
+            // still wins by unconditionally overwriting this entry. `file`
+            // stays `None` (not wired to `.file`, see
+            // `default_native_module_file`'s doc comment).
+            map.entry(parent.clone()).or_insert_with(|| {
+                let mut attrs = HashMap::new();
+                if let Some(path) = default_native_module_file(&parent) {
+                    attrs.insert(
+                        "__file__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str(path)),
+                    );
+                }
+                MbModule {
+                    name: parent.clone(),
+                    file: None,
+                    attrs,
+                    is_package: true,
+                    cached_value: None,
+                }
             });
             let leaf_val = map.get(&leaf_full).map(module_to_value);
             if let (Some(parent_mod), Some(val)) = (map.get_mut(&parent), leaf_val) {
