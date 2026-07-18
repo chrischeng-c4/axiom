@@ -3305,6 +3305,126 @@ pub(crate) fn instance_new_default(class_name: MbValue, args_list: MbValue) -> M
     instance_new_with_init_impl(class_name, args_list, None, true)
 }
 
+/// Kwargs-aware sibling of `instance_new_default` (#1951): `super().__call__(
+/// *args, **kwargs)` forwarding from a user metaclass must bind `kwargs` by
+/// name into `__init__` (CPython `z=9`), not flatten it into the positional
+/// arg list the way the pre-existing "Legacy fallback" trailing-append
+/// convention did — that landed the whole dict in `__init__`'s next
+/// positional/kw-only slot (mamba `z={'z': 9}`) since `instance_new_default`
+/// hardcodes its own kwargs to `None`. See `super_type_call_bypass_target`
+/// for the caller-side detection of exactly this shape.
+pub(crate) fn instance_new_default_kwargs(
+    class_name: MbValue,
+    args_list: MbValue,
+    kwargs_dict: MbValue,
+) -> MbValue {
+    instance_new_with_init_impl(class_name, args_list, Some(kwargs_dict), true)
+}
+
+/// #1951: does `receiver` (expected to be a `__super__` proxy) resolve
+/// `"__call__"` to `type`'s default instance-creation bypass — the shape
+/// `mb_call_method`'s `__super__` proxy arm (this file, the
+/// `class_name == "__super__"` branch) itself resolves to
+/// `instance_new_default`, either directly (the `instance_class.is_empty()`
+/// metaclass-context arm's own `name == "__call__"` case) or indirectly via
+/// `super_builtin_native_method`'s `SUPER_TYPE_CALL_METHOD` sentinel (#1525)
+/// once `mb_call_spread` unwraps that bound native method back into
+/// `mb_call_method`. Verified against the real `__super__` dispatch code by
+/// direct trace: `super_class="Meta"`, `super_self=C`, and after
+/// `super_dispatch_class` redirects `instance_class` from `"C"` to
+/// `"Meta"` (matching `super_class`), the non-empty path's
+/// `super_builtin_native_method("Meta", "Meta", "__call__", C)` returns the
+/// `SUPER_TYPE_CALL_METHOD`-tagged bound method that
+/// `mb_call_method`'s sentinel check turns into `instance_new_default(C,
+/// args)`. Re-derives both detections via the same
+/// `super_dispatch_class`/`lookup_method_after`/`super_builtin_native_method`
+/// primitives `mb_call_method` uses (rather than sharing code with that
+/// much larger, more delicate match arm) so `mb_call_method_kwargs`'s
+/// "Legacy fallback" can consult it up front — before the kwargs dict gets
+/// flattened into a trailing positional element — and hand
+/// `instance_new_default` a REAL kwargs dict instead. Returns the `cls`
+/// value to instantiate (`super_self`) only for that exact shape; `None`
+/// for anything else (not a super proxy, regular non-metaclass
+/// `super().__call__()` forwarding, `__new__`, or a real inherited
+/// parent-metaclass override exists) — callers should keep their existing
+/// positional-only handling for those.
+fn super_type_call_bypass_target(receiver: MbValue) -> Option<MbValue> {
+    let ptr = receiver.as_ptr()?;
+    let (super_class, super_self) = unsafe {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "__super__" => {
+                let fields_guard = fields.read().unwrap();
+                let super_class = fields_guard
+                    .get("__super_class__")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_default();
+                let super_self = fields_guard
+                    .get("__super_self__")
+                    .copied()
+                    .unwrap_or(MbValue::none());
+                (super_class, super_self)
+            }
+            _ => return None,
+        }
+    };
+    let (instance_class, class_context) = if let Some(self_ptr) = super_self.as_ptr() {
+        unsafe {
+            match &(*self_ptr).data {
+                ObjData::Instance { class_name, .. } if class_name == "type" => {
+                    (resolve_class_name(super_self).unwrap_or_default(), true)
+                }
+                ObjData::Instance { class_name, .. } => (class_name.clone(), false),
+                ObjData::Str(name) => (name.clone(), true),
+                _ => (String::new(), false),
+            }
+        }
+    } else {
+        (String::new(), false)
+    };
+    let instance_class = super_dispatch_class(instance_class, &super_class, class_context);
+    if instance_class.is_empty() {
+        // Mirrors the `instance_class.is_empty()` metaclass-context arm:
+        // only its `name == "__call__"` case with no inherited
+        // parent-metaclass method reaches `instance_new_default`.
+        let cls_str = resolve_class_name(super_self)?;
+        let meta = CLASS_REGISTRY
+            .with(|reg| reg.borrow().get(&cls_str).and_then(|c| c.metaclass.clone()))?;
+        let inherited = lookup_method_after(&meta, &super_class, "__call__");
+        return if inherited.is_none() {
+            Some(super_self)
+        } else {
+            None
+        };
+    }
+    // Mirrors the non-empty path: a real inherited method wins first; only
+    // the `type`-MRO-tail bypass (surfaced by `super_builtin_native_method`
+    // as the `SUPER_TYPE_CALL_METHOD` sentinel) is the `instance_new_default`
+    // shape — some other builtin `__call__` found earlier in the MRO is a
+    // real method call and must keep the existing positional handling.
+    let method = lookup_method_after(&instance_class, &super_class, "__call__");
+    if !method.is_none() {
+        return None;
+    }
+    let native =
+        super_builtin_native_method(&instance_class, &super_class, "__call__", super_self)?;
+    let native_ptr = native.as_ptr()?;
+    let is_sentinel = unsafe {
+        match &(*native_ptr).data {
+            ObjData::Instance { class_name, fields } if class_name == "__bound_native_method__" => {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("__method__")
+                    .and_then(|v| extract_str(*v))
+                    .as_deref()
+                    == Some(SUPER_TYPE_CALL_METHOD)
+            }
+            _ => false,
+        }
+    };
+    is_sentinel.then_some(super_self)
+}
+
 fn simple_namespace_subclass_inherits_native_init(name: &str) -> bool {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
@@ -3981,41 +4101,34 @@ fn instance_new_with_init_impl(
             if addr != 0 {
                 let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                 if is_registered {
-                    // Gather constructor args
-                    let mut ctor_args: Vec<MbValue> = Vec::new();
-                    if let Some(ptr) = args_list.as_ptr() {
-                        unsafe {
-                            if let ObjData::List(ref lock) = (*ptr).data {
-                                let items = lock.read().unwrap();
-                                ctor_args.extend(items.iter());
-                            }
-                        }
-                    }
-                    // Call metaclass.__call__(cls_name, ...args)
-                    // cls_name is passed as `self` (first arg) for the method.
-                    // REQ: JIT-compiled functions use SystemV/C calling convention.
-                    let result = match ctor_args.len() {
-                        0 => {
-                            let func: extern "C" fn(MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name)
-                        }
-                        1 => {
-                            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name, ctor_args[0])
-                        }
-                        2 => {
-                            let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name, ctor_args[0], ctor_args[1])
-                        }
-                        3 => {
-                            let func: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr as usize) };
-                            func(class_name, ctor_args[0], ctor_args[1], ctor_args[2])
-                        }
-                        _ => MbValue::none(),
+                    // #1951: dispatch via the generic spread-call binder
+                    // (mirrors the `custom_new_method` call a few lines
+                    // below) instead of a hand-rolled arity-keyed transmute.
+                    // The old code (a) never read `kwargs_dict` at all — the
+                    // constructor's own keyword args (e.g. `z=9` in
+                    // `C(1, 2, z=9)`) were silently dropped — and (b) picked
+                    // its transmute arity from `ctor_args.len()`, which only
+                    // matches the callee's real JIT entry arity for a
+                    // metaclass `__call__` with exactly that many fixed
+                    // positional params. The common forwarding idiom
+                    // `__call__(cls, *args, **kwargs)` has a fixed 3-slot
+                    // entry (cls, args, kwargs) regardless of call-site arg
+                    // count, so e.g. a 2-positional-arg call landed `args`
+                    // and `kwargs` on raw values (an int in each slot)
+                    // instead of a tuple/dict, surfacing downstream as
+                    // `'int' object has no attribute 'items'` when the
+                    // forwarded `super().__call__(*args, **kwargs)` tried to
+                    // read the (actually-int) kwargs mapping. Binding through
+                    // `mb_call_spread`/`mb_call_spread_kwargs` handles any
+                    // declared param shape (fixed, *args, **kwargs) the same
+                    // way every other dynamic call site does.
+                    let mut ctor_args: Vec<MbValue> = vec![class_name];
+                    ctor_args.extend(super::builtins::extract_items(args_list));
+                    let ctor_args_list = MbValue::from_ptr(MbObject::new_list(ctor_args));
+                    let result = if let Some(kw) = kwargs_dict {
+                        super::builtins::mb_call_spread_kwargs(call_method, ctor_args_list, kw)
+                    } else {
+                        super::builtins::mb_call_spread(call_method, ctor_args_list)
                     };
                     // If metaclass.__call__ returns a non-None value, use it as the instance.
                     // Otherwise fall through to default creation with __init__.
@@ -17099,6 +17212,27 @@ pub fn mb_call_method_kwargs(
             mb_call_method(receiver, method_name, args_list)
         }
         None => {
+            // #1951: `super().__call__(*args, **kwargs)` forwarding from a
+            // user metaclass's `__call__` override must reach
+            // `instance_new_default`'s default instance-creation bypass with
+            // a REAL kwargs dict bound by name, not the trailing-append
+            // convention below (see `instance_new_default_kwargs`'s doc
+            // comment for the exact symptom). Detect exactly the shape
+            // `mb_call_method`'s `__super__` proxy branch resolves to that
+            // bypass for and hand it `kwargs_dict` directly; everything else
+            // (regular non-metaclass `super().__call__()` forwarding,
+            // `__new__`, a real inherited parent-metaclass override, ...)
+            // keeps the existing trailing-append convention unchanged.
+            if name == "__call__" {
+                if let Some(cls) = super_type_call_bypass_target(receiver) {
+                    let pos_list = MbValue::from_ptr(MbObject::new_list_borrowed(pos));
+                    return if kwargs_dict_has_entries(kwargs_dict) {
+                        instance_new_default_kwargs(cls, pos_list, kwargs_dict)
+                    } else {
+                        instance_new_default(cls, pos_list)
+                    };
+                }
+            }
             // Legacy fallback: append the kwargs dict as a trailing positional
             // arg (the previous convention) and let mb_call_method handle it.
             let mut all = pos;
