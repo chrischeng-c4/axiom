@@ -36,6 +36,25 @@ indexes and GPU memory tiers.
 | Security Hardening | #769 | planned | planned | none | not_ready | collection authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #769 | partial | conformance | none | not_ready | matrix landed (parity checklist vs Milvus/Qdrant/Faiss/cuVS/pgvector); features tracked F1-F5 |
 | Competitor Performance | #769 | partial | dogfood | conformance | not_ready | pinned baseline: beam-GPU beats faiss-CPU batched flat at n>=100k (1.06-2.3x, recall 1.000); loses single-query latency |
+| Stateful Service Workload | #769 | planned | planned | none | not_ready | baseline stateful service workload projection |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Service
+Root WI: #769
+Status: confirmed
+Surfaces: Durable index, checkpoint state, and stateful replica lifecycle.
+EC Dimensions: behavior: pending stateful service workload projection
+Required Verification: smoke
+Promise:
+  Beam projects the shared stateful-service workload baseline.
+Gate Inventory:
+  - pending: apps/beam/tests/persistence.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| stateful-service-workload-projection | change | #769 | planned | planned | none | pending stateful service workload projection |
 
 ### CLI Interface
 
@@ -54,7 +73,8 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| beam-cli-shell | wi | #772 | implemented | verified | conformance | apps/beam/tests/cli_contract.rs (R1–R6 green) |
+| beam-cli-shell | change | #772 | implemented | verified | conformance | apps/beam/tests/cli_contract.rs (R1–R6 green) |
+| beam-cli-convention-and-vector-verbs | change | #772 | implemented | verified | conformance | apps/beam/tests/cli_contract.rs (R1–R6 green) |
 | beam-vector-verbs | epic | #769 | planned | planned | none | pending vector ingest/query/index verbs |
 
 ### Long-Running Stability
@@ -133,6 +153,11 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | gpu-vector-competitor-performance-baseline | epic | #769 | planned | planned | none | pending competitor performance gate |
+| four-pillar-throughput-saturation-ddd | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-ddd-zero-cost | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-gate-saturate-four-pillars | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-out-of-core-scaling | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-gpu-scaling | change | #769 | planned | planned | none | pending throughput architecture |
 
 ### GPU Vector Index
 
@@ -154,8 +179,8 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| gpu-flat-knn-wgpu-metal | slice | #769 | implemented | verified | conformance | apps/beam/tests/gpu_matches_cpu.rs (Apple M1 Max/Metal, recall 1.000) |
-| gpu-ivf-pq-ann | slice | #769 | implemented | verified | conformance | apps/beam/tests/ivf_recall.rs (IVF-flat 2.7× faster lossless; IVF-PQ ADC exact, recall tunable) |
+| gpu-flat-knn-wgpu-metal | change | #769 | implemented | verified | conformance | apps/beam/tests/gpu_matches_cpu.rs (Apple M1 Max/Metal, recall 1.000) |
+| gpu-ivf-pq-ann | change | #769 | implemented | verified | conformance | apps/beam/tests/ivf_recall.rs (IVF-flat 2.7× faster lossless; IVF-PQ ADC exact, recall tunable) |
 | gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending durable segments, memory tiers, rebuild, and GPU meter gates |
 
 ### Batch Ingest And Rebuild

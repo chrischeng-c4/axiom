@@ -1660,22 +1660,32 @@ dependencies = [
 
 [[package]]
 name = "beam"
-version = "0.4.3"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
  "bincode",
  "bytemuck",
+ "ciborium",
  "clap",
  "cli-std",
  "cudarc",
- "h2c",
  "hnsw_rs",
+ "lz4",
+ "lz4_flex",
  "pollster",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "server-lifecycle",
+ "service-auth",
+ "service-backup",
+ "service-http",
+ "storage-durable",
  "tokio",
+ "transport-h2c",
+ "utoipa",
  "wgpu",
 ]
 

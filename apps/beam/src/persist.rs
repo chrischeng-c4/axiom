@@ -90,6 +90,34 @@ pub fn load_framed<T: DeserializeOwned>(path: &Path, magic: &[u8; 8]) -> anyhow:
     bincode::deserialize_from(&mut reader).context("bincode deserialize payload")
 }
 
+/// A snapshot of the entire vector database: maps collection name to its deserialized [`Collection`](crate::collection::Collection).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct BeamSnapshot {
+    pub collections: std::collections::HashMap<String, crate::collection::Collection>,
+}
+
+impl BeamSnapshot {
+    /// Encode as CBOR + lz4 (compact binary format matching lumen).
+    pub fn encode(&self) -> anyhow::Result<Vec<u8>> {
+        let mut raw = Vec::new();
+        ciborium::into_writer(self, &mut raw)
+            .map_err(|e| anyhow::anyhow!("cbor encode BeamSnapshot: {e}"))?;
+        Ok(lz4_flex::compress_prepend_size(&raw))
+    }
+
+    /// Decode from CBOR + lz4.
+    pub fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
+        let raw = lz4_flex::decompress_size_prepended(bytes)
+            .context("lz4 decompress BeamSnapshot")?;
+        let mut snap: Self = ciborium::from_reader(&raw[..])
+            .map_err(|e| anyhow::anyhow!("cbor decode BeamSnapshot: {e}"))?;
+        for col in snap.collections.values_mut() {
+            col.rebuild_id_map();
+        }
+        Ok(snap)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

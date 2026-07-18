@@ -545,7 +545,10 @@ fn compute_pipeline(
         layout: Some(&pipeline_layout),
         module: shader,
         entry_point: Some(entry_point),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            zero_initialize_workgroup_memory: false,
+            ..Default::default()
+        },
         cache: None,
     })
 }

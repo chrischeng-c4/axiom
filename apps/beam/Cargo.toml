@@ -18,20 +18,24 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, features = ["env"] }
 # The async standard-CLI ops (`upgrade`/`issue`) are driven from a minimal
 # block_on runtime, exactly like loom — main stays sync.
 tokio = { workspace = true }
 # Standard agent-facing CLI ops — llm/upgrade/issue (the CONTRIBUTING.md CLI
 # convention). Offline paths always build; the network paths are gated behind
 # beam's online features below.
-cli-std = { path = "../../libs/cli-std", default-features = false }
+cli-std = { path = "../../libs/cli-std", default-features = false, features = ["k8s"] }
+reqwest = { workspace = true, features = ["blocking", "json"] }
 
 # --- Real GPU vector-search engine ---------------------------------------
 # GPU compute via wgpu (Metal on macOS). Pinned to the SAME major already in
 # the workspace lock (24.x) as `crates/cclab-grid-render-webgpu`, so the shared
-# Cargo.lock resolves without a second wgpu copy.
-wgpu = "24"
+# Cargo.lock resolves without a second wgpu copy. `vulkan-portability` also
+# compiles the VULKAN backend on macOS (loader + MoltenVK), so the same wgpu
+# Vulkan path NVIDIA uses can be runtime-verified on a Mac via
+# `BEAM_WGPU_BACKEND=vulkan` (see benchmark/dual-platform.md).
+wgpu = { version = "24", features = ["vulkan-portability"] }
 # f32 <-> bytes for GPU buffer uploads/readback (`Pod`/`Zeroable` derives).
 bytemuck = { version = "1", features = ["derive"] }
 # Block on wgpu's async `request_adapter` / `request_device` from sync code.
@@ -72,7 +76,17 @@ bincode = "1.3"
 # shared Cargo.lock stays single-versioned.
 axum = { workspace = true }
 serde_json = { workspace = true }
-h2c = { path = "../../libs/h2c", features = ["server"] }
+h2c = { package = "transport-h2c", path = "../../libs/transport-h2c", features = ["server"] }
+service-http = { path = "../../libs/service-http" }
+service-auth = { path = "../../libs/service-auth" }
+service-backup = { path = "../../libs/service-backup" }
+storage-durable = { path = "../../libs/storage-durable" }
+server-lifecycle = { path = "../../libs/server-lifecycle" }
+utoipa = { workspace = true, features = ["axum_extras"] }
+serde_yaml = { workspace = true }
+ciborium = "0.2"
+lz4_flex = "0.11"
+lz4 = { version = "1.24", optional = true } # (optional, if any code demands it, but lz4_flex is standard)
 
 [dev-dependencies]
 # Drive the `beam serve` REST API end-to-end from the service integration test

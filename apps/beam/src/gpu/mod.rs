@@ -45,8 +45,18 @@ impl GpuContext {
 
     async fn new_async() -> Option<Self> {
         // `Backends::PRIMARY` = Metal | Vulkan | DX12 — Metal on this Mac.
+        // `BEAM_WGPU_BACKEND=vulkan|metal|dx12|gl` narrows the selection: it
+        // forces a specific backend for cross-backend verification (e.g. the
+        // Vulkan path via MoltenVK on macOS, the same wgpu backend NVIDIA uses).
+        let backends = match std::env::var("BEAM_WGPU_BACKEND").ok().as_deref() {
+            Some("vulkan") => wgpu::Backends::VULKAN,
+            Some("metal") => wgpu::Backends::METAL,
+            Some("dx12") => wgpu::Backends::DX12,
+            Some("gl") => wgpu::Backends::GL,
+            _ => wgpu::Backends::PRIMARY,
+        };
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends,
             ..Default::default()
         });
         let adapter = instance
@@ -300,7 +310,10 @@ impl GpuFlatIndex {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -338,7 +351,10 @@ impl GpuFlatIndex {
             layout: Some(&filtered_pipeline_layout),
             module: &shader,
             entry_point: Some("main_filtered"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -377,7 +393,10 @@ impl GpuFlatIndex {
             layout: Some(&batch_pipeline_layout),
             module: &shader,
             entry_point: Some("main_batch"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -416,7 +435,10 @@ impl GpuFlatIndex {
             layout: Some(&topk_pipeline_layout),
             module: &shader,
             entry_point: Some("main_batch_topk"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -455,7 +477,10 @@ impl GpuFlatIndex {
             layout: Some(&tiled_pipeline_layout),
             module: &shader,
             entry_point: Some("main_batch_tiled"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
             cache: None,
         });
 

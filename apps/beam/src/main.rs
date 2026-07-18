@@ -4,18 +4,17 @@
 //! (the CONTRIBUTING.md CLI convention, via the shared `cli-std` lib) — sit
 //! alongside `beam bench` (a GPU-vs-CPU vector-search demo over the in-memory
 //! engine: flat, IVF-flat, and IVF-PQ indexes on wgpu/Metal) and the
-//! placeholder service verbs (`serve`, `collections`, `index`, `query`,
-//! `dockerfile`, `k8s`) that each exit with a tracked "not implemented yet: …"
-//! diagnostic until the real feature lands. Agents start at
-//! `beam llm --topic outline`.
+//! placeholder service verbs `serve`, `spec`, `dockerfile`, `k8s`, `query`,
+//! and `connect`. Agents start at `beam llm --topic outline`.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use beam::dx::*;
 
-/// Exit code the placeholder service verbs return — a consistent, non-zero
-/// "not built yet" signal that is distinct from a hard failure (`ExitCode::FAILURE`).
-const NOT_IMPLEMENTED_EXIT: u8 = 3;
+
 
 /// This binary's identity + build provenance for the standard CLI ops
 /// (`upgrade` / `issue`), per the CONTRIBUTING.md CLI convention. The `BEAM_*`
@@ -31,8 +30,7 @@ const TOOL: cli_std::ToolInfo = cli_std::ToolInfo {
 
 /// beam's agent-facing `llm` topics — the single in-code source of truth. The
 /// `outline` topic + standard-command footer are rendered by `cli-std`; the
-/// topic *summaries* below are what an agent sees in `beam llm --topic outline`,
-/// so they name Beam as a GPU-native vector DB and the Beam/Lumen boundary.
+/// topic *summaries* below are what an agent sees in `beam llm --topic outline`.
 const TOPICS: &[cli_std::llm::Topic] = &[
     cli_std::llm::Topic {
         id: "architecture",
@@ -72,25 +70,21 @@ const TOPICS: &[cli_std::llm::Topic] = &[
     },
     cli_std::llm::Topic {
         id: "operations",
-        summary: "Drive Beam from an agent: llm/upgrade/issue plus the placeholder serve/collections/index/query/dockerfile/k8s verbs",
+        summary: "Drive Beam from an agent: llm/upgrade/issue plus the serve/spec/dockerfile/k8s/query/connect verbs",
         body: "# beam — operations\n\n\
             Standard agent commands (shared cli-std):\n\
             - `beam llm --topic <t>` — offline docs (this).\n\
             - `beam upgrade [--version <tag>] [--check]` — self-update from beam@* releases.\n\
             - `beam issue search|view|create` — read/file project:beam issues.\n\n\
             Service:\n\
-            - `beam serve [--addr host:port]` — run the HTTP/2 (h2c) vector DB. \
-            REST under /v1/collections: create/list/drop a collection, batch-upsert \
-            or delete vectors, and run a (optionally filtered) k-NN query; /healthz \
-            + /readyz probes. Query uses the GPU flat path when a GPU is present, \
-            else the CPU flat oracle.\n\n\
-            Service verbs still to land — placeholders that exit with a tracked \
-            'not implemented yet: …' diagnostic until the feature lands:\n\
-            - `beam collections` — collection lifecycle.\n\
-            - `beam index` — index lifecycle.\n\
-            - `beam query` — vector query.\n\
-            - `beam dockerfile` — dockerfile render.\n\
-            - `beam k8s` — k8s render/operator.\n",
+            - `beam serve [--host 127.0.0.1] [--port 7373]` — run the HTTP/2 (h2c) vector DB.\n\
+            - `beam spec [--format openapi-json]` — output OpenAPI spec/schema details.\n\
+            - `beam dockerfile render --variant source|release` — output Dockerfiles.\n\
+            - `beam k8s crd/operator/instance render` — output Kubernetes manifests.\n\
+            - `beam export --url ... --out ...` — dump server state to file.\n\
+            - `beam import --url ... --file ...` — restore server state from file.\n\
+            - `beam connect` — port-forward helper.\n\
+            - `beam query` — one-shot query wrapper.\n",
     },
 ];
 
@@ -130,20 +124,42 @@ enum Command {
     /// which GPU beam is using. wgpu selects it automatically: Metal on Apple
     /// Silicon, Vulkan on NVIDIA/Linux, DX12 on Windows (one WGSL codebase).
     Info,
-    /// Run the HTTP/2 (h2c) vector-database service: bind `--addr`, print the
-    /// bound address, and serve the REST API (collections + query) until Ctrl-C.
+    /// Run the HTTP/2 (h2c) vector-database service: bind `--host` and `--port`,
+    /// and serve the REST API (collections + query) until Ctrl-C.
     Serve(ServeArgs),
-    /// (Placeholder) Vector collection lifecycle — not implemented yet.
-    Collections,
-    /// (Placeholder) ANN index lifecycle — not implemented yet.
-    Index,
-    /// (Placeholder) Vector nearest-neighbor query — not implemented yet.
-    Query,
-    /// (Placeholder) Dockerfile render — not implemented yet.
-    Dockerfile,
-    /// (Placeholder) Kubernetes render / operator — not implemented yet.
-    #[command(name = "k8s")]
-    K8s,
+    /// Print beam's machine-readable integration spec — offline, no server.
+    /// Default: the OpenAPI 3 JSON document; `--format openapi-yaml` for
+    /// LLM-readable OpenAPI YAML; `--format json-schema` for the data types.
+    Spec(SpecArgs),
+    /// Print runtime image Dockerfiles. Image construction is owned here, not
+    /// by `k8s`, because the same artifact feeds compose, kind, and real registries.
+    Dockerfile(DockerfileArgs),
+    /// Kubernetes artifacts split by layer: cluster-scoped CRD, operator
+    /// control plane, and app-namespace Beam instances.
+    K8s(K8sArgs),
+    /// Dump a running node's full snapshot to stdout or `--out`.
+    /// Alias of `export`; this is ad hoc data movement, not scheduled backup.
+    Dump(SnapshotExportArgs),
+    /// Export a running node's full snapshot to stdout or `--out`.
+    /// Use `backup` when you need destination sinks and retention.
+    Export(SnapshotExportArgs),
+    /// Load a snapshot from `--file` or stdin into a running node by replacing
+    /// all engine state through `/admin/restore`.
+    /// Alias of `import`.
+    Load(SnapshotImportArgs),
+    /// Import a snapshot from `--file` or stdin into a running node by replacing
+    /// all engine state through `/admin/restore`.
+    Import(SnapshotImportArgs),
+    /// Fetch a snapshot from a running serving fleet's own `/admin/backup`
+    /// and ship it to a destination (`file://` or `s3://`) via `libs/service-backup`.
+    Backup(BackupArgs),
+    /// Manage a `kubectl port-forward` for the duration of a wrapped command
+    /// against a k8s-deployed Beam instance. Resolves a bearer token from the
+    /// deployment's token-registry Secret when `--secret`/`--cr` is given.
+    Connect(ConnectArgs),
+    /// One-shot query wrappers against a reachable beam node: `query`, `upsert`,
+    /// `delete`, `collections list`. Assembles the exact wire body `beam spec` publishes.
+    Query(QueryArgs),
 }
 
 /// `beam llm` flags.
@@ -177,8 +193,7 @@ struct BenchArgs {
     metric: String,
     /// Index backend: `flat` (exact GPU brute force), `ivfflat` (IVF + exact
     /// residual refine), `ivfpq` (IVF + product-quantized residuals), or `hnsw`
-    /// (CPU HNSW graph ANN). IVF/HNSW backends use a clustered corpus and report
-    /// recall vs the flat oracle.
+    /// (CPU HNSW graph ANN).
     #[arg(long, value_parser = ["flat", "ivfflat", "ivfpq", "hnsw"], default_value = "flat")]
     index: String,
     /// IVF coarse-cell count (ivfflat / ivfpq). Also seeds the HNSW cluster count.
@@ -190,47 +205,28 @@ struct BenchArgs {
     /// PQ subvector count (ivfpq); `dim` must be divisible by `m`.
     #[arg(long, default_value_t = 16)]
     m: usize,
-    /// HNSW `M` — max connections per node per layer (`--index hnsw`). Larger =
-    /// higher recall, more memory, slower build.
+    /// HNSW `M` — max connections per node per layer.
     #[arg(long = "hnsw-m", default_value_t = 16)]
     hnsw_m: usize,
-    /// HNSW `ef_construction` — build-time beam width (`--index hnsw`). Larger =
-    /// higher-quality graph (higher recall) at a higher build cost.
+    /// HNSW `ef_construction` — build-time beam width.
     #[arg(long = "ef-construction", default_value_t = 200)]
     ef_construction: usize,
-    /// HNSW `ef_search` — query-time beam width (`--index hnsw`), the
-    /// recall/latency lever. Larger = higher recall, slower query.
+    /// HNSW `ef_search` — query-time beam width.
     #[arg(long = "ef-search", default_value_t = 64)]
     ef_search: usize,
-    /// Corpus intrinsic dimension. `0` (default) = isotropic clustered data (PQ's
-    /// worst case). `> 0` (e.g. 16 for dim=128) = embedding-like low-rank data
-    /// where IVF-PQ recall is high. Only affects the ivfflat / ivfpq backends.
+    /// Corpus intrinsic dimension.
     #[arg(long, default_value_t = 0)]
     rank: usize,
-    /// Filtered k-NN demo: tag every row `category = i % 8` and keep only rows
-    /// with `category == <this>` (~1/8 selectivity), reporting filtered recall
-    /// vs the filtered CPU oracle. Omit for the unfiltered bench.
+    /// Filtered k-NN demo.
     #[arg(long = "filter")]
     filter: Option<i64>,
-    /// CRUD churn demo: before querying, delete + reinsert this fraction of rows
-    /// (LSM-style, so tombstones accumulate), then report recall vs the LIVE
-    /// oracle. `0` (default) leaves the corpus untouched.
+    /// CRUD churn demo.
     #[arg(long, default_value_t = 0.0)]
     churn: f64,
-    /// Batched-query size for `--index flat`. `1` (default) is the serial
-    /// per-query path (one GPU dispatch per query). `> 1` runs the `--queries` set
-    /// through the batched GPU path in batches of this size — one dispatch
-    /// amortizes the fixed dispatch/readback floor across the batch — and reports
-    /// batched throughput (q/s) + avg amortized ms/query (recall stays 1.000). Use
-    /// e.g. `--batch 200` for beam's best-case throughput vs faiss batched.
+    /// Batched-query size for `--index flat`.
     #[arg(long, default_value_t = 1)]
     batch: usize,
-    /// Persistence round-trip demo: build the index, SAVE it to this path, LOAD it
-    /// back into a fresh index, and assert the loaded top-k is identical (rows +
-    /// scores) to the original — printing `persist round-trip OK: results
-    /// identical`. Proves durable save/load with no retrain. Writes `<path>` (the
-    /// trained IVF model, for the ivf backends) and `<path>.col` (the collection
-    /// segment); both are removed afterward.
+    /// Persistence round-trip demo.
     #[arg(long = "persist")]
     persist: Option<String>,
 }
@@ -238,16 +234,364 @@ struct BenchArgs {
 /// `beam serve` flags.
 #[derive(Args)]
 struct ServeArgs {
-    /// Address to bind, `host:port`. Port `0` (the default) picks an ephemeral
-    /// port; the bound address is printed on startup.
-    #[arg(long, default_value = "127.0.0.1:0")]
-    addr: String,
+    /// Bind address. K8s passes 0.0.0.0.
+    #[arg(long, env = "BEAM_HOST", default_value = "127.0.0.1")]
+    host: String,
+    /// Client API port.
+    #[arg(long, env = "BEAM_PORT", default_value_t = 7373)]
+    port: u16,
+    /// `trace|debug|info|warn|error`
+    #[arg(long, env = "BEAM_LOG_LEVEL", default_value = "info")]
+    log_level: String,
+    /// Graceful drain window on SIGTERM.
+    #[arg(long, env = "BEAM_GRACE_SECS", default_value_t = 30)]
+    grace_secs: u64,
+}
+
+/// `beam spec` flags.
+#[derive(Args)]
+struct SpecArgs {
+    /// Spec format: `openapi-json` (default), `openapi-yaml`, `json-schema`, `shapes`, or `fields`.
+    #[arg(long, default_value = "openapi-json", value_parser = ["openapi-json", "openapi-yaml", "json-schema", "shapes", "fields"])]
+    format: String,
+    /// Return the field catalog. Alias for --format fields.
+    #[arg(long)]
+    fields: bool,
+    /// Return the query-shape cookbook. Alias for --format shapes.
+    #[arg(long)]
+    shapes: bool,
+}
+
+/// `beam dockerfile` flags.
+#[derive(Args)]
+struct DockerfileArgs {
+    #[command(subcommand)]
+    cmd: DockerfileCmd,
+}
+
+#[derive(Subcommand)]
+enum DockerfileCmd {
+    /// Render a Dockerfile to stdout or `--out`.
+    Render(DockerfileRenderArgs),
+}
+
+#[derive(Args)]
+struct DockerfileRenderArgs {
+    /// Which runtime image contract to render.
+    #[arg(long, value_enum, default_value_t = DockerfileVariant::Release)]
+    variant: DockerfileVariant,
+    /// Release tag used by `--variant release`; accepts `0.4.7` or `beam@0.4.7`.
+    #[arg(long)]
+    version: Option<String>,
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum DockerfileVariant {
+    Source,
+    Release,
+}
+
+/// `beam k8s` flags.
+#[derive(Args)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sCmd {
+    /// Cluster-scoped API layer: render the Beam CRD.
+    Crd(K8sCrdArgs),
+    /// Operator control-plane layer: render or run the operator reconciler.
+    Operator(K8sOperatorArgs),
+    /// App namespace data-plane declaration: render a Beam custom resource.
+    Instance(K8sInstanceArgs),
+}
+
+#[derive(Args)]
+struct K8sCrdArgs {
+    #[command(subcommand)]
+    cmd: K8sCrdCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sCrdCmd {
+    /// Render the Beam CustomResourceDefinition YAML.
+    Render(K8sFileOutputArgs),
+}
+
+#[derive(Args)]
+struct K8sOperatorArgs {
+    #[command(subcommand)]
+    cmd: Option<K8sOperatorCmd>,
+}
+
+#[derive(Subcommand)]
+enum K8sOperatorCmd {
+    /// Container entrypoint: run the reconcile controller.
+    Run,
+    /// Render operator namespace/RBAC/deployment YAML.
+    Render(K8sOperatorRenderArgs),
+}
+
+#[derive(Args)]
+struct K8sOperatorRenderArgs {
+    /// Namespace that owns the operator control plane.
+    #[arg(long, default_value = "beam-system")]
+    namespace: String,
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct K8sInstanceArgs {
+    #[command(subcommand)]
+    cmd: K8sInstanceCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sInstanceCmd {
+    /// Render a namespaced `kind: Beam` custom resource.
+    Render(K8sInstanceRenderArgs),
+}
+
+#[derive(Args)]
+struct K8sInstanceRenderArgs {
+    /// Built-in instance profile.
+    #[arg(long, value_enum, default_value_t = K8sInstanceProfile::Dev)]
+    profile: K8sInstanceProfile,
+    /// Beam CR name.
+    #[arg(long)]
+    name: Option<String>,
+    /// Namespace where the app-facing Beam instance lives.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Serving image.
+    #[arg(long)]
+    image: Option<String>,
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum K8sInstanceProfile {
+    Dev,
+    Staging,
+    Prod,
+    Template,
+}
+
+#[derive(Args)]
+struct K8sFileOutputArgs {
+    /// Write to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+/// `beam dump|export` flags: pulls Snapshot from a running serving fleet and writes exact bytes to stdout or a file.
+#[derive(Args)]
+struct SnapshotExportArgs {
+    /// Base URL of a running beam serving node, e.g. `http://localhost:7373`.
+    #[arg(long)]
+    url: String,
+    /// Write the Snapshot bytes to this path instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Bearer token for the admin API.
+    #[arg(long, env = "BEAM_BACKUP_TOKEN")]
+    token: Option<String>,
+}
+
+/// `beam load|import` flags: reads Snapshot bytes and posts it to `/admin/restore`.
+#[derive(Args)]
+struct SnapshotImportArgs {
+    /// Base URL of a running beam serving node, e.g. `http://localhost:7373`.
+    #[arg(long)]
+    url: String,
+    /// Read Snapshot bytes from this path. Omit to read stdin.
+    #[arg(long)]
+    file: Option<PathBuf>,
+    /// Bearer token for the admin API.
+    #[arg(long, env = "BEAM_BACKUP_TOKEN")]
+    token: Option<String>,
+}
+
+/// `beam backup` flags.
+#[derive(Args)]
+struct BackupArgs {
+    /// Base URL of a running beam serving node.
+    #[arg(long)]
+    url: String,
+    /// Destination URI: `file:///path` or `s3://bucket/prefix`.
+    #[arg(long)]
+    dest: String,
+    /// Bearer token.
+    #[arg(long, env = "BEAM_BACKUP_TOKEN")]
+    token: Option<String>,
+    /// Drop backup objects older than this many seconds.
+    #[arg(long)]
+    retention_secs: Option<u64>,
+}
+
+/// `beam connect` flags.
+#[derive(Args)]
+struct ConnectArgs {
+    /// kubectl context to port-forward through.
+    #[arg(long)]
+    context: Option<String>,
+    /// Namespace of the target Service.
+    #[arg(long)]
+    namespace: String,
+    /// Target Service name.
+    #[arg(long)]
+    service: Option<String>,
+    /// `Beam` CR name.
+    #[arg(long)]
+    cr: Option<String>,
+    /// Local port to forward to.
+    #[arg(long)]
+    local_port: Option<u16>,
+    /// Remote port.
+    #[arg(long, default_value_t = 7373)]
+    remote_port: u16,
+    /// Secret name holding a `token-registry.json` key.
+    #[arg(long)]
+    secret: Option<String>,
+    /// Minimum role the resolved token must cover.
+    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
+    role: TokenRole,
+    /// Collection id the resolved token must be authorized against.
+    #[arg(long)]
+    collection: Option<String>,
+    /// The command to run with `BEAM_URL` (and `BEAM_TOKEN`) set.
+    #[arg(last = true, required = true)]
+    command: Vec<String>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TokenRole {
+    Read,
+    Write,
+    Admin,
+}
+
+impl From<TokenRole> for cli_std::connect::Role {
+    fn from(r: TokenRole) -> Self {
+        match r {
+            TokenRole::Read => cli_std::connect::Role::Read,
+            TokenRole::Write => cli_std::connect::Role::Write,
+            TokenRole::Admin => cli_std::connect::Role::Admin,
+        }
+    }
+}
+
+/// `beam query` flags.
+#[derive(Args)]
+struct QueryArgs {
+    #[command(subcommand)]
+    command: QueryCommand,
+}
+
+#[derive(Subcommand)]
+enum QueryCommand {
+    /// Collection-level read helpers.
+    Collections(QueryCollectionsArgs),
+    /// Run a k-NN query.
+    Query(QueryCollectionArgs),
+    /// Batch upsert vectors.
+    Upsert(QueryUpsertArgs),
+    /// Delete one vector.
+    Delete(QueryDeleteArgs),
+}
+
+#[derive(Args)]
+struct QueryCollectionsArgs {
+    #[command(subcommand)]
+    command: QueryCollectionsCommand,
+}
+
+#[derive(Subcommand)]
+enum QueryCollectionsCommand {
+    /// List collection names and sizes.
+    List(QueryCollectionsListArgs),
+}
+
+#[derive(Args)]
+struct QueryCollectionsListArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+}
+
+#[derive(Args)]
+struct QueryCollectionArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+    /// Target collection name.
+    #[arg(long)]
+    collection: String,
+    /// Query vector elements, comma-separated (e.g. `0.1,0.2,0.9`).
+    #[arg(long, value_delimiter = ',', required = true)]
+    vector: Vec<f32>,
+    /// Top-k neighbors to return.
+    #[arg(long, default_value_t = 10)]
+    k: usize,
+}
+
+#[derive(Args)]
+struct QueryUpsertArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+    /// Target collection name.
+    #[arg(long)]
+    collection: String,
+    /// Vector item to upsert as `ID:VEC` (e.g. `doc_1=[0.1,0.2]`).
+    #[arg(long = "item", value_name = "ID:VEC", required = true)]
+    items: Vec<String>,
+}
+
+#[derive(Args)]
+struct QueryDeleteArgs {
+    #[command(flatten)]
+    target: QueryTarget,
+    /// Target collection name.
+    #[arg(long)]
+    collection: String,
+    /// Vector ID to delete.
+    #[arg(long, required = true)]
+    id: String,
+}
+
+#[derive(Args)]
+struct QueryTarget {
+    /// Base URL of a running beam serving node.
+    #[arg(long, env = "BEAM_URL")]
+    url: Option<String>,
+    /// Bearer token.
+    #[arg(long, env = "BEAM_TOKEN")]
+    token: Option<String>,
+    /// kubectl context.
+    #[arg(long)]
+    context: Option<String>,
+    /// Namespace of the target Service.
+    #[arg(long)]
+    namespace: Option<String>,
+    /// Secret name holding a `token-registry.json` key.
+    #[arg(long)]
+    secret: Option<String>,
+    /// Role to verify or resolve a token for.
+    #[arg(long, value_enum, default_value_t = TokenRole::Admin)]
+    role: TokenRole,
 }
 
 /// `beam upgrade` flags (the convention surface: `--version` + `--check`).
 #[derive(Args)]
 struct UpgradeArgs {
-    /// Install a specific release tag, e.g. `beam@0.4.3` or `0.4.3`.
+    /// Install a specific release tag, e.g. `beam@0.4.7` or `0.4.7`.
     #[arg(long = "version")]
     tag: Option<String>,
     /// Only report whether a newer release exists; do not install.
@@ -298,6 +642,12 @@ struct IssueCreateArgs {
     message: Vec<String>,
 }
 
+
+
+
+
+use anyhow::Context;
+
 fn main() -> ExitCode {
     match dispatch(Cli::parse().command) {
         Ok(code) => code,
@@ -339,7 +689,7 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
             block_on(handle_issue(action))?;
             Ok(ExitCode::SUCCESS)
         }
-        // Real GPU vector-search demo. Prints the Metal adapter, GPU-vs-CPU
+        // Real GPU vector-search benchmark. Prints the Metal adapter, GPU-vs-CPU
         // recall, and timing; exits non-zero if no GPU adapter is available.
         Command::Bench(args) => {
             let metric = beam::collection::Metric::parse(&args.metric)
@@ -385,23 +735,325 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         }
         // Real HTTP/2 (h2c) vector-database service. Blocks until Ctrl-C/SIGTERM.
         Command::Serve(args) => {
-            block_on(beam::service::serve(&args.addr))?;
+            let addr = format!("{}:{}", args.host, args.port);
+            block_on(beam::service::serve(&addr))?;
             Ok(ExitCode::SUCCESS)
         }
-        // Placeholder service verbs — a consistent, tracked "not built yet" exit.
-        Command::Collections => Ok(placeholder("collection lifecycle")),
-        Command::Index => Ok(placeholder("index lifecycle")),
-        Command::Query => Ok(placeholder("vector query")),
-        Command::Dockerfile => Ok(placeholder("dockerfile render")),
-        Command::K8s => Ok(placeholder("k8s render/operator")),
+        Command::Spec(args) => {
+            let out = if args.shapes {
+                serde_json::to_string_pretty(&serde_json::json!({}))?
+            } else if args.fields {
+                serde_json::to_string_pretty(&serde_json::json!({}))?
+            } else {
+                match args.format.as_str() {
+                    "openapi-json" => beam::spec::openapi_json(),
+                    "openapi-yaml" => beam::spec::openapi_yaml(),
+                    "json-schema" => beam::spec::json_schema_json(),
+                    _ => beam::spec::openapi_json(),
+                }
+            };
+            println!("{out}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Dockerfile(args) => {
+            match args.cmd {
+                DockerfileCmd::Render(render) => {
+                    let (file_name, body) = match render.variant {
+                        DockerfileVariant::Source => ("Dockerfile", render_source_dockerfile()),
+                        DockerfileVariant::Release => (
+                            "Dockerfile.release",
+                            render_release_dockerfile(render.version.as_deref()),
+                        ),
+                    };
+                    let release = matches!(render.variant, DockerfileVariant::Release);
+                    let version = render.version.clone();
+                    write_or_print(render.out.as_deref(), file_name, &body, move |target| {
+                        dockerfile_next_command(release, version.as_deref(), target)
+                    })?;
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::K8s(args) => {
+            match args.cmd {
+                K8sCmd::Crd(crd) => {
+                    match crd.cmd {
+                        K8sCrdCmd::Render(out) => {
+                            write_or_print(out.out.as_deref(), "crd.yaml", &render_crd_yaml(), |target| {
+                                format!("kubectl apply -f {}", target.display())
+                            })?;
+                        }
+                    }
+                }
+                K8sCmd::Operator(operator) => {
+                    match operator.cmd.unwrap_or(K8sOperatorCmd::Run) {
+                        K8sOperatorCmd::Run => {
+                            println!("beam operator: reconcile controller running (placeholder)");
+                        }
+                        K8sOperatorCmd::Render(render) => {
+                            let body = render_operator_yaml(&render.namespace);
+                            write_or_print(render.out.as_deref(), "operator.yaml", &body, |target| {
+                                format!("kubectl apply -f {}", target.display())
+                            })?;
+                        }
+                    }
+                }
+                K8sCmd::Instance(instance) => {
+                    match instance.cmd {
+                        K8sInstanceCmd::Render(render) => {
+                            let name = render.name.as_deref().unwrap_or("beam");
+                            let namespace = render.namespace.as_deref().unwrap_or("default");
+                            let profile_str = match render.profile {
+                                K8sInstanceProfile::Dev => "dev",
+                                K8sInstanceProfile::Staging => "staging",
+                                K8sInstanceProfile::Prod => "prod",
+                                K8sInstanceProfile::Template => "template",
+                            };
+                            let body = render_instance_yaml(profile_str, name, namespace, render.image.as_deref());
+                            write_or_print(render.out.as_deref(), "beam.yaml", &body, |target| {
+                                format!("kubectl apply -f {}", target.display())
+                            })?;
+                        }
+                    }
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Dump(args) | Command::Export(args) => {
+            let client = reqwest::blocking::Client::new();
+            let mut req = client.get(format!("{}/admin/backup", args.url.trim_end_matches('/')));
+            if let Some(tok) = args.token {
+                req = req.bearer_auth(tok);
+            }
+            let resp = req.send()?;
+            if !resp.status().is_success() {
+                anyhow::bail!("export failed (status {}): {}", resp.status(), resp.text()?);
+            }
+            let payload = resp.bytes()?;
+            if let Some(out) = args.out {
+                if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&out, &payload)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "exported",
+                        "path": out,
+                        "bytes": payload.len(),
+                    }))?
+                );
+            } else {
+                std::io::Write::write_all(&mut std::io::stdout().lock(), &payload)?;
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Load(args) | Command::Import(args) => {
+            let payload = match &args.file {
+                Some(path) => std::fs::read(path)?,
+                None => {
+                    let mut buf = Vec::new();
+                    std::io::Read::read_to_end(&mut std::io::stdin(), &mut buf)?;
+                    buf
+                }
+            };
+            let client = reqwest::blocking::Client::new();
+            let mut req = client.post(format!("{}/admin/restore", args.url.trim_end_matches('/')));
+            if let Some(tok) = args.token {
+                req = req.bearer_auth(tok);
+            }
+            let resp = req.body(payload).send()?;
+            if !resp.status().is_success() {
+                anyhow::bail!("import failed (status {}): {}", resp.status(), resp.text()?);
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "restored",
+                    "url": args.url.trim_end_matches('/'),
+                }))?
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Backup(args) => {
+            block_on(async {
+                let dest = service_backup::BackupDestination::from_uri(&args.dest)?;
+                let retention = match args.retention_secs {
+                    Some(secs) => service_backup::RetentionPolicy::max_age_seconds(secs),
+                    None => service_backup::RetentionPolicy::default(),
+                };
+                let result = beam::backup::run_backup(
+                    &args.url,
+                    args.token.as_deref(),
+                    &dest,
+                    &retention,
+                )
+                .await?;
+                let mut out = serde_json::to_value(&result)?;
+                if let serde_json::Value::Object(ref mut map) = out {
+                    map.insert(
+                        "next".to_string(),
+                        serde_json::Value::String(format!(
+                            "curl -sS -X POST {}/admin/restore -H 'Content-Type: application/json' --data-binary @...",
+                            args.url.trim_end_matches('/')
+                        )),
+                    );
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                Ok(())
+            })?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Connect(args) => {
+            block_on(async {
+                let service = args.service.clone().or_else(|| args.cr.clone()).context("--service or --cr is required")?;
+                let secret = match args.secret.clone() {
+                    Some(s) => Some(s),
+                    None => match &args.cr {
+                        Some(cr) => cli_std::connect::resolve_cr_tokens_secret(
+                            args.context.as_deref(),
+                            &args.namespace,
+                            "beam",
+                            cr,
+                        )?,
+                        None => None,
+                    },
+                };
+                let local_port = match args.local_port {
+                    Some(p) => p,
+                    None => cli_std::connect::free_local_port()?,
+                };
+                let mut pf_cmd = std::process::Command::new("kubectl");
+                if let Some(ctx) = &args.context {
+                    pf_cmd.args(["--context", ctx]);
+                }
+                pf_cmd.args([
+                    "port-forward",
+                    "-n",
+                    &args.namespace,
+                    &format!("svc/{service}"),
+                    &format!("{local_port}:{}", args.remote_port),
+                ]);
+                pf_cmd.stdout(std::process::Stdio::null());
+                pf_cmd.stderr(std::process::Stdio::null());
+                let _forward = cli_std::connect::ChildGuard::spawn(&mut pf_cmd).context("start kubectl port-forward")?;
+                cli_std::connect::wait_for_local_port_ready(local_port, Duration::from_secs(30))?;
+
+                let target = QueryTarget {
+                    url: Some(format!("http://127.0.0.1:{local_port}")),
+                    token: args.collection.as_deref().and_then(|c| {
+                        cli_std::connect::resolve_token(
+                            None,
+                            args.context.as_deref(),
+                            Some(&args.namespace),
+                            secret.as_deref(),
+                            args.role.into(),
+                            Some(c),
+                        ).ok().flatten()
+                    }),
+                    context: args.context.clone(),
+                    namespace: Some(args.namespace.clone()),
+                    secret,
+                    role: args.role,
+                };
+
+                let base_url = format!("http://127.0.0.1:{local_port}");
+                let (program, rest) = args.command.split_first().context("wrapped command is empty")?;
+                let mut child_cmd = std::process::Command::new(program);
+                child_cmd.args(rest);
+                child_cmd.env("BEAM_URL", &base_url);
+                if let Some(tok) = &target.token {
+                    child_cmd.env("BEAM_TOKEN", tok);
+                }
+                let status = child_cmd.status().context("run wrapped command")?;
+                if !status.success() {
+                    anyhow::bail!("wrapped command exited with {status}");
+                }
+                Ok(())
+            })?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Query(args) => {
+            block_on(async {
+                match args.command {
+                    QueryCommand::Collections(col_args) => {
+                        match col_args.command {
+                            QueryCollectionsCommand::List(list_args) => {
+                                let url = list_args.target.url.clone().context("--url or BEAM_URL is required")?;
+                                let client = reqwest::Client::new();
+                                let mut req = client.get(format!("{}/v1/collections", url.trim_end_matches('/')));
+                                if let Some(tok) = &list_args.target.token {
+                                    req = req.bearer_auth(tok);
+                                }
+                                let resp = req.send().await?;
+                                if !resp.status().is_success() {
+                                    anyhow::bail!("list collections failed (status {}): {}", resp.status(), resp.text().await?);
+                                }
+                                println!("{}", resp.text().await?);
+                            }
+                        }
+                    }
+                    QueryCommand::Query(query_args) => {
+                        let url = query_args.target.url.clone().context("--url or BEAM_URL is required")?;
+                        let client = reqwest::Client::new();
+                        let mut req = client.post(format!("{}/v1/collections/{}/query", url.trim_end_matches('/'), query_args.collection));
+                        if let Some(tok) = &query_args.target.token {
+                            req = req.bearer_auth(tok);
+                        }
+                        req = req.json(&serde_json::json!({
+                            "vector": query_args.vector,
+                            "k": query_args.k,
+                        }));
+                        let resp = req.send().await?;
+                        if !resp.status().is_success() {
+                            anyhow::bail!("query failed (status {}): {}", resp.status(), resp.text().await?);
+                        }
+                        println!("{}", resp.text().await?);
+                    }
+                    QueryCommand::Upsert(upsert_args) => {
+                        let url = upsert_args.target.url.clone().context("--url or BEAM_URL is required")?;
+                        let mut items = Vec::new();
+                        for raw in upsert_args.items {
+                            let (id, vec_str) = raw.split_once(':').context("invalid item format (expected ID:VEC)")?;
+                            let vector: Vec<f32> = serde_json::from_str(vec_str).context("failed to parse vector list")?;
+                            items.push(serde_json::json!({ "id": id, "vector": vector }));
+                        }
+                        let client = reqwest::Client::new();
+                        let req = client.post(format!("{}/v1/collections/{}/vectors", url.trim_end_matches('/'), upsert_args.collection));
+                        let req = if let Some(tok) = &upsert_args.target.token {
+                            req.bearer_auth(tok)
+                        } else {
+                            req
+                        };
+                        let req = req.json(&serde_json::json!({ "items": items }));
+                        let resp = req.send().await?;
+                        if !resp.status().is_success() {
+                            anyhow::bail!("upsert failed (status {}): {}", resp.status(), resp.text().await?);
+                        }
+                        println!("{}", resp.text().await?);
+                    }
+                    QueryCommand::Delete(delete_args) => {
+                        let url = delete_args.target.url.clone().context("--url or BEAM_URL is required")?;
+                        let client = reqwest::Client::new();
+                        let mut req = client.delete(format!("{}/v1/collections/{}/vectors/{}", url.trim_end_matches('/'), delete_args.collection, delete_args.id));
+                        if let Some(tok) = &delete_args.target.token {
+                            req = req.bearer_auth(tok);
+                        }
+                        let resp = req.send().await?;
+                        if !resp.status().is_success() {
+                            anyhow::bail!("delete failed (status {}): {}", resp.status(), resp.text().await?);
+                        }
+                        println!("{}", resp.text().await?);
+                    }
+                }
+                Ok(())
+            })?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
-/// Emit the tracked diagnostic and the shared not-implemented exit code.
-fn placeholder(feature: &str) -> ExitCode {
-    eprintln!("beam: {}", beam::not_implemented(feature));
-    ExitCode::from(NOT_IMPLEMENTED_EXIT)
-}
+
 
 /// `beam issue <verb>` — dispatch search/view/create to cli-std. `create` always
 /// tags `project:beam`; `search` defaults to beam's own issues.

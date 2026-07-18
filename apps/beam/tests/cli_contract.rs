@@ -36,31 +36,18 @@ fn r2_help_lists_standard_verbs() {
     }
 }
 
-/// R3: `beam --help` lists the service verbs. `serve` is now a real subcommand
-/// (the HTTP/2 service — see `tests/service.rs`); the remaining five are still
-/// placeholders that exit non-zero with a tracked `not implemented yet: …`
-/// diagnostic.
+/// R3: `beam --help` lists the service verbs. `serve`, `query`, `dockerfile`, `k8s`
+/// are real subcommands whose `--help` exits successfully.
 #[test]
-fn r3_help_lists_placeholder_verbs_and_they_are_tracked() {
+fn r3_service_verbs_are_implemented() {
     let help = stdout_of(&["--help"]);
-    for verb in ["serve", "collections", "index", "query", "dockerfile", "k8s"] {
+    for verb in ["serve", "query", "dockerfile", "k8s", "connect", "backup", "spec"] {
         assert!(help.contains(verb), "help missing service verb `{verb}`:\n{help}");
     }
 
-    for (verb, detail) in [
-        ("collections", "collection lifecycle"),
-        ("index", "index lifecycle"),
-        ("query", "vector query"),
-        ("dockerfile", "dockerfile render"),
-        ("k8s", "k8s render/operator"),
-    ] {
-        let out = beam().arg(verb).output().expect("run placeholder verb");
-        assert!(!out.status.success(), "`beam {verb}` should exit non-zero");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            stderr.contains(&format!("not implemented yet: {detail}")),
-            "`beam {verb}` missing tracked diagnostic; stderr:\n{stderr}"
-        );
+    for verb in ["query", "dockerfile", "k8s"] {
+        let out = beam().arg(verb).arg("--help").output().expect("run service verb help");
+        assert!(out.status.success(), "`beam {verb} --help` should exit successfully");
     }
 }
 

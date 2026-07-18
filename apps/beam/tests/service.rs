@@ -229,6 +229,51 @@ async fn service_end_to_end() {
         .unwrap();
     assert_eq!(dup.status(), 409, "duplicate collection → 409");
 
+    // 6. Backup / Restore integration.
+    let backup_resp = client
+        .get(format!("{base}/admin/backup"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(backup_resp.status(), 200);
+    let backup_bytes = backup_resp.bytes().await.unwrap();
+
+    // Drop the collection, verify listing is empty, then restore and verify it returns.
+    assert_eq!(
+        client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),
+        200
+    );
+    let list_empty: Value = client
+        .get(format!("{base}/v1/collections"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list_empty["collections"].as_array().unwrap().len(), 0);
+
+    let restore_resp = client
+        .post(format!("{base}/admin/restore"))
+        .body(backup_bytes)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(restore_resp.status(), 200);
+
+    let list_restored: Value = client
+        .get(format!("{base}/v1/collections"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let cols_restored = list_restored["collections"].as_array().unwrap();
+    assert_eq!(cols_restored.len(), 1);
+    assert_eq!(cols_restored[0]["name"], "docs");
+    assert_eq!(cols_restored[0]["size"], 3); // size is 3 since we deleted vector 'a' earlier
+
     // Drop the collection → 200, and dropping again → 404.
     assert_eq!(
         client.delete(format!("{base}/v1/collections/docs")).send().await.unwrap().status(),

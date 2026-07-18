@@ -463,7 +463,7 @@ impl Collection {
     /// claims its external id (an id resolves to at most one live row by
     /// construction, since `update`/`delete` retire the prior row's live bit), so
     /// this reproduces the exact map the in-memory collection held at save time.
-    fn rebuild_id_map(&mut self) {
+    pub fn rebuild_id_map(&mut self) {
         let mut id_map = HashMap::with_capacity(self.external_ids.len());
         let mut n_live = 0usize;
         for row in 0..self.external_ids.len() {

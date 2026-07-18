@@ -35,12 +35,15 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::TcpListener;
+use utoipa::{OpenApi, ToSchema};
 
 use crate::collection::{Collection, Metric};
 use crate::gpu::{GpuContext, GpuFlatIndex};
 use crate::index::cpu_flat::CpuFlatIndex;
 use crate::index::{Neighbor, VectorIndex};
 use crate::payload::{AttrValue, Clause, Filter, Payload};
+
+use service_http::ApiErr;
 
 /// The in-process collection registry: name to its live [`CollectionState`],
 /// behind a single reader-writer lock (queries take a read lock; mutations a
@@ -99,30 +102,30 @@ struct AppState {
 // -- Wire types ------------------------------------------------------------
 
 /// `POST /v1/collections` body.
-#[derive(Deserialize)]
-struct CreateCollectionReq {
+#[derive(Deserialize, ToSchema)]
+pub struct CreateCollectionReq {
     name: String,
     dim: usize,
     metric: String,
 }
 
 /// One entry in the `GET /v1/collections` list: the name and its LIVE vector count.
-#[derive(Serialize)]
-struct CollectionInfo {
+#[derive(Serialize, ToSchema)]
+pub struct CollectionInfo {
     name: String,
     size: usize,
 }
 
 /// `POST /v1/collections/{name}/vectors` body: a batch of upserts.
-#[derive(Deserialize)]
-struct UpsertReq {
+#[derive(Deserialize, ToSchema)]
+pub struct UpsertReq {
     items: Vec<VectorItem>,
 }
 
 /// One vector to upsert: external id, the raw `dim`-long vector, and an optional
 /// flat attribute payload (`{key: int-or-string}`).
-#[derive(Deserialize)]
-struct VectorItem {
+#[derive(Deserialize, ToSchema)]
+pub struct VectorItem {
     id: String,
     vector: Vec<f32>,
     #[serde(default)]
@@ -131,8 +134,8 @@ struct VectorItem {
 
 /// `POST /v1/collections/{name}/query` body. `nprobe` is accepted for API
 /// compatibility with the IVF backends but ignored by the flat query path.
-#[derive(Deserialize)]
-struct QueryReq {
+#[derive(Deserialize, ToSchema)]
+pub struct QueryReq {
     vector: Vec<f32>,
     k: usize,
     #[serde(default)]
@@ -142,15 +145,15 @@ struct QueryReq {
 }
 
 /// JSON filter: a conjunction (AND) of [`WireClause`]s.
-#[derive(Deserialize)]
-struct WireFilter {
+#[derive(Deserialize, ToSchema)]
+pub struct WireFilter {
     clauses: Vec<WireClause>,
 }
 
 /// One JSON filter clause. `op = "eq"` needs `value` (int or string);
 /// `op = "range"` needs integer `lo` and `hi` (inclusive).
-#[derive(Deserialize)]
-struct WireClause {
+#[derive(Deserialize, ToSchema)]
+pub struct WireClause {
     op: String,
     key: String,
     #[serde(default)]
@@ -162,66 +165,41 @@ struct WireClause {
 }
 
 /// `POST /v1/collections/{name}/query` response.
-#[derive(Serialize)]
-struct QueryResp {
+#[derive(Serialize, ToSchema)]
+pub struct QueryResp {
     neighbors: Vec<NeighborOut>,
 }
 
 /// One returned neighbor: external id, raw metric score, and the row payload
 /// (omitted when empty). Payload keys are emitted sorted for deterministic output.
-#[derive(Serialize)]
-struct NeighborOut {
+#[derive(Serialize, ToSchema)]
+pub struct NeighborOut {
     id: String,
     score: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     payload: Option<BTreeMap<String, serde_json::Value>>,
 }
 
-// -- Error envelope --------------------------------------------------------
+// -- Error helpers ---------------------------------------------------------
 
-/// An HTTP-typed error: a status code plus a stable machine code and a message,
-/// rendered as `{"error": <code>, "message": <msg>}`.
-struct ApiError {
-    status: StatusCode,
-    code: &'static str,
-    message: String,
+fn bad_request_err(message: impl Into<String>) -> ApiErr {
+    ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", message)
 }
 
-impl ApiError {
-    fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            code,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::BAD_REQUEST, "bad_request", message)
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::NOT_FOUND, "not_found", message)
-    }
-
-    fn conflict(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::CONFLICT, "conflict", message)
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            message,
-        )
-    }
+fn not_found_err(message: impl Into<String>) -> ApiErr {
+    ApiErr::new(StatusCode::NOT_FOUND, "not_found", message)
 }
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let body = Json(json!({ "error": self.code, "message": self.message }));
-        (self.status, body).into_response()
-    }
+fn conflict_err(message: impl Into<String>) -> ApiErr {
+    ApiErr::new(StatusCode::CONFLICT, "conflict", message)
+}
+
+fn internal_err(message: impl Into<String>) -> ApiErr {
+    ApiErr::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        message,
+    )
 }
 
 // -- JSON <-> engine mapping ----------------------------------------------
@@ -246,11 +224,11 @@ fn attr_to_json(a: &AttrValue) -> serde_json::Value {
 
 /// Build an engine [`Payload`] from the optional wire `{key: value}` map,
 /// rejecting a non-scalar attribute value with a 400.
-fn build_payload(map: Option<HashMap<String, serde_json::Value>>) -> Result<Payload, ApiError> {
+fn build_payload(map: Option<HashMap<String, serde_json::Value>>) -> Result<Payload, ApiErr> {
     let mut payload = Payload::new();
     for (key, value) in map.into_iter().flatten() {
         let attr = json_to_attr(&value).ok_or_else(|| {
-            ApiError::bad_request(format!(
+            bad_request_err(format!(
                 "payload attribute `{key}` must be an integer or string"
             ))
         })?;
@@ -260,34 +238,34 @@ fn build_payload(map: Option<HashMap<String, serde_json::Value>>) -> Result<Payl
 }
 
 /// Build a single engine [`Clause`] from a wire clause, validating its operands.
-fn build_clause(clause: WireClause) -> Result<Clause, ApiError> {
+fn build_clause(clause: WireClause) -> Result<Clause, ApiErr> {
     match clause.op.as_str() {
         "eq" => {
             let value = clause
                 .value
-                .ok_or_else(|| ApiError::bad_request("`eq` clause requires `value`"))?;
+                .ok_or_else(|| bad_request_err("`eq` clause requires `value`"))?;
             let attr = json_to_attr(&value).ok_or_else(|| {
-                ApiError::bad_request("`eq` clause `value` must be an integer or string")
+                bad_request_err("`eq` clause `value` must be an integer or string")
             })?;
             Ok(Clause::Eq(clause.key, attr))
         }
         "range" => {
             let lo = clause
                 .lo
-                .ok_or_else(|| ApiError::bad_request("`range` clause requires integer `lo`"))?;
+                .ok_or_else(|| bad_request_err("`range` clause requires integer `lo`"))?;
             let hi = clause
                 .hi
-                .ok_or_else(|| ApiError::bad_request("`range` clause requires integer `hi`"))?;
+                .ok_or_else(|| bad_request_err("`range` clause requires integer `hi`"))?;
             Ok(Clause::IntRange(clause.key, lo, hi))
         }
-        other => Err(ApiError::bad_request(format!(
+        other => Err(bad_request_err(format!(
             "unknown clause op `{other}` (expected `eq` or `range`)"
         ))),
     }
 }
 
 /// Build an engine [`Filter`] (AND of clauses) from the optional wire filter.
-fn build_filter(filter: Option<WireFilter>) -> Result<Filter, ApiError> {
+fn build_filter(filter: Option<WireFilter>) -> Result<Filter, ApiErr> {
     let mut out = Filter::new();
     if let Some(filter) = filter {
         for clause in filter.clauses {
@@ -308,35 +286,35 @@ fn payload_to_map(payload: &Payload) -> BTreeMap<String, serde_json::Value> {
 
 // -- Handlers --------------------------------------------------------------
 
-/// `GET /healthz` — liveness. Always 200 while the process runs.
-async fn healthz() -> impl IntoResponse {
-    (StatusCode::OK, "ok")
-}
-
-/// `GET /readyz` — readiness. 200 once the server is serving (it always is here).
-async fn readyz() -> impl IntoResponse {
-    (StatusCode::OK, "ok")
-}
-
 /// `POST /v1/collections` — create a collection; 409 if the name is taken, 400
 /// on an unknown metric or zero dimension.
+#[utoipa::path(
+    post,
+    path = "/v1/collections",
+    request_body = CreateCollectionReq,
+    responses(
+        (status = 201, description = "Collection created successfully"),
+        (status = 400, description = "Bad request", body = ErrorEnvelope),
+        (status = 409, description = "Conflict", body = ErrorEnvelope)
+    )
+)]
 async fn create_collection(
     State(state): State<AppState>,
     Json(req): Json<CreateCollectionReq>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, ApiErr> {
     let metric = Metric::parse(&req.metric).ok_or_else(|| {
-        ApiError::bad_request(format!(
+        bad_request_err(format!(
             "unknown metric `{}` (expected l2|dot|cosine)",
             req.metric
         ))
     })?;
     if req.dim == 0 {
-        return Err(ApiError::bad_request("dim must be greater than 0"));
+        return Err(bad_request_err("dim must be greater than 0"));
     }
 
     let mut registry = state.registry.write().expect("registry lock poisoned");
     if registry.contains_key(&req.name) {
-        return Err(ApiError::conflict(format!(
+        return Err(conflict_err(format!(
             "collection `{}` already exists",
             req.name
         )));
@@ -354,6 +332,13 @@ async fn create_collection(
 
 /// `GET /v1/collections` — list every collection name and its live vector count,
 /// sorted by name for a deterministic response.
+#[utoipa::path(
+    get,
+    path = "/v1/collections",
+    responses(
+        (status = 200, description = "Collections listed successfully", body = inline(Vec<CollectionInfo>))
+    )
+)]
 async fn list_collections(State(state): State<AppState>) -> Response {
     let registry = state.registry.read().expect("registry lock poisoned");
     let mut collections: Vec<CollectionInfo> = registry
@@ -368,37 +353,61 @@ async fn list_collections(State(state): State<AppState>) -> Response {
 }
 
 /// `DELETE /v1/collections/{name}` — drop a collection; 404 if it is unknown.
+#[utoipa::path(
+    delete,
+    path = "/v1/collections/{name}",
+    params(
+        ("name" = String, Path, description = "Collection name")
+    ),
+    responses(
+        (status = 200, description = "Collection dropped successfully"),
+        (status = 404, description = "Collection not found", body = ErrorEnvelope)
+    )
+)]
 async fn drop_collection(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, ApiErr> {
     let mut registry = state.registry.write().expect("registry lock poisoned");
     if registry.remove(&name).is_some() {
         Ok((StatusCode::OK, Json(json!({ "dropped": name }))).into_response())
     } else {
-        Err(ApiError::not_found(format!("collection `{name}` not found")))
+        Err(not_found_err(format!("collection `{name}` not found")))
     }
 }
 
 /// `POST /v1/collections/{name}/vectors` — batch upsert. The whole batch is
 /// dim-validated before any row is applied (a bad item rejects the batch with a
 /// 400); 404 if the collection is unknown. Rebuilds the index once afterward.
+#[utoipa::path(
+    post,
+    path = "/v1/collections/{name}/vectors",
+    params(
+        ("name" = String, Path, description = "Collection name")
+    ),
+    request_body = UpsertReq,
+    responses(
+        (status = 200, description = "Vectors upserted successfully"),
+        (status = 400, description = "Bad request", body = ErrorEnvelope),
+        (status = 404, description = "Collection not found", body = ErrorEnvelope)
+    )
+)]
 async fn upsert_vectors(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(req): Json<UpsertReq>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, ApiErr> {
     let mut registry = state.registry.write().expect("registry lock poisoned");
     let cs = registry
         .get_mut(&name)
-        .ok_or_else(|| ApiError::not_found(format!("collection `{name}` not found")))?;
+        .ok_or_else(|| not_found_err(format!("collection `{name}` not found")))?;
     let dim = cs.collection.dim();
 
     // Validate every item up front so the batch applies all-or-nothing.
     let mut prepared = Vec::with_capacity(req.items.len());
     for item in req.items {
         if item.vector.len() != dim {
-            return Err(ApiError::bad_request(format!(
+            return Err(bad_request_err(format!(
                 "vector for id `{}` has dim {}, expected {}",
                 item.id,
                 item.vector.len(),
@@ -413,7 +422,7 @@ async fn upsert_vectors(
     for (id, vector, payload) in prepared {
         cs.collection
             .upsert(id, &vector, payload)
-            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            .map_err(|e| bad_request_err(e.to_string()))?;
     }
     cs.rebuild(&state.gpu);
 
@@ -422,19 +431,31 @@ async fn upsert_vectors(
 
 /// `DELETE /v1/collections/{name}/vectors/{id}` — delete one vector; 404 if the
 /// collection or the id is unknown. Rebuilds the index afterward.
+#[utoipa::path(
+    delete,
+    path = "/v1/collections/{name}/vectors/{id}",
+    params(
+        ("name" = String, Path, description = "Collection name"),
+        ("id" = String, Path, description = "Vector ID")
+    ),
+    responses(
+        (status = 200, description = "Vector deleted successfully"),
+        (status = 404, description = "Collection or vector not found", body = ErrorEnvelope)
+    )
+)]
 async fn delete_vector(
     State(state): State<AppState>,
     Path((name, id)): Path<(String, String)>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, ApiErr> {
     let mut registry = state.registry.write().expect("registry lock poisoned");
     let cs = registry
         .get_mut(&name)
-        .ok_or_else(|| ApiError::not_found(format!("collection `{name}` not found")))?;
+        .ok_or_else(|| not_found_err(format!("collection `{name}` not found")))?;
     if cs.collection.delete(&id) {
         cs.rebuild(&state.gpu);
         Ok((StatusCode::OK, Json(json!({ "deleted": id }))).into_response())
     } else {
-        Err(ApiError::not_found(format!(
+        Err(not_found_err(format!(
             "vector `{id}` not found in collection `{name}`"
         )))
     }
@@ -444,11 +465,24 @@ async fn delete_vector(
 /// (possibly GPU-blocking) search runs on a blocking task so the async worker
 /// stays free. 404 if the collection is unknown, 400 on a dim mismatch or a
 /// malformed filter clause.
+#[utoipa::path(
+    post,
+    path = "/v1/collections/{name}/query",
+    params(
+        ("name" = String, Path, description = "Collection name")
+    ),
+    request_body = QueryReq,
+    responses(
+        (status = 200, description = "Query executed successfully", body = QueryResp),
+        (status = 400, description = "Bad request", body = ErrorEnvelope),
+        (status = 404, description = "Collection not found", body = ErrorEnvelope)
+    )
+)]
 async fn query_collection(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(req): Json<QueryReq>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, ApiErr> {
     let QueryReq {
         vector,
         k,
@@ -459,13 +493,13 @@ async fn query_collection(
     let _ = nprobe;
     let filter = build_filter(filter)?;
 
-    let neighbors = tokio::task::spawn_blocking(move || -> Result<Vec<NeighborOut>, ApiError> {
+    let neighbors = tokio::task::spawn_blocking(move || -> Result<Vec<NeighborOut>, ApiErr> {
         let registry = state.registry.read().expect("registry lock poisoned");
         let cs = registry
             .get(&name)
-            .ok_or_else(|| ApiError::not_found(format!("collection `{name}` not found")))?;
+            .ok_or_else(|| not_found_err(format!("collection `{name}` not found")))?;
         if vector.len() != cs.collection.dim() {
-            return Err(ApiError::bad_request(format!(
+            return Err(bad_request_err(format!(
                 "query vector has dim {}, expected {}",
                 vector.len(),
                 cs.collection.dim()
@@ -486,9 +520,113 @@ async fn query_collection(
             .collect())
     })
     .await
-    .map_err(|e| ApiError::internal(format!("query task failed: {e}")))??;
+    .map_err(|e| internal_err(format!("query task failed: {e}")))??;
 
     Ok((StatusCode::OK, Json(QueryResp { neighbors })).into_response())
+}
+
+// -- Admin Handlers --------------------------------------------------------
+
+/// `GET /admin/backup` — snapshot of the entire database state as CBOR + lz4.
+#[utoipa::path(
+    get,
+    path = "/admin/backup",
+    responses(
+        (status = 200, description = "Snapshot returned successfully", body = inline(Vec<u8>)),
+        (status = 500, description = "Internal error", body = ErrorEnvelope)
+    )
+)]
+async fn admin_backup(State(state): State<AppState>) -> Result<Response, ApiErr> {
+    let registry = state.registry.read().expect("registry lock poisoned");
+    let mut collections = HashMap::new();
+    for (name, cs) in registry.iter() {
+        collections.insert(name.clone(), cs.collection.clone());
+    }
+    let snap = crate::persist::BeamSnapshot { collections };
+    let bytes = snap.encode().map_err(|e| internal_err(e.to_string()))?;
+    Ok((
+        StatusCode::OK,
+        [("content-type", "application/octet-stream")],
+        bytes,
+    )
+        .into_response())
+}
+
+/// `POST /admin/restore` — restore the database from a backup snapshot.
+#[utoipa::path(
+    post,
+    path = "/admin/restore",
+    responses(
+        (status = 200, description = "Database state restored successfully"),
+        (status = 400, description = "Bad request", body = ErrorEnvelope),
+        (status = 500, description = "Internal error", body = ErrorEnvelope)
+    )
+)]
+async fn admin_restore(
+    State(state): State<AppState>,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiErr> {
+    let snap = crate::persist::BeamSnapshot::decode(&body)
+        .map_err(|e| bad_request_err(format!("invalid snapshot body: {e}")))?;
+
+    let mut registry = state.registry.write().expect("registry lock poisoned");
+    registry.clear();
+    for (name, col) in snap.collections {
+        let mut cs = CollectionState::new(col);
+        cs.rebuild(&state.gpu);
+        registry.insert(name, cs);
+    }
+
+    Ok((StatusCode::OK, Json(json!({ "status": "restored" }))).into_response())
+}
+
+// -- OpenAPI definition ----------------------------------------------------
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "beam",
+        description = "GPU-native vector database. Owns GPU ANN vector storage, index lifecycle, batch ingest, and vector query execution; distinct from lumen (mixed search / ranking / dedup).",
+        license(name = "MIT")
+    ),
+    servers(
+        (url = "http://localhost:7373", description = "local dev")
+    ),
+    tags(
+        (name = "Collections", description = "Collection schema lifecycle"),
+        (name = "Vectors",     description = "Vector batch upsert & delete"),
+        (name = "Query",       description = "k-NN queries"),
+        (name = "Admin",       description = "Backup, restore, OpenAPI")
+    ),
+    paths(
+        create_collection,
+        list_collections,
+        drop_collection,
+        upsert_vectors,
+        delete_vector,
+        query_collection,
+        admin_backup,
+        admin_restore,
+    ),
+    components(
+        schemas(
+            CreateCollectionReq,
+            CollectionInfo,
+            UpsertReq,
+            VectorItem,
+            QueryReq,
+            WireFilter,
+            WireClause,
+            QueryResp,
+            NeighborOut,
+            service_http::ErrorEnvelope,
+        )
+    )
+)]
+pub struct BeamApi;
+
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    BeamApi::openapi()
 }
 
 // -- Assembly + serve ------------------------------------------------------
@@ -501,9 +639,7 @@ pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
         registry: Arc::new(RwLock::new(HashMap::new())),
         gpu,
     };
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+    let data_plane = Router::new()
         .route(
             "/v1/collections",
             post(create_collection).get(list_collections),
@@ -515,20 +651,32 @@ pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
             delete(delete_vector),
         )
         .route("/v1/collections/{name}/query", post(query_collection))
-        .with_state(state)
+        .route("/admin/backup", get(admin_backup))
+        .route("/admin/restore", post(admin_restore))
+        .with_state(state);
+
+    let drain = Arc::new(server_lifecycle::DrainController::new());
+
+    let probes = service_http::standard_probe_routes(
+        drain,
+        None, // metrics provider
+        openapi,
+    );
+
+    probes.merge(data_plane).layer(service_http::trace_layer())
 }
 
 /// Serve `app` on an already-bound `listener` (HTTP/1.1 + h2c on one port) until
-/// `shutdown` resolves. Thin delegation to the shared [`h2c::serve`] transport so
+/// `shutdown` resolves. Thin delegation to the shared [`service_http::serve`] transport so
 /// beam does not hand-roll the hyper-util accept loop. Public so tests can bind an
 /// ephemeral listener, read its address, and spawn the server with a pending
 /// shutdown.
 pub async fn serve_on(
     listener: TcpListener,
     app: Router,
-    shutdown: impl std::future::Future<Output = ()>,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) {
-    h2c::serve(listener, app, shutdown).await;
+    service_http::serve(listener, app, shutdown).await;
 }
 
 /// Run the vector-database service: acquire the GPU (if any), bind `addr`, print
@@ -550,28 +698,7 @@ pub async fn serve(addr: &str) -> anyhow::Result<()> {
     let bound = listener.local_addr()?;
     println!("beam serving on http://{bound}");
 
-    serve_on(listener, router(gpu), shutdown_signal()).await;
+    let shutdown = service_http::wait_shutdown_signal();
+    serve_on(listener, router(gpu), shutdown).await;
     Ok(())
-}
-
-/// Resolve on Ctrl-C (SIGINT) or SIGTERM — the graceful-stop signal for `serve`.
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let terminate = async {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut s) = signal(SignalKind::terminate()) {
-            s.recv().await;
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
-    }
-    println!("beam: shutting down");
 }
