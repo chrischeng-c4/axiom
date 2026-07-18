@@ -95,3 +95,42 @@ changes:
     impl_mode: hand-written
     description: "New end-to-end test (default feature set, jieba OFF): create a collection with a `text` field declared `analyzer: jieba`, index a document whose value is `\u5317\u4eac\u5927\u5b78`, run a `match` query for `\u5317\u4eac` over the HTTP API, and assert the document is returned (AC5, fails before this change since the old fallback only matches the exact whole string)."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: jieba-no-feature-cjk-bigram-fallback-verification
+requirements:
+  cjk_bigram_split:
+    id: R1
+    text: "With `jieba` OFF, tokenize(\"北京大學\", Analyzer::Jieba) returns overlapping character bigrams [\"北京\", \"京大\", \"大學\"] instead of the old whole-string token (AC1)."
+    kind: functional
+    risk: high
+    verify: cargo test -p lumen --lib tokenize::tests::jieba_fallback_when_no_feature
+  mixed_text_split:
+    id: R2
+    text: "With `jieba` OFF, \"lumen 搜尋引擎\" yields the `lumen` token (via the unchanged for_whitespace_lower path) plus CJK bigrams of the Chinese run, and never emits a whole-string token (AC2)."
+    kind: functional
+    risk: high
+    verify: cargo test -p lumen --lib tokenize::tests::jieba_fallback_mixed_text
+  other_analyzers_unaffected:
+    id: R4
+    text: "WhitespaceLower, Ngram, and the jieba-on (`#[cfg(feature = \"jieba\")]`) path stay byte-identical in behavior; only the `#[cfg(not(feature = \"jieba\"))]` fallback changes (AC4)."
+    kind: regression
+    risk: medium
+    verify: cargo test -p lumen --lib tokenize
+  single_char_and_empty_edge_cases:
+    id: R3
+    text: "A single CJK character input yields that character as one unigram token (not empty); empty/whitespace-only input yields no tokens (AC3)."
+    kind: regression
+    risk: medium
+    verify: cargo test -p lumen --lib tokenize::tests::jieba_fallback_single_cjk_char
+---
+flowchart TD
+    r1[R1 cjk bigram split] --> cargo_test_p_lumen_lib_tokenize_tests_jieba_fallback_when_no_feature[cargo test -p lumen --lib tokenize::tests::jieba_fallback_when_no_feature]
+    r2[R2 mixed text split] --> cargo_test_p_lumen_lib_tokenize_tests_jieba_fallback_mixed_text[cargo test -p lumen --lib tokenize::tests::jieba_fallback_mixed_text]
+    r3[R3 single char and empty edge cases] --> cargo_test_p_lumen_lib_tokenize_tests_jieba_fallback_single_cjk_char[cargo test -p lumen --lib tokenize::tests::jieba_fallback_single_cjk_char]
+    r4[R4 other analyzers unaffected] --> cargo_test_p_lumen_lib_tokenize[cargo test -p lumen --lib tokenize]
+```
