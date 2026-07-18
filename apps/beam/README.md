@@ -25,17 +25,36 @@ indexes and GPU memory tiers.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| GPU Vector Index | #769 | planned | planned | none | not_ready | GPU ANN index lifecycle and memory tiers |
-| Batch Ingest And Rebuild | #769 | planned | planned | none | not_ready | vector ingest, compaction, and offline rebuild |
-| Vector Query API | #769 | planned | planned | none | not_ready | nearest-neighbor search with filters and recall gates |
-| HTTP/2 API List | #769 | planned | planned | none | not_ready | h2c/OpenAPI endpoint inventory |
+| GPU Vector Index | #769 | partial | verified | conformance | not_ready | GPU flat + IVF-flat + IVF-PQ ANN on wgpu/Metal, recall verified vs oracle; durable segments/memory-tiers/rebuild pending |
+| Batch Ingest And Rebuild | #769 | partial | conformance | none | not_ready | batch upsert + CRUD + persistence (save/load); compaction present; offline rebuild pending |
+| Vector Query API | #769 | partial | conformance | none | not_ready | kNN + metadata filters over REST (`/v1/collections/{c}/query`); recall gates via ivf_recall |
+| HTTP/2 API List | #769 | partial | conformance | none | not_ready | h2c REST live (`beam serve`): health/collections/vectors/query; OpenAPI pending |
 | Kubernetes-Native Deployment | #769 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape with GPU scheduling |
 | Primary Replicas | #769 | planned | planned | none | not_ready | raft-backed metadata and index lifecycle ownership |
-| CLI Interface | #772 | planned | planned | none | not_ready | `beam` CLI for vector ingest/query/admin and agent docs |
+| CLI Interface | #772 | partial | smoke | conformance | not_ready | shell + std verbs (llm/upgrade/issue) landed; vector verbs pending |
 | Long-Running Stability | #769 | planned | planned | none | not_ready | GPU index soak, rebuild, failover, and recovery gates |
 | Security Hardening | #769 | planned | planned | none | not_ready | collection authz, tenant isolation, audit, and secret rotation |
-| Competitor Feature Parity | #769 | planned | planned | none | not_ready | Milvus/Qdrant/Faiss-style GPU vector feature matrix |
-| Competitor Performance | #769 | planned | planned | none | not_ready | pinned vector recall/latency baseline, rerun only on scope change |
+| Competitor Feature Parity | #769 | partial | conformance | none | not_ready | matrix landed (parity checklist vs Milvus/Qdrant/Faiss/cuVS/pgvector); features tracked F1-F5 |
+| Competitor Performance | #769 | partial | dogfood | conformance | not_ready | pinned baseline: beam-GPU beats faiss-CPU batched flat at n>=100k (1.06-2.3x, recall 1.000); loses single-query latency |
+| Stateful Service Workload | #769 | planned | planned | none | not_ready | baseline stateful service workload projection |
+
+### Stateful Service Workload
+
+ID: stateful-service-workload
+Type: Service
+Root WI: #769
+Status: confirmed
+Surfaces: Durable index, checkpoint state, and stateful replica lifecycle.
+EC Dimensions: behavior: pending stateful service workload projection
+Required Verification: smoke
+Promise:
+  Beam projects the shared stateful-service workload baseline.
+Gate Inventory:
+  - pending: apps/beam/tests/persistence.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| stateful-service-workload-projection | change | #769 | planned | planned | none | pending stateful service workload projection |
 
 ### CLI Interface
 
@@ -50,11 +69,13 @@ Promise:
 Beam ships an agent-drivable CLI for vector collection, ingest, query, index,
 and admin workflows while following the repository-wide CLI convention.
 Gate Inventory:
-- pending: apps/beam/tests/cli_contract.rs
+- passing: apps/beam/tests/cli_contract.rs (R1–R6, `cargo test -p beam` green)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| beam-cli-convention-and-vector-verbs | change | #772 | planned | planned | none | pending CLI convention gate |
+| beam-cli-shell | change | #772 | implemented | verified | conformance | apps/beam/tests/cli_contract.rs (R1–R6 green) |
+| beam-cli-convention-and-vector-verbs | change | #772 | implemented | verified | conformance | apps/beam/tests/cli_contract.rs (R1–R6 green) |
+| beam-vector-verbs | epic | #769 | planned | planned | none | pending vector ingest/query/index verbs |
 
 ### Long-Running Stability
 
@@ -107,7 +128,7 @@ Promise:
 Beam keeps an explicit GPU/vector feature matrix against established vector
 systems, with comparison scope changed only when product requirements change.
 Gate Inventory:
-- pending: apps/beam/benchmark/competitor-feature-matrix.md
+- landed: apps/beam/benchmark/competitor-feature-matrix.md (parity checklist + gaps)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -126,12 +147,17 @@ Promise:
 Beam maintains a pinned competitor performance baseline and reruns external
 benchmarks only when the comparison scope changes or a human explicitly asks.
 Gate Inventory:
-- pending: apps/beam/benchmark/competitor-performance-baseline.md
+- landed: apps/beam/benchmark/competitor-performance-baseline.md (beam-GPU beats faiss-CPU batched flat at n>=100k; independently re-verified)
 - pending: apps/beam/meter-beam-query.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | gpu-vector-competitor-performance-baseline | epic | #769 | planned | planned | none | pending competitor performance gate |
+| four-pillar-throughput-saturation-ddd | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-ddd-zero-cost | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-gate-saturate-four-pillars | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-out-of-core-scaling | change | #769 | planned | planned | none | pending throughput architecture |
+| competitive-throughput-gpu-scaling | change | #769 | planned | planned | none | pending throughput architecture |
 
 ### GPU Vector Index
 
@@ -146,12 +172,16 @@ Promise:
 Beam manages GPU-native vector indexes with explicit memory-tier and rebuild
 semantics rather than treating vector search as a Lumen side path.
 Gate Inventory:
-- pending: apps/beam/tests/gpu_vector_index.rs
+- passing: apps/beam/tests/gpu_matches_cpu.rs (GPU flat top-k == CPU oracle, L2/Dot/Cosine)
+- passing: apps/beam/tests/ivf_recall.rs (IVF-flat exact at full probe; recall grows with nprobe; GPU ADC == CPU ADC; scaling)
+- pending: apps/beam/tests/gpu_vector_index.rs (durable index build/load/rebuild lifecycle)
 - pending: apps/beam/meter-beam-gpu.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending vector index and GPU meter gates |
+| gpu-flat-knn-wgpu-metal | change | #769 | implemented | verified | conformance | apps/beam/tests/gpu_matches_cpu.rs (Apple M1 Max/Metal, recall 1.000) |
+| gpu-ivf-pq-ann | change | #769 | implemented | verified | conformance | apps/beam/tests/ivf_recall.rs (IVF-flat 2.7× faster lossless; IVF-PQ ADC exact, recall tunable) |
+| gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending durable segments, memory tiers, rebuild, and GPU meter gates |
 
 ### Batch Ingest And Rebuild
 
