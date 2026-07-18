@@ -56,3 +56,34 @@ flowchart TD
     llm --> boundary[Topics name Mesh/Beam/Lumen/Cube boundary explicitly]
     parse --> noheavydeps[No GPU/raft/http-server runtime dependency in this slice]
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: "Cargo.toml"
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: "apps/mesh/Cargo.toml"
+    action: create
+    section: logic
+    impl_mode: hand-written
+  - path: "apps/mesh/build.rs"
+    action: create
+    section: logic
+    impl_mode: hand-written
+  - path: "apps/mesh/src/lib.rs"
+    action: create
+    section: logic
+    impl_mode: hand-written
+  - path: "apps/mesh/src/main.rs"
+    action: create
+    section: logic
+    impl_mode: hand-written
+  - path: "apps/mesh/tests/cli_contract.rs"
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
