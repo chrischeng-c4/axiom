@@ -87,3 +87,56 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: mesh-cli-shell-verification
+requirements:
+  issue_scope:
+    id: R4
+    text: "`mesh issue --help` delegates to cli_std issue handling scoped to `app:mesh`, so tracker search/view/create carry that scope."
+    kind: functional
+    risk: medium
+    verify: cli_contract::issue_help_scoped_to_app_mesh
+  llm_boundary:
+    id: R3
+    text: "`mesh llm --topic outline` states the mesh/lumen/beam/cube boundary: Mesh owns typed node/edge property-graph storage, traversal/path query, and a log-driven derived index (never system of record); it does not own vector ANN (Beam), lexical/semantic/perceptual search (Lumen), or OLAP aggregation (Cube)."
+    kind: functional
+    risk: high
+    verify: cli_contract::llm_outline_states_boundary
+  no_heavy_deps:
+    id: R6
+    text: "The shell crate builds and tests without GPU, raft, or HTTP-server runtime dependencies (no stray heavy deps in this slice)."
+    kind: functional
+    risk: high
+    verify: cargo tree -p mesh (no GPU/raft/http-server crates)
+  placeholder_verbs_exit:
+    id: R5
+    text: "Each domain placeholder verb (`serve`, `collections`, `nodes`, `edges`, `query`, `dockerfile`, `k8s`) exits with code 3 and prints a tracked \"not implemented yet: <thing>\" diagnostic instead of panicking."
+    kind: functional
+    risk: high
+    verify: cli_contract::placeholder_verbs_exit_code_3_not_implemented
+  standard_cli_help:
+    id: R2
+    text: "`mesh --help` lists `llm`, `upgrade`, `issue`, and the domain placeholder verbs (`serve`, `collections`, `nodes`, `edges`, `query`, `dockerfile`, `k8s`)."
+    kind: functional
+    risk: high
+    verify: cli_contract::help_lists_all_verbs
+  workspace_member:
+    id: R1
+    text: "`apps/mesh` is a Cargo workspace member (lib + bin) with build.rs wiring cli_std's stamp(\"MESH\")."
+    kind: functional
+    risk: high
+    verify: cargo build -p mesh
+---
+flowchart TD
+    r1[R1 workspace member] --> cargo_build_p_mesh[cargo build -p mesh]
+    r2[R2 standard cli help] --> cli_contract_help_lists_all_verbs[cli_contract::help_lists_all_verbs]
+    r3[R3 llm boundary] --> cli_contract_llm_outline_states_boundary[cli_contract::llm_outline_states_boundary]
+    r4[R4 issue scope] --> cli_contract_issue_help_scoped_to_app_mesh[cli_contract::issue_help_scoped_to_app_mesh]
+    r5[R5 placeholder verbs exit] --> cli_contract_placeholder_verbs_exit_code_3_not_implemented[cli_contract::placeholder_verbs_exit_code_3_not_implemented]
+    r6[R6 no heavy deps] --> cargo_tree_p_mesh_no_gpu_raft_http_server_crates[cargo tree -p mesh (no GPU/raft/http-server crates)]
+```
