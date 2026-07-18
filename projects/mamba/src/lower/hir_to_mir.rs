@@ -8395,6 +8395,15 @@ impl<'a> HirToMir<'a> {
         }
 
         let iterable = self.lower_expr(&gen.iter);
+        // #1944: evaluating a comprehension generator's iterable expression
+        // can itself raise (e.g. a class constructor whose __init__ raises).
+        // Check and propagate BEFORE calling mb_iter — otherwise a pending
+        // exception here rides along into the iterator protocol, where it
+        // gets silently overwritten/absorbed by unrelated StopIteration
+        // signaling in mb_next_or_stop instead of reaching the enclosing
+        // try/except. Applies uniformly to every nesting level since this
+        // function recurses per generator clause.
+        self.emit_exception_propagate();
         let iter_obj = self.fresh_vreg();
         let iter_fn = if gen.is_async {
             "mb_async_iter"
