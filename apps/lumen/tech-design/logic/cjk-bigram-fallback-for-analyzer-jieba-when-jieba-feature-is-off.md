@@ -95,7 +95,7 @@ changes:
     section: unit-test
     impl_mode: hand-written
     anchor: jieba_fallback_when_no_feature
-    description: "Update `jieba_fallback_when_no_feature` to assert the bigram output for `\u5317\u4eac\u5927\u5b78` (\u5317\u4eac/\u4eac\u5927/\u5927\u5b78) instead of the old whole-string token; add a mixed-text case (`lumen \u641c\u5c0b\u5f15\u64ce` keeps the `lumen` token plus CJK bigrams of the Chinese run) and a single-CJK-char case (one char emits one unigram, not empty). All new/updated cases must pass under the default (no `jieba`) feature set."
+    description: "Update `jieba_fallback_when_no_feature` to assert the bigram output for 北京大學 (北京/京大/大學) instead of the old whole-string token; add a mixed-text case (`lumen 搜尋引擎` keeps the `lumen` token plus CJK bigrams of the Chinese run) and a single-CJK-char case (one char emits one unigram, not empty). All new/updated cases must pass under the default (no `jieba`) feature set."
   - path: apps/lumen/tech-design/semantic/source/apps-lumen-src-tokenize-rs.md
     action: modify
     section: logic
@@ -105,9 +105,8 @@ changes:
     action: create
     section: e2e-test
     impl_mode: hand-written
-    description: "New end-to-end test (default feature set, jieba OFF): create a collection with a `text` field declared `analyzer: jieba`, index a document whose value is `\u5317\u4eac\u5927\u5b78`, run a `match` query for `\u5317\u4eac` over the HTTP API, and assert the document is returned (AC5, fails before this change since the old fallback only matches the exact whole string)."
+    description: "New end-to-end test (default feature set, jieba OFF): create a collection with a `text` field declared `analyzer: jieba`, index a document whose value is 北京大學, run a `match` query for 北京 over the HTTP API, and assert the document is returned (AC5, fails before this change since the old fallback only matches the exact whole string)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
