@@ -78,7 +78,6 @@ pub(crate) fn for_whitespace_lower_cow<'a>(
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="#1975" reason="logic section in tokenize.rs is hand-written pending codegen support">
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in tokenize.rs is hand-written pending codegen support">
 #[cfg(feature = "jieba")]
 fn jieba(text: &str) -> Vec<String> {
     use std::sync::OnceLock;
@@ -157,20 +156,6 @@ fn is_cjk_char(c: char) -> bool {
         || (code >= 0xAC00 && code <= 0xD7A3)
 }
 // </HANDWRITE>
-// </HANDWRITE>
-
-#[cfg(not(feature = "jieba"))]
-fn jieba(text: &str) -> Vec<String> {
-    // No-feature fallback: treat the whole string as one token after
-    // lowercasing. Honest: makes `match` over Chinese degenerate to an
-    // exact-equality probe instead of silently dropping the field.
-    let t = text.trim().to_lowercase();
-    if t.is_empty() {
-        vec![]
-    } else {
-        vec![t]
-    }
-}
 
 fn ngram(text: &str, min: usize, max: usize) -> Vec<String> {
     let chars: Vec<char> = text
@@ -222,15 +207,56 @@ mod tests {
         assert!(tokenize("a", Analyzer::Ngram).is_empty());
     }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1975" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
 // <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
     #[test]
     fn jieba_fallback_when_no_feature() {
-        let tokens = tokenize("中文測試", Analyzer::Jieba);
+        let tokens = tokenize("北京大學", Analyzer::Jieba);
         #[cfg(not(feature = "jieba"))]
-        assert_eq!(tokens, vec!["中文測試"]);
+        assert_eq!(tokens, vec!["北京", "京大", "大學"]);
         #[cfg(feature = "jieba")]
         assert!(tokens.len() >= 1);
     }
+
+    #[test]
+    fn jieba_fallback_mixed_text() {
+        let tokens = tokenize("lumen 搜尋引擎", Analyzer::Jieba);
+        #[cfg(not(feature = "jieba"))]
+        {
+            // Should contain "lumen" from the non-CJK run, plus CJK bigrams from 搜尋引擎
+            assert!(tokens.contains(&"lumen".to_string()));
+            assert!(tokens.contains(&"搜尋".to_string()));
+            assert!(tokens.contains(&"尋引".to_string()));
+            assert!(tokens.contains(&"引擎".to_string()));
+            // Should NOT have the whole-string token
+            assert!(!tokens.contains(&"lumen 搜尋引擎".to_string()));
+            assert!(!tokens.contains(&"搜尋引擎".to_string()));
+        }
+        #[cfg(feature = "jieba")]
+        assert!(tokens.len() >= 1);
+    }
+
+    #[test]
+    fn jieba_fallback_single_cjk_char() {
+        let tokens = tokenize("中", Analyzer::Jieba);
+        #[cfg(not(feature = "jieba"))]
+        assert_eq!(tokens, vec!["中"]);
+        #[cfg(feature = "jieba")]
+        assert_eq!(tokens, vec!["中"]);
+    }
+
+    #[test]
+    fn jieba_fallback_empty() {
+        let tokens = tokenize("", Analyzer::Jieba);
+        assert_eq!(tokens, Vec::<String>::new());
+    }
+
+    #[test]
+    fn jieba_fallback_whitespace() {
+        let tokens = tokenize("   ", Analyzer::Jieba);
+        assert_eq!(tokens, Vec::<String>::new());
+    }
+// </HANDWRITE>
 // </HANDWRITE>
 }
 // CODEGEN-END
