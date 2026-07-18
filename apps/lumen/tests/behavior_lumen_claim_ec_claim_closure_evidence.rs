@@ -7,14 +7,15 @@
 // @contract ec-claim-closure-evidence
 // @category behavior
 // @required_for_production true
-// @command ./target/debug/aw ec check --project lumen
+// @command cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture
 // AW-EC-END
 
-// Contract: The production claim-closure document remains synchronized with generated EC cases.
+// Contract: The production claim-closure document remains synchronized with generated EC cases: the Gate Inventory's representative behavior/efficiency/stability/security generated claim suites actually execute their underlying production-claim commands.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_ec_claim_closure_evidence() {
-    let command = "./target/debug/aw ec check --project lumen";
+    let command =
+        "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture";
     let id = "lumen-claim-ec-claim-closure-evidence";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

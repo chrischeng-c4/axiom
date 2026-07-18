@@ -7,7 +7,7 @@
 // @contract dynamic-cross-pod-routing
 // @category behavior
 // @required_for_production true
-// @command cargo test -p lumen --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture
+// @command cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture
 // AW-EC-END
 
 // Contract: Cross-pod reads and writes follow the delivered ownership map to the owning shard.
@@ -15,7 +15,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_claim_dynamic_cross_pod_routing() {
     let command =
-        "cargo test -p lumen --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture";
+        "cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture";
     let id = "lumen-claim-dynamic-cross-pod-routing";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

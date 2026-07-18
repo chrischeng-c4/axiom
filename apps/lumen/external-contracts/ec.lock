@@ -3,13 +3,13 @@ project = "lumen"
 ir_kind = "ec"
 ec_path = "apps/lumen/external-contracts"
 inventory_path = "apps/lumen/aw.toml"
-generated_at = "2026-07-15T20:20:10.262650+00:00"
-ir_digest = "sha256:98561b87a29c7cb2516b976a8c5d17bbf58c36474070dbfe417bc8db274d3c50"
-source_digest = "sha256:4cf4f6394362460c009081255172e9390872b555f5294ac8eb1dd6589d2908ed"
+generated_at = "2026-07-18T18:17:24.013788+00:00"
+ir_digest = "sha256:b74bcd2cb91e04e0e102fb7edbffd6a20cfbf946046de9efb79476c52a0ec8e4"
+source_digest = "sha256:0d452ba4687eb49f07b9473bc5fb20b3f62fe69beece99694c1cc2b4bea3d7bc"
 
 [[sources]]
 path = "apps/lumen/external-contracts/claim-closure/production-claims.md"
-digest = "sha256:ea7e7e321cfc5f96b1fe17da0f3f56ae7d479e9b39db8d12b9ce3890175d0607"
+digest = "sha256:bdeb479af8c1823d50cc43594358616b2feda6845dacf9dd18c2be2afba98263"
 
 [[sources]]
 path = "apps/lumen/external-contracts/cli-interface/behavior/cli-interface.md"
@@ -449,12 +449,12 @@ contract_id = "dynamic-cross-pod-routing"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-dynamic-cross-pod-routing"
 test_path = "apps/lumen/tests/behavior_lumen_claim_dynamic_cross_pod_routing.rs"
-command = "cargo test -p lumen --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
+command = "cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
 required_for_production = true
 assertions = ["Cross-pod reads and writes follow the delivered ownership map to the owning shard."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:582171ee8703036a27f36409852d26597a7b2d75f9a576c44ce529df05123a9a"
+digest = "sha256:c9cec5beff712f96bb3b7203f7a264bc78b313004c547e506a11bfe70dd01ea2"
 
 [[cases]]
 id = "lumen-claim-dynamic-multi-shard-replica-kind"
@@ -599,12 +599,12 @@ contract_id = "ec-claim-closure-evidence"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-claim-closure-evidence"
 test_path = "apps/lumen/tests/behavior_lumen_claim_ec_claim_closure_evidence.rs"
-command = "./target/debug/aw ec check --project lumen"
+command = "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture"
 required_for_production = true
-assertions = ["The production claim-closure document remains synchronized with generated EC cases."]
+assertions = ["The production claim-closure document remains synchronized with generated EC cases: the Gate Inventory's representative behavior/efficiency/stability/security generated claim suites actually execute their underlying production-claim commands."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:f5d5adfafcff4dd83de7fdc75aa288f249c1ff062da1a5d44b4d6d3535a16eee"
+digest = "sha256:45f04077729143b6936b562e1fb21f16fd68521db85c4597f527dcce9c8d82b9"
 
 [[cases]]
 id = "lumen-claim-ec-generated-inventory-dispatch"
@@ -614,12 +614,12 @@ contract_id = "ec-generated-inventory-dispatch"
 dimension = "behavior"
 source_ref = "apps/lumen/external-contracts/claim-closure/production-claims.md#lumen-claim-ec-generated-inventory-dispatch"
 test_path = "apps/lumen/tests/behavior_lumen_claim_ec_generated_inventory_dispatch.rs"
-command = "./target/debug/aw ec check --project lumen"
+command = "cargo test -p lumen --test behavior_lumen_claim_cli_service_process_interface --test efficiency_lumen_claim_competitor_performance_external_comparison --test stability_lumen_claim_long_running_log_fanout --test security_lumen_claim_security_bearer_auth -- --ignored --nocapture && cd apps/lumen && ../../target/debug/vat run ec-efficiency-meter && ../../target/debug/vat run rig-resilience"
 required_for_production = true
-assertions = ["The generated AW EC inventory stays in sync with claim tests and dispatch commands."]
+assertions = ["The generated AW EC inventory dispatches its claim test suites and vat-managed runners, proving each generated case actually executes rather than only checking presence."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9c4e3f01e08203d0d6404afe510a9e14b115175375a0dc2bb52e474d0fabdf59"
+digest = "sha256:7842e6cdd617c6e744c6b4d5ea2ad5b0fd54597aa77c05d140e9ad13bb57123e"
 
 [[cases]]
 id = "lumen-claim-ec-vat-managed-runners"

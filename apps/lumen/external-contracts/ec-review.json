@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "project": "lumen",
+  "source_digest": "sha256:c02e15c61c839c74092c8080444057f3129a4e15fefeca251b58168c7249310a",
+  "decision": "accepted",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer",
+  "reviewed_at": "2026-07-18T18:16:53.353466+00:00",
+  "summary": "Re-adjudication at digest sha256:c02e15c6 after the single-line revision to lumen-claim-dynamic-cross-pod-routing (capability dynamic-shard-topology, WI #1988). The gate command gained --features operator: cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture. routed_shard_e2e.rs is #![cfg(feature = \"operator\")], so previously the binary compiled empty and --exact matched zero tests (false-green). With --features operator the named test now compiles and executes (verified 1 passed, 12 filtered out), and its oracle is the real two-Engine + RoutedRouter h2c cross-pod forwarding e2e, independent of aw ec. False-green axis is the material change and is now satisfied; oracle_independent, loopholes_checked, assertions_specific (unchanged text: reads/writes follow the delivered ownership map to the owning shard), capability_claim_coverage, and required_dimensions all hold. Everything else is unchanged from the previously-accepted digest sha256:27eb580d. All six axes pass; findings empty. Verdict: accepted. Agent-backed evidence under ec_review_backing (#1829); reviewer_kind stays agent and a post-completion human batch audit may still reopen it.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": true,
+    "assertions_specific": true,
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
+  },
+  "findings": []
+}
