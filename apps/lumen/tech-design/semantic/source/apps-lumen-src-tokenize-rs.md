@@ -24,6 +24,7 @@ Public API manifest for `apps/lumen/src/tokenize.rs` generated from AST during S
 | `DEFAULT_NGRAM_MIN` | apps/lumen/src/tokenize.rs | constant | pub | 24 |  |
 | `for_whitespace_lower` | apps/lumen/src/tokenize.rs | function | pub | 42 | for_whitespace_lower(text: &str, mut emit: impl FnMut(String)) -> u32 |
 | `for_whitespace_lower_cow` | apps/lumen/src/tokenize.rs | function | pub | 47 | for_whitespace_lower_cow(     mut text: &'a str,     mut emit: impl FnMut(Cow<'a, str>), ) -> u32 |
+| `is_cjk_char` | apps/lumen/src/tokenize.rs | function | (private) | 145 | is_cjk_char(c: char) -> bool |
 | `tokenize` | apps/lumen/src/tokenize.rs | function | pub | 29 | tokenize(text: &str, analyzer: Analyzer) -> Vec<String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
@@ -40,7 +41,10 @@ Public API manifest for `apps/lumen/src/tokenize.rs` generated from AST during S
 //! - `whitespace_lower` — lowercase + Unicode whitespace split. Default.
 //!   Adequate for English; Chinese falls through as one big token.
 //! - `jieba` — Chinese word segmentation. Feature-gated; falls back to
-//!   `whitespace_lower` when the `jieba` feature is off.
+//!   CJK-bigram tokenization (Han/Hiragana/Katakana/Hangul runs emit overlapping
+//!   2-char bigrams; non-CJK runs use whitespace_lower) when the `jieba`
+//!   feature is off. *Note: Documents indexed under the old whole-string
+//!   fallback need reindex before new-query CJK-bigram tokens will match them.*
 //! - `ngram` — character N-grams (default 2..3). Useful for substring
 //!   search on identifier-like fields.
 //!
@@ -122,15 +126,67 @@ fn jieba(text: &str) -> Vec<String> {
 
 #[cfg(not(feature = "jieba"))]
 fn jieba(text: &str) -> Vec<String> {
-    // No-feature fallback: treat the whole string as one token after
-    // lowercasing. Honest: makes `match` over Chinese degenerate to an
-    // exact-equality probe instead of silently dropping the field.
-    let t = text.trim().to_lowercase();
-    if t.is_empty() {
-        vec![]
-    } else {
-        vec![t]
+    // No-feature fallback: CJK-bigram tokenizer.
+    // Split input into maximal runs of CJK characters vs non-CJK characters.
+    // CJK runs emit overlapping 2-char bigrams (or a single unigram for length-1 runs).
+    // Non-CJK runs are tokenized via the existing for_whitespace_lower path.
+    // Output preserves scan order (CJK and non-CJK tokens interleaved as they appear).
+    
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return vec![];
     }
+    
+    let mut tokens = Vec::new();
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        let is_cjk = is_cjk_char(c);
+
+        // Consume a maximal run of same type (CJK or non-CJK)
+        let run_start = i;
+        while i < chars.len() && is_cjk_char(chars[i]) == is_cjk {
+            i += 1;
+        }
+        
+        let run: String = chars[run_start..i].iter().collect();
+        
+        if is_cjk {
+            // CJK run: emit overlapping bigrams (or unigram for length 1)
+            let run_chars: Vec<char> = run.chars().collect();
+            if run_chars.len() == 1 {
+                tokens.push(run_chars[0].to_string());
+            } else {
+                for j in 0..run_chars.len() - 1 {
+                    let bigram: String = run_chars[j..j + 2].iter().collect();
+                    tokens.push(bigram);
+                }
+            }
+        } else {
+            // Non-CJK run: tokenize via existing for_whitespace_lower path
+            for_whitespace_lower(&run, |tok| tokens.push(tok));
+        }
+    }
+    
+    tokens
+}
+
+/// Check if a Unicode character is in a CJK range.
+/// Covers Han (CJK Unified Ideographs + Ext A), Hiragana, Katakana, Hangul syllables.
+fn is_cjk_char(c: char) -> bool {
+    let code = c as u32;
+    // Han: U+4E00..U+9FFF (CJK Unified Ideographs)
+    (code >= 0x4E00 && code <= 0x9FFF)
+        // Han extension A: U+3400..U+4DBF
+        || (code >= 0x3400 && code <= 0x4DBF)
+        // Hiragana: U+3040..U+309F
+        || (code >= 0x3040 && code <= 0x309F)
+        // Katakana: U+30A0..U+30FF
+        || (code >= 0x30A0 && code <= 0x30FF)
+        // Hangul syllables: U+AC00..U+D7A3
+        || (code >= 0xAC00 && code <= 0xD7A3)
 }
 
 fn ngram(text: &str, min: usize, max: usize) -> Vec<String> {
@@ -185,11 +241,50 @@ mod tests {
 
     #[test]
     fn jieba_fallback_when_no_feature() {
-        let tokens = tokenize("中文測試", Analyzer::Jieba);
+        let tokens = tokenize("北京大學", Analyzer::Jieba);
         #[cfg(not(feature = "jieba"))]
-        assert_eq!(tokens, vec!["中文測試"]);
+        assert_eq!(tokens, vec!["北京", "京大", "大學"]);
         #[cfg(feature = "jieba")]
         assert!(tokens.len() >= 1);
+    }
+
+    #[test]
+    fn jieba_fallback_mixed_text() {
+        let tokens = tokenize("lumen 搜尋引擎", Analyzer::Jieba);
+        #[cfg(not(feature = "jieba"))]
+        {
+            // Should contain "lumen" from the non-CJK run, plus CJK bigrams from 搜尋引擎
+            assert!(tokens.contains(&"lumen".to_string()));
+            assert!(tokens.contains(&"搜尋".to_string()));
+            assert!(tokens.contains(&"尋引".to_string()));
+            assert!(tokens.contains(&"引擎".to_string()));
+            // Should NOT have the whole-string token
+            assert!(!tokens.contains(&"lumen 搜尋引擎".to_string()));
+            assert!(!tokens.contains(&"搜尋引擎".to_string()));
+        }
+        #[cfg(feature = "jieba")]
+        assert!(tokens.len() >= 1);
+    }
+
+    #[test]
+    fn jieba_fallback_single_cjk_char() {
+        let tokens = tokenize("中", Analyzer::Jieba);
+        #[cfg(not(feature = "jieba"))]
+        assert_eq!(tokens, vec!["中"]);
+        #[cfg(feature = "jieba")]
+        assert_eq!(tokens, vec!["中"]);
+    }
+
+    #[test]
+    fn jieba_fallback_empty() {
+        let tokens = tokenize("", Analyzer::Jieba);
+        assert_eq!(tokens, Vec::<String>::new());
+    }
+
+    #[test]
+    fn jieba_fallback_whitespace() {
+        let tokens = tokenize("   ", Analyzer::Jieba);
+        assert_eq!(tokens, Vec::<String>::new());
     }
 }
 // CODEGEN-END
