@@ -77,6 +77,7 @@ pub(crate) fn for_whitespace_lower_cow<'a>(
     emitted
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in tokenize.rs is hand-written pending codegen support">
 #[cfg(feature = "jieba")]
 fn jieba(text: &str) -> Vec<String> {
     use std::sync::OnceLock;
@@ -88,6 +89,7 @@ fn jieba(text: &str) -> Vec<String> {
         .filter(|t| !t.trim().is_empty())
         .collect()
 }
+// </HANDWRITE>
 
 #[cfg(not(feature = "jieba"))]
 fn jieba(text: &str) -> Vec<String> {
@@ -152,6 +154,7 @@ mod tests {
         assert!(tokenize("a", Analyzer::Ngram).is_empty());
     }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
     #[test]
     fn jieba_fallback_when_no_feature() {
         let tokens = tokenize("中文測試", Analyzer::Jieba);
@@ -160,5 +163,6 @@ mod tests {
         #[cfg(feature = "jieba")]
         assert!(tokens.len() >= 1);
     }
+// </HANDWRITE>
 }
 // CODEGEN-END
