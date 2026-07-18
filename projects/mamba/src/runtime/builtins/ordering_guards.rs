@@ -115,10 +115,18 @@ pub(super) fn can_derive_ordering_from_lt_eq(a: MbValue, b: MbValue) -> bool {
 }
 
 pub(super) fn unsupported_ordering_bool(a: MbValue, b: MbValue, op: &str) -> MbValue {
-    raise_type_error(format!(
-        "'{op}' not supported between instances of '{}' and '{}'",
-        value_type_name(a),
-        value_type_name(b)
-    ));
+    // #1962: don't clobber a pending exception from an earlier operand
+    // evaluation with a fresh operand-type TypeError — mirrors the #1547
+    // mb_value_cmp / #1938 mb_add guard. Reached directly by `mb_gt`/
+    // `mb_le`/`mb_ge` when one operand is a real Instance (without the
+    // relevant dunder) and the other is the `None` sentinel a raise left
+    // behind, bypassing the `mb_lt`/`values_lt_fallback` composition path.
+    if !super::super::exception::has_current_exception() {
+        raise_type_error(format!(
+            "'{op}' not supported between instances of '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
+    }
     MbValue::from_bool(false)
 }
