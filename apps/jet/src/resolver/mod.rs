@@ -576,6 +576,43 @@ impl ModuleResolver {
                 } else {
                     target.join(rest.trim_start_matches('/'))
                 };
+
+                // #1967: an alias may land inside an npm package directory
+                // rather than resolve straight to a file -- e.g. a
+                // scope-prefix alias (`"@mui/" = "./node_modules/@mui/"`)
+                // reaches `@mui/icons-material`'s package root, and
+                // `"@mui/icons-material/ArrowBack"` reaches it with a
+                // subpath. `try_extensions`'s directory branch only
+                // consults `package.json` `main`, never `exports`, so a
+                // dual-build package (`exports["."] = { require, default }`)
+                // always picked the CJS `require` build through an alias
+                // even when bare-specifier resolution (`resolve_package_dir`)
+                // correctly preferred `default`/ESM. Route directory hits
+                // through that same exports-aware, condition-ordered lookup
+                // before falling back to plain file/`main` probing. Aliases
+                // that map straight to a file (`"react-router" =
+                // ".../dist/development/index.mjs"`) are unaffected: `rest`
+                // is only used to look for a package root when non-empty,
+                // and a direct file target never satisfies the
+                // `is_dir() && package.json exists` gate below.
+                if rest.is_empty() {
+                    if candidate.is_dir() && candidate.join("package.json").exists() {
+                        if let Ok(resolved) = self.resolve_package_dir(&candidate, None) {
+                            return Ok(resolved);
+                        }
+                    }
+                } else {
+                    let (pkg_name, subpath) = parse_package_specifier(rest.trim_start_matches('/'));
+                    let package_dir = target.join(&pkg_name);
+                    if package_dir.is_dir() && package_dir.join("package.json").exists() {
+                        if let Ok(resolved) =
+                            self.resolve_package_dir(&package_dir, subpath.as_deref())
+                        {
+                            return Ok(resolved);
+                        }
+                    }
+                }
+
                 return self.try_extensions(&candidate);
             }
         }
@@ -1509,6 +1546,289 @@ mod tests {
                 "default".to_string()
             ],
             "Default conditions must be [import, browser, default] for browser ESM dev mode"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // #1967: production browser resolution must prefer exports `default`/
+    // `import`/`browser`/`module` over `require` for dual-build packages
+    // (e.g. @mui/icons-material: exports["."] = { require, default }, no
+    // `module` field), both for bare specifiers and for aliases that map a
+    // specifier to a package DIRECTORY rather than straight to a file.
+    // ──────────────────────────────────────────────────────────────────
+
+    /// Write a minimal dual-build npm package: `exports["."]` offers both
+    /// `require` (CJS root) and `default` (ESM root), matching
+    /// `@mui/icons-material`'s real shape (epic #1949 spike). Content
+    /// markers let assertions double-check *which file* got picked,
+    /// independent of the path comparison.
+    fn write_dual_build_package(package_dir: &Path) {
+        std::fs::create_dir_all(package_dir.join("esm")).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{
+                "name": "dual-pkg",
+                "version": "1.0.0",
+                "main": "./index.js",
+                "exports": {
+                    ".": {
+                        "require": "./index.js",
+                        "default": "./esm/index.js"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package_dir.join("index.js"),
+            "module.exports = 'CJS_MARKER';",
+        )
+        .unwrap();
+        std::fs::write(
+            package_dir.join("esm").join("index.js"),
+            "export default 'ESM_MARKER';",
+        )
+        .unwrap();
+    }
+
+    /// AC1 (bare half): a bare specifier resolving `dual-pkg` under
+    /// `ResolveOptions::for_browser_production()` must pick the `default`
+    /// (ESM) export, not `require` (CJS) -- even though `require` is the
+    /// first key in the exports object.
+    #[test]
+    fn production_browser_bare_specifier_prefers_default_over_require() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let pkg_dir = tmp.path().join("node_modules").join("dual-pkg");
+        write_dual_build_package(&pkg_dir);
+
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let importer = src_dir.join("main.js");
+        std::fs::write(&importer, "import x from 'dual-pkg';").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::for_browser_production()).unwrap();
+        let resolved = resolver.resolve("dual-pkg", &importer).unwrap();
+
+        assert_eq!(
+            resolved.path,
+            pkg_dir.join("esm").join("index.js"),
+            "production browser resolution must pick the exports `default` (ESM) build, \
+             not `require` (CJS), for a bare specifier: {:?}",
+            resolved.path
+        );
+    }
+
+    /// AC1 (alias half) + #1949 tw-monitor repro: a prefix alias
+    /// (`"@mui/" = "./node_modules/@mui/"`) maps a scoped specifier to the
+    /// package's DIRECTORY, not straight to a file. That directory lookup
+    /// must consult the package's `exports` map with the same condition
+    /// ordering as the bare-specifier path, not jump straight to
+    /// `package.json` `main`.
+    #[test]
+    fn production_browser_alias_directory_prefers_default_over_require() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let scope_dir = tmp.path().join("node_modules").join("@scope");
+        let pkg_dir = scope_dir.join("dual-pkg");
+        write_dual_build_package(&pkg_dir);
+
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let importer = src_dir.join("main.js");
+        std::fs::write(&importer, "import x from '@scope/dual-pkg';").unwrap();
+
+        let mut options = ResolveOptions::for_browser_production();
+        options.alias = vec![("@scope/".to_string(), scope_dir.clone())];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver.resolve("@scope/dual-pkg", &importer).unwrap();
+
+        assert_eq!(
+            resolved.path,
+            pkg_dir.join("esm").join("index.js"),
+            "alias-reached package directory must consult `exports` (default/ESM), \
+             not fall straight to `main` (CJS): {:?}",
+            resolved.path
+        );
+    }
+
+    /// Subpath variant of the alias-directory case: `exports["./*"]` (the
+    /// shape `@mui/icons-material/ArrowBack`-style single-icon imports use)
+    /// must apply the same require-vs-default choice per matched subpath,
+    /// reached through the alias.
+    #[test]
+    fn production_browser_alias_directory_subpath_prefers_default_over_require() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let scope_dir = tmp.path().join("node_modules").join("@scope");
+        let pkg_dir = scope_dir.join("icons-pkg");
+        std::fs::create_dir_all(pkg_dir.join("esm")).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{
+                "name": "icons-pkg",
+                "version": "1.0.0",
+                "exports": {
+                    "./*": {
+                        "require": "./*.js",
+                        "default": "./esm/*.js"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.join("Widget.js"), "module.exports = 'CJS_WIDGET';").unwrap();
+        std::fs::write(
+            pkg_dir.join("esm").join("Widget.js"),
+            "export default 'ESM_WIDGET';",
+        )
+        .unwrap();
+
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let importer = src_dir.join("main.js");
+        std::fs::write(&importer, "import Widget from '@scope/icons-pkg/Widget';").unwrap();
+
+        let mut options = ResolveOptions::for_browser_production();
+        options.alias = vec![("@scope/".to_string(), scope_dir.clone())];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver
+            .resolve("@scope/icons-pkg/Widget", &importer)
+            .unwrap();
+
+        assert_eq!(
+            resolved.path,
+            pkg_dir.join("esm").join("Widget.js"),
+            "alias-reached subpath must match exports[\"./*\"] default (ESM), \
+             not require (CJS): {:?}",
+            resolved.path
+        );
+    }
+
+    /// A deep-file alias (`"react-router" = "./node_modules/react-router/\
+    /// dist/development/index.mjs"`) maps straight to a FILE, not a package
+    /// directory -- it must resolve to exactly that file, untouched by
+    /// exports-map logic, even though the file lives inside a package that
+    /// itself has an `exports` map (which would pick a different file if
+    /// consulted).
+    #[test]
+    fn alias_mapped_directly_to_file_bypasses_exports_map() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let pkg_dir = tmp.path().join("node_modules").join("deep-pkg");
+        let dev_dir = pkg_dir.join("dist").join("development");
+        std::fs::create_dir_all(&dev_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{
+                "name": "deep-pkg",
+                "version": "1.0.0",
+                "exports": {
+                    ".": {
+                        "require": "./index.js",
+                        "default": "./esm/index.dev.js"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        let deep_file = dev_dir.join("index.mjs");
+        std::fs::write(&deep_file, "export default 'DEEP_FILE_MARKER';").unwrap();
+
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let importer = src_dir.join("main.js");
+        std::fs::write(&importer, "import x from 'deep-pkg';").unwrap();
+
+        let mut options = ResolveOptions::for_browser_production();
+        options.alias = vec![("deep-pkg".to_string(), deep_file.clone())];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver.resolve("deep-pkg", &importer).unwrap();
+
+        assert_eq!(
+            resolved.path, deep_file,
+            "a deep-file alias target must resolve verbatim, not be redirected through \
+             the target package's exports map: {:?}",
+            resolved.path
+        );
+    }
+
+    /// A require-only package (no `default`/`import`/`browser`/`module`
+    /// condition, matching a CJS-only dependency) reached through an
+    /// alias-mapped directory must still resolve via the pre-existing
+    /// `main`-field fallback -- the exports-map consultation must not
+    /// regress packages that only ship CJS.
+    #[test]
+    fn alias_directory_require_only_package_falls_back_to_main() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let scope_dir = tmp.path().join("node_modules").join("@scope");
+        let pkg_dir = scope_dir.join("legacy-pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{
+                "name": "legacy-pkg",
+                "version": "1.0.0",
+                "main": "index.js",
+                "exports": {
+                    ".": {
+                        "require": "./index.js"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg_dir.join("index.js"),
+            "module.exports = 'LEGACY_MARKER';",
+        )
+        .unwrap();
+
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let importer = src_dir.join("main.js");
+        std::fs::write(&importer, "import x from '@scope/legacy-pkg';").unwrap();
+
+        let mut options = ResolveOptions::for_browser_production();
+        options.alias = vec![("@scope/".to_string(), scope_dir.clone())];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver.resolve("@scope/legacy-pkg", &importer).unwrap();
+
+        assert_eq!(
+            resolved.path,
+            pkg_dir.join("index.js"),
+            "a require-only package reached through an alias-mapped directory must still \
+             resolve via the `main` fallback: {:?}",
+            resolved.path
+        );
+    }
+
+    /// AC3: an explicit `[resolve.conditions]` user override (surfaced here
+    /// as `ResolveOptions.conditions`, exactly as
+    /// `cli.rs::browser_production_resolve_options` applies it) still wins
+    /// over the new default -- a user who explicitly asks for `require`
+    /// still gets the CJS build, through the alias-directory path too.
+    #[test]
+    fn alias_directory_explicit_conditions_override_can_still_prefer_require() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let scope_dir = tmp.path().join("node_modules").join("@scope");
+        let pkg_dir = scope_dir.join("dual-pkg");
+        write_dual_build_package(&pkg_dir);
+
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let importer = src_dir.join("main.js");
+        std::fs::write(&importer, "import x from '@scope/dual-pkg';").unwrap();
+
+        let mut options = ResolveOptions::for_browser_production();
+        options.alias = vec![("@scope/".to_string(), scope_dir.clone())];
+        // Explicit override, as `[resolve] conditions = ["require", "default"]`
+        // in jet.toml would produce.
+        options.conditions = vec!["require".to_string(), "default".to_string()];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver.resolve("@scope/dual-pkg", &importer).unwrap();
+
+        assert_eq!(
+            resolved.path,
+            pkg_dir.join("index.js"),
+            "an explicit conditions override that includes `require` must still win: {:?}",
+            resolved.path
         );
     }
 }
