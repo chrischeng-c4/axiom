@@ -671,7 +671,7 @@ e2e_tests:
     claim_id: cross-pod-shard-routing
     contract_id: dynamic-cross-pod-routing
     category: behavior
-    command: "cargo test -p lumen --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
+    command: "cargo test -p lumen --features operator --test routed_shard_e2e forward_write_and_forward_read_land_on_owning_shard -- --exact --nocapture"
     assertions:
       - "Cross-pod reads and writes follow the delivered ownership map to the owning shard."
 
