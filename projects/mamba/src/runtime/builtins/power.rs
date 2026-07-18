@@ -116,12 +116,18 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
                     MbValue::from_float(b.powf(e))
                 }
                 _ => {
-                    super::super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(
-                            "unsupported operand type(s) for pow()".to_string(),
-                        )),
-                    );
+                    // #1962: don't clobber a pending exception from an
+                    // earlier operand evaluation with a fresh operand-type
+                    // TypeError — mirrors the #1547 mb_value_cmp / #1938
+                    // mb_add guard.
+                    if !super::super::exception::has_current_exception() {
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "unsupported operand type(s) for pow()".to_string(),
+                            )),
+                        );
+                    }
                     MbValue::none()
                 }
             }
