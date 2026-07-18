@@ -104,16 +104,15 @@ fn jieba(text: &str) -> Vec<String> {
     }
     
     let mut tokens = Vec::new();
-    let mut run_start = 0;
     let chars: Vec<char> = trimmed.chars().collect();
     let mut i = 0;
-    
+
     while i < chars.len() {
         let c = chars[i];
         let is_cjk = is_cjk_char(c);
-        
+
         // Consume a maximal run of same type (CJK or non-CJK)
-        run_start = i;
+        let run_start = i;
         while i < chars.len() && is_cjk_char(chars[i]) == is_cjk {
             i += 1;
         }
@@ -208,7 +207,6 @@ mod tests {
     }
 
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#1975" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in tokenize.rs is hand-written pending codegen support">
     #[test]
     fn jieba_fallback_when_no_feature() {
         let tokens = tokenize("北京大學", Analyzer::Jieba);
@@ -256,7 +254,6 @@ mod tests {
         let tokens = tokenize("   ", Analyzer::Jieba);
         assert_eq!(tokens, Vec::<String>::new());
     }
-// </HANDWRITE>
 // </HANDWRITE>
 }
 // CODEGEN-END
