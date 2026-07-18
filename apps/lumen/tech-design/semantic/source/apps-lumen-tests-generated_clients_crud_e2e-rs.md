@@ -334,8 +334,6 @@ main().catch((err) => {{
             "ES2022",
             "--module",
             "commonjs",
-            "--moduleResolution",
-            "node",
             "--lib",
             "ES2022,DOM",
             "--skipLibCheck",
