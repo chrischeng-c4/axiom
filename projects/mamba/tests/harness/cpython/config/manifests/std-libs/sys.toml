@@ -620,3 +620,14 @@ case      = "getdefaultencoding_is_utf8"
 subject   = "sys.getdefaultencoding"
 kind      = "semantic"
 intent    = "sys.getdefaultencoding() returns 'utf-8' on CPython 3.12"
+
+# __file__: sys is a frozen/statically-linked builtin — real CPython omits
+# __file__ entirely (hasattr is False), unlike most other native modules
+# which get a fabricated one (#1961). This guards against over-broadly
+# giving every native module a synthetic __file__.
+[[case]]
+dimension = "behavior"
+case      = "file_attr_omitted"
+subject   = "sys.__file__"
+kind      = "semantic"
+intent    = "sys has no __file__ attribute at all (a frozen/statically-linked builtin), matching CPython"
