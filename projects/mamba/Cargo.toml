@@ -273,6 +273,19 @@ path = "tests/harness/cpython/perf_pin.rs"
 harness = false
 test = false
 
+# cpython — full-enumeration perf-pin report (#1981). One #[test] that walks
+# every pin in a single run and classifies each into pass / ratio-fail /
+# fixture-error / no-baseline, so one pin's panic never masks the rest and the
+# whole ~128-pin surface is visible together. Default (harness-driven) since
+# it is a single ordinary #[test] fn, not a datatest-per-pin binary. Opt-in
+# only (`test = false`) for the same reason as perf_pin: release-profile CPU/
+# RSS measurement only, spurious under the default debug `cargo test -p mamba`.
+#   cargo test -p mamba --release --test perf_gate_report -- --nocapture
+[[test]]
+name = "perf_gate_report"
+path = "tests/harness/cpython/perf_gate_report.rs"
+test = false
+
 # mambalibs — mamba-only native library behavior
 [[test]]
 name = "mambalibs"

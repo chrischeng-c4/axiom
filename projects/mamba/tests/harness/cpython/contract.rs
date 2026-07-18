@@ -261,49 +261,77 @@ fn perf_pins_gate_speed_and_memory_against_cpython() {
         pins.len()
     );
 
+    // #1981: full-enumeration — every pin is schema-checked, and a problem in
+    // one pin never masks the check for the rest (the old panic-on-first
+    // `unwrap_or_else`/`assert!` chain stopped at the first offender, hiding
+    // every pin after it in the sorted walk). Violations are collected across
+    // the whole set and the test fails once, at the end, with the complete
+    // list and a count. The conditions themselves are unchanged: `floor` and
+    // `mem_floor` must be present and numeric with `floor <= 1.0` /
+    // `mem_floor >= 1.0`, and `fixture` must be present and point at a file
+    // that exists.
+    let mut violations: Vec<String> = Vec::new();
+
     for path in pins {
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
-        let parsed: Value = toml::from_str(&raw)
-            .unwrap_or_else(|err| panic!("cannot parse {}: {err}", path.display()));
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(err) => {
+                violations.push(format!("cannot read {}: {err}", path.display()));
+                continue;
+            }
+        };
+        let parsed: Value = match toml::from_str(&raw) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                violations.push(format!("cannot parse {}: {err}", path.display()));
+                continue;
+            }
+        };
 
-        let floor = parsed
-            .get("floor")
-            .and_then(Value::as_float)
-            .unwrap_or_else(|| panic!("{} missing numeric floor", path.display()));
-        assert!(
-            floor <= 1.0,
-            "{} allows mamba slower than CPython: floor={floor}",
-            path.display()
-        );
+        match parsed.get("floor").and_then(Value::as_float) {
+            Some(floor) if floor <= 1.0 => {}
+            Some(floor) => violations.push(format!(
+                "{} allows mamba slower than CPython: floor={floor}",
+                path.display()
+            )),
+            None => violations.push(format!("{} missing numeric floor", path.display())),
+        }
 
-        let mem_floor = parsed
-            .get("mem_floor")
-            .and_then(Value::as_float)
-            .unwrap_or_else(|| panic!("{} missing numeric mem_floor", path.display()));
-        assert!(
-            mem_floor >= 1.0,
-            "{} allows mamba peak RSS above CPython: mem_floor={mem_floor}",
-            path.display()
-        );
+        match parsed.get("mem_floor").and_then(Value::as_float) {
+            Some(mem_floor) if mem_floor >= 1.0 => {}
+            Some(mem_floor) => violations.push(format!(
+                "{} allows mamba peak RSS above CPython: mem_floor={mem_floor}",
+                path.display()
+            )),
+            None => violations.push(format!("{} missing numeric mem_floor", path.display())),
+        }
 
-        let fixture = parsed
-            .get("fixture")
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("{} missing fixture path", path.display()));
-        let fixture_path = manifest_dir().join(fixture);
-        assert!(
-            fixture_path.exists(),
-            "{} points at missing fixture {}",
-            path.display(),
-            fixture
-        );
+        match parsed.get("fixture").and_then(Value::as_str) {
+            Some(fixture) => {
+                let fixture_path = manifest_dir().join(fixture);
+                if !fixture_path.exists() {
+                    violations.push(format!(
+                        "{} points at missing fixture {}",
+                        path.display(),
+                        fixture
+                    ));
+                }
+            }
+            None => violations.push(format!("{} missing fixture path", path.display())),
+        }
         // D5.2: speed gates measure CPU externally (getrusage / /usr/bin/time),
         // so fixtures no longer self-emit a self-timing marker. The old
         // "must self-emit a timing marker" contract is removed here (it forced the
         // self-timing anti-pattern); once D5.1 strips the markers tree-wide this
         // can flip to the inverse contract (a speed fixture must NOT self-time).
     }
+
+    assert!(
+        violations.is_empty(),
+        "{} of the perf-pin schema checks failed:\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
 }
 
 #[test]
