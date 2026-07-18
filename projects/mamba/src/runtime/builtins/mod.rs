@@ -56,6 +56,7 @@ mod type_objects;
 mod type_union;
 mod unary_negation;
 mod value_extractors;
+mod wide_call;
 
 pub use absolute::mb_abs;
 pub use aggregate_kwargs::{
@@ -6395,10 +6396,11 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
 /// reboxing a raw-int return unless the callee is `any`/object-returning.
 /// Shared by the variadic spread + kwargs binding paths (and mb_call_spread_impl's
 /// positional dispatch) so the entry ABI `f(regular_0, .., args_list, kwargs_dict)`
-/// is honoured uniformly. Arity is hardcoded per-arm (0..=16, #1754) because each
-/// arm transmutes to a distinct `extern "C" fn(MbValue, ..)` type; beyond 16 raises
-/// rather than silently returning None (still a hardcoded ceiling, not a real fix
-/// for arbitrary arity — that needs a codegen-side pointer+length entry ABI).
+/// is honoured uniformly. Arities 0..=16 dispatch via a hardcoded per-arm
+/// `transmute` (#1754) because each arm needs a distinct `extern "C" fn(MbValue,
+/// ..)` Rust type; arities beyond that (no ceiling — #1950) route through
+/// `wide_call::dispatch_wide`, which lazily JIT-compiles a small Cranelift loader
+/// shim per distinct wide arity so a single Rust-callable type covers all of them.
 fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) -> MbValue {
     let raw_result: MbValue = unsafe {
         match items.len() {
@@ -6635,10 +6637,8 @@ fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) ->
                 )
             }
             n => {
-                raise_type_error(format!(
-                    "mamba: JIT call frame arity {n} exceeds the supported dispatch ceiling (16 params)"
-                ));
-                MbValue::none()
+                let bits = wide_call::dispatch_wide(raw_addr, items.as_ptr() as usize, n);
+                MbValue::from_bits(bits)
             }
         }
     };
