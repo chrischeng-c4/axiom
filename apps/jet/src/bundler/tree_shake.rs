@@ -1132,6 +1132,34 @@ fn extract_cjs_require_bindings(
         // `accessed`, already computed by scan_require_call above.
 
         if destructured.is_empty() && accessed.is_empty() {
+            // Pattern 3 (#1968): `const m = require('mod'); ... m.prop ...`
+            // — the require target is bound to a local name and read via
+            // property access on LATER lines, not the require() line
+            // itself. Line-wise narrowing (patterns 1/2 above) can't see
+            // this, so it used to fall straight to the namespace-wildcard
+            // branch below — cheap for a single wrapper module, but fatal
+            // for a re-export barrel: a `"*"` used-name makes
+            // `eliminate_unused_reexport_assignments` (bundler/dce.rs) bail
+            // out of pruning the barrel's re-export glue ENTIRELY (its
+            // own `"*"` short-circuit can't tell "genuinely reads every
+            // export" apart from "this extractor gave up narrowing"), so
+            // every leaf the barrel re-exports survives the bundler's
+            // require-reachability pass untouched — reproduced on a
+            // `@mui/icons-material`-shaped fixture (10,775 of 10,775
+            // barrel leaves retained) once a CJS shim did
+            // `const M = require('@mui/icons-material')` and read
+            // `M.SomeIcon` on a separate line. Recovering the specific
+            // accessed names here lets the fixed point (and the glue
+            // pruner downstream) narrow the barrel exactly as it already
+            // does for an explicit `require('mod').prop` access.
+            if let Some(binding) = extract_require_local_binding(trimmed) {
+                if let Some(names) =
+                    scan_require_binding_property_accesses(source, trimmed, &binding)
+                {
+                    results.push((target.0.clone(), names));
+                    continue;
+                }
+            }
             // Namespace-style require (`var m = require('mod')`,
             // `module.exports = require('mod')` interop wrappers). Whole-
             // module usage cannot be narrowed line-wise, so keep every
@@ -1151,6 +1179,120 @@ fn extract_cjs_require_bindings(
     }
 
     results
+}
+
+/// The local binding name a bare `const/let/var X = require(...)` line
+/// declares — `X`. Returns `None` for destructuring (`const { a } = ...`,
+/// already handled by `extract_destructured_names`) and for anything that
+/// isn't a plain identifier assignment (the shapes `extract_cjs_export_names`
+/// et al. don't otherwise recognize).
+fn extract_require_local_binding(line: &str) -> Option<String> {
+    for keyword in ["const ", "let ", "var "] {
+        let Some(rest) = line.strip_prefix(keyword) else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        if rest.starts_with('{') || rest.starts_with('[') {
+            return None; // destructuring — not this pattern.
+        }
+        let ident = rest
+            .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+            .next()?;
+        if ident.is_empty() {
+            return None;
+        }
+        let after_ident = rest[ident.len()..].trim_start();
+        return if after_ident.starts_with('=') && !after_ident.starts_with("==") {
+            Some(ident.to_string())
+        } else {
+            None
+        };
+    }
+    None
+}
+
+/// Scan `source` for every use of `binding` outside its own declaration
+/// line (`require_line`) and decide whether the require target's
+/// whole-module usage narrows to specific property names.
+///
+/// Returns `Some(names)` only when EVERY occurrence of `binding` elsewhere
+/// in the module is a `.prop` or `["prop"]` access — the bound object
+/// itself never escapes bare (passed to a function, spread, iterated,
+/// reassigned, ...), where an unpredictable set of its properties could be
+/// read. Any bare occurrence, or a computed (non-literal-string) index
+/// access, forces the conservative `None` so the caller keeps the existing
+/// whole-module wildcard. No property access at all also returns `None` —
+/// there is nothing to narrow to, and an unused binding is a
+/// require-for-side-effects case the wildcard already handles correctly.
+fn scan_require_binding_property_accesses(
+    source: &str,
+    require_line: &str,
+    binding: &str,
+) -> Option<Vec<String>> {
+    if binding.is_empty() {
+        return None;
+    }
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut names: Vec<String> = Vec::new();
+    let mut seen_access = false;
+
+    for line in source.lines() {
+        if line.trim() == require_line {
+            continue; // the declaration itself — not a use.
+        }
+        let bytes = line.as_bytes();
+        let mut from = 0usize;
+        while let Some(rel) = line[from..].find(binding) {
+            let start = from + rel;
+            let end = start + binding.len();
+            let before_ok = start == 0 || !is_id(bytes[start - 1]);
+            let after_ok = end >= bytes.len() || !is_id(bytes[end]);
+            from = start + 1;
+            if !before_ok || !after_ok {
+                continue; // part of a longer identifier — not this binding.
+            }
+
+            let rest = &line[end..];
+            if let Some(prop_rest) = rest.strip_prefix('.') {
+                let prop = prop_rest
+                    .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                    .next()
+                    .unwrap_or("");
+                if prop.is_empty() {
+                    return None; // `binding.` followed by nothing identifier-shaped.
+                }
+                names.push(prop.to_string());
+                seen_access = true;
+                continue;
+            }
+            if let Some(bracket_rest) = rest.strip_prefix('[') {
+                let Some(close) = bracket_rest.find(']') else {
+                    return None;
+                };
+                match extract_string_value(bracket_rest[..close].trim()) {
+                    Some(s) => {
+                        names.push(s);
+                        seen_access = true;
+                    }
+                    None => return None, // computed index — can't narrow safely.
+                }
+                continue;
+            }
+
+            // Bare occurrence outside a property access — the object
+            // itself is read as a value (argument, spread, iteration,
+            // reassignment, ...); its full property set is unpredictable.
+            return None;
+        }
+    }
+
+    if seen_access {
+        names.sort();
+        names.dedup();
+        Some(names)
+    } else {
+        None
+    }
 }
 
 /// Extract the specifier from a require() call. Superseded in the hot
@@ -2580,6 +2722,121 @@ const internal = 2;
         assert!(used.contains("useState"));
         // useEffect is NOT imported, so should not be in used set
         assert!(!used.contains("useEffect"));
+    }
+
+    #[test]
+    fn analyze_used_exports_barrel_with_cjs_shim_narrows_without_wildcard_at_scale() {
+        // #1968: build(entries) mirrors @mui/icons-material's actual
+        // shape at the scale that made the bug visible — a pure Named ESM
+        // barrel (`export { default as IconK } from "./IconK.js"`, no
+        // Star/mixed forms) plus a CJS shim doing
+        // `const M = require('@mui/icons-material'); ... M.Icon2 ...`
+        // (property access on a line SEPARATE from the require() call,
+        // exactly like tw-monitor's lucideReactShim.js reading
+        // `MuiIcons.SomeIcon`). Before the fix,
+        // extract_cjs_require_bindings's namespace-wildcard fallback fired
+        // for the shim's bare `const M = require(...)` line (no same-line
+        // destructure/access), registering `"*"` into the barrel's used
+        // set. That `"*"` made `dce::eliminate_unused_reexport_assignments`
+        // (bundler/dce.rs — unmodified by this fix, see its own
+        // `test_eliminate_unused_reexport_assignments_prunes_barrel_leaves_when_used_has_no_wildcard`
+        // for the byte-level pruning half of this reconciliation) bail out
+        // of pruning the barrel's re-export glue for every leaf, not just
+        // the unused ones, so the bundler's later require-reachability
+        // pass kept every leaf reachable — reproduced end-to-end against a
+        // real `jet build` of a 10-icon fixture with this exact shape
+        // (dist output contained all 10 icon functions pre-fix, only the 3
+        // genuinely-used ones post-fix). This test pins the fix at the
+        // extractor/analysis layer: the barrel's used set must recover the
+        // shim's specific `M.Icon2` access and stay wildcard-free at every
+        // scale, including the 5,000-entry scale the WI #1947 regression
+        // concern (sub-second analysis time) is measured against.
+        fn build(entries: usize) -> Vec<(PathBuf, String)> {
+            let mut modules = Vec::new();
+            let mut barrel_src = String::new();
+            for i in 0..entries {
+                barrel_src.push_str(&format!(
+                    "export {{ default as Icon{i} }} from \"./Icon{i}.js\";\n"
+                ));
+                modules.push((
+                    PathBuf::from(format!(
+                        "/fixture/node_modules/@mui/icons-material/esm/Icon{i}.js"
+                    )),
+                    format!("export default function Icon{i}() {{ return null; }}\n"),
+                ));
+            }
+            modules.push((
+                PathBuf::from("/fixture/node_modules/@mui/icons-material/esm/index.js"),
+                barrel_src,
+            ));
+            modules.push((
+                PathBuf::from("/fixture/entry.js"),
+                "import { Icon0, Icon1 } from '@mui/icons-material';\nimport './shim.js';\nconsole.log(Icon0, Icon1);\n".to_string(),
+            ));
+            modules.push((
+                PathBuf::from("/fixture/shim.js"),
+                "const MuiIcons = require('@mui/icons-material');\nconst Wrapped = wrap(MuiIcons.Icon2);\nmodule.exports = { Wrapped };\n".to_string(),
+            ));
+            modules
+        }
+
+        let resolver = |spec: &str, _importer: &Path| -> Option<PathBuf> {
+            if spec == "@mui/icons-material" {
+                Some(PathBuf::from(
+                    "/fixture/node_modules/@mui/icons-material/esm/index.js",
+                ))
+            } else {
+                None
+            }
+        };
+        let barrel_path = PathBuf::from("/fixture/node_modules/@mui/icons-material/esm/index.js");
+
+        for entries in [5usize, 100, 5000] {
+            let modules = build(entries);
+            let entry = PathBuf::from("/fixture/entry.js");
+            let start = std::time::Instant::now();
+            let result = analyze_used_exports_from(&modules, &entry, Some(&resolver)).unwrap();
+            let elapsed = start.elapsed();
+            assert!(
+                elapsed.as_secs() < 1,
+                "N={entries}: analysis must stay sub-second (WI #1947 regression concern), took {elapsed:?}"
+            );
+
+            let barrel_used = result.used_exports.get(&barrel_path).unwrap_or_else(|| {
+                panic!("N={entries}: barrel must have a used_exports entry, got {result:?}")
+            });
+            assert!(
+                !barrel_used.contains("*"),
+                "N={entries}: a CJS shim's namespace-wildcard fallback must not pollute the \
+                 barrel's used set once its specific M.Icon2 access is recovered, got {barrel_used:?}"
+            );
+            let mut sorted: Vec<&str> = barrel_used.iter().map(|s| s.as_str()).collect();
+            sorted.sort_unstable();
+            assert_eq!(
+                sorted,
+                vec!["Icon0", "Icon1", "Icon2"],
+                "N={entries}: exactly the 2 ESM-imported + 1 shim-accessed names are used, got {barrel_used:?}"
+            );
+
+            for i in 0..3usize.min(entries) {
+                let leaf = PathBuf::from(format!(
+                    "/fixture/node_modules/@mui/icons-material/esm/Icon{i}.js"
+                ));
+                assert!(
+                    !result.eliminated_modules.contains(&leaf),
+                    "N={entries}: Icon{i} is used and must be retained"
+                );
+            }
+            for i in 3..entries.min(5) {
+                let leaf = PathBuf::from(format!(
+                    "/fixture/node_modules/@mui/icons-material/esm/Icon{i}.js"
+                ));
+                assert!(
+                    result.eliminated_modules.contains(&leaf),
+                    "N={entries}: Icon{i} is never used anywhere and must be eliminated"
+                );
+            }
+        }
     }
 }
 

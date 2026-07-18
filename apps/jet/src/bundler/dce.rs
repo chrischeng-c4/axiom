@@ -2309,6 +2309,67 @@ Object.defineProperty(_m2.exports, "__esModule", { value: true });
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // #1968 — eliminate_unused_reexport_assignments pruning proof. This
+    // function had zero direct test coverage before #1968: the actual bug
+    // lived in tree_shake.rs's extract_cjs_require_bindings, which fed this
+    // (unmodified) function a `used` set polluted with "*" whenever a CJS
+    // shim did `const M = require('barrel'); ... M.someName ...` (property
+    // access on a line separate from the require() call) — see
+    // tree_shake.rs's
+    // `analyze_used_exports_barrel_with_cjs_shim_narrows_without_wildcard_at_scale`
+    // for the extractor-side half of this fix. These two tests pin this
+    // function's own pre-existing, correct behavior at both ends of that
+    // input: it prunes cleanly once `used` has no wildcard, and it still
+    // conservatively no-ops when `used` genuinely does.
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_eliminate_unused_reexport_assignments_prunes_barrel_leaves_when_used_has_no_wildcard() {
+        let source = concat!(
+            "module.exports[\"Icon0\"] = require(2)[\"default\"];\n",
+            "module.exports[\"Icon1\"] = require(3)[\"default\"];\n",
+            "module.exports[\"Icon2\"] = require(4)[\"default\"];\n",
+            "module.exports[\"Icon3\"] = require(5)[\"default\"];\n",
+            "module.exports[\"Icon4\"] = require(6)[\"default\"];\n",
+        );
+        let used: HashSet<String> = ["Icon0", "Icon1", "Icon2"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let pruned = eliminate_unused_reexport_assignments(source, &used, None);
+
+        assert!(
+            pruned.contains("Icon0") && pruned.contains("Icon1") && pruned.contains("Icon2"),
+            "used names' re-export assignments must survive: {pruned}"
+        );
+        assert!(
+            !pruned.contains("Icon3") && !pruned.contains("Icon4"),
+            "unused barrel leaves must be pruned once the used set has no wildcard, got: {pruned}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_reexport_assignments_is_noop_when_used_contains_wildcard() {
+        // Documents the existing, intentional conservative behavior the
+        // #1968 fix works AROUND (by keeping "*" out of the used set for a
+        // narrowable CJS shim access) rather than changing: once "*" is
+        // genuinely in `used` (a real `import * as ns` or a CJS require
+        // this module's own analysis truly could not narrow), this
+        // function must still not prune anything, since any export could
+        // be read at runtime.
+        let source = "module.exports[\"Icon0\"] = require(2)[\"default\"];\n";
+        let used: HashSet<String> = ["*"].into_iter().map(String::from).collect();
+
+        let pruned = eliminate_unused_reexport_assignments(source, &used, None);
+
+        assert_eq!(
+            pruned, source,
+            "a wildcard used set must remain a strict no-op"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // WI #1947 round 2 — eliminate_require_reexports_to_eliminated_modules
     // no-op/pruning proof cases. bundler::apply_tree_shaking now skips this
     // walk outright for a retained module whenever `numeric_require_ids`
