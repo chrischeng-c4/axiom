@@ -1,7 +1,19 @@
 ---
 id: '1975'
-summary: (fill)
-fill_sections: [logic, changes, unit-test]
+summary: >
+  Replace the jieba-off `Analyzer::Jieba` whole-string fallback with a
+  CJK-bigram tokenizer (Han/Hiragana/Katakana/Hangul runs -> overlapping
+  char bigrams, unigram for length-1 runs; non-CJK runs keep the existing
+  for_whitespace_lower path) so Chinese `match` no longer degenerates to
+  exact-string equality when the `jieba` feature is off.
+capability_refs:
+  - id: "lexical-search"
+    role: primary
+    gap: "jieba-fallback-cjk-bigram"
+    claim: "jieba-fallback-cjk-bigram"
+    coverage: partial
+    rationale: "This WI closes the jieba-off degradation gap in the Lexical Search capability's BM25/analyzer promise by replacing the whole-string fallback with CJK bigrams."
+fill_sections: [logic, changes, unit-test, e2e-test]
 ---
 
 ## Logic
@@ -57,16 +69,16 @@ flowchart TD
     collect --> next_run
 ```
 
-Design notes:
+Contract (approved, final): the `#[cfg(not(feature = "jieba"))] fn jieba` fallback signature (`fn jieba(text: &str) -> Vec<String>`) and the outer `tokenize` dispatch are unchanged; only the fallback body's internal algorithm changes. Guarantees held stable for callers:
 
-- CJK-run classification is a Unicode char-range test (Han `U+4E00..=U+9FFF` plus the common CJK extension/compat/punctuation-adjacent blocks already implied by "Han"; Hiragana `U+3040..=U+309F`, Katakana `U+30A0..=U+30FF`, Hangul syllables `U+AC00..=U+D7A3`) — no external segmenter dependency, matching the jieba-off constraint.
+- CJK-run classification is a Unicode char-range test (Han `U+4E00..=U+9FFF` plus the common CJK extension/compat blocks; Hiragana `U+3040..=U+309F`; Katakana `U+30A0..=U+30FF`; Hangul syllables `U+AC00..=U+D7A3`) — no external segmenter dependency, matching the jieba-off constraint.
 - A run is a maximal contiguous span of chars that are all CJK or all non-CJK; run boundaries never split a char.
 - Bigram emission is overlapping (window 1, stride 1) over the run's char sequence: an N-char CJK run yields N-1 bigrams (「北京大學」, N=4, yields 3 bigrams: 北京/京大/大學), matching Lucene `CJKBigramFilter` / Elasticsearch `cjk_bigram` semantics referenced in the WI problem statement.
 - A length-1 CJK run (a lone CJK character) emits that character as a single-char unigram token instead of being dropped, keeping it searchable (AC3).
 - Non-CJK runs (including surrounding whitespace/punctuation) are handed to the existing `for_whitespace_lower` emitter unchanged, so mixed text such as `lumen 搜尋引擎` keeps its `lumen` token exactly as today (R2) while the CJK run `搜尋引擎` is bigrammed.
 - Output preserves scan order (non-CJK and CJK tokens interleaved as they appear in the source), consistent with the existing `Vec<String>` contract in `tokenize`'s doc comment (duplicate tokens preserved, order matters for term-frequency callers).
-- No new `Analyzer` variant, no schema/API change: this logic lives entirely inside the existing `#[cfg(not(feature = "jieba"))] fn jieba` fallback body; the `#[cfg(feature = "jieba")]` path, `WhitespaceLower`, and `Ngram` are untouched.
-
+- No new `Analyzer` variant, no schema/API change: this logic lives entirely inside the existing `#[cfg(not(feature = "jieba"))] fn jieba` fallback body; the `#[cfg(feature = "jieba")]` path, `WhitespaceLower`, and `Ngram` are untouched (R3).
+- Documents indexed under the OLD whole-string fallback need reindex before new-query CJK-bigram tokens will match them; this is a documented degraded-mode caveat, not new migration machinery (module doc comment update).
 ## Changes
 <!-- type: changes lang: yaml -->
 
