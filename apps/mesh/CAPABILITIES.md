@@ -20,7 +20,7 @@ Markdown capability headings and tables below are machine-readable input for
 | HTTP/2 API List | #1969 | planned | planned | none | not_ready | h2c/OpenAPI endpoint inventory |
 | Kubernetes-Native Deployment | #1969 | planned | planned | none | not_ready | dedicated StatefulSet/operator shape |
 | Primary Replicas | #1969 | planned | planned | none | not_ready | raft-backed shard ownership |
-| CLI Interface | #1969 | planned | planned | none | not_ready | `mesh` CLI for graph write/query/admin and agent docs |
+| CLI Interface | #1969 | partial | partial | smoke | not_ready | `mesh` CLI for graph write/query/admin and agent docs — standard llm/upgrade/issue verbs plus placeholder domain verbs landed (#1970); real graph write/query verbs still pending |
 | Long-Running Stability | #1969 | planned | planned | none | not_ready | write/traversal soak and recovery gates |
 | Security Hardening | #1969 | planned | planned | none | not_ready | collection authz, tenant isolation, audit, and secret rotation |
 | Competitor Feature Parity | #1969 | planned | planned | none | not_ready | Neo4j/JanusGraph/DGraph/Neptune-style feature matrix |
@@ -39,12 +39,12 @@ Promise:
 Mesh ships an agent-drivable CLI for node/edge writes, traversal/path query, and
 admin workflows while following the repository-wide CLI convention.
 Gate Inventory:
-- pending: apps/mesh/tests/cli_contract.rs
+- passing: apps/mesh/tests/cli_contract.rs (`cargo test -p mesh`)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | mesh-cli-convention-and-graph-verbs | epic | #1969 | planned | planned | none | pending CLI convention gate |
-| mesh-cli-shell-scaffold | change | #1970 | planned | planned | none | pending CLI convention gate |
+| mesh-cli-shell-scaffold | change | #1970 | implemented | verified | smoke | `cargo test -p mesh` (5/5 passing); apps/mesh/tests/cli_contract.rs |
 
 ### Long-Running Stability
 
