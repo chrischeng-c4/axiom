@@ -44,6 +44,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | mesh-cli-convention-and-graph-verbs | epic | #1969 | planned | planned | none | pending CLI convention gate |
+| mesh-cli-shell-scaffold | change | #1970 | planned | planned | none | pending CLI convention gate |
 
 ### Long-Running Stability
 
