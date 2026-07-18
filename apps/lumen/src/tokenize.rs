@@ -77,6 +77,7 @@ pub(crate) fn for_whitespace_lower_cow<'a>(
     emitted
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="#1975" reason="logic section in tokenize.rs is hand-written pending codegen support">
 // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in tokenize.rs is hand-written pending codegen support">
 #[cfg(feature = "jieba")]
 fn jieba(text: &str) -> Vec<String> {
@@ -89,6 +90,73 @@ fn jieba(text: &str) -> Vec<String> {
         .filter(|t| !t.trim().is_empty())
         .collect()
 }
+
+#[cfg(not(feature = "jieba"))]
+fn jieba(text: &str) -> Vec<String> {
+    // No-feature fallback: CJK-bigram tokenizer.
+    // Split input into maximal runs of CJK characters vs non-CJK characters.
+    // CJK runs emit overlapping 2-char bigrams (or a single unigram for length-1 runs).
+    // Non-CJK runs are tokenized via the existing for_whitespace_lower path.
+    // Output preserves scan order (CJK and non-CJK tokens interleaved as they appear).
+    
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return vec![];
+    }
+    
+    let mut tokens = Vec::new();
+    let mut run_start = 0;
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut i = 0;
+    
+    while i < chars.len() {
+        let c = chars[i];
+        let is_cjk = is_cjk_char(c);
+        
+        // Consume a maximal run of same type (CJK or non-CJK)
+        run_start = i;
+        while i < chars.len() && is_cjk_char(chars[i]) == is_cjk {
+            i += 1;
+        }
+        
+        let run: String = chars[run_start..i].iter().collect();
+        
+        if is_cjk {
+            // CJK run: emit overlapping bigrams (or unigram for length 1)
+            let run_chars: Vec<char> = run.chars().collect();
+            if run_chars.len() == 1 {
+                tokens.push(run_chars[0].to_string());
+            } else {
+                for j in 0..run_chars.len() - 1 {
+                    let bigram: String = run_chars[j..j + 2].iter().collect();
+                    tokens.push(bigram);
+                }
+            }
+        } else {
+            // Non-CJK run: tokenize via existing for_whitespace_lower path
+            for_whitespace_lower(&run, |tok| tokens.push(tok));
+        }
+    }
+    
+    tokens
+}
+
+/// Check if a Unicode character is in a CJK range.
+/// Covers Han (CJK Unified Ideographs + Ext A), Hiragana, Katakana, Hangul syllables.
+fn is_cjk_char(c: char) -> bool {
+    let code = c as u32;
+    // Han: U+4E00..U+9FFF (CJK Unified Ideographs)
+    (code >= 0x4E00 && code <= 0x9FFF)
+        // Han extension A: U+3400..U+4DBF
+        || (code >= 0x3400 && code <= 0x4DBF)
+        // Hiragana: U+3040..U+309F
+        || (code >= 0x3040 && code <= 0x309F)
+        // Katakana: U+30A0..U+30FF
+        || (code >= 0x30A0 && code <= 0x30FF)
+        // Hangul syllables: U+AC00..U+D7A3
+        || (code >= 0xAC00 && code <= 0xD7A3)
+}
+// </HANDWRITE>
 // </HANDWRITE>
 
 #[cfg(not(feature = "jieba"))]
