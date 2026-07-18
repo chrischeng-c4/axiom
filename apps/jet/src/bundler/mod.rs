@@ -1781,6 +1781,29 @@ impl Bundler {
             .find(|c| c.chunk_type == splitting::ChunkType::Entry)
             .ok_or_else(|| anyhow::anyhow!("code splitting: no entry chunk produced"))?;
 
+        // `entry_chunk.imports` mixes two different load semantics: async
+        // chunk names (dynamic `import()` targets — loaded on demand,
+        // already correctly deferred by `dynamicImport`) and static
+        // shared/manual chunk names (the entry itself statically depends on
+        // them; see `splitting::split_chunks`'s `entry_imports` and
+        // `split_chunks_with_config`'s manual-chunk append). Only the latter
+        // must be loaded before `require(entry.id)` below — mirrors
+        // `splitting::generate_preload_hints`'s own async-exclusion filter,
+        // which already proves this is the correct way to separate the two.
+        // @issue #1963
+        let async_chunk_names: HashSet<&str> = split_result
+            .chunks
+            .iter()
+            .filter(|c| c.chunk_type == splitting::ChunkType::Async)
+            .map(|c| c.name.as_str())
+            .collect();
+        let entry_static_imports: Vec<&str> = entry_chunk
+            .imports
+            .iter()
+            .map(String::as_str)
+            .filter(|name| !async_chunk_names.contains(name))
+            .collect();
+
         let mut entry_code = String::new();
         entry_code.push_str(&generate_split_runtime());
         entry_code.push_str("\n\n");
@@ -1788,7 +1811,7 @@ impl Bundler {
             entry_code.push_str(&format_module_define(module));
         }
         entry_code.push_str("// Execute entry point\n");
-        entry_code.push_str(&format!("__jet__.require({});\n", entry.id));
+        entry_code.push_str(&entry_bootstrap_js(entry.id, &entry_static_imports));
 
         let chunks: Vec<ChunkArtifact> = split_result
             .chunks
@@ -1876,6 +1899,41 @@ fn format_module_define(module: &CompiledModule) -> String {
     format!(
         "// Module {}: {}\n__jet__.define({}, function(require, module, exports) {{\n{}\n}});\n\n",
         module.id, module_path, module.id, module.code
+    )
+}
+
+/// Build the entry chunk's final statement: run `entry_id` immediately once
+/// its static shared/manual chunk dependencies (if any) have actually
+/// loaded.
+///
+/// `static_imports` must already exclude async (dynamic-`import()`) chunk
+/// names — see the call site in `Bundler::generate_split_bundle` — so this
+/// never eagerly fetches a chunk that is supposed to load on demand.
+///
+/// - Empty (the common case: no shared/manual chunk is a static entry
+///   dependency): emits the pre-#1963 bare `__jet__.require(<id>);\n` byte
+///   for byte, so graphs with no such chunk keep byte-identical output.
+/// - Non-empty: a `ChunkType::Shared` chunk (auto-detected `shared` OR a
+///   `[build.manual_chunks]` chunk) the entry statically depends on must
+///   finish loading — and self-registering via `__jet__.registerChunk` —
+///   before `require` can resolve it, so the entry is only required inside
+///   the `Promise.all(...).then(...)` success callback. Pre-#1963 this was a
+///   bare synchronous `require(entry.id)`, which threw
+///   `Uncaught Error: Module not found: <id>` in a real page because nothing
+///   had ever called `__jet__.loadChunk` for the dependency first (#1948's
+///   STOP clause / #1930-#1931's carried-over gap).
+/// @issue #1963
+fn entry_bootstrap_js(entry_id: usize, static_imports: &[&str]) -> String {
+    if static_imports.is_empty() {
+        return format!("__jet__.require({entry_id});\n");
+    }
+    let chunk_list = static_imports
+        .iter()
+        .map(|name| format!("{name:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Promise.all([{chunk_list}].map(__jet__.loadChunk)).then(function() {{\n  __jet__.require({entry_id});\n}}, function(err) {{\n  console.error('jet: failed to load startup chunk', err);\n  throw err;\n}});\n"
     )
 }
 
@@ -3417,6 +3475,151 @@ mod code_splitting_tests {
         assert!(
             result.is_none(),
             "graph with no dynamic imports must fall back to None, got: {result:#?}"
+        );
+    }
+
+    // ── #1963: entry bootstrap loads static shared/manual chunks first ──
+    //
+    // #1948's STOP clause: a `ChunkType::Shared` chunk (auto-detected
+    // `shared` OR a `[build.manual_chunks]` chunk) the ENTRY statically
+    // depends on used to never load — the bootstrap was a bare synchronous
+    // `__jet__.require(entry.id)`, so a real page threw `Uncaught Error:
+    // Module not found: <id>` before anything ever called
+    // `__jet__.loadChunk` for it. `entry_bootstrap_js` is the fix's unit;
+    // `shared_chunk_that_is_a_static_entry_dependency_is_loaded_before_require_end_to_end`
+    // below proves `generate_split_bundle` actually threads the filtered
+    // static-import list through end to end.
+
+    #[test]
+    fn entry_bootstrap_js_no_static_imports_is_byte_identical_bare_require() {
+        // The common case (no shared/manual chunk is a static entry
+        // dependency — e.g. `split_bundle_fixture()` above, where
+        // shared.js is single-reference and the only name in
+        // `entry_chunk.imports` is the async "chunk-lazy1") must keep the
+        // pre-#1963 bare-require byte shape exactly, so
+        // `cli.rs::inject_chunk_manifest`'s anchor rework stays a
+        // byte-identical no-op for this path.
+        assert_eq!(entry_bootstrap_js(0, &[]), "__jet__.require(0);\n");
+        assert_eq!(entry_bootstrap_js(42, &[]), "__jet__.require(42);\n");
+    }
+
+    #[test]
+    fn entry_bootstrap_js_with_static_imports_loads_chunks_before_require_with_error_path() {
+        let js = entry_bootstrap_js(0, &["shared"]);
+        // Ordering, not just presence: the load must be scheduled BEFORE
+        // the require, matching `cli.rs::inject_chunk_manifest`'s
+        // requirement that the manifest (and therefore every loadChunk
+        // call depending on it) lands ahead of require.
+        let load_pos = js
+            .find("Promise.all([\"shared\"].map(__jet__.loadChunk))")
+            .unwrap_or_else(|| {
+                panic!("must call loadChunk via Promise.all before requiring the entry: {js}")
+            });
+        let require_pos = js
+            .find("__jet__.require(0);")
+            .unwrap_or_else(|| panic!("must still require the entry once loaded: {js}"));
+        assert!(
+            load_pos < require_pos,
+            "loadChunk must be scheduled before require(entry): {js}"
+        );
+        assert!(
+            js.contains("}, function(err) {"),
+            "must wire an error callback for a rejected chunk load: {js}"
+        );
+        assert!(
+            js.contains("console.error('jet: failed to load startup chunk', err);")
+                && js.contains("throw err;"),
+            "load failure must be logged and rethrown, not silently swallowed: {js}"
+        );
+    }
+
+    #[test]
+    fn entry_bootstrap_js_multiple_static_imports_preserves_order() {
+        let js = entry_bootstrap_js(7, &["shared", "vendor"]);
+        assert!(
+            js.contains("Promise.all([\"shared\", \"vendor\"].map(__jet__.loadChunk))"),
+            "must load every static dependency, in the given order, before requiring: {js}"
+        );
+    }
+
+    #[test]
+    fn shared_chunk_that_is_a_static_entry_dependency_is_loaded_before_require_end_to_end() {
+        // entry.js statically imports common.js, and lazy1.js (an async
+        // split point) ALSO statically imports common.js, so
+        // `splitting::split_chunks`'s 2+-reachability rule promotes
+        // common.js into its own "shared" chunk that the ENTRY statically
+        // depends on — mirrors `tests/build/code_splitting.rs`'s
+        // `write_shared_promotion_fixture` at unit-test scale.
+        let bundler = Bundler::new(BundleOptions {
+            splitting: true,
+            ..Default::default()
+        })
+        .expect("bundler new");
+
+        {
+            let mut g = bundler.graph.write();
+            let entry = g.add_module(
+                PathBuf::from("/fixture/entry.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            let common = g.add_module(
+                PathBuf::from("/fixture/common.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            let lazy1 = g.add_module(
+                PathBuf::from("/fixture/lazy1.js"),
+                graph::ModuleKind::Script,
+                0,
+            );
+            g.add_dependency(entry, common, EdgeKind::Import);
+            g.add_dependency(entry, lazy1, EdgeKind::DynamicImport);
+            g.add_dependency(lazy1, common, EdgeKind::Import);
+        }
+
+        let modules = vec![
+            compiled(0, "/fixture/entry.js", "__jet__.dynamicImport(2);"),
+            compiled(1, "/fixture/common.js", "exports.common = 1;"),
+            compiled(2, "/fixture/lazy1.js", "exports.lazy = 1;"),
+        ];
+
+        let (entry_code, chunks, _preload_hints) = bundler
+            .generate_split_bundle(&modules)
+            .expect("generate_split_bundle should succeed")
+            .expect("fixture has a dynamic import boundary; must not fall back to None");
+
+        assert!(
+            chunks.iter().any(|c| c.name == "shared"),
+            "common.js is reachable from 2 chunks (entry + lazy1); must be promoted to a \
+             shared chunk: {chunks:#?}"
+        );
+        assert!(
+            !entry_code.contains("exports.common = 1;"),
+            "the promoted shared module must be excluded from the entry chunk: {entry_code}"
+        );
+
+        // The actual #1963 assertion: the entry bootstrap must load
+        // "shared" via loadChunk before requiring the entry, and must NOT
+        // eagerly load "chunk-lazy1" (still an on-demand async chunk).
+        let load_pos = entry_code
+            .find("Promise.all([\"shared\"].map(__jet__.loadChunk))")
+            .unwrap_or_else(|| {
+                panic!(
+                    "entry bootstrap must loadChunk the static shared dependency before \
+                     require(entry): {entry_code}"
+                )
+            });
+        let require_pos = entry_code
+            .rfind("__jet__.require(0);")
+            .expect("entry must still require itself once loaded");
+        assert!(
+            load_pos < require_pos,
+            "shared chunk must load before require(entry): {entry_code}"
+        );
+        assert!(
+            !entry_code.contains("chunk-lazy1"),
+            "async chunk name must not be eagerly loaded in the entry bootstrap: {entry_code}"
         );
     }
 }

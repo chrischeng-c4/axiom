@@ -1311,6 +1311,327 @@ async fn splitting_lazy_chunk_loads_on_demand_in_real_browser() -> Result<()> {
     }
 }
 
+// ── #1963: entry-static shared/manual chunk boot smokes ────────────────────
+//
+// #1948's close-out STOP clause: a `ChunkType::Shared` chunk (auto-detected
+// `shared` OR a `[build.manual_chunks]` chunk) that the ENTRY statically
+// depends on never loads at runtime — the entry bootstrap used to end in a
+// bare synchronous `__jet__.require(entry.id)` with nothing calling
+// `__jet__.loadChunk` for that static dependency first, so a real page threw
+// `Uncaught Error: Module not found: <id>` at startup. Both smokes below
+// reuse the `StaticDistServer`/`spawn_jet_browser`/`browser_eval_json`
+// harness from the #1931 lazy-load smoke above, but render visibly into
+// `#root` (rather than `console.log`) so a real browser boot is directly
+// observable, and assert the dependency chunk's own network request actually
+// fired (`performance.getEntriesByType('resource')`).
+
+/// Writes a fixture where the entry statically imports a module that a lazy
+/// chunk ALSO imports — `bundler::splitting`'s 2+-chunk-reachability
+/// promotion carves that module into a real `"shared"` chunk that the ENTRY
+/// itself statically depends on (same shape as `write_shared_promotion_fixture`
+/// above, which proves the *build* output; this variant renders its marker
+/// into `#root` instead of `console.log`-ing it so a real browser can prove
+/// the app actually *boots*). The lazy imports are never triggered — they
+/// only need to exist so `bundler::splitting` treats `common.js` as reachable
+/// from 2+ chunks; nothing here depends on them ever loading.
+fn write_shared_promotion_boot_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { common } from './common.js';
+
+document.getElementById('root').innerHTML =
+  '<div id="output">' + common() + '</div>';
+
+import('./lazy1.js').then((mod) => mod.default());
+import('./lazy2.js').then((mod) => mod.default());
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/common.js"),
+        "export function common() { return 'ENTRY_STATIC_SHARED_MARKER'; }\n",
+    )
+    .expect("write common");
+    fs::write(
+        dir.join("src/lazy1.js"),
+        r#"import { common } from './common.js';
+
+export default function lazy1() { return 'LAZY_ONE_MARKER:' + common(); }
+"#,
+    )
+    .expect("write lazy1");
+    fs::write(
+        dir.join("src/lazy2.js"),
+        "export default function lazy2() { return 'LAZY_TWO_MARKER'; }\n",
+    )
+    .expect("write lazy2");
+}
+
+/// #1963 AC1 — an entry-static `shared` chunk (the auto-detected case) must
+/// actually load before the entry requires itself: the app boots, renders
+/// the shared module's value, and the shared chunk's own script request is
+/// observed in the page's resource timing.
+///
+/// Pre-fix, this reproduces #1948's STOP-clause finding directly: the entry
+/// bootstrap was a bare synchronous `__jet__.require(0)` with nothing ever
+/// calling `__jet__.loadChunk("shared")` first, so `require(0)` threw
+/// `Uncaught Error: Module not found: <common.js's module id>` before
+/// `#root` was ever touched — `document.getElementById('output')` would
+/// never appear and this test would time out waiting for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn splitting_entry_static_shared_chunk_boots_and_renders_in_real_browser() -> Result<()> {
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping splitting_entry_static_shared_chunk_boots_and_renders_in_real_browser: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_shared_promotion_boot_fixture(fixture);
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting"])?,
+        "build --splitting (entry-static shared chunk boot fixture)",
+    )?;
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "splitting build must emit dist/index.html"
+    );
+    let shared_js_exists = list_files_recursive(&fixture.join("dist/assets"))
+        .into_iter()
+        .any(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("shared.") && n.ends_with(".js"))
+        });
+    assert!(
+        shared_js_exists,
+        "fixture must force a promoted shared.<hash>.js chunk (WI #1963 repro shape)"
+    );
+
+    // Same hard-bound-timeout shape as the #1931 lazy-load smoke above.
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            // `&&`-guarded lookup: `#output` only exists once the entry's
+            // top-level code has actually run (the exact thing pre-fix code
+            // never manages to do), so a plain `.textContent` access would
+            // throw on `null` while polling before that point.
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            output_text.as_deref(),
+            Some("ENTRY_STATIC_SHARED_MARKER"),
+            "app must boot and render the entry's statically-imported shared-chunk dependency \
+             (WI #1963: entry bootstrap must loadChunk static deps before require(entry))"
+        );
+
+        let resources = browser_eval_json(
+            fixture,
+            "performance.getEntriesByType('resource').map((e) => e.name)",
+        )
+        .context("read resource timing")?;
+        let names: Vec<String> = resources
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            names.iter().any(|n| n.contains("/assets/shared.")),
+            "the shared chunk's own script request must actually occur: {names:?}"
+        );
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(inner) => inner,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            Err(anyhow!(
+                "splitting_entry_static_shared_chunk_boots_and_renders_in_real_browser timed \
+                 out after 60s"
+            ))
+        }
+    }
+}
+
+/// #1948/#1963 — DOM-rendering variant of `write_manual_chunks_fixture` above:
+/// same `node_modules/fakepkg` + `[build.manual_chunks]` vendor-glob shape,
+/// but renders visibly into `#root` (instead of `console.log`) so a real
+/// browser boot can be proven, closing the live-browser AC that
+/// `splitting_manual_chunks_config_routes_glob_matched_module_into_named_chunk_excluded_from_entry`'s
+/// doc comment explains was carved out of #1948 pending this fix.
+fn write_manual_chunks_boot_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("node_modules/fakepkg")).expect("create node_modules/fakepkg");
+    fs::write(
+        dir.join("node_modules/fakepkg/package.json"),
+        r#"{"name":"fakepkg","version":"1.0.0","main":"index.js"}"#,
+    )
+    .expect("write fakepkg package.json");
+    fs::write(
+        dir.join("node_modules/fakepkg/index.js"),
+        "export function fakepkg() { return 'FAKEPKG_BOOT_MARKER'; }\n",
+    )
+    .expect("write fakepkg index.js");
+
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { fakepkg } from 'fakepkg';
+
+document.getElementById('root').innerHTML =
+  '<div id="output">' + fakepkg() + '</div>';
+
+import('./lazy1.js').then((mod) => mod.default());
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/lazy1.js"),
+        "export default function lazy1() { return 'LAZY_ONE_MARKER'; }\n",
+    )
+    .expect("write lazy1");
+}
+
+/// #1963 AC2 — closes #1948's carved-out AC: a manual `[build.manual_chunks]`
+/// vendor chunk that the entry statically depends on must load before the
+/// entry requires itself, exactly like the auto-detected `shared` case
+/// above (manual chunks are `ChunkType::Shared` internally too — see
+/// `splitting::split_chunks_with_config`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn splitting_manual_vendor_chunk_boots_in_real_browser() -> Result<()> {
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping splitting_manual_vendor_chunk_boots_in_real_browser: no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_manual_chunks_boot_fixture(fixture);
+    fs::write(
+        fixture.join("jet.toml"),
+        "[build.manual_chunks]\nvendor = [\"**/node_modules/fakepkg/**\"]\n",
+    )
+    .expect("write jet.toml");
+
+    require_success(
+        run_jet(fixture, ["build", "--splitting"])?,
+        "build --splitting (manual vendor chunk boot fixture)",
+    )?;
+    let vendor_js_exists = list_files_recursive(&fixture.join("dist/assets"))
+        .into_iter()
+        .any(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("vendor.") && n.ends_with(".js"))
+        });
+    assert!(
+        vendor_js_exists,
+        "fixture must produce a vendor.<hash>.js manual chunk"
+    );
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            output_text.as_deref(),
+            Some("FAKEPKG_BOOT_MARKER"),
+            "app must boot and render the entry's statically-imported manual vendor chunk \
+             dependency (closes #1948's carved-out AC)"
+        );
+
+        let resources = browser_eval_json(
+            fixture,
+            "performance.getEntriesByType('resource').map((e) => e.name)",
+        )
+        .context("read resource timing")?;
+        let names: Vec<String> = resources
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            names.iter().any(|n| n.contains("/assets/vendor.")),
+            "the vendor chunk's own script request must actually occur: {names:?}"
+        );
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(inner) => inner,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            Err(anyhow!(
+                "splitting_manual_vendor_chunk_boots_in_real_browser timed out after 60s"
+            ))
+        }
+    }
+}
+
 // ── WI #1932: splitting default-on for web builds ──────────────────────────
 //
 // Splitting is no longer an explicit-only opt-in: a web-target `jet build`

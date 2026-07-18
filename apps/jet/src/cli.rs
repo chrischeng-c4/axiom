@@ -2508,7 +2508,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // `result.chunks` (true pre-#1932, when `--splitting` was
             // always explicit and every fixture had a dynamic import —
             // `inject_chunk_manifest` below panics-via-`?` on a graph with
-            // no `__jet__.require(...)` anchor, e.g. scope-hoisted flat
+            // no `// Execute entry point` anchor, e.g. scope-hoisted flat
             // output, if it runs unconditionally).
             // @issue #1932
             let did_split = splitting && !result.chunks.is_empty();
@@ -4939,21 +4939,114 @@ fn build_chunk_manifest_js(chunks: &[HashedChunk]) -> String {
 }
 
 /// Inject `__jet__.chunkManifest = {...};` into raw (pre-minify) entry code,
-/// right before the final `__jet__.require(<id>);` call.
+/// right after the `// Execute entry point` marker and before whatever
+/// bootstrap statement `Bundler::generate_split_bundle`'s `entry_bootstrap_js`
+/// emitted for it.
 ///
-/// `__jet__.require(` is `Bundler::generate_split_bundle`'s bundler-emitted
-/// anchor (not user-controllable), guaranteed to appear exactly once in raw
-/// entry code, so `rfind` locates the entry point call unambiguously.
-/// @issue #1930
+/// Anchors on the `// Execute entry point\n` comment rather than
+/// `__jet__.require(` (pre-#1963 anchor) because the bootstrap statement is
+/// no longer always a bare `__jet__.require(<id>);`: when the entry
+/// statically depends on a shared/manual chunk, `entry_bootstrap_js` instead
+/// emits a `Promise.all([...]).then(function(){ __jet__.require(<id>); },
+/// ...)` wrapper, and the manifest MUST land before that `Promise.all` call
+/// (its `loadChunk` calls read `window.__jet__.chunkManifest` immediately) —
+/// anchoring on `__jet__.require(` would instead splice the manifest inside
+/// the `.then()` success callback, after the loads it needs already ran
+/// without one. The comment is `Bundler::generate_split_bundle`'s
+/// bundler-emitted anchor (not user-controllable) and, like the old anchor,
+/// is guaranteed to appear exactly once in raw entry code, so `rfind`
+/// locates the entry point block unambiguously. For the common
+/// no-static-shared-dependency case (bootstrap stays a bare
+/// `__jet__.require(<id>);`), the comment is immediately followed by that
+/// statement with no characters in between, so this anchor change is a
+/// byte-identical no-op versus the pre-#1963 anchor.
+/// @issue #1930 @issue #1963
 fn inject_chunk_manifest(entry_code: &str, manifest_js: &str) -> Result<String> {
+    const ANCHOR: &str = "// Execute entry point\n";
     let anchor = entry_code
-        .rfind("__jet__.require(")
-        .context("code splitting: entry code missing __jet__.require(...) anchor")?;
+        .rfind(ANCHOR)
+        .context("code splitting: entry code missing \"// Execute entry point\" anchor")?;
+    let insert_at = anchor + ANCHOR.len();
     let mut out = String::with_capacity(entry_code.len() + manifest_js.len());
-    out.push_str(&entry_code[..anchor]);
+    out.push_str(&entry_code[..insert_at]);
     out.push_str(manifest_js);
-    out.push_str(&entry_code[anchor..]);
+    out.push_str(&entry_code[insert_at..]);
     Ok(out)
+}
+
+/// @issue #1963
+#[cfg(test)]
+mod inject_chunk_manifest_tests {
+    use super::*;
+
+    #[test]
+    fn bare_require_entry_code_gets_manifest_spliced_immediately_before_it() {
+        // Byte-identity proof for the common case (no static shared/manual
+        // chunk dependency): `Bundler::generate_split_bundle`'s
+        // `entry_bootstrap_js` emits a bare `__jet__.require(<id>);` tail
+        // when there are no static imports to load first, and the manifest
+        // must land right after the `// Execute entry point` comment and
+        // right before that statement — the exact same splice point the
+        // pre-#1963 `__jet__.require(` anchor produced.
+        let entry_code = "__jet__runtime();\n\n// Execute entry point\n__jet__.require(0);\n";
+        let manifest_js = "__jet__.chunkManifest = {\"chunks\":{},\"moduleChunks\":{}};\n";
+
+        let out = inject_chunk_manifest(entry_code, manifest_js).expect("inject must succeed");
+
+        assert_eq!(
+            out,
+            "__jet__runtime();\n\n// Execute entry point\n\
+             __jet__.chunkManifest = {\"chunks\":{},\"moduleChunks\":{}};\n\
+             __jet__.require(0);\n"
+        );
+    }
+
+    #[test]
+    fn promise_all_entry_code_gets_manifest_before_the_load_chunk_call() {
+        // `entry_bootstrap_js`'s non-empty-static-imports shape: the
+        // manifest must land before the `Promise.all([...]).then(...)`
+        // statement, not inside its `.then()` success callback — the
+        // manifest's `loadChunk` calls read `window.__jet__.chunkManifest`
+        // immediately, so a manifest spliced after the load call would be
+        // too late, and one spliced inside the success callback would never
+        // run until after the loads it needs to drive already (mis)fired.
+        let entry_code = "__jet__runtime();\n\n// Execute entry point\n\
+            Promise.all([\"shared\"].map(__jet__.loadChunk)).then(function() {\n  \
+            __jet__.require(0);\n}, function(err) {\n  \
+            console.error('jet: failed to load startup chunk', err);\n  throw err;\n});\n";
+        let manifest_js =
+            "__jet__.chunkManifest = {\"chunks\":{\"shared\":{}},\"moduleChunks\":{}};\n";
+
+        let out = inject_chunk_manifest(entry_code, manifest_js).expect("inject must succeed");
+
+        let manifest_pos = out
+            .find("__jet__.chunkManifest = ")
+            .expect("manifest assignment must be present");
+        let load_pos = out
+            .find("Promise.all([\"shared\"].map(__jet__.loadChunk))")
+            .expect("Promise.all load call must be present");
+        let require_pos = out
+            .find("__jet__.require(0);")
+            .expect("require call must still be present");
+        assert!(
+            manifest_pos < load_pos,
+            "manifest must be assigned before any loadChunk call: {out}"
+        );
+        assert!(
+            load_pos < require_pos,
+            "loadChunk must be scheduled before require(entry): {out}"
+        );
+    }
+
+    #[test]
+    fn missing_anchor_is_a_readable_error_not_a_panic() {
+        let err = inject_chunk_manifest("no anchor here", "manifest();\n")
+            .expect_err("entry code missing the anchor must error, not panic");
+        assert!(
+            err.to_string().contains("Execute entry point"),
+            "error must name the missing anchor: {err}"
+        );
+    }
 }
 
 fn content_hash_prefix(content: &str) -> String {
