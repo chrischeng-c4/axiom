@@ -56,7 +56,6 @@ flowchart TD
     llm --> boundary[Topics name Mesh/Beam/Lumen/Cube boundary explicitly]
     parse --> noheavydeps[No GPU/raft/http-server runtime dependency in this slice]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
