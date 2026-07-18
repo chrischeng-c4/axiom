@@ -140,6 +140,18 @@ subject   = "email.message_from_bytes"
 kind      = "mechanical"
 probe     = "callable"
 
+# __file__: a dotted submodule (email.message) is also Rust-native; its
+# synthetic __file__ must map dots to path separators (email/message.py),
+# and the leaf-attr import inferer already drops just "__file__" here so no
+# explicit import= override is needed (#1961).
+[[case]]
+dimension = "surface"
+case      = "message_file_attr_is_str"
+subject   = "email.message.__file__"
+kind      = "mechanical"
+probe     = "type"
+typename  = "str"
+
 # ===========================================================================
 # ERRORS — mechanical (call + expect_exc; generator emits assert-it-raised)
 # ===========================================================================

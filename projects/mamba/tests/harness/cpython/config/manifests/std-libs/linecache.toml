@@ -79,6 +79,17 @@ kind      = "mechanical"
 probe     = "type"
 typename  = "dict"
 
+# __file__: linecache is a Rust-native module (no vendored source), but
+# CPython gives it a real str __file__, so mamba must fabricate one rather
+# than leave it None (#1961).
+[[case]]
+dimension = "surface"
+case      = "file_attr_is_str"
+subject   = "linecache.__file__"
+kind      = "mechanical"
+probe     = "type"
+typename  = "str"
+
 # ===========================================================================
 # ERRORS — mechanical (call + expect_exc)
 # ===========================================================================
