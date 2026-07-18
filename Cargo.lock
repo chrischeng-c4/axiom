@@ -1659,6 +1659,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "beam"
+version = "0.4.7"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "bincode",
+ "bytemuck",
+ "ciborium",
+ "clap",
+ "cli-std",
+ "cudarc",
+ "hnsw_rs",
+ "lz4",
+ "lz4_flex",
+ "pollster",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "server-lifecycle",
+ "service-auth",
+ "service-backup",
+ "service-http",
+ "storage-durable",
+ "tokio",
+ "transport-h2c",
+ "utoipa",
+ "wgpu",
+]
+
+[[package]]
 name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3585,6 +3616,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
 dependencies = [
  "cmov",
+]
+
+[[package]]
+name = "cudarc"
+version = "0.16.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17200eb07e7d85a243aa1bf4569a7aa998385ba98d14833973a817a63cc86e92"
+dependencies = [
+ "libloading",
 ]
 
 [[package]]
