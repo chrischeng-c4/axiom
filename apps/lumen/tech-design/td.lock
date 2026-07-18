@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-15T20:06:30.450084+00:00"
-digest = "sha256:022d45b1a0b928660b080b2dc5ea7d599e12ab555978e972dafb3653603df454"
-source_digest = "sha256:022d45b1a0b928660b080b2dc5ea7d599e12ab555978e972dafb3653603df454"
-ir_digest = "sha256:66515ce25006a559aa6d910c60fdcae08c79893089d921808570f5a6c0b6fd17"
+generated_at = "2026-07-18T17:14:48.019775+00:00"
+digest = "sha256:a86ea252892c05fc6d6dd5378778dd8c3afed109e1196e6232f86a71ad30273a"
+source_digest = "sha256:a86ea252892c05fc6d6dd5378778dd8c3afed109e1196e6232f86a71ad30273a"
+ir_digest = "sha256:60ed127a9cda5544a57b266e86949260e98aae8a3db28eda7a4ec98556b24496"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -96,6 +96,12 @@ path = "logic/bulk-scroll-to-exhaustion-endpoint-for-all-matching-ids-no-unlim.m
 digest = "sha256:6a14ee52b8124628dd0981f9e7cb58ce379cff9fdb0da11e7c2ab6d9d46e7c27"
 ir_digest = "sha256:94796a86fb3f5d3a3b17eb18954e5fa414c75eb544cf5e7bc7d5a5f83131ed45"
 section_count = 3
+
+[[files]]
+path = "logic/cjk-bigram-fallback-for-analyzer-jieba-when-jieba-feature-is-off.md"
+digest = "sha256:a92e86ae5b3ea78ed75ba242080f2050c9e7057a0dd73bd8f0d9845122eb065d"
+ir_digest = "sha256:fddfd5ec9259a86c56cdd41dcdb0a4416413427feda393df0f423c642b0899aa"
+section_count = 4
 
 [[files]]
 path = "logic/convergence-self-heal-bounded-remediation-restart-on-version-mis.md"
