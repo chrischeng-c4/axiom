@@ -5105,6 +5105,11 @@ impl<'a> AstLowerer<'a> {
         let dataclass_decorated = decorators.iter().any(|d| decorator_is_dataclass(&d.node));
         let class_sym = SymbolId(self.next_local_sym);
         self.next_local_sym += 1;
+        // #1951: an explicit `metaclass=` keyword means `ClassName(...)` must
+        // dispatch through the metaclass's `__call__` before `__init__` is
+        // ever considered — see the has_explicit_metaclass guard in
+        // lower_class's __init__ pre-scan for the full rationale.
+        let has_explicit_metaclass = keyword_args.iter().any(|(k, _)| k == "metaclass");
         if let Some(mut cls) = self.lower_class(
             class_sym,
             bind_sym,
@@ -5113,6 +5118,7 @@ impl<'a> AstLowerer<'a> {
             bases,
             stmt_span,
             dataclass_decorated,
+            has_explicit_metaclass,
         ) {
             // PEP 557: register the synthesized __init__'s parameter
             // shape (declaration order; base dataclass fields first;
@@ -5616,6 +5622,7 @@ impl<'a> AstLowerer<'a> {
         bases: &[Spanned<ast::Expr>],
         span: Span,
         dataclass_decorated: bool,
+        has_explicit_metaclass: bool,
     ) -> Option<HirClass> {
         self.result
             .sym_names
@@ -5682,19 +5689,40 @@ impl<'a> AstLowerer<'a> {
                     // Register __init__ params (minus self) under the class name so
                     // `ClassName(arg)` call sites can fill defaults via the same
                     // resolution path used for free functions.
-                    let init_param_info: Vec<ParamInfo> = params
-                        .iter()
-                        .filter(|p| p.name != "self")
-                        .map(|p| {
-                            (
-                                p.name.clone(),
-                                p.default.as_ref().map(|d| ParamDefault::Ast(d.clone())),
-                                p.kind,
-                            )
-                        })
-                        .collect();
-                    self.func_param_info
-                        .insert(name.to_string(), init_param_info);
+                    //
+                    // #1951: skip this when the class declares an explicit
+                    // `metaclass=` keyword. That compile-time reorder/default-fill
+                    // binds the call site's raw args directly against __init__'s
+                    // signature — correct only when `ClassName(...)` really is
+                    // `__new__`+`__init__`. With a custom metaclass, `ClassName(...)`
+                    // is `type(ClassName).__call__(ClassName, *args, **kwargs)`
+                    // instead, and the metaclass's `__call__` must observe the
+                    // verbatim call-site arguments (e.g. a forwarding
+                    // `def __call__(cls, *args, **kwargs): return
+                    // super().__call__(*args, **kwargs)`) before __init__'s
+                    // defaults or keyword-only split ever apply — and this
+                    // ParamInfo tuple can't represent keyword-only-ness anyway
+                    // (arg_bind_sigs, which does, is only populated for bare-Ident
+                    // defs). Leaving func_param_info unset for these classes routes
+                    // `ClassName(...)` through the general dynamic call path
+                    // (build_spread_kwargs_call / plain positional HirExpr::Call),
+                    // which reaches instance_new_with_init[_kwargs]'s metaclass
+                    // __call__ dispatch with the original args/kwargs intact.
+                    if !has_explicit_metaclass {
+                        let init_param_info: Vec<ParamInfo> = params
+                            .iter()
+                            .filter(|p| p.name != "self")
+                            .map(|p| {
+                                (
+                                    p.name.clone(),
+                                    p.default.as_ref().map(|d| ParamDefault::Ast(d.clone())),
+                                    p.kind,
+                                )
+                            })
+                            .collect();
+                        self.func_param_info
+                            .insert(name.to_string(), init_param_info);
+                    }
                     break;
                 }
             }
@@ -8936,6 +8964,14 @@ impl<'a> AstLowerer<'a> {
                     // bare-Ident builtins above (print/zip/min/max/sum) — which
                     // consume their own kwargs and reuse `spread_list` for the
                     // positional slab — are unaffected.
+                    // Captured before the potential move of `kw_entries` below
+                    // (#1951): distinguishes a pure `*args, **kwargs` splat call
+                    // (no literal keyword names) from a mixed
+                    // `f(*args, key=fn, **extra)` shape, so the new
+                    // DoubleStarArg handling further down only takes over the
+                    // former — the mixed shape keeps its pre-existing (if
+                    // imperfect) handling rather than double-counting `key=fn`.
+                    let had_literal_kw_entries = !kw_entries.is_empty();
                     let is_attr_call = matches!(func.node, ast::Expr::Attr { .. });
                     if is_attr_call && !kw_entries.is_empty() {
                         let kwargs_dict = HirExpr::Dict {
@@ -9023,20 +9059,56 @@ impl<'a> AstLowerer<'a> {
                             });
                         }
                     }
-                    // A bare-Ident `*`-splat call that ALSO carries a `**mapping`
-                    // (`collect(0, *[1,2], k=9, **{"m":8})`) must bind its keywords
-                    // — the generic mb_call_spread below drops them. Route through
-                    // mb_call_spread_kwargs with the already-expanded positional
-                    // spread list plus the merged kwargs dict. Scoped to calls with
-                    // a `**` splat (explicit-kwargs-only `*`-splat calls keep their
-                    // existing handling); the builtin idents (zip/min/max/sum/print)
-                    // returned earlier.
-                    if matches!(func.node, ast::Expr::Ident(_))
+                    // A `*`-splat call that ALSO carries a `**mapping` must
+                    // bind its keywords — the generic mb_call_spread below
+                    // drops them (DoubleStarArg is a no-op in the
+                    // segment-building loop above). This covers both a
+                    // bare-Ident call with literal keywords too
+                    // (`collect(0, *[1,2], k=9, **{"m":8})` — build_kwargs_dict
+                    // already merges literal `Keyword` entries with `**`
+                    // dicts in call-site order) and a splat-only method call
+                    // like `super().__call__(*args, **kwargs)` (#1951). It
+                    // excludes an ATTR call that ALSO carries literal
+                    // keywords (`f(*args, key=fn, **extra)`): that shape
+                    // keeps the pre-existing trailing-dict handling above
+                    // (is_attr_call && !kw_entries.is_empty(), which already
+                    // ran) rather than double-counting `key=fn` through both
+                    // mechanisms — see FIXME-worthy gap noted there (the
+                    // trailing-dict convention doesn't itself merge a `**`
+                    // splat, only literal keywords; unrelated to #1951).
+                    if (!is_attr_call || !had_literal_kw_entries)
                         && args
                             .iter()
                             .any(|a| matches!(a, ast::CallArg::DoubleStarArg(_)))
                     {
                         if let Some(kwargs_dict) = self.build_kwargs_dict(args, any_ty) {
+                            // Method calls (an Attr callee, e.g. #1951's
+                            // `super().__call__(*args, **kwargs)`) must keep
+                            // the receiver and method name separate rather
+                            // than dispatch through the pre-resolved callable
+                            // value `f`: mb_call_method_kwargs's runtime
+                            // dispatcher carries the __super__-proxy-aware
+                            // handling (and the general bound-method fast
+                            // paths) that the value-based mb_call_spread_kwargs
+                            // doesn't have — mirroring the
+                            // `is_method_call && pack_trailing_kwargs` ->
+                            // mb_call_method_kwargs convention used for the
+                            // literal-keyword method-call path elsewhere in
+                            // this function. spread_list is already a runtime
+                            // list/tuple value (the has_star folding above),
+                            // so it doubles directly as mb_call_method_kwargs's
+                            // pos_list.
+                            if let HirExpr::Attr { object, attr, .. } = f {
+                                let name_str = HirExpr::StrLit(attr, self.checker.tcx.str());
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_call_method_kwargs".to_string(),
+                                        any_ty,
+                                    )),
+                                    args: vec![*object, name_str, spread_list, kwargs_dict],
+                                    ty: any_ty,
+                                });
+                            }
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit(
                                     "mb_call_spread_kwargs".to_string(),
