@@ -1462,6 +1462,12 @@ impl Bundler {
             .find(|m| m.path == entry)
             .map(|m| m.id)
             .or_else(|| modules.iter().map(|m| m.id).min());
+        // Captured alongside `reachable` for the elimination-walk skip-filter
+        // below (WI #1947 round 2): every id this DFS visits already has its
+        // full outgoing numeric-require-id set computed right here to decide
+        // where to walk next, so recording it costs nothing beyond the
+        // `HashMap` insert — no extra parsing or scanning versus before.
+        let mut module_require_ids: HashMap<usize, HashSet<usize>> = HashMap::new();
         let reachable: HashSet<usize> = if let Some(entry_id) = entry_id {
             let mut reachable = HashSet::new();
             let mut stack = vec![entry_id];
@@ -1477,7 +1483,8 @@ impl Bundler {
                         .map(|m| dce::numeric_require_ids(&m.code))
                         .unwrap_or_default(),
                 };
-                stack.extend(requires);
+                stack.extend(requires.iter().copied());
+                module_require_ids.insert(id, requires);
             }
             reachable
         } else {
@@ -1507,18 +1514,50 @@ impl Bundler {
                     .get(&m.path)
                     .cloned()
                     .unwrap_or_default();
+                // WI #1947 round 2: `eliminate_require_reexports_to_eliminated_modules`
+                // tree-sitter-parses this module and walks the whole AST twice
+                // purely to find require()/re-export edges into
+                // `eliminated_module_ids` — work that's wasted whenever this
+                // module can't reach any eliminated id at all. `module_require_ids`
+                // (collected by the reachability DFS above) already carries the
+                // exact numeric ids reachable from `code_base`'s code string for
+                // the `used.is_empty()` case below; for the `shake_module` case,
+                // it's still a safe superset, because `shake_module` only ever
+                // blanks whole ESM-export lines to `\n` — it can never introduce
+                // a require() call that wasn't already textually present in
+                // `code_base`, so `shaken`'s reachable ids are always a subset of
+                // `code_base`'s. Either way, a disjoint `module_require_ids` entry
+                // proves the walk below would be a no-op, so it's skipped
+                // outright. A missing map entry (every id reaching this closure
+                // was visited by the DFS above, so this should not happen) or a
+                // non-disjoint set both fall back to the real call — see this
+                // file's `test_apply_tree_shaking_retained_module_with_no_eliminated_references_is_byte_untouched`
+                // / `..._still_eliminates_unreachable_module_alongside_skip_filter`
+                // and dce.rs's `test_numeric_require_ids_disjoint_from_eliminated_set_predicts_noop`
+                // for the pruning correctness this must never regress.
+                let skip_elimination_walk = module_require_ids
+                    .get(&m.id)
+                    .is_some_and(|ids| ids.is_disjoint(&eliminated_module_ids));
                 if used.is_empty() {
-                    let code = dce::eliminate_require_reexports_to_eliminated_modules(
-                        &code_base,
-                        &eliminated_module_ids,
-                    );
+                    let code = if skip_elimination_walk {
+                        code_base
+                    } else {
+                        dce::eliminate_require_reexports_to_eliminated_modules(
+                            &code_base,
+                            &eliminated_module_ids,
+                        )
+                    };
                     return CompiledModule { code, ..m };
                 }
                 let shaken = tree_shake::shake_module(&code_base, &m.path, &used);
-                let shaken = dce::eliminate_require_reexports_to_eliminated_modules(
-                    &shaken,
-                    &eliminated_module_ids,
-                );
+                let shaken = if skip_elimination_walk {
+                    shaken
+                } else {
+                    dce::eliminate_require_reexports_to_eliminated_modules(
+                        &shaken,
+                        &eliminated_module_ids,
+                    )
+                };
                 CompiledModule { code: shaken, ..m }
             })
             .collect()
@@ -2101,6 +2140,71 @@ mod tests {
         assert!(
             ids.contains(&3),
             "rescued module 2's transformed require(3) must also rescue module 3: {ids:?}"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // WI #1947 round 2 — dce elimination-walk skip-filter (apply_tree_shaking)
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_apply_tree_shaking_retained_module_with_no_eliminated_references_is_byte_untouched() {
+        // dce::eliminate_require_reexports_to_eliminated_modules is skipped
+        // outright when a retained module's outgoing numeric require ids
+        // (captured by the reachability DFS) are disjoint from
+        // eliminated_module_ids. retained.js only ever requires live-dep.js
+        // (id 3) — never dead.js (id 1, genuinely unreachable) — so its code
+        // must come out of apply_tree_shaking byte-for-byte, not merely
+        // "equivalent": a filter that engaged when it shouldn't could still
+        // coincidentally produce correct-looking output under a looser check.
+        let bundler = Bundler::new(BundleOptions::default()).unwrap();
+        let retained_code = r#"var __re = require(3); Object.keys(__re).forEach(function (k) { module.exports[k] = __re[k]; }); exports.live = function live() {};"#;
+        let modules = vec![
+            make_compiled_with_id(0, "entry.js", r#"require(2); require(3);"#),
+            make_compiled_with_id(1, "dead.js", r#"exports.default = function dead() {};"#),
+            make_compiled_with_id(2, "retained.js", retained_code),
+            make_compiled_with_id(3, "live-dep.js", r#"exports.a = 1;"#),
+        ];
+
+        let shaken = bundler.apply_tree_shaking(modules, Path::new("entry.js"));
+        let retained = shaken
+            .iter()
+            .find(|m| m.id == 2)
+            .expect("retained.js is required by entry.js and must survive");
+        assert_eq!(
+            retained.code, retained_code,
+            "a retained module referencing no eliminated id must pass through the elimination stage byte-for-byte, got: {}",
+            retained.code
+        );
+    }
+
+    #[test]
+    fn test_apply_tree_shaking_still_eliminates_unreachable_module_alongside_skip_filter() {
+        // The skip-filter only gates the per-retained-module require-reexport
+        // GLUE cleanup walk — it must never affect which modules the outer
+        // reachability DFS decides to keep. dead.js is never required by
+        // anything reachable and must still be eliminated.
+        let bundler = Bundler::new(BundleOptions::default()).unwrap();
+        let modules = vec![
+            make_compiled_with_id(0, "entry.js", r#"require(2); require(3);"#),
+            make_compiled_with_id(1, "dead.js", r#"exports.default = function dead() {};"#),
+            make_compiled_with_id(
+                2,
+                "retained.js",
+                r#"var __re = require(3); Object.keys(__re).forEach(function (k) { module.exports[k] = __re[k]; }); exports.live = function live() {};"#,
+            ),
+            make_compiled_with_id(3, "live-dep.js", r#"exports.a = 1;"#),
+        ];
+
+        let shaken = bundler.apply_tree_shaking(modules, Path::new("entry.js"));
+        let ids: HashSet<usize> = shaken.iter().map(|m| m.id).collect();
+        assert!(
+            !ids.contains(&1),
+            "dead.js is never required by anything reachable and must still be eliminated: {ids:?}"
+        );
+        assert!(
+            ids.contains(&2) && ids.contains(&3),
+            "retained.js/live-dep.js must survive: {ids:?}"
         );
     }
 

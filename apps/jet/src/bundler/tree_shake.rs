@@ -1113,17 +1113,23 @@ fn extract_cjs_require_bindings(
     for line in source.lines() {
         let trimmed = line.trim();
 
-        let Some(req_source) = extract_require_specifier(trimmed) else {
+        // scan_require_call (WI #1947 round 2) finds the line's "require("
+        // once and derives both the specifier and any trailing
+        // `.prop`/`["prop"]` access from that single match, instead of the
+        // two independent `str::find("require(")` scans (one per helper)
+        // this loop used to run per line — extract_cjs_require_bindings was
+        // the heaviest single extractor on tw-monitor's real corpus.
+        let Some((req_source, accessed)) = scan_require_call(trimmed) else {
             continue;
         };
-        let Some(target) = lookup.find(&req_source, importer) else {
+        let Some(target) = lookup.find(req_source, importer) else {
             continue;
         };
 
         // Pattern 1: const { a, b } = require('mod')
         let destructured = extract_destructured_names(trimmed);
-        // Pattern 2: require('mod').prop (single-line property access)
-        let accessed = extract_require_property_access(trimmed);
+        // Pattern 2: require('mod').prop / require('mod')["prop"] — this is
+        // `accessed`, already computed by scan_require_call above.
 
         if destructured.is_empty() && accessed.is_empty() {
             // Namespace-style require (`var m = require('mod')`,
@@ -1147,7 +1153,12 @@ fn extract_cjs_require_bindings(
     results
 }
 
-/// Extract the specifier from a require() call.
+/// Extract the specifier from a require() call. Superseded in the hot
+/// `extract_cjs_require_bindings` loop by `scan_require_call` (WI #1947
+/// round 2 — needs the specifier and property-access result from one scan),
+/// but kept as a standalone unit with its own test coverage
+/// (`test_require_specifier`), hence no production caller remains.
+#[allow(dead_code)]
 fn extract_require_specifier(line: &str) -> Option<String> {
     let require_pos = line.find("require(")?;
     let after = &line[require_pos + 8..]; // skip "require("
@@ -1157,6 +1168,28 @@ fn extract_require_specifier(line: &str) -> Option<String> {
     }
     let end = after[1..].find(quote)?;
     Some(after[1..1 + end].to_string())
+}
+
+/// Find a `require(` call in `line` and return both its specifier (borrowed,
+/// no allocation) and any trailing `.prop`/`["prop"]` access, from a single
+/// scan (WI #1947 round 2). Behaviorally equivalent to calling
+/// `extract_require_specifier` then `extract_require_property_access`
+/// separately — both of those still exist standalone (with their own
+/// tests/callers, untouched) and are intentionally not modified; this is an
+/// additional combined entry point used only by
+/// `extract_cjs_require_bindings`'s hot loop, where both results are always
+/// needed together and re-finding "require(" a second time is pure waste.
+fn scan_require_call(line: &str) -> Option<(&str, Vec<String>)> {
+    let require_pos = line.find("require(")?;
+    let after = &line[require_pos + 8..]; // skip "require("
+    let quote = after.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let end = after[1..].find(quote)?;
+    let specifier = &after[1..1 + end];
+    let accessed = parse_require_property_access(&line[require_pos..]);
+    Some((specifier, accessed))
 }
 
 /// Extract destructured property names from `const { a, b } = require(...)`.
@@ -1184,35 +1217,37 @@ fn extract_destructured_names(line: &str) -> Vec<String> {
     names
 }
 
-/// Extract property access from require('mod').prop patterns.
-fn extract_require_property_access(line: &str) -> Vec<String> {
+/// Shared implementation for property-access parsing: given the line slice
+/// starting at a `require(` match (inclusive of "require("), find the
+/// matching call's closing `)` and parse a trailing `.prop` or `["prop"]`
+/// access. Factored out of `extract_require_property_access` (WI #1947
+/// round 2) so `scan_require_call` can reuse the same parsing logic against
+/// a `require(` position it already found, instead of re-running
+/// `line.find("require(")` a second time.
+fn parse_require_property_access(after_req: &str) -> Vec<String> {
     let mut names = Vec::new();
 
-    // Look for require(...).<prop> or require(...)[" prop"]
-    if let Some(req_pos) = line.find("require(") {
-        let after_req = &line[req_pos..];
-        if let Some(close_paren) = after_req.find(')') {
-            let after_close = &after_req[close_paren + 1..];
-            let rest = after_close.trim_start();
+    if let Some(close_paren) = after_req.find(')') {
+        let after_close = &after_req[close_paren + 1..];
+        let rest = after_close.trim_start();
 
-            // .property access
-            if let Some(rest) = rest.strip_prefix('.') {
-                let prop = rest
-                    .split(|c: char| !c.is_alphanumeric() && c != '_')
-                    .next()
-                    .unwrap_or("");
-                if !prop.is_empty() {
-                    names.push(prop.to_string());
-                }
+        // .property access
+        if let Some(rest) = rest.strip_prefix('.') {
+            let prop = rest
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or("");
+            if !prop.is_empty() {
+                names.push(prop.to_string());
             }
+        }
 
-            // ["property"] access
-            if rest.starts_with('[') {
-                if let Some(end) = rest.find(']') {
-                    let inner = rest[1..end].trim();
-                    if let Some(s) = extract_string_value(inner) {
-                        names.push(s);
-                    }
+        // ["property"] access
+        if rest.starts_with('[') {
+            if let Some(end) = rest.find(']') {
+                let inner = rest[1..end].trim();
+                if let Some(s) = extract_string_value(inner) {
+                    names.push(s);
                 }
             }
         }
@@ -1221,12 +1256,171 @@ fn extract_require_property_access(line: &str) -> Vec<String> {
     names
 }
 
+/// Extract property access from require('mod').prop patterns. Delegates to
+/// `parse_require_property_access` (shared with `scan_require_call`, WI
+/// #1947 round 2); kept as a standalone unit with its own test coverage
+/// (`test_cjs_require_property_access`, `test_cjs_require_dot_access`),
+/// hence no production caller remains.
+#[allow(dead_code)]
+fn extract_require_property_access(line: &str) -> Vec<String> {
+    // Look for require(...).<prop> or require(...)["prop"]
+    match line.find("require(") {
+        Some(req_pos) => parse_require_property_access(&line[req_pos..]),
+        None => Vec::new(),
+    }
+}
+
 fn extract_string_value(s: &str) -> Option<String> {
     let s = s.trim();
     if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
         Some(s[1..s.len() - 1].to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod cjs_require_scan_1947_tests {
+    use super::*;
+
+    /// `scan_require_call` (the merged single-scan replacement used by
+    /// `extract_cjs_require_bindings`, WI #1947 round 2) must always agree
+    /// with calling `extract_require_specifier` then
+    /// `extract_require_property_access` separately — those two original
+    /// functions are kept standalone (with their own pre-existing tests)
+    /// specifically so this comparison has an independent oracle.
+    fn assert_scan_matches_old_pair(line: &str) {
+        let old_specifier = extract_require_specifier(line);
+        let old_accessed = extract_require_property_access(line);
+        let new_result = scan_require_call(line);
+
+        match (old_specifier, new_result) {
+            (Some(old_spec), Some((new_spec, new_accessed))) => {
+                assert_eq!(
+                    old_spec.as_str(),
+                    new_spec,
+                    "specifier mismatch for line {line:?}"
+                );
+                assert_eq!(
+                    old_accessed, new_accessed,
+                    "accessed-names mismatch for line {line:?}"
+                );
+            }
+            (None, None) => {}
+            (old, new) => panic!(
+                "old/new disagreed on presence of a require() call for line {line:?}: \
+                 old_specifier={old:?}, new_result_is_some={}",
+                new.is_some()
+            ),
+        }
+    }
+
+    #[test]
+    fn scan_require_call_matches_old_pair_across_tricky_shapes() {
+        for line in [
+            "const { readFile, writeFile } = require('./fs-helpers');",
+            "const { readFile: rf, writeFile: wf } = require('./fs-helpers');",
+            "var jsx = require('react/jsx-runtime')[\"jsx\"];",
+            "var React = require('react').default;",
+            "var m = require('./whole-module');",
+            "module.exports = require('./interop-wrapper');",
+            "const x = 1;",
+            "require('./side-effect-only');",
+            "// see require('legacy-path') for background",
+            "const msg = \"please require('nonexistent-module') now\";",
+            "require(dynamicSpecifierVariable);",
+            "require(`./template-${literal}`);",
+        ] {
+            assert_scan_matches_old_pair(line);
+        }
+    }
+
+    /// End-to-end proof through the actual rewritten
+    /// `extract_cjs_require_bindings` (not just the lower-level
+    /// `scan_require_call` helper) on the CJS shapes the WI #1947 round-2
+    /// dispatch called out as tricky: plain destructured require, aliased
+    /// destructured require, and nested/property-access require (`.prop`
+    /// and `["prop"]` forms), all resolved from one module.
+    #[test]
+    fn extract_cjs_require_bindings_resolves_destructured_aliased_and_property_access_shapes() {
+        let app_source = "const { readFile, writeFile } = require('./fs-helpers');\nconst { readFile: rf, writeFile: wf } = require('./fs-helpers');\nconst def = require('./dep').default;\nconst named = require('./dep')[\"namedExport\"];\n";
+        let modules = vec![
+            (PathBuf::from("/fixture/app.js"), app_source.to_string()),
+            (
+                PathBuf::from("/fixture/fs-helpers.js"),
+                "exports.readFile = function () {};\nexports.writeFile = function () {};\n"
+                    .to_string(),
+            ),
+            (
+                PathBuf::from("/fixture/dep.js"),
+                "exports.default = function () {};\nexports.namedExport = 1;\n".to_string(),
+            ),
+        ];
+        let lookup = ModuleLookup::new(&modules);
+        let bindings =
+            extract_cjs_require_bindings(Path::new("/fixture/app.js"), app_source, &lookup);
+
+        let fs_helpers = PathBuf::from("/fixture/fs-helpers.js");
+        let dep = PathBuf::from("/fixture/dep.js");
+
+        // Both the plain and the aliased destructure resolve to the same
+        // *original* property names — aliases are a local binding-name
+        // detail, not a property-name detail (extract_destructured_names's
+        // pre-existing "before colon" rule, unrelated to the round-2 scan
+        // merge, exercised here end-to-end for confidence).
+        let fs_helpers_bindings: Vec<&Vec<String>> = bindings
+            .iter()
+            .filter(|(p, _)| *p == fs_helpers)
+            .map(|(_, names)| names)
+            .collect();
+        assert_eq!(
+            fs_helpers_bindings.len(),
+            2,
+            "expected one binding entry per require line, got {bindings:?}"
+        );
+        for names in fs_helpers_bindings {
+            assert_eq!(
+                names,
+                &vec!["readFile".to_string(), "writeFile".to_string()]
+            );
+        }
+
+        assert!(
+            bindings.contains(&(dep.clone(), vec!["default".to_string()])),
+            "dot-access require('./dep').default must resolve to [\"default\"], got {bindings:?}"
+        );
+        assert!(
+            bindings.contains(&(dep, vec!["namedExport".to_string()])),
+            "bracket-access require('./dep')[\"namedExport\"] must resolve to [\"namedExport\"], got {bindings:?}"
+        );
+    }
+
+    /// A `require(` substring that only appears inside a comment or a
+    /// string literal, whose "specifier" never resolves to a real module in
+    /// the graph, must not produce a phantom binding. This holds because of
+    /// the module-lookup resolution step (unaffected by the round-2 scan
+    /// merge) — not because of comment/string awareness in the line
+    /// scanner itself, which is a best-effort per-line text scan rather
+    /// than a real parser, both before and after WI #1947 round 2.
+    #[test]
+    fn require_text_inside_comment_or_string_with_unresolvable_specifier_yields_no_binding() {
+        let app_source = "// see require('nonexistent-legacy-module') for background\nconst msg = \"please require('also-nonexistent') now\";\nconst real = require('./real-dep');\n";
+        let modules = vec![
+            (PathBuf::from("/fixture/app.js"), app_source.to_string()),
+            (
+                PathBuf::from("/fixture/real-dep.js"),
+                "exports.default = function () {};\n".to_string(),
+            ),
+        ];
+        let lookup = ModuleLookup::new(&modules);
+        let bindings =
+            extract_cjs_require_bindings(Path::new("/fixture/app.js"), app_source, &lookup);
+
+        assert_eq!(
+            bindings,
+            vec![(PathBuf::from("/fixture/real-dep.js"), vec!["*".to_string()])],
+            "only the real, resolvable require() call may produce a binding, got {bindings:?}"
+        );
     }
 }
 

@@ -2307,6 +2307,111 @@ Object.defineProperty(_m2.exports, "__esModule", { value: true });
             "require(id) and _r(id) must both stay recognized, got {ids:?}"
         );
     }
+
+    // ──────────────────────────────────────────────────────────────────
+    // WI #1947 round 2 — eliminate_require_reexports_to_eliminated_modules
+    // no-op/pruning proof cases. bundler::apply_tree_shaking now skips this
+    // walk outright for a retained module whenever `numeric_require_ids`
+    // (the same primitive used below) proves its outgoing ids are disjoint
+    // from `eliminated_module_ids`; these tests establish, shape by shape,
+    // that the walk really does nothing when that's true (justifying the
+    // skip) and still prunes correctly when it's false (the skip must never
+    // fire on real work).
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_eliminate_require_reexports_removes_bare_require_referencing_eliminated_id() {
+        let source = "require(5);\nconsole.log('kept');\n";
+        let mut eliminated = HashSet::new();
+        eliminated.insert(5);
+        let out = eliminate_require_reexports_to_eliminated_modules(source, &eliminated);
+        assert!(
+            !out.contains("require(5)"),
+            "a bare require() of an eliminated id must be pruned: {out}"
+        );
+        assert!(
+            out.contains("console.log('kept')"),
+            "unrelated statements must survive: {out}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_require_reexports_removes_module_exports_reassignment_to_eliminated_id() {
+        let source = "module.exports = require(7);\nvar kept = 1;\n";
+        let mut eliminated = HashSet::new();
+        eliminated.insert(7);
+        let out = eliminate_require_reexports_to_eliminated_modules(source, &eliminated);
+        assert!(
+            !out.contains("require(7)"),
+            "a module.exports reassignment sourced from an eliminated id must be pruned: {out}"
+        );
+        assert!(
+            out.contains("var kept = 1;"),
+            "unrelated statements must survive: {out}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_require_reexports_removes_re_prefixed_declarator_and_its_object_keys_reexport_loop(
+    ) {
+        let source = "var __re = require(9);\nObject.keys(__re).forEach(function (k) { module.exports[k] = __re[k]; });\nvar kept = 2;\n";
+        let mut eliminated = HashSet::new();
+        eliminated.insert(9);
+        let out = eliminate_require_reexports_to_eliminated_modules(source, &eliminated);
+        assert!(
+            !out.contains("require(9)"),
+            "the __re declarator sourcing an eliminated id must be pruned: {out}"
+        );
+        assert!(
+            !out.contains("Object.keys(__re)"),
+            "its Object.keys reexport loop must be pruned too: {out}"
+        );
+        assert!(
+            out.contains("var kept = 2;"),
+            "unrelated statements must survive: {out}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_require_reexports_is_noop_when_no_referenced_id_is_eliminated() {
+        // Mirrors the invariant bundler::apply_tree_shaking's round-2
+        // skip-filter relies on: every numeric id this source can reach
+        // (bare require, module.exports reassignment, __re-prefixed
+        // reexport declarator + its Object.keys reexport loop) is disjoint
+        // from eliminated_module_ids, so none of the edit-collecting
+        // branches in collect_eliminated_require_reexport_edits /
+        // collect_eliminated_reexport_bindings can fire — zero edits, and
+        // the source comes back byte-for-byte unchanged.
+        let source = "require(1);\nvar __re = require(2);\nObject.keys(__re).forEach(function (k) { module.exports[k] = __re[k]; });\nmodule.exports = require(3);\nvar kept = 3;\n";
+        let mut eliminated = HashSet::new();
+        eliminated.insert(99);
+        let out = eliminate_require_reexports_to_eliminated_modules(source, &eliminated);
+        assert_eq!(
+            out, source,
+            "a source referencing no eliminated id must be byte-identical"
+        );
+    }
+
+    #[test]
+    fn test_numeric_require_ids_disjoint_from_eliminated_set_predicts_noop() {
+        // The exact property bundler::apply_tree_shaking's round-2
+        // skip-filter depends on: numeric_require_ids(source) disjoint from
+        // eliminated_module_ids implies eliminate_require_reexports_to_eliminated_modules
+        // is a no-op, across the require/reexport shapes it recognizes.
+        let source = "require(1);\nvar __re = require(2);\nObject.keys(__re).forEach(function (k) { module.exports[k] = __re[k]; });\n";
+        let ids = numeric_require_ids(source);
+        let mut eliminated = HashSet::new();
+        eliminated.insert(42);
+        assert!(
+            ids.is_disjoint(&eliminated),
+            "test setup: ids and eliminated must be disjoint, got ids={ids:?}"
+        );
+        let out = eliminate_require_reexports_to_eliminated_modules(source, &eliminated);
+        assert_eq!(
+            out, source,
+            "a numeric_require_ids-disjoint eliminated set must be a guaranteed no-op"
+        );
+    }
 }
 // CODEGEN-END
 
