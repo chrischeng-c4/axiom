@@ -2562,12 +2562,115 @@ impl Bundler {
             .filter(|name| !async_chunk_names.contains(name))
             .collect();
 
+        // Entry flat region (issue #1993): flatten the SAFE SUBSET of the
+        // entry chunk into one flat scope with unified mangling, keeping
+        // the `__jet__` registry for the residue the fallback ladder in
+        // `scope_hoist::partition_entry_for_flatten` can't prove safe.
+        // `JET_NO_ENTRY_FLATTEN=1` is a testing escape hatch that forces
+        // every entry module to the registry, reproducing the pre-#1993
+        // output byte-for-byte (see the `flat_ids.is_empty()` branch below,
+        // which is the exact same loop as before this change).
+        let entry_modules_sorted = modules_for(&entry_chunk.modules);
+        let no_entry_flatten = std::env::var_os("JET_NO_ENTRY_FLATTEN").is_some();
+        // Mirrors the single-file Phase 1/Phase 2 gate above: flattening's
+        // `_m{n}_`-prefixed identifiers only pay off once `mangle`/the oxc
+        // minifier compresses them. Under `--no-minify` (dev/debug builds)
+        // flattening would only cost readability with no offsetting size
+        // win, so keep the registry-per-module shape there too.
+        let partition = if no_entry_flatten || !self.minify {
+            scope_hoist::EntryFlattenPartition {
+                flat_ids: Vec::new(),
+                registry_ids: entry_modules_sorted.iter().map(|m| m.id).collect(),
+            }
+        } else {
+            scope_hoist::partition_entry_for_flatten(&entry_modules_sorted, &edges)
+        };
+
+        let timing = std::env::var_os("JET_BUNDLE_TIMING").is_some();
+        if timing {
+            eprintln!(
+                "[bundle-timing] entry-flatten partition: flattened={} registry={}",
+                partition.flat_ids.len(),
+                partition.registry_ids.len()
+            );
+        }
+
         let mut entry_code = String::new();
         entry_code.push_str(&generate_split_runtime());
         entry_code.push_str("\n\n");
-        for module in modules_for(&entry_chunk.modules) {
-            entry_code.push_str(&format_module_define(module));
+
+        if partition.flat_ids.is_empty() {
+            // No-flatten fallback (escape hatch, or the fallback ladder
+            // excluded every entry module): byte-identical to the
+            // pre-#1993 registry-only path.
+            for module in &entry_modules_sorted {
+                entry_code.push_str(&format_module_define(module));
+            }
+        } else {
+            let flat_modules = modules_for(&partition.flat_ids);
+            let registry_modules = modules_for(&partition.registry_ids);
+
+            let mut last = std::time::Instant::now();
+            let mut lap = |stage: &str| {
+                if timing {
+                    eprintln!(
+                        "[bundle-timing]   entry-flatten/{stage}: {:?}",
+                        last.elapsed()
+                    );
+                    last = std::time::Instant::now();
+                }
+            };
+
+            let raw_flat = scope_hoist::generate_entry_flat_region(
+                &flat_modules,
+                &edges,
+                entry.id,
+                !partition.registry_ids.is_empty(),
+            );
+            lap("flatten");
+            // R4 only: cross-module constant inlining is safe on flat-only
+            // text (its `_m{i}_NAME` pattern can only exist there). R5
+            // (cross-module unused-export DCE) is skipped: its
+            // `require_aliases_for_modules` helper only recognizes the
+            // `_r(id)` call form, not the registry residue's
+            // `var dep = require(id); dep.prop` alias pattern, so running
+            // it over combined flat+registry text risks stripping an
+            // export the registry side still reads. Documented limitation,
+            // not required by #1993's scope.
+            let flat_region = scope_hoist::inline_cross_module_constants(&raw_flat);
+            lap("r4_inline_constants");
+
+            // Registry `__jet__.define(...)` calls come FIRST, ahead of the
+            // flat region's IIFE: `define` only registers a factory (no
+            // invocation), so this ordering costs nothing, but it is load
+            // -bearing for interop — see `generate_entry_flat_region`'s doc
+            // comment. A flat module's synchronous top-level call into a
+            // registry-residue module needs `__jet__.modules[id]` already
+            // populated at that point, which only holds if every registry
+            // define has already run before the flat IIFE starts.
+            let mut body = String::with_capacity(flat_region.len() + registry_modules.len() * 256);
+            for module in &registry_modules {
+                body.push_str(&format_module_define(module));
+            }
+            body.push_str(&flat_region);
+
+            // Confirmed safe on combined flat+registry text: each either
+            // targets a flat-only-producible pattern, or explicitly
+            // recognizes both `_r(id)`/`require(id)` call forms and
+            // conservatively bails out per-occurrence when it can't
+            // attribute one.
+            let after_markers = dce::eliminate_unread_es_module_markers(&body);
+            lap("es_module_markers");
+            let after_reexport_wrappers =
+                scope_hoist_opt::collapse_pure_reexport_wrappers(&after_markers);
+            lap("reexport_wrappers");
+            let processed_body =
+                scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
+            lap("interop_thunks");
+
+            entry_code.push_str(&processed_body);
         }
+
         entry_code.push_str("// Execute entry point\n");
         entry_code.push_str(&entry_bootstrap_js(entry.id, &entry_static_imports));
 

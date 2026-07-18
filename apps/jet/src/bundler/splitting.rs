@@ -446,6 +446,135 @@ fn chunk_name(id: usize, id_to_path: &HashMap<usize, PathBuf>) -> String {
     format!("chunk-{}", stem)
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Split-entry flatten graph-shape helpers (issue #1993).
+//
+// `scope_hoist::partition_entry_for_flatten` classifies an entry chunk's
+// modules into a flatten-safe subset and a `__jet__`-registry residue; these
+// two functions answer the graph-shape half of that classification (cycle
+// membership, cross-chunk references) plus the emission ordering the flat
+// region needs. Kept here rather than in `scope_hoist.rs` because they only
+// look at edge/id shape, matching this module's existing scope.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Modules in `ids` that participate in a static-edge cycle: either a
+/// multi-member Tarjan SCC (size > 1) or a static self-loop. Tarjan reports
+/// a self-looped node as its own size-1 SCC, so the self-loop case needs an
+/// explicit check — otherwise it would read as "no cycle". Dynamic edges are
+/// excluded: they are chunk boundaries (`__jet__.dynamicImport`), never a
+/// same-scope initialization-order hazard.
+/// @issue #1993
+pub fn cycle_members(ids: &HashSet<usize>, edges: &[SplitEdgeId]) -> HashSet<usize> {
+    use petgraph::algo::tarjan_scc;
+    use petgraph::graph::{DiGraph, NodeIndex};
+
+    let mut graph = DiGraph::<usize, ()>::new();
+    let mut node_of: HashMap<usize, NodeIndex> = HashMap::with_capacity(ids.len());
+    for &id in ids {
+        node_of.entry(id).or_insert_with(|| graph.add_node(id));
+    }
+
+    let mut members: HashSet<usize> = HashSet::new();
+    for edge in edges {
+        if edge.is_dynamic || !ids.contains(&edge.from) || !ids.contains(&edge.to) {
+            continue;
+        }
+        if edge.from == edge.to {
+            members.insert(edge.from);
+            continue;
+        }
+        graph.add_edge(node_of[&edge.from], node_of[&edge.to], ());
+    }
+
+    for scc in tarjan_scc(&graph) {
+        if scc.len() > 1 {
+            members.extend(scc.iter().map(|&idx| graph[idx]));
+        }
+    }
+    members
+}
+
+/// Ids in `chunk_ids` that are required or dynamic-imported by code OUTSIDE
+/// `chunk_ids` — i.e. some other chunk's compiled output calls
+/// `require(id)` / `__jet__.dynamicImport(id)` for one of these ids. Those
+/// ids must stay in the `__jet__` registry so `__jet__.require(id)` can
+/// resolve them by id from any chunk, not just this chunk's own local flat
+/// scope.
+/// @issue #1993
+pub fn cross_chunk_referenced(chunk_ids: &HashSet<usize>, edges: &[SplitEdgeId]) -> HashSet<usize> {
+    edges
+        .iter()
+        .filter(|edge| chunk_ids.contains(&edge.to) && !chunk_ids.contains(&edge.from))
+        .map(|edge| edge.to)
+        .collect()
+}
+
+/// Ids in `chunk_ids` that hold a static edge OUT to a module NOT in
+/// `chunk_ids` — the mirror image of [`cross_chunk_referenced`]. The
+/// dependency itself lives in another chunk (a promoted shared/manual
+/// chunk), so this chunk's own bootstrap only defers the *registry*
+/// `require(entry_id)` path behind that other chunk's `loadChunk` promise
+/// (see `bundler::mod::entry_bootstrap_js`); a module inlined into the
+/// split-entry-flatten IIFE instead runs synchronously and unconditionally
+/// as soon as the bundle script executes, well before that promise can
+/// resolve, so it must stay on the registry to keep its own execution
+/// deferred behind the same `require(entry_id)` gate. Dynamic edges are
+/// excluded: a lowered `import()` call (`__jet__.dynamicImport(id)`) is
+/// already async/deferred on its own, so it carries no synchronous
+/// -ordering hazard even from inside a flattened module body.
+/// @issue #1993
+pub fn cross_chunk_importers(chunk_ids: &HashSet<usize>, edges: &[SplitEdgeId]) -> HashSet<usize> {
+    edges
+        .iter()
+        .filter(|edge| {
+            !edge.is_dynamic && chunk_ids.contains(&edge.from) && !chunk_ids.contains(&edge.to)
+        })
+        .map(|edge| edge.from)
+        .collect()
+}
+
+/// Dependency-order (importer-first, deepest-leaf-last — same convention as
+/// the bundler's global topological module-id assignment) for `ids`,
+/// restricted to static edges within `ids`. Self-loops are ignored (they
+/// don't affect relative order between distinct nodes).
+///
+/// The induced subgraph is acyclic by construction for any caller that
+/// already excluded [`cycle_members`] from `ids` first — two mutually
+/// reachable ids would have formed a size > 1 SCC and been excluded — so
+/// `toposort` always succeeds. A residual cycle (a caller bug, not a real
+/// graph shape) falls back to numeric id order instead of panicking.
+/// @issue #1993
+pub fn dependency_order(ids: &[usize], edges: &[SplitEdgeId]) -> Vec<usize> {
+    use petgraph::algo::toposort;
+    use petgraph::graph::{DiGraph, NodeIndex};
+
+    let id_set: HashSet<usize> = ids.iter().copied().collect();
+    let mut graph = DiGraph::<usize, ()>::new();
+    let mut node_of: HashMap<usize, NodeIndex> = HashMap::with_capacity(ids.len());
+    for &id in ids {
+        node_of.entry(id).or_insert_with(|| graph.add_node(id));
+    }
+    for edge in edges {
+        if edge.is_dynamic || edge.from == edge.to {
+            continue;
+        }
+        if !id_set.contains(&edge.from) || !id_set.contains(&edge.to) {
+            continue;
+        }
+        // importer -> dependency; toposort places the importer first.
+        graph.add_edge(node_of[&edge.from], node_of[&edge.to], ());
+    }
+
+    match toposort(&graph, None) {
+        Ok(order) => order.into_iter().map(|idx| graph[idx]).collect(),
+        Err(_) => {
+            let mut fallback: Vec<usize> = ids.to_vec();
+            fallback.sort_unstable();
+            fallback
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1622,6 +1751,206 @@ mod tests {
             output.is_empty(),
             "a fully-connected graph must not emit any orphan warning: {output}"
         );
+    }
+
+    // ── #1993: cycle_members / cross_chunk_referenced / dependency_order ──
+
+    #[test]
+    fn cycle_members_finds_two_module_scc() {
+        const A: usize = 0;
+        const B: usize = 1;
+        const C: usize = 2;
+        let ids: HashSet<usize> = HashSet::from([A, B, C]);
+        let edges = vec![
+            SplitEdgeId {
+                from: A,
+                to: B,
+                is_dynamic: false,
+            },
+            SplitEdgeId {
+                from: B,
+                to: A,
+                is_dynamic: false,
+            },
+            SplitEdgeId {
+                from: A,
+                to: C,
+                is_dynamic: false,
+            },
+        ];
+
+        assert_eq!(cycle_members(&ids, &edges), HashSet::from([A, B]));
+    }
+
+    #[test]
+    fn cycle_members_finds_self_loop() {
+        const A: usize = 0;
+        const B: usize = 1;
+        let ids: HashSet<usize> = HashSet::from([A, B]);
+        let edges = vec![SplitEdgeId {
+            from: A,
+            to: A,
+            is_dynamic: false,
+        }];
+
+        assert_eq!(cycle_members(&ids, &edges), HashSet::from([A]));
+    }
+
+    #[test]
+    fn cycle_members_ignores_dynamic_edges() {
+        const A: usize = 0;
+        const B: usize = 1;
+        let ids: HashSet<usize> = HashSet::from([A, B]);
+        // Would be a 2-cycle if both edges were static; a dynamic edge is a
+        // chunk boundary, not a same-scope initialization-order hazard.
+        let edges = vec![
+            SplitEdgeId {
+                from: A,
+                to: B,
+                is_dynamic: false,
+            },
+            SplitEdgeId {
+                from: B,
+                to: A,
+                is_dynamic: true,
+            },
+        ];
+
+        assert!(cycle_members(&ids, &edges).is_empty());
+    }
+
+    #[test]
+    fn cross_chunk_referenced_finds_external_edge() {
+        const OUTSIDE: usize = 99;
+        const A: usize = 0;
+        const B: usize = 1;
+        let chunk_ids: HashSet<usize> = HashSet::from([A, B]);
+        let edges = vec![
+            SplitEdgeId {
+                from: OUTSIDE,
+                to: A,
+                is_dynamic: true,
+            },
+            SplitEdgeId {
+                from: A,
+                to: B,
+                is_dynamic: false,
+            },
+        ];
+
+        assert_eq!(
+            cross_chunk_referenced(&chunk_ids, &edges),
+            HashSet::from([A])
+        );
+    }
+
+    #[test]
+    fn cross_chunk_referenced_ignores_internal_edges() {
+        const A: usize = 0;
+        const B: usize = 1;
+        let chunk_ids: HashSet<usize> = HashSet::from([A, B]);
+        let edges = vec![SplitEdgeId {
+            from: A,
+            to: B,
+            is_dynamic: false,
+        }];
+
+        assert!(cross_chunk_referenced(&chunk_ids, &edges).is_empty());
+    }
+
+    #[test]
+    fn cross_chunk_importers_finds_outgoing_external_edge() {
+        const OUTSIDE: usize = 99; // e.g. a promoted shared/manual chunk module
+        const A: usize = 0;
+        const B: usize = 1;
+        let chunk_ids: HashSet<usize> = HashSet::from([A, B]);
+        let edges = vec![
+            SplitEdgeId {
+                from: A,
+                to: OUTSIDE,
+                is_dynamic: false,
+            },
+            SplitEdgeId {
+                from: A,
+                to: B,
+                is_dynamic: false,
+            },
+        ];
+
+        assert_eq!(
+            cross_chunk_importers(&chunk_ids, &edges),
+            HashSet::from([A])
+        );
+    }
+
+    #[test]
+    fn cross_chunk_importers_ignores_internal_edges() {
+        const A: usize = 0;
+        const B: usize = 1;
+        let chunk_ids: HashSet<usize> = HashSet::from([A, B]);
+        let edges = vec![SplitEdgeId {
+            from: A,
+            to: B,
+            is_dynamic: false,
+        }];
+
+        assert!(cross_chunk_importers(&chunk_ids, &edges).is_empty());
+    }
+
+    #[test]
+    fn cross_chunk_importers_ignores_dynamic_edges() {
+        // A lowered `import()` call is already async/deferred on its own
+        // (`__jet__.dynamicImport(id)`), so it carries no synchronous
+        // -ordering hazard and must not force its source module to the
+        // registry.
+        const OUTSIDE: usize = 99;
+        const A: usize = 0;
+        let chunk_ids: HashSet<usize> = HashSet::from([A]);
+        let edges = vec![SplitEdgeId {
+            from: A,
+            to: OUTSIDE,
+            is_dynamic: true,
+        }];
+
+        assert!(cross_chunk_importers(&chunk_ids, &edges).is_empty());
+    }
+
+    #[test]
+    fn dependency_order_places_importer_before_dependency() {
+        const ENTRY: usize = 0;
+        const UTIL: usize = 1;
+        let ids = vec![UTIL, ENTRY]; // deliberately out of order
+        let edges = vec![SplitEdgeId {
+            from: ENTRY,
+            to: UTIL,
+            is_dynamic: false,
+        }];
+
+        assert_eq!(dependency_order(&ids, &edges), vec![ENTRY, UTIL]);
+    }
+
+    #[test]
+    fn dependency_order_falls_back_to_sorted_ids_on_residual_cycle() {
+        // A caller that fails to exclude a real cycle first (a caller bug,
+        // not a real graph shape) must not panic; it degrades to numeric
+        // id order instead.
+        const A: usize = 3;
+        const B: usize = 1;
+        let ids = vec![A, B];
+        let edges = vec![
+            SplitEdgeId {
+                from: A,
+                to: B,
+                is_dynamic: false,
+            },
+            SplitEdgeId {
+                from: B,
+                to: A,
+                is_dynamic: false,
+            },
+        ];
+
+        assert_eq!(dependency_order(&ids, &edges), vec![B, A]);
     }
 }
 // CODEGEN-END

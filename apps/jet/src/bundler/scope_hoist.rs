@@ -36,8 +36,9 @@
 //! - Single scope → minifier renames all local vars in one pass
 //! - Cross-module DCE and constant folding become possible
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use super::splitting;
 use super::CompiledModule;
 
 // Re-export post-flattening optimizations from the split module.
@@ -922,6 +923,250 @@ fn inline_module_body_v2(code: &str, idx: usize) -> String {
     }
 
     super::mangle::apply_scoped_module_renames(code, &root_renames, &global_renames)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Split-entry flatten (issue #1993): flatten the SAFE SUBSET of a split
+// build's entry chunk into one flat scope with unified mangling, keeping
+// the `__jet__` registry for the residue the fallback ladder can't prove
+// safe. Reuses `inline_module_body_v2` (R2/R3 substitution) unchanged; see
+// `bundler::mod::generate_split_bundle` for the call site and
+// `bundler::splitting` for the graph-shape helpers this partition uses.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Partition of an entry chunk's modules into a flatten-safe subset (one
+/// shared IIFE scope, unified mangling target — see
+/// [`generate_entry_flat_region`]) and a `__jet__`-registry residue (the
+/// modules the fallback ladder in [`partition_entry_for_flatten`] cannot
+/// prove safe).
+/// @issue #1993
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryFlattenPartition {
+    /// Ids to inline into the flat region. Already in dependency-execution
+    /// order (importer first) per [`splitting::dependency_order`].
+    pub flat_ids: Vec<usize>,
+    /// Ids that keep the `__jet__.define`/`require` registry wrapper.
+    pub registry_ids: Vec<usize>,
+}
+
+/// Classify an entry chunk's modules per the issue #1993 fallback ladder.
+/// A module stays in the `__jet__` registry (not flattened) if it:
+///
+/// - participates in a static-edge cycle ([`splitting::cycle_members`]:
+///   SCC size > 1 or a self-loop) — flattening would run initializers in
+///   the wrong order or infinitely recurse;
+/// - is referenced by any OTHER chunk ([`splitting::cross_chunk_referenced`])
+///   — it must stay id-addressable via `__jet__.require` from that chunk;
+/// - statically depends on a module that lives in another chunk
+///   ([`splitting::cross_chunk_importers`], e.g. a promoted #1963
+///   shared/manual chunk) — `entry_bootstrap_js` only defers the
+///   *registry* `require(entry_id)` path behind that chunk's `loadChunk`
+///   promise, but a flattened module runs synchronously and
+///   unconditionally as soon as the bundle script executes, well before
+///   that promise can resolve;
+/// - fails the per-module scope-hoist-safety check
+///   ([`is_entry_module_flatten_safe`]: `eval`/`with`/`arguments[..]`, or a
+///   side-effectful `node_modules` package); or
+/// - is itself a dynamic-import target — defensively `debug_assert!`ed
+///   rather than expected, since `splitting::bfs_static` already never
+///   walks into a split point, so this should be structurally impossible
+///   for entry-chunk members.
+///
+/// Everything else is safe to inline into the flat region. Correctness
+/// over size: ties and doubtful cases fall to the registry side.
+/// @issue #1993
+pub fn partition_entry_for_flatten(
+    entry_modules: &[&CompiledModule],
+    edges: &[splitting::SplitEdgeId],
+) -> EntryFlattenPartition {
+    let entry_ids: HashSet<usize> = entry_modules.iter().map(|m| m.id).collect();
+
+    debug_assert!(
+        !edges
+            .iter()
+            .any(|edge| edge.is_dynamic && entry_ids.contains(&edge.to)),
+        "entry chunk module is a dynamic-import target; split_chunks invariant violated"
+    );
+
+    let cyclic = splitting::cycle_members(&entry_ids, edges);
+    let cross_referenced = splitting::cross_chunk_referenced(&entry_ids, edges);
+    let cross_importers = splitting::cross_chunk_importers(&entry_ids, edges);
+
+    let mut flat_ids: Vec<usize> = Vec::with_capacity(entry_modules.len());
+    let mut registry_ids: Vec<usize> = Vec::with_capacity(entry_modules.len());
+
+    for module in entry_modules {
+        let id = module.id;
+        let safe = !cyclic.contains(&id)
+            && !cross_referenced.contains(&id)
+            && !cross_importers.contains(&id)
+            && is_entry_module_flatten_safe(module);
+        if safe {
+            flat_ids.push(id);
+        } else {
+            registry_ids.push(id);
+        }
+    }
+
+    let flat_ids = splitting::dependency_order(&flat_ids, edges);
+    registry_ids.sort_unstable();
+
+    EntryFlattenPartition {
+        flat_ids,
+        registry_ids,
+    }
+}
+
+/// Per-module scope-hoist safety check used by [`partition_entry_for_flatten`].
+/// Mirrors the same-purpose combined predicate inside
+/// [`generate_flattened_bundle`]: the `eval`/`with`/`arguments[..]` guard
+/// ([`is_module_flatten_safe`]), plus the `sideEffects` package.json
+/// heuristic ([`is_side_effect_free`]) for `node_modules` dependencies.
+/// Project source is always side-effect-free from a scope-hoist
+/// perspective — a CJS `exports`/`module.exports` assignment is the
+/// module's output mechanism, not a side effect.
+/// @issue #1993
+fn is_entry_module_flatten_safe(module: &CompiledModule) -> bool {
+    if !is_module_flatten_safe(&module.code) {
+        return false;
+    }
+    if module.path.to_string_lossy().contains("node_modules") {
+        return is_side_effect_free(module);
+    }
+    true
+}
+
+/// Generate the flat-scope region for the split-entry-chunk subset chosen
+/// by [`partition_entry_for_flatten`]: one IIFE containing every flat
+/// module's namespace object plus its inlined body (same `_m{idx}` /
+/// `_m{idx}e` / `_r` substitutions as [`generate_flattened_bundle`]'s
+/// Phase 2, via [`inline_module_body_v2`]), executed in dependency order
+/// (leaf deps first).
+///
+/// Two differences from the single-file flatten path, both required for
+/// split-build interop with the surrounding `__jet__` registry:
+///
+/// 1. The local `_r(id)` helper checks the flat region's own sparse module
+///    table first, then falls back to `__jet__.require(id)` — so a flat
+///    module that depends on a registry-residue module still resolves.
+/// 2. Immediately after *each* flat module's own body runs — not batched
+///    once at the end of the IIFE — the region pre-seeds
+///    `__jet__.cache[id] = {exports, id, loaded}` for that one id,
+///    mirroring the runtime's own `require()` cache contract (`cache[id]`
+///    is checked before `modules[id]`; see `generate_runtime`). Per-module
+///    interleaving (rather than one trailing batch) matters: a flat
+///    module's top-level code can synchronously call into a
+///    registry-residue module, whose factory then runs *nested inside*
+///    this still-executing IIFE and may itself `require()` an *earlier*
+///    flat module's export — which must already be cache-seeded at that
+///    exact point, not merely already executed. The seed reads the live
+///    `_m{idx}.exports` property (not a captured `_m{idx}e` alias),
+///    matching real CommonJS `module.exports` reassignment semantics.
+///    The seed is skipped for non-entry ids when `has_registry_residue`
+///    is `false`: every intra-region cross-reference already resolves
+///    through `_r`'s local `_mods` lookup, which never falls through to
+///    `__jet__.require` for an id it already holds, so with zero registry
+///    code in this chunk nothing can ever call `__jet__.require`/read
+///    `__jet__.cache` for a non-entry flat id — the seed would be
+///    provably dead weight. `entry_id`'s own seed is always emitted
+///    regardless, because the trailing bootstrap call
+///    (`entry_bootstrap_js`) unconditionally does
+///    `__jet__.require(entry_id)`, which resolves through the *registry*
+///    `require`'s cache-first check — see `generate_runtime` — not `_r`.
+///
+/// Ordering contract with the caller: registry `__jet__.define(...)` calls
+/// must be emitted — and thus have run, since `define` only registers a
+/// factory with no invocation — BEFORE this region's output, so a flat
+/// module's synchronous top-level call into a registry-residue module
+/// always finds `__jet__.modules[id]` already populated. The split runtime
+/// (which defines `window.__jet__`) precedes both. See
+/// `bundler::mod::generate_split_bundle`.
+///
+/// Residual limitation (documented, not fixed by this change): a
+/// three-hop chain — flat module A synchronously calls registry module R
+/// at A's top level, and R itself `require()`s flat module B, where B is
+/// *not* also a direct static dependency of A — can still resolve before
+/// B's own body has run, if the flat-only topological order (which only
+/// sees direct flat-to-flat edges, not transitive ones through registry
+/// nodes) happens to place B after A. This is a narrow, specific
+/// ordering-collision pattern (it requires registry residue — itself
+/// already the less-common case — to sit *between* two otherwise-unrelated
+/// flat modules on a synchronous top-level path); the more complete fix
+/// (transitive flat-to-flat ordering constraints computed through registry
+/// nodes) is left as follow-up rather than implemented here, per issue
+/// #1993's STOP-before-forcing-hairy-interop guidance.
+/// @issue #1993
+pub fn generate_entry_flat_region(
+    flat_modules: &[&CompiledModule],
+    edges: &[splitting::SplitEdgeId],
+    entry_id: usize,
+    has_registry_residue: bool,
+) -> String {
+    if flat_modules.is_empty() {
+        return String::new();
+    }
+
+    let by_id: HashMap<usize, &CompiledModule> = flat_modules.iter().map(|m| (m.id, *m)).collect();
+    let ids: Vec<usize> = flat_modules.iter().map(|m| m.id).collect();
+    let order = splitting::dependency_order(&ids, edges);
+
+    let code_total: usize = flat_modules.iter().map(|m| m.code.len()).sum();
+    let mut out = String::with_capacity(code_total + 200 + flat_modules.len() * 160);
+
+    out.push_str("// Entry flat region (issue #1993): scope-hoisted subset of the\n");
+    out.push_str("// entry chunk, unified mangling target. Registry residue precedes\n");
+    out.push_str("// this region (see generate_split_bundle) so its __jet__.define(...)\n");
+    out.push_str("// calls have already registered by the time this IIFE runs.\n");
+    out.push_str("(function(){\n'use strict';\n\n");
+
+    for &id in &order {
+        out.push_str(&format!("var _m{}={{exports:{{}}}};\n", id));
+    }
+    out.push('\n');
+
+    // Sparse by-id lookup restricted to this flat region, falling back to
+    // the `__jet__` registry for cross-region requires.
+    out.push_str("var _mods={");
+    for (i, &id) in order.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!("{}:_m{}", id, id));
+    }
+    out.push_str("};\n");
+    out.push_str("function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n");
+
+    // Execute in dependency order (leaf deps first) — same convention as
+    // generate_flattened_bundle. Each module's own `__jet__.cache` seed is
+    // emitted immediately after its body (interleaved, not batched at the
+    // end): see this function's doc comment for why that ordering matters.
+    for &id in order.iter().rev() {
+        let module = by_id[&id];
+        let inlined = inline_module_body_v2(&module.code, id);
+        out.push_str(&format!(
+            "// Module {}: {}\n",
+            id,
+            module.path.to_string_lossy()
+        ));
+        out.push_str("{\n");
+        out.push_str(&format!("var _m{idx}e=_m{idx}.exports;\n", idx = id));
+        out.push_str(&inlined);
+        out.push_str("\n}\n");
+        // See this function's doc comment for why the entry id's seed is
+        // unconditional while every other flat id's seed is dead weight
+        // (and thus skipped) when this chunk has no registry residue.
+        if has_registry_residue || id == entry_id {
+            out.push_str(&format!(
+                "__jet__.cache[{id}]={{exports:_m{id}.exports,id:{id},loaded:true}};\n\n",
+                id = id
+            ));
+        } else {
+            out.push('\n');
+        }
+    }
+
+    out.push_str("})();\n");
+    out
 }
 
 #[cfg(test)]
@@ -1937,6 +2182,185 @@ mod tests {
         assert_eq!(decls[2].kind, DeclKind::Let);
         assert_eq!(decls[3].kind, DeclKind::Function);
         assert_eq!(decls[4].kind, DeclKind::Class);
+    }
+
+    // ── #1993: split-entry flatten partition + flat-region emission ──
+
+    /// Mixed fixture exercising every rung of the fallback ladder in one
+    /// shot: a safe two-module cluster, a 2-module cycle, an eval()-using
+    /// module, a module cross-referenced from an async chunk, and a module
+    /// that itself statically depends on a promoted shared/manual chunk
+    /// module (issue #1993's measured-regression fix: `entry_bootstrap_js`
+    /// only defers the registry `require(entry_id)` path behind that other
+    /// chunk's `loadChunk` promise, not a flattened module's synchronous
+    /// top-level execution).
+    #[test]
+    fn partition_entry_for_flatten_mixed_fixture() {
+        const SAFE1: usize = 0;
+        const SAFE2: usize = 1;
+        const CYCLE_A: usize = 2;
+        const CYCLE_B: usize = 3;
+        const EVAL_MOD: usize = 4;
+        const CROSS_REF: usize = 5;
+        const EXTERNAL_DEP: usize = 6;
+        const ASYNC_CHUNK_MODULE: usize = 99; // lives in a different chunk
+        const SHARED_CHUNK_MODULE: usize = 100; // promoted #1963 shared chunk
+
+        let safe1 = make_module_with_id(SAFE1, "safe1.js", "var x = 1; module.exports = { x };");
+        let safe2 = make_module_with_id(SAFE2, "safe2.js", "module.exports = 2;");
+        let cycle_a = make_module_with_id(
+            CYCLE_A,
+            "cycle_a.js",
+            "var a = require(3); module.exports = a;",
+        );
+        let cycle_b = make_module_with_id(
+            CYCLE_B,
+            "cycle_b.js",
+            "var b = require(2); module.exports = b;",
+        );
+        let eval_mod = make_module_with_id(
+            EVAL_MOD,
+            "eval_mod.js",
+            "eval('var y = 1'); module.exports = {};",
+        );
+        let cross_ref =
+            make_module_with_id(CROSS_REF, "cross_ref.js", "module.exports = { z: 1 };");
+        let external_dep = make_module_with_id(
+            EXTERNAL_DEP,
+            "external_dep.js",
+            "var shared = require(100); module.exports = shared;",
+        );
+
+        let entry_modules: Vec<&CompiledModule> = vec![
+            &safe1,
+            &safe2,
+            &cycle_a,
+            &cycle_b,
+            &eval_mod,
+            &cross_ref,
+            &external_dep,
+        ];
+
+        let edges = vec![
+            splitting::SplitEdgeId {
+                from: SAFE1,
+                to: SAFE2,
+                is_dynamic: false,
+            },
+            splitting::SplitEdgeId {
+                from: CYCLE_A,
+                to: CYCLE_B,
+                is_dynamic: false,
+            },
+            splitting::SplitEdgeId {
+                from: CYCLE_B,
+                to: CYCLE_A,
+                is_dynamic: false,
+            },
+            // Another (async) chunk's module statically requires CROSS_REF
+            // by id — this is what forces CROSS_REF to the registry even
+            // though it is otherwise scope-hoist safe on its own.
+            splitting::SplitEdgeId {
+                from: ASYNC_CHUNK_MODULE,
+                to: CROSS_REF,
+                is_dynamic: false,
+            },
+            // EXTERNAL_DEP statically requires a module that lives in a
+            // different (promoted shared/manual) chunk — this is what
+            // forces EXTERNAL_DEP to the registry even though it is
+            // otherwise scope-hoist safe and part of no cycle.
+            splitting::SplitEdgeId {
+                from: EXTERNAL_DEP,
+                to: SHARED_CHUNK_MODULE,
+                is_dynamic: false,
+            },
+        ];
+
+        let partition = partition_entry_for_flatten(&entry_modules, &edges);
+
+        assert_eq!(partition.flat_ids, vec![SAFE1, SAFE2]);
+        assert_eq!(
+            partition.registry_ids,
+            vec![CYCLE_A, CYCLE_B, EVAL_MOD, CROSS_REF, EXTERNAL_DEP]
+        );
+    }
+
+    #[test]
+    fn generate_entry_flat_region_emits_cache_preseed_and_local_fallback() {
+        const A: usize = 0;
+        const B: usize = 1;
+        let a = make_module_with_id(A, "a.js", "var dep = require(1); module.exports = dep;");
+        let b = make_module_with_id(B, "b.js", "module.exports = 2;");
+        let flat_modules: Vec<&CompiledModule> = vec![&a, &b];
+        let edges = vec![splitting::SplitEdgeId {
+            from: A,
+            to: B,
+            is_dynamic: false,
+        }];
+
+        // has_registry_residue=true: this chunk has registry residue
+        // elsewhere, so every flat id's cache must stay seeded (we can't
+        // cheaply prove which specific ids the residue's `require()`
+        // calls target).
+        let out = generate_entry_flat_region(&flat_modules, &edges, A, true);
+
+        // Local `_r` resolves same-region ids without touching `__jet__`,
+        // falling back to `__jet__.require` for everything else.
+        assert!(
+            out.contains("function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}")
+        );
+        // Cache pre-seed makes flattened ids resolvable from registry
+        // residue via `__jet__.require(id)` -> `cache[id]`.
+        assert!(out.contains(&format!("__jet__.cache[{A}]=")));
+        assert!(out.contains(&format!("__jet__.cache[{B}]=")));
+        // `require(1)` inside module A's body was substituted to `_r(1)`.
+        assert!(out.contains("_r(1)"));
+        assert!(!out.contains("require(1)"));
+    }
+
+    #[test]
+    fn generate_entry_flat_region_skips_dead_non_entry_cache_preseed_when_no_registry_residue() {
+        // @issue #1993 — measured regression fix: on an all-safe chunk
+        // (no registry residue at all), a non-entry flat id's cache seed
+        // can never be read by anything (every intra-region reference
+        // resolves through `_r`'s local `_mods` lookup, and nothing
+        // outside this region can reach a flat-only chunk's ids), so it
+        // must be omitted. The entry id's seed stays mandatory because
+        // `entry_bootstrap_js`'s trailing `__jet__.require(entry_id)`
+        // always goes through the *registry* require's cache-first check.
+        const ENTRY: usize = 0;
+        const LEAF: usize = 1;
+        let entry = make_module_with_id(
+            ENTRY,
+            "entry.js",
+            "var dep = require(1); module.exports = dep;",
+        );
+        let leaf = make_module_with_id(LEAF, "leaf.js", "module.exports = 2;");
+        let flat_modules: Vec<&CompiledModule> = vec![&entry, &leaf];
+        let edges = vec![splitting::SplitEdgeId {
+            from: ENTRY,
+            to: LEAF,
+            is_dynamic: false,
+        }];
+
+        let out = generate_entry_flat_region(&flat_modules, &edges, ENTRY, false);
+
+        assert!(
+            out.contains(&format!("__jet__.cache[{ENTRY}]=")),
+            "entry id's cache seed is unconditional (trailing bootstrap require): {out}"
+        );
+        assert!(
+            !out.contains(&format!("__jet__.cache[{LEAF}]=")),
+            "non-entry id's cache seed must be omitted when there is no registry residue: {out}"
+        );
+        // Flat-to-flat resolution is unaffected — still goes through `_r`.
+        assert!(out.contains("_r(1)"));
+    }
+
+    #[test]
+    fn generate_entry_flat_region_empty_input_is_empty_output() {
+        let flat_modules: Vec<&CompiledModule> = Vec::new();
+        assert_eq!(generate_entry_flat_region(&flat_modules, &[], 0, false), "");
     }
 }
 // CODEGEN-END
