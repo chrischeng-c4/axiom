@@ -1864,7 +1864,13 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     );
     for (i, fname) in field_names.iter().enumerate() {
         let val = if i < args.len() {
-            args[i]
+            // `args` is borrowed from the caller's own arg storage (e.g.
+            // extract_items() copies pointers out of a List/Tuple without
+            // retaining — see mb_call_spread_impl); the instance takes its
+            // own reference, same as the defaults case below (#1978).
+            let a = args[i];
+            unsafe { super::super::rc::retain_if_ptr(a) };
+            a
         } else {
             // Defaults are owned by the factory; the instance takes its own
             // reference.
