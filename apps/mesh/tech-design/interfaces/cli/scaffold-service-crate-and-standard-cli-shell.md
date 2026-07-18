@@ -1,6 +1,24 @@
 ---
 id: '1970'
-summary: (fill)
+summary: >
+  Add Mesh's first Rust service crate and binary shell so the project has an
+  agent-drivable `mesh` CLI. The slice wires the required standard
+  `llm`/`upgrade`/`issue` verbs through shared `cli-std`, exposes placeholder
+  domain verbs (serve, collections, nodes, edges, query, dockerfile, k8s) for
+  future graph-engine work, and keeps the crate free of GPU/raft/HTTP-server
+  runtime dependencies.
+capability_refs:
+  - id: "cli-interface"
+    role: primary
+    gap: "mesh-cli-shell-scaffold"
+    claim: "mesh-cli-shell-scaffold"
+    coverage: partial
+    rationale: >
+      This TD turns Mesh's CLI Interface capability root into its first
+      independently verifiable non-epic implementation slice: the standard
+      llm/upgrade/issue CLI trio plus placeholder domain verbs, tracked
+      separately from the epic-level mesh-cli-convention-and-graph-verbs
+      work root.
 fill_sections: [logic, changes, unit-test]
 ---
 
