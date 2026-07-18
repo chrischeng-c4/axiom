@@ -7,7 +7,11 @@
 //! drifting timeout sources and poll intervals), the fixture SHA-256 +
 //! recursive `collect_files` walker (status.rs / contract.rs / perf_pin.rs),
 //! and the `python3` availability probes. This file is the single source of
-//! truth for those primitives.
+//! truth for those primitives. #1981 additionally moved `perf_pin.rs`'s
+//! CPython-baseline loading, host-affinity gate, and `/usr/bin/time`
+//! measurement primitives here, so `perf_pin.rs` (the single-pin gate) and
+//! `perf_gate_report.rs` (the full-enumeration report) can never drift on
+//! what "the CPU/RSS ratio" or "a usable baseline" means.
 //!
 //! It is wired into each consuming binary with
 //!
@@ -41,9 +45,11 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+use serde::Deserialize;
 
 // ── mamba binary location ─────────────────────────────────────────
 //
@@ -317,5 +323,469 @@ pub fn wait_with_timeout(mut child: Child, policy: TimeoutPolicy) -> std::io::Re
                 backoff = (backoff * 2).min(policy.poll_interval);
             }
         }
+    }
+}
+
+// ── perf-pin measurement primitives ───────────────────────────────
+//
+// Shared by `perf_pin.rs` (the single-pin datatest gate, `harness = false`,
+// `test = false`, one `Trial` per TOML under `config/perf/pins/`) and
+// `perf_gate_report.rs` (#1981: the full-enumeration report — every pin
+// gets a verdict row in one run, never masked by an earlier pin's panic).
+// Moved here (rather than duplicated a second time) so the two binaries can
+// never drift on what "the CPU/RSS ratio" or "a usable baseline" means.
+
+/// One `tests/harness/cpython/config/perf/pins/*.toml` entry.
+#[derive(Debug, Deserialize)]
+pub struct Pin {
+    pub issue: u64,
+    pub lib: String,
+    pub fixture: String,
+    pub floor: f64,
+    pub samples: usize,
+    #[serde(default)]
+    pub prereq_imports: Vec<String>,
+    /// Peak-RSS floor; the contract gate requires every pin to set it. It
+    /// matches cross_runtime.rs FLOOR semantics (mem_ratio = cpython_rss /
+    /// mamba_rss must be >= mem_floor, i.e. mamba uses no more peak memory
+    /// than CPython at floor 1.0x).
+    #[serde(default)]
+    pub mem_floor: Option<f64>,
+    /// Per-pin external wall-clock timeout override, in seconds (#964).
+    /// Defaults to `DEFAULT_PIN_TIMEOUT_SECS` when absent. Guards against a
+    /// fixture hang wedging the whole gate.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Default per-pin external wall-clock timeout (#964): a hung fixture must
+/// not wedge the whole perf-pin gate with an orphaned 100%-CPU grandchild.
+/// Overridable per-pin via the `timeout_secs` TOML field.
+pub const DEFAULT_PIN_TIMEOUT_SECS: u64 = 120;
+/// #1024: ship-profile mamba carries a fixed runtime RSS floor of about 26 MB
+/// before a fixture's own allocation pattern shows up. Small perf pins like
+/// `argparse_1442`, `googleapis_common_protos_1512`, and `grpclib_1514`
+/// structurally fail a raw `cpython_rss / mamba_rss` gate even when mamba's
+/// workload-attributed RSS is below CPython's, so the mem gate subtracts this
+/// fixed allowance from mamba before applying each pin's `mem_floor`.
+pub const MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES: u64 = 26_000_000;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Measurement {
+    pub cpu_time_ns: Option<u64>,
+    pub peak_rss_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MemGateEvaluation {
+    pub raw_ratio: f64,
+    pub adjusted_ratio: f64,
+    pub effective_mamba_rss_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CpythonPerfBaseline {
+    pub pin_path: String,
+    pub fixture_sha256: String,
+    pub samples: usize,
+    // Retained for sqlite-row deserialization compatibility; no longer used by
+    // the gate (D5.2 measures external CPU time, not the fixture marker).
+    #[allow(dead_code)]
+    pub internal_time_ns: u64,
+    pub cpu_time_ns: Option<u64>,
+    pub peak_rss_bytes: Option<u64>,
+    pub python: String,
+    pub captured_at_unix: u64,
+    /// Recording host (#966, `platform.node()`). #1981 promotes this from a
+    /// warn-only signal to an enforced gate: see [`baseline_is_same_host`] /
+    /// [`load_same_host_baseline`]. `#[serde(default)]` so pre-#966 baseline
+    /// rows (column added via `ALTER TABLE`, NULL on old rows) still
+    /// deserialize — and, per #1981, are treated exactly like a cross-host
+    /// row (honest degradation: a row with no recorded host is not
+    /// verifiably this host's, so it is not used for ratio grading either).
+    #[serde(default)]
+    pub host: Option<String>,
+}
+
+/// Best-effort local hostname (#966), compared against a loaded baseline's
+/// `host` to gate cross-host CPU/RSS ratio grading (#1981). Mirrors Python's
+/// `platform.node()` closely enough for an equality check (both ultimately
+/// `gethostname(2)`).
+#[cfg(unix)]
+pub fn local_hostname() -> Option<String> {
+    let mut buf = vec![0u8; 256];
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8(buf[..len].to_vec()).ok()
+}
+
+#[cfg(not(unix))]
+pub fn local_hostname() -> Option<String> {
+    None
+}
+
+/// True iff `baseline` was recorded on this exact host (#966 host, #1981
+/// enforcement). Conservative in every ambiguous direction: a `None`
+/// baseline host (pre-#966 legacy row), an undetectable local hostname, and
+/// an actual hostname mismatch are ALL "not the same host" — CPU/RSS ratios
+/// are only ever graded against a baseline this exact machine recorded,
+/// since they are not portable across machines (different CPUs, thermal
+/// state, background load).
+pub fn baseline_is_same_host(baseline: &CpythonPerfBaseline) -> bool {
+    match (baseline.host.as_deref(), local_hostname().as_deref()) {
+        (Some(baseline_host), Some(local_host)) => baseline_host == local_host,
+        _ => false,
+    }
+}
+
+/// Why [`load_same_host_baseline`] could not return a usable baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoBaselineReason {
+    /// No baseline row exists for this pin at all.
+    Missing,
+    /// A baseline row exists but fails [`baseline_is_same_host`] — recorded
+    /// on a different host, or a legacy pre-#966 row with no recorded host.
+    CrossHost,
+}
+
+impl NoBaselineReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NoBaselineReason::Missing => "missing",
+            NoBaselineReason::CrossHost => "cross-host",
+        }
+    }
+}
+
+/// Load `toml_path`'s CPython baseline and apply host-affinity (#1981): a
+/// baseline that exists but was not recorded on this exact host is never
+/// returned, since CPU/RSS ratios recorded elsewhere are not portable here.
+/// `Ok` only for a present, same-host row; `Err` distinguishes "no row at
+/// all" (still eligible for a live-python3 fallback measurement — see
+/// `perf_pin.rs::run_pin` and `perf_gate_report.rs::evaluate_pin`) from "a
+/// row exists but isn't this host's" (never graded — #1981 requires
+/// `no-baseline("cross-host")`, never a ratio, for that case).
+pub fn load_same_host_baseline(toml_path: &Path) -> Result<CpythonPerfBaseline, NoBaselineReason> {
+    match load_cpython_baseline(toml_path) {
+        Some(baseline) if baseline_is_same_host(&baseline) => Ok(baseline),
+        Some(_) => Err(NoBaselineReason::CrossHost),
+        None => Err(NoBaselineReason::Missing),
+    }
+}
+
+/// Put a spawned child in its own process group before exec, so a timeout
+/// kill can `killpg` the whole spawn tree. Mirrors `runner.rs`'s
+/// `apply_child_limits`: when the child is `/usr/bin/time`-wrapped, the
+/// actual measured process is a *grandchild* that inherits the group via
+/// fork (and is not itself a group leader), so killing the group takes down
+/// both.
+#[cfg(unix)]
+pub fn own_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        command.pre_exec(|| {
+            let _ = libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+pub fn own_process_group(_command: &mut Command) {}
+
+/// Parse a `/usr/bin/time` stderr blob for the child's peak RSS in bytes.
+/// macOS BSD `time -l` reports bytes; Linux GNU `time -v` reports kbytes.
+/// Returns None if no recognised line is present. Mirrors the same parser
+/// in `benches/3p/cross_runtime.rs`.
+pub fn parse_peak_rss(stderr: &str) -> Option<u64> {
+    for line in stderr.lines() {
+        let trimmed = line.trim();
+        // macOS BSD `time -l`: "<n>  maximum resident set size" (bytes).
+        if let Some(rest) = trimmed.strip_suffix("maximum resident set size") {
+            if let Ok(v) = rest.trim().parse::<u64>() {
+                return Some(v);
+            }
+        }
+        // Linux GNU `time -v`: "Maximum resident set size (kbytes): <n>".
+        if let Some(rest) = trimmed.strip_prefix("Maximum resident set size") {
+            if let Some(num) = rest.split(':').nth(1) {
+                if let Ok(v) = num.trim().parse::<u64>() {
+                    return Some(v.saturating_mul(1024));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse CPU time reported by `/usr/bin/time`.
+///
+/// macOS BSD `time -l` emits "<real> real <user> user <sys> sys"; Linux GNU
+/// `time -v` emits separate user/sys lines. The returned value is user+sys
+/// CPU time in nanoseconds.
+pub fn parse_cpu_time_ns(stderr: &str) -> Option<u64> {
+    let mut linux_user: Option<f64> = None;
+    let mut linux_sys: Option<f64> = None;
+
+    for line in stderr.lines() {
+        let trimmed = line.trim();
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() == 6 && parts[1] == "real" && parts[3] == "user" && parts[5] == "sys" {
+            let user = parts[2].parse::<f64>().ok()?;
+            let sys = parts[4].parse::<f64>().ok()?;
+            return Some(((user + sys) * 1_000_000_000.0) as u64);
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("User time (seconds):") {
+            linux_user = rest.trim().parse::<f64>().ok();
+        } else if let Some(rest) = trimmed.strip_prefix("System time (seconds):") {
+            linux_sys = rest.trim().parse::<f64>().ok();
+        }
+    }
+
+    match (linux_user, linux_sys) {
+        (Some(user), Some(sys)) => Some(((user + sys) * 1_000_000_000.0) as u64),
+        _ => None,
+    }
+}
+
+#[cfg(unix)]
+pub fn timeval_to_ns(tv: libc::timeval) -> u64 {
+    (tv.tv_sec as u64)
+        .saturating_mul(1_000_000_000)
+        .saturating_add((tv.tv_usec as u64).saturating_mul(1_000))
+}
+
+#[cfg(unix)]
+pub fn child_cpu_time_ns() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    let rc = unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr()) };
+    if rc != 0 {
+        return None;
+    }
+    let usage = unsafe { usage.assume_init() };
+    Some(timeval_to_ns(usage.ru_utime).saturating_add(timeval_to_ns(usage.ru_stime)))
+}
+
+#[cfg(not(unix))]
+pub fn child_cpu_time_ns() -> Option<u64> {
+    None
+}
+
+/// Build the `/usr/bin/time` argv prefix for the current platform. macOS uses
+/// BSD `-l`; everywhere else assume GNU `-v`. Returns None if `/usr/bin/time`
+/// does not exist (caller falls back to plain `Command::new(cmd)` and drops
+/// RSS/CPU measurement — external resource gating is best-effort by design).
+pub fn time_wrapper() -> Option<(&'static str, &'static str)> {
+    let p = Path::new("/usr/bin/time");
+    if !p.exists() {
+        return None;
+    }
+    if cfg!(target_os = "macos") {
+        Some(("/usr/bin/time", "-l"))
+    } else {
+        Some(("/usr/bin/time", "-v"))
+    }
+}
+
+/// Run `cmd args...` once, optionally wrapped by `/usr/bin/time` so the
+/// child's CPU time and peak RSS can be parsed. `timeout` bounds the whole
+/// external wall-clock run (#964): the child is spawned as its own process
+/// group leader and, on timeout, the whole group is `killpg`'d so a hang
+/// never leaks an orphaned 100%-CPU grandchild or wedges the gate forever.
+pub fn run_once_with_metrics(cmd: &str, args: &[&str], timeout: Duration) -> Measurement {
+    let cpu_before = child_cpu_time_ns();
+    let (spawn_cmd, spawn_args, wrapped): (&str, Vec<&str>, bool) =
+        if let Some((time_bin, flag)) = time_wrapper() {
+            let mut all_args: Vec<&str> = Vec::with_capacity(args.len() + 2);
+            all_args.push(flag);
+            all_args.push(cmd);
+            all_args.extend(args.iter().copied());
+            (time_bin, all_args, true)
+        } else {
+            (cmd, args.to_vec(), false)
+        };
+
+    let mut command = Command::new(spawn_cmd);
+    command
+        .args(&spawn_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    own_process_group(&mut command);
+    let child = command
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn {cmd}: {e}"));
+
+    let policy = TimeoutPolicy::fixed(timeout);
+    let wait_result = wait_with_timeout(child, policy);
+    let cpu_after = child_cpu_time_ns();
+    let out = match wait_result {
+        Ok(WaitOutcome::Finished(output)) => output,
+        Ok(WaitOutcome::TimedOut(output)) => panic!(
+            "{cmd} TIMEOUT after {}s (killed process group); args={:?}\nstdout={}\nstderr={}",
+            policy.timeout().as_secs(),
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ),
+        Err(e) => panic!("failed to wait for {cmd}: {e}"),
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "{cmd} failed: stdout={} stderr={}",
+        stdout,
+        stderr
+    );
+    // When wrapped, the child's stderr is interleaved with `time`'s memory
+    // report; the exit status is the child's (preserved by `time`).
+    let wrapper_cpu = if wrapped {
+        parse_cpu_time_ns(&stderr)
+    } else {
+        None
+    };
+    let rusage_cpu = match (cpu_before, cpu_after) {
+        (Some(before), Some(after)) => after.checked_sub(before),
+        _ => None,
+    };
+    let peak_rss_bytes = if wrapped {
+        parse_peak_rss(&stderr)
+    } else {
+        None
+    };
+    Measurement {
+        cpu_time_ns: rusage_cpu.filter(|value| *value > 0).or(wrapper_cpu),
+        peak_rss_bytes,
+    }
+}
+
+pub fn median(values: &mut [u64]) -> u64 {
+    values.sort_unstable();
+    values[values.len() / 2]
+}
+
+pub fn measure_n(cmd: &str, args: &[&str], n: usize, timeout: Duration) -> Measurement {
+    assert!(n > 0, "samples must be >= 1");
+    let mut cpu_samples = Vec::with_capacity(n);
+    let mut rss_samples = Vec::with_capacity(n);
+
+    for _ in 0..n {
+        let measurement = run_once_with_metrics(cmd, args, timeout);
+        if let Some(cpu) = measurement.cpu_time_ns {
+            cpu_samples.push(cpu);
+        }
+        if let Some(rss) = measurement.peak_rss_bytes {
+            rss_samples.push(rss);
+        }
+    }
+
+    Measurement {
+        cpu_time_ns: if cpu_samples.is_empty() {
+            None
+        } else {
+            Some(median(&mut cpu_samples))
+        },
+        peak_rss_bytes: rss_samples.into_iter().min(),
+    }
+}
+
+pub fn baseline_db() -> PathBuf {
+    std::env::var("MAMBA_CPYTHON_PERF_BASELINE_DB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/cpython/.cache/perf/cpython_baseline.sqlite")
+        })
+}
+
+pub fn baseline_required() -> bool {
+    std::env::var("MAMBA_REQUIRE_CPYTHON_PERF_BASELINE")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "required"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub fn baseline_tool() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/harness/cpython/tools/perf_baseline.py")
+}
+
+pub fn load_cpython_baseline(toml_path: &Path) -> Option<CpythonPerfBaseline> {
+    let db = baseline_db();
+    let required = baseline_required();
+    if !db.exists() {
+        assert!(
+            !required,
+            "CPython perf baseline DB missing: {}. Run `python3 tests/harness/cpython/tools/perf_baseline.py record` first.",
+            db.display()
+        );
+        return None;
+    }
+
+    let output = Command::new(python3_bin())
+        .arg(baseline_tool())
+        .arg("--db")
+        .arg(&db)
+        .arg("get")
+        .arg("--pin")
+        .arg(toml_path)
+        .output()
+        .unwrap_or_else(|err| panic!("failed to query CPython perf baseline: {err}"));
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Some(serde_json::from_str(&stdout).unwrap_or_else(|err| {
+            panic!(
+                "failed to parse CPython perf baseline JSON for {}: {err}\nstdout={stdout}",
+                toml_path.display()
+            )
+        }));
+    }
+
+    if output.status.code() == Some(2) {
+        assert!(
+            !required,
+            "CPython perf baseline row missing for {} in {}. Run `python3 tests/harness/cpython/tools/perf_baseline.py record --pin {}` first.",
+            toml_path.display(),
+            db.display(),
+            toml_path.display()
+        );
+        return None;
+    }
+
+    panic!(
+        "CPython perf baseline query failed for {}: stdout={} stderr={}",
+        toml_path.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+pub fn cpython_measurement_from_baseline(baseline: &CpythonPerfBaseline) -> Measurement {
+    Measurement {
+        cpu_time_ns: baseline.cpu_time_ns,
+        peak_rss_bytes: baseline.peak_rss_bytes,
+    }
+}
+
+pub fn evaluate_mem_gate(cpython_rss_bytes: u64, mamba_rss_bytes: u64) -> MemGateEvaluation {
+    let effective_mamba_rss_bytes =
+        mamba_rss_bytes.saturating_sub(MAMBA_FIXED_RUNTIME_RSS_FLOOR_BYTES);
+    let adjusted_ratio = if effective_mamba_rss_bytes == 0 {
+        f64::INFINITY
+    } else {
+        cpython_rss_bytes as f64 / effective_mamba_rss_bytes as f64
+    };
+    MemGateEvaluation {
+        raw_ratio: cpython_rss_bytes as f64 / mamba_rss_bytes as f64,
+        adjusted_ratio,
+        effective_mamba_rss_bytes,
     }
 }

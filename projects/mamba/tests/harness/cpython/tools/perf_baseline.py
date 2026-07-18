@@ -20,9 +20,13 @@ and import it back on another host:
 `export` writes one sorted JSON object per row (by `pin_path`) to
 `tests/harness/cpython/config/perf/pins/baseline.jsonl` by default; `import`
 upserts each JSONL row back into the target `--db`. Every row is stamped with
-the recording host (`platform.node()`); `perf_pin.rs` warns (does not fail)
-when the baseline it loads was recorded on a different host than the one
-running the gate, since CPU/RSS ratios aren't portable across machines.
+the recording host (`platform.node()`); `perf_pin.rs` and `perf_gate_report.rs`
+(#1981) skip a pin outright (`no-baseline("cross-host")`, never a ratio) when
+the baseline they load was recorded on a different host than the one running
+the gate — or has no recorded host at all (a legacy pre-#966 row) — since
+CPU/RSS ratios aren't portable across machines. Re-record on this host with
+`record` (a plain re-record upserts by `pin_path` and overwrites any stale
+host).
 
 No third-party dependencies; stdlib only.
 """
