@@ -296,6 +296,19 @@ path = "tests/mambalibs/runner.rs"
 name = "pkgmgr"
 path = "tests/pkgmgr/runner.rs"
 
+# external contracts — generated gates
+[[test]]
+name = "ec_mamba_t1_to_thread_gather_efficiency"
+path = "tests/external_contracts/ec_mamba_t1_to_thread_gather_efficiency.rs"
+
+[[test]]
+name = "ec_mamba_t1_to_thread_gather_results"
+path = "tests/external_contracts/ec_mamba_t1_to_thread_gather_results.rs"
+
+[[test]]
+name = "ec_mamba_t1_to_thread_gather_stability"
+path = "tests/external_contracts/ec_mamba_t1_to_thread_gather_stability.rs"
+
 # governance — cross-cutting gates + CI guard
 [[test]]
 name = "schema_gates"

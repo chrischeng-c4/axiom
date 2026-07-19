@@ -8,11 +8,17 @@ Machine-readable capability contract for Mamba.
 
 Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
 
+Roadmap execution order (policy-only; enforced operationally by the GitHub tier
+labels and #1996 Delivery Queue): Mamba Core Semantics → Language Core →
+Built-ins → C-based stdlibs → Hot stdlibs → Third-party → Other stdlibs
+(7a vendor, then 7b native rewrite). A later tier is not dependency-ready while
+a required earlier-tier EC is red.
+
 ### Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| T1. Mamba Core Semantics | #1505 | partial | planned | conformance | not_ready | Force Typed + Always Free-Threaded intentional divergence contract; later tiers wait for required ECs |
+| T1. Mamba Core Semantics | #1996 | partial | planned | conformance | not_ready | Force Typed + Always Free-Threaded intentional divergence contract; later tiers wait for required ECs |
 | C1. Py3.12 functional parity — Axis 1 | #3331 | partial | planned | conformance | not_ready | confirmed README promise; CPython oracle gate remains open |
 | C2. Less CPU time AND less memory than CPython — Axis 2 | #3880 | planned | planned | conformance | not_ready | confirmed README promise; CPU/RSS ratio gates remain open |
 | C3. mambalibs end-to-end — Axis 3 | #3457 | partial | planned | conformance | not_ready | confirmed README promise; native module coverage remains open |
@@ -21,10 +27,10 @@ Canonical field-style capability contracts below are machine-readable input for 
 ### T1. Mamba Core Semantics
 
 ID: mamba-core-semantics
-Root WI: #1505
+Root WI: #1996
 Status: confirmed
 Type: RuntimeTool
-Required Verification: conformance, negative
+Required Verification: conformance, negative, stability, efficiency, multicore
 Promise:
 Mamba is force typed and always free-threaded. Type inference failure is a
 compile error and `Any` is available only when explicitly requested; ingress,
@@ -36,9 +42,13 @@ is memory-safe and atomic; compound operations are not transactionally atomic
 and require caller locking when a multi-step invariant matters. Readiness needs
 correctness plus race, deadlock, leak, CPU, peak-RSS, and multicore evidence.
 Gate Inventory:
-- projects/mamba/external-contracts/type-system.md; projects/mamba/external-contracts/concurrency.md; projects/mamba/validation; #1996 Delivery Queue
+- projects/mamba/external-contracts/type-system.md
+- projects/mamba/external-contracts/concurrency.md
+- projects/mamba/validation
+- #1996 Delivery Queue
 Surfaces:
-- Compiler: `mamba check` + `mamba build` + `mamba run` + `threading` + `concurrent.futures` + `asyncio` - inference and wall enforcement; Python: `threading` + `concurrent.futures` + `asyncio` + built-in container mutation - always-free-threaded runtime behavior
+- Compiler: `mamba check` + `mamba build` + `mamba run` - inference and wall enforcement
+- Python: `threading` + `concurrent.futures` + `asyncio` + built-in container mutation - always-free-threaded runtime behavior
 EC Dimensions:
 - behavior: Force Typed rejection/acceptance and cooperative event-loop results
 - efficiency: CPU/RSS plus multicore scaling
@@ -139,8 +149,8 @@ EC Dimensions:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Local-first package manager baseline | epic | #459 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `cargo test -p mamba --test schema_gates pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/tests/pkgmgr; projects/mamba/src/pkgmanage |
-| Full uv package-manager parity and beyond | epic | #519 | implemented | verified | uv-parity | `cargo test -p mamba --test pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/src/pkgmanage/pkgmgr; projects/mamba/tests/pkgmgr |
-| `mamba run` command mode | change | #525 | implemented | verified | uv-parity | `cargo test -p mamba --test pkgmgr run_preflight::run_command_mode`; projects/mamba/src/main.rs; projects/mamba/src/pkgmanage/run.rs |
+| Full uv package-manager parity and beyond | epic | #519 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr`; `./target/debug/mamba pkgmgr-validate --json`; projects/mamba/src/pkgmanage/pkgmgr; projects/mamba/tests/pkgmgr |
+| `mamba run` command mode | change | #525 | implemented | verified | conformance | `cargo test -p mamba --test pkgmgr run_preflight::run_command_mode`; projects/mamba/src/main.rs; projects/mamba/src/pkgmanage/run.rs |
 
 Current state: `mamba init/auth/index/add/remove/lock/export/tree/version/package/publish/pip/venv/python/workspace/shell/sync/run/install/tool/hash/cache`
 plus `pkgmgr-validate` are wired through offline frozen-index gates, direct
@@ -191,4 +201,3 @@ environment with `.venv` executables and site-packages preferred before host
 fallbacks.
 No known release-blocking command-family gaps remain under #519; follow-up
 parity work should be tracked as focused hardening or live-network fixtures.
-
