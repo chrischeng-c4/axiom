@@ -286,6 +286,7 @@ codegen.profile = "rust/score-crate"
 name = "mamba"
 path = "projects/mamba"
 td_path = "projects/mamba/tech-design"
+cap_path = "projects/mamba/CAPABILITIES.md"
 label = "app:mamba"
 
 [[projects.workspaces]]
