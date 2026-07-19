@@ -131,6 +131,61 @@ fn extract_json_assignment(code: &str, marker: &str) -> Result<Value> {
         .with_context(|| format!("no JSON value found after {marker:?} ="))
 }
 
+/// Normalizes an entry file's code for cross-build byte-identity
+/// comparison: blanks the trailing `//# sourceMappingURL=...` comment
+/// (whose filename embeds the entry's own content hash) and splits the
+/// `__jet__.chunkManifest = {...}` assignment out into a separately
+/// returned, parsed `Value` (with the code's own copy of that JSON blob
+/// replaced by a fixed placeholder).
+///
+/// Needed because `build_chunk_manifest_js`'s `chunks`/`moduleChunks` key
+/// order is not currently stable run-to-run for otherwise byte-identical
+/// input — confirmed via 3 back-to-back `--splitting` builds of the exact
+/// same fixture with the survivor filter in the *same* state (ON) in all
+/// three, producing 2 distinct manifest key orderings and thus 2 distinct
+/// entry content hashes. That non-determinism sits entirely upstream of
+/// this WI (traced as far as `build_chunk_manifest_js` in `src/cli.rs`,
+/// whose input chunk-slice order is not itself sorted) and is reported
+/// separately rather than fixed here; this helper makes the byte-identity
+/// tests below robust to it while still proving genuine byte-identity for
+/// everything the survivor filter can actually affect.
+fn normalize_entry_code(code: &str) -> (String, Value) {
+    let normalized_lines: String = code
+        .lines()
+        .map(|line| {
+            if line.starts_with("//# sourceMappingURL=") {
+                "//# sourceMappingURL=<<STRIPPED>>"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let marker = "__jet__.chunkManifest";
+    let marker_idx = normalized_lines
+        .rfind(marker)
+        .unwrap_or_else(|| panic!("entry code missing {marker:?}: {normalized_lines}"));
+    let after_marker = marker_idx + marker.len();
+    let eq_rel = normalized_lines[after_marker..]
+        .find('=')
+        .unwrap_or_else(|| panic!("no '=' found after {marker:?}"));
+    let value_start = after_marker + eq_rel + 1;
+    let tail = &normalized_lines[value_start..];
+    let mut stream = serde_json::Deserializer::from_str(tail).into_iter::<Value>();
+    let value = stream
+        .next()
+        .unwrap_or_else(|| panic!("no JSON value found after {marker:?} ="))
+        .unwrap_or_else(|e| panic!("invalid JSON after {marker:?} =: {e}"));
+    let value_end = value_start + stream.byte_offset();
+
+    let mut placeholder_code = String::with_capacity(normalized_lines.len());
+    placeholder_code.push_str(&normalized_lines[..value_start]);
+    placeholder_code.push_str("<<CHUNK_MANIFEST>>");
+    placeholder_code.push_str(&normalized_lines[value_end..]);
+    (placeholder_code, value)
+}
+
 #[test]
 fn splitting_flag_emits_chunk_files_with_manifest_and_registered_async_chunks() -> Result<()> {
     // `--no-minify`: `build_chunk_manifest_js` emits the manifest via
@@ -2194,6 +2249,176 @@ fn splitting_survives_pnpm_symlink_and_alias_without_duplicating_or_orphaning_mo
         "expected exactly {EXPECTED_UNIQUE_MODULES} __jet__.define( calls across entry+chunks \
          (one per unique module: entry, symlinked shared-dep, lazy, alias-resolved private), \
          got {total_defines}"
+    );
+
+    Ok(())
+}
+
+/// WI #1995 round 4 — the pre-transform survivors-only transform filter
+/// must be byte-identical to its `JET_NO_SURVIVOR_FILTER=1` escape hatch:
+/// same `dist/` file set, same bytes, for a real `--splitting` build (the
+/// filter only skips transform *work* for modules a raw-source liveness
+/// pre-pass proves dead; it must never change what actually ships).
+///
+/// Uses `--no-minify` (same reason as the manifest-parsing tests above:
+/// `build_chunk_manifest_js` only emits strict, fully-quoted JSON before
+/// the minifier rewrites unquoted-identifier keys) and, for the top-level
+/// entry file specifically, compares `normalize_entry_code`'s output
+/// rather than raw bytes — see this test's and that helper's doc comments
+/// for why raw entry bytes are not currently a stable target. Both builds
+/// run from *one* fixture directory (via `-o`, not 2 separate tempdirs):
+/// `--no-minify` output keeps a `// Module N: <absolute path>` comment
+/// inline in chunk JS (not just `.map`), so 2 different tempdirs would
+/// make even chunk files legitimately differ for a reason unrelated to
+/// this WI. Every non-entry `dist/` file is compared byte-for-byte.
+#[test]
+fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_splitting_fixture(fixture);
+
+    fn build(fixture: &Path, out_dir: &str, no_filter: bool) -> Result<PathBuf> {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jet"));
+        cmd.args(["build", "--splitting", "--no-minify", "-o", out_dir])
+            .current_dir(fixture);
+        if no_filter {
+            cmd.env("JET_NO_SURVIVOR_FILTER", "1");
+        }
+        let output = cmd
+            .output()
+            .context("run jet build --splitting --no-minify")?;
+        require_success(
+            output,
+            if no_filter {
+                "build --splitting --no-minify (JET_NO_SURVIVOR_FILTER=1)"
+            } else {
+                "build --splitting --no-minify (survivor filter on)"
+            },
+        )?;
+        Ok(fixture.join(out_dir))
+    }
+
+    /// `(relative-path, absolute-path)` for every dist file, sorted by
+    /// relative path so 2 output trees zip up aligned.
+    fn sorted_entries(dist: &Path) -> Vec<(String, PathBuf)> {
+        let mut entries: Vec<(String, PathBuf)> = list_files_recursive(dist)
+            .into_iter()
+            .map(|p| {
+                let rel = p
+                    .strip_prefix(dist)
+                    .expect("file under dist")
+                    .to_string_lossy()
+                    .into_owned();
+                (rel, p)
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+    }
+
+    let dist_filtered = build(fixture, "dist-filtered", false)?;
+    let dist_unfiltered = build(fixture, "dist-unfiltered", true)?;
+
+    let is_entry = |rel: &str| -> bool {
+        rel.rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("main."))
+    };
+    let (filtered_entry, filtered_rest): (Vec<_>, Vec<_>) = sorted_entries(&dist_filtered)
+        .into_iter()
+        .partition(|(rel, _)| is_entry(rel));
+    let (unfiltered_entry, unfiltered_rest): (Vec<_>, Vec<_>) = sorted_entries(&dist_unfiltered)
+        .into_iter()
+        .partition(|(rel, _)| is_entry(rel));
+
+    // Entry file (`main.<hash>.js` + `.js.map`): the content hash itself is
+    // expected to differ (see doc comment) — require both builds to still
+    // emit exactly one entry `.js` + one entry `.js.map`, and use the 2
+    // (differing) filenames to normalize `index.html`'s `<script src>`
+    // reference below.
+    assert_eq!(
+        filtered_entry.len(),
+        2,
+        "expected exactly main.<hash>.js + .js.map, got {filtered_entry:?}"
+    );
+    assert_eq!(
+        unfiltered_entry.len(),
+        2,
+        "expected exactly main.<hash>.js + .js.map, got {unfiltered_entry:?}"
+    );
+    fn entry_js_path(entries: &[(String, PathBuf)]) -> &Path {
+        entries
+            .iter()
+            .find(|(rel, _)| rel.ends_with(".js"))
+            .map(|(_, p)| p.as_path())
+            .expect("main.<hash>.js missing")
+    }
+    let entry_filtered_path = entry_js_path(&filtered_entry);
+    let entry_unfiltered_path = entry_js_path(&unfiltered_entry);
+    let entry_filtered_name = entry_filtered_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8")
+        .to_string();
+    let entry_unfiltered_name = entry_unfiltered_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8")
+        .to_string();
+
+    // Non-entry files (chunk JS + every .map + index.html): exact
+    // relative-path set and byte-identical content. Both builds share one
+    // fixture directory (see doc comment), so the
+    // `// Module N: <absolute path>` comment `--no-minify` inlines into
+    // chunk JS is identical either way. `index.html` alone gets its
+    // `<script src="./main.<hash>.js">` reference normalized first, since
+    // it necessarily follows the entry's own (expected-to-differ) hash.
+    let filtered_rest_rel: Vec<&String> = filtered_rest.iter().map(|(r, _)| r).collect();
+    let unfiltered_rest_rel: Vec<&String> = unfiltered_rest.iter().map(|(r, _)| r).collect();
+    assert_eq!(
+        filtered_rest_rel, unfiltered_rest_rel,
+        "survivor filter must emit the same non-entry dist/ file set as the \
+         JET_NO_SURVIVOR_FILTER=1 escape hatch"
+    );
+    for ((rel, fp), (_, up)) in filtered_rest.iter().zip(unfiltered_rest.iter()) {
+        let fb = fs::read(fp).with_context(|| format!("read {}", fp.display()))?;
+        let ub = fs::read(up).with_context(|| format!("read {}", up.display()))?;
+        if rel == "index.html" {
+            let fs_text = String::from_utf8(fb).context("index.html must be utf-8")?;
+            let us_text = String::from_utf8(ub).context("index.html must be utf-8")?;
+            assert_eq!(
+                fs_text.replace(&entry_filtered_name, "<<ENTRY>>"),
+                us_text.replace(&entry_unfiltered_name, "<<ENTRY>>"),
+                "dist/index.html must be byte-identical (modulo the entry's \
+                 own content-hashed filename) between the survivor filter \
+                 and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
+            );
+            continue;
+        }
+        assert_eq!(
+            fb, ub,
+            "dist/{rel} must be byte-identical between the survivor filter \
+             and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
+        );
+    }
+
+    let entry_filtered_code =
+        fs::read_to_string(entry_filtered_path).context("read filtered entry")?;
+    let entry_unfiltered_code =
+        fs::read_to_string(entry_unfiltered_path).context("read unfiltered entry")?;
+    let (entry_filtered_norm, manifest_filtered) = normalize_entry_code(&entry_filtered_code);
+    let (entry_unfiltered_norm, manifest_unfiltered) = normalize_entry_code(&entry_unfiltered_code);
+    assert_eq!(
+        entry_filtered_norm, entry_unfiltered_norm,
+        "entry file must be byte-identical outside the chunkManifest \
+         assignment (and its own sourceMappingURL comment) between the \
+         survivor filter and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
+    );
+    assert_eq!(
+        manifest_filtered, manifest_unfiltered,
+        "chunkManifest must be the same JSON value (key order ignored — see \
+         normalize_entry_code's doc comment) between the survivor filter \
+         and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
     );
 
     Ok(())

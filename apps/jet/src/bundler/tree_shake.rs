@@ -118,6 +118,31 @@ pub fn analyze_used_exports_from(
     entry: &Path,
     resolver: Option<&(dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
 ) -> Result<TreeShakeResult> {
+    analyze_used_exports_from_with_implicit_edges(modules, entry, resolver, &[])
+}
+
+/// [`analyze_used_exports_from`] plus a caller-supplied set of "implicit"
+/// importer -> target edges, unioned into the liveness walk with the same
+/// unconditional wildcard strength as a dynamic `import()` edge (WI #1995
+/// round 4). Each `(importer, target)` pair only takes effect once
+/// `importer` itself becomes live via the normal textual walk below —
+/// exactly like a real dynamic-import edge, an implicit edge hanging off
+/// an unreachable importer contributes nothing.
+///
+/// Exists for `Bundler`'s pre-transform survivors-only filter
+/// (`Bundler::compute_transform_survivors`), which runs this analysis on
+/// raw, pre-transform source where bundler-fabricated edges the crawl
+/// inserts from module structure rather than the module's own text (e.g.
+/// `build_graph`'s `react/jsx-runtime` auto-import for every `.tsx`/`.jsx`
+/// module) are otherwise invisible to a textual scan — see
+/// `Bundler::implicit_edges`'s doc comment for the full inventory.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn analyze_used_exports_from_with_implicit_edges(
+    modules: &[(PathBuf, String)],
+    entry: &Path,
+    resolver: Option<&(dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
+    implicit_edges: &[(PathBuf, PathBuf)],
+) -> Result<TreeShakeResult> {
     let mut used: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let lookup = match resolver {
         Some(r) => ModuleLookup::with_resolver(modules, r),
@@ -164,15 +189,20 @@ pub fn analyze_used_exports_from(
             (path.as_path(), edges)
         })
         .collect();
-    let dynamic_edges: HashMap<&Path, Vec<PathBuf>> = modules
+    let mut dynamic_edges: HashMap<PathBuf, Vec<PathBuf>> = modules
         .iter()
-        .map(|(path, _)| {
-            (
-                path.as_path(),
-                facts[path.as_path()].dynamic_targets.clone(),
-            )
-        })
+        .map(|(path, _)| (path.clone(), facts[path.as_path()].dynamic_targets.clone()))
         .collect();
+    // WI #1995 round 4 — fold the caller-supplied implicit edges in as
+    // additional dynamic-style (wildcard-strength) targets, so both
+    // liveness-worklist sites below propagate them exactly like a real
+    // dynamic `import()` edge without any changes to the walk itself.
+    for (importer, target) in implicit_edges {
+        dynamic_edges
+            .entry(importer.clone())
+            .or_default()
+            .push(target.clone());
+    }
 
     // Liveness worklist from the entry: each live module marks its import
     // targets' names used and pulls those targets live.

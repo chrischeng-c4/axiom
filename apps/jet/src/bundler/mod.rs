@@ -566,6 +566,31 @@ pub struct Bundler {
     /// detected.
     /// @issue #1991
     barrel_demand: Mutex<HashMap<PathBuf, BarrelDemand>>,
+    /// Non-textual `(importer, target)` edges `build_graph` fabricates from
+    /// module *structure* rather than anything present in the importer's own
+    /// source text — invisible to a purely textual pre-transform liveness
+    /// scan. Reset at the start of every `build_graph` call, then consulted
+    /// by `compute_transform_survivors` (via
+    /// `tree_shake::analyze_used_exports_from_with_implicit_edges`) so the
+    /// survivors-only transform filter never misclassifies a
+    /// structurally-reachable module as dead.
+    ///
+    /// Inventory (WI #1995 round 4 — re-derive by grepping `build_graph` for
+    /// `queue.push`/`graph.add_dependency` call sites whenever this list is
+    /// suspected stale):
+    /// - `react/jsx-runtime`: every `.tsx`/`.jsx` module gets an implicit
+    ///   Import edge to `react/jsx-runtime` purely from file extension; the
+    ///   textual JSX-runtime import is only synthesized later, during the
+    ///   JSX transform pass itself, so it never appears in raw source.
+    ///   That is the only implicit edge the crawl currently inserts.
+    /// @issue #1995
+    implicit_edges: Mutex<Vec<(PathBuf, PathBuf)>>,
+    /// Canonicalized bundle entry path, captured by `build_graph` for
+    /// `compute_transform_survivors` (which needs the exact entry path to
+    /// seed `tree_shake::analyze_used_exports_from_with_implicit_edges`).
+    /// `None` until the first `build_graph` call.
+    /// @issue #1995
+    entry_path: Mutex<Option<PathBuf>>,
     /// When true, use Phase 2 flat bundle in `generate_bundle`.
     ///
     /// Phase 2 (`generate_flattened_bundle`) merges all module bodies into a
@@ -660,6 +685,8 @@ impl Bundler {
             unresolved_deps: Mutex::new(Vec::new()),
             parsed_trees: Mutex::new(HashMap::new()),
             barrel_demand: Mutex::new(HashMap::new()),
+            implicit_edges: Mutex::new(Vec::new()),
+            entry_path: Mutex::new(None),
             splitting,
             manual_chunks,
         })
@@ -1626,6 +1653,15 @@ impl Bundler {
 
         let entry_abs = std::fs::canonicalize(entry)?;
 
+        // WI #1995 round 4: reset the survivors-only-transform side channel
+        // for this crawl. `entry_path` seeds
+        // `compute_transform_survivors`' liveness walk with the same
+        // canonicalized path this function seeds the graph with;
+        // `implicit_edges` is repopulated below as the crawl fabricates
+        // non-textual edges (currently just `react/jsx-runtime`).
+        *self.entry_path.lock() = Some(entry_abs.clone());
+        self.implicit_edges.lock().clear();
+
         // Wave-parallel prefetch of the expensive pure work (file read,
         // tree-sitter import extraction, dependency resolution). The serial
         // walk below replays over these memos, so module-id assignment
@@ -1757,6 +1793,14 @@ impl Bundler {
                 if is_jsx {
                     match resolve_cached("react/jsx-runtime") {
                         Ok(resolved_path) => {
+                            // WI #1995 round 4: this edge is fabricated from
+                            // file extension alone, not from anything in
+                            // `module_path`'s own source text — record it
+                            // in the side channel so a raw-source liveness
+                            // pre-pass can still see it.
+                            self.implicit_edges
+                                .lock()
+                                .push((module_path.clone(), resolved_path.clone()));
                             queue.push((
                                 resolved_path,
                                 Some(module_id),
@@ -1896,6 +1940,98 @@ impl Bundler {
         Ok(normalize_bundler_path_lexical(&abs))
     }
 
+    /// Pre-transform liveness pre-pass for the survivors-only transform
+    /// filter (WI #1995 round 4). Runs
+    /// `tree_shake::analyze_used_exports_from_with_implicit_edges` over
+    /// every crawled module's raw, untransformed source — define-folded
+    /// exactly like `apply_tree_shaking`'s own `module_pairs` construction
+    /// (see the matching comment there: without this, a
+    /// `process.env.NODE_ENV !== 'production'` dev-only branch keeps its
+    /// requires looking used forever, which is where most of this filter's
+    /// skip opportunity actually lives) — unioned with `self.implicit_edges`
+    /// (non-textual edges `build_graph` fabricated from module structure —
+    /// see that field's doc comment for the inventory). Returns the
+    /// resulting live-path set.
+    ///
+    /// This define-folded-raw-source analysis is a deliberately
+    /// conservative over-approximation of what `apply_tree_shaking`'s
+    /// later, post-*transform* second-layer (numeric-require-id) DFS will
+    /// find reachable: the transform step (JSX/TS lowering, Gate 1/Gate 2
+    /// DCE) can only ever remove or relabel syntax the crawl already
+    /// walked, never invent a require the crawl never discovered, so
+    /// anything dead here is provably dead there too — "transform more,
+    /// never fewer". `transform_modules` uses the returned set to skip the
+    /// expensive transform entirely for modules outside it;
+    /// `apply_tree_shaking` itself is untouched and remains the sole
+    /// authority for what actually ships in the bundle.
+    ///
+    /// Returns `None` (meaning: transform everything, filter disabled) when
+    /// `JET_NO_SURVIVOR_FILTER` is set — the A/B knob for diffing filtered
+    /// vs. unfiltered bundle output byte-for-byte — when `build_graph` has
+    /// not yet populated `self.entry_path`, or when any crawled module's
+    /// source cannot be re-read. A partial liveness graph cannot be trusted
+    /// to skip anything, so any of those bails to the fully-conservative
+    /// "transform everything" behavior rather than risk a false-dead
+    /// verdict.
+    /// @issue #1995
+    fn compute_transform_survivors(
+        &self,
+        graph: &ModuleGraph,
+        sorted_ids: &[ModuleId],
+    ) -> Option<HashSet<PathBuf>> {
+        if std::env::var_os("JET_NO_SURVIVOR_FILTER").is_some() {
+            return None;
+        }
+        let entry = self.entry_path.lock().clone()?;
+
+        let mut module_pairs: Vec<(PathBuf, String)> = Vec::with_capacity(sorted_ids.len());
+        for &id in sorted_ids {
+            let node = graph.get_node(id)?;
+            let source = std::fs::read_to_string(&node.path).ok()?;
+            // Mirrors `apply_tree_shaking`'s `module_pairs` construction
+            // exactly (same condition, same three calls) so this pre-pass
+            // predicts that function's first-layer liveness rather than a
+            // strictly-more-conservative (and far less useful) unfolded
+            // scan.
+            let source = if self.defines.is_empty() {
+                source
+            } else {
+                let replaced = define::replace_defines(&source, &self.defines);
+                if replaced == source {
+                    source
+                } else {
+                    let folded = fold::fold_define_short_circuits(&replaced);
+                    dce::eliminate_static_conditionals_syntax(&folded)
+                }
+            };
+            module_pairs.push((node.path.clone(), source));
+        }
+
+        let implicit_edges = self.implicit_edges.lock().clone();
+        let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
+            self.resolver
+                .resolve(spec, importer)
+                .ok()
+                .filter(|r| !r.is_external)
+                .map(|r| r.path)
+        };
+        match tree_shake::analyze_used_exports_from_with_implicit_edges(
+            &module_pairs,
+            &entry,
+            Some(&resolve_specifier),
+            &implicit_edges,
+        ) {
+            Ok(result) => Some(result.used_exports.into_keys().collect()),
+            Err(e) => {
+                tracing::warn!(
+                    "survivors-only transform pre-pass failed, transforming everything: {}",
+                    e
+                );
+                None
+            }
+        }
+    }
+
     async fn transform_modules(&self) -> Result<(Vec<CompiledModule>, bool)> {
         tracing::debug!("Transforming modules");
 
@@ -1936,6 +2072,20 @@ impl Bundler {
             .with_splitting(self.splitting);
         let side_effect_free_module_ids =
             collect_side_effect_free_module_indices(&graph, &sorted_ids);
+
+        // WI #1995 round 4 — survivors-only transform: a raw-source
+        // liveness pre-pass (`compute_transform_survivors`) predicts which
+        // modules `apply_tree_shaking` will keep, so this pass can skip
+        // the (dominant-cost) transform entirely for the rest.
+        // `apply_tree_shaking` itself is untouched and remains the sole
+        // authority for what ships — this is purely a work-skip, not an
+        // elimination decision. `None` means the filter is disabled for
+        // this build (see that method's doc comment for every bail
+        // condition); every module is transformed exactly as before this
+        // WI.
+        let survivors = self.compute_transform_survivors(&graph, &sorted_ids);
+        let transformed_modules = std::sync::atomic::AtomicUsize::new(0);
+        let skipped_modules = std::sync::atomic::AtomicUsize::new(0);
 
         use rayon::prelude::*;
 
@@ -1992,6 +2142,27 @@ impl Bundler {
                         )));
                     }
                 };
+
+                // WI #1995 round 4 — survivors-only transform. Skip the
+                // expensive transform entirely for a Script module the
+                // pre-pass proved unreachable from the entry: placed after
+                // the GH #3136 metadata/mtime reads above (so IO problems
+                // on a module still surface once it IS selected for
+                // transform) but before the cache lookup below, so a
+                // skipped module is simply never looked up — it can
+                // neither poison nor be poisoned by a cache entry. CSS and
+                // Wasm modules are never gated: their own transform is
+                // already cheap (empty code / glue generation), not the
+                // cost this filter exists to avoid.
+                if node.kind == graph::ModuleKind::Script {
+                    if let Some(live) = &survivors {
+                        if !live.contains(&node.path) {
+                            skipped_modules.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            return None;
+                        }
+                    }
+                }
+                transformed_modules.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 if let Some(mut cached) = self.cache.get(&node.path, mtime) {
                     cached.id = module_id;
@@ -2170,6 +2341,20 @@ impl Bundler {
                  require-binding-dce ran={rdr}/{rdc} (skipped {})",
                 fdc.saturating_sub(fdr),
                 rdc.saturating_sub(rdr),
+            );
+
+            // #1995 round 4 — survivors-only transform counters, as a
+            // JET_BUNDLE_TIMING sibling line to `pass-gates` above.
+            // `implicit-edges` is `self.implicit_edges`'s length at the end
+            // of this build's crawl (currently: one entry per `.tsx`/`.jsx`
+            // module that resolved `react/jsx-runtime`) — 0 whenever the
+            // filter never ran (`JET_NO_SURVIVOR_FILTER=1` or no
+            // `.tsx`/`.jsx` modules in this build).
+            eprintln!(
+                "[bundle-timing] survivor-filter: transformed={} skipped={} implicit-edges={}",
+                transformed_modules.load(Ordering::Relaxed),
+                skipped_modules.load(Ordering::Relaxed),
+                self.implicit_edges.lock().len(),
             );
         }
 
@@ -3396,6 +3581,210 @@ export const value = add(1, 2);
             gated, ungated,
             "gate skip must be byte-identical to the ungated \
              (JET_NO_PASS_GATES=1) pipeline:\ngated:\n{gated}\nungated:\n{ungated}"
+        );
+    }
+
+    // WI #1995 round 4 — survivors-only transform tests.
+
+    /// The round-3 blocker case (see `Bundler::implicit_edges`'s doc
+    /// comment): a `.tsx` entry with zero textual `react`/`react/jsx-
+    /// runtime` reference anywhere in its own source must still record
+    /// (and keep live) the implicit `react/jsx-runtime` edge `build_graph`
+    /// fabricates from the file extension alone. Regression proof for the
+    /// implicit-edge side channel `compute_transform_survivors` unions
+    /// into its raw-source liveness pre-pass.
+    #[tokio::test]
+    async fn test_survivor_filter_keeps_implicit_jsx_runtime_edge_live() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let entry = tmp.path().join("entry.tsx");
+        std::fs::write(
+            &entry,
+            r#"
+export function App() {
+  return <div>Hello</div>;
+}
+"#,
+        )
+        .unwrap();
+
+        // Minimal resolvable `react/jsx-runtime` package, same shape as
+        // `tests/test-runner/test_runner_smoke.rs`'s fixture.
+        let node_modules = tmp.path().join("node_modules");
+        let react = node_modules.join("react");
+        std::fs::create_dir_all(&react).unwrap();
+        std::fs::write(
+            react.join("package.json"),
+            r#"{"name":"react","type":"module","exports":{"./jsx-runtime":"./jsx-runtime.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            react.join("jsx-runtime.js"),
+            r#"export const Fragment = Symbol.for("fragment");
+export const jsx = (tag, props) => ({ tag, props });
+export const jsxs = jsx;
+"#,
+        )
+        .unwrap();
+
+        let bundler = Bundler::new(BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            minify: false,
+            source_maps: false,
+            externalize_all_packages: false,
+            transform_options: crate::transform::TransformOptions {
+                dev_mode: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+        bundler.build_graph(&entry).await.unwrap();
+        assert_eq!(
+            bundler.implicit_edges.lock().len(),
+            1,
+            "build_graph must record exactly one implicit edge (entry.tsx -> \
+             react/jsx-runtime) for this fixture"
+        );
+
+        let (modules, _has_cycle) = bundler.transform_modules().await.unwrap();
+        assert!(
+            modules
+                .iter()
+                .any(|m| m.path.ends_with(std::path::Path::new("jsx-runtime.js"))),
+            "react/jsx-runtime must still be transformed even though nothing \
+             in entry.tsx's own source textually imports it: {:?}",
+            modules.iter().map(|m| &m.path).collect::<Vec<_>>()
+        );
+    }
+
+    /// A subtree (`dead_root.js` -> `dead_leaf.js`) reachable only through a
+    /// `process.env.NODE_ENV`-gated dev-only branch must be skipped by the
+    /// pre-transform survivors-only filter, and the filtered build must
+    /// stay byte-identical (after the real elimination authority,
+    /// `apply_tree_shaking`, runs on both) to the `JET_NO_SURVIVOR_FILTER=1`
+    /// escape hatch.
+    #[tokio::test]
+    async fn test_survivor_filter_skips_dead_only_subtree_and_stays_byte_identical() {
+        async fn build(
+            fixture_dir: &std::path::Path,
+            no_filter: bool,
+        ) -> (Vec<CompiledModule>, Vec<CompiledModule>) {
+            let entry = fixture_dir.join("entry.js");
+            std::fs::write(
+                &entry,
+                r#"
+import { live } from './live.js';
+if (process.env.NODE_ENV !== "production") {
+  const deadRoot = require('./dead_root.js');
+  console.log('dev branch', deadRoot);
+} else {
+  console.log('prod branch');
+}
+export const value = live();
+"#,
+            )
+            .unwrap();
+            std::fs::write(
+                fixture_dir.join("live.js"),
+                "export function live() { return 'LIVE_MARKER'; }\n",
+            )
+            .unwrap();
+            std::fs::write(
+                fixture_dir.join("dead_root.js"),
+                "const deadLeaf = require('./dead_leaf.js');\n\
+                 module.exports = { deadLeaf, marker: 'DEAD_ROOT_MARKER' };\n",
+            )
+            .unwrap();
+            std::fs::write(
+                fixture_dir.join("dead_leaf.js"),
+                "module.exports = { marker: 'DEAD_LEAF_MARKER' };\n",
+            )
+            .unwrap();
+
+            if no_filter {
+                std::env::set_var("JET_NO_SURVIVOR_FILTER", "1");
+            } else {
+                std::env::remove_var("JET_NO_SURVIVOR_FILTER");
+            }
+
+            let bundler = Bundler::new(BundleOptions {
+                entry: entry.clone(),
+                output_dir: fixture_dir.join("dist"),
+                minify: false,
+                source_maps: false,
+                externalize_all_packages: false,
+                transform_options: crate::transform::TransformOptions {
+                    dev_mode: false,
+                    ..Default::default()
+                },
+                defines: crate::bundler::define::production_defines(),
+                ..Default::default()
+            })
+            .unwrap();
+
+            bundler.build_graph(&entry).await.unwrap();
+            let (transformed, _has_cycle) = bundler.transform_modules().await.unwrap();
+            std::env::remove_var("JET_NO_SURVIVOR_FILTER");
+            let shaken = bundler.apply_tree_shaking(transformed.clone(), &entry);
+            (transformed, shaken)
+        }
+
+        let tmp_filtered = tempfile::TempDir::new().unwrap();
+        let (transformed_filtered, shaken_filtered) = build(tmp_filtered.path(), false).await;
+
+        let tmp_unfiltered = tempfile::TempDir::new().unwrap();
+        let (transformed_unfiltered, shaken_unfiltered) = build(tmp_unfiltered.path(), true).await;
+
+        let has_module = |modules: &[CompiledModule], name: &str| {
+            modules
+                .iter()
+                .any(|m| m.path.ends_with(std::path::Path::new(name)))
+        };
+        assert!(
+            has_module(&transformed_unfiltered, "dead_root.js")
+                && has_module(&transformed_unfiltered, "dead_leaf.js"),
+            "escape hatch (JET_NO_SURVIVOR_FILTER=1) must still transform the \
+             dead-only subtree: {:?}",
+            transformed_unfiltered
+                .iter()
+                .map(|m| &m.path)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !has_module(&transformed_filtered, "dead_root.js")
+                && !has_module(&transformed_filtered, "dead_leaf.js"),
+            "survivor filter must skip the dead-only subtree (reachable only \
+             through a process.env.NODE_ENV dev-only branch): {:?}",
+            transformed_filtered
+                .iter()
+                .map(|m| &m.path)
+                .collect::<Vec<_>>()
+        );
+
+        // Byte-identical FINAL output: after both paths run through the
+        // real elimination authority (`apply_tree_shaking`), the surviving
+        // (filename, code) sets must match exactly.
+        let final_set = |modules: &[CompiledModule]| -> std::collections::BTreeMap<String, String> {
+            modules
+                .iter()
+                .map(|m| {
+                    let name = m.path.file_name().unwrap().to_string_lossy().into_owned();
+                    (name, m.code.clone())
+                })
+                .collect()
+        };
+        assert_eq!(
+            final_set(&shaken_filtered),
+            final_set(&shaken_unfiltered),
+            "survivor filter must be byte-identical to the \
+             JET_NO_SURVIVOR_FILTER=1 escape hatch after apply_tree_shaking"
+        );
+        assert!(
+            !final_set(&shaken_filtered).contains_key("dead_root.js"),
+            "apply_tree_shaking itself must also have eliminated the dead \
+             subtree (both paths converge on the same final answer)"
         );
     }
 
