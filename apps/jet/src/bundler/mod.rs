@@ -3270,8 +3270,27 @@ impl Bundler {
                 let after_reexport_wrappers =
                     scope_hoist_opt::collapse_pure_reexport_wrappers(&after_markers);
                 lap("reexport_wrappers");
-                let out = scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
+                let after_interop =
+                    scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
                 lap("interop_thunks");
+                // Same-chunk export-binding elision (#2128): drop the
+                // exports-object property-key indirection for keys only
+                // ever read via same-chunk static named imports. Default-on;
+                // JET_NO_EXPORT_ELISION=1 is a testing escape hatch.
+                let out = if std::env::var_os("JET_NO_EXPORT_ELISION").is_some() {
+                    after_interop
+                } else {
+                    let (elided, stats) =
+                        scope_hoist_opt::elide_same_chunk_export_bindings(&after_interop);
+                    if timing {
+                        eprintln!(
+                            "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={}",
+                            stats.modules, stats.elided_keys, stats.kept
+                        );
+                    }
+                    elided
+                };
+                lap("export_elision");
                 out
             } else {
                 tracing::debug!("Using Phase 1 scope hoisting (no dynamic imports)");
@@ -3507,9 +3526,28 @@ impl Bundler {
             let after_reexport_wrappers =
                 scope_hoist_opt::collapse_pure_reexport_wrappers(&after_markers);
             lap("reexport_wrappers");
-            let processed_body =
+            let after_interop =
                 scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
             lap("interop_thunks");
+            // Same-chunk export-binding elision (#2128): safe on combined
+            // flat+registry text too — registry-residue reads use the
+            // literal `require(id)` token (a distinct lexical scope from
+            // the flat IIFE's `_r`), which `elide_same_chunk_export_bindings`
+            // always treats as a force-keep signal, never a rewrite target.
+            let processed_body = if std::env::var_os("JET_NO_EXPORT_ELISION").is_some() {
+                after_interop
+            } else {
+                let (elided, stats) =
+                    scope_hoist_opt::elide_same_chunk_export_bindings(&after_interop);
+                if timing {
+                    eprintln!(
+                        "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={}",
+                        stats.modules, stats.elided_keys, stats.kept
+                    );
+                }
+                elided
+            };
+            lap("export_elision");
 
             entry_code.push_str(&processed_body);
         }

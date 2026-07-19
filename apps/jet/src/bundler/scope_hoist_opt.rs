@@ -3185,6 +3185,599 @@ fn find_package_info(module_path: &std::path::Path) -> Option<(std::path::PathBu
     Some((node_modules_dir, package_name))
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// R7: Same-chunk export-binding elision (#2128)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Counters for `elide_same_chunk_export_bindings`, surfaced via
+/// `JET_BUNDLE_TIMING` as `export-elision: modules=N elided_keys=M kept=K`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExportElisionStats {
+    /// Distinct modules with at least one export key elided.
+    pub modules: usize,
+    /// Export keys whose `_m{id}.exports[...] = ...` assignment was
+    /// dropped in favor of direct local-binding reads.
+    pub elided_keys: usize,
+    /// Export key assignments inspected but conservatively left alone.
+    pub kept: usize,
+}
+
+/// Drop the exports-object property-key indirection for same-chunk,
+/// statically-consumed named exports in the flattened region (#1993).
+///
+/// `_m{id}.exports["key"] = local;` survives flattening purely so
+/// `_r(id).key` reads have a live object to read from. When every read of
+/// `key` is a flat-region `_r(id).key` / `_r(id)["key"]` access — never a
+/// bare/namespace read of the whole module, never a `require(id)` read
+/// from registry-residue code (a *different* lexical scope that can't see
+/// flat-region locals), never a write — the indirection is provably
+/// redundant: the producer already has a plain local binding holding the
+/// same value, so every consumer read can point straight at that binding:
+///
+/// ```js
+/// // before
+/// _m13.exports["getAlertUtilityClass"] = _m13_getAlertUtilityClass;
+/// var _m4_getAlertUtilityClass = _r(13)["getAlertUtilityClass"];
+/// // after
+/// var _m4_getAlertUtilityClass = _m13_getAlertUtilityClass;
+/// ```
+///
+/// That, in turn, lets the mangler compress the binding like any other
+/// local — the property *key* on the exports object is what survives
+/// minification unmangled today (`u.getAlertUtilityClass=e`-style output).
+///
+/// Conservative ladder (mirrors #1993's "any doubt → keep" discipline):
+/// - Only `_m{id}.exports["key"] = IDENT;` / `_m{id}.exports.key = IDENT;`
+///   assignments qualify (via `collect_direct_export_assignments`, already
+///   statement-boundary-anchored with duplicate-assignment exclusion);
+///   function/object/conditional/chained RHS forms are left alone.
+/// - A module is ineligible entirely (every key kept) if any bare/
+///   namespace/computed-key `_r(id)`/`require(id)` occurrence exists
+///   anywhere, EXCEPT the fallback operand of the
+///   `_r(id)["default"] || _r(id)` / `_r(id).default || _r(id)`
+///   default-interop idiom — the dominant real-world shape for modules
+///   with both a default and named export — which is masked out first so
+///   it doesn't falsely flag the module as namespace-consumed (see
+///   `bare_require_module_ids_excluding_default_fallback`).
+/// - Per key: every recorded read must come from `_r(` (flat region); a
+///   single `require(id).key` read or a single write (`_r(id).key = ...`)
+///   keeps that key's indirection.
+/// - `_m{id}.exports[...]`/`_r(id)` text only exists for modules the
+///   entry-flatten partition already proved safe to flatten (registry-
+///   resident and cross-chunk-referenced modules never emit this shape),
+///   so those two "keep" triggers are satisfied by construction.
+/// - When every key of a module is elided and nothing still references
+///   `_m{id}e`/`_m{id}`, `remove_orphan_module_alias_and_slot` drops the
+///   now-dead exports-object scaffolding too.
+///
+/// Reparse-guarded: on any parse failure after rewriting, the original
+/// code is returned unchanged with zeroed stats.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn elide_same_chunk_export_bindings(code: &str) -> (String, ExportElisionStats) {
+    let assignments = collect_direct_export_assignments(code);
+    if assignments.is_empty() {
+        return (code.to_string(), ExportElisionStats::default());
+    }
+
+    let escaped_ids = bare_require_module_ids_excluding_default_fallback(code);
+    let usage = collect_export_key_usage(code);
+    let block_scoped_names = collect_block_scoped_declaration_names(code);
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    let mut touched_modules: HashSet<usize> = HashSet::new();
+    let mut elided_keys = 0usize;
+
+    for (key, assignment) in &assignments {
+        let (id, _prop) = key;
+        // Only "= identifier" RHS forms are eligible; the producer's own
+        // local binding is reused verbatim as the consumer-facing name.
+        // Function/object/conditional/chained RHS forms are left alone.
+        if !is_js_identifier(&assignment.expr) {
+            continue;
+        }
+        if escaped_ids.contains(id) {
+            continue;
+        }
+        // Each flattened module lives in its own `{ ... }` block (the
+        // `// Module N: path` banner convention). Under ES-module
+        // strict-mode semantics a `function`/`class`/`let`/`const`
+        // binding is scoped to that block and invisible to sibling
+        // modules, while `var` (and the exports-object property that
+        // lives on it) is hoisted past block boundaries. Rewriting a
+        // cross-module consumer straight to a block-scoped name would
+        // trade a correct property read for a ReferenceError, so any
+        // binding that isn't provably `var`-hoisted stays on the
+        // indirection.
+        if block_scoped_names.contains(&assignment.expr) {
+            continue;
+        }
+        let Some(reads) = usage.get(key) else {
+            continue;
+        };
+        if reads.written || reads.require_side || reads.spans.is_empty() {
+            continue;
+        }
+        replacements.push((assignment.span.0, assignment.span.1, String::new()));
+        for &(start, end) in &reads.spans {
+            replacements.push((start, end, assignment.expr.clone()));
+        }
+        touched_modules.insert(*id);
+        elided_keys += 1;
+    }
+
+    if replacements.is_empty() {
+        return (code.to_string(), ExportElisionStats::default());
+    }
+
+    let mut rewritten = apply_static_replacements(code, replacements);
+    if rewritten == code {
+        // `apply_static_replacements` bails to the original text on any
+        // span-overlap surprise; treat that identically to "nothing to do".
+        return (code.to_string(), ExportElisionStats::default());
+    }
+
+    for id in &touched_modules {
+        rewritten = remove_orphan_module_alias_and_slot(&rewritten, *id);
+    }
+
+    if !super::dce::js_parses_without_errors(&rewritten) {
+        return (code.to_string(), ExportElisionStats::default());
+    }
+
+    let stats = ExportElisionStats {
+        modules: touched_modules.len(),
+        elided_keys,
+        kept: assignments.len() - elided_keys,
+    };
+    (rewritten, stats)
+}
+
+/// Names declared via `function`, `class`, `let`, or `const` anywhere in
+/// `code`. Each flattened module lives in its own `{ ... }` block; a
+/// binding declared with one of these keywords is scoped to that block
+/// under ES-module strict-mode semantics and must not be treated as safe
+/// for a cross-module direct reference (see `elide_same_chunk_export_bindings`).
+/// Deliberately over-inclusive (e.g. it also picks up `extends`/generic
+/// clause tokens near a `class` declaration) — extra names only cost a
+/// missed optimization, never an incorrect rewrite.
+fn collect_block_scoped_declaration_names(code: &str) -> HashSet<String> {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'\n';
+    let mut names: HashSet<String> = HashSet::new();
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if !is_id_cont_byte(prev) {
+            let matched_kw_len = ["function", "class", "let", "const"]
+                .iter()
+                .find(|kw| b[i..].starts_with(kw.as_bytes()))
+                .map(|kw| kw.len());
+            if let Some(kw_len) = matched_kw_len {
+                let after_kw = i + kw_len;
+                let boundary_ok = after_kw >= len || !is_id_cont_byte(b[after_kw]);
+                if boundary_ok {
+                    i = collect_declarator_names_from(b, after_kw, len, &mut names).max(after_kw);
+                    prev = b';';
+                    continue;
+                }
+            }
+        }
+
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    names
+}
+
+/// From just after a `function`/`class`/`let`/`const` keyword, collects
+/// every declarator identifier into `names` — including each name in a
+/// `let a = 1, b = 2;`-style multi-declarator list — and returns the byte
+/// offset the outer scan should resume from.
+fn collect_declarator_names_from(
+    b: &[u8],
+    start: usize,
+    len: usize,
+    names: &mut HashSet<String>,
+) -> usize {
+    let mut j = start;
+    loop {
+        while j < len && matches!(b[j], b' ' | b'\t' | b'\r' | b'\n') {
+            j += 1;
+        }
+        if j < len && b[j] == b'*' {
+            // generator `function* name(...)`
+            j += 1;
+            continue;
+        }
+        if j >= len || !is_id_start_byte(b[j]) {
+            return j;
+        }
+        let name_start = j;
+        while j < len && is_id_cont_byte(b[j]) {
+            j += 1;
+        }
+        if let Ok(name) = std::str::from_utf8(&b[name_start..j]) {
+            names.insert(name.to_string());
+        }
+        while j < len && matches!(b[j], b' ' | b'\t' | b'\r' | b'\n') {
+            j += 1;
+        }
+        if j >= len {
+            return j;
+        }
+        match b[j] {
+            // Function param list / class or function body / class
+            // `extends` clause / TS type annotation: no further
+            // declarator names follow at the top level.
+            b'(' | b'{' | b':' | b'<' => return j,
+            b';' => return j + 1,
+            b',' => {
+                j += 1;
+            }
+            b'=' => {
+                j = skip_declarator_initializer(b, j + 1, len);
+                if j < len && b[j] == b',' {
+                    j += 1;
+                } else {
+                    return j;
+                }
+            }
+            _ => return j,
+        }
+    }
+}
+
+/// Best-effort skip from just after a declarator's `=` to the next
+/// top-level (depth-0) `,` or `;`, tracking `()`/`[]`/`{}` nesting and
+/// skipping strings/templates/comments/regex literals. Only used to find
+/// subsequent names in a `let`/`const` multi-declarator list; imprecision
+/// here only changes which names get conservatively treated as
+/// block-scoped, never whether an unsafe rewrite happens.
+fn skip_declarator_initializer(b: &[u8], start: usize, len: usize) -> usize {
+    let mut i = start;
+    let mut depth: i32 = 0;
+    let mut prev = b'=';
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+        match b[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                if depth == 0 {
+                    return i;
+                }
+                depth -= 1;
+            }
+            b',' | b';' if depth == 0 => return i,
+            _ => {}
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+    i
+}
+
+/// Per-`(module_id, key)` usage summary produced by
+/// `collect_export_key_usage`.
+#[derive(Debug, Default)]
+struct ExportKeyUsage {
+    /// Byte spans of `_r(id).key` / `_r(id)["key"]` reads — safe to
+    /// rewrite to the producer's local binding.
+    spans: Vec<(usize, usize)>,
+    /// At least one read went through `require(id).key`: registry-residue
+    /// code in a different lexical scope than the flat IIFE, which can't
+    /// see the producer's local binding. Forces "keep".
+    require_side: bool,
+    /// At least one occurrence was a write (`_r(id).key = ...` /
+    /// `require(id).key = ...`) rather than a read. Forces "keep" — a
+    /// consumer mutating another module's exports object is visible to
+    /// every other reader of that object; a local `var` write would not
+    /// be.
+    written: bool,
+}
+
+/// Scan for `_r(id).key` / `_r(id)["key"]` / `require(id).key` /
+/// `require(id)["key"]` occurrences and group them by `(id, key)`.
+///
+/// Deliberately does not trace `var alias = _r(id); alias.key` aliasing:
+/// jet's own ESM→CJS transform never emits that shape for the dominant
+/// named-import case (`NamedImports` compiles directly to
+/// `var LOCAL = requireTarget["imported"];`), so skipping it costs no
+/// real-world elisions while keeping this scan a single linear pass.
+fn collect_export_key_usage(code: &str) -> HashMap<(usize, String), ExportKeyUsage> {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'(';
+    let mut usage: HashMap<(usize, String), ExportKeyUsage> = HashMap::new();
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let ident_start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = match std::str::from_utf8(&b[ident_start..i]) {
+                Ok(ident) => ident,
+                Err(_) => {
+                    prev = b'a';
+                    continue;
+                }
+            };
+
+            if ident == "_r" || ident == "require" {
+                if let Some((module_id, after_require)) = match_require_call_any(b, ident_start) {
+                    if let Ok(id) = module_id.parse::<usize>() {
+                        if let Some((prop, end_ref, is_assignment)) =
+                            match_any_property_access_after_base(b, after_require, true)
+                        {
+                            let entry = usage.entry((id, prop)).or_default();
+                            if is_assignment {
+                                entry.written = true;
+                            } else {
+                                entry.spans.push((ident_start, end_ref));
+                                if ident == "require" {
+                                    entry.require_side = true;
+                                }
+                            }
+                            i = end_ref;
+                            prev = b'a';
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            prev = b'a';
+            continue;
+        }
+
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    usage
+}
+
+/// `collect_bare_require_module_ids`, but first masks out the fallback
+/// operand of every `_r(id)["default"] || _r(id)` / `_r(id).default ||
+/// _r(id)` default-interop idiom so it isn't misread as a namespace/bare
+/// escape of `id`. Real-world mixed default+named imports
+/// (`var x = _r(id)["default"] || _r(id); var y = _r(id)["namedKey"];`)
+/// are the dominant shape blocking this pass without the exemption.
+fn bare_require_module_ids_excluding_default_fallback(code: &str) -> HashSet<usize> {
+    let spans = collect_default_fallback_spans(code);
+    if spans.is_empty() {
+        return collect_bare_require_module_ids(code);
+    }
+    let mut masked = code.as_bytes().to_vec();
+    for (start, end) in spans {
+        // Every masked byte was already confirmed ASCII (part of a matched
+        // `_r(`/`require(` call), so overwriting in place with an ASCII
+        // digit keeps the buffer valid UTF-8 and byte-length-identical,
+        // and a run of `0`s can never re-parse as a require call.
+        for byte in &mut masked[start..end] {
+            *byte = b'0';
+        }
+    }
+    let masked_code = String::from_utf8(masked).unwrap_or_else(|_| code.to_string());
+    collect_bare_require_module_ids(&masked_code)
+}
+
+/// Find every default-interop-fallback idiom in `code` and return the
+/// byte span of just the trailing fallback operand (the second
+/// `_r(id)`/`require(id)`), for
+/// `bare_require_module_ids_excluding_default_fallback` to mask.
+fn collect_default_fallback_spans(code: &str) -> Vec<(usize, usize)> {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'(';
+    let mut spans = Vec::new();
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if is_require_call_ident_at(b, i) {
+            if let Some((fallback_span, end)) = match_default_fallback_operand_span(b, i) {
+                spans.push(fallback_span);
+                i = end;
+                prev = b')';
+                continue;
+            }
+            if let Some((_, after_require)) = match_require_call_any(b, i) {
+                i = after_require;
+                prev = b')';
+                continue;
+            }
+        }
+
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    spans
+}
+
+/// Like `match_default_fallback_require`, but recognizes both `_r(id)`
+/// and `require(id)` call forms (via `match_require_call_any`) and
+/// returns the fallback operand's own span rather than just the end of
+/// the whole expression.
+fn match_default_fallback_operand_span(b: &[u8], i: usize) -> Option<((usize, usize), usize)> {
+    let (id, mut j) = match_require_call_any(b, i)?;
+    if b[j..].starts_with(b".default") {
+        j += ".default".len();
+    } else if b[j..].starts_with(br#"["default"]"#)
+        || b[j..].starts_with(br#"['default']"#)
+        || b[j..].starts_with(b"[`default`]")
+    {
+        j += br#"["default"]"#.len();
+    } else {
+        return None;
+    }
+    j = skip_ascii_ws(b, j);
+    if !b[j..].starts_with(b"||") {
+        return None;
+    }
+    j = skip_ascii_ws(b, j + 2);
+    let fallback_start = j;
+    let (rhs_id, end) = match_require_call_any(b, fallback_start)?;
+    (id == rhs_id).then_some(((fallback_start, end), end))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4464,6 +5057,219 @@ return _m0_x;"#;
 const label = `${_m0_x}`;
 const raw = `_m0_x`;"#;
         assert_eq!(count_identifier_refs(code, "_m0_x"), 2);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // R7: Same-chunk export-binding elision (#2128)
+    // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_eligible_simple_case() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var _m2_y=_r(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.modules, 1);
+        assert_eq!(stats.elided_keys, 1);
+        assert_eq!(stats.kept, 0);
+        assert!(!out.contains("_m1.exports"));
+        assert!(out.contains("_m2_y=_m1_x;"));
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_namespace_consumer_keeps_all_keys() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "var _m1_y=2;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "_m1.exports[\"y\"]=_m1_y;",
+            "var _m2_a=_r(1)[\"x\"];",
+            "var _m2_ns=_r(1);",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 0);
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_string_index_keeps() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var key='x';",
+            "var _m2_y=_r(1)[key];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 0);
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_registry_residue_shape_has_no_candidates() {
+        // Registry-residue (cross-chunk / cyclic / eval-unsafe) modules
+        // never emit the `_m{id}.exports[...]` shape this pass keys off —
+        // they keep the generic CJS `module`/`exports` factory parameter
+        // names instead, by construction of the entry-flatten partition
+        // (#1993). This documents "cross-chunk keeps" as structurally
+        // guaranteed rather than independently re-checked by this pass.
+        let code = concat!(
+            "__jet__.define(1, function(require, module, exports) {",
+            "var x = 1; module.exports[\"x\"] = x;",
+            "});",
+            "var _m2_y = require(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 0);
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_chained_conditional_assignment_keeps() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "_m1.exports[\"x\"]=condition?a:b;",
+            "var _m2_y=_r(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 0);
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_require_side_read_keeps() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var _m2_y=require(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 0);
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_write_through_require_keeps() {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var _m2_y=_r(1)[\"x\"];",
+            "_r(1)[\"x\"]=2;",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 0);
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_drops_scaffolding_when_all_keys_elided_and_unreferenced(
+    ) {
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var _m2_y=_r(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.modules, 1);
+        assert_eq!(stats.elided_keys, 1);
+        assert!(!out.contains("_m1.exports"));
+        assert!(!out.contains("_m1={exports:{}}"));
+        assert!(out.contains("_m2_y=_m1_x;"));
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_default_interop_mixed_import() {
+        // Ground-truth shape from MUI's Alert.js -> alertClasses.js
+        // (module 13): a mixed default+named import. The bare fallback
+        // operand of the `_r(13)["default"] || _r(13)` idiom must not
+        // block elision of the *named* key `default`; `getAlertUtilityClass`
+        // is a `function` declaration (block-scoped — see
+        // `test_elide_same_chunk_export_bindings_cross_block_function_declaration_keeps`)
+        // so it correctly stays on the indirection even though it has a
+        // clean dedicated read.
+        let code = concat!(
+            "var _m13={exports:{}};",
+            "var _m13_alertClasses=makeClasses();",
+            "function _m13_getAlertUtilityClass(slot){return slot;}",
+            "_m13.exports[\"getAlertUtilityClass\"]=_m13_getAlertUtilityClass;",
+            "_m13.exports[\"default\"]=_m13_alertClasses;",
+            "var _m4_alertClasses=_r(13)[\"default\"]||_r(13);",
+            "var _m4_getAlertUtilityClass=_r(13)[\"getAlertUtilityClass\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.modules, 1);
+        assert_eq!(stats.elided_keys, 1);
+        assert!(out.contains("_m13.exports[\"getAlertUtilityClass\"]=_m13_getAlertUtilityClass;"));
+        assert!(!out.contains("_m13.exports[\"default\"]"));
+        assert!(out.contains("_m4_getAlertUtilityClass=_r(13)[\"getAlertUtilityClass\"];"));
+        assert!(out.contains("_m4_alertClasses=_m13_alertClasses||_r(13);"));
+        // Scaffolding kept: `_m13.exports["getAlertUtilityClass"]` and the
+        // fallback operand `_r(13)` are both still live.
+        assert!(out.contains("_m13={exports:{}}"));
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_cross_block_function_declaration_keeps() {
+        // Regression for the real production_build_regression break this
+        // pass caused against the mui-visual corpus: `@mui/utils`'s
+        // deepmerge.js (module 245, `export default function deepmerge`)
+        // is re-exported unchanged by its barrel index.js (module 244,
+        // `export { default } from './deepmerge'`). Each flattened module
+        // lives in its own `{ ... }` block; `function _m245_deepmerge`
+        // is block-scoped there under ES-module strict-mode semantics,
+        // so a same-name reference from module 244's block — even one
+        // reached only indirectly, by rewriting a *usage* of module 245's
+        // "default" key that happens to sit inside module 244's own
+        // export-assignment RHS — is a ReferenceError at runtime, not a
+        // syntax error, so only a declaration-kind check (not
+        // `js_parses_without_errors`) can catch it. Confirmed live via
+        // JET_MINIFY_STAGE_DUMP: pre-fix, jet emitted
+        // `N.default=_m245_deepmerge` with no declaration for
+        // `_m245_deepmerge` left anywhere in the bundle.
+        let code = concat!(
+            "var _m245={exports:{}};",
+            "function _m245_deepmerge(a,b){return _m245_deepmerge(a,b);}",
+            "_m245.exports[\"default\"]=_m245_deepmerge;",
+            "var _m244={exports:{}};",
+            "_m244.exports[\"default\"]=_r(245)[\"default\"];",
+            "var _m9_x=_r(244)[\"default\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 0);
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_hatch_disabled_matches_input() {
+        // JET_NO_EXPORT_ELISION is wired at the `mod.rs` call sites, not
+        // inside this pure function — this test just pins that calling
+        // the function directly on already-eligible input always
+        // elides, so the hatch's effect (skipping the call entirely) is
+        // observable as a real byte-diff in the A/B build smoke test.
+        let code = concat!(
+            "var _m1={exports:{}};",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var _m2_y=_r(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_ne!(out, code);
+        assert_eq!(stats.elided_keys, 1);
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_no_assignments_returns_unchanged() {
+        let code = "var _m1={exports:{}};var _m1_x=1;console.log(_m1_x);";
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(out, code);
+        assert_eq!(stats, ExportElisionStats::default());
     }
 }
 // CODEGEN-END

@@ -169,7 +169,16 @@ struct StaticDistServer {
 
 impl StaticDistServer {
     async fn spawn(fixture: &Path) -> Result<Self> {
-        let dist = fixture.join("dist");
+        Self::spawn_dir(&fixture.join("dist")).await
+    }
+
+    /// Same as `spawn`, but serves an explicit directory rather than always
+    /// `<fixture>/dist` — used by #2128's export-elision A/B smoke, which
+    /// builds the same fixture twice (`-o <dir>`) to compare the default
+    /// (elision-on) output against the `JET_NO_EXPORT_ELISION=1` escape
+    /// hatch without 2 separate tempdirs.
+    async fn spawn_dir(dist: &Path) -> Result<Self> {
+        let dist = dist.to_path_buf();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .context("bind static dist server")?;
@@ -861,6 +870,193 @@ fn entry_flatten_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<(
         "chunkManifest must be the same JSON value (key order ignored — see \
          normalize_entry_code's doc comment) between the survivor filter \
          and the escape-hatch (JET_NO_SURVIVOR_FILTER=1, filter off) build"
+    );
+
+    Ok(())
+}
+
+// ── #2128 export-binding elision A/B smoke ──────────────────────────────────
+
+/// Writes a fixture that exercises both branches of #2128's same-chunk
+/// export-binding elision (`bundler/scope_hoist_opt.rs`,
+/// `elide_same_chunk_export_bindings`) at once:
+///
+/// - `producer.js`'s `getMarkerUtilityClass` is a `function`-declared named
+///   export (the real-world MUI `getXUtilityClass` shape that regressed
+///   `production_build_regression` pre-fix — see
+///   `elide_same_chunk_export_bindings`'s block-scope guard and
+///   `test_elide_same_chunk_export_bindings_cross_block_function_declaration_keeps`).
+///   Each flattened module lives in its own `{ ... }` block, so a
+///   `function` declaration is block-scoped there under ES-module
+///   strict-mode semantics; it must stay on the exports-object indirection
+///   in *both* builds below, never elided.
+/// - `producer.js`'s default export is consumed through `bridge.js`, a
+///   pass-through re-export module shaped so it survives the pre-existing
+///   `collapse_pure_reexport_wrappers` pass (it re-exports the *value*
+///   under a name that already has a distinct binding, and additionally
+///   owns an export of its own — `bridgeNoop` — so it is not a "pure"
+///   wrapper; the real-corpus analog is `@mui/utils/esm/deepmerge/index.js`,
+///   `export { default } from './deepmerge'; export * from './deepmerge';`,
+///   which the same pass also leaves standing). That leaves `bridge.js`'s
+///   own `_mN.exports["default"] = producedValue;` assignment — a plain
+///   `var`-declared identifier RHS — for #2128's pass to find and elide.
+fn write_export_elision_ab_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { render } from './consumer.js';
+
+document.getElementById('root').innerHTML = '<div id="output">' + render() + '</div>';
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/producer.js"),
+        r#"export default function computeValue() {
+  return 'PRODUCED_MARKER';
+}
+
+export function getMarkerUtilityClass(slot) {
+  return 'KEPT_MARKER:' + slot;
+}
+"#,
+    )
+    .expect("write producer");
+    fs::write(
+        dir.join("src/bridge.js"),
+        r#"import producedValue from './producer.js';
+
+export default producedValue;
+
+export function bridgeNoop() {
+  console.log('bridge side effect, never called');
+}
+"#,
+    )
+    .expect("write bridge");
+    fs::write(
+        dir.join("src/consumer.js"),
+        r#"import producedValue from './bridge.js';
+import { getMarkerUtilityClass } from './producer.js';
+
+export function render() {
+  return producedValue() + '|' + getMarkerUtilityClass('slot');
+}
+"#,
+    )
+    .expect("write consumer");
+}
+
+/// #2128 — the `JET_NO_EXPORT_ELISION=1` escape hatch must be behaviorally
+/// identical to the default (elision-on) build, in a real browser, on a
+/// fixture that exercises both an elision-eligible export (`bridge.js`'s
+/// re-exported default, a plain `var`-declared identifier) and a
+/// correctness-required "always kept" export (`getMarkerUtilityClass`, a
+/// `function` declaration — block-scoped, per the regression this WI's
+/// implementation found and fixed against the real mui-visual corpus).
+/// Also a basic byte-diff sanity check: the elision-on entry must never be
+/// larger than the escape-hatch entry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_elision_hatch_ab_boots_identically_in_real_browser() -> Result<()> {
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping export_elision_hatch_ab_boots_identically_in_real_browser: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_export_elision_ab_fixture(fixture);
+
+    const EXPECTED_OUTPUT: &str = "PRODUCED_MARKER|KEPT_MARKER:slot";
+
+    async fn build_and_boot(
+        fixture: &Path,
+        out_dir: &str,
+        no_elision: bool,
+    ) -> Result<(String, u64)> {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jet"));
+        cmd.args(["build", "-o", out_dir]).current_dir(fixture);
+        let phase = if no_elision {
+            cmd.env("JET_NO_EXPORT_ELISION", "1");
+            "build (JET_NO_EXPORT_ELISION=1)"
+        } else {
+            "build (default, elision on)"
+        };
+        let output = cmd.output().context("run jet build")?;
+        require_success(output, phase)?;
+
+        let dist = fixture.join(out_dir);
+        let entry = find_entry_file(&dist);
+        let size = fs::metadata(&entry)
+            .with_context(|| format!("stat {}", entry.display()))?
+            .len();
+
+        let result = tokio::time::timeout(Duration::from_secs(60), async {
+            let server = StaticDistServer::spawn_dir(&dist)
+                .await
+                .context("serve dist over local HTTP")?;
+            let url = server.url();
+            let mut browser = spawn_jet_browser(fixture, &url)
+                .context("jet browser launch dist/index.html")?;
+            wait_for_browser_session(fixture)
+                .await
+                .context("wait for browser session file")?;
+
+            let mut output_text = None;
+            for _ in 0..120 {
+                let value = browser_eval_json(
+                    fixture,
+                    "document.getElementById('output') && document.getElementById('output').textContent",
+                )
+                .unwrap_or(Value::Null);
+                if let Some(text) = value.as_str() {
+                    output_text = Some(text.to_string());
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
+            shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+            output_text.ok_or_else(|| anyhow!("#output element never rendered ({phase})"))
+        })
+        .await;
+
+        let text = match result {
+            Ok(inner) => inner?,
+            Err(_) => {
+                let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                    .args(["browser", "shutdown"])
+                    .current_dir(fixture)
+                    .output();
+                return Err(anyhow!(
+                    "export_elision_hatch_ab_boots_identically_in_real_browser: \
+                     {phase} timed out after 60s"
+                ));
+            }
+        };
+        Ok((text, size))
+    }
+
+    let (text_on, size_on) = build_and_boot(fixture, "dist-elision-on", false).await?;
+    let (text_off, size_off) = build_and_boot(fixture, "dist-elision-off", true).await?;
+
+    assert_eq!(
+        text_on, EXPECTED_OUTPUT,
+        "elision-on build must render the elided bridged default export and \
+         the kept function-declared export identically to source"
+    );
+    assert_eq!(
+        text_off, EXPECTED_OUTPUT,
+        "JET_NO_EXPORT_ELISION=1 escape hatch must render identically to the \
+         elision-on build"
+    );
+    assert!(
+        size_on < size_off,
+        "elision-on entry ({size_on} bytes) must be strictly smaller than the \
+         JET_NO_EXPORT_ELISION=1 entry ({size_off} bytes)"
     );
 
     Ok(())
