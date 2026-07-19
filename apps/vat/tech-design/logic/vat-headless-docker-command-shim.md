@@ -469,11 +469,12 @@ e2e_tests:
   - id: vat-docker-compose-bounded-wait-fake-lifecycle
     capability_id: agent-native-gpu-native-dev-containers
     claim_id: headless-docker-command-shim
-    command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture"
+    command: "VAT_DOCKER_COMPOSE_SHIM_LIFECYCLE_REQUIRED=1 RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture"
     assertions:
       - "The focused deterministic fake cases cover ready, timeout, later recovery, and down cleanup for docker compose up -d --wait."
       - "They prove one final ready up JSON with topology, timeout runtime/registry retention, later ready observation of the same launch, and no endpoint leakage from a timed-out result."
       - "The corresponding opt-in real Apple Container dual-service E2E is passed on this host; the fake suite remains the deterministic coverage for timeout/recovery/replacement races."
+      - "The production EC command fails closed instead of skipping when the runner forbids the loopback sockets required by the fake lifecycle."
   - id: vat-docker-compose-host-facing-independent-real-host
     capability_id: agent-native-gpu-native-dev-containers
     claim_id: headless-docker-command-shim

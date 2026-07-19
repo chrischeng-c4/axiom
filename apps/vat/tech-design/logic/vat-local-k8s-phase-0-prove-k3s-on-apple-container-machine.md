@@ -84,9 +84,10 @@ e2e_tests:
     command: "VAT_LOCAL_K8S_DISPOSABLE_E2E=1 cargo test -p vat --test vat_local_k8s_phase0 apple_machine_bootstraps_disposable_k3s_via_backing_container_exec -- --ignored --nocapture"
     assertions:
       - "The explicit opt-in probe creates one auto-booted source-fixture machine, parses only that machine's inspect-returned running `containerId`, and never searches for or touches an ambient container."
-      - "It requires PID 1 to be systemd and root command execution, installs pinned k3s v1.36.2+k3s1 with a guest-only 0600 admin kubeconfig, waits for `Node Ready`, then creates, waits for, logs, and deletes a BusyBox Job whose marker is `vat-k8s-phase0-workload-ok`."
+      - "It requires PID 1 to be systemd and root command execution, installs pinned k3s v1.36.2+k3s1 with a guest-only 0600 admin kubeconfig, first waits within a bounded loop for the Node resource to exist and then waits for `Node Ready`, then creates, waits for, logs, and deletes a BusyBox Job whose marker is `vat-k8s-phase0-workload-ok`."
       - "The probe captures node/pod state and k3s journal output in a JSON report, explicitly deletes the Job, then reconciles and proves bounded absence of only its owned machine; Drop cleanup is panic-only fallback. The observed host result is `ephemeral-go`."
       - "Without the separate host-API opt-in, this evidence proves a one-machine, one-boot guest substrate only. It does not prove default-add-on readiness, host API access, port exposure, local OCI image delivery, persistent volumes, multi-node networking, or stop/run durability."
+      - "Because the command explicitly opts into this real-host production gate, a missing or unusable Apple Container CLI is a hard failure rather than a successful skip."
   - id: vat-local-k8s-phase0-disposable-host-api
     name: "macOS reads the disposable guest API through an isolated kubeconfig"
     capability_id: agent-native-gpu-native-dev-containers

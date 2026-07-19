@@ -5,8 +5,8 @@
 // @capability agent-native-gpu-native-dev-containers
 // @claim local-kubernetes-cluster-service-and-vat-cluster
 // @contract local-agent-test-runner-protocol
-// @category behavior
-// @required_for_production true
+// @category stability
+// @required_for_production false
 // @command VAT_LOCAL_K8S_E2E=1 cargo test -p vat --test vat_local_k8s_phase0 apple_machine_exec_control_is_usable_before_k3s -- --ignored --nocapture
 // AW-EC-END
 

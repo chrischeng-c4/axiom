@@ -781,10 +781,10 @@ e2e_tests:
     claim_id: vat-compose-bounded-compose-subset-up-down-ps-logs
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_compose test_compose_full_cycle_up_down -- --nocapture"
+    command: "VAT_COMPOSE_REAL_DOCKER_E2E_REQUIRED=1 RUST_TEST_THREADS=1 cargo test -p vat --test vat_compose test_compose_full_cycle_up_down -- --nocapture"
     assertions:
       - "AC6: the repo-owned mainstream docker-compose.yml fixture succeeds against a real Docker backend through import -> up -d -> ps -> logs -> down, retains the imported registry ready for retry, and requires no source-file edits."
-      - "The test owns an isolated VAT_HOME and project name, skips only when Docker is unavailable, and is part of the generated EC gate rather than depending on an ambient ./docker-compose.yml."
+      - "The test owns an isolated VAT_HOME and project name; its production EC mode fails closed when Docker is unavailable, while ordinary developer runs may skip; it is part of the generated EC gate rather than depending on an ambient ./docker-compose.yml."
 ```
 
 ## Changes

@@ -7,16 +7,18 @@
 // @contract vat-docker-compose-bounded-wait-fake-lifecycle
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat --test vat_docker_shim -- --nocapture
+// @command VAT_DOCKER_COMPOSE_SHIM_LIFECYCLE_REQUIRED=1 RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture
 // AW-EC-END
 
-// Contract: The passed deterministic fake suite covers ready, timeout, later recovery/down cleanup, and down/re-import/relaunch replacement races for docker compose up -d --wait.
-// Contract: It proves one final ready up JSON with topology, timeout runtime/registry retention, target-pinned safe ps handoff only after current observation, and no unsafe next for terminal/replaced/bare deadlines; degraded exposes no endpoint.
+// Contract: The focused deterministic fake cases cover ready, timeout, later recovery, and down cleanup for docker compose up -d --wait.
+// Contract: They prove one final ready up JSON with topology, timeout runtime/registry retention, later ready observation of the same launch, and no endpoint leakage from a timed-out result.
 // Contract: The corresponding opt-in real Apple Container dual-service E2E is passed on this host; the fake suite remains the deterministic coverage for timeout/recovery/replacement races.
+// Contract: The production EC command fails closed instead of skipping when the runner forbids the loopback sockets required by the fake lifecycle.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_docker_compose_bounded_wait_fake_lifecycle() {
-    let command = "cargo test -p vat --test vat_docker_shim -- --nocapture";
+    let command =
+        "VAT_DOCKER_COMPOSE_SHIM_LIFECYCLE_REQUIRED=1 RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture";
     let id = "vat-docker-compose-bounded-wait-fake-lifecycle";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

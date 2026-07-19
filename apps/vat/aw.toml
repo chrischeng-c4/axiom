@@ -14,7 +14,7 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "vat"
-generated_from_td_digest = "sha256:594d991ff8f1de7bb7a6b65b0eba16de5650f1f139590adc0aebf8ed846a0345"
+generated_from_td_digest = "sha256:5a45a267828e48552595876fdac4a0eb5d24140b2e1659d0491044f1c686d0fd"
 
 [[aw.ec.generated.cases]]
 id = "scenario-failure-keeps-topology-and-logs"
@@ -24,7 +24,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs"
 test_path = "apps/vat/tests/behavior_scenario_failure_keeps_topology_and_logs.rs"
-command = "cargo test -p vat --lib scenario_failure_keeps_topology_and_logs -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_failure_keeps_topology_and_logs -- --nocapture"
 required_for_production = true
 assertions = [
     "failing runner forwards its exit code",
@@ -41,7 +41,7 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service"
 test_path = "apps/vat/tests/behavior_scenario_hermetic_requires_http_mock_service.rs"
-command = "cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_hermetic_requires_http_mock_service -- --nocapture"
 required_for_production = true
 assertions = [
     "hermetic scenario without http-mock exits non-zero",
@@ -57,13 +57,14 @@ contract_id = "production-like-integration-scenarios"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner"
 test_path = "apps/vat/tests/behavior_scenario_run_starts_app_dependency_and_runner.rs"
-command = "cargo test -p vat --lib scenario_run_starts_app_dependency_and_runner -- --nocapture"
+command = "VAT_SCENARIO_E2E_REQUIRED=1 cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture"
 required_for_production = true
 assertions = [
     "vat run --scenario prod-like succeeds",
     "app readiness marker exists before runner marker",
     "vat state includes test_run.scenario id/app/runner/services",
     "result JSONL includes scenario and app",
+    "the production gate fails closed when the required python3 service fixture runtime is unavailable",
 ]
 
 [[aw.ec.generated.cases]]
@@ -457,11 +458,11 @@ contract_id = "local-agent-test-runner-protocol"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#vat-compose-mainstream-manual-smoke"
 test_path = "apps/vat/tests/behavior_vat_compose_mainstream_manual_smoke.rs"
-command = "vat compose import ./docker-compose.yml && vat compose up -d --project demo && vat compose ps demo && vat compose logs demo web && vat compose down demo"
+command = "VAT_COMPOSE_REAL_DOCKER_E2E_REQUIRED=1 RUST_TEST_THREADS=1 cargo test -p vat --test vat_compose test_compose_full_cycle_up_down -- --nocapture"
 required_for_production = true
 assertions = [
-    "AC6: a real, unmodified mainstream docker-compose.yml (one image: service, one build: service, a depends_on entry) succeeds through the full import -> up -d -> ps -> logs -> down cycle, retaining an imported registry ready for another up, and the source compose file itself required no edits.",
-    "Not part of the cargo test / generated aw.toml EC gated surface (no CI-portable fixture repo is bundled for this manual smoke); recorded here as the human verification step named by AC6, run once against a developer-supplied compose file during this WI's own close-out.",
+    "AC6: the repo-owned mainstream docker-compose.yml fixture succeeds against a real Docker backend through import -> up -d -> ps -> logs -> down, retains the imported registry ready for retry, and requires no source-file edits.",
+    "The test owns an isolated VAT_HOME and project name; its production EC mode fails closed when Docker is unavailable, while ordinary developer runs may skip; it is part of the generated EC gate rather than depending on an ambient ./docker-compose.yml.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -535,12 +536,13 @@ contract_id = "vat-docker-compose-bounded-wait-fake-lifecycle"
 category = "behavior"
 td_ref = "apps/vat/tech-design/logic/vat-headless-docker-command-shim.md#vat-docker-compose-bounded-wait-fake-lifecycle"
 test_path = "apps/vat/tests/behavior_vat_docker_compose_bounded_wait_fake_lifecycle.rs"
-command = "cargo test -p vat --test vat_docker_shim -- --nocapture"
+command = "VAT_DOCKER_COMPOSE_SHIM_LIFECYCLE_REQUIRED=1 RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture"
 required_for_production = true
 assertions = [
-    "The passed deterministic fake suite covers ready, timeout, later recovery/down cleanup, and down/re-import/relaunch replacement races for docker compose up -d --wait.",
-    "It proves one final ready up JSON with topology, timeout runtime/registry retention, target-pinned safe ps handoff only after current observation, and no unsafe next for terminal/replaced/bare deadlines; degraded exposes no endpoint.",
+    "The focused deterministic fake cases cover ready, timeout, later recovery, and down cleanup for docker compose up -d --wait.",
+    "They prove one final ready up JSON with topology, timeout runtime/registry retention, later ready observation of the same launch, and no endpoint leakage from a timed-out result.",
     "The corresponding opt-in real Apple Container dual-service E2E is passed on this host; the fake suite remains the deterministic coverage for timeout/recovery/replacement races.",
+    "The production EC command fails closed instead of skipping when the runner forbids the loopback sockets required by the fake lifecycle.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -1282,9 +1284,10 @@ command = "VAT_LOCAL_K8S_DISPOSABLE_E2E=1 cargo test -p vat --test vat_local_k8s
 required_for_production = true
 assertions = [
     "The explicit opt-in probe creates one auto-booted source-fixture machine, parses only that machine's inspect-returned running `containerId`, and never searches for or touches an ambient container.",
-    "It requires PID 1 to be systemd and root command execution, installs pinned k3s v1.36.2+k3s1 with a guest-only 0600 admin kubeconfig, waits for `Node Ready`, then creates, waits for, logs, and deletes a BusyBox Job whose marker is `vat-k8s-phase0-workload-ok`.",
+    "It requires PID 1 to be systemd and root command execution, installs pinned k3s v1.36.2+k3s1 with a guest-only 0600 admin kubeconfig, first waits within a bounded loop for the Node resource to exist and then waits for `Node Ready`, then creates, waits for, logs, and deletes a BusyBox Job whose marker is `vat-k8s-phase0-workload-ok`.",
     "The probe captures node/pod state and k3s journal output in a JSON report, explicitly deletes the Job, then reconciles and proves bounded absence of only its owned machine; Drop cleanup is panic-only fallback. The observed host result is `ephemeral-go`.",
     "Without the separate host-API opt-in, this evidence proves a one-machine, one-boot guest substrate only. It does not prove default-add-on readiness, host API access, port exposure, local OCI image delivery, persistent volumes, multi-node networking, or stop/run durability.",
+    "Because the command explicitly opts into this real-host production gate, a missing or unusable Apple Container CLI is a hard failure rather than a successful skip.",
 ]
 
 [[aw.ec.generated.cases]]
@@ -1292,11 +1295,11 @@ id = "vat-local-k8s-phase0-real-host"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
-category = "behavior"
+category = "stability"
 td_ref = "apps/vat/tech-design/logic/vat-local-k8s-phase-0-prove-k3s-on-apple-container-machine.md#vat-local-k8s-phase0-real-host"
-test_path = "apps/vat/tests/behavior_vat_local_k8s_phase0_real_host.rs"
+test_path = "apps/vat/tests/stability_vat_local_k8s_phase0_real_host.rs"
 command = "VAT_LOCAL_K8S_E2E=1 cargo test -p vat --test vat_local_k8s_phase0 apple_machine_exec_control_is_usable_before_k3s -- --ignored --nocapture"
-required_for_production = true
+required_for_production = false
 assertions = [
     "The ignored, explicit opt-in test preflights `local/vat-k8s-systemd:phase0` (or `VAT_LOCAL_K8S_MACHINE_IMAGE`) and skips cleanly when the Apple Container CLI is absent. It never builds or publishes an image itself.",
     "Using the source-controlled systemd fixture, the test creates one unique no-boot machine with no home mount, 2 CPUs, and 4G memory. It requires PID 1 to be `systemd`, waits for systemd, stops the machine, and requires `container machine run` to restart it and return the control marker.",
