@@ -171,6 +171,7 @@ reqwest = { workspace = true }
 # is driven over its own wire protocol so the lumen-vs-pg end-to-end comparison
 # is honest.
 tokio-postgres = "0.7"
+toml = "0.8"
 # Stage 2 Phase 2i scale proof (tests/disk_scale_proof.rs). `memory-stats` reads
 # cross-platform PHYSICAL resident set size (macOS task_info, Linux /proc/self/statm)
 # so the disk-engine's bounded-RSS claim is measured, not asserted. `libc` exposes

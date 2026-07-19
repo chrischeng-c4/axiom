@@ -19,6 +19,7 @@ details.
 | [defer](apps/defer/README.md) | Defer is the Cloud Tasks-like delayed push-queue dispatch service in the Axiom stack. |
 | [cube](apps/cube/README.md) | Cube is the OLAP service in the Axiom service stack. |
 | [beam](apps/beam/README.md) | Beam is the GPU vector database in the Axiom service stack. |
+| [sift](projects/sift/README.md) | Sift is the GCP/GKE-first operational event platform for structured logs, traces, errors, metrics, audit, and change events. |
 | [arena](apps/arena/README.md) | N-target competitive comparison runner — fan one workload across targets, ratio + ratchet-gate, one agent-readable JSON report. |
 | [guard](apps/guard/README.md) | Security posture gate for the cclab ecosystem. |
 | [rig](apps/rig/README.md) | Declarative test-scenario harness engine for the cclab ecosystem. |
@@ -94,6 +95,7 @@ an installer yet are marked _coming soon_.
 | [meter](apps/meter/README.md) | `meter` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/meter/install.sh \| sh` |
 | [pgpool](apps/pgpool/README.md) | `pgpool` | _coming soon_ |
 | [preview](apps/preview/README.md) | `preview` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/preview/install.sh \| sh` |
+| [sift](projects/sift/README.md) | `sift` | _coming soon_ |
 | [relay](apps/relay/README.md) | `relay` | _coming soon_ |
 | [rig](apps/rig/README.md) | `rig` | `curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/apps/rig/install.sh \| sh` |
 | [tape](apps/tape/README.md) | `tape` | _coming soon_ |

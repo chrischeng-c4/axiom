@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:logic:37a91ad9" tracker="pending-tracker" reason="Export typed configuration, tracing, metric provider, and lifecycle metrics."
+// HANDWRITE-BEGIN gap="missing-generator:logic:37a91ad9" tracker="1868" reason="Export typed configuration, tracing, metric provider, and lifecycle metrics."
 //! Protocol-neutral service observability composition.
 //!
 //! This crate owns configuration, stable identity, structured logging,
@@ -6,10 +6,16 @@
 //! counters. Protocol adapters such as HTTP remain in their protocol crates.
 
 pub mod config;
+pub mod jsonl;
 pub mod logging;
 pub mod metrics;
 
 pub use config::{LogFormat, ObservabilityConfig, ServiceIdentity};
+pub use jsonl::{
+    collector_compatible, service_log_schema_v1, ServiceJsonFormatter, ServiceLogEventV1,
+    ServiceLogIdentityV1, MAX_ATTRIBUTES, MAX_ATTRIBUTE_KEY_BYTES, MAX_ATTRIBUTE_VALUE_BYTES,
+    MAX_EVENT_BYTES, MAX_REQUEST_ID_BYTES, SERVICE_LOG_SCHEMA_V1,
+};
 #[cfg(feature = "otlp")]
 pub use logging::extract_trace_context;
 pub use logging::{

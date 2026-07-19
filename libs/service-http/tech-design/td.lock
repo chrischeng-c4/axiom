@@ -2,10 +2,10 @@ version = 2
 project = "service-http"
 ir_kind = "td"
 td_path = "libs/service-http/tech-design"
-generated_at = "2026-07-15T17:01:13.741209+00:00"
-digest = "sha256:45ada323e7a2d00688d50b0f8ddcb79b418b0697dfc29dbaef19704ae740bd1d"
-source_digest = "sha256:45ada323e7a2d00688d50b0f8ddcb79b418b0697dfc29dbaef19704ae740bd1d"
-ir_digest = "sha256:49cf997f2f3661d0cb4af56f6bb3f1729e919a730d6f64f7a3bafa38906d5a9c"
+generated_at = "2026-07-17T08:17:11.632244+00:00"
+digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
+source_digest = "sha256:dc51758584e725e61858e0c662caf70f386ec9aaeafcfaf2db5db50349fb2fd3"
+ir_digest = "sha256:54e9c6fba4bb68ab977a994ac4984c937be11f2d0b11f6066ea9898944cb17d6"
 
 [[files]]
 path = "interfaces/rest/extract-protocol-neutral-service-observability-integration.md"
@@ -23,6 +23,12 @@ section_count = 3
 path = "logic/extract-shared-otlp-tracing-baseline-for-lumen-and-tape.md"
 digest = "sha256:c231c1bcc5670a16070fe6580355b4246bdaf25c7b024f7f885cf284ff708813"
 ir_digest = "sha256:2625bf18f8ef2697409e08e24575be41167394d7899ebec77677d78f20fa1160"
+section_count = 3
+
+[[files]]
+path = "logic/make-w3c-request-trace-context-exporter-independent.md"
+digest = "sha256:7d1e9083175fde129f336bb9d9e26761428ccc315b2bf502872a5ab3f57bc338"
+ir_digest = "sha256:4920177adfc84ebb4a9df9a33a20221477db5ddeb2582bb7399aaf02595cf78f"
 section_count = 3
 
 [[files]]

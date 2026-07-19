@@ -12,6 +12,7 @@
 
 // Contract: vat run <runner-id> starts a local readiness service, runs the runner, captures logs, records artifacts, and returns JSON evidence.
 // Contract: failed runner evidence remains inspectable.
+// Contract: An unconfirmed Docker or MicroVM cleanup forces a nonzero result and keeps the VAT evidence regardless of the normal keep policy.
 // Contract: direct vat run -- <cmd> compatibility is preserved.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]

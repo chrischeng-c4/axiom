@@ -988,6 +988,32 @@ fn persist_ec_first_next_action(project_root: &Path, wi: &str, next_action: Stri
     })
 }
 
+/// `ec gen --wi` is used at two different points in the linear lifecycle. A
+/// fresh EC-first WI hands off to TD authoring, while a post-implementation
+/// review/regeneration at `cb_filled` must execute the newly current EC
+/// inventory. Rewinding the latter to `td create` emits a command that the TD
+/// phase guard correctly rejects.
+fn ec_gen_next_action_for_wi(project_root: &Path, project: &str, wi: &str) -> Result<String> {
+    let backend = crate::issues::local_backend(project_root);
+    let issue = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(load_or_hydrate_local_lifecycle_issue(
+            project_root,
+            &backend,
+            wi,
+        ))
+    })?;
+    Ok(ec_gen_next_action(project, wi, issue.phase.as_deref()))
+}
+
+fn ec_gen_next_action(project: &str, wi: &str, phase: Option<&str>) -> String {
+    let normalized_phase = phase.map(crate::issues::types::td_phase::normalize);
+    if normalized_phase == Some(crate::issues::types::td_phase::CB_FILLED) {
+        crate::cli::run::ec_verify_command(project, wi)
+    } else {
+        format!("aw td create {wi}")
+    }
+}
+
 /// Read the local lifecycle ledger first, hydrating it from the configured
 /// tracker only when a root or capability command reaches EC before a WI root
 /// had a chance to seed the local copy.
@@ -1243,10 +1269,11 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
     } else {
         ctx.project_root.join(&args.path)
     };
-    if !path.starts_with(&ctx.ec_root) {
+    if !path.starts_with(&ctx.ec_root) && !path.starts_with(&ctx.td_root) {
         bail!(
-            "EC fill target must be under {}; got {}",
+            "EC fill target must be under {} or the legacy TD source root {}; got {}",
             relative_to(&ctx.project_root, &ctx.ec_root),
+            relative_to(&ctx.project_root, &ctx.td_root),
             relative_to(&ctx.project_root, &path)
         );
     }
@@ -1738,7 +1765,8 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
 
     if !args.dry_run {
         if let Some(wi) = args.wi.as_deref() {
-            persist_ec_first_next_action(&project_root, wi, format!("aw td create {wi}"))?;
+            let next = ec_gen_next_action_for_wi(&project_root, &ctx.project, wi)?;
+            persist_ec_first_next_action(&project_root, wi, next)?;
         }
     }
 
@@ -2136,7 +2164,7 @@ Inspect the current EC inventory (external-contracts/**, aw.toml EC section) aga
 5. loopholes_checked — no trivially-satisfiable or gameable case exists.\n\
 6. false_green_risk_checked — a broken implementation would plausibly fail at least one case.\n\n\
 You must NOT be the same identity that authored this EC content (independence is enforced at submission and will reject a same-identity review even if attempted).\n\n\
-Submit your verdict by writing the review payload JSON at {payload} with `reviewer_kind: \"agent\"`, `reviewed_by: \"<your agent identity>\"`, a `decision` of `accepted` (with every checklist item true and no findings) or `needs_revision` (with concrete `findings` and a `target_path` under external-contracts/**), then resume with `aw ec review --project {project} --evidence-file '{payload}'`.",
+Submit your verdict by writing the review payload JSON at {payload} with `reviewer_kind: \"agent\"`, `reviewed_by: \"<your agent identity>\"`, a `decision` of `accepted` (with every checklist item true and no findings) or `needs_revision` (with concrete `findings` and a `target_path` naming an existing Markdown source under external-contracts/**, or under tech-design/** for a legacy TD-derived inventory), then resume with `aw ec review --project {project} --evidence-file '{payload}'`.",
         project = ctx.project,
         payload = payload_path.display()
     )
@@ -2395,8 +2423,9 @@ fn validate_ec_review_payload(
             }
             if ec_fill_command_for_target(ctx, &record.target_path).is_none() {
                 bail!(
-                    "needs_revision EC review target_path must name a markdown file under {}",
-                    relative_to(&ctx.project_root, &ctx.ec_root)
+                    "needs_revision EC review target_path must name an existing markdown file under {} or the legacy TD source root {}",
+                    relative_to(&ctx.project_root, &ctx.ec_root),
+                    relative_to(&ctx.project_root, &ctx.td_root)
                 );
             }
         }
@@ -2564,7 +2593,8 @@ fn ec_fill_command_for_target(ctx: &EcProjectContext, target: &str) -> Option<St
     } else {
         ctx.project_root.join(target)
     };
-    if !path.starts_with(&ctx.ec_root)
+    if !path.exists()
+        || (!path.starts_with(&ctx.ec_root) && !path.starts_with(&ctx.td_root))
         || path.extension().and_then(|ext| ext.to_str()) != Some("md")
     {
         return None;
@@ -2663,11 +2693,60 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
 fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    // #2084: never execute commands from a generated inventory that no longer
+    // matches the current EC sources. Besides being unsafe, recording those
+    // stale failures as a normal red verifier result routes a cb_filled,
+    // HANDWRITE-only WI to `aw td gen`, which has no phase-safe repair target
+    // and livelocks the root runner. Review the current source digest first;
+    // accepted review then owns the existing `ec gen --verify` transition.
+    let inventory_check = check_ec_context(&ctx)?;
+    if inventory_check.stale {
+        let next = command_with_wi(
+            format!("aw ec review --project {}", ctx.project),
+            args.wi.as_deref(),
+        );
+        if let Some(wi) = args.wi.as_deref() {
+            persist_ec_first_next_action(&project_root, wi, next.clone())?;
+        }
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "project": ctx.project,
+                    "status": "inventory_not_ready",
+                    "clean": false,
+                    "check": inventory_check,
+                    "next": next,
+                }))?
+            );
+        } else {
+            println!(
+                "ec verify {}: refused before execution (inventory is not current)",
+                ctx.project
+            );
+            for finding in &inventory_check.findings {
+                println!("  - {finding}");
+            }
+            println!("next: {next}");
+        }
+        if args.wi.is_none() {
+            bail!(
+                "ec verify {} refused a non-current inventory; run `{next}`",
+                ctx.project
+            );
+        }
+        return Ok(());
+    }
     let summary = verify_ec_context(&ctx, args.required_only)?;
-    let lifecycle_state = args
-        .wi
-        .as_deref()
-        .map(|wi| {
+    let semantic_review_required = ec_verify_requires_semantic_review(&summary);
+    let mut routed_next = None;
+    let lifecycle_state = if let Some(wi) = args.wi.as_deref() {
+        if semantic_review_required {
+            let next = command_with_wi(format!("aw ec review --project {}", ctx.project), Some(wi));
+            persist_ec_first_next_action(&project_root, wi, next.clone())?;
+            routed_next = Some(next);
+            None
+        } else {
             let result = if summary.clean {
                 crate::cli::loop_state::LastResult::Green
             } else {
@@ -2704,8 +2783,16 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
                     summary.passed_count, summary.command_count
                 )),
             )
-        })
-        .transpose()?;
+            .map(Some)?
+        }
+    } else {
+        None
+    };
+    let next_action = routed_next.or_else(|| {
+        lifecycle_state
+            .as_ref()
+            .and_then(|state| state.next_action.clone())
+    });
     if args.json {
         if let Some(state) = &lifecycle_state {
             println!(
@@ -2713,7 +2800,15 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({
                     "summary": summary,
                     "loop_state": state,
-                    "next": state.next_action,
+                    "next": next_action,
+                }))?
+            );
+        } else if next_action.is_some() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "summary": summary,
+                    "next": next_action,
                 }))?
             );
         } else {
@@ -2748,15 +2843,20 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
             }
         }
     }
-    if let Some(state) = &lifecycle_state {
-        if let Some(next) = &state.next_action {
-            println!("next: {next}");
-        }
+    if let Some(next) = &next_action {
+        println!("next: {next}");
     }
-    if !summary.clean && lifecycle_state.is_none() {
+    if !summary.clean && args.wi.is_none() {
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn ec_verify_requires_semantic_review(summary: &EcVerifySummary) -> bool {
+    summary
+        .results
+        .iter()
+        .any(|result| result.failure_kind == Some(EcVerifyFailureKind::SemanticReviewRequired))
 }
 
 fn run_doc(project: &str, args: EcDocArgs) -> Result<()> {
@@ -5138,6 +5238,19 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
 /// commands have no `required_for_production` concept and always run.
 /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
 fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVerifySummary> {
+    // #2084: the generated manifest is executable input. Fail closed before
+    // loading or spawning anything when the current TD/EC source digest has
+    // drifted from that input. Other generated-artifact findings retain their
+    // existing verifier semantics.
+    let inventory_check = check_ec_context(ctx)?;
+    if inventory_check.stale {
+        bail!(
+            "EC inventory {} is not current ({} finding(s)); run `aw ec review --project {}` then regenerate before verification",
+            inventory_check.inventory_path,
+            inventory_check.findings.len(),
+            ctx.project
+        );
+    }
     let Some((inventory_path, manifest)) = load_ec_manifest(ctx)? else {
         bail!(
             "EC inventory missing in {}; run `aw ec gen --project {}` first",
@@ -7093,11 +7206,12 @@ e2e_tests:
         record.reviewed_by = "independent-reviewer-agent".to_string();
         record.summary = "Coverage gap found by independent agent review.".to_string();
         record.findings = vec!["missing oracle-independence evidence".to_string()];
-        record.target_path = tmp
+        let target = tmp
             .path()
-            .join("projects/demo/external-contracts/behavior/search.md")
-            .to_string_lossy()
-            .into_owned();
+            .join("projects/demo/external-contracts/behavior/search.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "# Search EC\n").unwrap();
+        record.target_path = target.to_string_lossy().into_owned();
         validate_ec_review_payload(&ctx, &manifest, &record)
             .expect("agent needs_revision follows the same validation path as human");
         assert_eq!(
@@ -7252,8 +7366,28 @@ e2e_tests:
         let (_tmp, ctx) = write_demo_repo();
         let mut ctx = ctx;
         ctx.review_mode = "deferred".to_string();
-        let manifest = manifest_with_clean_mapped_case();
+        fs::write(
+            ctx.td_root.join("specs/contract.md"),
+            r#"
+## Deferred Review Contract
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: demo-happy-path
+    capability_id: demo-capability
+    claim_id: demo-happy-path
+    category: behavior
+    command: "sh -c 'exit 0'"
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
 
         let summary = verify_ec_context(&ctx, false).unwrap();
 
@@ -7365,12 +7499,63 @@ e2e_tests:
         let target = tmp
             .path()
             .join("projects/demo/external-contracts/behavior/search.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "# Search EC\n").unwrap();
         assert_eq!(
             ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
             Some(
                 "aw ec fill --project demo projects/demo/external-contracts/behavior/search.md --section e2e-test"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn ec_needs_revision_routes_legacy_td_source_to_bounded_fill() {
+        let (tmp, ctx) = write_demo_repo();
+        let target = tmp.path().join("projects/demo/tech-design/logic/search.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "# Search TD\n").unwrap();
+        assert_eq!(
+            ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
+            Some(
+                "aw ec fill --project demo projects/demo/tech-design/logic/search.md --section e2e-test"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn ec_needs_revision_rejects_missing_target_in_allowed_root() {
+        let (tmp, ctx) = write_demo_repo();
+        let target = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/missing.md");
+        assert_eq!(
+            ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
+            None
+        );
+    }
+
+    #[test]
+    fn ec_gen_next_action_routes_cb_filled_to_current_inventory_verify() {
+        assert_eq!(
+            ec_gen_next_action("vat", "1872", Some("cb_filled")),
+            "aw ec verify --project vat --required-only --wi 1872"
+        );
+        assert_eq!(
+            ec_gen_next_action("vat", "1872", Some("cb_reviewed")),
+            "aw ec verify --project vat --required-only --wi 1872",
+            "retired post-fill phases normalize to cb_filled"
+        );
+    }
+
+    #[test]
+    fn ec_gen_next_action_keeps_fresh_ec_first_handoff_to_td_create() {
+        assert_eq!(ec_gen_next_action("vat", "1872", None), "aw td create 1872");
+        assert_eq!(
+            ec_gen_next_action("vat", "1872", Some("td_inited")),
+            "aw td create 1872"
         );
     }
 
@@ -8054,6 +8239,103 @@ e2e_tests:
         assert_eq!(summary.command_count, 1);
         assert_eq!(summary.passed_count, 1);
         assert_eq!(summary.results[0].claim_id, "demo-smoke");
+    }
+
+    #[test]
+    fn ec_verify_refuses_stale_inventory_before_running_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        let contract_path = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/stale-command.md");
+        fs::create_dir_all(contract_path.parent().unwrap()).unwrap();
+        let sentinel = tmp.path().join("stale-command-ran");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+## Stale Command
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: stale-command
+    capability_id: demo
+    claim_id: stale-command
+    command: "touch {}"
+```
+"#,
+                sentinel.display()
+            ),
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+
+        let content = fs::read_to_string(&contract_path).unwrap();
+        fs::write(
+            &contract_path,
+            content.replace(
+                &format!("command: \"touch {}\"", sentinel.display()),
+                "command: \"true\"",
+            ),
+        )
+        .unwrap();
+
+        let error = verify_ec_context(&ctx, false)
+            .expect_err("stale inventory must fail before command execution")
+            .to_string();
+        assert!(error.contains("is not current"), "{error}");
+        assert!(
+            !sentinel.exists(),
+            "the stale generated command must never execute"
+        );
+    }
+
+    #[test]
+    fn ec_verify_routes_missing_semantic_review_before_running_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        let contract_path = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/pending-review.md");
+        fs::create_dir_all(contract_path.parent().unwrap()).unwrap();
+        let sentinel = tmp.path().join("unreviewed-command-ran");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+## Pending Review
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: pending-review
+    capability_id: demo
+    claim_id: pending-review
+    command: "touch {}"
+```
+"#,
+                sentinel.display()
+            ),
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+
+        let summary = verify_ec_context(&ctx, false).unwrap();
+
+        assert!(!summary.clean);
+        assert!(ec_verify_requires_semantic_review(&summary));
+        assert!(
+            !sentinel.exists(),
+            "an unreviewed generated command must never execute"
+        );
     }
 
     /// #1469: `required_only=true` (the per-close terminal gate's filter)

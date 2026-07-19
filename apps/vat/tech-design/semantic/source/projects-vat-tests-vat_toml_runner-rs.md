@@ -43,6 +43,8 @@ fn vat_bin() -> &'static str {
     env!("CARGO_BIN_EXE_vat")
 }
 
+const SCENARIO_E2E_REQUIRED: &str = "VAT_SCENARIO_E2E_REQUIRED";
+
 fn python3_available() -> bool {
     Command::new("python3")
         .arg("--version")
@@ -74,6 +76,12 @@ fn result_event(events: &[Value]) -> &Value {
 #[test]
 fn scenario_run_starts_app_dependency_and_runner() {
     if !python3_available() {
+        assert_ne!(
+            std::env::var(SCENARIO_E2E_REQUIRED).as_deref(),
+            Ok("1"),
+            "{SCENARIO_E2E_REQUIRED}=1 requires a working python3 interpreter"
+        );
+        eprintln!("Skipping scenario runner test: python3 is unavailable");
         return;
     }
 

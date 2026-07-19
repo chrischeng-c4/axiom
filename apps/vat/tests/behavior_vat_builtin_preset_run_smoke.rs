@@ -10,7 +10,7 @@
 // @command cargo test -p vat --test vat_emulator_pubsub -- --nocapture --include-ignored
 // AW-EC-END
 
-// Contract: a `preset = "firebase-auth"` or `preset = "gcloud-pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.
+// Contract: a `preset = "firebase-auth"` or `preset = "pubsub"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn vat_builtin_preset_run_smoke() {

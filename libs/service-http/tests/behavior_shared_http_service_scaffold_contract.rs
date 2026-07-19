@@ -7,15 +7,18 @@
 // @contract shared-http-service-scaffold-contract
 // @category behavior
 // @required_for_production true
-// @command cargo test -p service-http
+// @command cargo test -p service-http && cargo test -p service-http --features otlp --test otlp_tracing
 // AW-EC-END
 
 // Contract: Shared HTTP Service Scaffold public Rust API behavior remains covered by the configured library test suite.
 // Contract: The library contract stays usable through its documented README capability surface.
+// Contract: Optional OTLP export uses stable service identity and falls back to structured logging when unavailable.
+// Contract: The shared request trace layer propagates valid W3C parent context without changing logging-only startup.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn shared_http_service_scaffold_contract() {
-    let command = "cargo test -p service-http";
+    let command =
+        "cargo test -p service-http && cargo test -p service-http --features otlp --test otlp_tracing";
     let id = "shared-http-service-scaffold-contract";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

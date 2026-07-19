@@ -315,7 +315,7 @@ changes:
     reason: "Lock atomic foreground/detached claim-token handoff with a bounded ten-second internal claim wait, two-second no-PID reclamation, token-owner VAT publication without parent store polling, durable handoff_protocol: 1 provenance after transient handoff fields clear, current-record EvidenceUnavailable before full terminal evidence, the protocol-absent plus metadata-NotFound compatibility recovery, parent-owned stop acknowledgement, already-reaped child terminalization, and binding retention through Docker or MicroVM cleanup retry with exact-name list proof without changing normal Docker behavior."
     refs:
       - "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md#unit-test"
-  - path: apps/vat/tests/aw-ec.toml
+  - path: apps/vat/aw.toml
     action: modify
     section: e2e-test
     impl_mode: hand-written

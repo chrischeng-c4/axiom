@@ -433,12 +433,16 @@ requirements:
 ```yaml
 e2e_tests:
   - id: vat-docker-shim-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "VAT_DOCKER_SHIM_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim -- --ignored --nocapture"
     assertions:
       - "A temporary shim builds a test-scoped Dockerfile image and removes it through docker image rm."
       - "A high-entropy nonce+PID owner-labeled temporary nginx docker run -d -p host:80 returns host HTTP 2xx and supports inspect/logs. Exact-label rechecks are conservative best-effort precautions and the emergency guard retains on uncertainty; Apple Container has no atomic conditional delete, so no race-free or impossible-to-misdelete cleanup claim is made."
       - "The shared/cacheable nginx image may remain; no image cleanup is claimed."
   - id: vat-docker-compose-strict-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "VAT_DOCKER_COMPOSE_SHIM_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_compose_strict_profile_contract -- --ignored --nocapture"
     assertions:
       - "A strict-single-image-v1 one-service literal nginx Compose file starts via the installed docker shim and emits the agent-facing Compose result."
@@ -446,12 +450,16 @@ e2e_tests:
       - "A failing exec preserves its exact child exit code and emits a structured failure result with a runnable ps next."
       - "down emits terminal cleaned_up, removes the exact Apple Container service, and releases the published host port."
   - id: vat-docker-compose-strict-build-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "VAT_DOCKER_COMPOSE_BUILD_SHIM_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_compose_strict_build_profile_contract -- --ignored --nocapture"
     assertions:
       - "A one-service short-build Compose file builds an exact project-scoped image in Apple Container, starts it through the installed docker shim, and exposes host HTTP."
       - "ps, service-name exec -T, and logs operate over the built MicroVM service without exposing its generated Apple Container name."
       - "The public source-build up result exposes its exact image and cleanup_next; executing cleanup_next removes the exact service, host port, and image without VAT_HOME inspection or a shared-store prune."
   - id: vat-docker-compose-host-facing-independent-fake-lifecycle
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "cargo test -p vat --test vat_docker_shim compose_host_facing_independent_profile_runs_two_services_through_the_shim -- --nocapture"
     assertions:
       - "A deterministic fake runtime starts two literal-image services selected by the exact host-facing-independent-v1 marker, with two distinct loopback host ports."
@@ -459,100 +467,135 @@ e2e_tests:
       - "A typed degraded ps omits every endpoint rather than null-filling or leaking a partial topology; ps --format is unsupported and topology is not an app-healthcheck."
       - "This deterministic fixture complements the opt-in real Apple Container dual-service E2E; it does not widen that passed host evidence to service-name DNS, general Compose, Docker Engine API, or Kubernetes."
   - id: vat-docker-compose-bounded-wait-fake-lifecycle
-    command: "cargo test -p vat --test vat_docker_shim -- --nocapture"
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
+    command: "VAT_DOCKER_COMPOSE_SHIM_LIFECYCLE_REQUIRED=1 RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture"
     assertions:
-      - "The passed deterministic fake suite covers ready, timeout, later recovery/down cleanup, and down/re-import/relaunch replacement races for docker compose up -d --wait."
-      - "It proves one final ready up JSON with topology, timeout runtime/registry retention, target-pinned safe ps handoff only after current observation, and no unsafe next for terminal/replaced/bare deadlines; degraded exposes no endpoint."
+      - "The focused deterministic fake cases cover ready, timeout, later recovery, and down cleanup for docker compose up -d --wait."
+      - "They prove one final ready up JSON with topology, timeout runtime/registry retention, later ready observation of the same launch, and no endpoint leakage from a timed-out result."
       - "The corresponding opt-in real Apple Container dual-service E2E is passed on this host; the fake suite remains the deterministic coverage for timeout/recovery/replacement races."
+      - "The production EC command fails closed instead of skipping when the runner forbids the loopback sockets required by the fake lifecycle."
   - id: vat-docker-compose-host-facing-independent-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 VAT_DOCKER_COMPOSE_INDEPENDENT_SHIM_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_compose_host_facing_independent_profile_contract -- --ignored --nocapture"
     assertions:
       - "Passed 1/1 (50 filtered) on this host in 4.54 seconds."
       - "The opt-in gated Apple Container test proves host-facing-independent-v1 up -d --wait, both loopback endpoints, one-document JSON ps/logs/exec, text logs, text exec including a no-final-newline handoff, and down cleanup of exact containers, ports, and registry."
       - "It remains evidence for this bounded profile only, not service-name DNS, general Compose, a Docker Engine API, or Kubernetes."
   - id: vat-docker-stats-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "cargo test -p vat --test vat_docker_shim docker_stats -- --nocapture"
     assertions:
       - "The deterministic fake contract accepts only strict non-streaming native-JSON stats, invokes canonical Apple Container argv, preserves valid opaque native JSON and child nonzero exits, and suppresses malformed/oversized stdout."
       - "A five-second bounded observation plus isolated process-group cleanup replays stdout only after complete validated capture; an escaped pipe holder fails closed. It does not prove ownership, health, liveness, or a Docker Engine schema."
       - "Recorded validation: shared docker_shim library coverage passed 54/54. The full serial fake-shim aggregate is intentionally not recorded because an independent serial run exposed a nondeterministic pre-existing Compose JSON logs timing race. Direct real-host observation passed 1/1 (50 filtered) on Apple Container 1.1.0; stats targets the temporary owner-labeled nginx container and proves one valid native JSON document only. Fake/unit tests prove byte-preservation and fail-closed details."
   - id: vat-docker-ps-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim docker_ps_json -- --nocapture"
     assertions:
       - "The deterministic fake contract accepts direct docker ps JSON and only the documented container ls/list aliases, normalizes to canonical Apple Container list argv, and byte-for-byte replays one validated opaque native JSON value."
       - "Templates/table output, filters, quiet plus JSON, duplicate/unknown flags, positionals, and docker container ps JSON fail before runtime; malformed, oversized, or escaped-pipe stdout fails closed under the five-second bounded isolated cleanup."
       - "Recorded validation: cargo check without default features passed; shared docker_shim library passed 54/54; focused direct ps integration passed 4/4. The full serial fake-shim aggregate is intentionally not recorded because an independent serial run exposed a nondeterministic pre-existing Compose JSON logs timing race. Direct real-host observation passed 1/1 (50 filtered) on Apple Container 1.1.0; ps is a global read-only inventory smoke observation, not a targeted ownership result. It proves one valid native JSON document only; fake/unit tests prove byte-preservation and fail-closed details."
   - id: vat-docker-images-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim docker_images_json -- --nocapture"
     assertions:
       - "The deterministic fake contract accepts direct docker images JSON and only the documented image ls/list aliases, normalizes to canonical Apple Container image-list argv, and byte-for-byte replays one validated opaque native JSON value."
       - "Template/table/YAML/TOML output, filters, quiet, verbose, all, digests, no-trunc, positionals, duplicates, unknown flags, and -- fail before runtime; malformed, oversized, or escaped-pipe stdout fails closed under the five-second bounded isolated cleanup while text/quiet image listing remains inherited."
       - "Recorded validation: cargo check without default features passed; shared docker_shim library passed 54/54; focused docker_images_json integration passed 4/4. The full serial fake-shim aggregate is intentionally not recorded because an independent serial run exposed a nondeterministic pre-existing Compose JSON logs timing race. Direct real-host observation passed 1/1 (50 filtered) on Apple Container 1.1.0; images is a global read-only inventory smoke observation, not a targeted ownership result. It proves one valid native JSON document only; fake/unit tests prove byte-preservation and fail-closed details."
   - id: vat-docker-image-inspect-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim docker_image_inspect_json -- --nocapture"
     assertions:
       - "The deterministic fake contract accepts only direct docker image inspect JSON with one selector before one safe opaque IMAGE, strips the selector, invokes only container image inspect IMAGE, and byte-for-byte replays one validated Apple-native JSON document."
       - "Templates, --, extra references, and every other option fail before Apple Container; a valid native document with a nonzero child exit preserves that status, while malformed, oversized, or escaped-pipe capture suppresses raw stdout under five-second bounded isolated cleanup."
       - "Recorded validation: cargo check passed; canonical cargo test -p vat --lib docker_shim -- --nocapture passed 58/58; this focused integration passed 4/4 with 1 ignored. It does not claim Docker image-inspect schema/templates/Engine API, provenance, security, registry, build-completion, readiness, or secret redaction."
   - id: vat-docker-image-inspect-json-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 VAT_DOCKER_IMAGE_INSPECT_JSON_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_image_inspect_json_contract -- --ignored --nocapture"
     assertions:
       - "Passed 1/1 (61 filtered) in 1.21 seconds. The host probe validates one Apple-native JSON document for alpine:3.20 and records that VAT stripped the Docker selector before invoking only container image inspect alpine:3.20."
       - "It is bounded direct-image observation only: it does not establish Docker image-inspect schema/template/Engine API behavior, provenance, security, registry, build-completion, readiness, or secret-redaction properties."
   - id: vat-docker-inspect-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim docker_inspect -- --nocapture"
     assertions:
       - "The deterministic fake contract accepts direct docker inspect JSON and only the documented container inspect alias, strips the VAT-only selector, invokes canonical Apple Container inspect argv, and byte-for-byte replays one validated opaque native JSON value."
       - "--type, --size, templates/table/YAML/TOML, filters, a second id, --, and unknown flags fail before runtime; unformatted inspect remains inherited, valid JSON plus a nonzero child exit preserves status, and malformed, oversized, or flood output suppresses raw stdout under five-second bounded isolated cleanup."
       - "It is not Docker Engine inspect schema, ownership/provenance/security/image/registry/build-status, health/readiness/liveness/port-reachability evidence, or a secret-redaction guarantee. Recorded validation: cargo check without default features passed; shared docker_shim library passed 54/54; focused docker_inspect integration passed 5/5. The full serial fake-shim aggregate is intentionally not recorded because an independent serial run exposed a nondeterministic pre-existing Compose JSON logs timing race. Direct real-host observation passed 1/1 (50 filtered) on Apple Container 1.1.0; inspect targets the temporary owner-labeled nginx container and proves one valid native JSON document only. Fake/unit tests prove byte-preservation and fail-closed details."
   - id: vat-docker-logs-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim docker_logs_json -- --nocapture"
     assertions:
       - "The deterministic fake contract accepts direct/container logs only with exact format plus bounded tail selectors before one final safe id, strips the selector, invokes canonical Apple logs argv, and emits one VAT vat.docker.logs.v1/vat_json wrapper rather than a sixth native JSON or Docker multiplex/demux schema."
       - "The wrapper carries untrusted Apple stdio, bounded diagnostic stderr, truncation/lossy flags, backend/container/requested tail/runtime/child outcome, and safe inspect next. Ordinary child failure retains wrapper+exit; follow/boot/timestamps/since/until/templates and all other modifiers reject before runtime; timeout/setup/escaped-pipe paths emit no partial wrapper after five-second plus one-second bounded cleanup with dual-stream suffix/serialized caps."
       - "Recorded validation: cargo check without default features passed; canonical cargo test -p vat --lib docker_shim -- --nocapture passed 54/54; focused docker_logs_json integration passed 6/6. The full serial fake-shim aggregate is intentionally not recorded because an independent serial run exposed a nondeterministic pre-existing Compose JSON logs timing race. Direct real-host observation passed 1/1 (50 filtered) on Apple Container 1.1.0; VAT logs targets the high-entropy nonce+PID owner-labeled temporary nginx container and proves one VAT wrapper only. Exact-label rechecks are conservative best-effort precautions, the emergency guard retains on uncertainty, and Apple Container has no atomic conditional delete; this is not a race-free or impossible-to-misdelete cleanup guarantee. No shared nginx image cleanup is claimed. Fake/unit tests prove byte-preservation and fail-closed details."
   - id: vat-docker-exec-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim docker_exec_json -- --nocapture"
     assertions:
       - "The deterministic fake contract accepts only direct/container exec JSON with one format and one 1..=1200 timeout before a safe id, a literal Docker-facing delimiter, and a nonempty raw command; raw/unformatted exec remains generic."
       - "VAT removes the Docker-only delimiter and normalizes to Apple `container exec CONTAINER COMMAND [ARG...]`, then emits one `vat.docker.exec.v1` / `vat_json` wrapper with separate serialized-64-KiB-capped suffixes, `timeout_scope=host-container-client-observation`, and a safe inspect next."
       - "Ordinary child failure preserves wrapper+exit; timeout or setup/capture failure emits no partial wrapper. Deterministic validation passed: docker_shim library 54/54 and focused docker_exec_json 4/4. The host timeout does not claim guest command termination; no Docker Engine parity, generic runtime, Compose, or Kubernetes claim follows."
   - id: vat-docker-run-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim docker_run_json -- --nocapture"
     assertions:
       - "The deterministic contract accepts only direct foreground docker run JSON with flexible-order format/timeout selectors before IMAGE, rejects every caller lifecycle/network/mount/env option before Apple Container, and creates a generated high-entropy name plus independent owner label."
       - "It emits one vat.docker.run.v1/vat_json document with bounded stdout/stderr only after exact owner-label cleanup confirms absence; ordinary child nonzero retains wrapper+exit, while timeout/setup/cleanup uncertainty emits no partial wrapper and only Apple's explicit not-found diagnostic counts as absence."
       - "Passed 5 plus 1 ignored in 1.80s. The host timeout is not guest-wide termination, and this makes no crash-recovery, Docker Engine parity, or secret-redaction claim."
   - id: vat-docker-run-json-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 VAT_DOCKER_RUN_JSON_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_run_json_ephemeral_contract -- --ignored --nocapture"
     assertions:
       - "Passed 1/1 (56 filtered) in 2.30s using local alpine:3.20: one foreground JSON document carries stdout/stderr markers and exact generated-container cleanup confirms absent after the run."
       - "The evidence is bounded to that owner-cleaned one-shot and does not establish guest-wide timeout termination, crash recovery, Docker Engine parity, or secret redaction."
   - id: vat-docker-build-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "cargo test -p vat --test vat_docker_shim docker_build_json -- --nocapture"
     assertions:
       - "The deterministic contract accepts only direct build with exact format/1..=1200-timeout/tag selectors, documented optional fields before one local-directory context, and maps only supported non-selector fields to public container build argv."
       - "It emits one bounded vat.docker.build.v1/vat_json receipt after normal client completion or child nonzero, retains image lifecycle with no product auto-cleanup, safely inspects only a success, and emits no receipt on timeout/setup/capture failure."
       - "Current validation: cargo check passed; docker_shim lib 62/62; focused build suite 4 plus 1 ignored (63 filtered); native_image_owner_guard 1/1 (67 filtered). It does not claim Engine/API, provenance, ownership, readiness, security, secret-redaction, cancellation, or rollback."
   - id: vat-docker-build-json-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 VAT_DOCKER_BUILD_JSON_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_build_json_receipt_contract -- --ignored --nocapture"
     assertions:
       - "Passed 1/1 (67 filtered) in 2.53 seconds. The opt-in probe proves one strict Docker-build receipt and records public Apple argv with JSON/deadline selectors stripped."
       - "Its high-entropy test tag and exact io.cclab.vat.e2e-owner label require exact native absence before build, exact label recheck before delete, and exact native absence after. This is test-only cleanup safety, not product behavior: Apple has no conditional build/delete, races are best effort and ambiguity leaks rather than authorizing cleanup."
       - "The receipt remains retained_no_auto_cleanup; this bounded host proof does not establish generic build correctness, Docker Engine/API, provenance, ownership, security, redaction, cancellation, or rollback."
   - id: vat-docker-pull-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "cargo test -p vat --test vat_docker_shim docker_pull_json -- --nocapture"
     assertions:
       - "The deterministic contract accepts only direct pull with exact format/1..=1200-timeout selectors before one opaque image reference; it rejects empty/leading-dash/whitespace-control/URL-style `://`/leading Git-style `git@` remote forms while keeping ordinary OCI `@digest` opaque, retains raw unselected pull and docker image pull behavior, and maps only a selector-stripped request to public container image pull argv."
       - "It emits one bounded vat.docker.pull.v1/vat_json receipt only after normal client completion or child nonzero, marks the image not_owned_no_auto_cleanup with no registry management, safely inspects only a success, and emits no receipt on timeout/setup/capture/pipe failure."
       - "Current validation: cargo check passed; docker_shim lib 65/65; focused pull suite 5 plus 1 ignored (68 filtered). It does not claim Engine/API, registry auth lifecycle, provenance, digest, platform, freshness, image state, ownership, security, secret redaction, cancellation, download completion, or rollback."
   - id: vat-docker-pull-json-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "RUST_TEST_THREADS=1 VAT_DOCKER_PULL_JSON_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_pull_json_receipt_contract -- --ignored --nocapture"
     assertions:
       - "Passed 1/1 (73 filtered) in 27.14 seconds. The opt-in probe proves one strict Docker-pull receipt and records public Apple `container image pull alpine:3.20` argv with JSON/deadline selectors stripped."
       - "The E2E deliberately uses a shared/cacheable alpine image but still runs the real pull client: it neither deletes that image nor asserts ownership on success or failure. It can contact a registry or alter shared image state, so it is bounded receipt evidence rather than transfer, image-state, registry-auth, or cleanup proof."
       - "The receipt remains not_owned_no_auto_cleanup; this host proof does not establish Docker Engine/API, registry management/auth lifecycle, provenance, digest, platform, freshness, security, secret redaction, cancellation, download completion, or rollback."
   - id: vat-docker-direct-json-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-docker-command-shim
     command: "VAT_DOCKER_SHIM_E2E_REQUIRED=1 cargo test -p vat --test vat_docker_shim apple_container_docker_run_published_port_contract -- --ignored --nocapture"
     assertions:
       - "Passed 1/1 (50 filtered) on Apple Container 1.1.0. The gate uses a high-entropy nonce+PID temporary nginx container and verifies io.cclab.vat.e2e-owner=<token> by inspect before cleanup. Exact-label rechecks are conservative best-effort precautions, and the emergency guard retains the container on uncertainty. Apple Container has no atomic conditional delete, so this does not claim race-free cleanup or that a misdelete is impossible; the shared/cacheable nginx image is not cleaned up."
@@ -605,7 +648,7 @@ changes:
     section: cli
     impl_mode: hand-written
     reason: "Teach agents five strict native-JSON observations plus the separate bounded direct VAT-JSON logs wrapper, the three-profile Compose grammar, bounded detached wait, negative contract, ps topology endpoint-proof and provenance boundaries, terminal handoff semantics, and evidence limit."
-  - path: apps/vat/tests/aw-ec.toml
+  - path: apps/vat/aw.toml
     action: modify
     section: e2e-test
     impl_mode: hand-written

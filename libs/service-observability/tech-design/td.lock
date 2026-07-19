@@ -1,0 +1,14 @@
+version = 2
+project = "service-observability"
+ir_kind = "td"
+td_path = "libs/service-observability/tech-design"
+generated_at = "2026-07-17T08:55:14.454127+00:00"
+digest = "sha256:3058cfbf532b7a089296bb9224f8cee6c273d2eb79159a8d04574cdc9bf8da42"
+source_digest = "sha256:3058cfbf532b7a089296bb9224f8cee6c273d2eb79159a8d04574cdc9bf8da42"
+ir_digest = "sha256:5f759954c135e1b8768b76997d48a538de9939f6870abf62e397d7d8639ba35a"
+
+[[files]]
+path = "logic/standardize-versioned-jsonl-stdout-correlation.md"
+digest = "sha256:617d15bb3baf561e58e0f843746a6546576d4ecf253cc0b6a5bce40df8622fa7"
+ir_digest = "sha256:9b16b8747a4762b88bf6dffc9a0728c4678f5f7bfec8511a154c5ce8774c69ac"
+section_count = 3

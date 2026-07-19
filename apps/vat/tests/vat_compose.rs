@@ -27,6 +27,8 @@ mod tests {
         env!("CARGO_BIN_EXE_vat")
     }
 
+    const REAL_DOCKER_E2E_REQUIRED: &str = "VAT_COMPOSE_REAL_DOCKER_E2E_REQUIRED";
+
     /// Check if Docker is available (skip test if not) -- the compose full
     /// cycle test runs services via `--runtime docker`.
     fn docker_available() -> bool {
@@ -788,6 +790,11 @@ cmd = ["true"]
     #[test]
     fn test_compose_full_cycle_up_down() {
         if !docker_available() {
+            assert_ne!(
+                std::env::var(REAL_DOCKER_E2E_REQUIRED).as_deref(),
+                Ok("1"),
+                "{REAL_DOCKER_E2E_REQUIRED}=1 requires a working Docker daemon"
+            );
             eprintln!("Skipping test: docker not available");
             return;
         }

@@ -18978,7 +18978,7 @@ capability_refs:
 
             assert_eq!(kind, CapabilityActionKind::RunVerify, "phase: {phase}");
             assert_eq!(
-                command, "aw ec verify --project jet --wi 57",
+                command, "aw ec verify --project jet --required-only --wi 57",
                 "phase: {phase}"
             );
             assert_eq!(
