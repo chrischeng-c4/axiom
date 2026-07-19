@@ -591,6 +591,19 @@ pub struct Bundler {
     /// `None` until the first `build_graph` call.
     /// @issue #1995
     entry_path: Mutex<Option<PathBuf>>,
+    /// Single-pass analysis reuse (WI #1995 round 5): the full
+    /// `TreeShakeResult` `compute_transform_survivors` computes over the
+    /// whole crawled graph (raw source, define-folded, with implicit
+    /// edges), cached here so `apply_tree_shaking` can reuse it for its own
+    /// elimination stage instead of re-reading every module's source and
+    /// re-running the same analysis a second time. `None` whenever the
+    /// survivors filter didn't run this build (`JET_SURVIVOR_FILTER` unset,
+    /// or the pre-pass bailed) — `apply_tree_shaking` falls back to its own
+    /// recompute in that case, unchanged from round 4. Reset to `None` at
+    /// the start of every `build_graph` call, same lifecycle as
+    /// `implicit_edges`/`entry_path`.
+    /// @issue #1995
+    shake_analysis: Mutex<Option<tree_shake::TreeShakeResult>>,
     /// When true, use Phase 2 flat bundle in `generate_bundle`.
     ///
     /// Phase 2 (`generate_flattened_bundle`) merges all module bodies into a
@@ -687,6 +700,7 @@ impl Bundler {
             barrel_demand: Mutex::new(HashMap::new()),
             implicit_edges: Mutex::new(Vec::new()),
             entry_path: Mutex::new(None),
+            shake_analysis: Mutex::new(None),
             splitting,
             manual_chunks,
         })
@@ -1658,9 +1672,15 @@ impl Bundler {
         // `compute_transform_survivors`' liveness walk with the same
         // canonicalized path this function seeds the graph with;
         // `implicit_edges` is repopulated below as the crawl fabricates
-        // non-textual edges (currently just `react/jsx-runtime`).
+        // non-textual edges (currently just `react/jsx-runtime`). Round 5
+        // adds `shake_analysis`: the cached `TreeShakeResult` from this
+        // crawl's survivors pre-pass, reused by `apply_tree_shaking` so the
+        // same analysis isn't recomputed a second time. It must be cleared
+        // here too — stale results from a previous `build_graph` call must
+        // never leak into this crawl's `apply_tree_shaking`.
         *self.entry_path.lock() = Some(entry_abs.clone());
         self.implicit_edges.lock().clear();
+        *self.shake_analysis.lock() = None;
 
         // Wave-parallel prefetch of the expensive pure work (file read,
         // tree-sitter import extraction, dependency resolution). The serial
@@ -1990,28 +2010,48 @@ impl Bundler {
         }
         let entry = self.entry_path.lock().clone()?;
 
-        let mut module_pairs: Vec<(PathBuf, String)> = Vec::with_capacity(sorted_ids.len());
-        for &id in sorted_ids {
-            let node = graph.get_node(id)?;
-            let source = std::fs::read_to_string(&node.path).ok()?;
-            // Mirrors `apply_tree_shaking`'s `module_pairs` construction
-            // exactly (same condition, same three calls) so this pre-pass
-            // predicts that function's first-layer liveness rather than a
-            // strictly-more-conservative (and far less useful) unfolded
-            // scan.
-            let source = if self.defines.is_empty() {
-                source
-            } else {
-                let replaced = define::replace_defines(&source, &self.defines);
-                if replaced == source {
+        use rayon::prelude::*;
+
+        // Round 5 (#1995): was a sequential `for &id in sorted_ids { ... }`
+        // loop — its dominant cost (file read + defines-fold) is the same
+        // shape every other pure-prefetch pass in this file already runs
+        // through `par_iter` (see `prefetch_graph_modules_eager`,
+        // `transform_modules`'s own per-module transform loop below).
+        // `module_pairs`' order does not affect
+        // `analyze_used_exports_from_with_implicit_edges`'s result — every
+        // per-module fact it computes is immediately re-keyed into a
+        // `HashMap<PathBuf, _>` inside that function, and this method's own
+        // return value is itself an unordered `HashSet<PathBuf>` — so
+        // collecting out of input order is safe. `collect::<Option<Vec<_>>>()`
+        // preserves the original "any one module's node lookup or source
+        // read failing aborts the whole pre-pass" semantics (short-circuits
+        // to `None`, matching the sequential loop's `?` behavior), just
+        // without the sequential loop's early-exit-on-first-failure — an
+        // acceptable difference on this already-rare error path.
+        let module_pairs: Vec<(PathBuf, String)> = sorted_ids
+            .par_iter()
+            .map(|&id| {
+                let node = graph.get_node(id)?;
+                let source = std::fs::read_to_string(&node.path).ok()?;
+                // Mirrors `apply_tree_shaking`'s `module_pairs` construction
+                // exactly (same condition, same three calls) so this pre-pass
+                // predicts that function's first-layer liveness rather than a
+                // strictly-more-conservative (and far less useful) unfolded
+                // scan.
+                let source = if self.defines.is_empty() {
                     source
                 } else {
-                    let folded = fold::fold_define_short_circuits(&replaced);
-                    dce::eliminate_static_conditionals_syntax(&folded)
-                }
-            };
-            module_pairs.push((node.path.clone(), source));
-        }
+                    let replaced = define::replace_defines(&source, &self.defines);
+                    if replaced == source {
+                        source
+                    } else {
+                        let folded = fold::fold_define_short_circuits(&replaced);
+                        dce::eliminate_static_conditionals_syntax(&folded)
+                    }
+                };
+                Some((node.path.clone(), source))
+            })
+            .collect::<Option<Vec<_>>>()?;
 
         let implicit_edges = self.implicit_edges.lock().clone();
         let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
@@ -2027,7 +2067,16 @@ impl Bundler {
             Some(&resolve_specifier),
             &implicit_edges,
         ) {
-            Ok(result) => Some(result.used_exports.into_keys().collect()),
+            Ok(result) => {
+                let survivors: HashSet<PathBuf> = result.used_exports.keys().cloned().collect();
+                // Round 5 (#1995): cache the full analysis so
+                // `apply_tree_shaking` can reuse it for its own elimination
+                // stage instead of re-reading every module's source and
+                // re-running this same analysis a second time — see
+                // `shake_analysis`'s field doc for the reuse contract.
+                *self.shake_analysis.lock() = Some(result);
+                Some(survivors)
+            }
             Err(e) => {
                 tracing::warn!(
                     "survivors-only transform pre-pass failed, transforming everything: {}",
@@ -2089,7 +2138,19 @@ impl Bundler {
         // this build (see that method's doc comment for every bail
         // condition); every module is transformed exactly as before this
         // WI.
+        //
+        // Round 5 (#1995): this call used to be folded into the outer
+        // `transform_modules` `JET_BUNDLE_TIMING` lap with no way to tell
+        // how much of that lap was the pre-pass itself vs. the per-module
+        // transform loop below — measured here as its own `analysis` lap
+        // so the two are visible separately. 0 (or near-0) whenever the
+        // filter is off (`compute_transform_survivors` bails before doing
+        // any work — see its doc comment).
+        let analysis_start = std::time::Instant::now();
         let survivors = self.compute_transform_survivors(&graph, &sorted_ids);
+        if std::env::var_os("JET_BUNDLE_TIMING").is_some() {
+            eprintln!("[bundle-timing] analysis: {:?}", analysis_start.elapsed());
+        }
         let transformed_modules = std::sync::atomic::AtomicUsize::new(0);
         let skipped_modules = std::sync::atomic::AtomicUsize::new(0);
 
@@ -2384,47 +2445,108 @@ impl Bundler {
             tracing::warn!("JET_NO_TREESHAKE set: skipping tree shaking");
             return modules;
         }
-        let module_pairs: Vec<(PathBuf, String)> = modules
-            .iter()
-            .map(|m| {
-                let source = std::fs::read_to_string(&m.path).unwrap_or_else(|_| m.code.clone());
-                // Analyze post-define sources: without this, the dead
-                // `process.env.NODE_ENV !== 'production'` branch in packages
-                // like prop-types still marks its dev-only requires
-                // (factoryWithTypeCheckers, react-is, object-assign) as used
-                // even though the transformed code only requires the
-                // production shim.
-                let source = if self.defines.is_empty() {
-                    source
-                } else {
-                    let replaced = define::replace_defines(&source, &self.defines);
-                    if replaced == source {
+
+        // WI #1995 round 5 — single-pass analysis reuse. When the survivors
+        // filter ran this build, `compute_transform_survivors` already
+        // computed the exact liveness/used-exports analysis this function
+        // used to unconditionally redundantly recompute below — both read
+        // raw, pre-transform source from disk with the same defines-folding
+        // (see the recompute branch's `module_pairs` construction, mirrored
+        // exactly), so the two calls only ever differed in (b) which
+        // unreachable modules also happened to be in the input list — and
+        // (b) is provably inert: `compute_transform_survivors`' survivor
+        // set is a conservative over-approximation ("transform more, never
+        // fewer" — see that method's doc comment), so any module it
+        // excludes is unreachable even under its own more-generous
+        // (implicit-edges-inclusive) walk, hence unreachable under this
+        // function's own walk too — it can never have contributed a
+        // `used_exports` entry to any module this function's own recompute
+        // would have found reachable. Reusing the cached analysis is
+        // therefore safe: same meaning, computed once instead of twice.
+        // `None` (filter didn't run this build, or its pre-pass bailed)
+        // falls through to the recompute below. `JET_DOUBLE_SHAKE_ANALYSIS=1`
+        // forces the recompute even when a cached analysis is available,
+        // for benchmark comparison.
+        //
+        // The recompute branch below now threads `self.implicit_edges`
+        // through too (previously it always called the implicit-edges-blind
+        // `analyze_used_exports_from` wrapper). That wasn't just a caching
+        // gap: it was a latent correctness bug, independent of the
+        // survivors filter, that this round's mixed-size fixture surfaced
+        // empirically (Mandate 3's "+10KB" audit) — the automatic JSX
+        // runtime import (`jsx`/`jsxs` from `react/jsx-runtime`) is
+        // synthetic, never present in any `.tsx`/`.jsx` file's raw source
+        // text (only the *transform* writes it), so a raw-source scan
+        // without implicit edges can never discover it. `Fragment` often
+        // survived anyway (explicit `import { Fragment }` in real code is
+        // common), but `jsx`/`jsxs` did not: `shake_module` pruned their
+        // `export const` lines out of `react/jsx-runtime`'s own shimmed
+        // body, which is silently harmless only for entirely-dead call
+        // sites (a bare property read like `$(id).jsx` evaluates to
+        // `undefined` and is discarded) — a genuinely live JSX call site
+        // would throw (`... .jsx is not a function`) at runtime. This
+        // recompute path is the pre-round-4 baseline behavior (it's what
+        // every build ran before the survivors filter existed, and it's
+        // still what any filter-off build runs today), so the bug was not
+        // introduced by the filter — the filter's implicit-edges-aware
+        // analysis happened to mask it whenever it ran. `self.implicit_edges`
+        // is populated unconditionally during `build_graph`'s crawl (see
+        // its push site's own comment), independent of whether the
+        // survivors filter is enabled, so passing it here costs nothing
+        // extra and closes the gap for the filter-off path too.
+        let cached_analysis = if std::env::var_os("JET_DOUBLE_SHAKE_ANALYSIS").is_none() {
+            self.shake_analysis.lock().clone()
+        } else {
+            None
+        };
+        let analysis = if let Some(analysis) = cached_analysis {
+            analysis
+        } else {
+            let module_pairs: Vec<(PathBuf, String)> = modules
+                .iter()
+                .map(|m| {
+                    let source =
+                        std::fs::read_to_string(&m.path).unwrap_or_else(|_| m.code.clone());
+                    // Analyze post-define sources: without this, the dead
+                    // `process.env.NODE_ENV !== 'production'` branch in packages
+                    // like prop-types still marks its dev-only requires
+                    // (factoryWithTypeCheckers, react-is, object-assign) as used
+                    // even though the transformed code only requires the
+                    // production shim.
+                    let source = if self.defines.is_empty() {
                         source
                     } else {
-                        let folded = fold::fold_define_short_circuits(&replaced);
-                        dce::eliminate_static_conditionals_syntax(&folded)
-                    }
-                };
-                (m.path.clone(), source)
-            })
-            .collect();
+                        let replaced = define::replace_defines(&source, &self.defines);
+                        if replaced == source {
+                            source
+                        } else {
+                            let folded = fold::fold_define_short_circuits(&replaced);
+                            dce::eliminate_static_conditionals_syntax(&folded)
+                        }
+                    };
+                    (m.path.clone(), source)
+                })
+                .collect();
 
-        let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
-            self.resolver
-                .resolve(spec, importer)
-                .ok()
-                .filter(|r| !r.is_external)
-                .map(|r| r.path)
-        };
-        let analysis = match tree_shake::analyze_used_exports_from(
-            &module_pairs,
-            entry,
-            Some(&resolve_specifier),
-        ) {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::warn!("Tree shake analysis failed, skipping: {}", e);
-                return modules;
+            let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
+                self.resolver
+                    .resolve(spec, importer)
+                    .ok()
+                    .filter(|r| !r.is_external)
+                    .map(|r| r.path)
+            };
+            let implicit_edges = self.implicit_edges.lock().clone();
+            match tree_shake::analyze_used_exports_from_with_implicit_edges(
+                &module_pairs,
+                entry,
+                Some(&resolve_specifier),
+                &implicit_edges,
+            ) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!("Tree shake analysis failed, skipping: {}", e);
+                    return modules;
+                }
             }
         };
         // JET_TREESHAKE_DEBUG=<file> dumps per-module used-export sets.
