@@ -5076,10 +5076,7 @@ fn validate_compile_nonlocal_declarations(
     }
 
     fn type_param_names(type_params: &[crate::parser::ast::TypeParam]) -> HashSet<String> {
-        type_params
-            .iter()
-            .map(|param| param.name.clone())
-            .collect()
+        type_params.iter().map(|param| param.name.clone()).collect()
     }
 
     fn function_scope(
@@ -5123,9 +5120,7 @@ fn validate_compile_nonlocal_declarations(
                         {
                             return Some(crate::error::MambaError::syntax(
                                 stmt.span,
-                                format!(
-                                    "nonlocal binding not allowed for type parameter '{name}'"
-                                ),
+                                format!("nonlocal binding not allowed for type parameter '{name}'"),
                             ));
                         }
                         if function_scopes

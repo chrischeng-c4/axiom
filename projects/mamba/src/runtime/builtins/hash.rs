@@ -129,9 +129,9 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                 // result must go through int_from_i64 (auto-boxing to a
                 // heap BigInt when it doesn't fit inline) rather than the
                 // inline-only MbValue::from_int, which silently truncates.
-                ObjData::BigInt(_) => {
-                    super::super::bigint_ops::int_from_i64(super::super::bigint_ops::mb_int_hash(val))
-                }
+                ObjData::BigInt(_) => super::super::bigint_ops::int_from_i64(
+                    super::super::bigint_ops::mb_int_hash(val),
+                ),
                 // CPython: hash(z) = float_hash(re) + HASH_IMAG * float_hash(im)
                 // (HASH_IMAG = 1000003). A real-valued complex (im == 0) hashes
                 // exactly like float_hash(re), so hash(complex(x, 0)) == hash(x).
