@@ -223,6 +223,19 @@ pub struct JetBuildConfig {
     /// ```
     /// @issue #1948
     pub manual_chunks: Option<HashMap<String, Vec<String>>>,
+
+    /// Enable the persistent, content-addressed transform cache
+    /// (`node_modules/.jet/transform-cache.bin`), reused across separate
+    /// `jet build` process invocations.
+    ///
+    /// `None` (unset) defers to the CLI default: enabled. Explicit
+    /// `true`/`false` here is overridden by the `--no-cache` CLI flag when
+    /// passed. `JET_NO_PERSISTENT_CACHE=1` disables it unconditionally
+    /// regardless of this setting or the flag.
+    ///
+    /// Example: `cache = false`.
+    /// @issue #2137
+    pub cache: Option<bool>,
 }
 
 /// `[lib]` section of `jet.toml` — `jet build --lib` settings.

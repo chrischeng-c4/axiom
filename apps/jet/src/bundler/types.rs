@@ -96,6 +96,16 @@ pub struct BundleOptions {
     /// `--splitting` output unchanged.
     /// @issue #1948
     pub manual_chunks: HashMap<String, Vec<String>>,
+
+    /// Project root to load/save the persistent, content-addressed
+    /// transform cache (`node_modules/.jet/transform-cache.bin`) under.
+    /// `None` (the default) disables the persistent cache entirely — its
+    /// `get`/`insert` become no-ops and the in-memory `CompilationCache`
+    /// (dev server, `--lib`, `--nx`) behaves exactly as before. `jet build`
+    /// sets this to the resolved project root unless disabled via
+    /// `--no-cache` / `[build] cache = false` / `JET_NO_PERSISTENT_CACHE=1`.
+    /// @issue #2137
+    pub cache_project_root: Option<PathBuf>,
 }
 
 /// Production build configuration.
@@ -302,6 +312,7 @@ impl Default for BundleOptions {
             declaration: false,
             splitting: false,
             manual_chunks: HashMap::new(),
+            cache_project_root: None,
         }
     }
 }

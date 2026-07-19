@@ -33,6 +33,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 toml = "0.8"
+# Persistent transform cache on-disk format (#2137) — already a transitive
+# dependency via oxc_minifier -> oxc_compat -> oxc-browserslist -> postcard,
+# so this adds no new crate to the build graph.
+postcard = { version = "1.1.3", features = ["use-std"] }
 
 # JSON Schema export (#1233 Slice 5 — `jet config schema`)
 schemars = "0.8"
@@ -269,6 +273,9 @@ path = "tests/build/entry_flatten.rs"
 [[test]]
 name = "fast_import_scan"
 path = "tests/build/fast_import_scan.rs"
+[[test]]
+name = "transform_cache"
+path = "tests/build/transform_cache.rs"
 
 # tests/stories/ — jet stories: CSF story discovery + parse (Storybook replacement)
 [[test]]

@@ -412,6 +412,21 @@ pub fn command() -> Command {
                         .help("Disable code splitting; always emit a single-file bundle"),
                 )
                 .arg(
+                    // #2137 — persistent, content-addressed transform cache
+                    // (`node_modules/.jet/transform-cache.bin`) hatch. Named
+                    // independently of `install`'s own `--no-cache` flag
+                    // (registry-metadata cache): distinct subcommand, no
+                    // clap namespace collision.
+                    Arg::new("no-cache")
+                        .long("no-cache")
+                        .action(ArgAction::SetTrue)
+                        .help(
+                            "Disable the persistent transform cache \
+                             (node_modules/.jet/transform-cache.bin); always re-transform \
+                             every module",
+                        ),
+                )
+                .arg(
                     Arg::new("define")
                         .long("define")
                         .action(ArgAction::Append)
@@ -2418,6 +2433,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // @issue #1932 — flag > config > target-default precedence; see
             // `build_splitting_enabled`'s doc comment.
             let splitting = build_splitting_enabled(m, build_target, build_config.build.splitting);
+            // #2137 — flag > config > default-on precedence; see
+            // `build_cache_enabled`'s doc comment. `None` leaves
+            // `BundleOptions::cache_project_root` at its `Default` (disabled)
+            // so an explicit `--no-cache` costs nothing beyond skipping this
+            // one `Some(..)`.
+            let cache_enabled = build_cache_enabled(m, build_config.build.cache);
 
             let bundle_opts = crate::bundler::BundleOptions {
                 entry: entry.clone(),
@@ -2441,6 +2462,14 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 // supports. Absent config keeps this empty, matching
                 // today's `--splitting` output exactly (AC2).
                 manual_chunks: build_config.build.manual_chunks.clone().unwrap_or_default(),
+                // #2137 — opts this build path (and only this one; dev
+                // server / `--lib` / `--nx` are unaffected) into the
+                // persistent transform cache.
+                cache_project_root: if cache_enabled {
+                    Some(root_dir.clone())
+                } else {
+                    None
+                },
                 ..Default::default()
             };
 
@@ -5645,6 +5674,32 @@ fn build_splitting_enabled(
         return configured;
     }
     build_target == crate::build_target::BuildTarget::Web
+}
+
+/// Resolve whether `jet build` uses the persistent, content-addressed
+/// transform cache (`node_modules/.jet/transform-cache.bin`), per
+/// `--no-cache` > `[build].cache` > default-on precedence (mirrors
+/// `build_splitting_enabled`'s "off flag always wins" shape):
+///
+/// 1. `--no-cache` always forces it off.
+/// 2. `[build].cache` in jet.toml, when the flag above is absent.
+/// 3. Default: on.
+///
+/// `JET_NO_PERSISTENT_CACHE=1` is a separate, lower-level kill switch
+/// consulted directly by `PersistentTransformCache::load` — it disables the
+/// cache even when this function returns `true` (a `Some(root)`
+/// `cache_project_root` with the env var set still loads disabled), so any
+/// caller that constructs a `Bundler` directly (tests, embedders) honors it
+/// without re-plumbing this CLI precedence.
+/// @issue #2137
+fn build_cache_enabled(m: &ArgMatches, config_cache: Option<bool>) -> bool {
+    if m.get_flag("no-cache") {
+        return false;
+    }
+    if let Some(configured) = config_cache {
+        return configured;
+    }
+    true
 }
 
 /// Run TypeScript checks for a project or every project in an Nx workspace.

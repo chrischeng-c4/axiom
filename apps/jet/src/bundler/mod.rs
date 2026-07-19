@@ -3,6 +3,7 @@
 use anyhow::Result;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -21,6 +22,7 @@ pub mod json_shake;
 pub mod lib_build;
 pub mod mangle;
 pub mod minify;
+pub mod persistent_cache;
 pub mod scope_hoist;
 pub mod scope_hoist_opt;
 pub mod sourcemap;
@@ -868,6 +870,22 @@ pub struct Bundler {
     /// `generate_split_bundle` (i.e. only when `splitting` is also `true`).
     /// @issue #1948
     manual_chunks: HashMap<String, Vec<String>>,
+    /// Disk-backed sibling to `cache` (#2137): `transform_modules` consults
+    /// this ONLY after `cache`'s existing in-memory `(path, mtime)` lookup
+    /// misses, so dev-server/watch semantics on `cache` itself are
+    /// completely unchanged. Disabled (`PersistentTransformCache::disabled`)
+    /// unless `BundleOptions::cache_project_root` was set — every non-opted
+    /// path (dev server, `--lib`, `--nx`) gets a cache whose `get`/`insert`
+    /// are no-ops, so this field never needs an `Option<..>` at its call
+    /// sites. See `persistent_cache`'s module doc comment for the full
+    /// design.
+    /// @issue #2137
+    persistent_cache: persistent_cache::PersistentTransformCache,
+    /// `persistent_cache`'s own `load()` stats, captured once in `new` so
+    /// `bundle`'s `JET_BUNDLE_TIMING` line can report `loaded_in=`
+    /// alongside `save`'s freshly-measured `saved_in=`.
+    /// @issue #2137
+    persistent_cache_load: persistent_cache::LoadStats,
 }
 
 /// Compilation cache for incremental builds
@@ -878,7 +896,13 @@ pub struct CompilationCache {
 
 /// Compiled module with metadata
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` (#2137): every field here is already trivially
+/// serializable, which is what makes this struct the exact payload the
+/// persistent transform cache (`persistent_cache::PersistentTransformCache`)
+/// round-trips through `node_modules/.jet/transform-cache.bin` — no
+/// shadow-mirrored on-disk representation, this IS the cached value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledModule {
     pub id: usize,
     pub path: PathBuf,
@@ -896,6 +920,25 @@ impl Bundler {
         let defines = options.defines.clone();
         let splitting = options.splitting;
         let manual_chunks = options.manual_chunks.clone();
+        // #2137 — computed (and, when enabled, loaded from disk) before
+        // `options.transform_options` moves into `Transformer::new` below;
+        // see `persistent_cache::config_fingerprint`'s doc comment for what
+        // it covers.
+        let config_fingerprint = persistent_cache::config_fingerprint(
+            &defines,
+            minify,
+            splitting,
+            &options.transform_options,
+        );
+        let (persistent_cache, persistent_cache_load) = match &options.cache_project_root {
+            Some(root) => {
+                persistent_cache::PersistentTransformCache::load(root, config_fingerprint)
+            }
+            None => (
+                persistent_cache::PersistentTransformCache::disabled(),
+                persistent_cache::LoadStats::default(),
+            ),
+        };
         let mut resolve_options = options.resolve_options;
         // WI #1305: retain a copy of the already-loaded alias table before
         // `resolve_options` moves into `ModuleResolver::new` below, so the
@@ -931,6 +974,8 @@ impl Bundler {
             source_cache: Mutex::new(HashMap::new()),
             splitting,
             manual_chunks,
+            persistent_cache,
+            persistent_cache_load,
         })
     }
 
@@ -977,6 +1022,24 @@ impl Bundler {
         // Convention: if entry is `src/index.tsx`, look for `src/index.css`.
         if let Some(css_asset) = self.try_process_css_entry(&entry) {
             output.assets.push(css_asset);
+        }
+
+        // #2137 — persist the transform cache after a successful build. A
+        // no-op (`SaveStats::default()`, no I/O) unless
+        // `BundleOptions::cache_project_root` was set. Deliberately last:
+        // a build that errors out earlier via `?` above never reaches this
+        // line, so a partially-completed build never overwrites the store
+        // with incomplete work.
+        let save_stats = self.persistent_cache.save();
+        if timing {
+            eprintln!(
+                "[bundle-timing] cache: hits={} misses={} loaded_in={:.2}ms saved_in={:.2}ms bytes={}",
+                self.persistent_cache.hits(),
+                self.persistent_cache.misses(),
+                self.persistent_cache_load.duration.as_secs_f64() * 1000.0,
+                save_stats.duration.as_secs_f64() * 1000.0,
+                save_stats.bytes_written,
+            );
         }
 
         Ok(output)
@@ -2616,6 +2679,45 @@ impl Bundler {
                         )));
                     }
                 };
+
+                // #2137 — persistent transform cache lookup, reachable only
+                // once the in-memory `self.cache` check above has already
+                // missed: unconditionally true in a one-shot `jet build`
+                // process (its `DashMap` always starts empty), and only on a
+                // process's first touch of `node.path` in a long-lived
+                // dev-server run. `barrel_demand_snapshot` is taken once
+                // here and reused below by the barrel-prune match, so this
+                // replaces what used to be a second separate lock+lookup on
+                // the same map. `self.persistent_cache` is a no-op
+                // `get`/`insert` unless `BundleOptions::cache_project_root`
+                // was set, so every opted-out path (dev server, `--lib`,
+                // `--nx`) pays only one `bool` check here. See
+                // `persistent_cache`'s module doc comment for what each
+                // `EntryKey` field guards against.
+                let barrel_demand_snapshot = self.barrel_demand.lock().get(&node.path).cloned();
+                let persistent_key = persistent_cache::EntryKey {
+                    content_hash: persistent_cache::hash_str(&source),
+                    own_id: module_id,
+                    dep_fingerprint: persistent_cache::dependency_fingerprint(
+                        &graph,
+                        id,
+                        &module_map,
+                    ),
+                    barrel_fingerprint: persistent_cache::barrel_fingerprint(
+                        barrel_demand_snapshot.as_ref(),
+                    ),
+                };
+                if let Some(mut cached) = self.persistent_cache.get(&node.path, &persistent_key) {
+                    cached.id = module_id;
+                    // Backfill the in-memory cache too, so a second build in
+                    // the same long-lived process (dev server) hits
+                    // `self.cache` directly next time without a persistent
+                    // lookup.
+                    self.cache.insert(node.path.clone(), mtime, cached.clone());
+                    tracing::debug!("Using persistent-cached module: {:?}", node.path);
+                    return Some(Ok(cached));
+                }
+
                 // #1991: a confirmed pure barrel's own body still lists
                 // every leaf it re-exports, including names the lazy
                 // crawl never fetched (they have no graph edge for
@@ -2628,7 +2730,7 @@ impl Bundler {
                 // so it must not be reused below — a cache miss here
                 // falls back to a fresh parse, the same as any TS/TSX/JSX
                 // module already takes.
-                let source = match self.barrel_demand.lock().get(&node.path) {
+                let source = match &barrel_demand_snapshot {
                     Some(BarrelDemand::Names(names)) => {
                         let pruned = prune_barrel_source_to_demand(&source, names);
                         self.parsed_trees.lock().remove(&node.path);
@@ -2814,6 +2916,13 @@ impl Bundler {
 
                         self.cache
                             .insert(node.path.clone(), mtime, compiled.clone());
+                        // #2137 — mirror the insert into the persistent
+                        // layer; a no-op unless the cache is enabled.
+                        self.persistent_cache.insert(
+                            node.path.clone(),
+                            persistent_key,
+                            compiled.clone(),
+                        );
 
                         tracing::debug!("Transformed module: {:?}", node.path);
                         Some(Ok(compiled))
