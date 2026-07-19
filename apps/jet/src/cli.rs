@@ -2554,8 +2554,21 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // (same treatment as the runtime IIFE already baked into
             // `result.code`). Off path: `raw_entry` equals `result.code`
             // unchanged.
+            //
+            // `JET_VERBOSE_MANIFEST=1` (issue #2123) selects the pre-#2123
+            // verbose `{chunks:{...},moduleChunks:{...}}` JSON shape for
+            // A/B comparison instead of the default compact
+            // `{n,h,i,m}` encoding; `result.code` already carries the
+            // matching runtime accessor shape
+            // (`Bundler::generate_split_bundle` reads the same env var to
+            // pick `generate_split_runtime_verbose` vs `_compact`), so this
+            // is the only other place that decision has to be made.
             let raw_entry = if did_split {
-                let manifest_js = build_chunk_manifest_js(&hashed_chunks);
+                let manifest_js = if std::env::var_os("JET_VERBOSE_MANIFEST").is_some() {
+                    build_chunk_manifest_js(&hashed_chunks)
+                } else {
+                    build_chunk_manifest_compact_js(&hashed_chunks)
+                };
                 inject_chunk_manifest(&result.code, &manifest_js)
                     .context("Failed to inject code-splitting chunk manifest")?
             } else {
@@ -4915,6 +4928,11 @@ struct HashedChunk {
     name: String,
     /// Output-relative filename, e.g. "assets/chunk-lazy1.abcd1234.js".
     filename: String,
+    /// Bare 8-hex-char content hash (the same value baked into `filename`
+    /// between the chunk name and `.js`), kept separately so
+    /// `build_chunk_manifest_compact_js` doesn't have to re-derive it from
+    /// `filename` by string-stripping. @issue #2123
+    hash: String,
     /// Post-processed (minified if enabled) chunk code, ready to write.
     /// Already carries the `//# sourceMappingURL=` comment in `External`
     /// mode (matching the entry's ordering: the content hash above is
@@ -4934,9 +4952,20 @@ struct HashedChunk {
     map_json: Option<String>,
 }
 
-/// Build the `__jet__.chunkManifest = {...};` statement from already-hashed
-/// chunks: `{ chunks: { name: { file, imports } }, moduleChunks: { id: name } }`.
+/// Build the verbose `__jet__.chunkManifest = {...};` statement from
+/// already-hashed chunks: `{ chunks: { name: { file, imports } },
+/// moduleChunks: { id: name } }`. Every chunk name is repeated 3+ times
+/// (the `chunks` key, inside its own `file` string, and once per
+/// `moduleChunks` value) — for a few hundred chunks this is tens of KB of
+/// reconstructible JSON (issue #2123), so `build_chunk_manifest_compact_js`
+/// below is the default encoding; this verbose form now only ships behind
+/// the `JET_VERBOSE_MANIFEST=1` escape hatch (A/B + debugging), selected at
+/// the `did_split` call site alongside `generate_split_runtime_verbose`
+/// (the matching runtime accessor shape — see that function's doc comment
+/// for why the runtime shape is chosen at build time, not branched on at
+/// runtime).
 /// @issue #1930
+/// @issue #2123
 fn build_chunk_manifest_js(chunks: &[HashedChunk]) -> String {
     let mut chunks_obj = serde_json::Map::new();
     let mut module_chunks_obj = serde_json::Map::new();
@@ -4964,6 +4993,218 @@ fn build_chunk_manifest_js(chunks: &[HashedChunk]) -> String {
         serde_json::to_string(&manifest)
             .unwrap_or_else(|_| "{\"chunks\":{},\"moduleChunks\":{}}".to_string())
     )
+}
+
+/// Build the compact `__jet__.chunkManifest = {...};` statement (issue
+/// #2123, the default encoding — see `build_chunk_manifest_js` above for
+/// the verbose `JET_VERBOSE_MANIFEST=1` escape-hatch form it replaces).
+///
+/// Shape: `{ n: [name, ...], h: [hash, ...], i: [[importOrdinal, ...],
+/// ...], m: { moduleId: chunkOrdinal } }`. Every chunk name is stored
+/// exactly ONCE, in `n`; its position there ("ordinal") is how every other
+/// field refers back to it instead of repeating the name string:
+/// - `h[ordinal]` is that chunk's bare 8-hex-char content hash (no
+///   `assets/` prefix or `.js` suffix — the compact runtime variant
+///   (`generate_split_runtime_compact`) reconstructs the on-disk path as
+///   `"assets/" + n[ordinal] + "." + h[ordinal] + ".js"`, the exact shape
+///   `build_hashed_chunk` always writes chunk files to).
+/// - `i[ordinal]` is the chunk's `imports` (dependency chunks to load
+///   first), translated from names to ordinals into `n`.
+/// - `m` replaces the verbose form's `moduleChunks: { id: name }` reverse
+///   index with `{ id: ordinal }`.
+///
+/// Emission is fully sorted — chunk names alphabetically (so `n`/`h`/`i`
+/// share that order), each chunk's own `i[ordinal]` import-ordinal list
+/// numerically, and `m`'s module-id keys numerically — so 2 builds of the
+/// same input produce byte-identical manifest JSON regardless of `chunks`'
+/// incoming order (AC3). This also fixes #1940's nondeterminism for this
+/// (default) path; the verbose escape hatch above still carries that
+/// pre-existing ordering gap (`serde_json::Map`'s insertion-order-preserving
+/// backing, `chunks`' own not-necessarily-sorted incoming order).
+/// @issue #2123
+fn build_chunk_manifest_compact_js(chunks: &[HashedChunk]) -> String {
+    let mut sorted: Vec<&HashedChunk> = chunks.iter().collect();
+    sorted.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+
+    let ordinal_of: HashMap<&str, usize> = sorted
+        .iter()
+        .enumerate()
+        .map(|(ordinal, chunk)| (chunk.name.as_str(), ordinal))
+        .collect();
+
+    let mut names: Vec<&str> = Vec::with_capacity(sorted.len());
+    let mut hashes: Vec<&str> = Vec::with_capacity(sorted.len());
+    let mut imports: Vec<Vec<usize>> = Vec::with_capacity(sorted.len());
+    for chunk in &sorted {
+        names.push(chunk.name.as_str());
+        hashes.push(chunk.hash.as_str());
+
+        // Import names not found in `ordinal_of` are dropped rather than
+        // panicking (mirrors `hash_preload_hints`'s defensive
+        // `filter_map`) — every non-entry chunk's `imports` names another
+        // non-entry chunk in practice, but this keeps manifest generation
+        // total instead of panicking if that invariant is ever violated.
+        let mut import_ordinals: Vec<usize> = chunk
+            .imports
+            .iter()
+            .filter_map(|name| ordinal_of.get(name.as_str()).copied())
+            .collect();
+        import_ordinals.sort_unstable();
+        imports.push(import_ordinals);
+    }
+
+    // `m`'s insertion order IS its serialized key order (`serde_json::Map`
+    // is indexmap-backed in this workspace — see this function's doc
+    // comment) — collect then sort numerically by module id before
+    // inserting, rather than inserting in `sorted`'s (chunk-name) order,
+    // so `m`'s own key order is independently deterministic.
+    let mut module_entries: Vec<(usize, usize)> = Vec::new();
+    for chunk in &sorted {
+        let ordinal = ordinal_of[chunk.name.as_str()];
+        module_entries.extend(chunk.module_ids.iter().map(|&id| (id, ordinal)));
+    }
+    module_entries.sort_unstable_by_key(|(id, _)| *id);
+    let mut module_chunks_obj = serde_json::Map::new();
+    for (id, ordinal) in module_entries {
+        module_chunks_obj.insert(id.to_string(), serde_json::Value::from(ordinal));
+    }
+
+    let manifest = serde_json::json!({
+        "n": names,
+        "h": hashes,
+        "i": imports,
+        "m": module_chunks_obj,
+    });
+    format!(
+        "__jet__.chunkManifest = {};\n",
+        serde_json::to_string(&manifest)
+            .unwrap_or_else(|_| "{\"n\":[],\"h\":[],\"i\":[],\"m\":{}}".to_string())
+    )
+}
+
+/// @issue #2123
+#[cfg(test)]
+mod build_chunk_manifest_compact_js_tests {
+    use super::*;
+
+    fn chunk(name: &str, hash: &str, imports: &[&str], module_ids: &[usize]) -> HashedChunk {
+        HashedChunk {
+            name: name.to_string(),
+            filename: format!("assets/{name}.{hash}.js"),
+            hash: hash.to_string(),
+            code: String::new(),
+            imports: imports.iter().map(|s| s.to_string()).collect(),
+            module_ids: module_ids.to_vec(),
+            map_json: None,
+        }
+    }
+
+    /// `manifest_js` is always exactly
+    /// `"__jet__.chunkManifest = " + <json> + ";\n"` — strip that fixed
+    /// wrapper and parse the remainder, rather than hand-rolling a
+    /// tolerant scanner (`code_splitting.rs`'s integration tests need that
+    /// tolerance because they parse real, possibly-minified entry files;
+    /// this module calls `build_chunk_manifest_compact_js` directly, so
+    /// its output shape is exact).
+    fn parse_manifest_json(manifest_js: &str) -> serde_json::Value {
+        let json_text = manifest_js
+            .strip_prefix("__jet__.chunkManifest = ")
+            .expect("manifest_js must start with the chunkManifest assignment")
+            .strip_suffix(";\n")
+            .expect("manifest_js must end with ';\\n'");
+        serde_json::from_str(json_text).expect("manifest_js body must be valid JSON")
+    }
+
+    #[test]
+    fn empty_input_falls_back_to_empty_compact_shape() {
+        let manifest_js = build_chunk_manifest_compact_js(&[]);
+        assert_eq!(
+            manifest_js,
+            "__jet__.chunkManifest = {\"n\":[],\"h\":[],\"i\":[],\"m\":{}};\n"
+        );
+    }
+
+    #[test]
+    fn names_hashes_imports_and_module_chunks_are_sorted_by_chunk_name_and_numerically() {
+        // "chunk-b" imports "chunk-c" and "chunk-a" (deliberately listed out
+        // of alphabetical order) and every chunk's module id is deliberately
+        // out of step with its position in this Vec — proving `n`/`h` sort
+        // by chunk name, `i`'s per-chunk ordinal list sorts numerically
+        // (which, since ordinals are assigned in alphabetical order, is the
+        // same as sorting import names alphabetically), and `m` sorts by
+        // module id independent of chunk order.
+        let chunks = vec![
+            chunk("chunk-c", "cccccccc", &[], &[30]),
+            chunk("chunk-a", "aaaaaaaa", &[], &[10]),
+            chunk("chunk-b", "bbbbbbbb", &["chunk-c", "chunk-a"], &[20]),
+        ];
+
+        let manifest_js = build_chunk_manifest_compact_js(&chunks);
+        let manifest = parse_manifest_json(&manifest_js);
+
+        assert_eq!(
+            manifest["n"],
+            serde_json::json!(["chunk-a", "chunk-b", "chunk-c"]),
+            "n must be sorted alphabetically: {manifest}"
+        );
+        assert_eq!(
+            manifest["h"],
+            serde_json::json!(["aaaaaaaa", "bbbbbbbb", "cccccccc"]),
+            "h must align with n's sorted order: {manifest}"
+        );
+        // chunk-a (ordinal 0) and chunk-c (ordinal 2) are chunk-b's
+        // (ordinal 1) imports, sorted numerically: [0, 2].
+        assert_eq!(
+            manifest["i"],
+            serde_json::json!([[], [0, 2], []]),
+            "i must translate import names to ordinals into n, sorted numerically: {manifest}"
+        );
+        assert_eq!(
+            manifest["m"],
+            serde_json::json!({"10": 0, "20": 1, "30": 2}),
+            "m must map module id -> chunk ordinal, keyed/ordered by module id: {manifest}"
+        );
+    }
+
+    #[test]
+    fn emission_is_deterministic_regardless_of_input_chunk_order() {
+        // AC3: 2 differently-ordered `chunks` slices describing the same
+        // chunk set must still produce byte-identical manifest text.
+        let forward = vec![
+            chunk("chunk-a", "11111111", &[], &[1]),
+            chunk("chunk-b", "22222222", &[], &[2]),
+            chunk("chunk-c", "33333333", &[], &[3]),
+        ];
+        let reversed = vec![
+            chunk("chunk-c", "33333333", &[], &[3]),
+            chunk("chunk-a", "11111111", &[], &[1]),
+            chunk("chunk-b", "22222222", &[], &[2]),
+        ];
+
+        assert_eq!(
+            build_chunk_manifest_compact_js(&forward),
+            build_chunk_manifest_compact_js(&reversed),
+            "manifest text must be byte-identical regardless of the incoming chunk slice's order"
+        );
+    }
+
+    #[test]
+    fn hash_field_is_bare_hex_and_file_path_is_reconstructible_from_it() {
+        // The compact runtime (`generate_split_runtime_compact`) reconstructs
+        // a chunk's on-disk path as `"assets/" + n[k] + "." + h[k] + ".js"` —
+        // proves `h` carries exactly the bare hash `build_hashed_chunk` bakes
+        // into `filename`, with no `assets/`/name/`.js` fragments leaking in.
+        let chunks = vec![chunk("chunk-solo", "deadbeef", &[], &[])];
+        let manifest = parse_manifest_json(&build_chunk_manifest_compact_js(&chunks));
+
+        assert_eq!(manifest["h"], serde_json::json!(["deadbeef"]));
+        let reconstructed = format!(
+            "assets/{}.{}.js",
+            manifest["n"][0].as_str().expect("n[0] must be a string"),
+            manifest["h"][0].as_str().expect("h[0] must be a string")
+        );
+        assert_eq!(reconstructed, chunks[0].filename);
+    }
 }
 
 /// Inject `__jet__.chunkManifest = {...};` into raw (pre-minify) entry code,
@@ -5017,14 +5258,18 @@ mod inject_chunk_manifest_tests {
         // right before that statement — the exact same splice point the
         // pre-#1963 `__jet__.require(` anchor produced.
         let entry_code = "__jet__runtime();\n\n// Execute entry point\n__jet__.require(0);\n";
-        let manifest_js = "__jet__.chunkManifest = {\"chunks\":{},\"moduleChunks\":{}};\n";
+        // Compact shape (issue #2123, the default since this test's WI
+        // #1963) — `inject_chunk_manifest` treats `manifest_js` as an
+        // opaque string either way, so this is representative rather than
+        // load-bearing for the splice-point assertion below.
+        let manifest_js = "__jet__.chunkManifest = {\"n\":[],\"h\":[],\"i\":[],\"m\":{}};\n";
 
         let out = inject_chunk_manifest(entry_code, manifest_js).expect("inject must succeed");
 
         assert_eq!(
             out,
             "__jet__runtime();\n\n// Execute entry point\n\
-             __jet__.chunkManifest = {\"chunks\":{},\"moduleChunks\":{}};\n\
+             __jet__.chunkManifest = {\"n\":[],\"h\":[],\"i\":[],\"m\":{}};\n\
              __jet__.require(0);\n"
         );
     }
@@ -5042,8 +5287,10 @@ mod inject_chunk_manifest_tests {
             Promise.all([\"shared\"].map(__jet__.loadChunk)).then(function() {\n  \
             __jet__.require(0);\n}, function(err) {\n  \
             console.error('jet: failed to load startup chunk', err);\n  throw err;\n});\n";
+        // Compact shape (issue #2123) — see the sibling test above for why
+        // the exact manifest shape doesn't affect this test's assertions.
         let manifest_js =
-            "__jet__.chunkManifest = {\"chunks\":{\"shared\":{}},\"moduleChunks\":{}};\n";
+            "__jet__.chunkManifest = {\"n\":[\"shared\"],\"h\":[\"abcd1234\"],\"i\":[[]],\"m\":{}};\n";
 
         let out = inject_chunk_manifest(entry_code, manifest_js).expect("inject must succeed");
 
@@ -5138,6 +5385,7 @@ fn build_hashed_chunk(
     HashedChunk {
         name: chunk.name.clone(),
         filename,
+        hash: chunk_hash,
         code,
         imports: chunk.imports.clone(),
         module_ids: chunk.module_ids.clone(),

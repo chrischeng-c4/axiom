@@ -23,6 +23,7 @@ use axum::{
     Router,
 };
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
@@ -131,6 +132,29 @@ fn extract_json_assignment(code: &str, marker: &str) -> Result<Value> {
         .with_context(|| format!("no JSON value found after {marker:?} ="))
 }
 
+/// Like `extract_json_assignment`, but also returns the exact byte length of
+/// the JSON value's own text (not the surrounding `<marker> = ` / trailing
+/// `;`) — used by the issue #2123 manifest-size tests below to measure
+/// `__jet__.chunkManifest`'s span independent of surrounding entry code.
+fn manifest_value_and_span(code: &str, marker: &str) -> (Value, usize) {
+    let marker_idx = code
+        .rfind(marker)
+        .unwrap_or_else(|| panic!("code missing {marker:?}"));
+    let after_marker = marker_idx + marker.len();
+    let eq_rel = code[after_marker..]
+        .find('=')
+        .unwrap_or_else(|| panic!("no '=' found after {marker:?}"));
+    let value_start = after_marker + eq_rel + 1;
+    let tail = &code[value_start..];
+    let mut stream = serde_json::Deserializer::from_str(tail).into_iter::<Value>();
+    let value = stream
+        .next()
+        .unwrap_or_else(|| panic!("no JSON value found after {marker:?} ="))
+        .unwrap_or_else(|e| panic!("invalid JSON after {marker:?} =: {e}"));
+    let span = stream.byte_offset();
+    (value, span)
+}
+
 /// Normalizes an entry file's code for cross-build byte-identity
 /// comparison: blanks the trailing `//# sourceMappingURL=...` comment
 /// (whose filename embeds the entry's own content hash) and splits the
@@ -149,6 +173,17 @@ fn extract_json_assignment(code: &str, marker: &str) -> Result<Value> {
 /// separately rather than fixed here; this helper makes the byte-identity
 /// tests below robust to it while still proving genuine byte-identity for
 /// everything the survivor filter can actually affect.
+///
+/// Issue #2123 fixed this nondeterminism for the default (compact)
+/// manifest path by sorting at emission time in
+/// `build_chunk_manifest_compact_js` — see
+/// `compact_chunk_manifest_emission_is_deterministic_across_builds` below,
+/// which asserts full raw-byte entry identity (not just this helper's
+/// normalized/tolerant comparison) for that path. `build_chunk_manifest_js`
+/// itself (the `JET_VERBOSE_MANIFEST=1` escape hatch) is untouched and
+/// still carries the ordering gap described above, so this helper — and
+/// the tolerance it provides — stays in place for tests that exercise or
+/// share code with that path.
 fn normalize_entry_code(code: &str) -> (String, Value) {
     let normalized_lines: String = code
         .lines()
@@ -184,6 +219,136 @@ fn normalize_entry_code(code: &str) -> (String, Value) {
     placeholder_code.push_str("<<CHUNK_MANIFEST>>");
     placeholder_code.push_str(&normalized_lines[value_end..]);
     (placeholder_code, value)
+}
+
+/// Normalizes a `__jet__.chunkManifest` JSON value into one shape-agnostic
+/// view, regardless of which encoding produced it: the pre-#2123 verbose
+/// `{ chunks: { name: { file, imports } }, moduleChunks: { id: name } }`
+/// shape (`build_chunk_manifest_js`, `JET_VERBOSE_MANIFEST=1`) or the
+/// default compact `{ n: [name], h: [hash], i: [[importOrdinal]],
+/// m: { id: chunkOrdinal } }` shape (`build_chunk_manifest_compact_js`,
+/// issue #2123). Returns `(chunk name -> (asset file, import chunk
+/// names), module id -> owning chunk name)`; a chunk's import names (and,
+/// for the module map, nothing else) are sorted so callers can compare
+/// decoded manifests for semantic equality without caring about a
+/// particular encoding's incidental array order (`Promise.all` in both
+/// `generate_split_runtime_verbose`/`_compact`'s `loadChunk` load a
+/// chunk's imports concurrently, so import order is not itself
+/// observable behavior).
+///
+/// Shape is detected by the presence of `chunks` (verbose) vs its absence
+/// (compact) — the two shapes don't share any top-level key name, so this
+/// is unambiguous.
+fn decode_manifest(
+    manifest: &Value,
+) -> (
+    BTreeMap<String, (String, Vec<String>)>,
+    BTreeMap<String, String>,
+) {
+    if let Some(chunks_obj) = manifest.get("chunks").and_then(Value::as_object) {
+        let chunks = chunks_obj
+            .iter()
+            .map(|(name, entry)| {
+                let file = entry
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| {
+                        panic!("chunks[{name:?}].file missing/non-string: {entry:?}")
+                    })
+                    .to_string();
+                let mut imports: Vec<String> = entry
+                    .get("imports")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|v| {
+                                v.as_str()
+                                    .unwrap_or_else(|| {
+                                        panic!("chunks[{name:?}].imports entry non-string: {v:?}")
+                                    })
+                                    .to_string()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                imports.sort_unstable();
+                (name.clone(), (file, imports))
+            })
+            .collect();
+        let module_chunks = manifest
+            .get("moduleChunks")
+            .and_then(Value::as_object)
+            .expect("manifest.moduleChunks must be an object in verbose shape")
+            .iter()
+            .map(|(id, name)| {
+                (
+                    id.clone(),
+                    name.as_str()
+                        .unwrap_or_else(|| panic!("moduleChunks[{id:?}] non-string: {name:?}"))
+                        .to_string(),
+                )
+            })
+            .collect();
+        (chunks, module_chunks)
+    } else {
+        let names: Vec<&str> = manifest
+            .get("n")
+            .and_then(Value::as_array)
+            .expect("manifest.n must be an array in compact shape")
+            .iter()
+            .map(|v| v.as_str().expect("manifest.n entries must be strings"))
+            .collect();
+        let hashes: Vec<&str> = manifest
+            .get("h")
+            .and_then(Value::as_array)
+            .expect("manifest.h must be an array in compact shape")
+            .iter()
+            .map(|v| v.as_str().expect("manifest.h entries must be strings"))
+            .collect();
+        let imports: Vec<Vec<usize>> = manifest
+            .get("i")
+            .and_then(Value::as_array)
+            .expect("manifest.i must be an array in compact shape")
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_array()
+                    .expect("manifest.i entries must be arrays")
+                    .iter()
+                    .map(|v| v.as_u64().expect("manifest.i ordinal must be a number") as usize)
+                    .collect()
+            })
+            .collect();
+        assert_eq!(names.len(), hashes.len(), "manifest.n/.h length mismatch");
+        assert_eq!(names.len(), imports.len(), "manifest.n/.i length mismatch");
+
+        let chunks = names
+            .iter()
+            .enumerate()
+            .map(|(ordinal, name)| {
+                let file = format!("assets/{}.{}.js", name, hashes[ordinal]);
+                let mut chunk_imports: Vec<String> = imports[ordinal]
+                    .iter()
+                    .map(|&idx| names[idx].to_string())
+                    .collect();
+                chunk_imports.sort_unstable();
+                (name.to_string(), (file, chunk_imports))
+            })
+            .collect();
+
+        let module_chunks = manifest
+            .get("m")
+            .and_then(Value::as_object)
+            .expect("manifest.m must be an object in compact shape")
+            .iter()
+            .map(|(id, ordinal)| {
+                let ordinal = ordinal.as_u64().expect("manifest.m value must be a number") as usize;
+                (id.clone(), names[ordinal].to_string())
+            })
+            .collect();
+
+        (chunks, module_chunks)
+    }
 }
 
 #[test]
@@ -243,23 +408,12 @@ fn splitting_flag_emits_chunk_files_with_manifest_and_registered_async_chunks() 
 
     let manifest = extract_json_assignment(&entry_code, "__jet__.chunkManifest")
         .expect("entry must carry a parseable __jet__.chunkManifest assignment");
-    let chunks_obj = manifest
-        .get("chunks")
-        .and_then(Value::as_object)
-        .expect("manifest.chunks must be an object");
-    let module_chunks_obj = manifest
-        .get("moduleChunks")
-        .and_then(Value::as_object)
-        .expect("manifest.moduleChunks must be an object");
+    let (chunks, module_chunks) = decode_manifest(&manifest);
 
     for chunk_name in ["chunk-lazy1", "chunk-lazy2"] {
-        let manifest_entry = chunks_obj
+        let (manifest_file, _imports) = chunks
             .get(chunk_name)
-            .unwrap_or_else(|| panic!("manifest.chunks missing {chunk_name:?}: {chunks_obj:?}"));
-        let manifest_file = manifest_entry
-            .get("file")
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("manifest.chunks[{chunk_name:?}].file missing/non-string"));
+            .unwrap_or_else(|| panic!("manifest missing chunk {chunk_name:?}: {chunks:?}"));
         assert!(
             manifest_file.starts_with("assets/") && manifest_file.ends_with(".js"),
             "chunk file {manifest_file:?} must live under assets/ as a .js file"
@@ -284,16 +438,12 @@ fn splitting_flag_emits_chunk_files_with_manifest_and_registered_async_chunks() 
         "splitting build must write chunk files under dist/assets/"
     );
     assert!(
-        module_chunks_obj
-            .values()
-            .any(|v| v.as_str() == Some("chunk-lazy1")),
-        "moduleChunks must map at least one module id to chunk-lazy1: {module_chunks_obj:?}"
+        module_chunks.values().any(|name| name == "chunk-lazy1"),
+        "module->chunk map must map at least one module id to chunk-lazy1: {module_chunks:?}"
     );
     assert!(
-        module_chunks_obj
-            .values()
-            .any(|v| v.as_str() == Some("chunk-lazy2")),
-        "moduleChunks must map at least one module id to chunk-lazy2: {module_chunks_obj:?}"
+        module_chunks.values().any(|name| name == "chunk-lazy2"),
+        "module->chunk map must map at least one module id to chunk-lazy2: {module_chunks:?}"
     );
 
     Ok(())
@@ -1744,19 +1894,11 @@ fn default_web_build_splits_automatically_when_graph_has_dynamic_imports() -> Re
 
     let manifest = extract_json_assignment(&entry_code, "__jet__.chunkManifest")
         .expect("entry must carry a parseable __jet__.chunkManifest assignment");
-    let chunks_obj = manifest
-        .get("chunks")
-        .and_then(Value::as_object)
-        .expect("manifest.chunks must be an object");
+    let (chunks, _module_chunks) = decode_manifest(&manifest);
     for chunk_name in ["chunk-lazy1", "chunk-lazy2"] {
-        assert!(
-            chunks_obj.contains_key(chunk_name),
-            "manifest.chunks missing {chunk_name:?} under default-on splitting: {chunks_obj:?}"
-        );
-        let chunk_file = chunks_obj[chunk_name]
-            .get("file")
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("manifest.chunks[{chunk_name:?}].file missing/non-string"));
+        let (chunk_file, _imports) = chunks.get(chunk_name).unwrap_or_else(|| {
+            panic!("manifest missing chunk {chunk_name:?} under default-on splitting: {chunks:?}")
+        });
         assert!(
             dist.join(chunk_file).exists(),
             "manifest names {chunk_file:?} for {chunk_name:?} but no such file was written"
@@ -2012,43 +2154,29 @@ fn large_corpus_default_split_stays_within_chunk_count_size_and_wall_time_budget
     let raw_entry_code = fs::read_to_string(&raw_entry_path).expect("read entry file (no-minify)");
     let manifest = extract_json_assignment(&raw_entry_code, "__jet__.chunkManifest")
         .expect("entry must carry a parseable __jet__.chunkManifest assignment");
-    let chunks_obj = manifest
-        .get("chunks")
-        .and_then(Value::as_object)
-        .expect("manifest.chunks must be an object");
-    let module_chunks_obj = manifest
-        .get("moduleChunks")
-        .and_then(Value::as_object)
-        .expect("manifest.moduleChunks must be an object");
+    let (chunks, module_chunks) = decode_manifest(&manifest);
     assert_eq!(
-        chunks_obj.len(),
+        chunks.len(),
         MODULE_COUNT,
-        "expected exactly {MODULE_COUNT} manifest.chunks entries, got {}",
-        chunks_obj.len()
+        "expected exactly {MODULE_COUNT} manifest chunk entries, got {}",
+        chunks.len()
     );
     assert_eq!(
-        module_chunks_obj.len(),
+        module_chunks.len(),
         MODULE_COUNT,
-        "expected exactly {MODULE_COUNT} manifest.moduleChunks entries, got {}",
-        module_chunks_obj.len()
+        "expected exactly {MODULE_COUNT} manifest module->chunk entries, got {}",
+        module_chunks.len()
     );
-    for (chunk_name, chunk_meta) in chunks_obj {
-        let file = chunk_meta
-            .get("file")
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("manifest.chunks[{chunk_name:?}].file missing/non-string"));
+    for (chunk_name, (file, _imports)) in &chunks {
         assert!(
             raw_dist.join(file).exists(),
             "manifest names {file:?} for {chunk_name:?} but no such file exists on disk"
         );
     }
-    for (module_id, chunk_name) in module_chunks_obj {
-        let chunk_name_str = chunk_name
-            .as_str()
-            .unwrap_or_else(|| panic!("moduleChunks[{module_id:?}] is not a string"));
+    for (module_id, chunk_name) in &module_chunks {
         assert!(
-            chunks_obj.contains_key(chunk_name_str),
-            "moduleChunks[{module_id:?}] = {chunk_name_str:?} has no matching entry in manifest.chunks"
+            chunks.contains_key(chunk_name),
+            "module->chunk map[{module_id:?}] = {chunk_name:?} has no matching manifest chunk entry"
         );
     }
 
@@ -2180,27 +2308,16 @@ fn splitting_survives_pnpm_symlink_and_alias_without_duplicating_or_orphaning_mo
 
     let manifest = extract_json_assignment(&entry_code, "__jet__.chunkManifest")
         .expect("entry must carry a parseable __jet__.chunkManifest assignment");
-    let chunks_obj = manifest
-        .get("chunks")
-        .and_then(Value::as_object)
-        .expect("manifest.chunks must be an object");
-    let module_chunks_obj = manifest
-        .get("moduleChunks")
-        .and_then(Value::as_object)
-        .expect("manifest.moduleChunks must be an object");
+    let (chunks, module_chunks) = decode_manifest(&manifest);
 
     assert_eq!(
-        chunks_obj.len(),
+        chunks.len(),
         1,
-        "expected exactly one async chunk (\"chunk-lazy\"), got {chunks_obj:?}"
+        "expected exactly one async chunk (\"chunk-lazy\"), got {chunks:?}"
     );
-    let lazy_chunk_meta = chunks_obj
+    let (lazy_chunk_file, _imports) = chunks
         .get("chunk-lazy")
-        .unwrap_or_else(|| panic!("manifest.chunks missing \"chunk-lazy\": {chunks_obj:?}"));
-    let lazy_chunk_file = lazy_chunk_meta
-        .get("file")
-        .and_then(Value::as_str)
-        .expect("manifest.chunks[\"chunk-lazy\"].file missing/non-string");
+        .unwrap_or_else(|| panic!("manifest missing chunk \"chunk-lazy\": {chunks:?}"));
     let lazy_chunk_path = dist.join(lazy_chunk_file);
     assert!(
         lazy_chunk_path.exists(),
@@ -2217,21 +2334,21 @@ fn splitting_survives_pnpm_symlink_and_alias_without_duplicating_or_orphaning_mo
         "chunk-lazy must carry the lazy module and its alias-resolved private dep together; code={lazy_chunk_code}"
     );
 
-    // moduleChunks only records modules assigned to a *named* (non-entry)
-    // chunk (see `build_chunk_manifest_js`), so exactly the 2 chunk-lazy
-    // members (lazy.js + its private dep) are expected here — the 2
-    // entry-inlined modules (index.js + the symlinked shared-dep) are not.
+    // The module->chunk map only records modules assigned to a *named*
+    // (non-entry) chunk (see `decode_manifest`), so exactly the 2
+    // chunk-lazy members (lazy.js + its private dep) are expected here —
+    // the 2 entry-inlined modules (index.js + the symlinked shared-dep)
+    // are not.
     assert_eq!(
-        module_chunks_obj.len(),
+        module_chunks.len(),
         2,
-        "expected exactly 2 moduleChunks entries (lazy.js + its alias-resolved private dep), \
-         got {module_chunks_obj:?}"
+        "expected exactly 2 module->chunk entries (lazy.js + its alias-resolved private dep), \
+         got {module_chunks:?}"
     );
-    for chunk_name in module_chunks_obj.values() {
+    for chunk_name in module_chunks.values() {
         assert_eq!(
-            chunk_name.as_str(),
-            Some("chunk-lazy"),
-            "every moduleChunks entry must point at chunk-lazy, got {module_chunks_obj:?}"
+            chunk_name, "chunk-lazy",
+            "every module->chunk entry must point at chunk-lazy, got {module_chunks:?}"
         );
     }
 
@@ -2423,6 +2540,319 @@ fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
         "chunkManifest must be the same JSON value (key order ignored — see \
          normalize_entry_code's doc comment) between the survivor filter \
          and the escape-hatch (JET_NO_SURVIVOR_FILTER=1, filter off) build"
+    );
+
+    Ok(())
+}
+
+/// Issue #2123 (epic #1990, "beat vite"): the embedded chunk manifest was
+/// jet's largest remaining entry-size lever versus vite — 89,052 bytes for
+/// a 667-chunk build using the pre-#2123 verbose
+/// `{chunks:{name:{file,imports}}, moduleChunks:{id:name}}` shape, which
+/// repeats every chunk name 3+ times. `build_chunk_manifest_compact_js`
+/// (the new default) stores each chunk name once (`n`) and refers to
+/// chunks by ordinal everywhere else (`h`/`i`/`m`); this test measures its
+/// span at the exact scale named in the issue (AC1) and asserts it against
+/// the issue's <=35KB target.
+#[test]
+fn compact_chunk_manifest_stays_within_35kb_budget_at_scale() -> Result<()> {
+    const MODULE_COUNT: usize = 667;
+    const MANIFEST_SIZE_BUDGET_BYTES: usize = 35 * 1024;
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_large_dynamic_import_corpus(fixture, MODULE_COUNT);
+
+    require_success(
+        run_jet(fixture, ["build", "--no-minify"])?,
+        "build (default flags, 667-module corpus, manifest size measurement)",
+    )?;
+
+    let dist = fixture.join("dist");
+    let entry_path = list_files_recursive(&dist)
+        .into_iter()
+        .find(|p| {
+            p.parent() == Some(dist.as_path())
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("main.") && n.ends_with(".js"))
+        })
+        .expect("no top-level main.<hash>.js entry file");
+    let entry_code = fs::read_to_string(&entry_path).expect("read entry file");
+
+    let (manifest, span_bytes) = manifest_value_and_span(&entry_code, "__jet__.chunkManifest");
+    let (chunks, module_chunks) = decode_manifest(&manifest);
+    assert_eq!(
+        chunks.len(),
+        MODULE_COUNT,
+        "expected {MODULE_COUNT} manifest chunk entries, got {}",
+        chunks.len()
+    );
+    assert_eq!(
+        module_chunks.len(),
+        MODULE_COUNT,
+        "expected {MODULE_COUNT} manifest module->chunk entries, got {}",
+        module_chunks.len()
+    );
+
+    eprintln!(
+        "#2123 compact chunkManifest measurement: {span_bytes} bytes for {MODULE_COUNT} chunks \
+         (budget {MANIFEST_SIZE_BUDGET_BYTES} bytes)"
+    );
+    assert!(
+        span_bytes <= MANIFEST_SIZE_BUDGET_BYTES,
+        "compact chunkManifest is {span_bytes} bytes for {MODULE_COUNT} chunks, budget is \
+         {MANIFEST_SIZE_BUDGET_BYTES} bytes (issue #2123 target: <=35KB at 667-chunk scale)"
+    );
+
+    Ok(())
+}
+
+/// Issue #2123 AC2: `JET_VERBOSE_MANIFEST=1` selects the pre-#2123 verbose
+/// manifest shape (`build_chunk_manifest_js`) and its matching runtime
+/// accessors (`generate_split_runtime_verbose`) as a build-time escape
+/// hatch/A-B baseline. Chunk files themselves never encode manifest shape
+/// (`Bundler::generate_split_bundle` doesn't read `JET_VERBOSE_MANIFEST`,
+/// and `registerChunk` stays name-keyed either way), so every dist/ file
+/// except the entry must be byte-identical between the two builds; only
+/// the entry's manifest shape (and, downstream of that, its content hash)
+/// differs. Also reports both builds' manifest span side by side, at the
+/// issue's named 667-chunk scale — the "measure verbose vs compact" verify
+/// step.
+#[test]
+fn compact_chunk_manifest_escape_hatch_matches_verbose_shape_and_keeps_chunk_files_byte_identical(
+) -> Result<()> {
+    const MODULE_COUNT: usize = 667;
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_large_dynamic_import_corpus(fixture, MODULE_COUNT);
+
+    fn build(fixture: &Path, out_dir: &str, verbose: bool) -> Result<PathBuf> {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jet"));
+        cmd.args(["build", "--no-minify", "-o", out_dir])
+            .current_dir(fixture);
+        if verbose {
+            cmd.env("JET_VERBOSE_MANIFEST", "1");
+        }
+        let output = cmd.output().context("run jet build")?;
+        require_success(
+            output,
+            if verbose {
+                "build --no-minify (JET_VERBOSE_MANIFEST=1)"
+            } else {
+                "build --no-minify (default, compact manifest)"
+            },
+        )?;
+        Ok(fixture.join(out_dir))
+    }
+
+    /// `(relative-path, absolute-path)` for every dist file, sorted by
+    /// relative path so 2 output trees zip up aligned.
+    fn sorted_entries(dist: &Path) -> Vec<(String, PathBuf)> {
+        let mut entries: Vec<(String, PathBuf)> = list_files_recursive(dist)
+            .into_iter()
+            .map(|p| {
+                let rel = p
+                    .strip_prefix(dist)
+                    .expect("file under dist")
+                    .to_string_lossy()
+                    .into_owned();
+                (rel, p)
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+    }
+
+    let dist_compact = build(fixture, "dist-compact", false)?;
+    let dist_verbose = build(fixture, "dist-verbose", true)?;
+
+    let is_entry = |rel: &str| -> bool {
+        rel.rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("main."))
+    };
+    let (compact_entry, compact_rest): (Vec<_>, Vec<_>) = sorted_entries(&dist_compact)
+        .into_iter()
+        .partition(|(rel, _)| is_entry(rel));
+    let (verbose_entry, verbose_rest): (Vec<_>, Vec<_>) = sorted_entries(&dist_verbose)
+        .into_iter()
+        .partition(|(rel, _)| is_entry(rel));
+
+    fn entry_js_path(entries: &[(String, PathBuf)]) -> &Path {
+        entries
+            .iter()
+            .find(|(rel, _)| rel.ends_with(".js"))
+            .map(|(_, p)| p.as_path())
+            .expect("main.<hash>.js missing")
+    }
+    let entry_compact_path = entry_js_path(&compact_entry);
+    let entry_verbose_path = entry_js_path(&verbose_entry);
+    let entry_compact_name = entry_compact_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8")
+        .to_string();
+    let entry_verbose_name = entry_verbose_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8")
+        .to_string();
+
+    // Non-entry files (chunk JS + every .map + index.html): exact
+    // relative-path set and byte-identical content (AC2).
+    let compact_rest_rel: Vec<&String> = compact_rest.iter().map(|(r, _)| r).collect();
+    let verbose_rest_rel: Vec<&String> = verbose_rest.iter().map(|(r, _)| r).collect();
+    assert_eq!(
+        compact_rest_rel, verbose_rest_rel,
+        "compact (default) and JET_VERBOSE_MANIFEST=1 builds must emit the same non-entry \
+         dist/ file set"
+    );
+    for ((rel, cp), (_, vp)) in compact_rest.iter().zip(verbose_rest.iter()) {
+        let cb = fs::read(cp).with_context(|| format!("read {}", cp.display()))?;
+        let vb = fs::read(vp).with_context(|| format!("read {}", vp.display()))?;
+        if rel == "index.html" {
+            let cs_text = String::from_utf8(cb).context("index.html must be utf-8")?;
+            let vs_text = String::from_utf8(vb).context("index.html must be utf-8")?;
+            assert_eq!(
+                cs_text.replace(&entry_compact_name, "<<ENTRY>>"),
+                vs_text.replace(&entry_verbose_name, "<<ENTRY>>"),
+                "dist/index.html must be byte-identical (modulo the entry's own \
+                 content-hashed filename) between the compact and verbose manifest builds"
+            );
+            continue;
+        }
+        assert_eq!(
+            cb, vb,
+            "dist/{rel} must be byte-identical between the compact and verbose manifest \
+             builds (AC2: only the manifest lookup path differs, chunk files are unaffected)"
+        );
+    }
+
+    let entry_compact_code =
+        fs::read_to_string(entry_compact_path).context("read compact entry")?;
+    let entry_verbose_code =
+        fs::read_to_string(entry_verbose_path).context("read verbose entry")?;
+
+    // Shape assertion: compact uses the `n`/`h`/`i`/`m` keys, verbose uses
+    // `chunks`/`moduleChunks` — confirms JET_VERBOSE_MANIFEST=1 actually
+    // selected the old encoder, not just the old runtime.
+    assert!(
+        entry_compact_code.contains("\"n\":") && entry_compact_code.contains("\"h\":"),
+        "default build's manifest must use the compact n/h/i/m shape"
+    );
+    assert!(
+        entry_verbose_code.contains("\"chunks\":")
+            && entry_verbose_code.contains("\"moduleChunks\":"),
+        "JET_VERBOSE_MANIFEST=1 build's manifest must use the pre-#2123 verbose shape"
+    );
+
+    // Semantic equivalence: modulo shape, both manifests must describe the
+    // exact same chunk set, same per-chunk file+imports, and same
+    // module->chunk mapping.
+    let (compact_manifest, compact_span) =
+        manifest_value_and_span(&entry_compact_code, "__jet__.chunkManifest");
+    let (verbose_manifest, verbose_span) =
+        manifest_value_and_span(&entry_verbose_code, "__jet__.chunkManifest");
+    let (compact_chunks, compact_module_chunks) = decode_manifest(&compact_manifest);
+    let (verbose_chunks, verbose_module_chunks) = decode_manifest(&verbose_manifest);
+    assert_eq!(
+        compact_chunks, verbose_chunks,
+        "compact and verbose manifests must decode to the same chunk name -> (file, imports) map"
+    );
+    assert_eq!(
+        compact_module_chunks, verbose_module_chunks,
+        "compact and verbose manifests must decode to the same module id -> chunk name map"
+    );
+
+    eprintln!(
+        "#2123 manifest span at {MODULE_COUNT} chunks: compact={compact_span} bytes, \
+         verbose={verbose_span} bytes (reduction={} bytes, {:.1}%)",
+        verbose_span.saturating_sub(compact_span),
+        100.0 * (verbose_span as f64 - compact_span as f64) / verbose_span as f64
+    );
+    assert!(
+        compact_span < verbose_span,
+        "compact manifest ({compact_span} bytes) must be smaller than verbose \
+         ({verbose_span} bytes)"
+    );
+
+    Ok(())
+}
+
+/// Issue #2123 AC3: `build_chunk_manifest_compact_js` sorts chunk names
+/// alphabetically (fixing ordinal assignment, and thus `n`/`h`/`i`'s own
+/// order), each chunk's own import-ordinal list numerically, and `m`'s
+/// module-id keys numerically, all independent of `chunks`' incoming
+/// slice order — closing the pre-existing #1940 nondeterminism
+/// (`serde_json::Map`'s insertion-order-preserving backing, documented on
+/// `normalize_entry_code` above) for this (default) manifest path. Unlike
+/// the tolerant `normalize_entry_code`-based comparisons elsewhere in this
+/// file, this test asserts full raw-byte entry identity across 2 builds of
+/// one fixture — the stronger claim sorted deterministic emission makes
+/// possible.
+#[test]
+fn compact_chunk_manifest_emission_is_deterministic_across_builds() -> Result<()> {
+    const MODULE_COUNT: usize = 667;
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_large_dynamic_import_corpus(fixture, MODULE_COUNT);
+
+    fn build(fixture: &Path, out_dir: &str) -> Result<PathBuf> {
+        require_success(
+            run_jet(fixture, ["build", "--no-minify", "-o", out_dir])?,
+            "build --no-minify (determinism run)",
+        )?;
+        Ok(fixture.join(out_dir))
+    }
+
+    let dist_a = build(fixture, "dist-a")?;
+    let dist_b = build(fixture, "dist-b")?;
+
+    fn entry_js_path(dist: &Path) -> PathBuf {
+        list_files_recursive(dist)
+            .into_iter()
+            .find(|p| {
+                p.parent() == Some(dist)
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("main.") && n.ends_with(".js"))
+            })
+            .expect("no top-level main.<hash>.js entry file")
+    }
+
+    let entry_a_path = entry_js_path(&dist_a);
+    let entry_b_path = entry_js_path(&dist_b);
+
+    // If manifest emission is genuinely deterministic, 2 builds of the
+    // identical fixture must hash (and therefore name) their entry files
+    // identically — a stronger signal than "manifest JSON parses to the
+    // same value" (`normalize_entry_code`'s tolerant comparison, used
+    // elsewhere in this file for the still-nondeterministic verbose path).
+    let entry_a_name = entry_a_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8");
+    let entry_b_name = entry_b_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8");
+    assert_eq!(
+        entry_a_name, entry_b_name,
+        "2 builds of the identical fixture must produce the same content-hashed entry \
+         filename (sorted deterministic manifest emission, issue #2123 AC3)"
+    );
+
+    let entry_a_bytes =
+        fs::read(&entry_a_path).with_context(|| format!("read {}", entry_a_path.display()))?;
+    let entry_b_bytes =
+        fs::read(&entry_b_path).with_context(|| format!("read {}", entry_b_path.display()))?;
+    assert_eq!(
+        entry_a_bytes, entry_b_bytes,
+        "2 builds of the identical fixture must produce a fully byte-identical entry file \
+         (issue #2123 AC3: sorted deterministic compact manifest emission)"
     );
 
     Ok(())

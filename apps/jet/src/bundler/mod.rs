@@ -246,8 +246,37 @@ fn generate_runtime() -> String {
 /// fallback (`generate_bundle_with_runtime`, used whenever a build has
 /// cycles or dynamic imports regardless of `--splitting`) stays byte-for-byte
 /// unchanged (AC2).
+///
+/// Issue #2123: `loadChunk`/`dynamicImport` must agree with
+/// `cli.rs`'s manifest encoder on the manifest's shape, so the choice is
+/// made once here, at build time, by reading the same `JET_VERBOSE_MANIFEST`
+/// env var `cli.rs`'s call site reads for `build_chunk_manifest_js` vs
+/// `build_chunk_manifest_compact_js` — two complete runtime string
+/// variants (`_verbose`/`_compact` below), not one template with an
+/// `if (manifest.n) ... else ...` runtime branch in the accessors
+/// themselves. Build-time selection keeps both the common (compact) path
+/// and the escape-hatch (verbose) path exactly as simple as the pre-#2123
+/// single-shape runtime, and keeps the verbose path byte-for-byte
+/// unchanged.
 /// @issue #1930
+/// @issue #2123
 fn generate_split_runtime() -> String {
+    if std::env::var_os("JET_VERBOSE_MANIFEST").is_some() {
+        generate_split_runtime_verbose()
+    } else {
+        generate_split_runtime_compact()
+    }
+}
+
+/// `generate_split_runtime`'s `JET_VERBOSE_MANIFEST=1` variant: `loadChunk`/
+/// `dynamicImport` read the pre-#2123 verbose
+/// `{ chunks: { name: { file, imports } }, moduleChunks: { id: name } }`
+/// manifest shape `build_chunk_manifest_js` (cli.rs) emits for that same
+/// escape hatch. Byte-for-byte the original (pre-#2123) `generate_split_runtime`
+/// body — kept unchanged so the escape hatch is a faithful A/B baseline.
+/// @issue #1930
+/// @issue #2123
+fn generate_split_runtime_verbose() -> String {
     r#"// Jet Module Runtime (code splitting)
 (function() {
   'use strict';
@@ -372,6 +401,169 @@ fn generate_split_runtime() -> String {
       return Promise.reject(new Error('__jet__.dynamicImport: no chunk maps to module ' + id));
     }
     return loadChunk(chunkName).then(function() {
+      return require(id);
+    });
+  }
+
+  // Expose global runtime
+  window.__jet__ = {
+    define: define,
+    require: require,
+    modules: modules,
+    cache: cache,
+    registerChunk: registerChunk,
+    loadChunk: loadChunk,
+    dynamicImport: dynamicImport
+  };
+})();
+"#
+    .to_string()
+}
+
+/// `generate_split_runtime`'s default variant: `loadChunk`/`dynamicImport`
+/// read the compact `{ n: [name, ...], h: [hash, ...],
+/// i: [[importOrdinal, ...], ...], m: { moduleId: chunkOrdinal } }`
+/// manifest shape `build_chunk_manifest_compact_js` (cli.rs) emits by
+/// default (issue #2123). Chunk names live once, in `n`; every other field
+/// refers back to a chunk by its index ("ordinal") into `n` instead of
+/// repeating the name string, and the on-disk URL
+/// (`"assets/" + n[k] + "." + h[k] + ".js"`, matching `build_hashed_chunk`'s
+/// `assets/<name>.<hash>.js` naming) is reconstructed here rather than
+/// stored. Otherwise identical structure/behavior to
+/// `generate_split_runtime_verbose` above (same `define`/`require`/
+/// `registerChunk`, same dep-first `Promise.all` chunk loading, same
+/// `<script>`-tag injection + dedup-by-name).
+/// @issue #2123
+fn generate_split_runtime_compact() -> String {
+    r#"// Jet Module Runtime (code splitting)
+(function() {
+  'use strict';
+
+  var modules = {};
+  var cache = {};
+
+  // Module definition
+  function define(id, factory) {
+    modules[id] = factory;
+  }
+
+  // Module require
+  function require(id) {
+    // Return cached module if exists
+    if (cache[id]) {
+      return cache[id].exports;
+    }
+
+    // Create module object
+    var module = cache[id] = {
+      exports: {},
+      id: id,
+      loaded: false
+    };
+
+    // Execute module factory
+    var factory = modules[id];
+    if (!factory) {
+      throw new Error('Module not found: ' + id);
+    }
+
+    factory.call(module.exports, require, module, module.exports);
+    module.loaded = true;
+
+    return module.exports;
+  }
+
+  // Chunk registry, in-flight load dedup map, and the entry script's own
+  // src — captured synchronously at IIFE-execution time, since
+  // document.currentScript is only valid during the initial script's own
+  // (top-level) execution — so async/shared chunk <script> tags resolve
+  // against the right base path.
+  var registeredChunks = {};
+  var chunkPromises = {};
+  var entryScriptSrc =
+    (typeof document !== 'undefined' && document.currentScript)
+      ? document.currentScript.src
+      : '';
+
+  // Register an async/shared chunk's modules. Called by the chunk file
+  // itself once it loads, via a generated call into this function
+  // (see Bundler::generate_split_bundle's chunk wrapper on the Rust side).
+  function registerChunk(name, factory) {
+    factory();
+    registeredChunks[name] = true;
+  }
+
+  // Load an async/shared chunk by name, injecting a <script> tag. Dep-first:
+  // loads the chunk's declared dependency chunks (chunkManifest imports,
+  // here an ordinal array into the compact manifest's `n`) before the
+  // chunk itself. Dedups concurrent loads of the same chunk.
+  function loadChunk(name) {
+    if (registeredChunks[name]) {
+      return Promise.resolve();
+    }
+    if (typeof document === 'undefined') {
+      return Promise.reject(new Error(
+        '__jet__.loadChunk: no document available to load chunk "' + name + '"'
+      ));
+    }
+    if (chunkPromises[name]) {
+      return chunkPromises[name];
+    }
+    var manifest = (window.__jet__ && window.__jet__.chunkManifest) ||
+      { n: [], h: [], i: [], m: {} };
+    var ordinal = manifest.n.indexOf(name);
+    if (ordinal === -1) {
+      return Promise.reject(new Error('__jet__.loadChunk: unknown chunk "' + name + '"'));
+    }
+    var importOrdinals = manifest.i[ordinal] || [];
+    var promise = Promise.all(importOrdinals.map(function(idx) {
+      return loadChunk(manifest.n[idx]);
+    })).then(function() {
+      if (registeredChunks[name]) {
+        return;
+      }
+      return new Promise(function(resolve, reject) {
+        var base = entryScriptSrc.substring(0, entryScriptSrc.lastIndexOf('/') + 1);
+        var file = 'assets/' + manifest.n[ordinal] + '.' + manifest.h[ordinal] + '.js';
+        var script = document.createElement('script');
+        script.src = base + file;
+        script.onload = function() {
+          if (registeredChunks[name]) {
+            resolve();
+          } else {
+            reject(new Error(
+              '__jet__.loadChunk: chunk "' + name + '" loaded but did not register'
+            ));
+          }
+        };
+        script.onerror = function() {
+          reject(new Error(
+            '__jet__.loadChunk: failed to load chunk "' + name + '" (' + script.src + ')'
+          ));
+        };
+        document.head.appendChild(script);
+      });
+    });
+    chunkPromises[name] = promise;
+    return promise;
+  }
+
+  // Dynamic import() lowering target: require the module directly if it is
+  // already available (e.g. bundled into the entry chunk), otherwise load
+  // its owning chunk first.
+  function dynamicImport(id) {
+    if (modules[id]) {
+      return Promise.resolve().then(function() {
+        return require(id);
+      });
+    }
+    var manifest = (window.__jet__ && window.__jet__.chunkManifest) ||
+      { n: [], h: [], i: [], m: {} };
+    var ordinal = manifest.m[id];
+    if (ordinal === undefined) {
+      return Promise.reject(new Error('__jet__.dynamicImport: no chunk maps to module ' + id));
+    }
+    return loadChunk(manifest.n[ordinal]).then(function() {
       return require(id);
     });
   }
