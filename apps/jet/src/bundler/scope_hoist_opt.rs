@@ -3595,10 +3595,18 @@ pub struct ExportElisionStats {
 ///   `_m{id}e`/`_m{id}`, `remove_orphan_module_alias_and_slot` drops the
 ///   now-dead exports-object scaffolding too.
 ///
-/// Reparse-guarded: on any parse failure after rewriting, the original
-/// code is returned unchanged with zeroed stats.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
-pub fn elide_same_chunk_export_bindings(code: &str) -> (String, ExportElisionStats) {
+///
+/// Core scan-and-rewrite logic for [`elide_same_chunk_export_bindings`],
+/// shared with the combined [`convert_and_elide_flat_region`] pipeline
+/// (#2133): builds and applies every replacement (primary elision +
+/// orphan alias/slot cleanup) but performs no reparse-validation of its
+/// own, so a caller that already knows it needs to validate a larger
+/// combined region can defer that single region-wide parse instead of
+/// paying one here too. [`elide_same_chunk_export_bindings`] wraps this
+/// with its own validation (and its own "Reparse-guarded" contract) for
+/// standalone callers.
+fn elide_same_chunk_export_bindings_unvalidated(code: &str) -> (String, ExportElisionStats) {
     let assignments = collect_direct_export_assignments(code);
     if assignments.is_empty() {
         return (code.to_string(), ExportElisionStats::default());
@@ -3674,15 +3682,23 @@ pub fn elide_same_chunk_export_bindings(code: &str) -> (String, ExportElisionSta
         rewritten = apply_static_replacements(&rewritten, orphan_replacements);
     }
 
-    if !super::dce::js_parses_without_errors(&rewritten) {
-        return (code.to_string(), ExportElisionStats::default());
-    }
-
     let stats = ExportElisionStats {
         modules: touched_modules.len(),
         elided_keys,
         kept: assignments.len() - elided_keys,
     };
+    (rewritten, stats)
+}
+
+/// Reparse-guarded: on any parse failure after rewriting, the original
+/// code is returned unchanged with zeroed stats. See
+/// [`elide_same_chunk_export_bindings_unvalidated`] for the scan/rewrite
+/// algorithm this wraps.
+pub fn elide_same_chunk_export_bindings(code: &str) -> (String, ExportElisionStats) {
+    let (rewritten, stats) = elide_same_chunk_export_bindings_unvalidated(code);
+    if rewritten == code || !super::dce::js_parses_without_errors(&rewritten) {
+        return (code.to_string(), ExportElisionStats::default());
+    }
     (rewritten, stats)
 }
 
@@ -6712,11 +6728,19 @@ pub struct FnDeclConversionStats {
 ///   in the region, is left alone — converting one of several bindings
 ///   sharing a name risks changing which declaration wins.
 ///
-/// Reparse-guarded: on any parse failure after rewriting, the original
-/// code is returned unchanged with zeroed stats. `JET_NO_FN_DECL_CONVERSION=1`
-/// is a testing escape hatch, checked by callers in `mod.rs` — this
-/// function itself always converts when called.
-pub fn convert_flat_region_function_declarations_to_var(
+/// `JET_NO_FN_DECL_CONVERSION=1` is a testing escape hatch, checked by
+/// callers in `mod.rs` — this function itself always converts when called.
+///
+/// Core scan-and-rewrite logic for
+/// [`convert_flat_region_function_declarations_to_var`], shared with the
+/// combined [`convert_and_elide_flat_region`] pipeline (#2133): builds and
+/// applies every replacement but performs no reparse-validation of its
+/// own, so a caller that already knows it needs to validate a larger
+/// combined region can defer that single region-wide parse instead of
+/// paying one here too. [`convert_flat_region_function_declarations_to_var`]
+/// wraps this with its own validation (and its own "Reparse-guarded"
+/// contract) for standalone callers.
+fn convert_flat_region_function_declarations_to_var_unvalidated(
     code: &str,
 ) -> (String, FnDeclConversionStats) {
     use std::sync::OnceLock;
@@ -6832,12 +6856,84 @@ pub fn convert_flat_region_function_declarations_to_var(
         return (code.to_string(), stats);
     }
 
-    let rewritten = apply_static_replacements(code, replacements);
+    (apply_static_replacements(code, replacements), stats)
+}
+
+/// Reparse-guarded: on any parse failure after rewriting, the original
+/// code is returned unchanged with zeroed stats. See
+/// [`convert_flat_region_function_declarations_to_var_unvalidated`] for the
+/// scan/rewrite algorithm this wraps.
+pub fn convert_flat_region_function_declarations_to_var(
+    code: &str,
+) -> (String, FnDeclConversionStats) {
+    let (rewritten, stats) = convert_flat_region_function_declarations_to_var_unvalidated(code);
+    if stats.converted == 0 {
+        // No replacement was ever built (no candidates, or every candidate
+        // was skipped) — `rewritten` is `code` unchanged; `apply_static_replacements`
+        // was never called, so unlike the failure path below, the skip
+        // counters are real diagnostic output, not a validation reset.
+        return (rewritten, stats);
+    }
     if rewritten == code || !super::dce::js_parses_without_errors(&rewritten) {
         return (code.to_string(), FnDeclConversionStats::default());
     }
-
     (rewritten, stats)
+}
+
+/// Runs flat-region function-declaration→var-hoisting conversion (#2132)
+/// immediately followed by same-chunk export-binding elision (#2128) as one
+/// pipeline, sharing a single region-wide reparse-validation pass across
+/// both instead of one per pass (#2133): on the mui-visual-demo reference
+/// corpus, each pass's own from-scratch `js_parses_without_errors` reparse
+/// of the ~1.4MB flat region was the single largest cost within that pass
+/// (measured ~75% of `fn_decl_conversion` and ~41% of `export_elision` on a
+/// reference-shaped synthetic region), yet the second reparse is redundant
+/// work: elision's input is exactly conversion's already-validated output,
+/// so the combined output only needs to be proven parseable once.
+///
+/// On the (unobserved-on-real-corpora) rare path where the combined result
+/// fails to parse, a second reparse of just the post-conversion text
+/// disambiguates which pass to keep, preserving each pass's existing
+/// independent fall-back-to-original guarantee exactly.
+pub fn convert_and_elide_flat_region(
+    code: &str,
+) -> (String, FnDeclConversionStats, ExportElisionStats) {
+    let (after_conv, conv_stats) =
+        convert_flat_region_function_declarations_to_var_unvalidated(code);
+    // Mirrors `convert_flat_region_function_declarations_to_var`'s own
+    // no-replacement tier: when conversion never built a replacement,
+    // `after_conv` is `code` unchanged (always valid, no reparse needed
+    // for it), and `conv_stats`'s skip counters (if any) are real
+    // diagnostics to report as-is, not a validation reset.
+    let conv_is_noop = conv_stats.converted == 0;
+
+    let (after_elision, elision_stats) = elide_same_chunk_export_bindings_unvalidated(&after_conv);
+
+    if after_elision == code {
+        return (code.to_string(), conv_stats, ExportElisionStats::default());
+    }
+    if super::dce::js_parses_without_errors(&after_elision) {
+        return (after_elision, conv_stats, elision_stats);
+    }
+
+    // The combined result doesn't parse. If conversion made no edit, the
+    // fault is entirely elision's (`after_conv` == `code`, always valid);
+    // report conversion's real stats and reset only elision's — exactly
+    // what calling the two standalone, self-validating wrappers in
+    // sequence would produce. Otherwise disambiguate with a second reparse
+    // of conversion's output alone — a cost only ever paid on this path,
+    // never observed on real corpora.
+    if conv_is_noop {
+        return (code.to_string(), conv_stats, ExportElisionStats::default());
+    }
+    if after_conv != code && super::dce::js_parses_without_errors(&after_conv) {
+        return (after_conv, conv_stats, ExportElisionStats::default());
+    }
+    (
+        code.to_string(),
+        FnDeclConversionStats::default(),
+        ExportElisionStats::default(),
+    )
 }
 
 #[cfg(test)]
@@ -6943,6 +7039,138 @@ mod fn_decl_conversion_tests {
         assert_eq!(stats.converted, 2, "{out}");
         assert!(out.contains("var _m8_a=function()"), "{out}");
         assert!(out.contains("var _m9_b=function()"), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod convert_and_elide_flat_region_tests {
+    use super::*;
+
+    /// Builds a reference-shaped synthetic flat region: `module_count`
+    /// modules, each with one function-declared export, one plain-var
+    /// export, and (past the first few ids) direct `_r(id).key` reads of
+    /// two earlier modules' exports — plus a safe (no quotes/backslashes)
+    /// ~1.3KB filler literal per module so the region's total size lands
+    /// near the ~1.4MB mui-visual-demo reference corpus (#2133) instead of
+    /// a tiny-helper toy size.
+    fn build_reference_shaped_flat_region(module_count: usize) -> String {
+        let filler = "M0,0 L4,8 L12,3 Z ".repeat(70);
+
+        let mut out = String::with_capacity(module_count * 2200);
+        out.push_str("(function(){\n'use strict';\n\n");
+        for id in 0..module_count {
+            out.push_str(&format!("var _m{id}={{exports:{{}}}};\n"));
+        }
+        out.push('\n');
+        out.push_str("var _mods={");
+        for id in 0..module_count {
+            if id > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!("{id}:_m{id}"));
+        }
+        out.push_str("};\n");
+        out.push_str("function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n");
+
+        for id in 0..module_count {
+            out.push_str(&format!("// Module {id}: src/mod{id}.js\n"));
+            out.push_str("{\n");
+            out.push_str(&format!("var _m{id}e=_m{id}.exports;\n"));
+            out.push_str(&format!(
+                "function _m{id}_helper(x) {{\n  var total = x;\n  for (var i = 0; i < 12; i++) {{\n    total = total + i * 2 - 1;\n  }}\n  var label = \"computed-\" + total + \"-suffix\";\n  return total + label.length;\n}}\n"
+            ));
+            out.push_str(&format!(
+                "var _m{id}_config = {{ id: {id}, label: \"module-{id}\", enabled: true, path: \"{filler}\" }};\n"
+            ));
+            out.push_str(&format!("_m{id}.exports[\"helper\"] = _m{id}_helper;\n"));
+            out.push_str(&format!("var _m{id}_value = {id} * 3 + 7;\n"));
+            out.push_str(&format!("_m{id}.exports[\"value\"] = _m{id}_value;\n"));
+            if id > 2 {
+                let a = id - 1;
+                let b = id / 2;
+                out.push_str(&format!("var _m{id}_a = _r({a}).helper(_r({a}).value);\n"));
+                out.push_str(&format!("var _m{id}_b = _r({b}).value + _m{id}_a;\n"));
+            }
+            out.push_str("}\n");
+            out.push_str(&format!(
+                "__jet__.cache[{id}]={{exports:_m{id}.exports,id:{id},loaded:true}};\n\n"
+            ));
+        }
+        out.push_str("})();\n");
+        out
+    }
+
+    #[test]
+    fn combined_pipeline_matches_running_both_passes_sequentially_on_a_large_region() {
+        let code = build_reference_shaped_flat_region(700);
+        assert!(
+            super::super::dce::js_parses_without_errors(&code),
+            "synthetic fixture must itself be valid JS"
+        );
+
+        let (sequential_conv, sequential_conv_stats) =
+            convert_flat_region_function_declarations_to_var(&code);
+        let (sequential_out, sequential_elision_stats) =
+            elide_same_chunk_export_bindings(&sequential_conv);
+
+        let (combined_out, combined_conv_stats, combined_elision_stats) =
+            convert_and_elide_flat_region(&code);
+
+        assert_eq!(
+            combined_out, sequential_out,
+            "sharing one reparse across both passes must be byte-identical to running \
+             convert_flat_region_function_declarations_to_var then \
+             elide_same_chunk_export_bindings sequentially"
+        );
+        assert_eq!(combined_conv_stats, sequential_conv_stats);
+        assert_eq!(combined_elision_stats, sequential_elision_stats);
+        assert!(
+            combined_conv_stats.converted > 0,
+            "fixture should exercise the conversion pass"
+        );
+        assert!(
+            combined_elision_stats.elided_keys > 0,
+            "fixture should exercise the elision pass"
+        );
+    }
+
+    #[test]
+    fn combined_pipeline_preserves_conversion_skip_counters_when_both_passes_are_otherwise_no_ops()
+    {
+        // Regression guard for the #2133 refactor: when both passes are
+        // no-ops overall (nothing rewritten), conversion's own
+        // skipped_order/skipped_shape diagnostics must still surface
+        // as-is rather than collapsing to a validation-failure reset —
+        // exactly as the standalone `convert_flat_region_function_declarations_to_var`
+        // wrapper already preserves them (`js_parses_without_errors` is
+        // never even called in this tier, on either the sequential or the
+        // combined path).
+        let code = "var _m1_alias = _m1_bar;\nfunction _m1_bar() { return 1; }\n";
+        let (out, conv_stats, elision_stats) = convert_and_elide_flat_region(code);
+        assert_eq!(out, code);
+        assert_eq!(conv_stats.converted, 0);
+        assert_eq!(conv_stats.skipped_order, 1);
+        assert_eq!(elision_stats, ExportElisionStats::default());
+    }
+
+    #[test]
+    fn combined_pipeline_stays_well_under_a_generous_time_budget_on_a_large_region() {
+        // Not a tight perf gate (CI hardware varies) — a coarse regression
+        // guard against reintroducing an O(passes) full-region reparse or
+        // similar quadratic-in-region-size cost on the flat-region passes
+        // (#2133).
+        let code = build_reference_shaped_flat_region(700);
+        let start = std::time::Instant::now();
+        let (_out, conv_stats, elision_stats) = convert_and_elide_flat_region(&code);
+        let elapsed = start.elapsed();
+        assert!(conv_stats.converted > 0);
+        assert!(elision_stats.elided_keys > 0);
+        assert!(
+            elapsed.as_millis() < 2000,
+            "combined convert+elide pass took {elapsed:?} on a {}-byte reference-shaped region; \
+             expected comfortably under 2s even on slow/loaded CI hardware",
+            code.len()
+        );
     }
 }
 // </HANDWRITE>
