@@ -1705,21 +1705,61 @@ fn remove_orphan_module_alias_and_slot(code: &str, id: usize) -> String {
 }
 
 fn replace_module_slot_entry_with_zero(code: &str, slot: &str) -> String {
-    let Some(start) = code.find("var _mods=[") else {
+    if let Some(start) = code.find("var _mods=[") {
+        let body_start = start + "var _mods=[".len();
+        let Some(rel_end) = code[body_start..].find("];") else {
+            return code.to_string();
+        };
+        let body_end = body_start + rel_end;
+        let mut changed = false;
+        let entries: Vec<String> = code[body_start..body_end]
+            .split(',')
+            .map(|entry| {
+                if entry == slot {
+                    changed = true;
+                    "0".to_string()
+                } else {
+                    entry.to_string()
+                }
+            })
+            .collect();
+        if !changed {
+            return code.to_string();
+        }
+        let mut out = String::with_capacity(code.len());
+        out.push_str(&code[..body_start]);
+        out.push_str(&entries.join(","));
+        out.push_str(&code[body_end..]);
+        return out;
+    }
+
+    // generate_entry_flat_region (issue #1993) emits the flat-region module
+    // map as a sparse object literal instead (`var _mods={0:_m0,1:_m1};`),
+    // since flat-region module ids are not contiguous from 0 the way
+    // generate_flattened_bundle's dense array is. Same neutralization
+    // intent as the array case above: blank the matching `id:_mN` entry's
+    // value to `0` so `_r(id)` still safely falls through to
+    // `__jet__.require(id)` instead of leaving a dangling reference to the
+    // slot declaration remove_orphan_module_alias_and_slot just removed.
+    let Some(start) = code.find("var _mods={") else {
         return code.to_string();
     };
-    let body_start = start + "var _mods=[".len();
-    let Some(rel_end) = code[body_start..].find("];") else {
+    let body_start = start + "var _mods={".len();
+    let Some(rel_end) = code[body_start..].find("};") else {
         return code.to_string();
     };
     let body_end = body_start + rel_end;
+    let Some(id_str) = slot.strip_prefix("_m") else {
+        return code.to_string();
+    };
+    let target_entry = format!("{id_str}:{slot}");
     let mut changed = false;
     let entries: Vec<String> = code[body_start..body_end]
         .split(',')
         .map(|entry| {
-            if entry == slot {
+            if entry == target_entry {
                 changed = true;
-                "0".to_string()
+                format!("{id_str}:0")
             } else {
                 entry.to_string()
             }
@@ -5185,6 +5225,79 @@ const raw = `_m0_x`;"#;
     }
 
     #[test]
+    fn test_elide_same_chunk_export_bindings_cleans_up_object_shaped_mods_map() {
+        // Regression for a genuine `ReferenceError: _m1 is not defined` this
+        // pass caused on the entry-flatten path (generate_entry_flat_region,
+        // #1993): that path's preamble uses a sparse OBJECT literal
+        // (`var _mods={0:_m0,1:_m1};`), not generate_flattened_bundle's
+        // dense ARRAY literal (`var _mods=[_m0,_m1];`).
+        // remove_orphan_module_alias_and_slot's reference-count guard
+        // treats the _mods entry as one of the (at most 2) legitimate
+        // remaining references to the slot before removing
+        // `var _m1={exports:{}};` — so the _mods entry must be neutralized
+        // in lockstep, or slot removal orphans a dangling `_m1` read inside
+        // the still-present object literal (found via #2132's var-hoisted
+        // function-declaration conversion, which is the first pass able to
+        // make a function-declared export like this one elision-eligible).
+        let code = concat!(
+            "var _m0={exports:{}};",
+            "var _m1={exports:{}};",
+            "var _mods={0:_m0,1:_m1};",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var _m0_y=_r(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 1);
+        assert!(!out.contains("_m1.exports"));
+        assert!(
+            !out.contains("_m1={exports:{}}"),
+            "slot decl should be removed, got: {out}"
+        );
+        assert!(
+            !out.contains(":_m1"),
+            "the _mods object entry for module 1 must be neutralized \
+             (zeroed), not left dangling, got: {out}"
+        );
+        assert!(
+            out.contains("1:0"),
+            "the neutralized _mods entry should read 1:0, got: {out}"
+        );
+        assert!(out.contains("_m0_y=_m1_x;"));
+    }
+
+    #[test]
+    fn test_elide_same_chunk_export_bindings_cleans_up_array_shaped_mods_map() {
+        // Same regression coverage as the object-shape test above, but for
+        // generate_flattened_bundle's dense ARRAY literal shape
+        // (`var _mods=[_m0,_m1];`) — locks in the pre-existing, correct
+        // behavior alongside the object-shape fix so a future change can't
+        // quietly regress one shape while fixing the other.
+        let code = concat!(
+            "var _m0={exports:{}};",
+            "var _m1={exports:{}};",
+            "var _mods=[_m0,_m1];",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}",
+            "var _m1_x=1;",
+            "_m1.exports[\"x\"]=_m1_x;",
+            "var _m0_y=_r(1)[\"x\"];",
+        );
+        let (out, stats) = elide_same_chunk_export_bindings(code);
+        assert_eq!(stats.elided_keys, 1);
+        assert!(!out.contains("_m1.exports"));
+        assert!(
+            !out.contains("_m1={exports:{}}"),
+            "slot decl should be removed, got: {out}"
+        );
+        assert!(
+            out.contains("_mods=[_m0,0]"),
+            "the _mods array entry for module 1 must be neutralized (zeroed), got: {out}"
+        );
+        assert!(out.contains("_m0_y=_m1_x;"));
+    }
+
+    #[test]
     fn test_elide_same_chunk_export_bindings_default_interop_mixed_import() {
         // Ground-truth shape from MUI's Alert.js -> alertClasses.js
         // (module 13): a mixed default+named import. The bare fallback
@@ -6186,6 +6299,336 @@ fn collect_prefixed_ident_occurrences_in_range(
             prev = b[i];
         }
         i += 1;
+    }
+}
+
+/// Counters for `convert_flat_region_function_declarations_to_var`,
+/// surfaced via `JET_BUNDLE_TIMING` as
+/// `fn-decl-conversion: converted=N skipped_order=M skipped_shape=K`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FnDeclConversionStats {
+    /// Top-level `function` declarations rewritten to `var`-hoisted
+    /// anonymous function expressions.
+    pub converted: usize,
+    /// Candidates skipped because some occurrence of the prefixed name
+    /// appears earlier in the flat region's top-to-bottom execution order
+    /// than the declaration itself (the conservative textual-precede
+    /// scan — see the function doc comment).
+    pub skipped_order: usize,
+    /// Candidates skipped for shape reasons: the prefixed name is
+    /// declared more than once as a `function`, or is also declared via
+    /// `var`/`let`/`const` elsewhere in the region (would shadow instead
+    /// of hoist). Async/generator/expression-position declarations are
+    /// excluded before candidacy and are not counted here.
+    pub skipped_shape: usize,
+}
+
+/// Convert eligible flat-region top-level `function` declarations into
+/// `var`-hoisted anonymous function expressions (#2132).
+///
+/// Each flattened module lives in its own `{ ... }` block (see
+/// `generate_flattened_bundle` / `generate_entry_flat_region`). Under ES
+/// strict-mode semantics a `function` declared inside that block is
+/// block-scoped — invisible outside the block — while `var` hoists past
+/// the block to the enclosing flat-region function scope. That is exactly
+/// the split `elide_same_chunk_export_bindings` (#2128) already draws via
+/// `collect_block_scoped_declaration_names`: only `var`-hoisted bindings
+/// are eligible for direct cross-module reference, so function-*declared*
+/// exports — the dominant shape for helper-style export families — never
+/// qualified no matter how safe the actual data flow was. This pass runs
+/// first so elision's existing eligibility check sees a plain `var`.
+///
+/// ```js
+/// // before (block-scoped; invisible outside this module's block)
+/// function _m3_getButtonUtilityClass(slot) { return 'Button-' + slot; }
+/// // after (var-hoisted; now the shape elision already recognizes)
+/// var _m3_getButtonUtilityClass=function(slot) { return 'Button-' + slot; };
+/// ```
+///
+/// The replacement function expression is deliberately left **anonymous**.
+/// Giving it back the original short name would leak the full source
+/// identifier through `Function.prototype.name` — but today's baseline
+/// (block-scoped `function NAME(){}`) already has its OWN declared name
+/// compressed away by the mangler's final, scope-blind
+/// `compress_generated_prefixed_names` pass (confirmed empirically: a
+/// `function _m1_getButtonUtilityClass(){}` export compiles today to
+/// `function e(){}`, i.e. `.name` is already an opaque short alias, never
+/// the original readable identifier). Reusing the exact same `_m<n>_name`
+/// token as the anonymous expression's `var` target keeps that same
+/// blanket rename in sole control of the visible `.name` post-mangle
+/// (ES2015 `NamedEvaluation` infers `.name` from the `var` target only
+/// when the expression itself is nameless), matching today's observable
+/// "opaque compressed name" behavior instead of regressing it to the full
+/// readable name. A *named* function expression here would additionally
+/// be misclassified as block-scoped by `collect_block_scoped_declaration_names`
+/// (it matches on any identifier immediately following `function`,
+/// declaration or expression alike), silently defeating the elision
+/// unlock this pass exists for.
+///
+/// Four safety conditions gate a rewrite (conservative on any doubt, per
+/// the file's existing #1993/#2128 discipline):
+/// - **Top-level only**: only names carrying the flattener's `_m<n>_`
+///   prefix qualify (inner/nested declarations never receive that
+///   prefix), and the declaration must sit in statement position
+///   (immediately after `;`, `{`, `}`, or start-of-text past only
+///   whitespace) — which also naturally excludes `async function` (the
+///   `async` keyword breaks the immediately-preceding-boundary check) and
+///   expression-position uses (`= function NAME`, `return function NAME`).
+/// - **No earlier-in-execution-order reference**: the flat region executes
+///   top-to-bottom at load, so a `var`'s *assignment* — unlike a function
+///   declaration's *hoist* — only takes effect once execution reaches it.
+///   Conservatively scan the whole region for the earliest textual
+///   occurrence of the prefixed name; if it precedes the declaration's own
+///   start (whether that earlier text is eagerly executed or merely
+///   defined inside another not-yet-called function — the scan can't tell
+///   the difference, so it doesn't try), skip. Cross-module references can
+///   never trigger this (an import edge already orders producer before
+///   consumer in the acyclic flatten), so only intra-region hazards like a
+///   same-module forward reference or module-internal mutual recursion can
+///   trip it; the rule is applied uniformly and is sound for both — of a
+///   mutually-recursive pair, the textually-first declaration converts and
+///   the second (referenced by the first, before its own declaration)
+///   stays a hoisted function declaration.
+/// - **Plain function only**: generators and getters/setters/method
+///   shorthand never match the `function\s+NAME\s*\(` shape in the first
+///   place (no "function" keyword token at all, or no whitespace between
+///   "function" and "*").
+/// - **No top-level shadowing**: a prefixed name declared more than once
+///   as a `function`, or also declared via `var`/`let`/`const` elsewhere
+///   in the region, is left alone — converting one of several bindings
+///   sharing a name risks changing which declaration wins.
+///
+/// Reparse-guarded: on any parse failure after rewriting, the original
+/// code is returned unchanged with zeroed stats. `JET_NO_FN_DECL_CONVERSION=1`
+/// is a testing escape hatch, checked by callers in `mod.rs` — this
+/// function itself always converts when called.
+pub fn convert_flat_region_function_declarations_to_var(
+    code: &str,
+) -> (String, FnDeclConversionStats) {
+    use std::sync::OnceLock;
+    static FUNC: OnceLock<Regex> = OnceLock::new();
+    static VAR_DECL: OnceLock<Regex> = OnceLock::new();
+    let func = FUNC.get_or_init(|| Regex::new(r"function\s+(_m\d+_[a-zA-Z0-9_$]+)\s*\(").unwrap());
+    let var_decl = VAR_DECL
+        .get_or_init(|| Regex::new(r"(?:var|let|const)\s+(_m\d+_[a-zA-Z0-9_$]+)\b").unwrap());
+
+    let b = code.as_bytes();
+
+    let statement_position = |start: usize| -> bool {
+        let mut p = start;
+        while p > 0 && matches!(b[p - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            p -= 1;
+        }
+        p == 0 || matches!(b[p - 1], b';' | b'{' | b'}')
+    };
+
+    struct Candidate {
+        name: String,
+        start: usize,
+        params_open: usize,
+        body_close: usize,
+    }
+
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut name_decl_counts: HashMap<String, usize> = HashMap::new();
+
+    for cap in func.captures_iter(code) {
+        let whole = cap.get(0).unwrap();
+        let name = cap.get(1).unwrap().as_str().to_string();
+        let start = whole.start();
+        if !statement_position(start) {
+            continue;
+        }
+        // The regex consumes through the opening "(" of the param list.
+        let params_open = whole.end() - 1;
+        if params_open >= b.len() || b[params_open] != b'(' {
+            continue;
+        }
+        let Some(params_close) = skip_code_balanced(b, params_open, b'(', b')') else {
+            continue;
+        };
+        let mut q = params_close;
+        while q < b.len() && matches!(b[q], b' ' | b'\t' | b'\r' | b'\n') {
+            q += 1;
+        }
+        if q >= b.len() || b[q] != b'{' {
+            continue;
+        }
+        let Some(body_close) = skip_code_balanced(b, q, b'{', b'}') else {
+            continue;
+        };
+        *name_decl_counts.entry(name.clone()).or_insert(0) += 1;
+        candidates.push(Candidate {
+            name,
+            start,
+            params_open,
+            body_close,
+        });
+    }
+
+    let mut stats = FnDeclConversionStats::default();
+    if candidates.is_empty() {
+        return (code.to_string(), stats);
+    }
+
+    // Condition 4 (no top-level shadowing), var/let/const half: collected
+    // globally, position-independent — a later `var` of the same name is
+    // just as much a shadow risk as an earlier one.
+    let mut var_declared: HashSet<String> = HashSet::new();
+    for cap in var_decl.captures_iter(code) {
+        var_declared.insert(cap[1].to_string());
+    }
+
+    // Condition 2 (no earlier-in-execution-order reference): earliest
+    // textual occurrence per prefixed name, region-wide.
+    let mut occurrences: Vec<(usize, String)> = Vec::new();
+    collect_prefixed_ident_occurrences(b, &mut occurrences);
+    let mut first_occurrence: HashMap<String, usize> = HashMap::new();
+    for (pos, name) in occurrences {
+        first_occurrence
+            .entry(name)
+            .and_modify(|p| *p = (*p).min(pos))
+            .or_insert(pos);
+    }
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    for cand in &candidates {
+        if *name_decl_counts.get(&cand.name).unwrap_or(&0) > 1 || var_declared.contains(&cand.name)
+        {
+            stats.skipped_shape += 1;
+            continue;
+        }
+        // The declaration's own name token always sits at/after `start`,
+        // so this can only match a genuinely earlier occurrence.
+        if let Some(&first) = first_occurrence.get(&cand.name) {
+            if first < cand.start {
+                stats.skipped_order += 1;
+                continue;
+            }
+        }
+        let rest = &code[cand.params_open..cand.body_close];
+        let replacement = format!("var {}=function{};", cand.name, rest);
+        replacements.push((cand.start, cand.body_close, replacement));
+        stats.converted += 1;
+    }
+
+    if replacements.is_empty() {
+        // Every candidate was skipped; the skip counts are still
+        // meaningful diagnostic output, unlike the true-bail paths below.
+        return (code.to_string(), stats);
+    }
+
+    let rewritten = apply_static_replacements(code, replacements);
+    if rewritten == code || !super::dce::js_parses_without_errors(&rewritten) {
+        return (code.to_string(), FnDeclConversionStats::default());
+    }
+
+    (rewritten, stats)
+}
+
+#[cfg(test)]
+mod fn_decl_conversion_tests {
+    use super::*;
+
+    #[test]
+    fn converts_simple_top_level_function_declaration() {
+        let code = "function _m3_getButtonUtilityClass(slot) { return 'Button-' + slot; }\n_m3.exports[\"getButtonUtilityClass\"] = _m3_getButtonUtilityClass;\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 1, "{out}");
+        assert_eq!(stats.skipped_order, 0, "{out}");
+        assert_eq!(stats.skipped_shape, 0, "{out}");
+        assert!(
+            out.contains(
+                "var _m3_getButtonUtilityClass=function(slot) { return 'Button-' + slot; };"
+            ),
+            "{out}"
+        );
+        assert!(
+            !out.contains("function _m3_getButtonUtilityClass("),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn anonymous_function_expression_does_not_leak_original_name() {
+        let code = "function _m5_computeAlertUtilityClassLongName() { return 1; }";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 1, "{out}");
+        // No inner name: the mangler's blanket `_m<n>_name` compression
+        // pass stays in sole control of the visible `.name`, matching
+        // today's observable "opaque compressed name" behavior instead of
+        // leaking the original readable identifier.
+        assert!(out.contains("=function()"), "{out}");
+        assert!(!out.contains("computeAlertUtilityClassLongName()"), "{out}");
+    }
+
+    #[test]
+    fn no_candidates_is_a_no_op() {
+        let code = "var _m1e=_m1.exports;\n_m1e.value=1;\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(out, code);
+        assert_eq!(stats, FnDeclConversionStats::default());
+    }
+
+    #[test]
+    fn skips_when_a_reference_precedes_the_declaration() {
+        // A local re-export alias reads the name before its own
+        // declaration is reached in top-to-bottom execution order.
+        let code = "var _m1_alias = _m1_bar;\nfunction _m1_bar() { return 1; }\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 0, "{out}");
+        assert_eq!(stats.skipped_order, 1, "{out}");
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn module_internal_mutual_recursion_converts_the_first_and_skips_the_second() {
+        // A (declared first) calls B; B (declared second) calls A. B's
+        // reference to A is textually after A (safe); A's reference to B
+        // is textually before B (unsafe) -- the textual-precede rule
+        // applies uniformly and correctly splits the pair.
+        let code = "function _m2_isEven(n) { return n === 0 ? true : _m2_isOdd(n - 1); }\nfunction _m2_isOdd(n) { return n === 0 ? false : _m2_isEven(n - 1); }\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 1, "{out}");
+        assert_eq!(stats.skipped_order, 1, "{out}");
+        assert!(out.contains("var _m2_isEven=function(n)"), "{out}");
+        assert!(out.contains("function _m2_isOdd(n)"), "{out}");
+    }
+
+    #[test]
+    fn skips_async_and_generator_declarations() {
+        let code = "async function _m4_fetchThing() { return 1; }\nfunction* _m4_genThing() { return 1; }\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 0, "{out}");
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn skips_names_also_declared_via_var_elsewhere() {
+        let code =
+            "function _m6_helper() { return 1; }\nvar _m6_helper2 = _m6_helper;\nvar _m6_helper;\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 0, "{out}");
+        assert_eq!(stats.skipped_shape, 1, "{out}");
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn skips_duplicate_function_declarations_of_the_same_name() {
+        let code = "function _m7_dup() { return 1; }\nfunction _m7_dup() { return 2; }\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 0, "{out}");
+        assert_eq!(stats.skipped_shape, 2, "{out}");
+        assert_eq!(out, code);
+    }
+
+    #[test]
+    fn converts_multiple_independent_declarations_in_one_pass() {
+        let code = "function _m8_a() { return 1; }\nfunction _m9_b() { return 2; }\n_m8.exports[\"a\"]=_m8_a;\n_m9.exports[\"b\"]=_m9_b;\n";
+        let (out, stats) = convert_flat_region_function_declarations_to_var(code);
+        assert_eq!(stats.converted, 2, "{out}");
+        assert!(out.contains("var _m8_a=function()"), "{out}");
+        assert!(out.contains("var _m9_b=function()"), "{out}");
     }
 }
 // </HANDWRITE>

@@ -3273,15 +3273,40 @@ impl Bundler {
                 let after_interop =
                     scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
                 lap("interop_thunks");
+                // Flat-region function-declaration → var-hoisted conversion
+                // (#2132): unblocks the export-binding elision below for
+                // function-declared exports, which are block-scoped (and
+                // therefore ineligible for elision) until rewritten to a
+                // var-hoisted anonymous function expression. Runs before
+                // elision so elision's eligibility check already sees a
+                // plain var. Default-on; JET_NO_FN_DECL_CONVERSION=1 is a
+                // testing escape hatch.
+                let after_fn_decl_conv = if std::env::var_os("JET_NO_FN_DECL_CONVERSION").is_some()
+                {
+                    after_interop
+                } else {
+                    let (converted, stats) =
+                        scope_hoist_opt::convert_flat_region_function_declarations_to_var(
+                            &after_interop,
+                        );
+                    if timing {
+                        eprintln!(
+                            "[bundle-timing]   generate/fn-decl-conversion: converted={} skipped_order={} skipped_shape={}",
+                            stats.converted, stats.skipped_order, stats.skipped_shape
+                        );
+                    }
+                    converted
+                };
+                lap("fn_decl_conversion");
                 // Same-chunk export-binding elision (#2128): drop the
                 // exports-object property-key indirection for keys only
                 // ever read via same-chunk static named imports. Default-on;
                 // JET_NO_EXPORT_ELISION=1 is a testing escape hatch.
                 let out = if std::env::var_os("JET_NO_EXPORT_ELISION").is_some() {
-                    after_interop
+                    after_fn_decl_conv
                 } else {
                     let (elided, stats) =
-                        scope_hoist_opt::elide_same_chunk_export_bindings(&after_interop);
+                        scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv);
                     if timing {
                         eprintln!(
                             "[bundle-timing]   generate/export-elision: modules={} elided_keys={} kept={}",
@@ -3529,16 +3554,39 @@ impl Bundler {
             let after_interop =
                 scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
             lap("interop_thunks");
+            // Flat-region function-declaration → var-hoisted conversion
+            // (#2132): safe on combined flat+registry text too — registry
+            // residue never uses the flattener's `_m<n>_` prefix, so the
+            // conversion's regex can only ever match inside the flat
+            // region. Runs before elision so elision's eligibility check
+            // already sees a plain var. Default-on; JET_NO_FN_DECL_CONVERSION=1
+            // is a testing escape hatch.
+            let after_fn_decl_conv = if std::env::var_os("JET_NO_FN_DECL_CONVERSION").is_some() {
+                after_interop
+            } else {
+                let (converted, stats) =
+                    scope_hoist_opt::convert_flat_region_function_declarations_to_var(
+                        &after_interop,
+                    );
+                if timing {
+                    eprintln!(
+                        "[bundle-timing]   entry-flatten/fn-decl-conversion: converted={} skipped_order={} skipped_shape={}",
+                        stats.converted, stats.skipped_order, stats.skipped_shape
+                    );
+                }
+                converted
+            };
+            lap("fn_decl_conversion");
             // Same-chunk export-binding elision (#2128): safe on combined
             // flat+registry text too — registry-residue reads use the
             // literal `require(id)` token (a distinct lexical scope from
             // the flat IIFE's `_r`), which `elide_same_chunk_export_bindings`
             // always treats as a force-keep signal, never a rewrite target.
             let processed_body = if std::env::var_os("JET_NO_EXPORT_ELISION").is_some() {
-                after_interop
+                after_fn_decl_conv
             } else {
                 let (elided, stats) =
-                    scope_hoist_opt::elide_same_chunk_export_bindings(&after_interop);
+                    scope_hoist_opt::elide_same_chunk_export_bindings(&after_fn_decl_conv);
                 if timing {
                     eprintln!(
                         "[bundle-timing]   entry-flatten/export-elision: modules={} elided_keys={} kept={}",

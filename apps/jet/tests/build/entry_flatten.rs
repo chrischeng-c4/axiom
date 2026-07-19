@@ -950,12 +950,18 @@ export function render() {
 /// #2128 — the `JET_NO_EXPORT_ELISION=1` escape hatch must be behaviorally
 /// identical to the default (elision-on) build, in a real browser, on a
 /// fixture that exercises both an elision-eligible export (`bridge.js`'s
-/// re-exported default, a plain `var`-declared identifier) and a
-/// correctness-required "always kept" export (`getMarkerUtilityClass`, a
-/// `function` declaration — block-scoped, per the regression this WI's
-/// implementation found and fixed against the real mui-visual corpus).
-/// Also a basic byte-diff sanity check: the elision-on entry must never be
-/// larger than the escape-hatch entry.
+/// re-exported default, a plain `var`-declared identifier) and
+/// `getMarkerUtilityClass`, a `function` declaration — block-scoped, per
+/// the regression #2128's implementation found and fixed against the real
+/// mui-visual corpus. Also a basic byte-diff sanity check: the elision-on
+/// entry must never be larger than the escape-hatch entry.
+///
+/// #2132 extends this A/B with a third variant: `getMarkerUtilityClass`
+/// is *also* a var-hoisting-conversion candidate (a top-level flat-region
+/// `function` declaration), so with elision left on but
+/// `JET_NO_FN_DECL_CONVERSION=1` set, it is the one export in this fixture
+/// that stays block-scoped and therefore "always kept" by elision — still
+/// correct, just less size-optimal than the full default pipeline.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_elision_hatch_ab_boots_identically_in_real_browser() -> Result<()> {
     if !common::chromium_available() {
@@ -976,15 +982,25 @@ async fn export_elision_hatch_ab_boots_identically_in_real_browser() -> Result<(
         fixture: &Path,
         out_dir: &str,
         no_elision: bool,
+        no_fn_decl_conversion: bool,
     ) -> Result<(String, u64)> {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_jet"));
         cmd.args(["build", "-o", out_dir]).current_dir(fixture);
-        let phase = if no_elision {
+        let mut phase_parts: Vec<&str> = Vec::new();
+        if no_elision {
             cmd.env("JET_NO_EXPORT_ELISION", "1");
-            "build (JET_NO_EXPORT_ELISION=1)"
+            phase_parts.push("JET_NO_EXPORT_ELISION=1");
+        }
+        if no_fn_decl_conversion {
+            cmd.env("JET_NO_FN_DECL_CONVERSION", "1");
+            phase_parts.push("JET_NO_FN_DECL_CONVERSION=1");
+        }
+        let phase = if phase_parts.is_empty() {
+            "build (default, elision + fn-decl-conversion on)".to_string()
         } else {
-            "build (default, elision on)"
+            format!("build ({})", phase_parts.join(" "))
         };
+        let phase = phase.as_str();
         let output = cmd.output().context("run jet build")?;
         require_success(output, phase)?;
 
@@ -1040,23 +1056,191 @@ async fn export_elision_hatch_ab_boots_identically_in_real_browser() -> Result<(
         Ok((text, size))
     }
 
-    let (text_on, size_on) = build_and_boot(fixture, "dist-elision-on", false).await?;
-    let (text_off, size_off) = build_and_boot(fixture, "dist-elision-off", true).await?;
+    let (text_on, size_on) = build_and_boot(fixture, "dist-elision-on", false, false).await?;
+    let (text_off, size_off) = build_and_boot(fixture, "dist-elision-off", true, false).await?;
+    let (text_no_fn_conv, size_no_fn_conv) =
+        build_and_boot(fixture, "dist-fn-decl-conversion-off", false, true).await?;
 
     assert_eq!(
         text_on, EXPECTED_OUTPUT,
         "elision-on build must render the elided bridged default export and \
-         the kept function-declared export identically to source"
+         the elided function-declared export identically to source"
     );
     assert_eq!(
         text_off, EXPECTED_OUTPUT,
         "JET_NO_EXPORT_ELISION=1 escape hatch must render identically to the \
          elision-on build"
     );
+    assert_eq!(
+        text_no_fn_conv, EXPECTED_OUTPUT,
+        "JET_NO_FN_DECL_CONVERSION=1 escape hatch must render identically to \
+         the default build (getMarkerUtilityClass stays block-scoped and \
+         elision-ineligible, but still correct)"
+    );
     assert!(
         size_on < size_off,
         "elision-on entry ({size_on} bytes) must be strictly smaller than the \
          JET_NO_EXPORT_ELISION=1 entry ({size_off} bytes)"
+    );
+    assert!(
+        size_on < size_no_fn_conv,
+        "default entry ({size_on} bytes) must be strictly smaller than the \
+         JET_NO_FN_DECL_CONVERSION=1 entry ({size_no_fn_conv} bytes): \
+         disabling #2132's conversion must leave getMarkerUtilityClass's \
+         export indirection in place, forfeiting #2128's elision for it"
+    );
+
+    Ok(())
+}
+
+/// #2132's conservative "no earlier-in-execution-order reference" safety
+/// condition, on a fixture engineered to exercise it: `parity.js` declares
+/// a mutually-recursive pair (`isOdd` calls `isEven`; `isEven` calls
+/// `isOdd`) plus an exported `describeParity` that calls `isEven`. The
+/// textually-first declaration (`isOdd`) has no earlier reference to
+/// itself anywhere in the flat region, so it converts; `isEven` is
+/// referenced by `isOdd`'s body *before* `isEven`'s own declaration is
+/// reached, so it must stay a hoisted `function` declaration;
+/// `describeParity` is declared after both and is only ever referenced
+/// from the entry module's block, which sits later still in the
+/// topologically-ordered flat region — so it converts too. `import()`s
+/// `lazy.js` purely to make `--splitting` actually engage the
+/// entry-flatten path (`generate_entry_flat_region`, #1993) — the second
+/// of #2132's two `mod.rs` call sites — rather than falling back to the
+/// ordinary (non-split) Phase 2 flattening path that
+/// `export_elision_hatch_ab_boots_identically_in_real_browser` above
+/// already exercises.
+fn write_fn_decl_hoisting_order_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import { describeParity } from './parity.js';
+
+document.getElementById('root').innerHTML = '<div id="output">' + describeParity(7) + '</div>';
+
+import('./lazy.js').then((mod) => mod.default());
+"#,
+    )
+    .expect("write entry");
+    fs::write(
+        dir.join("src/parity.js"),
+        r#"function isOdd(n) {
+  return n === 0 ? false : isEven(n - 1);
+}
+
+function isEven(n) {
+  return n === 0 ? true : isOdd(n - 1);
+}
+
+export function describeParity(n) {
+  return n + ':' + (isEven(n) ? 'even' : 'odd');
+}
+"#,
+    )
+    .expect("write parity");
+    fs::write(
+        dir.join("src/lazy.js"),
+        "export default function lazy() { return 'LAZY'; }\n",
+    )
+    .expect("write lazy");
+}
+
+/// Real-browser proof that #2132's conversion boots correctly on
+/// module-internal mutual recursion via the entry-flatten path, and a
+/// white-box pin (the `JET_BUNDLE_TIMING` `entry-flatten/fn-decl-conversion:`
+/// line) confirming the mixed converted/skipped outcome actually happened
+/// rather than the fixture merely happening to boot some other way.
+/// Expected counts (empirically confirmed against this exact fixture
+/// before authoring this assertion): `converted=2` (`isOdd`,
+/// `describeParity`) and `skipped_order=1` (`isEven`, referenced by
+/// `isOdd`'s body before its own declaration is reached).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fn_decl_conversion_mutual_recursion_boots_correctly_in_real_browser() -> Result<()> {
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping fn_decl_conversion_mutual_recursion_boots_correctly_in_real_browser: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_fn_decl_hoisting_order_fixture(fixture);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_jet"))
+        .args(["build", "--splitting"])
+        .current_dir(fixture)
+        .env("JET_BUNDLE_TIMING", "1")
+        .output()
+        .context("run jet build --splitting")?;
+    let output = require_success(output, "build --splitting (fn-decl hoisting-order fixture)")?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    let conversion_line = stderr
+        .lines()
+        .find(|line| line.contains("entry-flatten/fn-decl-conversion:"))
+        .with_context(|| {
+            format!("no entry-flatten/fn-decl-conversion timing line in stderr: {stderr}")
+        })?;
+    assert!(
+        conversion_line.contains("converted=2 skipped_order=1 skipped_shape=0"),
+        "expected isOdd and describeParity to convert (converted=2) and \
+         isEven to be skipped for order (skipped_order=1), got: {conversion_line}"
+    );
+
+    let dist = fixture.join("dist");
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn_dir(&dist)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser = spawn_jet_browser(fixture, &url)
+            .context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        output_text.ok_or_else(|| anyhow!("#output element never rendered"))
+    })
+    .await;
+
+    let text = match result {
+        Ok(inner) => inner?,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            return Err(anyhow!(
+                "fn_decl_conversion_mutual_recursion_boots_correctly_in_real_browser \
+                 timed out after 60s"
+            ));
+        }
+    };
+
+    assert_eq!(
+        text, "7:odd",
+        "mutually-recursive isOdd/isEven (7 is odd) must still compute \
+         correctly when only the textually-first declarations (isOdd, \
+         describeParity) are var-hoisted and isEven stays a hoisted \
+         function declaration"
     );
 
     Ok(())
