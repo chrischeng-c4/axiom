@@ -1775,6 +1775,311 @@ fn replace_module_slot_entry_with_zero(code: &str, slot: &str) -> String {
     out
 }
 
+/// Region-wide indices for deciding, per elision-touched module id, whether
+/// its `_m{id}e` exports alias and/or `_m{id}` module-object slot have
+/// become orphaned. Built ONCE per `elide_same_chunk_export_bindings` call
+/// instead of `remove_orphan_module_alias_and_slot`'s old per-id sequential
+/// region rescans (O(touched_modules x region) -> O(region), #2133). Only
+/// used by `elide_same_chunk_export_bindings`; `lower_direct_export_reads`
+/// still drives `remove_orphan_module_alias_and_slot` directly, unchanged.
+struct OrphanCleanupIndex {
+    /// Exact `_m<digits>` / `_m<digits>e` token text -> region-wide
+    /// occurrence count (see `collect_module_slot_alias_ref_counts`).
+    ident_counts: HashMap<String, usize>,
+    /// Exact digit text captured from every unanchored, lexically-unaware
+    /// `_r(<ws>digits<ws>)` occurrence in the region (see
+    /// `collect_bare_r_call_id_texts`).
+    bare_r_call_id_texts: HashSet<String>,
+    /// `var _m<id>e=_m<id>.exports;` declaration span(s), by id.
+    alias_decl_spans: HashMap<usize, Vec<(usize, usize)>>,
+    /// `var _m<id>={exports:{}};` declaration span(s), by id.
+    slot_decl_spans: HashMap<usize, Vec<(usize, usize)>>,
+    /// `_mods` array/object-literal entry span(s), keyed by exact entry
+    /// text (e.g. `_m13` for the dense-array form, `13:_m13` for the
+    /// sparse entry-flatten object form).
+    mods_entry_spans: HashMap<String, Vec<(usize, usize)>>,
+    /// Whether the located `_mods` list is the dense-array form
+    /// (`var _mods=[_m0,_m1,...]`) rather than the entry-flatten sparse
+    /// object form (`var _mods={0:_m0,...}`, #1993) — decides both the
+    /// target entry text and its zeroed replacement per id.
+    mods_is_array_form: bool,
+}
+
+fn build_orphan_cleanup_index(code: &str) -> OrphanCleanupIndex {
+    let (mods_entry_spans, mods_is_array_form) = match locate_mods_body(code) {
+        Some((body_start, body_end, is_array)) => {
+            (index_mods_entries(code, body_start, body_end), is_array)
+        }
+        None => (HashMap::new(), false),
+    };
+    OrphanCleanupIndex {
+        ident_counts: collect_module_slot_alias_ref_counts(code),
+        bare_r_call_id_texts: collect_bare_r_call_id_texts(code),
+        alias_decl_spans: collect_alias_decl_spans(code),
+        slot_decl_spans: collect_slot_decl_spans(code),
+        mods_entry_spans,
+        mods_is_array_form,
+    }
+}
+
+/// Per-touched-module orphan cleanup decisions, computed purely from
+/// `index` lookups (O(1) each) instead of `remove_orphan_module_alias_and_slot`'s
+/// per-id region rescans. Mirrors that function's exact decision order and
+/// edge-case asymmetries:
+/// - alias-decl removal is gated on the decl span actually being found
+///   (`.contains(&alias_decl)` in the original) AND its own ref count;
+///   removing it drops the paired slot token's count by exactly one (the
+///   alias decl's own `_m{id}.exports` reference), so that adjustment is
+///   applied before the slot-count eligibility check below.
+/// - slot-decl removal is *not* gated on a decl span being found (the
+///   original calls `.replace(&slot_decl, "")` unconditionally once the
+///   count check passes); `_mods` zeroing is attempted independently of
+///   whether a slot-decl span was actually found, matching the original's
+///   unconditional tail call into `replace_module_slot_entry_with_zero`.
+fn collect_orphan_cleanup_replacements(
+    index: &OrphanCleanupIndex,
+    touched_modules: &HashSet<usize>,
+) -> Vec<(usize, usize, String)> {
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+
+    for &id in touched_modules {
+        let slot = format!("_m{id}");
+        let alias = format!("_m{id}e");
+
+        let mut alias_removed = false;
+        if let Some(spans) = index.alias_decl_spans.get(&id) {
+            let alias_count = index.ident_counts.get(&alias).copied().unwrap_or(0);
+            if alias_count <= 1 {
+                for &(start, end) in spans {
+                    replacements.push((start, end, String::new()));
+                }
+                alias_removed = true;
+            }
+        }
+
+        if index.bare_r_call_id_texts.contains(id.to_string().as_str()) {
+            continue;
+        }
+
+        let slot_count = index.ident_counts.get(&slot).copied().unwrap_or(0);
+        let effective_slot_count = slot_count.saturating_sub(if alias_removed { 1 } else { 0 });
+        if effective_slot_count > 2 {
+            continue;
+        }
+
+        if let Some(spans) = index.slot_decl_spans.get(&id) {
+            for &(start, end) in spans {
+                replacements.push((start, end, String::new()));
+            }
+        }
+
+        let (target_entry, zeroed) = if index.mods_is_array_form {
+            (slot.clone(), "0".to_string())
+        } else {
+            (format!("{id}:{slot}"), format!("{id}:0"))
+        };
+        if let Some(spans) = index.mods_entry_spans.get(&target_entry) {
+            for &(start, end) in spans {
+                replacements.push((start, end, zeroed.clone()));
+            }
+        }
+    }
+
+    replacements
+}
+
+/// Every id whose bare `_r(id)` require call-site appears anywhere in
+/// `code`, keyed by the *exact digit text* captured (not the parsed
+/// number) — matching `remove_orphan_module_alias_and_slot`'s original
+/// per-id `Regex::new(&format!(r"_r\(\s*{}\s*\)", id))` check byte-for-byte
+/// (a zero-padded id text like `007` would not satisfy an `id.to_string()`
+/// lookup of `7`, exactly as the original per-id literal-digit pattern
+/// would not match it either), but compiled and scanned ONCE for the whole
+/// region instead of once per touched module id.
+fn collect_bare_r_call_id_texts(code: &str) -> HashSet<String> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"_r\(\s*(\d+)\s*\)").unwrap());
+    re.captures_iter(code)
+        .map(|cap| cap[1].to_string())
+        .collect()
+}
+
+/// `var _m<id>e=_m<id>.exports;` declaration span(s), by id. The regex
+/// crate has no backreferences, so the "same id on both sides" requirement
+/// implied by the original string-built `format!("var {alias}={slot}.exports;")`
+/// is enforced with two capture groups plus an explicit equality check.
+fn collect_alias_decl_spans(code: &str) -> HashMap<usize, Vec<(usize, usize)>> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"var _m(\d+)e=_m(\d+)\.exports;").unwrap());
+    let mut spans: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+    for caps in re.captures_iter(code) {
+        if caps[1] != caps[2] {
+            continue;
+        }
+        if let Ok(id) = caps[1].parse::<usize>() {
+            let m = caps.get(0).unwrap();
+            spans.entry(id).or_default().push((m.start(), m.end()));
+        }
+    }
+    spans
+}
+
+/// `var _m<id>={exports:{}};` declaration span(s), by id.
+fn collect_slot_decl_spans(code: &str) -> HashMap<usize, Vec<(usize, usize)>> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"var _m(\d+)=\{exports:\{\}\};").unwrap());
+    let mut spans: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+    for caps in re.captures_iter(code) {
+        if let Ok(id) = caps[1].parse::<usize>() {
+            let m = caps.get(0).unwrap();
+            spans.entry(id).or_default().push((m.start(), m.end()));
+        }
+    }
+    spans
+}
+
+/// Locates the flat-region `_mods` module-slot list body exactly once,
+/// mirroring `replace_module_slot_entry_with_zero`'s per-call `.find()`
+/// pair (dense array form from `generate_flattened_bundle`, checked first,
+/// else the sparse object form from `generate_entry_flat_region`, #1993) —
+/// but paid ONE time for the whole region instead of once per touched
+/// module id. Returns `(body_start, body_end, is_array_form)`.
+fn locate_mods_body(code: &str) -> Option<(usize, usize, bool)> {
+    if let Some(start) = code.find("var _mods=[") {
+        let body_start = start + "var _mods=[".len();
+        let rel_end = code[body_start..].find("];")?;
+        return Some((body_start, body_start + rel_end, true));
+    }
+    let start = code.find("var _mods={")?;
+    let body_start = start + "var _mods={".len();
+    let rel_end = code[body_start..].find("};")?;
+    Some((body_start, body_start + rel_end, false))
+}
+
+/// Splits a `_mods` list body on literal `,` exactly like
+/// `replace_module_slot_entry_with_zero`'s `str::split(',')` (deliberately
+/// no whitespace trimming, matching its exact-text `entry == slot`
+/// comparison), recording each entry's byte span keyed by its exact text
+/// so later per-id lookups are O(1) instead of a fresh split+scan per id.
+fn index_mods_entries(
+    code: &str,
+    body_start: usize,
+    body_end: usize,
+) -> HashMap<String, Vec<(usize, usize)>> {
+    let mut spans: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+    let b = code.as_bytes();
+    let mut entry_start = body_start;
+    let mut i = body_start;
+    while i <= body_end {
+        if i == body_end || b[i] == b',' {
+            spans
+                .entry(code[entry_start..i].to_string())
+                .or_default()
+                .push((entry_start, i));
+            entry_start = i + 1;
+        }
+        i += 1;
+    }
+    spans
+}
+
+/// Region-wide occurrence counts of every `_m<digits>` (module-object
+/// "slot") and `_m<digits>e` (exports-alias) identifier token, keyed by
+/// exact token text. Replaces the per-candidate `count_identifier_refs`
+/// sweep `remove_orphan_module_alias_and_slot` used to run once per touched
+/// module id (#2133). Deliberately mirrors `count_identifier_refs_in_range`'s
+/// exact word-boundary + not-preceded-by-`.` + string/template/comment-skip
+/// semantics byte-for-byte (including its lack of regex-literal awareness,
+/// unlike `collect_prefixed_ident_occurrences_in_range`) so every count this
+/// produces is identical to what a direct `count_identifier_refs(code, name)`
+/// call on the same `name` would have returned.
+fn collect_module_slot_alias_ref_counts(code: &str) -> HashMap<String, usize> {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    collect_module_slot_alias_ref_counts_in_range(b, 0, len, &mut counts);
+    counts
+}
+
+fn collect_module_slot_alias_ref_counts_in_range(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    counts: &mut HashMap<String, usize>,
+) {
+    let len = end.min(b.len());
+    let mut i = start.min(len);
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            continue;
+        }
+
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                collect_module_slot_alias_ref_counts_in_range(b, expr_start, expr_end, counts);
+                0
+            });
+            i = next.min(len);
+            continue;
+        }
+
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                if i + 1 < len {
+                    i += 2;
+                }
+                continue;
+            }
+        }
+
+        if is_id_start_byte(b[i]) {
+            let tok_start = i;
+            i += 1;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let tok = &b[tok_start..i];
+            if tok.len() > 2 && tok[0] == b'_' && tok[1] == b'm' && tok[2].is_ascii_digit() {
+                let mut d = 2;
+                while d < tok.len() && tok[d].is_ascii_digit() {
+                    d += 1;
+                }
+                let is_slot = d == tok.len();
+                let is_alias = !is_slot && d == tok.len() - 1 && tok[d] == b'e';
+                if is_slot || is_alias {
+                    let mut p = tok_start;
+                    while p > 0 && matches!(b[p - 1], b' ' | b'\t') {
+                        p -= 1;
+                    }
+                    if p == 0 || b[p - 1] != b'.' {
+                        if let Ok(name) = std::str::from_utf8(tok) {
+                            *counts.entry(name.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+}
+
 /// Remove `function`/`class` declarations and `var`/`const`/`let`
 /// declarations with side-effect-free initializers whose `_mN_`-prefixed
 /// name has no remaining references beyond the declaration itself.
@@ -3356,8 +3661,17 @@ pub fn elide_same_chunk_export_bindings(code: &str) -> (String, ExportElisionSta
         return (code.to_string(), ExportElisionStats::default());
     }
 
-    for id in &touched_modules {
-        rewritten = remove_orphan_module_alias_and_slot(&rewritten, *id);
+    // Orphan alias/slot cleanup used to call `remove_orphan_module_alias_and_slot`
+    // once per touched module, each call re-scanning the *entire* region from
+    // scratch (word-boundary ref counts, a freshly compiled `_r(id)` regex, and
+    // an `_mods` list re-parse). On the mui-visual-demo reference corpus that's
+    // ~94 touched modules x a ~1.4MB region, which dominated build time
+    // (O(touched_modules x region), #2133). Build the same lookups ONCE off
+    // `rewritten` and turn every module's decision into O(1) index lookups.
+    let orphan_index = build_orphan_cleanup_index(&rewritten);
+    let orphan_replacements = collect_orphan_cleanup_replacements(&orphan_index, &touched_modules);
+    if !orphan_replacements.is_empty() {
+        rewritten = apply_static_replacements(&rewritten, orphan_replacements);
     }
 
     if !super::dce::js_parses_without_errors(&rewritten) {
