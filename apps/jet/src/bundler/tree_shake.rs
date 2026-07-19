@@ -249,7 +249,11 @@ pub fn analyze_used_exports_from_with_implicit_edges(
     //   2. `export { x as alias } from './y'` → if barrel's `alias` is
     //                                          used, mark `y`'s `x` used
     //                                          (the original name lives
-    //                                          on the leaf).
+    //                                          on the leaf). A wildcard-
+    //                                          strength (`"*"`) barrel
+    //                                          consumer marks every pair's
+    //                                          leaf name used, same as
+    //                                          shape 3 below (#1998).
     //   3. `export * from './y'`             → if barrel's `x` is used,
     //                                          mark `y`'s `x` used. Only a
     //                                          wildcard/namespace consumer
@@ -296,20 +300,48 @@ pub fn analyze_used_exports_from_with_implicit_edges(
                     }
                     ReexportKind::Named(pairs) => {
                         // Each pair is (local-on-leaf, exposed-on-barrel).
-                        // Propagate only when the exposed name is used.
+                        // Propagate when the exposed name is used, OR the
+                        // barrel itself is consumed only via wildcard
+                        // (`"*"`) — same wildcard-implies-every-export rule
+                        // the Star arm above already applies. Before this
+                        // fix (#1998) a barrel reached exclusively through
+                        // `"*"` usage (a CJS interop wrapper's
+                        // `_interopRequireDefault(require(...))`, a
+                        // namespace import, or another re-export barrel
+                        // whose own usage couldn't be narrowed to a literal
+                        // name) never satisfied
+                        // `barrel_used.contains(&barrel_name)` for a plain
+                        // `export { default } from './leaf'` shape —
+                        // `@mui/utils/clamp`'s actual index.js — so the
+                        // leaf silently never entered `used`/`live` and was
+                        // dropped from the bundle outright even though a
+                        // wildcard consumer by definition reads every
+                        // export the barrel has, named or not (repro:
+                        // `@mui/system`'s `colorManipulator.js` imports
+                        // `clamp` as a plain default import, but the only
+                        // edge that reaches `@mui/utils/clamp/index.js` in
+                        // the mui-visual production fixture happens to be
+                        // wildcard-strength, e.g. via a CJS interop
+                        // wrapper elsewhere in the graph — `clampWrapper`
+                        // then called `(0, _clamp.default)(...)` against a
+                        // module the bundle never actually shipped).
                         // We hold off on creating the `used[target]`
                         // entry until we know we have at least one name
                         // to insert — same rationale as the Star arm.
-                        let to_add: Vec<String> = pairs
-                            .into_iter()
-                            .filter_map(|(leaf_name, barrel_name)| {
-                                if barrel_used.contains(&barrel_name) {
-                                    Some(leaf_name)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
+                        let to_add: Vec<String> = if barrel_used.contains("*") {
+                            pairs.into_iter().map(|(leaf_name, _)| leaf_name).collect()
+                        } else {
+                            pairs
+                                .into_iter()
+                                .filter_map(|(leaf_name, barrel_name)| {
+                                    if barrel_used.contains(&barrel_name) {
+                                        Some(leaf_name)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect()
+                        };
                         if to_add.is_empty() {
                             continue;
                         }
@@ -1345,6 +1377,21 @@ fn extract_cjs_export_names(source: &str) -> Vec<String> {
 }
 
 /// Extract CJS require bindings: which properties are used from required modules.
+///
+/// Walks every `require(...)` call on each line, not just the first
+/// (#1998). Minifiers routinely coalesce multiple top-level requires onto
+/// one comma-separated `var`/`let`/`const` statement — react-dom's actual
+/// production CJS bundle has `'use strict';var
+/// aa=require("react"),ca=require("scheduler");` as a single line. Before
+/// this fix, the loop below matched `scan_require_call` once per line, so
+/// every require after the first on a shared line was silently dropped —
+/// `scheduler` never got a `used_exports` entry at all. That was harmless
+/// while the pre-transform survivors-only filter
+/// (`bundler::mod::compute_transform_survivors`) was opt-in (#1995 round
+/// 1), but once the filter went default-on (#1995 round 3) it became a
+/// hard exclusion gate: `scheduler`'s files were skipped during transform
+/// and never entered the bundle at all, producing `TypeError: j is not a
+/// function` the moment react-dom called into it in a real browser.
 fn extract_cjs_require_bindings(
     importer: &Path,
     source: &str,
@@ -1354,69 +1401,100 @@ fn extract_cjs_require_bindings(
 
     for line in source.lines() {
         let trimmed = line.trim();
+        let mut cursor = 0usize;
 
-        // scan_require_call (WI #1947 round 2) finds the line's "require("
-        // once and derives both the specifier and any trailing
-        // `.prop`/`["prop"]` access from that single match, instead of the
-        // two independent `str::find("require(")` scans (one per helper)
-        // this loop used to run per line — extract_cjs_require_bindings was
-        // the heaviest single extractor on tw-monitor's real corpus.
-        let Some((req_source, accessed)) = scan_require_call(trimmed) else {
-            continue;
-        };
-        let Some(target) = lookup.find(req_source, importer) else {
-            continue;
-        };
-
-        // Pattern 1: const { a, b } = require('mod')
-        let destructured = extract_destructured_names(trimmed);
-        // Pattern 2: require('mod').prop / require('mod')["prop"] — this is
-        // `accessed`, already computed by scan_require_call above.
-
-        if destructured.is_empty() && accessed.is_empty() {
-            // Pattern 3 (#1968): `const m = require('mod'); ... m.prop ...`
-            // — the require target is bound to a local name and read via
-            // property access on LATER lines, not the require() line
-            // itself. Line-wise narrowing (patterns 1/2 above) can't see
-            // this, so it used to fall straight to the namespace-wildcard
-            // branch below — cheap for a single wrapper module, but fatal
-            // for a re-export barrel: a `"*"` used-name makes
-            // `eliminate_unused_reexport_assignments` (bundler/dce.rs) bail
-            // out of pruning the barrel's re-export glue ENTIRELY (its
-            // own `"*"` short-circuit can't tell "genuinely reads every
-            // export" apart from "this extractor gave up narrowing"), so
-            // every leaf the barrel re-exports survives the bundler's
-            // require-reachability pass untouched — reproduced on a
-            // `@mui/icons-material`-shaped fixture (10,775 of 10,775
-            // barrel leaves retained) once a CJS shim did
-            // `const M = require('@mui/icons-material')` and read
-            // `M.SomeIcon` on a separate line. Recovering the specific
-            // accessed names here lets the fixed point (and the glue
-            // pruner downstream) narrow the barrel exactly as it already
-            // does for an explicit `require('mod').prop` access.
-            if let Some(binding) = extract_require_local_binding(trimmed) {
-                if let Some(names) =
-                    scan_require_binding_property_accesses(source, trimmed, &binding)
-                {
-                    results.push((target.0.clone(), names));
-                    continue;
-                }
+        // scan_require_call (WI #1947 round 2) finds one "require(" and
+        // derives both the specifier and any trailing `.prop`/`["prop"]`
+        // access from that single match. This outer `while` (#1998) keeps
+        // re-running it against the remainder of the line after each match
+        // so a line with more than one require() call — not just the
+        // first — is fully accounted for.
+        while let Some(rel_pos) = trimmed[cursor..].find("require(") {
+            let require_pos = cursor + rel_pos;
+            let after = &trimmed[require_pos + 8..]; // skip "require("
+            let Some(quote) = after.chars().next() else {
+                break;
+            };
+            if quote != '"' && quote != '\'' {
+                // Not a string-literal call (e.g. `require(dynamicVar)`) —
+                // skip just this occurrence and keep scanning the rest of
+                // the line for a later, real require() call.
+                cursor = require_pos + 8;
+                continue;
             }
-            // Namespace-style require (`var m = require('mod')`,
-            // `module.exports = require('mod')` interop wrappers). Whole-
-            // module usage cannot be narrowed line-wise, so keep every
-            // export of the target. Dropping this edge entirely left CJS
-            // package wrappers' ESM twins dead in the liveness walk and
-            // the glue pruner deleted their genuinely-used exports
-            // (internal_processStyles vanished from @mui/styled-engine).
-            results.push((target.0.clone(), vec!["*".to_string()]));
-            continue;
-        }
-        if !destructured.is_empty() {
-            results.push((target.0.clone(), destructured));
-        }
-        if !accessed.is_empty() {
-            results.push((target.0.clone(), accessed));
+            let Some(end) = after[1..].find(quote) else {
+                break; // unterminated — nothing more to safely parse on this line.
+            };
+            let req_source = &after[1..1 + end];
+            let accessed = parse_require_property_access(&trimmed[require_pos..]);
+            cursor = require_pos + 8 + 1 + end + 1; // just past the closing quote.
+
+            let Some(target) = lookup.find(req_source, importer) else {
+                continue;
+            };
+
+            // Pattern 1: const { a, b } = require('mod') — scoped to just
+            // this call (the brace pair immediately left of its own `=`),
+            // not the whole line, so a comma-coalesced sibling declarator
+            // on the same line can't donate an unrelated destructure.
+            let destructured = extract_destructured_names_before(trimmed, require_pos);
+            // Pattern 2: require('mod').prop / require('mod')["prop"] — this
+            // is `accessed`, already computed above and likewise scoped to
+            // just this call (parse_require_property_access only looks at
+            // the text starting at this require's own position).
+
+            if destructured.is_empty() && accessed.is_empty() {
+                // Pattern 3 (#1968): `const m = require('mod'); ... m.prop ...`
+                // — the require target is bound to a local name and read via
+                // property access on LATER lines, not the require() line
+                // itself. Line-wise narrowing (patterns 1/2 above) can't see
+                // this, so it used to fall straight to the namespace-wildcard
+                // branch below — cheap for a single wrapper module, but fatal
+                // for a re-export barrel: a `"*"` used-name makes
+                // `eliminate_unused_reexport_assignments` (bundler/dce.rs) bail
+                // out of pruning the barrel's re-export glue ENTIRELY (its
+                // own `"*"` short-circuit can't tell "genuinely reads every
+                // export" apart from "this extractor gave up narrowing"), so
+                // every leaf the barrel re-exports survives the bundler's
+                // require-reachability pass untouched — reproduced on a
+                // `@mui/icons-material`-shaped fixture (10,775 of 10,775
+                // barrel leaves retained) once a CJS shim did
+                // `const M = require('@mui/icons-material')` and read
+                // `M.SomeIcon` on a separate line. Recovering the specific
+                // accessed names here lets the fixed point (and the glue
+                // pruner downstream) narrow the barrel exactly as it already
+                // does for an explicit `require('mod').prop` access.
+                //
+                // extract_require_local_binding_before (#1998) finds the
+                // identifier immediately left of THIS call's own `=`,
+                // instead of requiring the require to be the line's first
+                // token — so `aa` and `ca` resolve as two independent
+                // bindings on `var aa=require("react"),ca=require("scheduler");`
+                // rather than only the line's first declarator.
+                if let Some(binding) = extract_require_local_binding_before(trimmed, require_pos) {
+                    if let Some(names) =
+                        scan_require_binding_property_accesses(source, trimmed, &binding)
+                    {
+                        results.push((target.0.clone(), names));
+                        continue;
+                    }
+                }
+                // Namespace-style require (`var m = require('mod')`,
+                // `module.exports = require('mod')` interop wrappers). Whole-
+                // module usage cannot be narrowed line-wise, so keep every
+                // export of the target. Dropping this edge entirely left CJS
+                // package wrappers' ESM twins dead in the liveness walk and
+                // the glue pruner deleted their genuinely-used exports
+                // (internal_processStyles vanished from @mui/styled-engine).
+                results.push((target.0.clone(), vec!["*".to_string()]));
+                continue;
+            }
+            if !destructured.is_empty() {
+                results.push((target.0.clone(), destructured));
+            }
+            if !accessed.is_empty() {
+                results.push((target.0.clone(), accessed));
+            }
         }
     }
 
@@ -1454,6 +1532,51 @@ pub(crate) fn extract_require_local_binding(line: &str) -> Option<String> {
         };
     }
     None
+}
+
+/// The local binding name a `require(...)` call at `require_pos` in `line`
+/// is assigned to — the `X` in `...X = require(...)`, scoped to just the
+/// text immediately left of THIS call's `=` rather than requiring the
+/// call to be the line's first token (unlike its sibling
+/// `extract_require_local_binding` above, which only recognizes a
+/// line-initial `const`/`let`/`var` declarator and is kept exactly as-is
+/// for its own existing caller, `bundler::mod::prefetch_graph_modules`).
+///
+/// Handles both a require preceded by unrelated statements on the same
+/// line (`'use strict';var aa=require("react")...` — react-dom's actual
+/// production CJS bundle) and a require that is the *second or later*
+/// declarator in a comma-separated `var`/`let`/`const` list
+/// (`var aa=require("react"),ca=require("scheduler");`, the very same
+/// line — #1998's exact repro: minifiers routinely coalesce top-level
+/// requires this way). Returns `None` for anything that isn't a bare
+/// `IDENT = require(...)` assignment immediately to the left — including
+/// a member-expression assignment target such as `exports.foo =
+/// require(...)` (rejected via the `.`-before-identifier check below, so
+/// `foo` is never mistaken for a plain local variable binding) —
+/// destructuring is handled separately by `extract_destructured_names_before`,
+/// and anything else correctly falls through to the caller's whole-module
+/// wildcard fallback.
+fn extract_require_local_binding_before(line: &str, require_pos: usize) -> Option<String> {
+    let before = line[..require_pos].trim_end();
+    let before = before.strip_suffix('=')?;
+    // Reject `==`, `!=`, `<=`, `>=` — a real assignment's `=` is never
+    // itself preceded by another operator character.
+    if before.ends_with(['=', '!', '<', '>']) {
+        return None;
+    }
+    let before = before.trim_end();
+    let ident_start = before
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let ident = &before[ident_start..];
+    if ident.is_empty() || ident.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    if ident_start > 0 && before.as_bytes()[ident_start - 1] == b'.' {
+        return None; // `obj.foo = require(...)` — a property target, not a plain local binding.
+    }
+    Some(ident.to_string())
 }
 
 /// Scan `source` for every use of `binding` outside its own declaration
@@ -1611,6 +1734,54 @@ pub(crate) fn extract_destructured_names(line: &str) -> Vec<String> {
     }
 
     names
+}
+
+/// The `{ a, b }` destructured names bound to a `require(...)` call at
+/// `require_pos` in `line` — the destructuring-pattern twin of
+/// `extract_require_local_binding_before` above, scoped the same way (the
+/// brace pair must sit immediately left of THIS call's own `=`). Delegates
+/// the actual name parsing to `extract_destructured_names` once the
+/// matching `{...}` span is located, so comma/alias handling stays defined
+/// in one place.
+///
+/// Scoping to "immediately left of this require's own `=`" — instead of
+/// `extract_destructured_names`'s whole-line scan for the first `{`/`}`
+/// pair — also means an unrelated brace pair earlier on the same line
+/// (from a different comma-separated declarator, or from ordinary
+/// control-flow code sharing the line) can never be mistaken for this
+/// call's own destructure target (#1998).
+fn extract_destructured_names_before(line: &str, require_pos: usize) -> Vec<String> {
+    let before = line[..require_pos].trim_end();
+    let Some(before) = before.strip_suffix('=') else {
+        return Vec::new();
+    };
+    if before.ends_with(['=', '!', '<', '>']) {
+        return Vec::new();
+    }
+    let before = before.trim_end();
+    if !before.ends_with('}') {
+        return Vec::new();
+    }
+    let bytes = before.as_bytes();
+    let mut depth = 0i32;
+    let mut open_idx = None;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b'}' => depth += 1,
+            b'{' => {
+                depth -= 1;
+                if depth == 0 {
+                    open_idx = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    match open_idx {
+        Some(open_idx) => extract_destructured_names(&before[open_idx..]),
+        None => Vec::new(),
+    }
 }
 
 /// Shared implementation for property-access parsing: given the line slice
@@ -1788,6 +1959,58 @@ mod cjs_require_scan_1947_tests {
         assert!(
             bindings.contains(&(dep, vec!["namedExport".to_string()])),
             "bracket-access require('./dep')[\"namedExport\"] must resolve to [\"namedExport\"], got {bindings:?}"
+        );
+    }
+
+    /// #1998: minifiers routinely coalesce multiple top-level requires onto
+    /// one comma-separated `var`/`let`/`const` statement — react-dom's
+    /// actual production CJS bundle has
+    /// `'use strict';var aa=require("react"),ca=require("scheduler");` as a
+    /// single line (verbatim, reproduced here with fixture module names).
+    /// Before the fix, `extract_cjs_require_bindings`'s single
+    /// `scan_require_call` match per line silently dropped every require
+    /// after the first on a shared line, so the module required only via
+    /// the second declarator got NO binding entry at all. That was a
+    /// silent hole in the liveness analysis that, once
+    /// `bundler::mod::compute_transform_survivors` (#1995) started using
+    /// this analysis as a hard pre-transform exclusion gate, escalated into
+    /// skipping the module's transform entirely — producing `TypeError: j
+    /// is not a function` in a real browser the moment react-dom called
+    /// into `scheduler`.
+    #[test]
+    fn extract_cjs_require_bindings_resolves_every_declarator_on_a_multi_require_line() {
+        let app_source = "'use strict';var aa=require('./react-like'),ca=require('./scheduler-like');\nca.unstable_now();\n";
+        let modules = vec![
+            (PathBuf::from("/fixture/app.js"), app_source.to_string()),
+            (
+                PathBuf::from("/fixture/react-like.js"),
+                "exports.createElement = function () {};\n".to_string(),
+            ),
+            (
+                PathBuf::from("/fixture/scheduler-like.js"),
+                "exports.unstable_now = function () {};\nexports.unstable_scheduleCallback = function () {};\n"
+                    .to_string(),
+            ),
+        ];
+        let lookup = ModuleLookup::new(&modules);
+        let bindings =
+            extract_cjs_require_bindings(Path::new("/fixture/app.js"), app_source, &lookup);
+
+        let react_like = PathBuf::from("/fixture/react-like.js");
+        let scheduler_like = PathBuf::from("/fixture/scheduler-like.js");
+
+        assert!(
+            bindings.iter().any(|(p, _)| *p == react_like),
+            "the FIRST declarator on the shared line must still resolve, got {bindings:?}"
+        );
+        assert!(
+            bindings.iter().any(|(p, _)| *p == scheduler_like),
+            "the SECOND declarator on the shared line must also resolve (#1998), got {bindings:?}"
+        );
+        assert!(
+            bindings.contains(&(scheduler_like, vec!["unstable_now".to_string()])),
+            "ca's only later use is a .unstable_now() property access, so it must narrow \
+             to that name rather than fall back to a whole-module wildcard, got {bindings:?}"
         );
     }
 
@@ -3008,6 +3231,71 @@ const internal = 2;
         assert!(
             !leaf_used.contains("default"),
             "export * must not propagate the default export: {leaf_used:?}"
+        );
+    }
+
+    /// #1998: reproduces `@mui/utils/clamp`'s exact real-world shape from
+    /// the mui-visual production fixture — a plain default re-export
+    /// barrel (`export { default } from './leaf'`, `ReexportKind::Named`
+    /// with a single `("default", "default")` pair) whose ONLY inbound
+    /// edge is wildcard-strength (`"*"`), never the literal name
+    /// `"default"`. `colorManipulator.js` does `import clamp from
+    /// '@mui/utils/clamp'`, but the fixture's actual liveness edge into
+    /// the barrel came from a CJS interop wrapper elsewhere in the graph
+    /// (`_interopRequireDefault(require('@mui/utils/clamp'))`, which
+    /// `extract_cjs_require_bindings` correctly records as wildcard usage
+    /// — it cannot narrow a whole-module interop wrap to one property).
+    /// Before this fix, the Named arm only checked
+    /// `barrel_used.contains(&barrel_name)` — `"default" !=
+    /// "*"` — so `leaf.js` never entered `used`/`live` and was dropped
+    /// from the bundle outright, producing `TypeError: (0 ,
+    /// hn.default) is not a function` the moment `clampWrapper` called
+    /// into it in a real browser.
+    #[test]
+    fn named_reexport_of_default_propagates_through_a_wildcard_only_barrel_use() {
+        let modules = vec![
+            (
+                PathBuf::from("/fixture/entry.js"),
+                // A CJS interop wrapper is the ONLY edge into barrel.js —
+                // whole-module wildcard usage, never the literal name
+                // "default".
+                "var _interopRequireDefault = require('helper');\n\
+                 var _barrel = _interopRequireDefault(require('./barrel'));\n\
+                 function wrapper(v) { return (0, _barrel.default)(v); }\n"
+                    .to_string(),
+            ),
+            (
+                PathBuf::from("/fixture/barrel.js"),
+                "export { default } from './leaf';\n".to_string(),
+            ),
+            (
+                PathBuf::from("/fixture/leaf.js"),
+                "function clamp(v) { return v; }\nexport default clamp;\n".to_string(),
+            ),
+            (PathBuf::from("/fixture/helper.js"), String::new()),
+        ];
+
+        let result = analyze_used_exports(&modules).unwrap();
+        let barrel_used = result
+            .used_exports
+            .get(&PathBuf::from("/fixture/barrel.js"))
+            .expect("barrel must be live via the interop wrapper's wildcard edge");
+        assert!(
+            barrel_used.contains("*"),
+            "sanity: barrel usage must actually be wildcard-only for this repro; got {barrel_used:?}"
+        );
+        let leaf_used = result.used_exports.get(&PathBuf::from("/fixture/leaf.js"));
+        assert!(
+            leaf_used.is_some_and(|names| names.contains("default")),
+            "a wildcard-only barrel use must still propagate a Named `export {{ default }}` \
+             re-export to its leaf; got {leaf_used:?}"
+        );
+        assert!(
+            !result
+                .eliminated_modules
+                .contains(&PathBuf::from("/fixture/leaf.js")),
+            "leaf.js must not be eliminated: {:?}",
+            result.eliminated_modules,
         );
     }
 
