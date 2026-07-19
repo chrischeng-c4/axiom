@@ -266,6 +266,9 @@ path = "tests/build/lazy_barrel_expansion.rs"
 [[test]]
 name = "entry_flatten"
 path = "tests/build/entry_flatten.rs"
+[[test]]
+name = "fast_import_scan"
+path = "tests/build/fast_import_scan.rs"
 
 # tests/stories/ — jet stories: CSF story discovery + parse (Storybook replacement)
 [[test]]

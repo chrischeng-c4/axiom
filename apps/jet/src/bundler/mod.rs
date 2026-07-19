@@ -533,6 +533,14 @@ struct PrefetchedModule {
     /// transform won't rewrite, so the module transform can reuse it instead of
     /// re-parsing. `None` for TS/TSX/JSX/CSS/etc. See `extract_imports_with_tree`.
     tree: Option<tree_sitter::Tree>,
+    /// Which import-extraction path this module's `imports` came from
+    /// (#1997): `Some(true)` = the string-scan fast path
+    /// (`imports::extract_imports_fast`), `Some(false)` = the tree-sitter
+    /// fallback, `None` = extraction was never attempted (not a
+    /// `ModuleKind::Script`, or the file read failed). Read back in
+    /// `build_graph` to print the `JET_BUNDLE_TIMING` `import-scan:`
+    /// line; carries no other behavior.
+    used_fast_import_scan: Option<bool>,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
@@ -1167,6 +1175,7 @@ impl Bundler {
         let mut imports: std::result::Result<imports::ModuleImports, String> =
             Err("not a script module".to_string());
         let mut tree: Option<tree_sitter::Tree> = None;
+        let mut used_fast_import_scan: Option<bool> = None;
 
         if determine_module_kind(&module_path.to_path_buf()) == graph::ModuleKind::Script {
             if let Ok(src) = &source {
@@ -1177,11 +1186,13 @@ impl Bundler {
                 // so its JS-grammar parse can be reused there. Keep the tree only
                 // for those modules; TS/TSX/JSX get re-parsed post-rewrite anyway.
                 let reusable = matches!(ext, Some("js") | Some("cjs") | Some("mjs"));
-                match imports::extract_imports_with_tree(src, is_typescript) {
-                    Ok((module_imports, parsed)) => {
-                        if reusable {
-                            tree = Some(parsed);
-                        }
+                // #1997: try the cheap string-scan fast path first; a tree is
+                // never produced there, so `tree` stays `None` for a fast-scanned
+                // module and the transform stage re-parses it if needed --
+                // exactly like it already does for every TS/TSX/JSX module today.
+                match imports::extract_imports_fast(src) {
+                    Some(module_imports) => {
+                        used_fast_import_scan = Some(true);
                         imports = Ok(self.runtime_static_imports(
                             src,
                             module_path,
@@ -1189,7 +1200,23 @@ impl Bundler {
                             module_imports,
                         ));
                     }
-                    Err(e) => imports = Err(e.to_string()),
+                    None => {
+                        used_fast_import_scan = Some(false);
+                        match imports::extract_imports_with_tree(src, is_typescript) {
+                            Ok((module_imports, parsed)) => {
+                                if reusable {
+                                    tree = Some(parsed);
+                                }
+                                imports = Ok(self.runtime_static_imports(
+                                    src,
+                                    module_path,
+                                    is_typescript,
+                                    module_imports,
+                                ));
+                            }
+                            Err(e) => imports = Err(e.to_string()),
+                        }
+                    }
                 }
                 if let Ok(module_imports) = &imports {
                     let mut specs: Vec<&str> = Vec::new();
@@ -1221,6 +1248,7 @@ impl Bundler {
             imports,
             resolutions,
             tree,
+            used_fast_import_scan,
         }
     }
 }
@@ -1647,8 +1675,18 @@ impl Bundler {
         let Ok(transformed) = self.transformer.transform_js(source, module_path) else {
             return module_imports;
         };
-        let Ok(runtime_imports) = imports::extract_imports(&transformed.code, false) else {
-            return module_imports;
+        // #1997: this narrowing step already pays for a full retransform of
+        // the TS source, so trying the string-scan fast path on the
+        // resulting (guaranteed-plain-JS) output first is a second, cheap
+        // win independent of the primary crawl call site above.
+        let runtime_imports = match imports::extract_imports_fast(&transformed.code) {
+            Some(runtime_imports) => runtime_imports,
+            None => {
+                let Ok(runtime_imports) = imports::extract_imports(&transformed.code, false) else {
+                    return module_imports;
+                };
+                runtime_imports
+            }
         };
         let runtime_sources: std::collections::HashSet<String> = runtime_imports
             .static_imports
@@ -1698,6 +1736,23 @@ impl Bundler {
         // re-export lines against this map before codegen (#1991) — see
         // `Bundler::barrel_demand`'s doc comment.
         *self.barrel_demand.lock() = barrel_demand;
+
+        // #1997 — how many crawled modules the string-scan fast path
+        // (`imports::extract_imports_fast`) covered vs. how many still
+        // needed the tree-sitter fallback, as a JET_BUNDLE_TIMING sibling
+        // line. Modules where extraction was never attempted (non-script
+        // kinds, unreadable files) are excluded from both counts.
+        if std::env::var_os("JET_BUNDLE_TIMING").is_some() {
+            let fast = prefetched
+                .values()
+                .filter(|p| p.used_fast_import_scan == Some(true))
+                .count();
+            let fallback = prefetched
+                .values()
+                .filter(|p| p.used_fast_import_scan == Some(false))
+                .count();
+            eprintln!("[bundle-timing] import-scan: fast={fast} fallback={fallback}");
+        }
 
         let mut queue: Vec<(PathBuf, Option<ModuleId>, Option<graph::EdgeKind>)> =
             vec![(entry_abs, None, None)];
@@ -1777,22 +1832,31 @@ impl Bundler {
                         tracing::warn!("Failed to extract imports from {:?}: {}", module_path, e);
                         continue;
                     }
-                    None => match imports::extract_imports(&source, is_typescript) {
-                        Ok(imports) => self.runtime_static_imports(
-                            &source,
-                            &module_path,
-                            is_typescript,
-                            imports,
-                        ),
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to extract imports from {:?}: {}",
-                                module_path,
-                                e
-                            );
-                            continue;
+                    // #1997: same fast-path-first preference as the parallel
+                    // prefetch above, for this rare synchronous fallback (a
+                    // module the wave crawl didn't already memoize).
+                    None => {
+                        let extracted = match imports::extract_imports_fast(&source) {
+                            Some(imports) => Ok(imports),
+                            None => imports::extract_imports(&source, is_typescript),
+                        };
+                        match extracted {
+                            Ok(imports) => self.runtime_static_imports(
+                                &source,
+                                &module_path,
+                                is_typescript,
+                                imports,
+                            ),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to extract imports from {:?}: {}",
+                                    module_path,
+                                    e
+                                );
+                                continue;
+                            }
                         }
-                    },
+                    }
                 };
 
                 // For TSX/JSX files with automatic runtime, add react/jsx-runtime as implicit dependency
@@ -5584,6 +5648,7 @@ mod lazy_barrel_expansion_tests {
             imports: Err("not a script module".to_string()),
             resolutions: HashMap::new(),
             tree: None,
+            used_fast_import_scan: None,
         }
     }
 
