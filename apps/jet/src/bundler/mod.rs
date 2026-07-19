@@ -3045,7 +3045,63 @@ impl Bundler {
             );
         }
 
-        modules
+        // WI #2126 — statement-level DCE for retained modules. Runs
+        // adjacent to (immediately after) `shake_module`'s ESM export-line
+        // pruning below, on the same already-shaken body: `shake_module`
+        // narrows a barrel's `export { a, b }` clause, and this pass then
+        // walks what's left looking for CJS `exports.NAME = ...;`
+        // assignments and top-level function/class/var declarations that
+        // `used_exports`-reachability proves dead — the gap real
+        // pre-built-CJS vendor packages leave open, since Babel emits an
+        // unconditional `exports.NAME = value;` for every named export
+        // regardless of downstream usage (see dce.rs's
+        // `eliminate_dead_top_level_declarations` doc comment for the full
+        // mark-and-sweep algorithm). Deliberately only wired into the
+        // `used.is_empty()` == false branch below (where `shake_module`
+        // itself already runs): an empty `used` set there means "no
+        // specific per-export usage signal," not "nothing is used," and
+        // `shake_module` already treats that case as unsafe to touch for
+        // the same reason. `JET_NO_STMT_DCE=1` is the A/B bypass knob,
+        // mirroring `JET_NO_TREESHAKE` above; `JET_BUNDLE_TIMING` (already
+        // established convention) gets one extra lap line with per-build
+        // counters.
+        struct StmtDceCounters {
+            modules: std::cell::Cell<usize>,
+            pruned_decls: std::cell::Cell<usize>,
+            pruned_bytes: std::cell::Cell<usize>,
+            skipped_vendor: std::cell::Cell<usize>,
+        }
+        let stmt_dce_enabled = std::env::var_os("JET_NO_STMT_DCE").is_none();
+        let stmt_dce_counters = StmtDceCounters {
+            modules: std::cell::Cell::new(0),
+            pruned_decls: std::cell::Cell::new(0),
+            pruned_bytes: std::cell::Cell::new(0),
+            skipped_vendor: std::cell::Cell::new(0),
+        };
+        let apply_stmt_dce = |code: String, used: &HashSet<String>| -> String {
+            if !stmt_dce_enabled {
+                return code;
+            }
+            stmt_dce_counters
+                .modules
+                .set(stmt_dce_counters.modules.get() + 1);
+            let outcome = dce::eliminate_dead_top_level_declarations(&code, used);
+            if outcome.skipped_vendor {
+                stmt_dce_counters
+                    .skipped_vendor
+                    .set(stmt_dce_counters.skipped_vendor.get() + 1);
+                return code;
+            }
+            stmt_dce_counters
+                .pruned_decls
+                .set(stmt_dce_counters.pruned_decls.get() + outcome.pruned_decls);
+            stmt_dce_counters
+                .pruned_bytes
+                .set(stmt_dce_counters.pruned_bytes.get() + outcome.pruned_bytes);
+            outcome.code
+        };
+
+        let result: Vec<CompiledModule> = modules
             .into_iter()
             .filter(|m| reachable.contains(&m.id))
             .map(|m| {
@@ -3099,9 +3155,20 @@ impl Bundler {
                         &eliminated_module_ids,
                     )
                 };
+                let shaken = apply_stmt_dce(shaken, &used);
                 CompiledModule { code: shaken, ..m }
             })
-            .collect()
+            .collect();
+        if std::env::var_os("JET_BUNDLE_TIMING").is_some() {
+            eprintln!(
+                "[bundle-timing] stmt-dce: modules={} pruned_decls={} bytes={} skipped_vendor={}",
+                stmt_dce_counters.modules.get(),
+                stmt_dce_counters.pruned_decls.get(),
+                stmt_dce_counters.pruned_bytes.get(),
+                stmt_dce_counters.skipped_vendor.get()
+            );
+        }
+        result
     }
 
     fn generate_bundle(

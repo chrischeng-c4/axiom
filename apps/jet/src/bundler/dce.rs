@@ -14,6 +14,10 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Parser};
 
+// WI #2126: reuses the whole-module eval/with/arguments[..] safety probe
+// for `eliminate_dead_top_level_declarations`.
+use super::scope_hoist;
+
 /// Build a lookup table: byte_offsets[char_idx] = byte offset in `source`.
 /// byte_offsets[chars.len()] = source.len() (one past the end).
 fn build_byte_offsets(source: &str) -> Vec<usize> {
@@ -1884,6 +1888,471 @@ fn find_ternary_colon(
     }
 }
 
+// ---------------------------------------------------------------------
+// WI #2126 — statement-level DCE for retained modules.
+//
+// `shake_module` (tree_shake.rs) prunes ESM `export { a, b }` clause
+// members that are unused, but real vendor packages ship pre-built CJS
+// (Babel output): every named export gets an *unconditional*
+// `exports.NAME = value;` assignment regardless of downstream usage —
+// `shake_module`'s ESM-syntax-only matching cannot see these at all, so
+// the function/class/const bodies backing unused CJS exports (and any
+// helper only those unused exports call) survive tree-shaking untouched.
+//
+// This pass closes that gap by parsing each retained module body's
+// top-level statements and running a conservative mark-and-sweep over
+// declaration-name references:
+//   - seeds  = identifiers referenced by any "always-live" statement
+//     (anything that is not a prunable-shaped declaration — including a
+//     CJS export assignment whose target is in `used_exports`)
+//   - reachability propagates transitively through live declarations'
+//     own bodies (a live decl's callees become live; the reverse is not
+//     true — a decl is not made live merely because it calls something
+//     that happens to be live)
+//   - anything never reached is spliced out
+//
+// Liveness lookups are a scope-blind, comment/string-INCLUSIVE raw-text
+// word scan (`word_occurs_in_span`): over-approximating "is this name
+// referenced anywhere in this span" is always safe here because the
+// worst case is merely a missed opportunity to prune, never an incorrect
+// deletion. This deliberately folds what the original spike described as
+// two mechanisms (an AST-filtered identifier index, plus a separate
+// string-literal-inclusive scan for the keep-decision) into one, since a
+// raw-text scan already subsumes both and the module explicitly favors
+// "pick the simple sound rule" over mirroring a two-mechanism design.
+//
+// Declarations are only ever considered prunable when they have one of a
+// small set of side-effect-free shapes (see
+// `is_side_effect_free_initializer_kind`); anything else — notably a
+// `require(...)` call initializer, since dropping an unreferenced
+// `require()` binding could silently skip a side-effecting module load —
+// falls back to the always-live bucket. `is_module_flatten_safe` (shared
+// with scope-hoisting) gates the whole module out of this pass on
+// `eval(`/`with(`/`arguments[` — those constructs can reference any
+// top-level binding by name at runtime in ways no static scan can see.
+
+/// One prunable top-level declaration: a function/class declaration, or a
+/// `var`/`let`/`const` statement whose declarator(s) all have a
+/// side-effect-free shape (see [`is_side_effect_free_initializer_kind`]).
+/// `names` holds every name bound by the statement — for a multi-declarator
+/// `var a = 1, b = 2;` this is `["a", "b"]`, and the two are kept or pruned
+/// atomically as one unit (conservative: any one live binding keeps the
+/// whole statement, including its sibling declarators).
+struct TopLevelDecl {
+    names: Vec<String>,
+    span: std::ops::Range<usize>,
+}
+
+/// A CJS `exports.NAME = ...;` / `module.exports.NAME = ...;` /
+/// `exports["NAME"] = ...;` / `module.exports["NAME"] = ...;` assignment
+/// statement whose liveness is decided purely by `used_exports` membership
+/// (not by any reference scan) — this is the shape Babel emits
+/// unconditionally for every named export.
+struct ConditionalExportAssignment {
+    name: String,
+    span: std::ops::Range<usize>,
+}
+
+/// Result of [`eliminate_dead_top_level_declarations`].
+pub(crate) struct StmtDceOutcome {
+    pub(crate) code: String,
+    pub(crate) pruned_decls: usize,
+    pub(crate) pruned_bytes: usize,
+    pub(crate) skipped_vendor: bool,
+}
+
+impl StmtDceOutcome {
+    fn unchanged(source: &str) -> Self {
+        StmtDceOutcome {
+            code: source.to_string(),
+            pruned_decls: 0,
+            pruned_bytes: 0,
+            skipped_vendor: false,
+        }
+    }
+
+    fn skipped(source: &str) -> Self {
+        StmtDceOutcome {
+            code: source.to_string(),
+            pruned_decls: 0,
+            pruned_bytes: 0,
+            skipped_vendor: true,
+        }
+    }
+}
+
+// A module at least this large AND this dense (see
+// `STMT_DCE_VENDOR_AVG_LINE_LEN_THRESHOLD`) is heuristically treated as an
+// already-minified, pre-shaken single-file vendor bundle: parsing +
+// scanning it for statement-level DCE has a real cost and single-file
+// minified vendor code is already about as small as it is going to get.
+// Skipping only costs opportunity, never correctness, so the rule is
+// deliberately cheap and self-contained (size + average-line-length only —
+// no cross-module "is this the only retained module in its package"
+// plumbing).
+const STMT_DCE_VENDOR_SIZE_THRESHOLD: usize = 100_000;
+const STMT_DCE_VENDOR_AVG_LINE_LEN_THRESHOLD: usize = 500;
+
+fn looks_like_minified_vendor_bundle(source: &str) -> bool {
+    if source.len() < STMT_DCE_VENDOR_SIZE_THRESHOLD {
+        return false;
+    }
+    let newline_count = source.bytes().filter(|&b| b == b'\n').count();
+    let avg_line_len = source.len() / newline_count.max(1);
+    avg_line_len >= STMT_DCE_VENDOR_AVG_LINE_LEN_THRESHOLD
+}
+
+/// Declarator initializer node kinds that can never themselves be a
+/// meaningful runtime side effect, so a `var`/`let`/`const` statement made
+/// up only of declarators with these initializer kinds (or no initializer
+/// at all) is eligible for pruning. Anything else — most importantly a
+/// `call_expression` such as `require(...)` — keeps the whole statement in
+/// the always-live bucket, because dropping an unreferenced binding could
+/// silently skip a side-effecting call.
+fn is_side_effect_free_initializer_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "arrow_function"
+            | "function"
+            | "function_expression"
+            | "generator_function"
+            | "class"
+            | "number"
+            | "string"
+            | "true"
+            | "false"
+            | "null"
+    )
+}
+
+/// Extracts the exported name from a CJS export-assignment statement's
+/// source text, e.g. `exports.foo = foo;` -> `Some("foo")`,
+/// `module.exports["bar"] = bar;` -> `Some("bar")`. Returns `None` both for
+/// non-export-assignment statements and for chained assignments such as
+/// `exports.a = exports.b = value;`, whose right-hand side is itself
+/// another export target — `is_chained_export_assignment` rejects those so
+/// the (rare) chained shape always falls back to the safe always-live
+/// bucket rather than risking mis-attributing the statement to only its
+/// first target name.
+fn cjs_export_assignment_name(stmt_text: &str) -> Option<&str> {
+    for prefix in ["module.exports.", "exports."] {
+        let Some(rest) = stmt_text.strip_prefix(prefix) else {
+            continue;
+        };
+        let Some(end) = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        else {
+            continue;
+        };
+        if end == 0 {
+            continue;
+        }
+        let name = &rest[..end];
+        let Some(rhs) = rest[end..].trim_start().strip_prefix('=') else {
+            continue;
+        };
+        if rhs.starts_with('=') {
+            // `===`/`==` is a comparison, not an assignment.
+            continue;
+        }
+        if is_chained_export_assignment(rhs.trim_start()) {
+            return None;
+        }
+        return Some(name);
+    }
+    for prefix in ["module.exports[\"", "exports[\""] {
+        let Some(rest) = stmt_text.strip_prefix(prefix) else {
+            continue;
+        };
+        let Some(end) = rest.find('"') else {
+            continue;
+        };
+        if end == 0 {
+            continue;
+        }
+        let name = &rest[..end];
+        let Some(after_bracket) = rest[end + 1..].trim_start().strip_prefix(']') else {
+            continue;
+        };
+        let Some(rhs) = after_bracket.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        if rhs.starts_with('=') {
+            continue;
+        }
+        if is_chained_export_assignment(rhs.trim_start()) {
+            return None;
+        }
+        return Some(name);
+    }
+    None
+}
+
+fn is_chained_export_assignment(rhs: &str) -> bool {
+    rhs.starts_with("exports.")
+        || rhs.starts_with("exports[\"")
+        || rhs.starts_with("module.exports.")
+        || rhs.starts_with("module.exports[\"")
+}
+
+/// Classifies one top-level statement node into either a prunable
+/// declaration (`decls`), a `used_exports`-gated CJS export assignment
+/// (`conditional`), or an always-live statement (`root_spans`) — every
+/// statement lands in exactly one bucket.
+fn classify_top_level_statement(
+    source: &str,
+    node: Node<'_>,
+    used_exports: &HashSet<String>,
+    decls: &mut Vec<TopLevelDecl>,
+    conditional: &mut Vec<ConditionalExportAssignment>,
+    root_spans: &mut Vec<std::ops::Range<usize>>,
+) {
+    match node.kind() {
+        "function_declaration" | "generator_function_declaration" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if name_node.kind() == "identifier" {
+                    decls.push(TopLevelDecl {
+                        names: vec![source[name_node.byte_range()].to_string()],
+                        span: node.byte_range(),
+                    });
+                    return;
+                }
+            }
+        }
+        "class_declaration" | "abstract_class_declaration" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if name_node.kind() == "identifier" {
+                    decls.push(TopLevelDecl {
+                        names: vec![source[name_node.byte_range()].to_string()],
+                        span: node.byte_range(),
+                    });
+                    return;
+                }
+            }
+        }
+        "variable_declaration" | "lexical_declaration" => {
+            let mut cursor = node.walk();
+            let declarators: Vec<Node<'_>> = node
+                .named_children(&mut cursor)
+                .filter(|c| c.kind() == "variable_declarator")
+                .collect();
+            if !declarators.is_empty() {
+                let mut names = Vec::with_capacity(declarators.len());
+                let mut all_safe = true;
+                for declarator in &declarators {
+                    let Some(name_node) = declarator.child_by_field_name("name") else {
+                        all_safe = false;
+                        break;
+                    };
+                    if name_node.kind() != "identifier" {
+                        // Destructuring (`object_pattern`/`array_pattern`) —
+                        // conservatively always-live rather than teaching
+                        // this pass a second binding-name extractor.
+                        all_safe = false;
+                        break;
+                    }
+                    let value_ok = match declarator.child_by_field_name("value") {
+                        None => true,
+                        Some(v) => is_side_effect_free_initializer_kind(v.kind()),
+                    };
+                    if !value_ok {
+                        all_safe = false;
+                        break;
+                    }
+                    names.push(source[name_node.byte_range()].to_string());
+                }
+                if all_safe && !names.is_empty() {
+                    decls.push(TopLevelDecl {
+                        names,
+                        span: node.byte_range(),
+                    });
+                    return;
+                }
+            }
+        }
+        "expression_statement" => {
+            let text = source[node.byte_range()].trim();
+            if let Some(name) = cjs_export_assignment_name(text) {
+                if used_exports.contains(name) {
+                    root_spans.push(node.byte_range());
+                }
+                conditional.push(ConditionalExportAssignment {
+                    name: name.to_string(),
+                    span: node.byte_range(),
+                });
+                return;
+            }
+        }
+        _ => {}
+    }
+    root_spans.push(node.byte_range());
+}
+
+/// Scope-blind, comment/string-inclusive whole-word occurrence check: is
+/// `name` present anywhere in `source[span]`, bounded by non-identifier
+/// bytes (or the span edges) on both sides? Deliberately does not skip
+/// `string`/`comment` node contents — a name mentioned only inside a
+/// string (e.g. `window["riskyImpl"]`) or a comment must still count as a
+/// live reference, because over-keeping is safe and under-keeping is not.
+fn word_occurs_in_span(source: &str, name: &str, span: &std::ops::Range<usize>) -> bool {
+    if name.is_empty() || span.start >= span.end || span.end > source.len() {
+        return false;
+    }
+    let slice = &source[span.start..span.end];
+    let bytes = slice.as_bytes();
+    for (start, _) in slice.match_indices(name) {
+        let end = start + name.len();
+        let before_ok = start == 0 || !is_ident_byte(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_ident_byte(bytes[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Statement-level dead-code elimination for one already-transformed,
+/// CJS-lowered module body: drops top-level function/class/var/let/const
+/// declarations (and CJS export assignments) that are unreachable from
+/// `used_exports` per the conservative mark-and-sweep documented above the
+/// struct definitions in this section. Returns the original source
+/// unchanged (`StmtDceOutcome::unchanged`) whenever the module contains a
+/// parse error, `eval`/`with`/`arguments[`, or a `used_exports` `"*"`
+/// (whole-namespace) marker, and `StmtDceOutcome::skipped` when the module
+/// looks like an already-minified vendor bundle
+/// (`looks_like_minified_vendor_bundle`). The re-parse-guard-after-splice
+/// pattern mirrors `eliminate_unused_side_effect_free_require_bindings`
+/// above: if the post-splice text fails to re-parse cleanly, the original
+/// source is returned untouched rather than risking corrupted output.
+pub(crate) fn eliminate_dead_top_level_declarations(
+    source: &str,
+    used_exports: &HashSet<String>,
+) -> StmtDceOutcome {
+    if used_exports.contains("*") {
+        return StmtDceOutcome::unchanged(source);
+    }
+    if looks_like_minified_vendor_bundle(source) {
+        return StmtDceOutcome::skipped(source);
+    }
+    let Some(tree) = parse_js(source) else {
+        return StmtDceOutcome::unchanged(source);
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        return StmtDceOutcome::unchanged(source);
+    }
+    if !scope_hoist::is_module_flatten_safe(source) {
+        return StmtDceOutcome::unchanged(source);
+    }
+
+    let mut decls: Vec<TopLevelDecl> = Vec::new();
+    let mut conditional: Vec<ConditionalExportAssignment> = Vec::new();
+    let mut root_spans: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        classify_top_level_statement(
+            source,
+            child,
+            used_exports,
+            &mut decls,
+            &mut conditional,
+            &mut root_spans,
+        );
+    }
+    if decls.is_empty() {
+        return StmtDceOutcome::unchanged(source);
+    }
+
+    // Seed: decls referenced by any always-live statement.
+    let mut live = vec![false; decls.len()];
+    for (i, decl) in decls.iter().enumerate() {
+        if decl.names.iter().any(|name| {
+            root_spans
+                .iter()
+                .any(|span| word_occurs_in_span(source, name, span))
+        }) {
+            live[i] = true;
+        }
+    }
+    // Fixed-point propagation: a live decl's own body can reference other
+    // decls, which become live in turn (direction matters — a decl is
+    // never marked live merely because it calls something live).
+    loop {
+        let mut changed = false;
+        for i in 0..decls.len() {
+            if live[i] {
+                continue;
+            }
+            let reached = (0..decls.len()).any(|j| {
+                j != i
+                    && live[j]
+                    && decls[i]
+                        .names
+                        .iter()
+                        .any(|name| word_occurs_in_span(source, name, &decls[j].span))
+            });
+            if reached {
+                live[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut edits: Vec<StaticEdit> = Vec::new();
+    let mut pruned_decls = 0usize;
+    for (i, decl) in decls.iter().enumerate() {
+        if !live[i] {
+            edits.push(StaticEdit {
+                start: decl.span.start,
+                end: decl.span.end,
+                replacement: String::new(),
+            });
+            pruned_decls += 1;
+        }
+    }
+    for cond in &conditional {
+        if !used_exports.contains(cond.name.as_str()) {
+            edits.push(StaticEdit {
+                start: cond.span.start,
+                end: cond.span.end,
+                replacement: String::new(),
+            });
+        }
+    }
+    if edits.is_empty() {
+        return StmtDceOutcome::unchanged(source);
+    }
+
+    edits.sort_by_key(|edit| edit.start);
+    let mut filtered: Vec<StaticEdit> = Vec::new();
+    let mut last_end = 0usize;
+    for edit in edits {
+        if edit.start >= last_end {
+            last_end = edit.end;
+            filtered.push(edit);
+        }
+    }
+    let pruned_bytes: usize = filtered.iter().map(|edit| edit.end - edit.start).sum();
+    let mut out = source.to_string();
+    for edit in filtered.into_iter().rev() {
+        out.replace_range(edit.start..edit.end, "");
+    }
+    if parse_js(&out)
+        .map(|tree| tree.root_node().has_error())
+        .unwrap_or(true)
+    {
+        return StmtDceOutcome::unchanged(source);
+    }
+    StmtDceOutcome {
+        code: out,
+        pruned_decls,
+        pruned_bytes,
+        skipped_vendor: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2677,6 +3146,452 @@ Object.defineProperty(_m2.exports, "__esModule", { value: true });
             out, source,
             "a numeric_require_ids-disjoint eliminated set must be a guaranteed no-op"
         );
+    }
+
+    // WI #2126 — statement-level DCE for retained modules. The three
+    // "topology" fixtures below are minimal synthetic module bodies with
+    // the same reference shape as spike #2121's hand-verified real-world
+    // examples (function names kept for traceability; bodies are
+    // invented/trivial).
+
+    #[test]
+    fn test_stmt_dce_generate_utility_class_topology_one_dead_three_live() {
+        let source = r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isGlobalState = isGlobalState;
+exports.generateUtilityClass = generateUtilityClass;
+exports.isSlotComponent = isSlotComponent;
+exports.globalStateClassesMapping = void 0;
+function isGlobalState(name) {
+  return name === "disabled";
+}
+function generateUtilityClass(componentName, slot) {
+  return componentName + "-" + slot;
+}
+function isSlotComponent(slot) {
+  return slot.indexOf("Root") !== -1;
+}
+const globalStateClassesMapping = {
+  active: "Mui-active"
+};
+exports.globalStateClassesMapping = globalStateClassesMapping;
+"#;
+        let mut used = HashSet::new();
+        used.insert("generateUtilityClass".to_string());
+        used.insert("isSlotComponent".to_string());
+        used.insert("globalStateClassesMapping".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert!(!outcome.skipped_vendor);
+        assert_eq!(
+            outcome.pruned_decls, 1,
+            "only isGlobalState should be pruned: {}",
+            outcome.code
+        );
+        assert!(
+            !outcome.code.contains("function isGlobalState"),
+            "isGlobalState must be pruned, got: {}",
+            outcome.code
+        );
+        assert!(outcome.code.contains("function generateUtilityClass"));
+        assert!(outcome.code.contains("function isSlotComponent"));
+        assert!(outcome.code.contains("globalStateClassesMapping"));
+        assert!(js_parses_without_errors(&outcome.code));
+    }
+
+    #[test]
+    fn test_stmt_dce_css_utils_topology_five_dead_two_live() {
+        let source = r#""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getUnit = getUnit;
+exports.toUnitless = toUnitless;
+exports.getSpacingVar = getSpacingVar;
+exports.getStyleValue = getStyleValue;
+exports.padding = padding;
+exports.margin = margin;
+exports.convertLength = convertLength;
+function getUnit(input) {
+  return String(input).replace(/[\d.\-+]/g, "");
+}
+function toUnitless(length) {
+  return parseFloat(length);
+}
+function getSpacingVar(unit) {
+  return toUnitless(unit) + "px";
+}
+function getStyleValue(value) {
+  return getUnit(value);
+}
+function padding(value) {
+  return getStyleValue(value) + " " + getUnit(value);
+}
+function margin(value) {
+  return padding(value);
+}
+function convertLength(base) {
+  return function (length) {
+    return toUnitless(length) / toUnitless(base) * 100 + "%";
+  };
+}
+"#;
+        let mut used = HashSet::new();
+        used.insert("getUnit".to_string());
+        used.insert("toUnitless".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert!(!outcome.skipped_vendor);
+        assert_eq!(
+            outcome.pruned_decls, 5,
+            "getSpacingVar/getStyleValue/padding/margin/convertLength should be pruned (red-herring internal calls to live functions do not save them): {}",
+            outcome.code
+        );
+        assert!(outcome.code.contains("function getUnit"));
+        assert!(outcome.code.contains("function toUnitless"));
+        for dead in [
+            "getSpacingVar",
+            "getStyleValue",
+            "padding",
+            "margin",
+            "convertLength",
+        ] {
+            assert!(
+                !outcome.code.contains(&format!("function {dead}")),
+                "{dead} must be pruned, got: {}",
+                outcome.code
+            );
+        }
+        assert!(js_parses_without_errors(&outcome.code));
+    }
+
+    #[test]
+    fn test_stmt_dce_color_manipulator_topology_nine_dead_alpha_chain_live() {
+        let source = r##""use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.alpha = alpha;
+exports.darken = darken;
+exports.lighten = lighten;
+exports.blend = blend;
+exports.emphasize = emphasize;
+exports.getContrastRatio = getContrastRatio;
+exports.hslToRgb = hslToRgb;
+exports.rgbToHex = rgbToHex;
+exports.intToHex = intToHex;
+exports.colorChannel = void 0;
+exports.decomposeColor = decomposeColor;
+exports.hexToRgb = hexToRgb;
+exports.recomposeColor = recomposeColor;
+function clampWrapper(value, min = 0, max = 1) {
+  return Math.min(Math.max(min, value), max);
+}
+function hexToRgb(color) {
+  return color;
+}
+function decomposeColor(color) {
+  if (color.charAt(0) === "#") {
+    return decomposeColor(hexToRgb(color));
+  }
+  return { type: "rgb", values: [0, 0, 0] };
+}
+function recomposeColor(color) {
+  return "rgb(" + color.values.join(",") + ")";
+}
+function alpha(color, value) {
+  const parsed = decomposeColor(color);
+  parsed.values[3] = clampWrapper(value);
+  return recomposeColor(parsed);
+}
+function darken(color, coefficient) {
+  return recomposeColor(decomposeColor(color));
+}
+function lighten(color, coefficient) {
+  return recomposeColor(decomposeColor(color));
+}
+function blend(background, overlay, opacity) {
+  return recomposeColor(decomposeColor(background));
+}
+function emphasize(color, coefficient) {
+  return darken(color, coefficient);
+}
+function getContrastRatio(foreground, background) {
+  return hslToRgb(foreground);
+}
+function hslToRgb(color) {
+  return recomposeColor(decomposeColor(color));
+}
+function rgbToHex(color) {
+  return intToHex(0);
+}
+function intToHex(int) {
+  return int.toString(16);
+}
+const colorChannel = color => {
+  return decomposeColor(color).values.join(" ");
+};
+exports.colorChannel = colorChannel;
+"##;
+        let mut used = HashSet::new();
+        used.insert("alpha".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert!(!outcome.skipped_vendor);
+        assert_eq!(
+            outcome.pruned_decls, 9,
+            "darken/lighten/blend/emphasize/getContrastRatio/hslToRgb/rgbToHex/intToHex/colorChannel should be pruned: {}",
+            outcome.code
+        );
+        for live in [
+            "alpha",
+            "decomposeColor",
+            "hexToRgb",
+            "recomposeColor",
+            "clampWrapper",
+        ] {
+            assert!(
+                outcome.code.contains(&format!("function {live}")),
+                "{live} must survive via the alpha->decomposeColor->{{hexToRgb,recomposeColor,clampWrapper}} chain, got: {}",
+                outcome.code
+            );
+        }
+        for dead in [
+            "darken",
+            "lighten",
+            "blend",
+            "emphasize",
+            "getContrastRatio",
+            "hslToRgb",
+            "rgbToHex",
+            "intToHex",
+            "colorChannel",
+        ] {
+            assert!(
+                !outcome.code.contains(&format!("function {dead}"))
+                    && !outcome.code.contains(&format!("const {dead}")),
+                "{dead} must be pruned, got: {}",
+                outcome.code
+            );
+        }
+        assert!(js_parses_without_errors(&outcome.code));
+    }
+
+    #[test]
+    fn test_stmt_dce_multi_declarator_statement_is_atomic() {
+        let source = r#"function useIt() {
+  return b;
+}
+exports.useIt = useIt;
+var a = 1, b = 2;
+var c = 3, d = 4;
+"#;
+        let mut used = HashSet::new();
+        used.insert("useIt".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert!(
+            outcome.code.contains("var a = 1, b = 2;"),
+            "atomic multi-declarator: b is referenced so a must survive alongside it, got: {}",
+            outcome.code
+        );
+        assert!(
+            !outcome.code.contains("var c = 3, d = 4;"),
+            "wholly-unreferenced multi-declarator statement must be pruned atomically, got: {}",
+            outcome.code
+        );
+        assert!(js_parses_without_errors(&outcome.code));
+    }
+
+    #[test]
+    fn test_stmt_dce_shadowed_generic_name_conservative_keep() {
+        // Scope-blind word-scan: the nested `helper` inside `useIt` is a
+        // DIFFERENT binding from the top-level `helper`, but this pass
+        // cannot tell the two apart — it must conservatively keep the
+        // top-level one rather than risk deleting a live declaration.
+        let source = r#"function helper() {
+  return 1;
+}
+function useIt() {
+  function helper() {
+    return 2;
+  }
+  return helper();
+}
+exports.useIt = useIt;
+"#;
+        let mut used = HashSet::new();
+        used.insert("useIt".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert!(
+            outcome.code.contains("function helper() {\n  return 1;\n}"),
+            "shadowed top-level helper must be conservatively kept, got: {}",
+            outcome.code
+        );
+        assert_eq!(outcome.pruned_decls, 0);
+        assert!(js_parses_without_errors(&outcome.code));
+    }
+
+    #[test]
+    fn test_stmt_dce_string_literal_access_keep() {
+        let source = r#"function riskyImpl() {
+  return 42;
+}
+function lookup() {
+  return window["riskyImpl"];
+}
+exports.lookup = lookup;
+"#;
+        let mut used = HashSet::new();
+        used.insert("lookup".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert!(
+            outcome.code.contains("function riskyImpl"),
+            "a name mentioned only inside a string literal must conservatively keep the declaration, got: {}",
+            outcome.code
+        );
+        assert_eq!(outcome.pruned_decls, 0);
+        assert!(js_parses_without_errors(&outcome.code));
+    }
+
+    #[test]
+    fn test_stmt_dce_side_effect_iife_kept_and_does_not_block_pruning() {
+        let source = "(function () {\n  console.log(\"boot\");\n})();\nfunction unused() {\n  return 1;\n}\n";
+        let outcome = eliminate_dead_top_level_declarations(source, &HashSet::new());
+        assert!(
+            outcome.code.contains("console.log(\"boot\")"),
+            "the side-effecting IIFE must never be touched, got: {}",
+            outcome.code
+        );
+        assert!(
+            !outcome.code.contains("function unused"),
+            "an actually-unreferenced declaration elsewhere must still be pruned, got: {}",
+            outcome.code
+        );
+        assert_eq!(outcome.pruned_decls, 1);
+        assert!(js_parses_without_errors(&outcome.code));
+    }
+
+    #[test]
+    fn test_stmt_dce_eval_module_skips_whole_module_unchanged() {
+        let source = "function unused() {\n  return 1;\n}\neval(\"var x = 1;\");\n";
+        let outcome = eliminate_dead_top_level_declarations(source, &HashSet::new());
+        assert_eq!(
+            outcome.code, source,
+            "eval(..) anywhere must bail out untouched"
+        );
+        assert_eq!(outcome.pruned_decls, 0);
+        assert!(!outcome.skipped_vendor);
+    }
+
+    #[test]
+    fn test_stmt_dce_with_statement_skips_whole_module_unchanged() {
+        // `is_module_flatten_safe` (reused from scope_hoist.rs) matches the
+        // exact substring `"with("` with no space — this fixture matches
+        // that shape deliberately (as transformed/minified code typically
+        // does) rather than exercising a `with (obj)` spacing variant that
+        // probe does not catch; see this test module's other coverage for
+        // the substring-matching characteristic this implies.
+        let source = "function unused() {\n  return 1;\n}\nwith(obj) {\n  x = 1;\n}\n";
+        let outcome = eliminate_dead_top_level_declarations(source, &HashSet::new());
+        assert_eq!(
+            outcome.code, source,
+            "with(..) anywhere must bail out untouched"
+        );
+    }
+
+    #[test]
+    fn test_stmt_dce_dynamic_arguments_index_skips_whole_module_unchanged() {
+        let source =
+            "function unused() {\n  return 1;\n}\nfunction reader() {\n  return arguments[0];\n}\nexports.reader = reader;\n";
+        let mut used = HashSet::new();
+        used.insert("reader".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert_eq!(
+            outcome.code, source,
+            "dynamic arguments[..] indexing anywhere must bail out untouched"
+        );
+    }
+
+    #[test]
+    fn test_stmt_dce_star_used_export_skips_whole_module_unchanged() {
+        let source = "function unused() {\n  return 1;\n}\n";
+        let mut used = HashSet::new();
+        used.insert("*".to_string());
+        let outcome = eliminate_dead_top_level_declarations(source, &used);
+        assert_eq!(
+            outcome.code, source,
+            "used_exports containing \"*\" means whole-namespace consumption -- nothing is safe to prune"
+        );
+        assert_eq!(outcome.pruned_decls, 0);
+    }
+
+    #[test]
+    fn test_stmt_dce_require_bound_binding_never_pruned() {
+        let source =
+            "var sideEffecting = require(\"./polyfill\");\nfunction unused() {\n  return 1;\n}\n";
+        let outcome = eliminate_dead_top_level_declarations(source, &HashSet::new());
+        assert!(
+            outcome.code.contains("require(\"./polyfill\")"),
+            "a require()-initialized binding must never be a pruning candidate, got: {}",
+            outcome.code
+        );
+        assert!(!outcome.code.contains("function unused"));
+        assert_eq!(outcome.pruned_decls, 1);
+    }
+
+    #[test]
+    fn test_stmt_dce_destructuring_declaration_conservative_keep() {
+        let source =
+            "const { a, b } = require(\"./thing\");\nfunction unused() {\n  return 1;\n}\n";
+        let outcome = eliminate_dead_top_level_declarations(source, &HashSet::new());
+        assert!(
+            outcome
+                .code
+                .contains("const { a, b } = require(\"./thing\");"),
+            "a destructuring declaration must never be a pruning candidate, got: {}",
+            outcome.code
+        );
+        assert!(!outcome.code.contains("function unused"));
+    }
+
+    #[test]
+    fn test_stmt_dce_minified_vendor_bundle_is_skipped() {
+        let padding = "x".repeat(150_000);
+        let source = format!("var pad = \"{padding}\";function unused(){{return 1;}}");
+        let outcome = eliminate_dead_top_level_declarations(&source, &HashSet::new());
+        assert!(
+            outcome.skipped_vendor,
+            "a large, dense single-line module must be skipped as vendor"
+        );
+        assert_eq!(outcome.code, source);
+        assert_eq!(outcome.pruned_decls, 0);
+    }
+
+    #[test]
+    fn test_stmt_dce_large_but_normally_formatted_module_is_not_skipped() {
+        // Same order of magnitude in size as the minified-skip test above,
+        // but formatted with real newlines (low average line length) —
+        // must NOT trip the vendor-density heuristic, and must still
+        // prune the ~999 genuinely-unreferenced helpers.
+        let mut source = String::new();
+        for i in 0..1000 {
+            source.push_str(&format!(
+                "function helper{i}() {{\n  // this comment pads the body length for the size threshold test\n  return {i};\n}}\n"
+            ));
+        }
+        source.push_str("function used() {\n  return helper0();\n}\nexports.used = used;\n");
+        assert!(
+            source.len() >= STMT_DCE_VENDOR_SIZE_THRESHOLD,
+            "fixture must clear the size threshold: {}",
+            source.len()
+        );
+        let mut used = HashSet::new();
+        used.insert("used".to_string());
+        let outcome = eliminate_dead_top_level_declarations(&source, &used);
+        assert!(
+            !outcome.skipped_vendor,
+            "normally-formatted large source must not be treated as a minified vendor bundle"
+        );
+        assert!(
+            outcome.pruned_decls > 0,
+            "helper1..helper999 should be pruned"
+        );
+        assert!(!outcome.code.contains("function helper999"));
+        assert!(outcome.code.contains("function helper0"));
+        assert!(js_parses_without_errors(&outcome.code));
     }
 }
 // CODEGEN-END

@@ -138,7 +138,11 @@ pub fn is_flatten_safe(modules: &[CompiledModule]) -> bool {
     true
 }
 
-fn is_module_flatten_safe(code: &str) -> bool {
+// `pub(crate)`: reused by `dce::eliminate_dead_top_level_declarations`
+// (WI #2126) as the whole-module eval/with/arguments[..] safety probe
+// before attempting statement-level DCE, so it is not skip-hoist-local
+// anymore.
+pub(crate) fn is_module_flatten_safe(code: &str) -> bool {
     !(code.contains("eval(") || code.contains("with(") || code.contains("arguments["))
 }
 
