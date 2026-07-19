@@ -2619,7 +2619,15 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // Write output
             std::fs::write(output_dir.join(&out_filename), &code)
                 .context("Failed to write bundle")?;
-            for chunk in &hashed_chunks {
+            // Chunk `.js` + `.map` writes are independent per-file I/O
+            // (build_hashed_chunk already did all the CPU work above, back
+            // in the `chunk_post_process` lap) — parallelize with rayon,
+            // the same `par_iter()` pattern chunk minify/sourcemap
+            // generation already uses above (WI #1931).
+            // `JET_SERIAL_CHUNK_WRITES=1` is the escape hatch / A-B knob
+            // for corpus-fixture write-output-equivalence testing.
+            // @issue #1994
+            let write_chunk = |chunk: &HashedChunk| -> Result<()> {
                 let chunk_path = output_dir.join(&chunk.filename);
                 if let Some(parent) = chunk_path.parent() {
                     std::fs::create_dir_all(parent)
@@ -2635,6 +2643,26 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                         map_json,
                     )
                     .with_context(|| format!("Failed to write chunk source map {map_filename}"))?;
+                }
+                Ok(())
+            };
+            if std::env::var_os("JET_SERIAL_CHUNK_WRITES").is_some() {
+                for chunk in &hashed_chunks {
+                    write_chunk(chunk)?;
+                }
+            } else {
+                use rayon::prelude::*;
+                // `collect()` on an `IndexedParallelIterator` preserves
+                // `hashed_chunks`' original order in the output `Vec`
+                // regardless of which chunk's write finishes first on which
+                // thread, so the loop below always surfaces the first
+                // chunk's error by original list order (not completion
+                // order) — the same "first error, file named" semantics as
+                // the serial loop above, just with the writes themselves
+                // running concurrently.
+                let results: Vec<Result<()>> = hashed_chunks.par_iter().map(write_chunk).collect();
+                for write_result in results {
+                    write_result?;
                 }
             }
             lap("chunk_sourcemap_write");

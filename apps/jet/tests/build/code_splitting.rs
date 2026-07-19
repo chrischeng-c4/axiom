@@ -2427,4 +2427,204 @@ fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
 
     Ok(())
 }
+
+/// WI #1994 — the "Write output" loop's per-chunk `.js` + `.map` file
+/// writes are now parallelized (rayon over `HashedChunk`s) instead of
+/// serial; `JET_SERIAL_CHUNK_WRITES=1` is the escape hatch this test uses
+/// as the serial ground truth to diff against. Reuses
+/// `write_large_dynamic_import_corpus` (originally #1894's
+/// quadratic-regression fixture) to get a build with many independent
+/// chunks, so the parallel write path actually fans out across more than
+/// one file.
+///
+/// Both builds run from *one* fixture directory (via `-o`, not 2 separate
+/// tempdirs) — same reason as
+/// `splitting_survivor_filter_is_byte_identical_to_escape_hatch` above:
+/// `--no-minify` output keeps a `// Module N: <absolute path>` comment
+/// inline in chunk JS, so 2 different tempdirs would make even chunk files
+/// legitimately differ for a reason unrelated to this WI. Also mirrors that
+/// test's entry-file handling (`normalize_entry_code` + parsed-manifest
+/// comparison instead of raw byte equality): the entry's content hash can
+/// legitimately differ run-to-run for the same pre-existing,
+/// separately-tracked reason documented on `normalize_entry_code` (manifest
+/// key order is not stable across separate process invocations) — that is
+/// unrelated to chunk *write* parallelization, which only changes I/O
+/// order, not any computed content (chunk minify/hashing/manifest
+/// construction all already ran, in `hashed_chunks`' original list order,
+/// before the write loop).
+#[test]
+fn splitting_parallel_chunk_writes_match_serial_escape_hatch() -> Result<()> {
+    const MODULE_COUNT: usize = 80;
+
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_large_dynamic_import_corpus(fixture, MODULE_COUNT);
+
+    fn build(fixture: &Path, out_dir: &str, serial: bool) -> Result<PathBuf> {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_jet"));
+        cmd.args(["build", "--splitting", "--no-minify", "-o", out_dir])
+            .current_dir(fixture);
+        if serial {
+            cmd.env("JET_SERIAL_CHUNK_WRITES", "1");
+        }
+        let output = cmd
+            .output()
+            .context("run jet build --splitting --no-minify")?;
+        require_success(
+            output,
+            if serial {
+                "build --splitting --no-minify (JET_SERIAL_CHUNK_WRITES=1)"
+            } else {
+                "build --splitting --no-minify (default, parallel chunk writes)"
+            },
+        )?;
+        Ok(fixture.join(out_dir))
+    }
+
+    /// `(relative-path, absolute-path)` for every dist file, sorted by
+    /// relative path so 2 output trees zip up aligned.
+    fn sorted_entries(dist: &Path) -> Vec<(String, PathBuf)> {
+        let mut entries: Vec<(String, PathBuf)> = list_files_recursive(dist)
+            .into_iter()
+            .map(|p| {
+                let rel = p
+                    .strip_prefix(dist)
+                    .expect("file under dist")
+                    .to_string_lossy()
+                    .into_owned();
+                (rel, p)
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+    }
+
+    let dist_parallel = build(fixture, "dist-parallel", false)?;
+    let dist_serial = build(fixture, "dist-serial", true)?;
+
+    // Sanity: this fixture must actually produce many chunks, or the
+    // parallel write path never fans out across more than one file.
+    let count_ext = |dist: &Path, ext: &str| -> usize {
+        list_files_recursive(&dist.join("assets"))
+            .into_iter()
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some(ext))
+            .count()
+    };
+    assert_eq!(
+        count_ext(&dist_parallel, "js"),
+        MODULE_COUNT,
+        "expected {MODULE_COUNT} chunk .js files under dist-parallel/assets/"
+    );
+    assert_eq!(
+        count_ext(&dist_parallel, "map"),
+        MODULE_COUNT,
+        "expected {MODULE_COUNT} chunk .map files under dist-parallel/assets/ \
+         (default sourcemap mode is external)"
+    );
+
+    let is_entry = |rel: &str| -> bool {
+        rel.rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("main."))
+    };
+    let (parallel_entry, parallel_rest): (Vec<_>, Vec<_>) = sorted_entries(&dist_parallel)
+        .into_iter()
+        .partition(|(rel, _)| is_entry(rel));
+    let (serial_entry, serial_rest): (Vec<_>, Vec<_>) = sorted_entries(&dist_serial)
+        .into_iter()
+        .partition(|(rel, _)| is_entry(rel));
+
+    // Entry file (`main.<hash>.js` + `.js.map`): the content hash itself
+    // can differ run-to-run for a pre-existing, separately-tracked reason
+    // unrelated to this WI (see doc comment) — require both builds to
+    // still emit exactly one entry `.js` + one entry `.js.map`, and use
+    // the 2 (possibly differing) filenames to normalize `index.html`'s
+    // `<script src>` reference below.
+    assert_eq!(
+        parallel_entry.len(),
+        2,
+        "expected exactly main.<hash>.js + .js.map, got {parallel_entry:?}"
+    );
+    assert_eq!(
+        serial_entry.len(),
+        2,
+        "expected exactly main.<hash>.js + .js.map, got {serial_entry:?}"
+    );
+    fn entry_js_path(entries: &[(String, PathBuf)]) -> &Path {
+        entries
+            .iter()
+            .find(|(rel, _)| rel.ends_with(".js"))
+            .map(|(_, p)| p.as_path())
+            .expect("main.<hash>.js missing")
+    }
+    let entry_parallel_path = entry_js_path(&parallel_entry);
+    let entry_serial_path = entry_js_path(&serial_entry);
+    let entry_parallel_name = entry_parallel_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8")
+        .to_string();
+    let entry_serial_name = entry_serial_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .expect("entry filename utf-8")
+        .to_string();
+
+    // Non-entry files (chunk JS + every .map + index.html): exact
+    // relative-path set and byte-identical content. Both builds share one
+    // fixture directory (see doc comment), so the
+    // `// Module N: <absolute path>` comment `--no-minify` inlines into
+    // chunk JS is identical either way. `index.html` alone gets its
+    // `<script src="./main.<hash>.js">` reference normalized first, since
+    // it necessarily follows the entry's own (possibly differing) hash.
+    let parallel_rest_rel: Vec<&String> = parallel_rest.iter().map(|(r, _)| r).collect();
+    let serial_rest_rel: Vec<&String> = serial_rest.iter().map(|(r, _)| r).collect();
+    assert_eq!(
+        parallel_rest_rel, serial_rest_rel,
+        "parallel (default) and serial (JET_SERIAL_CHUNK_WRITES=1) chunk-write \
+         builds must emit the same non-entry dist/ file set"
+    );
+    for ((rel, pp), (_, sp)) in parallel_rest.iter().zip(serial_rest.iter()) {
+        let pb = fs::read(pp).with_context(|| format!("read {}", pp.display()))?;
+        let sb = fs::read(sp).with_context(|| format!("read {}", sp.display()))?;
+        if rel == "index.html" {
+            let ps_text = String::from_utf8(pb).context("index.html must be utf-8")?;
+            let ss_text = String::from_utf8(sb).context("index.html must be utf-8")?;
+            assert_eq!(
+                ps_text.replace(&entry_parallel_name, "<<ENTRY>>"),
+                ss_text.replace(&entry_serial_name, "<<ENTRY>>"),
+                "dist/index.html must be byte-identical (modulo the entry's \
+                 own content-hashed filename) between the parallel (default) \
+                 and serial (JET_SERIAL_CHUNK_WRITES=1) chunk-write builds"
+            );
+            continue;
+        }
+        assert_eq!(
+            pb, sb,
+            "dist/{rel} must be byte-identical between the parallel (default) \
+             and serial (JET_SERIAL_CHUNK_WRITES=1) chunk-write builds"
+        );
+    }
+
+    let entry_parallel_code =
+        fs::read_to_string(entry_parallel_path).context("read parallel entry")?;
+    let entry_serial_code = fs::read_to_string(entry_serial_path).context("read serial entry")?;
+    let (entry_parallel_norm, manifest_parallel) = normalize_entry_code(&entry_parallel_code);
+    let (entry_serial_norm, manifest_serial) = normalize_entry_code(&entry_serial_code);
+    assert_eq!(
+        entry_parallel_norm, entry_serial_norm,
+        "entry file must be byte-identical outside the chunkManifest \
+         assignment (and its own sourceMappingURL comment) between the \
+         parallel (default) and serial (JET_SERIAL_CHUNK_WRITES=1) \
+         chunk-write builds"
+    );
+    assert_eq!(
+        manifest_parallel, manifest_serial,
+        "chunkManifest must be the same JSON value (key order ignored — see \
+         normalize_entry_code's doc comment) between the parallel (default) \
+         and serial (JET_SERIAL_CHUNK_WRITES=1) chunk-write builds"
+    );
+
+    Ok(())
+}
 // HANDWRITE-END
