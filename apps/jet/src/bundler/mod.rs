@@ -1965,21 +1965,27 @@ impl Bundler {
     /// `apply_tree_shaking` itself is untouched and remains the sole
     /// authority for what actually ships in the bundle.
     ///
-    /// Returns `None` (meaning: transform everything, filter disabled) when
-    /// `JET_NO_SURVIVOR_FILTER` is set — the A/B knob for diffing filtered
-    /// vs. unfiltered bundle output byte-for-byte — when `build_graph` has
-    /// not yet populated `self.entry_path`, or when any crawled module's
-    /// source cannot be re-read. A partial liveness graph cannot be trusted
-    /// to skip anything, so any of those bails to the fully-conservative
-    /// "transform everything" behavior rather than risk a false-dead
-    /// verdict.
+    /// Returns `None` (meaning: transform everything, filter disabled)
+    /// unless `JET_SURVIVOR_FILTER=1` is set — WI #1995 round 5 made this
+    /// filter **opt-in**, not opt-out: round 4's default-on shape measured
+    /// as a net regression on the reference corpus (double analysis — this
+    /// pre-pass and `apply_tree_shaking`'s own recompute both re-read and
+    /// re-analyze the whole corpus; see round 5's `shake_analysis` reuse for
+    /// the fix in progress) and shifted output bytes vs. the escape hatch
+    /// outside known nondeterminism. `JET_SURVIVOR_FILTER=1` is also the A/B
+    /// knob for diffing filtered vs. unfiltered bundle output byte-for-byte.
+    /// Also returns `None` when `build_graph` has not yet populated
+    /// `self.entry_path`, or when any crawled module's source cannot be
+    /// re-read. A partial liveness graph cannot be trusted to skip
+    /// anything, so any of those bails to the fully-conservative "transform
+    /// everything" behavior rather than risk a false-dead verdict.
     /// @issue #1995
     fn compute_transform_survivors(
         &self,
         graph: &ModuleGraph,
         sorted_ids: &[ModuleId],
     ) -> Option<HashSet<PathBuf>> {
-        if std::env::var_os("JET_NO_SURVIVOR_FILTER").is_some() {
+        if std::env::var_os("JET_SURVIVOR_FILTER").is_none() {
             return None;
         }
         let entry = self.entry_path.lock().clone()?;
@@ -2348,8 +2354,8 @@ impl Bundler {
             // `implicit-edges` is `self.implicit_edges`'s length at the end
             // of this build's crawl (currently: one entry per `.tsx`/`.jsx`
             // module that resolved `react/jsx-runtime`) — 0 whenever the
-            // filter never ran (`JET_NO_SURVIVOR_FILTER=1` or no
-            // `.tsx`/`.jsx` modules in this build).
+            // filter never ran (round 5: `JET_SURVIVOR_FILTER` not set — the
+            // filter is opt-in — or no `.tsx`/`.jsx` modules in this build).
             eprintln!(
                 "[bundle-timing] survivor-filter: transformed={} skipped={} implicit-edges={}",
                 transformed_modules.load(Ordering::Relaxed),
@@ -3640,6 +3646,12 @@ export const jsxs = jsx;
         })
         .unwrap();
 
+        // WI #1995 round 5: the survivors-only filter is opt-in
+        // (`JET_SURVIVOR_FILTER=1`) — this test exists specifically to
+        // exercise it, so opt in explicitly and clean up afterward (env
+        // vars are process-global across parallel test threads).
+        std::env::set_var("JET_SURVIVOR_FILTER", "1");
+
         bundler.build_graph(&entry).await.unwrap();
         assert_eq!(
             bundler.implicit_edges.lock().len(),
@@ -3649,6 +3661,7 @@ export const jsxs = jsx;
         );
 
         let (modules, _has_cycle) = bundler.transform_modules().await.unwrap();
+        std::env::remove_var("JET_SURVIVOR_FILTER");
         assert!(
             modules
                 .iter()
@@ -3661,10 +3674,11 @@ export const jsxs = jsx;
 
     /// A subtree (`dead_root.js` -> `dead_leaf.js`) reachable only through a
     /// `process.env.NODE_ENV`-gated dev-only branch must be skipped by the
-    /// pre-transform survivors-only filter, and the filtered build must
-    /// stay byte-identical (after the real elimination authority,
-    /// `apply_tree_shaking`, runs on both) to the `JET_NO_SURVIVOR_FILTER=1`
-    /// escape hatch.
+    /// pre-transform survivors-only filter (opted into via
+    /// `JET_SURVIVOR_FILTER=1` — WI #1995 round 5), and the filtered build
+    /// must stay byte-identical (after the real elimination authority,
+    /// `apply_tree_shaking`, runs on both) to the default (filter off)
+    /// build.
     #[tokio::test]
     async fn test_survivor_filter_skips_dead_only_subtree_and_stays_byte_identical() {
         async fn build(
@@ -3703,10 +3717,13 @@ export const value = live();
             )
             .unwrap();
 
+            // WI #1995 round 5: the survivors-only filter is opt-in
+            // (`JET_SURVIVOR_FILTER=1`) — `no_filter=false` here means
+            // "exercise the filter", so that branch now opts in explicitly.
             if no_filter {
-                std::env::set_var("JET_NO_SURVIVOR_FILTER", "1");
+                std::env::remove_var("JET_SURVIVOR_FILTER");
             } else {
-                std::env::remove_var("JET_NO_SURVIVOR_FILTER");
+                std::env::set_var("JET_SURVIVOR_FILTER", "1");
             }
 
             let bundler = Bundler::new(BundleOptions {
@@ -3726,7 +3743,7 @@ export const value = live();
 
             bundler.build_graph(&entry).await.unwrap();
             let (transformed, _has_cycle) = bundler.transform_modules().await.unwrap();
-            std::env::remove_var("JET_NO_SURVIVOR_FILTER");
+            std::env::remove_var("JET_SURVIVOR_FILTER");
             let shaken = bundler.apply_tree_shaking(transformed.clone(), &entry);
             (transformed, shaken)
         }
@@ -3745,7 +3762,7 @@ export const value = live();
         assert!(
             has_module(&transformed_unfiltered, "dead_root.js")
                 && has_module(&transformed_unfiltered, "dead_leaf.js"),
-            "escape hatch (JET_NO_SURVIVOR_FILTER=1) must still transform the \
+            "default (survivor filter off) build must still transform the \
              dead-only subtree: {:?}",
             transformed_unfiltered
                 .iter()
@@ -3778,8 +3795,8 @@ export const value = live();
         assert_eq!(
             final_set(&shaken_filtered),
             final_set(&shaken_unfiltered),
-            "survivor filter must be byte-identical to the \
-             JET_NO_SURVIVOR_FILTER=1 escape hatch after apply_tree_shaking"
+            "survivor filter must be byte-identical to the default \
+             (survivor filter off) build after apply_tree_shaking"
         );
         assert!(
             !final_set(&shaken_filtered).contains_key("dead_root.js"),

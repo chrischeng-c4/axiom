@@ -2254,11 +2254,12 @@ fn splitting_survives_pnpm_symlink_and_alias_without_duplicating_or_orphaning_mo
     Ok(())
 }
 
-/// WI #1995 round 4 — the pre-transform survivors-only transform filter
-/// must be byte-identical to its `JET_NO_SURVIVOR_FILTER=1` escape hatch:
-/// same `dist/` file set, same bytes, for a real `--splitting` build (the
-/// filter only skips transform *work* for modules a raw-source liveness
-/// pre-pass proves dead; it must never change what actually ships).
+/// WI #1995 round 4/5 — the pre-transform survivors-only transform filter
+/// (opt-in via `JET_SURVIVOR_FILTER=1` since round 5) must be byte-identical
+/// to the default (filter off) build: same `dist/` file set, same bytes,
+/// for a real `--splitting` build (the filter only skips transform *work*
+/// for modules a raw-source liveness pre-pass proves dead; it must never
+/// change what actually ships).
 ///
 /// Uses `--no-minify` (same reason as the manifest-parsing tests above:
 /// `build_chunk_manifest_js` only emits strict, fully-quoted JSON before
@@ -2281,8 +2282,11 @@ fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_jet"));
         cmd.args(["build", "--splitting", "--no-minify", "-o", out_dir])
             .current_dir(fixture);
-        if no_filter {
-            cmd.env("JET_NO_SURVIVOR_FILTER", "1");
+        // WI #1995 round 5: the survivors-only filter is opt-in
+        // (`JET_SURVIVOR_FILTER=1`) — `no_filter=false` here means
+        // "exercise the filter", so that's the branch that opts in.
+        if !no_filter {
+            cmd.env("JET_SURVIVOR_FILTER", "1");
         }
         let output = cmd
             .output()
@@ -2290,9 +2294,9 @@ fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
         require_success(
             output,
             if no_filter {
-                "build --splitting --no-minify (JET_NO_SURVIVOR_FILTER=1)"
+                "build --splitting --no-minify (default, survivor filter off)"
             } else {
-                "build --splitting --no-minify (survivor filter on)"
+                "build --splitting --no-minify (JET_SURVIVOR_FILTER=1)"
             },
         )?;
         Ok(fixture.join(out_dir))
@@ -2378,7 +2382,7 @@ fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
     assert_eq!(
         filtered_rest_rel, unfiltered_rest_rel,
         "survivor filter must emit the same non-entry dist/ file set as the \
-         JET_NO_SURVIVOR_FILTER=1 escape hatch"
+         default (survivor filter off) build"
     );
     for ((rel, fp), (_, up)) in filtered_rest.iter().zip(unfiltered_rest.iter()) {
         let fb = fs::read(fp).with_context(|| format!("read {}", fp.display()))?;
@@ -2391,14 +2395,14 @@ fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
                 us_text.replace(&entry_unfiltered_name, "<<ENTRY>>"),
                 "dist/index.html must be byte-identical (modulo the entry's \
                  own content-hashed filename) between the survivor filter \
-                 and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
+                 and the default (survivor filter off) build"
             );
             continue;
         }
         assert_eq!(
             fb, ub,
             "dist/{rel} must be byte-identical between the survivor filter \
-             and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
+             and the default (survivor filter off) build"
         );
     }
 
@@ -2412,13 +2416,13 @@ fn splitting_survivor_filter_is_byte_identical_to_escape_hatch() -> Result<()> {
         entry_filtered_norm, entry_unfiltered_norm,
         "entry file must be byte-identical outside the chunkManifest \
          assignment (and its own sourceMappingURL comment) between the \
-         survivor filter and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
+         survivor filter and the default (survivor filter off) build"
     );
     assert_eq!(
         manifest_filtered, manifest_unfiltered,
         "chunkManifest must be the same JSON value (key order ignored — see \
          normalize_entry_code's doc comment) between the survivor filter \
-         and the JET_NO_SURVIVOR_FILTER=1 escape hatch"
+         and the default (survivor filter off) build"
     );
 
     Ok(())
