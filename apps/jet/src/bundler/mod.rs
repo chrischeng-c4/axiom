@@ -3065,13 +3065,47 @@ impl Bundler {
         // mirroring `JET_NO_TREESHAKE` above; `JET_BUNDLE_TIMING` (already
         // established convention) gets one extra lap line with per-build
         // counters.
+        //
+        // WI #2134 — gated off entirely on the entry-flatten path.
+        // #2126's own close-out measured only 184 net bytes on the mui
+        // corpus's default (minified, splitting-on) build, because
+        // `scope_hoist`'s R5 (`eliminate_unused_exports_preserving_entry`)
+        // and the entry-flatten partition's own downstream pipeline
+        // already remove the same dead declarations later — this pass
+        // pays ~200ms of sequential tree-sitter parsing per build for
+        // that near-zero marginal yield whenever the build is headed
+        // there. `self.splitting` is the exact already-resolved boolean
+        // that later decides whether `generate_bundle` even attempts
+        // `generate_split_bundle`/entry-flatten (see that call site, and
+        // `build_splitting_enabled` in cli.rs, which is what produced
+        // this value in the first place) — reused here as-is instead of
+        // re-derived, so this gate can never drift from the real
+        // decision. Non-flatten builds (`--no-splitting`; library builds
+        // never reach this method at all — `library` mode runs through
+        // `lib_build::build_library` instead of `Bundler::bundle`) are
+        // unaffected: the pass still runs exactly as before.
+        // `JET_FORCE_STMT_DCE=1` forces the pass back on even on the
+        // flatten path (A/B measurement + escape hatch); `JET_NO_STMT_DCE=1`
+        // still wins over it when both are set, mirroring the "off flag
+        // always wins" precedence convention used elsewhere (e.g.
+        // `build_minify_enabled_from_matches` in cli.rs).
         struct StmtDceCounters {
             modules: std::cell::Cell<usize>,
             pruned_decls: std::cell::Cell<usize>,
             pruned_bytes: std::cell::Cell<usize>,
             skipped_vendor: std::cell::Cell<usize>,
         }
-        let stmt_dce_enabled = std::env::var_os("JET_NO_STMT_DCE").is_none();
+        let stmt_dce_no = std::env::var_os("JET_NO_STMT_DCE").is_some();
+        let stmt_dce_force = std::env::var_os("JET_FORCE_STMT_DCE").is_some();
+        let entry_flatten_path = self.splitting;
+        let stmt_dce_skipped_flatten = entry_flatten_path && !stmt_dce_no && !stmt_dce_force;
+        let stmt_dce_enabled = if stmt_dce_no {
+            false
+        } else if stmt_dce_force {
+            true
+        } else {
+            !entry_flatten_path
+        };
         let stmt_dce_counters = StmtDceCounters {
             modules: std::cell::Cell::new(0),
             pruned_decls: std::cell::Cell::new(0),
@@ -3161,11 +3195,12 @@ impl Bundler {
             .collect();
         if std::env::var_os("JET_BUNDLE_TIMING").is_some() {
             eprintln!(
-                "[bundle-timing] stmt-dce: modules={} pruned_decls={} bytes={} skipped_vendor={}",
+                "[bundle-timing] stmt-dce: modules={} pruned_decls={} bytes={} skipped_vendor={} skipped_flatten={}",
                 stmt_dce_counters.modules.get(),
                 stmt_dce_counters.pruned_decls.get(),
                 stmt_dce_counters.pruned_bytes.get(),
-                stmt_dce_counters.skipped_vendor.get()
+                stmt_dce_counters.skipped_vendor.get(),
+                stmt_dce_skipped_flatten as u8
             );
         }
         result
@@ -4112,6 +4147,121 @@ mod tests {
             ids.contains(&2) && ids.contains(&3),
             "retained.js/live-dep.js must survive: {ids:?}"
         );
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // WI #2134 — stmt-DCE gated off on the entry-flatten path
+    // ──────────────────────────────────────────────────────────────────
+
+    /// Two-module fixture whose only interesting export is `dead`:
+    /// reachable (a numeric `require(1)` keeps vendor.js in
+    /// `apply_tree_shaking`'s outer DFS, which only understands numeric
+    /// require ids), and narrowed by the tree-shake analysis to exactly
+    /// `used_exports = {"used"}` via the *string-literal* destructure
+    /// `const { used } = require("./vendor.js")` — `extract_cjs_require_bindings`
+    /// only narrows string-literal specifiers, never numeric ones. Both
+    /// forms are needed on entry.js: the numeric require keeps vendor.js in
+    /// `reachable`, and the string-literal require narrows `used_exports`
+    /// past the `used.is_empty()` early return that would otherwise skip
+    /// `shake_module`/`apply_stmt_dce` entirely (as every other synthetic
+    /// fixture in this file, which only uses numeric requires, already
+    /// does). `deadFn` has no side effects and is never referenced from
+    /// anything live, so it is exactly the shape
+    /// `eliminate_dead_top_level_declarations` prunes when stmt-dce runs;
+    /// `helper` is referenced from the live `used` export so it stays live
+    /// either way and isn't part of either assertion.
+    fn stmt_dce_gate_fixture_modules() -> Vec<CompiledModule> {
+        vec![
+            make_compiled_with_id(
+                0,
+                "entry.js",
+                "require(1);\nconst { used } = require(\"./vendor.js\");\nused();\n",
+            ),
+            make_compiled_with_id(
+                1,
+                "vendor.js",
+                "function helper() { return 'HELPER_MARKER'; }\nexports.used = function used() { return helper(); };\nexports.dead = function deadFn() { return 'DEAD_MARKER_TEXT'; };\n",
+            ),
+        ]
+    }
+
+    /// Single test, deliberately not split further: `JET_NO_STMT_DCE` /
+    /// `JET_FORCE_STMT_DCE` are process-global env vars, and `cargo test`
+    /// runs `#[test]` fns concurrently by default, so two separate test
+    /// functions each mutating these same two vars around their own
+    /// `apply_tree_shaking` call would race each other (observed directly:
+    /// splitting this into two tests made the first one flake under the
+    /// default multi-threaded runner, because the second test's
+    /// `JET_FORCE_STMT_DCE=1` window could be observed mid-flight by the
+    /// first). Keeping every case sequential in one test body is the fix,
+    /// not a serial-test framework this codebase doesn't otherwise use for
+    /// its other env-hatch tests (`JET_NO_SURVIVOR_FILTER`/
+    /// `JET_NO_PASS_GATES`), which get away with it only because they don't
+    /// currently have a same-file sibling test touching the same var.
+    #[test]
+    fn test_apply_tree_shaking_gates_stmt_dce_off_on_entry_flatten_path() {
+        fn vendor_code(bundler: &Bundler) -> String {
+            let shaken =
+                bundler.apply_tree_shaking(stmt_dce_gate_fixture_modules(), Path::new("entry.js"));
+            shaken
+                .into_iter()
+                .find(|m| m.id == 1)
+                .expect("vendor.js is required by entry.js and must survive")
+                .code
+        }
+
+        std::env::remove_var("JET_NO_STMT_DCE");
+        std::env::remove_var("JET_FORCE_STMT_DCE");
+
+        let non_flatten = Bundler::new(BundleOptions {
+            splitting: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let flatten = Bundler::new(BundleOptions {
+            splitting: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // No env hatch involved — the gate `apply_tree_shaking` derives
+        // from `self.splitting` alone, both ways.
+        let code = vendor_code(&non_flatten);
+        assert!(
+            !code.contains("DEAD_MARKER_TEXT"),
+            "non-flatten build (splitting=false) must run stmt-dce and prune \
+             the unused `dead` export, got: {code}"
+        );
+        let code = vendor_code(&flatten);
+        assert!(
+            code.contains("DEAD_MARKER_TEXT"),
+            "entry-flatten build (splitting=true) must gate stmt-dce off and \
+             leave the unused `dead` export in place, got: {code}"
+        );
+
+        // JET_FORCE_STMT_DCE=1 forces the pass back on even on the flatten
+        // path (A/B + escape hatch).
+        std::env::set_var("JET_FORCE_STMT_DCE", "1");
+        let code = vendor_code(&flatten);
+        assert!(
+            !code.contains("DEAD_MARKER_TEXT"),
+            "JET_FORCE_STMT_DCE=1 must force stmt-dce back on even on the \
+             flatten path, got: {code}"
+        );
+
+        // JET_NO_STMT_DCE=1 still wins when both are set (mirrors the "off
+        // flag always wins" precedence convention used elsewhere, e.g.
+        // `build_minify_enabled_from_matches` in cli.rs).
+        std::env::set_var("JET_NO_STMT_DCE", "1");
+        let code = vendor_code(&flatten);
+        assert!(
+            code.contains("DEAD_MARKER_TEXT"),
+            "JET_NO_STMT_DCE=1 must still win over JET_FORCE_STMT_DCE=1 when \
+             both are set, got: {code}"
+        );
+
+        std::env::remove_var("JET_NO_STMT_DCE");
+        std::env::remove_var("JET_FORCE_STMT_DCE");
     }
 
     #[tokio::test]
