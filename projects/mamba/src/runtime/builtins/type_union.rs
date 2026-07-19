@@ -118,8 +118,8 @@ fn dedupe_union_parts(parts: Vec<MbValue>) -> Vec<MbValue> {
     let mut out = Vec::new();
     let mut seen = Vec::<String>::new();
     for part in parts {
-        let key = type_identity_from_value(part)
-            .unwrap_or_else(|| format!("{:016x}", part.to_bits()));
+        let key =
+            type_identity_from_value(part).unwrap_or_else(|| format!("{:016x}", part.to_bits()));
         if !seen.iter().any(|s| s == &key) {
             seen.push(key);
             out.push(part);

@@ -184,9 +184,7 @@ pub(crate) fn make_type_object_with_display_name(
     );
     fields.insert(
         "__doc__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(format!(
-            "{display_name} type object."
-        ))),
+        MbValue::from_ptr(MbObject::new_str(format!("{display_name} type object."))),
     );
     let obj = Box::new(MbObject {
         header: rc::MbObjectHeader {
@@ -223,7 +221,10 @@ fn set_type_object_string_field(type_obj: MbValue, field_name: &str, value: &str
             return;
         }
         let value = MbValue::from_ptr(MbObject::new_str(value.to_string()));
-        let old = fields.write().unwrap().insert(field_name.to_string(), value);
+        let old = fields
+            .write()
+            .unwrap()
+            .insert(field_name.to_string(), value);
         if let Some(old) = old {
             rc::release_if_ptr(old);
         }
