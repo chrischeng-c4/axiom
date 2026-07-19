@@ -72,6 +72,37 @@ pub struct TransformResult {
     pub source_map: Option<String>,
 }
 
+/// Per-module step-cost accounting for
+/// [`Transformer::transform_js_with_context_resolution_tree_and_timings`]'s
+/// two-step pipeline (beat-vite epic #1990 round 7 — instrumentation only,
+/// no behavior change). Callers `fetch_add` with `Ordering::Relaxed` from
+/// inside a `rayon::par_iter` transforming every surviving module; see
+/// `bundler::mod::transform_modules`'s `JET_BUNDLE_TIMING` sibling-line
+/// print for the aggregate report.
+///
+/// `.tsx` sources run through `transform_tsx::transform_tsx`, a documented
+/// single-pass tree-sitter walk with no internal ts-strip/jsx phase
+/// boundary (see that function's own "single-pass" `tracing::debug!`
+/// message) — its cost is attributed entirely to `jsx_ns` as a deliberate,
+/// documented approximation, not split from `ts_strip_ns`. `.ts`
+/// (type-only, no JSX) is real ts-strip and attributes to `ts_strip_ns`;
+/// `.jsx` (no TS) is real JSX-only lowering and also attributes to
+/// `jsx_ns`; plain `.js`/`.mjs`/`.cjs` do no step-1 work (a no-op
+/// `TransformResult` clone) and add nothing to either bucket.
+/// @issue #1999
+#[derive(Debug, Default)]
+pub struct TransformStepTimings {
+    /// Step 1 dispatch cost for `.ts` sources (`typescript::transform_typescript`).
+    pub ts_strip_ns: std::sync::atomic::AtomicU64,
+    /// Step 1 dispatch cost for `.jsx` (`jsx::transform_jsx`) and `.tsx`
+    /// (`transform_tsx::transform_tsx`, single-pass — see struct doc above).
+    pub jsx_ns: std::sync::atomic::AtomicU64,
+    /// Step 2 cost: `modules::transform_modules_with_dir_index_and_tree`
+    /// (ESM/CJS module rewrite), run for every extension including plain
+    /// `.js`/`.mjs`/`.cjs`.
+    pub modules_rewrite_ns: std::sync::atomic::AtomicU64,
+}
+
 /// GH #3809 — fallback extension string used when the path has no
 /// extension at all. Kept as a named constant so call sites and tests
 /// pin the same value.
@@ -212,9 +243,39 @@ impl Transformer {
         resolution_index: Option<&modules::ModuleResolutionIndex>,
         reuse_tree: Option<tree_sitter::Tree>,
     ) -> Result<TransformResult> {
+        self.transform_js_with_context_resolution_tree_and_timings(
+            source,
+            filename,
+            module_map,
+            resolution_index,
+            reuse_tree,
+            None,
+        )
+    }
+
+    /// Like [`Self::transform_js_with_context_resolution_and_tree`] but
+    /// records step-level cost into `timings` when `Some` (#1999, beat-vite
+    /// round 7). `None` skips every `Instant::now()` call, so this
+    /// function's own untimed wrapper above — and, through it, every other
+    /// existing caller — pays nothing extra. See [`TransformStepTimings`]'s
+    /// doc comment for exactly which step attributes to which bucket
+    /// (notably: `.tsx` is single-pass and attributes wholly to `jsx_ns`).
+    /// @issue #1999
+    pub fn transform_js_with_context_resolution_tree_and_timings(
+        &self,
+        source: &str,
+        filename: &Path,
+        module_map: &HashMap<PathBuf, usize>,
+        resolution_index: Option<&modules::ModuleResolutionIndex>,
+        reuse_tree: Option<tree_sitter::Tree>,
+        timings: Option<&TransformStepTimings>,
+    ) -> Result<TransformResult> {
+        use std::sync::atomic::Ordering;
+
         let ext = filename.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         // 1. First, apply TypeScript/JSX transformation
+        let step1_start = timings.map(|_| std::time::Instant::now());
         let transformed = match ext.as_ref() {
             "jsx" => jsx::transform_jsx(source, &self.options)?,
             "tsx" => transform_tsx::transform_tsx(source, &self.options)?,
@@ -225,6 +286,20 @@ impl Transformer {
             },
             _ => anyhow::bail!("Unsupported file extension: {}", ext),
         };
+        if let (Some(t), Some(start)) = (timings, step1_start) {
+            let nanos = start.elapsed().as_nanos() as u64;
+            match ext.as_ref() {
+                "ts" => {
+                    t.ts_strip_ns.fetch_add(nanos, Ordering::Relaxed);
+                }
+                "jsx" | "tsx" => {
+                    t.jsx_ns.fetch_add(nanos, Ordering::Relaxed);
+                }
+                // Plain JS did no step-1 work; unsupported extensions
+                // already bailed above.
+                _ => {}
+            }
+        }
 
         // A reuse tree is only valid when step 1 did not rewrite the source.
         let reuse_tree = match ext.as_ref() {
@@ -234,13 +309,19 @@ impl Transformer {
 
         // 2. Apply ES6 module transformation (pass current module dir for relative resolution)
         let current_dir = filename.parent();
-        modules::transform_modules_with_dir_index_and_tree(
+        let step2_start = timings.map(|_| std::time::Instant::now());
+        let result = modules::transform_modules_with_dir_index_and_tree(
             &transformed.code,
             module_map,
             resolution_index,
             current_dir,
             reuse_tree,
-        )
+        );
+        if let (Some(t), Some(start)) = (timings, step2_start) {
+            t.modules_rewrite_ns
+                .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        result
     }
 
     /// Transform CSS file

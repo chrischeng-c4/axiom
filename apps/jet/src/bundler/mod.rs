@@ -479,7 +479,12 @@ fn inject_tags_into_head(html: &str, tags: &str) -> String {
     }
 }
 
+/// `bundler` is threaded through only so this can consult the per-build
+/// `source_cache` (`Bundler::cached_source`) instead of re-reading every
+/// module from disk a second time (#1999) — the crawl already read these
+/// same bytes during `build_graph`'s prefetch.
 fn collect_side_effect_free_module_indices(
+    bundler: &Bundler,
     graph: &ModuleGraph,
     sorted_ids: &[ModuleId],
 ) -> HashSet<usize> {
@@ -496,7 +501,7 @@ fn collect_side_effect_free_module_indices(
             if node.kind != graph::ModuleKind::Script {
                 return None;
             }
-            let source = std::fs::read_to_string(&node.path).ok()?;
+            let source = bundler.cached_source(&node.path).ok()?;
             let has_side_effects =
                 crate::bundler::tree_shake::module_has_side_effects_with_package_json(
                     &source,
@@ -612,6 +617,28 @@ pub struct Bundler {
     /// `implicit_edges`/`entry_path`.
     /// @issue #1995
     shake_analysis: Mutex<Option<tree_shake::TreeShakeResult>>,
+    /// Per-build cache of every crawled module's raw source text, keyed by
+    /// canonical module path. Populated during `build_graph`'s prefetch
+    /// crawl (`prefetch_one_module`) and consulted by every downstream phase
+    /// that would otherwise re-read the same file from disk
+    /// (`compute_transform_survivors`'s liveness pre-pass,
+    /// `collect_side_effect_free_module_indices`, `transform_modules`'s
+    /// per-module closure, `apply_tree_shaking`'s cache-miss recompute path)
+    /// instead of hitting the filesystem again — up to 4-5 redundant reads
+    /// of the same bytes per build otherwise. `cached_source` is the shared
+    /// read-through helper: a cache hit returns the shared `Arc<str>`; a
+    /// miss falls back to `fs::read_to_string` and back-fills the cache so
+    /// later readers in the same build still benefit.
+    ///
+    /// Reset at the start of every `build_graph` call, same lifecycle as
+    /// `implicit_edges`/`entry_path`/`shake_analysis`, so a later rebuild
+    /// reusing this `Bundler` (e.g. dev-server re-bundling after a file
+    /// changes) never serves a stale snapshot.
+    /// `JET_NO_SOURCE_CACHE=1` disables population/consultation entirely
+    /// (every reader falls straight through to `fs::read_to_string`) for a
+    /// byte-identity A/B diff.
+    /// @issue #1999
+    source_cache: Mutex<HashMap<PathBuf, Arc<str>>>,
     /// When true, use Phase 2 flat bundle in `generate_bundle`.
     ///
     /// Phase 2 (`generate_flattened_bundle`) merges all module bodies into a
@@ -709,6 +736,7 @@ impl Bundler {
             implicit_edges: Mutex::new(Vec::new()),
             entry_path: Mutex::new(None),
             shake_analysis: Mutex::new(None),
+            source_cache: Mutex::new(HashMap::new()),
             splitting,
             manual_chunks,
         })
@@ -1171,6 +1199,19 @@ impl Bundler {
     /// static, dynamic) through the shared resolver.
     fn prefetch_one_module(&self, module_path: &Path) -> PrefetchedModule {
         let source = std::fs::read_to_string(module_path).map_err(|e| e.to_string());
+        // #1999: seed the per-build source cache from the crawl's own read so
+        // every downstream phase (`compute_transform_survivors`,
+        // `collect_side_effect_free_module_indices`, `transform_modules`,
+        // `apply_tree_shaking`'s recompute path) can reuse these bytes
+        // instead of re-reading the file from disk. See `Bundler::
+        // source_cache`'s doc comment for the reset/consult contract.
+        if std::env::var_os("JET_NO_SOURCE_CACHE").is_none() {
+            if let Ok(src) = &source {
+                self.source_cache
+                    .lock()
+                    .insert(module_path.to_path_buf(), Arc::from(src.as_str()));
+            }
+        }
         let mut resolutions: HashMap<String, std::result::Result<PathBuf, String>> = HashMap::new();
         let mut imports: std::result::Result<imports::ModuleImports, String> =
             Err("not a script module".to_string());
@@ -1700,6 +1741,28 @@ impl Bundler {
         module_imports
     }
 
+    /// Read-through helper for `source_cache`: a cache hit (populated by the
+    /// crawl's `prefetch_one_module`) returns the shared `Arc<str>` with no
+    /// filesystem access; a miss falls back to `fs::read_to_string` and
+    /// back-fills the cache so later readers in the same build also hit.
+    /// `JET_NO_SOURCE_CACHE=1` bypasses the cache entirely (every call reads
+    /// straight through to disk) for a byte-identity A/B diff against the
+    /// pre-#1999 always-read-from-disk behavior.
+    /// @issue #1999
+    fn cached_source(&self, path: &Path) -> std::result::Result<Arc<str>, std::io::Error> {
+        if std::env::var_os("JET_NO_SOURCE_CACHE").is_some() {
+            return std::fs::read_to_string(path).map(|s| Arc::from(s.as_str()));
+        }
+        if let Some(cached) = self.source_cache.lock().get(path) {
+            return Ok(cached.clone());
+        }
+        let src: Arc<str> = Arc::from(std::fs::read_to_string(path)?.as_str());
+        self.source_cache
+            .lock()
+            .insert(path.to_path_buf(), src.clone());
+        Ok(src)
+    }
+
     async fn build_graph(&self, entry: &PathBuf) -> Result<()> {
         tracing::debug!("Building module graph from: {:?}", entry);
 
@@ -1719,6 +1782,11 @@ impl Bundler {
         *self.entry_path.lock() = Some(entry_abs.clone());
         self.implicit_edges.lock().clear();
         *self.shake_analysis.lock() = None;
+        // #1999: same reset rule — this build's crawl is about to repopulate
+        // `source_cache` from scratch; a previous `build_graph` call's
+        // snapshot must never leak into this one (dev-server re-bundle after
+        // a file changes).
+        self.source_cache.lock().clear();
 
         // Wave-parallel prefetch of the expensive pure work (file read,
         // tree-sitter import extraction, dependency resolution). The serial
@@ -1798,7 +1866,18 @@ impl Bundler {
                     continue;
                 }
                 None => match std::fs::read_to_string(&module_path) {
-                    Ok(s) => s,
+                    Ok(s) => {
+                        // #1999: this module missed the wave-parallel
+                        // prefetch (e.g. discovered only via this serial
+                        // replay); back-fill the cache so later phases don't
+                        // also miss it.
+                        if std::env::var_os("JET_NO_SOURCE_CACHE").is_none() {
+                            self.source_cache
+                                .lock()
+                                .insert(module_path.clone(), Arc::from(s.as_str()));
+                        }
+                        s
+                    }
                     Err(e) => {
                         tracing::warn!("Failed to read module {:?}: {}", module_path, e);
                         continue;
@@ -2099,7 +2178,10 @@ impl Bundler {
             .par_iter()
             .map(|&id| {
                 let node = graph.get_node(id)?;
-                let source = std::fs::read_to_string(&node.path).ok()?;
+                // #1999: consult the per-build source cache the crawl
+                // already populated instead of re-reading this module's
+                // bytes from disk a second time.
+                let source = self.cached_source(&node.path).ok()?.to_string();
                 // Mirrors `apply_tree_shaking`'s `module_pairs` construction
                 // exactly (same condition, same three calls) so this pre-pass
                 // predicts that function's first-layer liveness rather than a
@@ -2193,7 +2275,7 @@ impl Bundler {
             )
             .with_splitting(self.splitting);
         let side_effect_free_module_ids =
-            collect_side_effect_free_module_indices(&graph, &sorted_ids);
+            collect_side_effect_free_module_indices(self, &graph, &sorted_ids);
 
         // WI #1995 round 4 — survivors-only transform: a raw-source
         // liveness pre-pass (`compute_transform_survivors`) predicts which
@@ -2220,6 +2302,14 @@ impl Bundler {
         }
         let transformed_modules = std::sync::atomic::AtomicUsize::new(0);
         let skipped_modules = std::sync::atomic::AtomicUsize::new(0);
+        // #1999 (beat-vite round 7) — per-module transform sub-lap
+        // breakdown: `transform_sub_laps` covers `Transformer`'s own
+        // two-step pipeline (ts_strip/jsx dispatch + modules_rewrite, see
+        // `TransformStepTimings`'s doc comment); `define_dce_tail_ns`
+        // covers this closure's own bundler-side defines+fold+DCE tail
+        // below. Printed together as a `JET_BUNDLE_TIMING` sibling line.
+        let transform_sub_laps = crate::transform::TransformStepTimings::default();
+        let define_dce_tail_ns = std::sync::atomic::AtomicU64::new(0);
 
         use rayon::prelude::*;
 
@@ -2304,8 +2394,12 @@ impl Bundler {
                     return Some(Ok(cached));
                 }
 
-                let source = match std::fs::read_to_string(&node.path) {
-                    Ok(s) => s,
+                // #1999: consult the per-build source cache instead of
+                // re-reading this module's bytes from disk a third time
+                // (already read once by the crawl, once by the survivors
+                // pre-pass).
+                let source = match self.cached_source(&node.path) {
+                    Ok(s) => s.to_string(),
                     Err(e) => {
                         return Some(Err(anyhow::anyhow!(
                             "bundler: cannot read module {:?}: {e} (GH #3136)",
@@ -2340,12 +2434,13 @@ impl Bundler {
                         // (plain-JS modules only) so this module is parsed once.
                         let reuse_tree = self.parsed_trees.lock().remove(&node.path);
                         self.transformer
-                            .transform_js_with_context_resolution_and_tree(
+                            .transform_js_with_context_resolution_tree_and_timings(
                                 &source,
                                 &node.path,
                                 &module_map,
                                 Some(&resolution_index),
                                 reuse_tree,
+                                Some(&transform_sub_laps),
                             )
                     }
                     graph::ModuleKind::Css => Ok(crate::transform::TransformResult {
@@ -2375,6 +2470,11 @@ impl Bundler {
                         // When defines are present, also run syntax-aware DCE to eliminate dead
                         // branches created by the replacements (e.g. `if ("production" !==
                         // "production")`) without corrupting third-party nested if/else shapes.
+                        //
+                        // #1999 (beat-vite round 7): `dce_tail_start` times this whole
+                        // block (both the empty-defines fast path and the real
+                        // fold+DCE tail) into `define_dce_tail_ns`.
+                        let dce_tail_start = std::time::Instant::now();
                         let final_code = if self.defines.is_empty() {
                             transform_result.code.clone()
                         } else {
@@ -2434,6 +2534,10 @@ impl Bundler {
                                 after_dce
                             }
                         };
+                        define_dce_tail_ns.fetch_add(
+                            dce_tail_start.elapsed().as_nanos() as u64,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
 
                         let compiled = CompiledModule {
                             id: module_id,
@@ -2490,6 +2594,27 @@ impl Bundler {
                 transformed_modules.load(Ordering::Relaxed),
                 skipped_modules.load(Ordering::Relaxed),
                 self.implicit_edges.lock().len(),
+            );
+
+            // #1999 (beat-vite round 7) — transform_modules internal
+            // sub-lap breakdown: how much of the per-module loop above went
+            // to TS-strip vs. JSX lowering (`.tsx` is single-pass and
+            // attributes wholly to `jsx` — see `TransformStepTimings`'s doc
+            // comment) vs. the ES6/CJS module rewrite vs. this closure's
+            // own bundler-side defines+fold+DCE tail. These are summed
+            // across every worker thread in the `par_iter` above, so their
+            // total can exceed (and is not directly comparable to) this
+            // phase's own wall-clock `transform_modules` lap.
+            eprintln!(
+                "[bundle-timing] transform-sub-laps: ts_strip={:?} jsx={:?} modules_rewrite={:?} define_dce_tail={:?}",
+                std::time::Duration::from_nanos(
+                    transform_sub_laps.ts_strip_ns.load(Ordering::Relaxed)
+                ),
+                std::time::Duration::from_nanos(transform_sub_laps.jsx_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(
+                    transform_sub_laps.modules_rewrite_ns.load(Ordering::Relaxed)
+                ),
+                std::time::Duration::from_nanos(define_dce_tail_ns.load(Ordering::Relaxed)),
             );
         }
 
@@ -2573,8 +2698,12 @@ impl Bundler {
             let module_pairs: Vec<(PathBuf, String)> = modules
                 .iter()
                 .map(|m| {
-                    let source =
-                        std::fs::read_to_string(&m.path).unwrap_or_else(|_| m.code.clone());
+                    // #1999: consult the per-build source cache instead of
+                    // re-reading this module's bytes from disk again.
+                    let source = self
+                        .cached_source(&m.path)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|_| m.code.clone());
                     // Analyze post-define sources: without this, the dead
                     // `process.env.NODE_ENV !== 'production'` branch in packages
                     // like prop-types still marks its dev-only requires
