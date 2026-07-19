@@ -46,6 +46,30 @@ capability_refs:
     rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated aw.toml EC inventory behavior in src/cli/ec.rs."
   - id: project-local-td-and-ec-gates
     role: primary
+    gap: stale-ec-inventory-verifier-fail-closed-routing
+    claim: stale-ec-inventory-verifier-fail-closed-routing
+    coverage: full
+    rationale: "The EC verifier refuses stale or unreviewed executable inventories before command execution and persists independent review/regeneration as the bounded WI's runnable next action."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-needs-revision-existing-source-routing
+    claim: ec-needs-revision-existing-source-routing
+    coverage: full
+    rationale: "Needs-revision review evidence can route only to an existing canonical EC Markdown source, including the legacy TD source fallback, so every emitted ec fill command is executable."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-gen-post-implementation-phase-aware-handoff
+    claim: ec-gen-post-implementation-phase-aware-handoff
+    coverage: full
+    rationale: "EC regeneration preserves the fresh EC-first handoff to TD authoring but routes a cb_filled WI to execution of the newly current verifier instead of rewinding to an invalid td create command."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: root-owned-ec-production-required-verdict
+    claim: root-owned-ec-production-required-verdict
+    coverage: full
+    rationale: "WI and capability roots record their EC verdict from the production-required case set used by terminal code-check, while unscoped manual verification can still exercise advisory cases."
+  - id: project-local-td-and-ec-gates
+    role: primary
     gap: project-label-producer-td-routing
     claim: project-label-producer-td-routing
     coverage: full
@@ -3576,6 +3600,41 @@ changes:
       independence, digest binding, `needs_revision` routing, human-audit
       reopen of an agent-accepted EC, `ec_review_mode = "deferred"`
       semantics) are unchanged (R3).
+      #2084: `run_verify` now calls the same structural inventory check used by
+      `aw ec check` before executing any generated command. A stale TD/EC
+      source digest fails closed and, when
+      `--wi` is present, persists `aw ec review --project <project> --wi <wi>`
+      as the root-owned next action. `verify_ec_context` repeats this guard at
+      the shared terminal-gate boundary so code-check cannot execute stale
+      inventory either. A semantic-review pseudo-failure is likewise routed
+      to review rather than recorded as a generic red result whose default
+      `aw td gen` adaptation is unrunnable for cb_filled HANDWRITE-only WIs.
+      Regressions use stale and unreviewed `touch` commands to prove neither
+      sentinel is ever created and the latter is classified for review
+      routing.
+      #2122: `needs_revision` review evidence now names an existing Markdown
+      source before AW accepts it. `ec_fill_command_for_target` and
+      `run_fill` accept canonical `external-contracts/**` sources plus an
+      existing `tech-design/**` fallback for projects whose inventory is
+      still TD-derived; arbitrary and missing paths remain rejected. The
+      independent-review prompt states the same boundary, preventing a
+      reviewer from inventing an external-contract path that would make the
+      emitted `aw ec fill` command fail immediately.
+      #2124: `run_gen --wi` now resolves the owning WI phase before it writes
+      the durable post-generation action. A fresh EC-first root still hands
+      off to `aw td create`, while `cb_filled` (including retired post-fill
+      aliases normalized by `td_phase::normalize`) routes to `aw ec verify`
+      against the newly current inventory. This prevents an accepted
+      review/regeneration cycle from rewinding a completed implementation to
+      a `td create` command that the phase guard must reject.
+      #2125: `ec_verify_command`, shared by WI roots, capability roots, and
+      the post-review `ec gen` handoff, now emits `--required-only`. The
+      root-owned loop verdict therefore executes the same production-required
+      case set as terminal code-check and records advisory cases as skipped
+      instead of turning a documented non-production stability NO-GO into TD
+      adaptation. The public unscoped `aw ec verify` default is unchanged and
+      still runs all configured cases when an operator explicitly wants the
+      advisory suite.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify

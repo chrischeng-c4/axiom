@@ -244,22 +244,30 @@ requirements:
 ```yaml
 e2e_tests:
   - id: vat-headless-ephemeral-k8s-bootstrap-diagnostics
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-ephemeral-kubernetes-session
     command: "cargo test -p vat --test vat_k8s_ephemeral -- --nocapture"
     assertions:
       - "The passed deterministic fake regression keeps the bootstrap root error primary, then emits staged non-sensitive installer/guest/machine diagnostics with exactly guest_install_log, guest_k3s_system, backing_container_logs, machine_boot_log, machine_inspect, and container_system_status."
       - "The diagnostics are fixed read-only probes under a six-second total and one-second-per-probe budget; they exclude private kubeconfig/cache and host credentials, do not change the existing 300-second bootstrap behavior, do not rerun k3s --version or add a wrapper/recovery command, and exact cleanup still runs."
   - id: vat-headless-leased-k8s-json-exec-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-ephemeral-kubernetes-session
     command: "cargo test -p vat --test vat_k8s_ephemeral leased_session_exec -- --nocapture"
     assertions:
       - "The fake runtime proves the JSON leased exec result has one VAT-owned document, separate bounded streams, a preserved child exit code, no raw replay, and no session marker mutation; credential-validation and API-probe failures mask private paths."
       - "A fake owned-API probe that crosses the lease deadline does not spawn the credentialed child. The independent-kubectl leased real-host E2E passed 1/1 (36 filtered) in 29.97s and includes strict JSON exec with --timeout 30."
   - id: vat-headless-leased-k8s-port-forward-json-fake
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-ephemeral-kubernetes-session
     command: "cargo test -p vat --test vat_k8s_ephemeral leased_session_port_forward_json -- --nocapture"
     assertions:
       - "The fake runtime proves text stays separate while JSON returns one vat.k8s.session.port-forward.v1 only after exact tunnel/group cleanup, preserving the host child exit and separately bounded stream snapshots without raw replay."
       - "VAT masks its own setup/API/tunnel/cleanup errors, preserves opaque credential-free child output in a successful result, refuses to open a tunnel when the lease crosses expiry after API proof, and cleans direct/outer children before readers join after partial setup failure."
       - "Focused deterministic filter passed 7/7. The independent-kubectl Service-forward E2E passed 1/1 (36 filtered) in 49.57s and includes the strict JSON tunnel only for one Service-only loopback session."
   - id: vat-headless-ephemeral-k8s-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-ephemeral-kubernetes-session
     command: "VAT_K8S_EPHEMERAL_E2E_REQUIRED=1 cargo test -p vat --test vat_k8s_ephemeral apple_container_k3s_session_exposes_host_api_then_cleans_up -- --ignored --nocapture"
     assertions:
       - "An independently installed non-OrbStack kubectl is first on PATH; an OrbStack-provided binary is rejected before the K3s command runs."
@@ -268,18 +276,24 @@ e2e_tests:
       - "The terminal result's exact machine name returns Apple Container's not-found result after return."
       - "A pass is only a one-boot agent-session proof, never a durable microvm-k3s claim."
   - id: vat-headless-leased-k8s-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-ephemeral-kubernetes-session
     command: "VAT_K8S_SESSION_E2E_REQUIRED=1 cargo test -p vat --test vat_k8s_ephemeral apple_container_k3s_leased_session_supports_multiple_host_commands_then_deletes -- --ignored --nocapture"
     assertions:
       - "Two independent host kubectl commands use one active private lease."
       - "Explicit delete confirms exact Apple machine absence and removes the credential directory."
       - "The proof does not claim Apple-machine restart, reboot persistence, or a durable cluster backend."
   - id: vat-headless-leased-k8s-local-image-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-ephemeral-kubernetes-session
     command: "RUST_TEST_THREADS=1 VAT_K8S_LOCAL_IMAGE_E2E_REQUIRED=1 cargo test -p vat --test vat_k8s_ephemeral apple_container_k3s_lease_imports_local_image_without_registry_pull -- --ignored --nocapture"
     assertions:
       - "Passed 1/1 (36 filtered) in 49.73s: an already-local Apple alpine:3.20 image is inspected, privately delivered into one active K3s lease, and reported with an OCI descriptor digest."
       - "The one fixture pod uses imagePullPolicy Never, completes, and emits its marker log; this proves the imported local image for that pod only, not registry-pull generality."
       - "Explicit delete confirms exact Apple machine and private session storage cleanup. This is not persistence, GUI, or Docker Engine/API evidence."
   - id: vat-headless-leased-k8s-port-forward-real-host
+    capability_id: agent-native-gpu-native-dev-containers
+    claim_id: headless-ephemeral-kubernetes-session
     command: "VAT_K8S_PORT_FORWARD_E2E_REQUIRED=1 cargo test -p vat --test vat_k8s_ephemeral apple_container_k3s_lease_port_forwards_local_service_to_one_credential_free_host_child -- --ignored --nocapture"
     assertions:
       - "Independent-kubectl real-host E2E passed 1/1 (36 filtered) in 49.57s. A local alpine fixture was loaded into the active K3s lease; because BusyBox lacks `httpd`, an in-pod HTTP probe verified the fixture before its Service endpoint responded through one VAT-owned 127.0.0.1 text forward and the strict one-document JSON tunnel."

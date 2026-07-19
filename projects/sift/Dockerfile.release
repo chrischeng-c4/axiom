@@ -1,0 +1,19 @@
+# HANDWRITE-BEGIN gap="sift-release-image-artifact" tracker="1606" reason="Provide the verified release-binary Sift image contract."
+FROM debian:bookworm-slim
+ARG SIFT_VERSION=REPLACE_ME
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL "https://github.com/chrischeng-c4/axiom/releases/download/sift@${SIFT_VERSION}/sift-linux-${TARGETARCH}.tar.gz" -o /tmp/sift.tar.gz \
+    && tar -xzf /tmp/sift.tar.gz -C /usr/local/bin sift \
+    && rm /tmp/sift.tar.gz
+ENV SIFT_HOST=0.0.0.0 \
+    SIFT_PORT=7380 \
+    SIFT_DATA_DIR=/var/lib/sift \
+    SIFT_LOG_FORMAT=json
+VOLUME ["/var/lib/sift"]
+EXPOSE 7380
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/sift"]
+CMD ["serve"]
+# HANDWRITE-END

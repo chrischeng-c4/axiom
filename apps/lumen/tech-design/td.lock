@@ -2,10 +2,10 @@ version = 2
 project = "lumen"
 ir_kind = "td"
 td_path = "apps/lumen/tech-design"
-generated_at = "2026-07-18T18:14:37.186997+00:00"
-digest = "sha256:911f980b1914602d7ec2e2d2abd3f3f74b80d893119545c22408969e548628c6"
-source_digest = "sha256:911f980b1914602d7ec2e2d2abd3f3f74b80d893119545c22408969e548628c6"
-ir_digest = "sha256:44ae0d212b30c5a095feb585bf254aa3f8636e6f35b5d354a67f8ab7bbeabbe8"
+generated_at = "2026-07-19T14:39:28.349107+00:00"
+digest = "sha256:a3e83dc93728468ec8a38f7970e0ce58f597647918b9977f9a1d4cfa4a049493"
+source_digest = "sha256:a3e83dc93728468ec8a38f7970e0ce58f597647918b9977f9a1d4cfa4a049493"
+ir_digest = "sha256:b43652593547a270617cdcda60c036b5e2e7cecd6a3598528f41f62cb1b6277e"
 
 [[files]]
 path = "interfaces/cli/cli-connect-query-k8s-agent-workflow.md"
@@ -174,6 +174,12 @@ path = "logic/offset-cursor-sort-silently-ignores-sort-reject-with-400-fix-sta.m
 digest = "sha256:b1243fbcd1c98b4b8ed75edaea2a9b74f99a0a8990fe922c452debd86d238548"
 ir_digest = "sha256:aaa733cb82e28d666bbb8decf2bcde859bfb1801c71daacdcf2a128ef2fc48bf"
 section_count = 4
+
+[[files]]
+path = "logic/prove-traceparent-to-structured-stdout-correlation.md"
+digest = "sha256:85da592250967cce631af7f9b7347ad17a5b7dcaaba62ca94d19e9c611b42b0a"
+ir_digest = "sha256:32df31d2a60ef9c606f3e5ed469088d0c79b558f027d0555f34710deb0671349"
+section_count = 3
 
 [[files]]
 path = "logic/py-codegen-spec-gen-lang-py-0-4-20-batchsearchitem-alias-referen.md"

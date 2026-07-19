@@ -8,7 +8,7 @@ use storage_durable::{atomic_write, FsyncPolicy};
 
 #[cfg(feature = "s3")]
 use crate::s3::S3Sink;
-use crate::BackupDestination;
+use crate::{BackupDestination, GcsSink};
 
 /// Destination for snapshot bytes.
 /// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-sink-rs.md#source
@@ -98,10 +98,7 @@ pub struct UnsupportedCloudSink {
 impl UnsupportedCloudSink {
     fn action_message(&self) -> String {
         match &self.destination {
-            BackupDestination::Gcs { .. } => format!(
-                "backup destination {} parses as GCS, but service-backup does not yet ship a GCS sink; use file:// or s3:// for production, or remove the gs:// config until GCS support lands",
-                self.destination.identity()
-            ),
+            BackupDestination::Gcs { .. } => unreachable!("GCS always uses GcsSink"),
             BackupDestination::S3 { .. } => format!(
                 "backup destination {} requires the service-backup `s3` feature in the runner; rebuild with `--features s3` or use file://",
                 self.destination.identity()
@@ -134,16 +131,11 @@ pub fn sink_from_destination(destination: &BackupDestination) -> Result<Box<dyn 
         BackupDestination::Local { .. } => {
             Ok(Box::new(LocalFsSink::from_destination(destination)?))
         }
+        BackupDestination::Gcs { .. } => Ok(Box::new(GcsSink::from_destination(destination)?)),
         #[cfg(feature = "s3")]
         BackupDestination::S3 { .. } => Ok(Box::new(S3Sink::from_destination(destination)?)),
         #[cfg(not(feature = "s3"))]
-        BackupDestination::S3 { .. } | BackupDestination::Gcs { .. } => {
-            Ok(Box::new(UnsupportedCloudSink {
-                destination: destination.clone(),
-            }))
-        }
-        #[cfg(feature = "s3")]
-        BackupDestination::Gcs { .. } => Ok(Box::new(UnsupportedCloudSink {
+        BackupDestination::S3 { .. } => Ok(Box::new(UnsupportedCloudSink {
             destination: destination.clone(),
         })),
     }
@@ -167,12 +159,10 @@ mod tests {
     }
 
     #[test]
-    fn gcs_sink_reports_actionable_unsupported_message() {
+    fn gcs_destination_constructs_real_sink_without_network_io() {
         let dest = BackupDestination::from_uri("gs://bucket/prefix").unwrap();
         let sink = sink_from_destination(&dest).unwrap();
-        let err = sink.put(SystemTime::now(), b"x").unwrap_err().to_string();
-        assert!(err.contains("does not yet ship a GCS sink"));
-        assert!(err.contains("use file:// or s3://"));
+        assert_eq!(sink.identity(), "gs://bucket/prefix");
     }
 
     #[cfg(not(feature = "s3"))]

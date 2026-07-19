@@ -837,6 +837,87 @@ fn take_detached_compose_stop_request(path: &Path) -> bool {
     true
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="1872" reason="Expose validated active-run service capture paths to trusted same-run runners.">
+fn prepare_service_log_handoff(
+    vat_dir: &Path,
+    logs_dir: &Path,
+    service_ids: &[&str],
+) -> Result<BTreeMap<String, String>> {
+    let vat_root = std::fs::canonicalize(vat_dir)
+        .with_context(|| format!("resolve active vat directory {}", vat_dir.display()))?;
+    let logs_root = std::fs::canonicalize(logs_dir)
+        .with_context(|| format!("resolve active vat logs directory {}", logs_dir.display()))?;
+    if !logs_root.starts_with(&vat_root) {
+        bail!(
+            "active VAT logs directory {} escapes vat directory {}",
+            logs_root.display(),
+            vat_root.display()
+        );
+    }
+
+    let mut tokens = BTreeMap::<String, String>::new();
+    let mut paths = Vec::with_capacity(service_ids.len());
+    for service_id in service_ids {
+        let token = normalize_service_log_env_token(service_id)?;
+        if let Some(existing) = tokens.insert(token.clone(), (*service_id).to_string()) {
+            bail!(
+                "service log environment token collision: `{existing}` and `{service_id}` both map to VAT_SERVICE_{token}"
+            );
+        }
+        let stdout = logs_root.join(format!("{service_id}.stdout.log"));
+        let stderr = logs_root.join(format!("{service_id}.stderr.log"));
+        if stdout.parent() != Some(logs_root.as_path())
+            || stderr.parent() != Some(logs_root.as_path())
+        {
+            bail!("service `{service_id}` log path escapes active VAT logs directory");
+        }
+        paths.push((token, stdout, stderr));
+    }
+
+    let mut env = BTreeMap::from([(
+        "VAT_LOGS_DIR".to_string(),
+        logs_root.to_string_lossy().into_owned(),
+    )]);
+    for (token, stdout, stderr) in paths {
+        File::create(&stdout)
+            .with_context(|| format!("create service stdout capture {}", stdout.display()))?;
+        File::create(&stderr)
+            .with_context(|| format!("create service stderr capture {}", stderr.display()))?;
+        env.insert(
+            format!("VAT_SERVICE_{token}_STDOUT_LOG"),
+            stdout.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            format!("VAT_SERVICE_{token}_STDERR_LOG"),
+            stderr.to_string_lossy().into_owned(),
+        );
+    }
+    Ok(env)
+}
+
+fn normalize_service_log_env_token(service_id: &str) -> Result<String> {
+    if service_id.is_empty() || service_id.len() > 64 {
+        bail!("unsafe service id `{service_id}` for active log-path handoff");
+    }
+    let mut chars = service_id.chars();
+    if !chars.next().is_some_and(|ch| ch.is_ascii_alphanumeric())
+        || !service_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        bail!(
+            "unsafe service id `{service_id}` for active log-path handoff; use an ASCII alphanumeric prefix followed by ASCII alphanumeric, dash, underscore, or dot"
+        );
+    }
+    Ok(service_id
+        .chars()
+        .map(|ch| match ch {
+            '-' | '.' => '_',
+            ch => ch.to_ascii_uppercase(),
+        })
+        .collect())
+}
+
 fn run_configured(
     vat: &mut store::Vat,
     cfg: &VatConfig,
@@ -873,6 +954,10 @@ fn run_configured(
             }
         }
     }
+    // This is a trusted same-run handoff, not a cross-user security boundary:
+    // paths remain under vat.dir, child bytes stay in their capture files, and
+    // VAT neither parses nor replays them to its own JSONL stdout.
+    let service_log_env = prepare_service_log_handoff(&vat.dir, logs_dir, &service_ids)?;
     let mut service_plans = Vec::new();
     let mut run_env = vat.meta.spec.env.clone();
     for service in ordered_required_services(cfg, &service_ids)? {
@@ -882,6 +967,9 @@ fn run_configured(
         }
         service_plans.push(plan);
     }
+    // VAT owns these reserved values. Apply them after user/service exports so
+    // a config cannot redirect a collector to an arbitrary host path.
+    run_env.extend(service_log_env);
 
     // Transparent service routing (network sandbox): every declared GCP emulator
     // preset's real googleapis host -> its resolved local endpoint, seeded onto
@@ -1038,6 +1126,7 @@ fn run_configured(
     vat.log(Event::new(EventKind::RunFinished, summary))?;
     Ok(code)
 }
+// </HANDWRITE>
 
 fn scenario_service_ids(
     cfg: &VatConfig,

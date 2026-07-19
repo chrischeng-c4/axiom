@@ -1233,10 +1233,11 @@ fn apple_machine_bootstraps_disposable_k3s_via_backing_container_exec() {
     let host_api_requested = std::env::var(HOST_API_E2E_OPT_IN).as_deref() == Ok("1");
 
     let container_version = container_command("container_version", &["--version"]);
-    if !container_version.passed() {
-        eprintln!("container CLI unavailable; skipping disposable k3s substrate probe");
-        return;
-    }
+    assert!(
+        container_version.passed(),
+        "{DISPOSABLE_E2E_OPT_IN}=1 requires the Apple Container CLI; probe failed: {}",
+        container_version.stderr
+    );
 
     let name = format!("{}-disposable", unique_machine_name());
     let image = machine_image();
@@ -1333,7 +1334,7 @@ fn apple_machine_bootstraps_disposable_k3s_via_backing_container_exec() {
                             &[
                                 "sh",
                                 "-ec",
-                                "set -eu; systemctl is-active --quiet k3s; k3s kubectl wait --for=condition=Ready node --all --timeout=180s; k3s kubectl get nodes -o wide",
+                                "set -eu; systemctl is-active --quiet k3s; attempts=0; until k3s kubectl get nodes -o name 2>/dev/null | grep -q '^node/'; do attempts=$((attempts + 1)); test \"$attempts\" -lt 60 || { echo 'k3s node did not appear within 120 seconds' >&2; exit 1; }; sleep 2; done; k3s kubectl wait --for=condition=Ready node --all --timeout=120s; k3s kubectl get nodes -o wide",
                             ],
                             K3S_READY_TIMEOUT,
                         )

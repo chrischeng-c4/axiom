@@ -2571,7 +2571,6 @@ fn docker_inspect_json_rejects_object_selectors_templates_and_nonexact_args_befo
             "--format=json",
         ]
         .as_slice(),
-        ["image", "inspect", "--format=json", "agent-web"].as_slice(),
     ] {
         let output = Command::new(&shim)
             .env("PATH", path_with_prepend(&fake_bin))

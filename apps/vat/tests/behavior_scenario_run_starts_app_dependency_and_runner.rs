@@ -7,18 +7,19 @@
 // @contract production-like-integration-scenarios
 // @category behavior
 // @required_for_production true
-// @command cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture
+// @command VAT_SCENARIO_E2E_REQUIRED=1 cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture
 // AW-EC-END
 
 // Contract: vat run --scenario prod-like succeeds
 // Contract: app readiness marker exists before runner marker
 // Contract: vat state includes test_run.scenario id/app/runner/services
 // Contract: result JSONL includes scenario and app
+// Contract: the production gate fails closed when the required python3 service fixture runtime is unavailable
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn scenario_run_starts_app_dependency_and_runner() {
     let command =
-        "cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture";
+        "VAT_SCENARIO_E2E_REQUIRED=1 cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture";
     let id = "scenario-run-starts-app-dependency-and-runner";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

@@ -29,10 +29,8 @@ pub enum BackupDestination {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         credentials_secret: Option<String>,
     },
-    /// Google Cloud Storage. Parsed and serialized as part of the shared
-    /// backup schema, but not yet backed by a production sink implementation.
-    /// Prefer workload identity; use `credentialsSecret` only once a real GCS
-    /// adapter exists.
+    /// Google Cloud Storage. The adapter uses workload identity by default and
+    /// Vat's `STORAGE_EMULATOR_HOST` for integration tests.
     Gcs {
         bucket: String,
         #[serde(default)]
@@ -45,8 +43,7 @@ pub enum BackupDestination {
 /// @spec libs/service-backup/tech-design/semantic/source/libs-service-backup-src-destination-rs.md#source
 impl BackupDestination {
     /// Parse the common URI spellings used by operators and CLIs.
-    /// `gs://bucket/prefix` remains schema-compatible so configs can validate
-    /// and round-trip, but runners still fail loudly until a GCS adapter lands.
+    /// `gs://bucket/prefix` selects the always-linked GCS adapter.
     pub fn from_uri(raw: &str) -> Result<Self> {
         let raw = raw.trim();
         ensure!(!raw.is_empty(), "backup destination URI is empty");
