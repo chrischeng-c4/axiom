@@ -1292,6 +1292,21 @@ fn collect_numeric_require_ids(source: &str, node: Node<'_>, ids: &mut Vec<usize
     }
 }
 
+/// #1995 — cheap textual pre-check gating
+/// `eliminate_unused_side_effect_free_require_bindings`, which
+/// tree-sitter-parses its input unconditionally even though every
+/// candidate binding it can remove is a require-like call. Mirrors
+/// [`collect_numeric_require_ids`]'s exact call-target set so it stays
+/// sound if that matcher ever grows a new alias: `require(...)`, the
+/// mangled `_r(...)` alias, and the splitting-lowered
+/// `__jet__.dynamicImport(...)` (GH #1930 — `transform/modules.rs` lowers
+/// a resolved dynamic `import()` directly into a module's own transform
+/// output when `--splitting` is on, so this form is a real per-module,
+/// pre-bundle occurrence and not only a post-mangle one).
+pub(crate) fn could_contain_require_like_call(code: &str) -> bool {
+    code.contains("require(") || code.contains("_r(") || code.contains("__jet__.dynamicImport(")
+}
+
 fn parse_js(source: &str) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
     if parser
@@ -1469,6 +1484,59 @@ fn parse_bool(s: &str) -> Option<bool> {
         _ => None,
     }
 }
+
+/// #1995 — cheap textual pre-check for whether `code` could contain a
+/// statically foldable condition, gating the `fold_define_short_circuits`
+/// + `eliminate_static_conditionals_syntax` pair (both tree-sitter-parse
+/// their input unconditionally). Sound relative to every shape
+/// [`eval_condition`] recognizes:
+///   - literal string compares (`"a"==="b"`) — checking bare `==`/`!=`
+///     covers all four operator spellings, since `===`/`!==` both contain
+///     `==` as a substring and the remaining `!=` case is covered
+///     directly.
+///   - literal bool compares (`true===false`) — bare `true`/`false`
+///     tokens.
+///   - a bare `true`/`false`/`!0`/`!1` condition on its own (e.g.
+///     hand-written `if (false) { … }`, or the minified form
+///     `fold_define_short_circuits` itself produces — pre-minified vendor
+///     sources can already contain `!0`/`!1` before defines ever touch
+///     them).
+/// Overapproximate on purpose: a false positive just runs the pass and
+/// finds nothing to fold; a false negative would silently drop dead-code
+/// elimination the pipeline performed unconditionally before this gate
+/// existed, so every disjunct above is required for soundness, not just
+/// the common define-substitution case.
+///
+/// One known, universal false-positive source is stripped before the scan:
+/// `transform/modules.rs` prepends the fixed, non-conditional
+/// `__esModule` CJS-interop marker (see [`ESMODULE_PROLOGUE`]) onto every
+/// ESM-syntax module's transform output, and that marker's own `{ value:
+/// true }` would otherwise trip the bare-`true` disjunct on essentially
+/// every module in an ESM codebase, making the gate a near-permanent
+/// no-op in practice (confirmed against the #1947-style synthetic
+/// barrel-heavy timing fixture: 1006/1006 modules ran the pass before this
+/// strip, 0/1006 after). The marker is a single statement — never a
+/// shape `eval_condition` folds — so removing it before the probe cannot
+/// hide a real foldable condition.
+pub(crate) fn could_fold_static_conditional(code: &str) -> bool {
+    let code = code.strip_prefix(ESMODULE_PROLOGUE).unwrap_or(code);
+    code.contains("==")
+        || code.contains("!=")
+        || code.contains("!0")
+        || code.contains("!1")
+        || code.contains("true")
+        || code.contains("false")
+}
+
+/// The fixed, verbatim `__esModule` CJS-interop marker
+/// `transform/modules.rs`'s `transform_modules_with_dir_index_and_tree`
+/// prepends onto every ESM-syntax module's transform output (never
+/// data-dependent — always this exact statement when present). Shared
+/// with [`could_fold_static_conditional`]'s prologue strip; mirrors the
+/// same fixed-shape assumption `eliminate_unread_es_module_markers`
+/// above already makes about this marker's generated text.
+const ESMODULE_PROLOGUE: &str =
+    "Object.defineProperty(module.exports, \"__esModule\", { value: true });\n";
 
 /// Find matching closing brace, handling nested braces.
 /// All positions are char indices.
@@ -1847,6 +1915,107 @@ mod tests {
         assert_eq!(eval_condition("false === false"), Some(true));
     }
 
+    // #1995 — gate-probe soundness: every shape `eval_condition` can fold
+    // must trip `could_fold_static_conditional`, or the transform_modules
+    // pass gate would silently skip live dead-code elimination.
+
+    #[test]
+    fn test_could_fold_static_conditional_catches_string_compare() {
+        assert!(could_fold_static_conditional(
+            r#"if ("production" !== "production") { dead(); }"#
+        ));
+        assert!(could_fold_static_conditional(
+            r#"if ("production" === "production") { live(); }"#
+        ));
+    }
+
+    #[test]
+    fn test_could_fold_static_conditional_catches_bool_compare() {
+        assert!(could_fold_static_conditional(
+            "if (false === false) { live(); }"
+        ));
+        assert!(could_fold_static_conditional(
+            "if (true !== false) { live(); }"
+        ));
+    }
+
+    #[test]
+    fn test_could_fold_static_conditional_catches_bare_literal_and_minified_forms() {
+        // Hand-written / vendor dead-branch guards with no comparison
+        // operator and no relation to any configured define.
+        assert!(could_fold_static_conditional("if (false) { dead(); }"));
+        assert!(could_fold_static_conditional("if (true) { live(); }"));
+        assert!(could_fold_static_conditional("cond ? true : false"));
+        // Pre-minified vendor input that already uses the `!0`/`!1` forms
+        // `fold_define_short_circuits` itself would otherwise produce.
+        assert!(could_fold_static_conditional("if (!0) { live(); }"));
+        assert!(could_fold_static_conditional("if (!1) { dead(); }"));
+    }
+
+    #[test]
+    fn test_could_fold_static_conditional_skips_plain_code() {
+        // No comparison operator, no boolean literal anywhere: neither
+        // `fold_define_short_circuits` nor `eliminate_static_conditionals_syntax`
+        // could act on this module, so the gate should be able to skip it.
+        assert!(!could_fold_static_conditional(
+            "function add(a, b) { return a + b; } export default add;"
+        ));
+    }
+
+    #[test]
+    fn test_could_fold_static_conditional_strips_esmodule_prologue_false_positive() {
+        // Every ESM-syntax module's transform output is prefixed with the
+        // fixed `__esModule` CJS-interop marker (transform/modules.rs),
+        // whose own `{ value: true }` would otherwise trip the bare-`true`
+        // disjunct on essentially every module in an ESM codebase — the
+        // synthetic #1947-style timing fixture measured 1006/1006 modules
+        // running the pass before this strip existed. A plain module body
+        // with nothing else foldable must be skippable once the known
+        // prologue is discounted.
+        assert!(!could_fold_static_conditional(
+            "Object.defineProperty(module.exports, \"__esModule\", { value: true });\n\
+             function add(a, b) { return a + b; }\n\
+             module.exports.add = add;"
+        ));
+        // A genuine foldable condition anywhere after the prologue must
+        // still trip the probe — stripping the marker must not hide real
+        // analysis surface.
+        assert!(could_fold_static_conditional(
+            "Object.defineProperty(module.exports, \"__esModule\", { value: true });\n\
+             if (\"production\" === \"production\") { live(); }"
+        ));
+        // A module that merely CONTAINS `__esModule` handling without the
+        // exact fixed prologue shape (e.g. code that reads the flag, not
+        // jet's own generated marker) is not stripped, so its own literal
+        // `true` still trips the probe — the strip only ever removes the
+        // one exact, known, non-conditional statement.
+        assert!(could_fold_static_conditional(
+            "if (mod.__esModule === true) { live(); }"
+        ));
+    }
+
+    // #1995 — gate-probe soundness for `eliminate_unused_side_effect_free_require_bindings`:
+    // every call-target text `collect_numeric_require_ids` recognizes must
+    // trip `could_contain_require_like_call`.
+
+    #[test]
+    fn test_could_contain_require_like_call_catches_all_aliases() {
+        assert!(could_contain_require_like_call(
+            "var PropTypes = require(7);"
+        ));
+        assert!(could_contain_require_like_call("var PropTypes = _r(7);"));
+        assert!(could_contain_require_like_call(
+            "__jet__.dynamicImport(7).then(function (m) { return m; });"
+        ));
+    }
+
+    #[test]
+    fn test_could_contain_require_like_call_skips_plain_code() {
+        assert!(!could_contain_require_like_call(
+            "function add(a, b) { return a + b; } export default add;"
+        ));
+    }
+
     #[test]
     fn test_dce_if_false_removed() {
         let input = r#"before(); if ("production" !== "production") { dead(); } after();"#;
@@ -2030,6 +2199,42 @@ module.exports["value"] = value;"#;
             eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
         assert!(output.contains("PropTypes"), "{}", output);
         assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    // #1995 — gate/pass agreement: whenever `could_contain_require_like_call`
+    // says "run the pass", `eliminate_unused_side_effect_free_require_bindings`
+    // must still prune every alias form `collect_numeric_require_ids`
+    // recognizes, not just the plain `require(...)` spelling.
+
+    #[test]
+    fn test_gate2_probe_and_pass_agree_on_mangled_alias_require_binding() {
+        let input = r#"var PropTypes = _r(7)["default"] || _r(7);
+const value = 1;
+module.exports["value"] = value;"#;
+        assert!(
+            could_contain_require_like_call(input),
+            "probe must recognize the `_r(` alias form: {input}"
+        );
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(!output.contains("PropTypes"), "{}", output);
+        assert!(!output.contains("_r(7)"), "{}", output);
+        assert!(output.contains("module.exports"), "{}", output);
+    }
+
+    #[test]
+    fn test_gate2_probe_and_pass_agree_on_dynamic_import_lowering_alias() {
+        let input = r#"var Chunk = __jet__.dynamicImport(7)["default"] || __jet__.dynamicImport(7);
+const value = 1;
+module.exports["value"] = value;"#;
+        assert!(
+            could_contain_require_like_call(input),
+            "probe must recognize the `__jet__.dynamicImport(` alias form: {input}"
+        );
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(!output.contains("Chunk"), "{}", output);
+        assert!(output.contains("module.exports"), "{}", output);
     }
 
     #[test]

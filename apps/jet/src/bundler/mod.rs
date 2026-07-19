@@ -1939,6 +1939,22 @@ impl Bundler {
 
         use rayon::prelude::*;
 
+        // #1995 — per-module pass gating. `fold_define_short_circuits` +
+        // `eliminate_static_conditionals_syntax` + `eliminate_unused_side_
+        // effect_free_require_bindings` each unconditionally tree-sitter-parse
+        // their input even on modules with nothing for them to do; skip a
+        // pass only when a cheap textual probe proves it has no candidates
+        // (see `dce::could_fold_static_conditional` /
+        // `dce::could_contain_require_like_call` for the soundness argument).
+        // JET_NO_PASS_GATES=1 forces every gate open, reproducing pre-#1995
+        // behavior exactly — the A/B knob for diffing gated vs ungated
+        // bundle output byte-for-byte.
+        let force_run_all_gates = std::env::var_os("JET_NO_PASS_GATES").is_some();
+        let fold_dce_candidates = std::sync::atomic::AtomicUsize::new(0);
+        let fold_dce_ran = std::sync::atomic::AtomicUsize::new(0);
+        let require_dce_candidates = std::sync::atomic::AtomicUsize::new(0);
+        let require_dce_ran = std::sync::atomic::AtomicUsize::new(0);
+
         let modules: Vec<CompiledModule> = sorted_ids
             .par_iter()
             .enumerate()
@@ -2066,12 +2082,52 @@ impl Bundler {
                             // whole condition to be one literal compare),
                             // keeping multi-KB dev branches and their
                             // dev-only imports alive through tree shaking.
-                            let after_fold = fold::fold_define_short_circuits(&after_define);
-                            let after_dce = dce::eliminate_static_conditionals_syntax(&after_fold);
-                            dce::eliminate_unused_side_effect_free_require_bindings(
-                                &after_dce,
-                                &side_effect_free_module_ids,
-                            )
+                            //
+                            // #1995 — Gate 1: skip fold+syntax-DCE unless
+                            // either (a) `replace_defines` actually changed
+                            // this module's text (the only way a define
+                            // token turns into a foldable literal), or (b)
+                            // the cheap `could_fold_static_conditional`
+                            // probe proves the post-define text already
+                            // contains a shape `eval_condition` can fold
+                            // independent of defines (see dce.rs for the
+                            // soundness argument). False positives just run
+                            // the pass and find nothing; JET_NO_PASS_GATES=1
+                            // forces it open unconditionally.
+                            fold_dce_candidates.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let defines_changed = after_define != transform_result.code;
+                            let after_dce = if force_run_all_gates
+                                || defines_changed
+                                || dce::could_fold_static_conditional(&after_define)
+                            {
+                                fold_dce_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let after_fold = fold::fold_define_short_circuits(&after_define);
+                                dce::eliminate_static_conditionals_syntax(&after_fold)
+                            } else {
+                                after_define
+                            };
+
+                            // #1995 — Gate 2: every candidate binding
+                            // `eliminate_unused_side_effect_free_require_bindings`
+                            // can remove is a require-like call
+                            // (`require(...)` / `_r(...)` /
+                            // `__jet__.dynamicImport(...)` — see
+                            // `dce::could_contain_require_like_call`); skip
+                            // the tree-sitter parse when none of those three
+                            // textual forms are present.
+                            require_dce_candidates
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if force_run_all_gates
+                                || dce::could_contain_require_like_call(&after_dce)
+                            {
+                                require_dce_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                dce::eliminate_unused_side_effect_free_require_bindings(
+                                    &after_dce,
+                                    &side_effect_free_module_ids,
+                                )
+                            } else {
+                                after_dce
+                            }
                         };
 
                         let compiled = CompiledModule {
@@ -2098,6 +2154,24 @@ impl Bundler {
             .collect::<Result<Vec<_>>>()?;
 
         tracing::info!("Transformed {} modules", modules.len());
+
+        // #1995 — pass-gate counters, printed as JET_BUNDLE_TIMING sibling
+        // lines: how many defines-bearing modules actually ran the
+        // fold+syntax-DCE pass vs. the require-binding-elimination pass,
+        // out of how many were candidates (had `self.defines` non-empty).
+        if std::env::var_os("JET_BUNDLE_TIMING").is_some() {
+            use std::sync::atomic::Ordering;
+            let fdc = fold_dce_candidates.load(Ordering::Relaxed);
+            let fdr = fold_dce_ran.load(Ordering::Relaxed);
+            let rdc = require_dce_candidates.load(Ordering::Relaxed);
+            let rdr = require_dce_ran.load(Ordering::Relaxed);
+            eprintln!(
+                "[bundle-timing] pass-gates: fold+syntax-dce ran={fdr}/{fdc} (skipped {}), \
+                 require-binding-dce ran={rdr}/{rdc} (skipped {})",
+                fdc.saturating_sub(fdr),
+                rdc.saturating_sub(rdr),
+            );
+        }
 
         Ok((modules, has_cycle))
     }
@@ -3195,6 +3269,133 @@ export const value = 1;
             !compiled.code.contains("dev branch"),
             "production define+DCE should remove dev-only branch:\n{}",
             compiled.code
+        );
+    }
+
+    // #1995 — per-module pass gating equivalence tests.
+
+    #[tokio::test]
+    async fn test_gate1_probe_folds_literal_compare_with_no_define_change() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let entry = tmp.path().join("entry.js");
+        // No `process.env.NODE_ENV` / `process.env` / `__DEV__` token
+        // anywhere in this module's source, so `replace_defines` is a
+        // no-op for it (Gate 1 condition (a) is false). The literal
+        // string compare below is unrelated to any configured define;
+        // only the `could_fold_static_conditional` probe (condition (b))
+        // can prove this module still needs the fold+syntax-DCE pass.
+        std::fs::write(
+            &entry,
+            r#"
+if ("a" === "a") {
+  keep();
+} else {
+  drop();
+}
+export const value = 1;
+"#,
+        )
+        .unwrap();
+
+        let bundler = Bundler::new(BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            minify: false,
+            source_maps: false,
+            externalize_all_packages: false,
+            transform_options: crate::transform::TransformOptions {
+                dev_mode: false,
+                ..Default::default()
+            },
+            // Non-empty so the gated `else` branch runs at all; this
+            // specific module never references any of these tokens, so
+            // `replace_defines` leaves it byte-identical.
+            defines: crate::bundler::define::production_defines(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        bundler.build_graph(&entry).await.unwrap();
+        let (modules, _has_cycle) = bundler.transform_modules().await.unwrap();
+        let compiled = modules
+            .iter()
+            .find(|m| m.path.ends_with(std::path::Path::new("entry.js")))
+            .expect("entry module should be transformed");
+
+        assert!(
+            compiled.code.contains("keep()"),
+            "true branch of a literal string compare must survive:\n{}",
+            compiled.code
+        );
+        assert!(
+            !compiled.code.contains("drop()"),
+            "dead branch of a literal string compare unrelated to any \
+             define must still be eliminated even though replace_defines \
+             made no change to this module:\n{}",
+            compiled.code
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gate_skip_produces_byte_identical_output_to_ungated() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let entry = tmp.path().join("entry.js");
+        // No comparison operators, no boolean literals, no require-like
+        // calls anywhere: both Gate 1 and Gate 2 should skip their passes
+        // entirely for this module.
+        std::fs::write(
+            &entry,
+            r#"
+export function add(a, b) {
+  return a + b;
+}
+export const value = add(1, 2);
+"#,
+        )
+        .unwrap();
+
+        async fn build(entry: &std::path::PathBuf, out_dir: std::path::PathBuf) -> String {
+            let bundler = Bundler::new(BundleOptions {
+                entry: entry.to_path_buf(),
+                output_dir: out_dir,
+                minify: false,
+                source_maps: false,
+                externalize_all_packages: false,
+                transform_options: crate::transform::TransformOptions {
+                    dev_mode: false,
+                    ..Default::default()
+                },
+                defines: crate::bundler::define::production_defines(),
+                ..Default::default()
+            })
+            .unwrap();
+            bundler.build_graph(entry).await.unwrap();
+            let (modules, _has_cycle) = bundler.transform_modules().await.unwrap();
+            modules
+                .into_iter()
+                .find(|m| m.path.ends_with(std::path::Path::new("entry.js")))
+                .expect("entry module should be transformed")
+                .code
+        }
+
+        // JET_NO_PASS_GATES=1 forces both gates open, reproducing
+        // pre-#1995 (always-run) behavior exactly. Set/unset around each
+        // build so the two calls in this test never observe each other's
+        // state; only ever forces gates *open* for any other test that
+        // might transiently observe it mid-flight, which cannot change
+        // those tests' correctness assertions (running more passes than
+        // strictly necessary is always output-safe).
+        std::env::remove_var("JET_NO_PASS_GATES");
+        let gated = build(&entry, tmp.path().join("dist-gated")).await;
+
+        std::env::set_var("JET_NO_PASS_GATES", "1");
+        let ungated = build(&entry, tmp.path().join("dist-ungated")).await;
+        std::env::remove_var("JET_NO_PASS_GATES");
+
+        assert_eq!(
+            gated, ungated,
+            "gate skip must be byte-identical to the ungated \
+             (JET_NO_PASS_GATES=1) pipeline:\ngated:\n{gated}\nungated:\n{ungated}"
         );
     }
 
