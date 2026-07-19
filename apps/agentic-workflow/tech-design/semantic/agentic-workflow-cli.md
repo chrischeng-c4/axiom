@@ -64,6 +64,12 @@ capability_refs:
     rationale: "EC regeneration preserves the fresh EC-first handoff to TD authoring but routes a cb_filled WI to execution of the newly current verifier instead of rewinding to an invalid td create command."
   - id: project-local-td-and-ec-gates
     role: primary
+    gap: root-owned-ec-production-required-verdict
+    claim: root-owned-ec-production-required-verdict
+    coverage: full
+    rationale: "WI and capability roots record their EC verdict from the production-required case set used by terminal code-check, while unscoped manual verification can still exercise advisory cases."
+  - id: project-local-td-and-ec-gates
+    role: primary
     gap: project-label-producer-td-routing
     claim: project-label-producer-td-routing
     coverage: full
@@ -3621,6 +3627,14 @@ changes:
       against the newly current inventory. This prevents an accepted
       review/regeneration cycle from rewinding a completed implementation to
       a `td create` command that the phase guard must reject.
+      #2125: `ec_verify_command`, shared by WI roots, capability roots, and
+      the post-review `ec gen` handoff, now emits `--required-only`. The
+      root-owned loop verdict therefore executes the same production-required
+      case set as terminal code-check and records advisory cases as skipped
+      instead of turning a documented non-production stability NO-GO into TD
+      adaptation. The public unscoped `aw ec verify` default is unchanged and
+      still runs all configured cases when an operator explicitly wants the
+      advisory suite.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify

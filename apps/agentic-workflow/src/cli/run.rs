@@ -538,9 +538,11 @@ pub(crate) fn ec_draft_command(project: &str, wi: &str) -> String {
 
 /// The root-owned verdict act after TD/codegen reaches a terminal candidate.
 /// Its `--wi` projection makes EC red resumable as TD adaptation and EC green
-/// resumable as the bounded terminal code-check.
+/// resumable as the bounded terminal code-check. Root-owned verdicts use the
+/// same production-required filter as terminal code-check; an unscoped manual
+/// `aw ec verify` remains available for explicitly exercising advisory cases.
 pub(crate) fn ec_verify_command(project: &str, wi: &str) -> String {
-    format!("aw ec verify --project {project} --wi {wi}")
+    format!("aw ec verify --project {project} --required-only --wi {wi}")
 }
 
 /// Thin shell: `aw goal wi <id>` -- drive one work item's next lifecycle tick
@@ -3264,7 +3266,10 @@ mod tests {
 
         issue.phase = Some("cb_filled".to_string());
         let (command, _reason) = wi_change_lifecycle_step(&issue);
-        assert_eq!(command, "aw ec verify --project jet --wi 937");
+        assert_eq!(
+            command,
+            "aw ec verify --project jet --required-only --wi 937"
+        );
 
         // A retired CRRR phase normalizes (td_phase::normalize, #916) before
         // routing, same as the capability.rs router.

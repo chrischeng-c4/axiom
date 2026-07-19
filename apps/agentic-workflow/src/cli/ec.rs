@@ -1008,7 +1008,7 @@ fn ec_gen_next_action_for_wi(project_root: &Path, project: &str, wi: &str) -> Re
 fn ec_gen_next_action(project: &str, wi: &str, phase: Option<&str>) -> String {
     let normalized_phase = phase.map(crate::issues::types::td_phase::normalize);
     if normalized_phase == Some(crate::issues::types::td_phase::CB_FILLED) {
-        format!("aw ec verify --project {project} --wi {wi}")
+        crate::cli::run::ec_verify_command(project, wi)
     } else {
         format!("aw td create {wi}")
     }
@@ -7541,11 +7541,11 @@ e2e_tests:
     fn ec_gen_next_action_routes_cb_filled_to_current_inventory_verify() {
         assert_eq!(
             ec_gen_next_action("vat", "1872", Some("cb_filled")),
-            "aw ec verify --project vat --wi 1872"
+            "aw ec verify --project vat --required-only --wi 1872"
         );
         assert_eq!(
             ec_gen_next_action("vat", "1872", Some("cb_reviewed")),
-            "aw ec verify --project vat --wi 1872",
+            "aw ec verify --project vat --required-only --wi 1872",
             "retired post-fill phases normalize to cb_filled"
         );
     }
