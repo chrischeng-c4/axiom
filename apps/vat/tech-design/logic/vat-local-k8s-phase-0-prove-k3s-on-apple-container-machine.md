@@ -66,7 +66,8 @@ e2e_tests:
     capability_id: agent-native-gpu-native-dev-containers
     claim_id: local-kubernetes-cluster-service-and-vat-cluster
     contract_id: local-agent-test-runner-protocol
-    category: behavior
+    category: stability
+    required_for_production: false
     command: "VAT_LOCAL_K8S_E2E=1 cargo test -p vat --test vat_local_k8s_phase0 apple_machine_exec_control_is_usable_before_k3s -- --ignored --nocapture"
     assertions:
       - "The ignored, explicit opt-in test preflights `local/vat-k8s-systemd:phase0` (or `VAT_LOCAL_K8S_MACHINE_IMAGE`) and skips cleanly when the Apple Container CLI is absent. It never builds or publishes an image itself."

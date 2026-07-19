@@ -198,7 +198,7 @@ e2e_tests:
     claim_id: production-like-integration-scenarios
     contract_id: production-like-integration-scenarios
     category: behavior
-    command: "cargo test -p vat scenario_run_starts_app_dependency_and_runner -- --nocapture"
+    command: "cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture"
     assertions:
       - "vat run --scenario prod-like succeeds"
       - "app readiness marker exists before runner marker"
@@ -210,7 +210,7 @@ e2e_tests:
     claim_id: production-like-integration-scenarios
     contract_id: production-like-integration-scenarios
     category: behavior
-    command: "cargo test -p vat scenario_failure_keeps_topology_and_logs -- --nocapture"
+    command: "cargo test -p vat --test vat_toml_runner scenario_failure_keeps_topology_and_logs -- --nocapture"
     assertions:
       - "failing runner forwards its exit code"
       - "keep=failed retains the vat directory"
@@ -222,7 +222,7 @@ e2e_tests:
     claim_id: production-like-integration-scenarios
     contract_id: production-like-integration-scenarios
     category: behavior
-    command: "cargo test -p vat scenario_hermetic_requires_http_mock_service -- --nocapture"
+    command: "cargo test -p vat --test vat_toml_runner scenario_hermetic_requires_http_mock_service -- --nocapture"
     assertions:
       - "hermetic scenario without http-mock exits non-zero"
       - "stdout JSONL contains scenario_hermetic_proxy_required"

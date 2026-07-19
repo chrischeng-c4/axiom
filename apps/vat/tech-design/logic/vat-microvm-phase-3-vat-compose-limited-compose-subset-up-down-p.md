@@ -776,15 +776,15 @@ e2e_tests:
       - "#1529: auto/native/docker select Docker and MicroVm selects Apple Container; a preflight/build failure occurs before generated vat.toml replacement, preserving a prior materialized import. Image-only compose files remain builder-independent."
       - "#1529: a fresh inactive imported compose up refuses a parseable registry/config service-ID-set mismatch before Docker or Apple Container starts, ignoring service-table order; it accepts a user-edited valid vat.toml when its identity set still matches project.json. Bound or active records bypass this gate for VAT-evidence cleanup, and malformed configs retain vat run's existing parse failure; no full config digest blocks compatible local edits."
   - id: vat-compose-mainstream-manual-smoke
-    name: "manual smoke: a real unmodified mainstream docker-compose.yml round-trips import -> up -d -> ps -> logs -> down"
+    name: "real Docker smoke: a repo-owned mainstream docker-compose.yml round-trips import -> up -d -> ps -> logs -> down"
     capability_id: agent-native-gpu-native-dev-containers
     claim_id: vat-compose-bounded-compose-subset-up-down-ps-logs
     contract_id: local-agent-test-runner-protocol
     category: behavior
-    command: "vat compose import ./docker-compose.yml && vat compose up -d --project demo && vat compose ps demo && vat compose logs demo web && vat compose down demo"
+    command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_compose test_compose_full_cycle_up_down -- --nocapture"
     assertions:
-      - "AC6: a real, unmodified mainstream docker-compose.yml (one image: service, one build: service, a depends_on entry) succeeds through the full import -> up -d -> ps -> logs -> down cycle, retaining an imported registry ready for another up, and the source compose file itself required no edits."
-      - "Not part of the cargo test / generated aw.toml EC gated surface (no CI-portable fixture repo is bundled for this manual smoke); recorded here as the human verification step named by AC6, run once against a developer-supplied compose file during this WI's own close-out."
+      - "AC6: the repo-owned mainstream docker-compose.yml fixture succeeds against a real Docker backend through import -> up -d -> ps -> logs -> down, retains the imported registry ready for retry, and requires no source-file edits."
+      - "The test owns an isolated VAT_HOME and project name, skips only when Docker is unavailable, and is part of the generated EC gate rather than depending on an ambient ./docker-compose.yml."
 ```
 
 ## Changes

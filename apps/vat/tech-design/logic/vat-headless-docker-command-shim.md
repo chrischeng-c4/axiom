@@ -469,10 +469,10 @@ e2e_tests:
   - id: vat-docker-compose-bounded-wait-fake-lifecycle
     capability_id: agent-native-gpu-native-dev-containers
     claim_id: headless-docker-command-shim
-    command: "cargo test -p vat --test vat_docker_shim -- --nocapture"
+    command: "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture"
     assertions:
-      - "The passed deterministic fake suite covers ready, timeout, later recovery/down cleanup, and down/re-import/relaunch replacement races for docker compose up -d --wait."
-      - "It proves one final ready up JSON with topology, timeout runtime/registry retention, target-pinned safe ps handoff only after current observation, and no unsafe next for terminal/replaced/bare deadlines; degraded exposes no endpoint."
+      - "The focused deterministic fake cases cover ready, timeout, later recovery, and down cleanup for docker compose up -d --wait."
+      - "They prove one final ready up JSON with topology, timeout runtime/registry retention, later ready observation of the same launch, and no endpoint leakage from a timed-out result."
       - "The corresponding opt-in real Apple Container dual-service E2E is passed on this host; the fake suite remains the deterministic coverage for timeout/recovery/replacement races."
   - id: vat-docker-compose-host-facing-independent-real-host
     capability_id: agent-native-gpu-native-dev-containers

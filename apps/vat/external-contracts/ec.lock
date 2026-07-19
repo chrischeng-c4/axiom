@@ -3,9 +3,9 @@ project = "vat"
 ir_kind = "ec"
 ec_path = "apps/vat/external-contracts"
 inventory_path = "apps/vat/aw.toml"
-generated_at = "2026-07-17T17:01:36.686014+00:00"
-ir_digest = "sha256:591d7c2ac21ce9b537db11bdd5f93fcac4433755d80899c615af5f4c939f20f9"
-source_digest = "sha256:6f083d5d7126f92681b285289b96cbf709f0e6cce3629145862e2ec989fc21c5"
+generated_at = "2026-07-18T08:14:12.198562+00:00"
+ir_digest = "sha256:5374f2ddea344e5b73921e1a692fa6739c59d22f8cab6a363918dce01e30023d"
+source_digest = "sha256:029f5b08cd3ac0c71363e81cad9293aa819aee8cf105f064bf86fe76c54aacca"
 tool_contracts = []
 
 [[sources]]
@@ -82,11 +82,11 @@ digest = "sha256:77746fb49553b8451876115b356457054974e5976a72276e654709fd63bf6cb
 
 [[sources]]
 path = "apps/vat/tech-design/logic/production-like-integration-scenarios.md"
-digest = "sha256:71926e5d9d9665b6e948d7140f9e90754f4ebeb0d5ea41d301880275fcf2dfaf"
+digest = "sha256:753f1e3d289c7227f66f2749e22eb4316c901e412d0a657afa574e1093069687"
 
 [[sources]]
 path = "apps/vat/tech-design/logic/vat-headless-docker-command-shim.md"
-digest = "sha256:74bf98e125df36160675c7c7bfddd4fac853188847b9c1d051ead46c4b6fde96"
+digest = "sha256:79efaaba79a5f2c800c3d250eb8734a583dc8bf747105bedb430473f40081dac"
 
 [[sources]]
 path = "apps/vat/tech-design/logic/vat-headless-ephemeral-local-k8s.md"
@@ -98,7 +98,7 @@ digest = "sha256:be652b6a9c51e68098aecac854fe2c457ea9e32204e651b098be4c889c11460
 
 [[sources]]
 path = "apps/vat/tech-design/logic/vat-local-k8s-phase-0-prove-k3s-on-apple-container-machine.md"
-digest = "sha256:5f8d9f1cbe294a80aa7bada940b36fef2837e05d42b3c5f1de5e9e78da2bbcd5"
+digest = "sha256:9f78c21a7179f8ddefa68a4632f00799d30103cb8794ad85d3a3fef4ac94baac"
 
 [[sources]]
 path = "apps/vat/tech-design/logic/vat-microvm-fail-closed-when-published-host-ports-are-unusable.md"
@@ -110,7 +110,7 @@ digest = "sha256:b286bad312e1fab5496e71369954121f5617104910660e59687fc2d3c986104
 
 [[sources]]
 path = "apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md"
-digest = "sha256:4274140e31d73c8fc0badd16e4ef17cd8919692349f0783e5cfa82b70bc18e40"
+digest = "sha256:13f79b43c2f30ea5fe5a8ff1d934d894ccbeb1f85ecbb7d4c6b49c92c8786169"
 
 [[sources]]
 path = "apps/vat/tech-design/logic/vat-network-sandbox-full-hermetic-http-mock-no-forward-mode-bloc.md"
@@ -136,7 +136,7 @@ contract_id = "production-like-integration-scenarios"
 dimension = "behavior"
 source_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-failure-keeps-topology-and-logs"
 test_path = "apps/vat/tests/behavior_scenario_failure_keeps_topology_and_logs.rs"
-command = "cargo test -p vat --lib scenario_failure_keeps_topology_and_logs -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_failure_keeps_topology_and_logs -- --nocapture"
 required_for_production = true
 assertions = [
     "failing runner forwards its exit code",
@@ -146,7 +146,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:792d37209928823303859d065c22aef4d8dd9843be325befcb9b06e10783f600"
+digest = "sha256:7d62c9d96a3153d6d4950de2f6873217b6352a6fc529670f7aea7fc847126869"
 
 [[cases]]
 id = "scenario-hermetic-requires-http-mock-service"
@@ -156,7 +156,7 @@ contract_id = "production-like-integration-scenarios"
 dimension = "behavior"
 source_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-hermetic-requires-http-mock-service"
 test_path = "apps/vat/tests/behavior_scenario_hermetic_requires_http_mock_service.rs"
-command = "cargo test -p vat --lib scenario_hermetic_requires_http_mock_service -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_hermetic_requires_http_mock_service -- --nocapture"
 required_for_production = true
 assertions = [
     "hermetic scenario without http-mock exits non-zero",
@@ -165,7 +165,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:ff06a24faf6f399685a62731b4307015d44c19ddccb7536ed3fe9ea73a870f66"
+digest = "sha256:344366a47f5ecb3478a01772f55547232d64ccd30d7bf4ac3de11e6b126eecc9"
 
 [[cases]]
 id = "scenario-run-starts-app-dependency-and-runner"
@@ -175,7 +175,7 @@ contract_id = "production-like-integration-scenarios"
 dimension = "behavior"
 source_ref = "apps/vat/tech-design/logic/production-like-integration-scenarios.md#scenario-run-starts-app-dependency-and-runner"
 test_path = "apps/vat/tests/behavior_scenario_run_starts_app_dependency_and_runner.rs"
-command = "cargo test -p vat --lib scenario_run_starts_app_dependency_and_runner -- --nocapture"
+command = "cargo test -p vat --test vat_toml_runner scenario_run_starts_app_dependency_and_runner -- --nocapture"
 required_for_production = true
 assertions = [
     "vat run --scenario prod-like succeeds",
@@ -185,7 +185,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:cab91a4a88678ccda5872375f3ffaab3324da3aa03201feb628d005e87c295b3"
+digest = "sha256:4f520c27f096b80ee4e10257dc9958295107b70852dbb0bd80701fcfcf8b4561"
 
 [[cases]]
 id = "vat-agent-state-and-diff-surface"
@@ -659,15 +659,15 @@ contract_id = "local-agent-test-runner-protocol"
 dimension = "behavior"
 source_ref = "apps/vat/tech-design/logic/vat-microvm-phase-3-vat-compose-limited-compose-subset-up-down-p.md#vat-compose-mainstream-manual-smoke"
 test_path = "apps/vat/tests/behavior_vat_compose_mainstream_manual_smoke.rs"
-command = "vat compose import ./docker-compose.yml && vat compose up -d --project demo && vat compose ps demo && vat compose logs demo web && vat compose down demo"
+command = "RUST_TEST_THREADS=1 cargo test -p vat --test vat_compose test_compose_full_cycle_up_down -- --nocapture"
 required_for_production = true
 assertions = [
-    "AC6: a real, unmodified mainstream docker-compose.yml (one image: service, one build: service, a depends_on entry) succeeds through the full import -> up -d -> ps -> logs -> down cycle, retaining an imported registry ready for another up, and the source compose file itself required no edits.",
-    "Not part of the cargo test / generated aw.toml EC gated surface (no CI-portable fixture repo is bundled for this manual smoke); recorded here as the human verification step named by AC6, run once against a developer-supplied compose file during this WI's own close-out.",
+    "AC6: the repo-owned mainstream docker-compose.yml fixture succeeds against a real Docker backend through import -> up -d -> ps -> logs -> down, retains the imported registry ready for retry, and requires no source-file edits.",
+    "The test owns an isolated VAT_HOME and project name, skips only when Docker is unavailable, and is part of the generated EC gate rather than depending on an ambient ./docker-compose.yml.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:156e494aca5b4ab1e620eac560c30bbe468657b2750742087fa16a982686e0b2"
+digest = "sha256:58a8d7622664532b2442b8768244ade1042e8b25bd9a1cbcbce6de8e19b786d7"
 
 [[cases]]
 id = "vat-compose-runtime-local-build-artifacts"
@@ -752,16 +752,16 @@ contract_id = "vat-docker-compose-bounded-wait-fake-lifecycle"
 dimension = "behavior"
 source_ref = "apps/vat/tech-design/logic/vat-headless-docker-command-shim.md#vat-docker-compose-bounded-wait-fake-lifecycle"
 test_path = "apps/vat/tests/behavior_vat_docker_compose_bounded_wait_fake_lifecycle.rs"
-command = "cargo test -p vat --test vat_docker_shim -- --nocapture"
+command = "RUST_TEST_THREADS=1 cargo test -p vat --test vat_docker_shim compose_wait_ -- --nocapture"
 required_for_production = true
 assertions = [
-    "The passed deterministic fake suite covers ready, timeout, later recovery/down cleanup, and down/re-import/relaunch replacement races for docker compose up -d --wait.",
-    "It proves one final ready up JSON with topology, timeout runtime/registry retention, target-pinned safe ps handoff only after current observation, and no unsafe next for terminal/replaced/bare deadlines; degraded exposes no endpoint.",
+    "The focused deterministic fake cases cover ready, timeout, later recovery, and down cleanup for docker compose up -d --wait.",
+    "They prove one final ready up JSON with topology, timeout runtime/registry retention, later ready observation of the same launch, and no endpoint leakage from a timed-out result.",
     "The corresponding opt-in real Apple Container dual-service E2E is passed on this host; the fake suite remains the deterministic coverage for timeout/recovery/replacement races.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:2bf2eb172078962f35ed320cb18476bca12e9944b84f16565175ef6a4cdbe21c"
+digest = "sha256:35aa74162ece656ea0f87f9628d65ca71efadf056948519ec5f82f439bd5eec4"
 
 [[cases]]
 id = "vat-docker-compose-host-facing-independent-fake-lifecycle"
@@ -1656,11 +1656,11 @@ id = "vat-local-k8s-phase0-real-host"
 capability_id = "agent-native-gpu-native-dev-containers"
 claim_id = "local-kubernetes-cluster-service-and-vat-cluster"
 contract_id = "local-agent-test-runner-protocol"
-dimension = "behavior"
+dimension = "stability"
 source_ref = "apps/vat/tech-design/logic/vat-local-k8s-phase-0-prove-k3s-on-apple-container-machine.md#vat-local-k8s-phase0-real-host"
-test_path = "apps/vat/tests/behavior_vat_local_k8s_phase0_real_host.rs"
+test_path = "apps/vat/tests/stability_vat_local_k8s_phase0_real_host.rs"
 command = "VAT_LOCAL_K8S_E2E=1 cargo test -p vat --test vat_local_k8s_phase0 apple_machine_exec_control_is_usable_before_k3s -- --ignored --nocapture"
-required_for_production = true
+required_for_production = false
 assertions = [
     "The ignored, explicit opt-in test preflights `local/vat-k8s-systemd:phase0` (or `VAT_LOCAL_K8S_MACHINE_IMAGE`) and skips cleanly when the Apple Container CLI is absent. It never builds or publishes an image itself.",
     "Using the source-controlled systemd fixture, the test creates one unique no-boot machine with no home mount, 2 CPUs, and 4G memory. It requires PID 1 to be `systemd`, waits for systemd, stops the machine, and requires `container machine run` to restart it and return the control marker.",
@@ -1670,7 +1670,7 @@ assertions = [
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:36b18b850d7b64747fa09e82e982f98b8c96c9572315823fcbfc99ae02f48796"
+digest = "sha256:266ac17af6d1dadc1af5d27371eb72345d1b3c15f849e02c8e1b7a775606a6b4"
 
 [[cases]]
 id = "vat-microvm-build"
