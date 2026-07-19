@@ -46,6 +46,12 @@ capability_refs:
     rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated aw.toml EC inventory behavior in src/cli/ec.rs."
   - id: project-local-td-and-ec-gates
     role: primary
+    gap: stale-ec-inventory-verifier-fail-closed-routing
+    claim: stale-ec-inventory-verifier-fail-closed-routing
+    coverage: full
+    rationale: "The EC verifier refuses stale or unreviewed executable inventories before command execution and persists independent review/regeneration as the bounded WI's runnable next action."
+  - id: project-local-td-and-ec-gates
+    role: primary
     gap: project-label-producer-td-routing
     claim: project-label-producer-td-routing
     coverage: full
@@ -3576,6 +3582,18 @@ changes:
       independence, digest binding, `needs_revision` routing, human-audit
       reopen of an agent-accepted EC, `ec_review_mode = "deferred"`
       semantics) are unchanged (R3).
+      #2084: `run_verify` now calls the same structural inventory check used by
+      `aw ec check` before executing any generated command. A stale TD/EC
+      source digest fails closed and, when
+      `--wi` is present, persists `aw ec review --project <project> --wi <wi>`
+      as the root-owned next action. `verify_ec_context` repeats this guard at
+      the shared terminal-gate boundary so code-check cannot execute stale
+      inventory either. A semantic-review pseudo-failure is likewise routed
+      to review rather than recorded as a generic red result whose default
+      `aw td gen` adaptation is unrunnable for cb_filled HANDWRITE-only WIs.
+      Regressions use stale and unreviewed `touch` commands to prove neither
+      sentinel is ever created and the latter is classified for review
+      routing.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify

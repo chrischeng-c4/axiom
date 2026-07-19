@@ -2663,11 +2663,60 @@ fn run_record(args: EcRecordArgs) -> Result<()> {
 fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
+    // #2084: never execute commands from a generated inventory that no longer
+    // matches the current EC sources. Besides being unsafe, recording those
+    // stale failures as a normal red verifier result routes a cb_filled,
+    // HANDWRITE-only WI to `aw td gen`, which has no phase-safe repair target
+    // and livelocks the root runner. Review the current source digest first;
+    // accepted review then owns the existing `ec gen --verify` transition.
+    let inventory_check = check_ec_context(&ctx)?;
+    if inventory_check.stale {
+        let next = command_with_wi(
+            format!("aw ec review --project {}", ctx.project),
+            args.wi.as_deref(),
+        );
+        if let Some(wi) = args.wi.as_deref() {
+            persist_ec_first_next_action(&project_root, wi, next.clone())?;
+        }
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "project": ctx.project,
+                    "status": "inventory_not_ready",
+                    "clean": false,
+                    "check": inventory_check,
+                    "next": next,
+                }))?
+            );
+        } else {
+            println!(
+                "ec verify {}: refused before execution (inventory is not current)",
+                ctx.project
+            );
+            for finding in &inventory_check.findings {
+                println!("  - {finding}");
+            }
+            println!("next: {next}");
+        }
+        if args.wi.is_none() {
+            bail!(
+                "ec verify {} refused a non-current inventory; run `{next}`",
+                ctx.project
+            );
+        }
+        return Ok(());
+    }
     let summary = verify_ec_context(&ctx, args.required_only)?;
-    let lifecycle_state = args
-        .wi
-        .as_deref()
-        .map(|wi| {
+    let semantic_review_required = ec_verify_requires_semantic_review(&summary);
+    let mut routed_next = None;
+    let lifecycle_state = if let Some(wi) = args.wi.as_deref() {
+        if semantic_review_required {
+            let next = command_with_wi(format!("aw ec review --project {}", ctx.project), Some(wi));
+            persist_ec_first_next_action(&project_root, wi, next.clone())?;
+            routed_next = Some(next);
+            None
+        } else {
             let result = if summary.clean {
                 crate::cli::loop_state::LastResult::Green
             } else {
@@ -2704,8 +2753,16 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
                     summary.passed_count, summary.command_count
                 )),
             )
-        })
-        .transpose()?;
+            .map(Some)?
+        }
+    } else {
+        None
+    };
+    let next_action = routed_next.or_else(|| {
+        lifecycle_state
+            .as_ref()
+            .and_then(|state| state.next_action.clone())
+    });
     if args.json {
         if let Some(state) = &lifecycle_state {
             println!(
@@ -2713,7 +2770,15 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({
                     "summary": summary,
                     "loop_state": state,
-                    "next": state.next_action,
+                    "next": next_action,
+                }))?
+            );
+        } else if next_action.is_some() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "summary": summary,
+                    "next": next_action,
                 }))?
             );
         } else {
@@ -2748,15 +2813,20 @@ fn run_verify(project: &str, args: EcVerifyArgs) -> Result<()> {
             }
         }
     }
-    if let Some(state) = &lifecycle_state {
-        if let Some(next) = &state.next_action {
-            println!("next: {next}");
-        }
+    if let Some(next) = &next_action {
+        println!("next: {next}");
     }
-    if !summary.clean && lifecycle_state.is_none() {
+    if !summary.clean && args.wi.is_none() {
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn ec_verify_requires_semantic_review(summary: &EcVerifySummary) -> bool {
+    summary
+        .results
+        .iter()
+        .any(|result| result.failure_kind == Some(EcVerifyFailureKind::SemanticReviewRequired))
 }
 
 fn run_doc(project: &str, args: EcDocArgs) -> Result<()> {
@@ -5138,6 +5208,19 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
 /// commands have no `required_for_production` concept and always run.
 /// @spec apps/agentic-workflow/tech-design/surface/specs/aw-ec-only-semantic-approval.md#logic
 fn verify_ec_context(ctx: &EcProjectContext, required_only: bool) -> Result<EcVerifySummary> {
+    // #2084: the generated manifest is executable input. Fail closed before
+    // loading or spawning anything when the current TD/EC source digest has
+    // drifted from that input. Other generated-artifact findings retain their
+    // existing verifier semantics.
+    let inventory_check = check_ec_context(ctx)?;
+    if inventory_check.stale {
+        bail!(
+            "EC inventory {} is not current ({} finding(s)); run `aw ec review --project {}` then regenerate before verification",
+            inventory_check.inventory_path,
+            inventory_check.findings.len(),
+            ctx.project
+        );
+    }
     let Some((inventory_path, manifest)) = load_ec_manifest(ctx)? else {
         bail!(
             "EC inventory missing in {}; run `aw ec gen --project {}` first",
@@ -7252,8 +7335,28 @@ e2e_tests:
         let (_tmp, ctx) = write_demo_repo();
         let mut ctx = ctx;
         ctx.review_mode = "deferred".to_string();
-        let manifest = manifest_with_clean_mapped_case();
+        fs::write(
+            ctx.td_root.join("specs/contract.md"),
+            r#"
+## Deferred Review Contract
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: demo-happy-path
+    capability_id: demo-capability
+    claim_id: demo-happy-path
+    category: behavior
+    command: "sh -c 'exit 0'"
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
 
         let summary = verify_ec_context(&ctx, false).unwrap();
 
@@ -8054,6 +8157,103 @@ e2e_tests:
         assert_eq!(summary.command_count, 1);
         assert_eq!(summary.passed_count, 1);
         assert_eq!(summary.results[0].claim_id, "demo-smoke");
+    }
+
+    #[test]
+    fn ec_verify_refuses_stale_inventory_before_running_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        let contract_path = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/stale-command.md");
+        fs::create_dir_all(contract_path.parent().unwrap()).unwrap();
+        let sentinel = tmp.path().join("stale-command-ran");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+## Stale Command
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: stale-command
+    capability_id: demo
+    claim_id: stale-command
+    command: "touch {}"
+```
+"#,
+                sentinel.display()
+            ),
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        write_accepted_ec_review(&ctx, &manifest);
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+
+        let content = fs::read_to_string(&contract_path).unwrap();
+        fs::write(
+            &contract_path,
+            content.replace(
+                &format!("command: \"touch {}\"", sentinel.display()),
+                "command: \"true\"",
+            ),
+        )
+        .unwrap();
+
+        let error = verify_ec_context(&ctx, false)
+            .expect_err("stale inventory must fail before command execution")
+            .to_string();
+        assert!(error.contains("is not current"), "{error}");
+        assert!(
+            !sentinel.exists(),
+            "the stale generated command must never execute"
+        );
+    }
+
+    #[test]
+    fn ec_verify_routes_missing_semantic_review_before_running_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        let contract_path = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/pending-review.md");
+        fs::create_dir_all(contract_path.parent().unwrap()).unwrap();
+        let sentinel = tmp.path().join("unreviewed-command-ran");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+## Pending Review
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: pending-review
+    capability_id: demo
+    claim_id: pending-review
+    command: "touch {}"
+```
+"#,
+                sentinel.display()
+            ),
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+
+        let summary = verify_ec_context(&ctx, false).unwrap();
+
+        assert!(!summary.clean);
+        assert!(ec_verify_requires_semantic_review(&summary));
+        assert!(
+            !sentinel.exists(),
+            "an unreviewed generated command must never execute"
+        );
     }
 
     /// #1469: `required_only=true` (the per-close terminal gate's filter)
