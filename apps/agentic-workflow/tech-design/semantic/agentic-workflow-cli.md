@@ -58,6 +58,12 @@ capability_refs:
     rationale: "Needs-revision review evidence can route only to an existing canonical EC Markdown source, including the legacy TD source fallback, so every emitted ec fill command is executable."
   - id: project-local-td-and-ec-gates
     role: primary
+    gap: ec-gen-post-implementation-phase-aware-handoff
+    claim: ec-gen-post-implementation-phase-aware-handoff
+    coverage: full
+    rationale: "EC regeneration preserves the fresh EC-first handoff to TD authoring but routes a cb_filled WI to execution of the newly current verifier instead of rewinding to an invalid td create command."
+  - id: project-local-td-and-ec-gates
+    role: primary
     gap: project-label-producer-td-routing
     claim: project-label-producer-td-routing
     coverage: full
@@ -3608,6 +3614,13 @@ changes:
       independent-review prompt states the same boundary, preventing a
       reviewer from inventing an external-contract path that would make the
       emitted `aw ec fill` command fail immediately.
+      #2124: `run_gen --wi` now resolves the owning WI phase before it writes
+      the durable post-generation action. A fresh EC-first root still hands
+      off to `aw td create`, while `cb_filled` (including retired post-fill
+      aliases normalized by `td_phase::normalize`) routes to `aw ec verify`
+      against the newly current inventory. This prevents an accepted
+      review/regeneration cycle from rewinding a completed implementation to
+      a `td create` command that the phase guard must reject.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify

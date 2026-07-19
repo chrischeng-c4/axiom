@@ -988,6 +988,32 @@ fn persist_ec_first_next_action(project_root: &Path, wi: &str, next_action: Stri
     })
 }
 
+/// `ec gen --wi` is used at two different points in the linear lifecycle. A
+/// fresh EC-first WI hands off to TD authoring, while a post-implementation
+/// review/regeneration at `cb_filled` must execute the newly current EC
+/// inventory. Rewinding the latter to `td create` emits a command that the TD
+/// phase guard correctly rejects.
+fn ec_gen_next_action_for_wi(project_root: &Path, project: &str, wi: &str) -> Result<String> {
+    let backend = crate::issues::local_backend(project_root);
+    let issue = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(load_or_hydrate_local_lifecycle_issue(
+            project_root,
+            &backend,
+            wi,
+        ))
+    })?;
+    Ok(ec_gen_next_action(project, wi, issue.phase.as_deref()))
+}
+
+fn ec_gen_next_action(project: &str, wi: &str, phase: Option<&str>) -> String {
+    let normalized_phase = phase.map(crate::issues::types::td_phase::normalize);
+    if normalized_phase == Some(crate::issues::types::td_phase::CB_FILLED) {
+        format!("aw ec verify --project {project} --wi {wi}")
+    } else {
+        format!("aw td create {wi}")
+    }
+}
+
 /// Read the local lifecycle ledger first, hydrating it from the configured
 /// tracker only when a root or capability command reaches EC before a WI root
 /// had a chance to seed the local copy.
@@ -1739,7 +1765,8 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
 
     if !args.dry_run {
         if let Some(wi) = args.wi.as_deref() {
-            persist_ec_first_next_action(&project_root, wi, format!("aw td create {wi}"))?;
+            let next = ec_gen_next_action_for_wi(&project_root, &ctx.project, wi)?;
+            persist_ec_first_next_action(&project_root, wi, next)?;
         }
     }
 
@@ -7507,6 +7534,28 @@ e2e_tests:
         assert_eq!(
             ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
             None
+        );
+    }
+
+    #[test]
+    fn ec_gen_next_action_routes_cb_filled_to_current_inventory_verify() {
+        assert_eq!(
+            ec_gen_next_action("vat", "1872", Some("cb_filled")),
+            "aw ec verify --project vat --wi 1872"
+        );
+        assert_eq!(
+            ec_gen_next_action("vat", "1872", Some("cb_reviewed")),
+            "aw ec verify --project vat --wi 1872",
+            "retired post-fill phases normalize to cb_filled"
+        );
+    }
+
+    #[test]
+    fn ec_gen_next_action_keeps_fresh_ec_first_handoff_to_td_create() {
+        assert_eq!(ec_gen_next_action("vat", "1872", None), "aw td create 1872");
+        assert_eq!(
+            ec_gen_next_action("vat", "1872", Some("td_inited")),
+            "aw td create 1872"
         );
     }
 
