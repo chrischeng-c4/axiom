@@ -52,6 +52,12 @@ capability_refs:
     rationale: "The EC verifier refuses stale or unreviewed executable inventories before command execution and persists independent review/regeneration as the bounded WI's runnable next action."
   - id: project-local-td-and-ec-gates
     role: primary
+    gap: ec-needs-revision-existing-source-routing
+    claim: ec-needs-revision-existing-source-routing
+    coverage: full
+    rationale: "Needs-revision review evidence can route only to an existing canonical EC Markdown source, including the legacy TD source fallback, so every emitted ec fill command is executable."
+  - id: project-local-td-and-ec-gates
+    role: primary
     gap: project-label-producer-td-routing
     claim: project-label-producer-td-routing
     coverage: full
@@ -3594,6 +3600,14 @@ changes:
       Regressions use stale and unreviewed `touch` commands to prove neither
       sentinel is ever created and the latter is classified for review
       routing.
+      #2122: `needs_revision` review evidence now names an existing Markdown
+      source before AW accepts it. `ec_fill_command_for_target` and
+      `run_fill` accept canonical `external-contracts/**` sources plus an
+      existing `tech-design/**` fallback for projects whose inventory is
+      still TD-derived; arbitrary and missing paths remain rejected. The
+      independent-review prompt states the same boundary, preventing a
+      reviewer from inventing an external-contract path that would make the
+      emitted `aw ec fill` command fail immediately.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify

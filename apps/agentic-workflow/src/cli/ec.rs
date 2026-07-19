@@ -1243,10 +1243,11 @@ fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
     } else {
         ctx.project_root.join(&args.path)
     };
-    if !path.starts_with(&ctx.ec_root) {
+    if !path.starts_with(&ctx.ec_root) && !path.starts_with(&ctx.td_root) {
         bail!(
-            "EC fill target must be under {}; got {}",
+            "EC fill target must be under {} or the legacy TD source root {}; got {}",
             relative_to(&ctx.project_root, &ctx.ec_root),
+            relative_to(&ctx.project_root, &ctx.td_root),
             relative_to(&ctx.project_root, &path)
         );
     }
@@ -2136,7 +2137,7 @@ Inspect the current EC inventory (external-contracts/**, aw.toml EC section) aga
 5. loopholes_checked — no trivially-satisfiable or gameable case exists.\n\
 6. false_green_risk_checked — a broken implementation would plausibly fail at least one case.\n\n\
 You must NOT be the same identity that authored this EC content (independence is enforced at submission and will reject a same-identity review even if attempted).\n\n\
-Submit your verdict by writing the review payload JSON at {payload} with `reviewer_kind: \"agent\"`, `reviewed_by: \"<your agent identity>\"`, a `decision` of `accepted` (with every checklist item true and no findings) or `needs_revision` (with concrete `findings` and a `target_path` under external-contracts/**), then resume with `aw ec review --project {project} --evidence-file '{payload}'`.",
+Submit your verdict by writing the review payload JSON at {payload} with `reviewer_kind: \"agent\"`, `reviewed_by: \"<your agent identity>\"`, a `decision` of `accepted` (with every checklist item true and no findings) or `needs_revision` (with concrete `findings` and a `target_path` naming an existing Markdown source under external-contracts/**, or under tech-design/** for a legacy TD-derived inventory), then resume with `aw ec review --project {project} --evidence-file '{payload}'`.",
         project = ctx.project,
         payload = payload_path.display()
     )
@@ -2395,8 +2396,9 @@ fn validate_ec_review_payload(
             }
             if ec_fill_command_for_target(ctx, &record.target_path).is_none() {
                 bail!(
-                    "needs_revision EC review target_path must name a markdown file under {}",
-                    relative_to(&ctx.project_root, &ctx.ec_root)
+                    "needs_revision EC review target_path must name an existing markdown file under {} or the legacy TD source root {}",
+                    relative_to(&ctx.project_root, &ctx.ec_root),
+                    relative_to(&ctx.project_root, &ctx.td_root)
                 );
             }
         }
@@ -2564,7 +2566,8 @@ fn ec_fill_command_for_target(ctx: &EcProjectContext, target: &str) -> Option<St
     } else {
         ctx.project_root.join(target)
     };
-    if !path.starts_with(&ctx.ec_root)
+    if !path.exists()
+        || (!path.starts_with(&ctx.ec_root) && !path.starts_with(&ctx.td_root))
         || path.extension().and_then(|ext| ext.to_str()) != Some("md")
     {
         return None;
@@ -7176,11 +7179,12 @@ e2e_tests:
         record.reviewed_by = "independent-reviewer-agent".to_string();
         record.summary = "Coverage gap found by independent agent review.".to_string();
         record.findings = vec!["missing oracle-independence evidence".to_string()];
-        record.target_path = tmp
+        let target = tmp
             .path()
-            .join("projects/demo/external-contracts/behavior/search.md")
-            .to_string_lossy()
-            .into_owned();
+            .join("projects/demo/external-contracts/behavior/search.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "# Search EC\n").unwrap();
+        record.target_path = target.to_string_lossy().into_owned();
         validate_ec_review_payload(&ctx, &manifest, &record)
             .expect("agent needs_revision follows the same validation path as human");
         assert_eq!(
@@ -7468,12 +7472,41 @@ e2e_tests:
         let target = tmp
             .path()
             .join("projects/demo/external-contracts/behavior/search.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "# Search EC\n").unwrap();
         assert_eq!(
             ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
             Some(
                 "aw ec fill --project demo projects/demo/external-contracts/behavior/search.md --section e2e-test"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn ec_needs_revision_routes_legacy_td_source_to_bounded_fill() {
+        let (tmp, ctx) = write_demo_repo();
+        let target = tmp.path().join("projects/demo/tech-design/logic/search.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "# Search TD\n").unwrap();
+        assert_eq!(
+            ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
+            Some(
+                "aw ec fill --project demo projects/demo/tech-design/logic/search.md --section e2e-test"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn ec_needs_revision_rejects_missing_target_in_allowed_root() {
+        let (tmp, ctx) = write_demo_repo();
+        let target = tmp
+            .path()
+            .join("projects/demo/external-contracts/behavior/missing.md");
+        assert_eq!(
+            ec_fill_command_for_target(&ctx, &target.to_string_lossy()),
+            None
         );
     }
 
