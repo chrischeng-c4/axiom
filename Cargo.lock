@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "beam"
-version = "0.4.7"
+version = "0.4.8"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
