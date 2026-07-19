@@ -60,16 +60,41 @@ pub fn eliminate_dead_code(source: &str) -> String {
 /// literal boolean or string comparison after define replacement. It does not
 /// try to prove general variable liveness, so it is safe to run on large third
 /// party bundles where the older brace-scanning optimizer is too broad.
+///
+/// #2135 — round-trips through up to 8 rounds of fold-and-reparse (nested
+/// dev-check ladders can expose a new foldable condition only after the
+/// outer one is folded away), but a round's own validating reparse of its
+/// edited output and the *next* round's collecting reparse of that exact
+/// same text used to be two independent `parse_js` calls on byte-identical
+/// input back to back. `parse_js` is a pure function of its input text (a
+/// fresh `Parser` with no incremental-reuse tree, see its doc comment), so
+/// the validated tree is carried forward as the next round's collect-tree
+/// instead of being discarded and reparsed — roughly halving the parse
+/// count for any module that needs more than one round, with the identical
+/// edit sequence and output as before.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_static_conditionals_syntax(source: &str) -> String {
     let mut result = source.to_string();
+    let Some(mut tree) = parse_js(&result) else {
+        return result;
+    };
 
     for _ in 0..8 {
-        let next = eliminate_static_conditionals_syntax_once(&result);
-        if next == result {
+        if tree.root_node().has_error() {
             break;
         }
-        result = next;
+        let Some(out) = eliminate_static_conditionals_syntax_edits(&result, tree.root_node())
+        else {
+            break;
+        };
+        let Some(next_tree) = parse_js(&out) else {
+            break;
+        };
+        if next_tree.root_node().has_error() {
+            break;
+        }
+        result = out;
+        tree = next_tree;
     }
 
     result
@@ -972,19 +997,17 @@ pub(crate) fn numeric_require_ids(source: &str) -> HashSet<usize> {
     ids.into_iter().collect()
 }
 
-fn eliminate_static_conditionals_syntax_once(source: &str) -> String {
-    let Some(tree) = parse_js(source) else {
-        return source.to_string();
-    };
-    let root = tree.root_node();
-    if root.has_error() {
-        return source.to_string();
-    }
-
+/// One round of [`eliminate_static_conditionals_syntax`]'s edit collection
+/// + application, given an already-parsed, already-error-free `root` for
+/// `source` (the caller owns parsing/validating so a round with nothing to
+/// fold costs zero additional `parse_js` calls — see that function's doc
+/// comment for why reusing the tree is sound). Returns `None` when there is
+/// nothing to fold.
+fn eliminate_static_conditionals_syntax_edits(source: &str, root: Node<'_>) -> Option<String> {
     let mut edits = Vec::new();
     collect_static_condition_edits(source, root, &mut edits);
     if edits.is_empty() {
-        return source.to_string();
+        return None;
     }
 
     edits.sort_by_key(|edit| edit.start);
@@ -1002,14 +1025,7 @@ fn eliminate_static_conditionals_syntax_once(source: &str) -> String {
         out.replace_range(edit.start..edit.end, &edit.replacement);
     }
 
-    if parse_js(&out)
-        .map(|tree| tree.root_node().has_error())
-        .unwrap_or(true)
-    {
-        return source.to_string();
-    }
-
-    out
+    Some(out)
 }
 
 fn collect_unused_require_binding_edits(
@@ -1311,15 +1327,44 @@ pub(crate) fn could_contain_require_like_call(code: &str) -> bool {
     code.contains("require(") || code.contains("_r(") || code.contains("__jet__.dynamicImport(")
 }
 
+// #2135 (beat-vite round 8) — `parse_js` is called up to a few times per
+// module across `eliminate_static_conditionals_syntax`'s round-trip loop
+// and `eliminate_unused_side_effect_free_require_bindings`'s
+// collect-then-validate pair (roughly 700-900 calls total on the
+// mui-visual reference corpus), and every one of those calls used to pay
+// its own `Parser::new()` + `set_language(..)` setup even though a
+// `Parser` has no per-source state to reset between unrelated `.parse()`
+// calls — passing `None` as the old tree (as every call site here always
+// does) tells tree-sitter to parse `source` from scratch, so reusing the
+// same configured `Parser` across calls is the documented, idiomatic
+// tree-sitter usage pattern and produces byte-identical trees to
+// constructing a fresh one each time. `thread_local!` gives each
+// bundler.rs `par_iter` worker thread (`Parser` is not `Sync`, so it can
+// never be shared *across* threads) its own lazily-built parser that
+// lives for the rest of that worker's run instead of one per call. The
+// language only needs loading once per thread; on the (practically
+// unreachable — the grammar is a compile-time-locked dependency, not
+// runtime data) `set_language` failure path, the slot is left empty so
+// every call keeps retrying and returning `None`, exactly matching the
+// original per-call behavior.
 fn parse_js(source: &str) -> Option<tree_sitter::Tree> {
-    let mut parser = Parser::new();
-    if parser
-        .set_language(&tree_sitter_javascript::LANGUAGE.into())
-        .is_err()
-    {
-        return None;
+    thread_local! {
+        static PARSER: std::cell::RefCell<Option<Parser>> = const { std::cell::RefCell::new(None) };
     }
-    parser.parse(source, None)
+    PARSER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            let mut parser = Parser::new();
+            if parser
+                .set_language(&tree_sitter_javascript::LANGUAGE.into())
+                .is_err()
+            {
+                return None;
+            }
+            *slot = Some(parser);
+        }
+        slot.as_mut().and_then(|parser| parser.parse(source, None))
+    })
 }
 
 #[derive(Debug)]

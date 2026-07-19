@@ -2502,6 +2502,23 @@ impl Bundler {
         // below. Printed together as a `JET_BUNDLE_TIMING` sibling line.
         let transform_sub_laps = crate::transform::TransformStepTimings::default();
         let define_dce_tail_ns = std::sync::atomic::AtomicU64::new(0);
+        // #2135 (beat-vite round 8) — `define_dce_tail_ns` was the largest
+        // single transform-sub-lap (1.45s CPU summed across par_iter workers
+        // on the reference corpus) with no way to tell which of its steps
+        // actually burns that time. These five split it into: the
+        // `replace_defines` string-replacement pass itself (`dce_defines_ns`),
+        // each pass-gate predicate's own cost (`could_fold_static_conditional`
+        // / `could_contain_require_like_call` — `dce_fold_gate_ns` /
+        // `dce_require_gate_ns`), and each pass's actual run when its gate
+        // lets it through (`dce_fold_run_ns` / `dce_require_run_ns`). Their
+        // sum plus the empty-defines fast path accounts for
+        // `define_dce_tail_ns` in full — see the `define-dce-sub-laps` print
+        // below.
+        let dce_defines_ns = std::sync::atomic::AtomicU64::new(0);
+        let dce_fold_gate_ns = std::sync::atomic::AtomicU64::new(0);
+        let dce_fold_run_ns = std::sync::atomic::AtomicU64::new(0);
+        let dce_require_gate_ns = std::sync::atomic::AtomicU64::new(0);
+        let dce_require_run_ns = std::sync::atomic::AtomicU64::new(0);
 
         use rayon::prelude::*;
 
@@ -2670,8 +2687,19 @@ impl Bundler {
                         let final_code = if self.defines.is_empty() {
                             transform_result.code.clone()
                         } else {
+                            // #2135 — sub-lap (a): the replace_defines pass
+                            // itself, plus the `defines_changed` compare its
+                            // output feeds Gate 1 below (one extra string
+                            // compare that cannot exist without this step,
+                            // so it is timed together with its producer).
+                            let defines_start = std::time::Instant::now();
                             let after_define =
                                 define::replace_defines(&transform_result.code, &self.defines);
+                            let defines_changed = after_define != transform_result.code;
+                            dce_defines_ns.fetch_add(
+                                defines_start.elapsed().as_nanos() as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
                             // Fold define-produced literal comparisons and
                             // their short-circuit consumers before the
                             // syntax DCE: `"production"!=="production"&&x`
@@ -2692,14 +2720,38 @@ impl Bundler {
                             // the pass and find nothing; JET_NO_PASS_GATES=1
                             // forces it open unconditionally.
                             fold_dce_candidates.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let defines_changed = after_define != transform_result.code;
+                            // #2135 — sub-lap (b): only the probe call
+                            // itself is timed. `fold_probe_hit` is written so
+                            // `could_fold_static_conditional` is invoked
+                            // under exactly the same condition as the
+                            // original `force_run_all_gates || defines_changed
+                            // || could_fold_static_conditional(..)` chain
+                            // (both already-known bools first, probe only
+                            // when both are false) — same short-circuit,
+                            // same result, now with the probe's own cost
+                            // attributed separately from the bools.
+                            let fold_gate_start = std::time::Instant::now();
+                            let fold_probe_hit = !(force_run_all_gates || defines_changed)
+                                && dce::could_fold_static_conditional(&after_define);
+                            dce_fold_gate_ns.fetch_add(
+                                fold_gate_start.elapsed().as_nanos() as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
                             let after_dce = if force_run_all_gates
                                 || defines_changed
-                                || dce::could_fold_static_conditional(&after_define)
+                                || fold_probe_hit
                             {
                                 fold_dce_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                // #2135 — sub-lap (c): the actual fold +
+                                // syntax-DCE run.
+                                let fold_run_start = std::time::Instant::now();
                                 let after_fold = fold::fold_define_short_circuits(&after_define);
-                                dce::eliminate_static_conditionals_syntax(&after_fold)
+                                let folded = dce::eliminate_static_conditionals_syntax(&after_fold);
+                                dce_fold_run_ns.fetch_add(
+                                    fold_run_start.elapsed().as_nanos() as u64,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                folded
                             } else {
                                 after_define
                             };
@@ -2714,14 +2766,34 @@ impl Bundler {
                             // textual forms are present.
                             require_dce_candidates
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            if force_run_all_gates
-                                || dce::could_contain_require_like_call(&after_dce)
-                            {
+                            // #2135 — sub-lap (d): mirrors sub-lap (b) —
+                            // only the probe call is timed, invoked under
+                            // the same `!force_run_all_gates && ..`
+                            // short-circuit the original `force_run_all_gates
+                            // || could_contain_require_like_call(..)` chain
+                            // already implied.
+                            let require_gate_start = std::time::Instant::now();
+                            let require_probe_hit = !force_run_all_gates
+                                && dce::could_contain_require_like_call(&after_dce);
+                            dce_require_gate_ns.fetch_add(
+                                require_gate_start.elapsed().as_nanos() as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            if force_run_all_gates || require_probe_hit {
                                 require_dce_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                dce::eliminate_unused_side_effect_free_require_bindings(
-                                    &after_dce,
-                                    &side_effect_free_module_ids,
-                                )
+                                // #2135 — sub-lap (e): the actual
+                                // require-binding-DCE run.
+                                let require_run_start = std::time::Instant::now();
+                                let result =
+                                    dce::eliminate_unused_side_effect_free_require_bindings(
+                                        &after_dce,
+                                        &side_effect_free_module_ids,
+                                    );
+                                dce_require_run_ns.fetch_add(
+                                    require_run_start.elapsed().as_nanos() as u64,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                result
                             } else {
                                 after_dce
                             }
@@ -2807,6 +2879,23 @@ impl Bundler {
                     transform_sub_laps.modules_rewrite_ns.load(Ordering::Relaxed)
                 ),
                 std::time::Duration::from_nanos(define_dce_tail_ns.load(Ordering::Relaxed)),
+            );
+
+            // #2135 (beat-vite round 8) — `define_dce_tail`'s own internal
+            // breakdown, as a `transform-sub-laps` sibling line: how much of
+            // that tail went to the `replace_defines` pass, each pass-gate
+            // predicate's own cost, and each pass's actual run when its gate
+            // let it through. Same cross-worker-summed caveat as the line
+            // above. Kept in the final commit (not scratch instrumentation)
+            // — one more eprintln under the same flag, cheap and
+            // future-proof for the next define_dce_tail investigation.
+            eprintln!(
+                "[bundle-timing] define-dce-sub-laps: defines={:?} fold_gate={:?} fold_run={:?} require_gate={:?} require_run={:?}",
+                std::time::Duration::from_nanos(dce_defines_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(dce_fold_gate_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(dce_fold_run_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(dce_require_gate_ns.load(Ordering::Relaxed)),
+                std::time::Duration::from_nanos(dce_require_run_ns.load(Ordering::Relaxed)),
             );
         }
 
