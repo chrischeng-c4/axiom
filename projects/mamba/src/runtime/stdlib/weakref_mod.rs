@@ -735,6 +735,7 @@ unsafe extern "C" fn dispatch_ref(args_ptr: *const MbValue, nargs: usize) -> MbV
 }
 
 unsafe extern "C" fn dispatch_proxy(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    crate::icf_guard!();
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_weakref_proxy(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -1361,8 +1362,14 @@ pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
         );
     }
     // `__callback__` is the public CPython attribute (None when no callback);
-    // `_callback` kept as a legacy alias.
+    // `_callback` kept as a legacy alias. Both keys store the same MbValue, so
+    // the second slot needs its own retain -- release_contained_values (rc.rs)
+    // walks every field independently on teardown and would otherwise release
+    // callback one time too many.
     fields.insert("__callback__".to_string(), callback);
+    unsafe {
+        super::super::rc::retain_if_ptr(callback);
+    }
     fields.insert("_callback".to_string(), callback);
     fields.insert(
         "__class__".to_string(),
@@ -1435,7 +1442,13 @@ pub fn mb_weakref_proxy(obj: MbValue, callback: MbValue) -> MbValue {
             "_global_tracked".to_string(),
             MbValue::from_bool(value_has_live_global(obj)),
         );
+        // Same two-key alias as mb_weakref_ref above: retain once more so the
+        // extra map slot has its own owning unit (rc.rs::release_contained_values
+        // releases every field independently on teardown).
         fields.insert("__callback__".to_string(), callback);
+        unsafe {
+            super::super::rc::retain_if_ptr(callback);
+        }
         fields.insert("_callback".to_string(), callback);
         fields.insert(
             "__class__".to_string(),

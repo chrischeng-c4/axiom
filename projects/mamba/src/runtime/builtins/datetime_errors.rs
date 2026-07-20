@@ -9,8 +9,20 @@ pub(super) fn raise_datetime_op_type_error(op: &str, a: MbValue, b: MbValue) -> 
     fn dt_class(v: MbValue) -> Option<String> {
         let ptr = v.as_ptr()?;
         unsafe {
-            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name.starts_with("datetime.") {
+                    if class_name == "datetime.datetime" {
+                        // #1972 Differentiate datetime.date and datetime.datetime in datetime-mul TypeError message
+                        let is_date = fields
+                            .read()
+                            .ok()
+                            .and_then(|f| f.get("_is_date").copied())
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if is_date {
+                            return Some("datetime.date".to_string());
+                        }
+                    }
                     return Some(class_name.clone());
                 }
             }

@@ -241,12 +241,20 @@ fn is_cacheable_name(filename: &str) -> bool {
 
 /// Pull a string value out of a dict by key, returning None if absent/non-str.
 fn dict_str(d: MbValue, key: &str) -> Option<String> {
+    if !is_dict(d) {
+        return None;
+    }
+    // #1964 Safe check for dict type
     let v = dict_ops::mb_dict_get(d, new_str(key), MbValue::none());
     extract_str(v)
 }
 
 /// Pull a value out of a dict by key, returning None if the key is absent.
 fn dict_val(d: MbValue, key: &str) -> Option<MbValue> {
+    if !is_dict(d) {
+        return None;
+    }
+    // #1964 Safe check for dict type
     if dict_ops::mb_dict_contains(d, new_str(key)).as_bool() == Some(true) {
         Some(dict_ops::mb_dict_getitem(d, new_str(key)))
     } else {
@@ -268,10 +276,8 @@ fn is_dict(val: MbValue) -> bool {
 fn resolve_name_loader(module_globals: MbValue) -> Option<(String, MbValue)> {
     use super::super::class;
     if !is_dict(module_globals) {
-        return None;
-    }
-    if dict_ops::mb_dict_contains(module_globals, new_str("__name__")).as_bool() != Some(true) {
-        return None;
+        // #1964 module_globals can be None
+        return Some((String::new(), MbValue::none()));
     }
     let mod_name = dict_str(module_globals, "__name__").unwrap_or_default();
 
@@ -359,35 +365,43 @@ pub fn register() {
 
 // ── Public runtime functions ──
 
-/// linecache.getline(filename, lineno, module_globals=None) -> str
 pub fn mb_linecache_getline(
     filename: MbValue,
     lineno: MbValue,
     module_globals: MbValue,
 ) -> MbValue {
-    // CPython: a non-int lineno raises TypeError ("list indices..."), so reject
-    // floats explicitly. `getline(f, 1.1)` -> TypeError. (`test_getline`)
-    if lineno.is_float() {
-        super::super::exception::mb_raise(
-            new_str("TypeError"),
-            new_str("list indices must be integers or slices, not float"),
-        );
-        return MbValue::none();
-    }
-    let lineno_i = match lineno.as_int() {
-        Some(n) => n,
-        None => return new_str(""),
-    };
-
     let lines = getlines_internal(filename, module_globals);
-    if lineno_i < 1 {
+
+    // #1964: Handle int/bigint/float/other types of lineno correctly matching CPython
+    if let Some(lineno_i) = lineno.as_int() {
+        if lineno_i >= 1 && (lineno_i as usize) <= lines.len() {
+            return new_str(&lines[(lineno_i - 1) as usize]);
+        }
+        return new_str("");
+    } else if crate::runtime::builtins::is_bigint_value(lineno) {
         return new_str("");
     }
-    let idx = (lineno_i - 1) as usize;
-    match lines.get(idx) {
-        Some(l) => new_str(l),
-        None => new_str(""),
+
+    if let Some(f) = lineno.as_float() {
+        if f >= 1.0 && f <= lines.len() as f64 {
+            super::super::exception::mb_raise(
+                new_str("TypeError"),
+                new_str("list indices must be integers or slices, not float"),
+            );
+            return MbValue::none();
+        }
+        return new_str("");
     }
+
+    let tname = crate::runtime::builtins::add_operand_type_name(lineno);
+    super::super::exception::mb_raise(
+        new_str("TypeError"),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "'<=' not supported between instances of 'int' and '{}'",
+            tname
+        ))),
+    );
+    MbValue::none()
 }
 
 /// linecache.getlines(filename, module_globals=None) -> list[str]

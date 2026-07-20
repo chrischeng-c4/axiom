@@ -7064,19 +7064,30 @@ fn mb_getattr_impl(
                     // bound methods, not hard-rejected. Fall through to the
                     // slow path for every other case, same as before this
                     // carve-out was revived.
-                    if !attr_s.starts_with("__")
-                        && super::module::is_module_value(obj)
-                        && super::dict_ops::dict_get_exact_str(&guard, "__name__")
+                    // If the object is a module value, raise AttributeError on miss, or call __getattr__ if present (#1965)
+                    if super::module::is_module_value(obj) {
+                        if let Some(getattr_fn) = super::dict_ops::dict_get_exact_str(&guard, "__getattr__") {
+                            let method_args = MbValue::from_ptr(MbObject::new_list(vec![attr]));
+                            drop(guard);
+                            return super::builtins::mb_call_spread(getattr_fn, method_args);
+                        }
+                        let mod_name = super::dict_ops::dict_get_exact_str(&guard, "__name__")
                             .and_then(extract_str)
-                            .is_some_and(|mod_name| {
-                                mod_name == "test" || mod_name.starts_with("test.")
-                            })
-                    {
+                            .unwrap_or_else(|| "module".to_string());
+                        if !attr_s.starts_with("__")
+                            && (mod_name == "test" || mod_name.starts_with("test."))
+                        {
+                            return MbValue::none();
+                        }
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "module '{}' has no attribute '{}'",
+                                mod_name, attr_s
+                            ))),
+                        );
                         return MbValue::none();
                     }
-                    // Dict miss is a real AttributeError shape; fall through
-                    // to the slow path so existing dunder / __getattr__ /
-                    // descriptor semantics keep handling it.
                 }
             }
         }
@@ -12844,7 +12855,16 @@ pub fn mb_ifloordiv(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__ifloordiv__", 4, super::builtins::mb_floordiv)
 }
 pub fn mb_matmul(a: MbValue, b: MbValue) -> MbValue {
-    mb_dispatch_binop(MATMUL_OPCODE, a, b)
+    let res = mb_dispatch_binop(MATMUL_OPCODE, a, b);
+    // Matmul error handling fallback (#1971)
+    if res.is_none() && !super::exception::has_current_exception() {
+        super::builtins::raise_type_error(format!(
+            "unsupported operand type(s) for @: '{}' and '{}'",
+            super::builtins::value_type_name(a),
+            super::builtins::value_type_name(b)
+        ));
+    }
+    res
 }
 pub fn mb_imatmul(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__imatmul__", MATMUL_OPCODE, mb_matmul)

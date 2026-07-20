@@ -4337,6 +4337,16 @@ impl TypeChecker {
         use super::stdlib_typespec::CallableSpecKind;
 
         let target = self.resolve_structured_stdlib_call(func, func_ty)?;
+        // #1964: linecache signatures are over-walled: module_globals can be None or not present,
+        // and float lineno should be rejected at runtime instead of static boundaries.
+        if target.module == "linecache"
+            && matches!(
+                target.name.as_str(),
+                "getline" | "getlines" | "lazycache" | "updatecache"
+            )
+        {
+            return None;
+        }
         // #1611: `classmethod.__get__`/`staticmethod.__get__`'s typeshed
         // overloads type `instance` as an unresolved TypeVar (`_T`) bound
         // from the wrapped callable's own (usually unannotated) parameter.

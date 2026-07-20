@@ -2065,9 +2065,11 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
             if !super::exception::has_current_exception() {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        "unsupported operand type(s) for |".to_string(),
-                    )),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported operand type(s) for |: '{}' and '{}'",
+                        value_type_name(a),
+                        value_type_name(b)
+                    ))),
                 );
             }
             return MbValue::none();

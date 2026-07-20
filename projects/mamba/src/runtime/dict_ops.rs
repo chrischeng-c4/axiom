@@ -741,13 +741,22 @@ impl std::hash::Hash for DictKey {
                 dict_codepoints_hash_value(codepoints).hash(state)
             }
             DictKey::Instance { hash_val, .. } => hash_val.hash(state),
+            DictKey::Int(i) => {
+                // Int and Bool share the same hash domain and discriminant space to unify True == 1, False == 0 (#1952)
+                0u8.hash(state);
+                i.hash(state);
+            }
+            DictKey::Bool(b) => {
+                // Int and Bool share the same hash domain and discriminant space to unify True == 1, False == 0 (#1952)
+                0u8.hash(state);
+                (*b as i64).hash(state);
+            }
             _ => {
                 std::mem::discriminant(self).hash(state);
                 match self {
-                    DictKey::Int(i) => i.hash(state),
+                    DictKey::Int(_) | DictKey::Bool(_) => unreachable!(),
                     DictKey::Float(b) => b.hash(state),
                     DictKey::Bytes(b) => b.hash(state),
-                    DictKey::Bool(b) => b.hash(state),
                     DictKey::None => {}
                     DictKey::Other(s) => s.hash(state),
                     DictKey::Func(addr) => addr.hash(state),
@@ -767,6 +776,10 @@ impl PartialEq for DictKey {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (DictKey::Int(a), DictKey::Int(b)) => a == b,
+            (DictKey::Bool(a), DictKey::Bool(b)) => a == b,
+            // Unify Int and Bool comparison (#1952)
+            (DictKey::Int(a), DictKey::Bool(b)) => *a == *b as i64,
+            (DictKey::Bool(a), DictKey::Int(b)) => *a as i64 == *b,
             (DictKey::Float(a), DictKey::Float(b)) => a == b,
             (DictKey::Str(a), DictKey::Str(b)) => a == b,
             (DictKey::StrCodepoints(a), DictKey::StrCodepoints(b)) => a == b,
@@ -779,7 +792,6 @@ impl PartialEq for DictKey {
                 dict_key_string_like_eq_instance_without_python(key, *hash_val, *ptr)
             }
             (DictKey::Bytes(a), DictKey::Bytes(b)) => a == b,
-            (DictKey::Bool(a), DictKey::Bool(b)) => a == b,
             (DictKey::None, DictKey::None) => true,
             (
                 DictKey::Instance {

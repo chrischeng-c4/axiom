@@ -8640,6 +8640,44 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         enforceable: true,
         ret: CoreTy::Unknown,
     },
+    // #1964: linecache signatures are over-walled: module_globals can be None or not present,
+    // and float lineno should be rejected at runtime instead of static boundaries.
+    StdlibSig {
+        module: "linecache",
+        qualifier: "",
+        name: "getline",
+        kind: SigKind::ModuleFn,
+        params: &[],
+        enforceable: false,
+        ret: CoreTy::Unknown,
+    },
+    StdlibSig {
+        module: "linecache",
+        qualifier: "",
+        name: "getlines",
+        kind: SigKind::ModuleFn,
+        params: &[],
+        enforceable: false,
+        ret: CoreTy::Unknown,
+    },
+    StdlibSig {
+        module: "linecache",
+        qualifier: "",
+        name: "lazycache",
+        kind: SigKind::ModuleFn,
+        params: &[],
+        enforceable: false,
+        ret: CoreTy::Unknown,
+    },
+    StdlibSig {
+        module: "linecache",
+        qualifier: "",
+        name: "updatecache",
+        kind: SigKind::ModuleFn,
+        params: &[],
+        enforceable: false,
+        ret: CoreTy::Unknown,
+    },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
