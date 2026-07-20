@@ -81,3 +81,42 @@ changes:
     section: ec-runners-logic
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 2155-verification
+requirements:
+  req1:
+    id: R1
+    text: "Define Beam-owned VAT scenarios and meter manifests for DDD overhead, GPU batching, out-of-core memory, and pipeline overlap."
+    kind: functional
+    risk: medium
+    verify: cargo test benchmark_beam_competitor_performance
+  req2:
+    id: R2
+    text: "Execute the real production pipeline and pin independent oracle/baseline versions, datasets, hardware identity, warmup, samples, thresholds, and evidence paths."
+    kind: functional
+    risk: medium
+    verify: vat run ec-efficiency-meter scenarios
+  req3:
+    id: R3
+    text: "Reject missing tools, zero executed cases, unavailable required hardware, stale evidence, and placeholder/simulated adapters."
+    kind: functional
+    risk: high
+    verify: vat run ec-efficiency-meter scenarios failure cases
+  req4:
+    id: R4
+    text: "After the EC source digest changes, obtain a new independent agent-backed semantic review; do not reuse or fabricate human approval."
+    kind: functional
+    risk: high
+    verify: aw ec check --project beam
+---
+flowchart TD
+    r1[R1 req1] --> cargo_test_benchmark_beam_competitor_performance[cargo test benchmark_beam_competitor_performance]
+    r2[R2 req2] --> vat_run_ec_efficiency_meter_scenarios[vat run ec-efficiency-meter scenarios]
+    r3[R3 req3] --> vat_run_ec_efficiency_meter_scenarios_failure_cases[vat run ec-efficiency-meter scenarios failure cases]
+    r4[R4 req4] --> aw_ec_check_project_beam[aw ec check --project beam]
+```
