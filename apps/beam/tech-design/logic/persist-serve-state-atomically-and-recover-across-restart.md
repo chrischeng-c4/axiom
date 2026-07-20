@@ -60,22 +60,22 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "struct ServeArgs"
+    anchor: "ServeArgs"
   - path: apps/beam/src/persist.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "pub fn save_framed"
+    anchor: "save_framed"
   - path: apps/beam/src/service.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "struct AppState"
+    anchor: "AppState"
   - path: apps/beam/tests/persistence.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
-    anchor: "fn flat_round_trip_identity_cpu_and_gpu"
+    anchor: "flat_round_trip_identity_cpu_and_gpu"
   - path: apps/beam/tests/restart_recovery.rs
     action: create
     section: unit-test
