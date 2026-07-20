@@ -1,6 +1,16 @@
 ---
 id: '2151'
-summary: (fill)
+summary: >
+  Implement an error-honest asynchronous NVMe vector repository that correctly uses typed errors
+  for I/O failures rather than silently replacing short reads with zeroed vectors.
+capability_refs:
+  - id: "batch-ingest-and-rebuild"
+    role: primary
+    claim: "beam-async-cold-vector-repository"
+    coverage: full
+    rationale: >
+      Provides an honest NVMe storage abstraction for durable vectors that fails fast
+      on bad offsets or missing files instead of masking errors.
 fill_sections: [logic, changes, unit-test]
 ---
 
