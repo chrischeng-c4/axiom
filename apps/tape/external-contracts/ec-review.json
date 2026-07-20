@@ -1,27 +1,19 @@
 {
   "version": 1,
   "project": "tape",
-  "source_digest": "sha256:af8f22eb6c649c78ceedf5bce25a2204126f3c3bc420a8cad6a2c7180fdbb372",
-  "decision": "needs_revision",
+  "source_digest": "sha256:3d1ee7bdcbf4635e73760a26d2b8b126d19ac5aa92e1a1bbb37631b4eaad7ef4",
+  "decision": "accepted",
   "reviewer_kind": "agent",
   "reviewed_by": "agent:aw-ec-reviewer:tape_ec_review",
-  "reviewed_at": "2026-07-20T06:01:23.529115+00:00",
-  "summary": "The revised performance EC now pins concrete workloads, thresholds, fail-closed prerequisites, and independent ratio calculations, so assertion specificity is repaired. It is still not semantically sufficient because the referenced test executables contradict those assertions: Kafka still skips successfully and all three performance gates still delegate pass/fail to Tape's implementation helpers. The generated-client, competitor-feature oracle, and two security evidence blockers are unchanged. The generated inventory also remains structurally stale at 15 of 28 source cases.",
+  "reviewed_at": "2026-07-20T06:54:54.348749+00:00",
+  "summary": "Accepted after fresh end-to-end review of all 28 current Tape EC cases and referenced runners at source digest sha256:3d1ee7bdcbf4635e73760a26d2b8b126d19ac5aa92e1a1bbb37631b4eaad7ef4. Behavior, efficiency, security, and stability cases bind the current Tape capability claims to concrete CLI, library, HTTP/h2c, generated-client, Raft, bootstrap, operator, soak, auth/admission, guard, meter, NATS JetStream, and Kafka journeys. Assertions pin route sets, error and authorization behavior, event/payload sizes, latency limits, replay ratios, recovery outcomes, and resource plateaus. Oracles are test-owned or externally versioned: generated clients are inspected across TypeScript/Python/Rust, competitor classification comes from a committed official-source fixture, performance thresholds and ratios are computed directly in EC tests, and service-auth independently checks credential-free audit events. Zero-test and prerequisite loopholes are closed: exact filters name live tests; generated clients have one non-ignored integration test; VAT meter-perf uses --include-ignored and selects two ordinary local tests plus the ignored real NATS release test; standalone EC commands use --release --ignored for NATS and Kafka; both real-service runners fail closed when their required service cannot start. Findings empty.",
   "checklist": {
-    "capability_claim_coverage": false,
+    "capability_claim_coverage": true,
     "required_dimensions": true,
     "assertions_specific": true,
-    "oracle_independent": false,
-    "loopholes_checked": false,
-    "false_green_risk_checked": false
+    "oracle_independent": true,
+    "loopholes_checked": true,
+    "false_green_risk_checked": true
   },
-  "findings": [
-    "tape-competitor-performance-kafka-replay-win / topic-replay-kafka-local-backlog-win: the revised EC now requires the production gate to fail closed, but `tests/tape_vs_kafka.rs` still returns success when Docker/Kafka is unavailable or fixed port 9092 is occupied (`spawn_kafka_broker` returns `None` and the test returns). Make the referenced runner fail on every missing prerequisite, or point this required case at a different mandatory runner that cannot report success without completing the pinned Kafka workload and 1.5x assertion.",
-    "tape-competitor-performance-local-regression-and-calibration-ledger plus the NATS/Kafka win cases / topic-replay-competitor-performance-baseline: the revised EC correctly pins fixed thresholds and says the tests do not trust Tape's verdict helpers, but the referenced executables still call `tape::bench::verify_report` and `tape::bench::verify_external_replay_win`; the NATS/Kafka reports and `win_claim` are also constructed by `tape::bench::external_replay_win`. Make the external test layer independently compare the observed fields against the EC's 5,000/50,000/5,000-us budgets and independently compute/assert each >=1.5 ratio, without using implementation-owned verdict or win-claim functions.",
-    "tape-cli-interface-generated-clients / tape-openapi-generated-client-contract: the EC command remains `cargo test -p tape --test backup -- --nocapture`, but `tests/backup.rs` is entirely gated by `#![cfg(feature = \"backup\")]` and tests backup transport rather than `tape spec gen`; the command can execute zero tests and never prove TypeScript, Python, or Rust client generation. Revise this case to invoke a non-zero dedicated generated-client test (for example the existing `spec_gen_verbs_parse_and_generate` binary test or a stronger end-to-end equivalent) and assert the emitted artifacts and Tape route scope directly.",
-    "tape-competitor-feature-parity-topic-exchange-functional / topic-replay-competitor-feature-matrix: `tests/competitor_feature_parity.rs` still defines every competitor capability as hard-coded booleans in `matrix()` and then asserts those same booleans, so no independent competitor oracle can falsify the Kafka/Redpanda/Pulsar/JetStream/RabbitMQ claims. Revise the case to consume a versioned externally sourced baseline or real peer conformance evidence, with provenance pinned outside the implementation and test assertions that compare Tape behavior against that independent oracle.",
-    "tape-security-hardening-access-control / tape-topic-subscription-authz-boundary: its command still runs only `service_auth` and `service_admission`, but the final assertion additionally claims redacted authorization audit fields and a payload-free successful admin-backup audit event. Revise the case to execute an audit-capture journey that performs credential rotation and an authenticated admin backup and asserts the emitted redacted event, or split/remove claims not exercised by this command.",
-    "tape-security-hardening-guard-scan / guard-static-runtime-evidence: the EC still claims guard attaches meter evidence for bearer-auth request-boundary cases, but `vat.toml` runs meter over `--test cli_contract`, whose cases do not exercise required bearer authentication or topic RBAC. Revise the tool case/runner to meter the real `service_auth` security journey (and retain non-zero-test enforcement), or narrow the assertion so it does not claim auth evidence."
-  ],
-  "target_path": "apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md"
+  "findings": []
 }

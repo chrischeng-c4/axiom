@@ -1,23 +1,23 @@
-// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger
+// SPEC-MANAGED: apps/tape/external-contracts/topology/behavior/shard-topology.md#tape-topology-existing-raft-replica-sync
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec tape-competitor-performance-local-regression-and-calibration-ledger
-// @capability competitor-performance
-// @claim topic-replay-competitor-performance-baseline
-// @contract topic-replay-local-performance-and-peer-calibration
-// @category efficiency
+// @ec tape-topology-existing-raft-replica-sync
+// @capability primary-replicas
+// @claim tape-raft-log-replica-sync-existing-pvc
+// @contract tape-topology-existing-raft-replica-sync
+// @category stability
 // @required_for_production true
-// @command cargo test -p tape --test tape_perf_gate -- --nocapture
+// @command cargo test -p tape --test raft_cluster --test raft_failover --test raft_persistence -- --test-threads=1
 // AW-EC-END
 
-// Contract: The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.
-// Contract: The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.
+// Contract: A Tape Raft group elects, replicates committed journal appends, forwards follower appends to its leader, and retains the durable applied floor across restart.
+// Contract: A fresh Tape node catches up by InstallSnapshot and a killed leader is replaced by a surviving elected group without committed-event loss.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn tape_competitor_performance_local_regression_and_calibration_ledger() {
-    let command = "cargo test -p tape --test tape_perf_gate -- --nocapture";
-    let id = "tape-competitor-performance-local-regression-and-calibration-ledger";
+fn tape_topology_existing_raft_replica_sync() {
+    let command =
+        "cargo test -p tape --test raft_cluster --test raft_failover --test raft_persistence -- --test-threads=1";
+    let id = "tape-topology-existing-raft-replica-sync";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

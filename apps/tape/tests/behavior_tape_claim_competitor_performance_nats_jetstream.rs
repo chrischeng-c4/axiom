@@ -7,17 +7,18 @@
 // @contract topic-replay-nats-jetstream-local-backlog-win
 // @category efficiency
 // @required_for_production true
-// @command cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture
+// @command cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture
 // AW-EC-END
 
-// Contract: The test starts a real local nats-server with JetStream enabled.
-// Contract: Tape and JetStream replay the same 20,000-event, 128-byte-payload backlog workload from the beginning.
-// Contract: Tape's real h2c replay-stream latency is at least 1.5x faster than NATS JetStream for the symmetric local backlog workload.
-// Contract: The five-sample report includes throughput, p50/p95/p99, child-process CPU and RSS, durable bytes and disk amplification, and errors for both services.
+// Contract: The release-only gate must start a real local nats-server with JetStream enabled and fail closed when that prerequisite cannot be started.
+// Contract: Tape and JetStream replay five samples of the same 20,000-event, 128-byte-payload durable backlog from the beginning.
+// Contract: The EC test independently computes nats_p50_us / max(tape_p50_us, 1) and requires the ratio to be >= 1.5 without trusting Tape's external_replay_win or verify_external_replay_win helpers.
+// Contract: The report includes throughput, p50/p95/p99, child-process CPU and RSS, durable bytes and disk amplification, and errors for both services.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn tape_competitor_performance_nats_jetstream_replay_win() {
-    let command = "cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture";
+    let command =
+        "cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture";
     let id = "tape-competitor-performance-nats-jetstream-replay-win";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

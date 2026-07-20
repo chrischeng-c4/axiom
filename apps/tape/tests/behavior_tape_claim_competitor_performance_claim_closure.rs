@@ -7,7 +7,7 @@
 // @contract topic-replay-performance-local-and-nats-win
 // @category efficiency
 // @required_for_production true
-// @command cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture
+// @command cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture
 // AW-EC-END
 
 // Contract: The local Tape performance regression gate passes for bounded pull/replay and explicit checkpoint-ack operations.
@@ -17,7 +17,7 @@
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn tape_competitor_performance_claim_closure() {
     let command =
-        "cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture";
+        "cargo test --release -p tape --test tape_perf_gate -- --nocapture && cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture";
     let id = "tape-competitor-performance-claim-closure";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

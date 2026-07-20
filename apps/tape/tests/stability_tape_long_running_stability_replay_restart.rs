@@ -1,23 +1,23 @@
-// SPEC-MANAGED: apps/tape/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#tape-competitor-performance-local-regression-and-calibration-ledger
+// SPEC-MANAGED: apps/tape/external-contracts/long-running-stability/stability/replay-resilience.md#tape-long-running-stability-replay-restart
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec tape-competitor-performance-local-regression-and-calibration-ledger
-// @capability competitor-performance
-// @claim topic-replay-competitor-performance-baseline
-// @contract topic-replay-local-performance-and-peer-calibration
-// @category efficiency
+// @ec tape-long-running-stability-replay-restart
+// @capability long-running-stability
+// @claim tape-append-checkpoint-restart-recovery
+// @contract tape-replay-stability-restart-recovery
+// @category stability
 // @required_for_production true
-// @command cargo test -p tape --test tape_perf_gate -- --nocapture
+// @command cargo test -p tape --test long_running_stability --test raft_persistence -- --nocapture
 // AW-EC-END
 
-// Contract: The oracle runs exactly 1,000 events with 128-byte payloads and independently requires append p95 <= 5,000 us, full replay <= 50,000 us, and checkpoint p95 <= 5,000 us.
-// Contract: The test computes those limits from observed report fields and fixed EC constants; it does not call Tape's default_baseline or verify_report verdict helpers.
-// Contract: Redpanda, Pulsar, and RabbitMQ Streams performance wins remain unclaimed without mandatory calibrated real-service peer runs; RabbitMQ topic exchange remains routing-only.
+// Contract: Repeated Raft restart preserves committed append history and consumer checkpoint progress.
+// Contract: A restarted node recovers its applied floor and accepts new proposals without replaying an already persisted checkpoint.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn tape_competitor_performance_local_regression_and_calibration_ledger() {
-    let command = "cargo test -p tape --test tape_perf_gate -- --nocapture";
-    let id = "tape-competitor-performance-local-regression-and-calibration-ledger";
+fn tape_long_running_stability_replay_restart() {
+    let command =
+        "cargo test -p tape --test long_running_stability --test raft_persistence -- --nocapture";
+    let id = "tape-long-running-stability-replay-restart";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
