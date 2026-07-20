@@ -135,18 +135,17 @@ fn replace_operator_namespace(input: &str, namespace: &str) -> String {
     out
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in dx.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2152" reason="logic section in dx.rs is hand-written pending codegen support">
 pub fn render_instance_yaml(
     profile: &str,
     name: &str,
     namespace: &str,
     image: Option<&str>,
 ) -> String {
-    // Generate a simple Kubernetes Deployment + Service representing a Beam instance.
     let image = image.unwrap_or("beam:latest");
     format!(
-        r#"apiVersion: v1
-kind: Service
+        r#"apiVersion: beam.dev/v1alpha1
+kind: Beam
 metadata:
   name: {name}
   namespace: {namespace}
@@ -154,40 +153,8 @@ metadata:
     app: {name}
     profile: {profile}
 spec:
-  ports:
-    - port: 7373
-      targetPort: 7373
-      name: http
-  selector:
-    app: {name}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {name}
-  namespace: {namespace}
-  labels:
-    app: {name}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: {name}
-  template:
-    metadata:
-      labels:
-        app: {name}
-    spec:
-      containers:
-        - name: beam
-          image: {image}
-          ports:
-            - containerPort: 7373
-          env:
-            - name: BEAM_PORT
-              value: "7373"
-            - name: BEAM_HOST
-              value: "0.0.0.0"
+  image: {image}
+  port: 7373
 "#
     )
 }
