@@ -9,41 +9,45 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-aw-typed-renderer-applicability
-entry: artifact
+id: workbench-aw-typed-renderer
+entry: request
 nodes:
-  artifact: { kind: start, label: "confined Markdown artifact request" }
-  detect: { kind: process, label: "detect optional AW artifact kind from source structure" }
-  typed: { kind: decision, label: "supported TD, EC, capability, or WI?" }
-  render: { kind: process, label: "render typed sections and relationships read only" }
-  fallback: { kind: process, label: "defer to generic Markdown renderer" }
-  guard: { kind: process, label: "preserve source bytes and expose navigation" }
-  done: { kind: terminal, label: "return structured context document" }
+  request: { kind: start, label: "confined Markdown request" }
+  configured: { kind: decision, label: "root has regular aw.toml activation file?" }
+  read: { kind: process, label: "bounded read of requested source" }
+  detect: { kind: decision, label: "TD, EC, capability, or WI structure?" }
+  parse: { kind: process, label: "extract frontmatter, sections, Mermaid, commands, assertions, relationships" }
+  render: { kind: process, label: "escape typed panels and add source navigation" }
+  fallback: { kind: process, label: "remain unsupported so generic Markdown can render" }
+  done: { kind: terminal, label: "read-only ContextDocument" }
 edges:
-  - { from: artifact, to: detect }
-  - { from: detect, to: typed }
-  - { from: typed, to: render, label: "yes" }
-  - { from: typed, to: fallback, label: "no" }
-  - { from: render, to: guard }
-  - { from: fallback, to: guard }
-  - { from: guard, to: done }
+  - { from: request, to: configured }
+  - { from: configured, to: read, label: "yes" }
+  - { from: configured, to: fallback, label: "no" }
+  - { from: read, to: detect }
+  - { from: detect, to: parse, label: "yes" }
+  - { from: detect, to: fallback, label: "no" }
+  - { from: parse, to: render }
+  - { from: render, to: done }
+  - { from: fallback, to: done }
 ---
 flowchart LR
-    artifact([Artifact request]) --> detect[Detect structure]
-    detect --> typed{Supported AW kind?}
-    typed -->|Yes| render[Typed render]
-    typed -->|No| fallback[Markdown fallback]
-    render --> guard[Byte identity and navigation]
-    fallback --> guard
-    guard --> done([Context document])
+    request([Markdown request]) --> configured{aw.toml file?}
+    configured -->|Yes| read[Bounded read]
+    configured -->|No| fallback[Generic Markdown candidate]
+    read --> detect{Typed AW structure?}
+    detect -->|Yes| parse[Extract typed data]
+    detect -->|No| fallback
+    parse --> render[Escaped panels and navigation]
+    render --> done([Context document])
+    fallback --> done
 ```
 
-Create a separate optional `AwTypedRenderer` registered above generic Markdown only when an artifact is structurally recognizable as a TD, EC, capability contract, or WI document. Detection and rendering read the confined source path directly; they never invoke `aw`, GitHub, approval, lifecycle, or repository mutation operations.
+`AwTypedRenderer` has priority 300 and supports only confined `.md` or `.markdown` file requests whose canonical root contains a regular `aw.toml` activation file. Activation is a local presence check, not an AW command or configuration mutation. It reads at most one MiB and recognizes four structures: TD frontmatter with `fill_sections`, EC headings or frontmatter declaring an external contract, capability documents containing `## Capabilities` plus a capability index, and bounded WI documents containing Problem, Capability Alignment, Scope, Acceptance Criteria, and Reference Context sections. Unrecognized or unconfigured input reports unsupported so the existing priority-200 `MarkdownRenderer` remains the deterministic fallback.
 
-The renderer extracts YAML frontmatter, typed Markdown headings, fenced Mermaid diagrams, command blocks, assertion identifiers, and explicit artifact references into a structured context document with source navigation. Unknown or incomplete documents remain eligible for the existing `MarkdownRenderer`; absent `aw.toml` is not an error and is not itself used as the support signal.
+The parser returns an `AwArtifactModel` with `AwArtifactKind`, YAML frontmatter key/value rows, Markdown headings with one-based source lines, Mermaid fenced blocks, shell/console command blocks, assertion identifiers, and explicit `.md` or `#<issue>` relationships. Extraction is line-oriented and bounded; all values are treated as untrusted source text. The renderer HTML-escapes typed panels, reuses safe generic Markdown for readable body content, and adds navigation entries labeled with artifact section and line while preserving the confined source path in provenance. Parse/render failures remain isolated by `RendererRegistry` and allow generic Markdown to run with a warning.
 
-Open, navigate, refresh, and drop/close are pure reads over the same source bytes. Parse failures are isolated by the existing registry and fall through to safe generic Markdown with warnings, while all relationships remain disclosed as derived links rather than canonical lifecycle state.
-
+`RendererRegistry::generic_with_optional_aw` registers `AwTypedRenderer`, `MarkdownRenderer`, and `GitRenderer` in that order by priority. The typed renderer owns no mutable state or handles: open and refresh repeat the same pure read, navigation returns existing path metadata, and close is ordinary drop. Production and tests contain no `Command` invocation for `aw` or `gh`, no approval API, no write/open-options path, and no PTY, cwd, launch-folder, or lifecycle-state dependency. Source relations are presented as derived navigation only; canonical truth stays in repository bytes and AW itself.
 ## Changes
 <!-- type: changes lang: yaml -->
 
