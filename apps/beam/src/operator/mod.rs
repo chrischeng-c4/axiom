@@ -18,6 +18,7 @@ use kube::ResourceExt;
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
 #[serde(rename_all = "camelCase")]
 pub struct BeamSpec {
     /// Serving container image, e.g. beam:latest.
@@ -35,6 +36,7 @@ pub struct BeamSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grace_secs: Option<u64>,
 }
+// </HANDWRITE>
 
 /// Status subresource written back by the reconcile loop.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -48,6 +50,7 @@ pub struct BeamStatus {
     pub observed_generation: i64,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
 impl ManagedService for Beam {
     /// Server-side-apply field manager + leader-election Lease name.
     const MANAGER: &'static str = "beam-operator";
@@ -185,6 +188,7 @@ impl ManagedService for Beam {
         })
     }
 }
+// </HANDWRITE>
 
 /// Run the reconcile loop for `Beam` resources.
 pub async fn run() -> anyhow::Result<()> {
