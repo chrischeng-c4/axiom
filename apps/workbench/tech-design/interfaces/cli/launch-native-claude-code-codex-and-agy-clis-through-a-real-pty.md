@@ -12,64 +12,60 @@ fill_sections: [logic, changes, unit-test]
 id: workbench-native-agent-pty
 entry: plan
 nodes:
-  plan: { kind: start, label: "construct exact native agent command for selected folder" }
-  resolve: { kind: decision, label: "program resolves to an executable file?" }
-  unavailable: { kind: terminal, label: "return recoverable unavailable-binary error before allocating a PTY" }
-  allocate: { kind: process, label: "allocate native PTY at requested rows and columns" }
-  spawn: { kind: process, label: "spawn resolved program in selected folder with TERM=xterm-256color" }
-  stream: { kind: process, label: "expose blocking output reader and synchronized input writer" }
-  control: { kind: decision, label: "input, resize, interrupt, wait, or terminate?" }
-  input: { kind: process, label: "write bytes and flush them through PTY master" }
-  resize: { kind: process, label: "resize PTY master and notify child terminal" }
-  interrupt: { kind: process, label: "write terminal interrupt byte so the controlling PTY forwards SIGINT" }
-  wait: { kind: process, label: "observe child exit status without inventing vendor session state" }
-  terminate: { kind: process, label: "kill and reap the child; Drop performs best-effort cleanup" }
-  exited: { kind: terminal, label: "PTY session is closed and resources are released" }
+  plan: { kind: start, label: "build inspectable native provider command with selected cwd" }
+  resolve: { kind: decision, label: "program resolves before PTY allocation?" }
+  unavailable: { kind: terminal, label: "recoverable unavailable-binary error" }
+  allocate: { kind: process, label: "allocate native PTY at requested size" }
+  spawn: { kind: process, label: "spawn resolved program in selected folder" }
+  active: { kind: decision, label: "session operation?" }
+  input: { kind: process, label: "write and flush input bytes" }
+  resize: { kind: process, label: "resize PTY master" }
+  interrupt: { kind: process, label: "write terminal ETX for Ctrl-C forwarding" }
+  wait: { kind: process, label: "wait for exact child exit status" }
+  terminate: { kind: process, label: "kill and reap child" }
+  closed: { kind: terminal, label: "release PTY resources" }
 edges:
   - { from: plan, to: resolve }
   - { from: resolve, to: unavailable, label: "no" }
   - { from: resolve, to: allocate, label: "yes" }
   - { from: allocate, to: spawn }
-  - { from: spawn, to: stream }
-  - { from: stream, to: control }
-  - { from: control, to: input, label: "stdin" }
-  - { from: control, to: resize, label: "window size" }
-  - { from: control, to: interrupt, label: "Ctrl-C" }
-  - { from: control, to: wait, label: "exit" }
-  - { from: control, to: terminate, label: "cleanup" }
-  - { from: input, to: control }
-  - { from: resize, to: control }
-  - { from: interrupt, to: control }
-  - { from: wait, to: exited }
-  - { from: terminate, to: exited }
+  - { from: spawn, to: active }
+  - { from: active, to: input, label: "stdin" }
+  - { from: active, to: resize, label: "size" }
+  - { from: active, to: interrupt, label: "Ctrl-C" }
+  - { from: active, to: wait, label: "exit" }
+  - { from: active, to: terminate, label: "cleanup" }
+  - { from: input, to: active }
+  - { from: resize, to: active }
+  - { from: interrupt, to: active }
+  - { from: wait, to: closed }
+  - { from: terminate, to: closed }
 ---
 flowchart LR
-    plan([Build native agent command]) --> resolve{Binary available?}
+    plan([Build provider command]) --> resolve{Binary available?}
     resolve -->|No| unavailable([Recoverable error])
     resolve -->|Yes| allocate[Allocate native PTY]
-    allocate --> spawn[Spawn in selected folder]
-    spawn --> stream[Reader and writer]
-    stream --> control{Session control}
-    control -->|Input| input[Write and flush]
-    control -->|Resize| resize[Resize PTY]
-    control -->|Ctrl-C| interrupt[Terminal interrupt byte]
-    control -->|Exit| wait[Wait for status]
-    control -->|Cleanup| terminate[Kill and reap]
-    input --> control
-    resize --> control
-    interrupt --> control
-    wait --> exited([Closed])
-    terminate --> exited
+    allocate --> spawn[Spawn in selected cwd]
+    spawn --> active{Session operation}
+    active -->|Input| input[Write and flush]
+    active -->|Resize| resize[Resize master]
+    active -->|Ctrl-C| interrupt[Write ETX]
+    active -->|Exit| wait[Wait for status]
+    active -->|Cleanup| terminate[Kill and reap]
+    input --> active
+    resize --> active
+    interrupt --> active
+    wait --> closed([Closed])
+    terminate --> closed
 ```
 
-`AgentKind` is the closed provider enum: `ClaudeCode`, `Codex`, and `Agy`, with `ClaudeCode` as `Default`. `AgentLaunchCommand::for_kind` is a pure construction boundary. It preserves the selected canonical folder as `cwd` and emits exactly `claude`, `codex`, or `agy` with no hidden arguments. The returned command is inspectable before launch so tests and later UI code can disclose the authoritative native program, arguments, and cwd. Workbench stores no vendor session, history, or resume model.
+`AgentKind` is a closed `ClaudeCode | Codex | Agy` enum and defaults to `ClaudeCode`. `AgentLaunchCommand::for_kind` is pure and inspectable: it emits exactly `claude`, `codex`, or `agy`, no hidden arguments, and the canonical selected folder as `cwd`. This keeps each vendor CLI and its native session/history behavior authoritative.
 
-`PtySession::spawn` accepts the inspectable command plus a `PtySize`. It first resolves the named program against `PATH` (or validates an explicit path) and returns `PtyLaunchError::UnavailableBinary` before PTY allocation when the executable cannot be found. A failed launch therefore does not poison shared shell state; callers may immediately retry another command. The resolved program is handed to `portable_pty::CommandBuilder`, with the selected folder as cwd and terminal capability variables set for a real interactive CLI.
+`PtySession::spawn` resolves the program against `PATH` or validates an explicit path before allocating anything. Absence returns a typed `PtyLaunchError::UnavailableBinary`, leaving callers free to retry. The resolved executable is passed to `portable_pty::CommandBuilder`; requested rows and columns create the native PTY, selected folder sets child cwd, and `TERM=xterm-256color` plus `COLORTERM=truecolor` preserve the interactive terminal contract.
 
-The native PTY master owns a cloneable blocking output reader, a single synchronized input writer, terminal resize, child status, termination, and cleanup. Blocking reads are intentionally moved by callers to a dedicated thread rather than disguised as async I/O. Ordinary input is written and flushed unchanged. Interrupt forwarding writes the terminal ETX byte through the controlling PTY, producing the same Ctrl-C path a user terminal uses; explicit termination uses the child killer. `wait` reaps the child, and `Drop` performs best-effort kill and reap when a live session is abandoned.
+The session retains the PTY master, its single writer, and the child handle. It can clone a blocking reader for a dedicated output thread, write and flush arbitrary input, query and change kernel PTY size, forward Ctrl-C by writing ETX through the controlling terminal, poll or wait for exact exit status, and explicitly terminate the child. `wait` and `terminate` reap the child; `Drop` best-effort kills and reaps an abandoned live child. No provider-specific mutable state enters this type.
 
-The deterministic integration fixture launches the platform local shell through the same generic PTY runtime, not through a mock and not through an installed vendor binary. It proves bidirectional bytes, selected-folder cwd, kernel-visible resize, terminal interrupt delivery, exit status, and post-drop process cleanup. Adapter construction and unavailable-binary tests cover all three providers without requiring Claude Code, Codex, or AGY in CI. This slice provides the native runtime boundary only; terminal cwd-to-context synchronization remains owned by #2194 and rendered terminal integration remains part of the later production journey.
-
+Integration tests launch a real local shell command through the same generic runtime, never a mock. They prove round-trip bytes, selected cwd, resize, Ctrl-C signal handling, exit code, and cleanup. Pure construction and isolated-PATH failure tests cover all providers without requiring installed Claude Code, Codex, or AGY. Terminal cwd-to-context synchronization remains #2194; this WI owns only command and PTY lifecycle.
 ## Changes
 <!-- type: changes lang: yaml -->
 
