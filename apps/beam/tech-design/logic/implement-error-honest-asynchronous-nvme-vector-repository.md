@@ -41,7 +41,6 @@ flowchart TD
     check_read_length -->|No| return_short_read([Return StorageError::ShortRead])
     check_read_length -->|Yes| done([Return valid bytes])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
