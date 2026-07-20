@@ -38,7 +38,6 @@ flowchart TD
     save_state --> fsync_data[Fsync file & parent dir]
     fsync_data --> done([Ack success])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
