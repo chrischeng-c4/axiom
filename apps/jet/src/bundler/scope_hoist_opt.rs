@@ -3823,7 +3823,7 @@ fn is_bare_function_expression(expr: &str) -> bool {
     skip_code_balanced(b, j, b'{', b'}') == Some(b.len())
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// `<params> => <body>`, consuming `expr` in full, where `<params>` is a
 /// bare identifier or a parenthesized parameter list and `<body>` is a
 /// block or a bare expression. `async` arrows are out of the v1 ladder
