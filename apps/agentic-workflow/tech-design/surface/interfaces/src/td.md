@@ -115,27 +115,37 @@ passes only the current target's typed IR partition to its generator.
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AstArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 82 |  |
-| `AuditArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 277 |  |
-| `AuditGroupBy` | apps/agentic-workflow/src/cli/td.rs | enum | pub | 265 |  |
-| `CheckArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 220 |  |
-| `CreateArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 92 |  |
-| `GenCodeArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 202 |  |
-| `CodeCheckArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 237 |  |
-| `ReviewArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 146 |  |
-| `ReviseArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 171 |  |
+| `AstArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 139 |  |
+| `AuditArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 266 |  |
+| `AuditGroupBy` | apps/agentic-workflow/src/cli/td.rs | enum | pub | 254 |  |
+| `CheckArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 237 |  |
+| `CreateArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 149 |  |
+| `GenCodeArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 214 |  |
+| `LifecycleCommitEmpty` | apps/agentic-workflow/src/cli/td.rs | enum | pub | 1000 |  |
+| `PromoteArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 99 |  |
 | `TdArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 23 |  |
-| `TdClaimArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 62 |  |
-| `TdCommand` | apps/agentic-workflow/src/cli/td.rs | enum | pub | 30 |  |
-| `discover_worktree_spec` | apps/agentic-workflow/src/cli/td.rs | function | pub | 740 | discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<String> |
-| `run` | apps/agentic-workflow/src/cli/td.rs | function | pub | 2031 | run(args: TdArgs) -> Result<()> |
-| `run_audit` | apps/agentic-workflow/src/cli/td.rs | function | pub | 4757 | run_audit(args: AuditArgs) -> Result<()> |
-| `run_check` | apps/agentic-workflow/src/cli/td.rs | function | pub | 2085 | run_check(args: CheckArgs) -> Result<()> |
-| `run_claim` | apps/agentic-workflow/src/cli/td.rs | function | pub | 6189 | run_claim(args: TdClaimArgs) -> Result<()> |
-| `run_gen_code` | apps/agentic-workflow/src/cli/td.rs | function | pub | 4259 | run_gen_code(args: GenCodeArgs) -> Result<()> |
-| `td_activate_inplace_allowing_dirty_spec_path` | apps/agentic-workflow/src/cli/td.rs | function | pub | 447 | td_activate_inplace_allowing_dirty_spec_path(     project_root: &std::path::Path,     slug: &str,     spec_path: &str, ) -> Result<()> |
-| `td_activate_inplace_if_present` | apps/agentic-workflow/src/cli/td.rs | function | pub | 423 | td_activate_inplace_if_present(     project_root: &std::path::Path,     slug: &str, ) -> Result<()> |
-| `td_workspace_path` | apps/agentic-workflow/src/cli/td.rs | function | pub | 376 | td_workspace_path(project_root: &std::path::Path, _slug: &str) -> std::path::PathBuf |
+| `TdAuditRecordArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 120 |  |
+| `TdBodySectionPayload` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 3071 |  |
+| `TdClaimArgs` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 80 |  |
+| `TdCommand` | apps/agentic-workflow/src/cli/td.rs | enum | pub | 33 |  |
+| `UnitTestRequirement` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 3160 |  |
+| `UnitTestSectionPayload` | apps/agentic-workflow/src/cli/td.rs | struct | pub | 3176 |  |
+| `commit_lifecycle_message` | apps/agentic-workflow/src/cli/td.rs | function | pub | 1039 | commit_lifecycle_message(     worktree_path: &std::path::Path,     paths: &[&str],     message: &str,     allow_empty: LifecycleCommitEmpty, ) -> Result<()> |
+| `default_spec_path_for_issue_in_project` | apps/agentic-workflow/src/cli/td.rs | function | pub | 2688 | default_spec_path_for_issue_in_project(     project_root: &std::path::Path,     issue: &Issue,     fallback_slug: &str, ) -> Result<String> |
+| `discover_worktree_spec` | apps/agentic-workflow/src/cli/td.rs | function | pub | 959 | discover_worktree_spec(worktree_abs: &std::path::Path) -> Option<String> |
+| `resolve_issue_td_generation_spec_path` | apps/agentic-workflow/src/cli/td.rs | function | pub | 2765 | resolve_issue_td_generation_spec_path(     project_root: &std::path::Path,     issue: &Issue,     fallback_slug: &str, ) -> Result<String> |
+| `resolve_issue_td_spec_paths` | apps/agentic-workflow/src/cli/td.rs | function | pub | 2729 | resolve_issue_td_spec_paths(     project_root: &std::path::Path,     issue: &Issue,     fallback_slug: &str, ) -> Result<Vec<String>> |
+| `run` | apps/agentic-workflow/src/cli/td.rs | function | pub | 3438 | run(args: TdArgs) -> Result<()> |
+| `run_audit` | apps/agentic-workflow/src/cli/td.rs | function | pub | 5054 | run_audit(args: AuditArgs) -> Result<()> |
+| `run_check` | apps/agentic-workflow/src/cli/td.rs | function | pub | 3526 | run_check(args: CheckArgs) -> Result<()> |
+| `run_claim` | apps/agentic-workflow/src/cli/td.rs | function | pub | 8061 | run_claim(args: TdClaimArgs) -> Result<()> |
+| `run_gen_code` | apps/agentic-workflow/src/cli/td.rs | function | pub | 4817 | run_gen_code(args: GenCodeArgs) -> Result<()> |
+| `stage_lifecycle_paths` | apps/agentic-workflow/src/cli/td.rs | function | pub | 1072 | stage_lifecycle_paths(     worktree_path: &std::path::Path,     git_bin: &std::path::Path,     paths: &[&str], ) -> Result<()> |
+| `td_activate_inplace_allowing_dirty_lifecycle_paths` | apps/agentic-workflow/src/cli/td.rs | function | pub | 444 | td_activate_inplace_allowing_dirty_lifecycle_paths(     project_root: &std::path::Path,     slug: &str,     allowed_rel: &[&str], ) -> Result<()> |
+| `td_activate_inplace_allowing_dirty_spec_path` | apps/agentic-workflow/src/cli/td.rs | function | pub | 483 | td_activate_inplace_allowing_dirty_spec_path(     project_root: &std::path::Path,     slug: &str,     spec_path: &str, ) -> Result<()> |
+| `td_activate_inplace_if_present` | apps/agentic-workflow/src/cli/td.rs | function | pub | 420 | td_activate_inplace_if_present(     project_root: &std::path::Path,     slug: &str, ) -> Result<()> |
+| `td_workspace_path` | apps/agentic-workflow/src/cli/td.rs | function | pub | 365 | td_workspace_path(project_root: &std::path::Path, _slug: &str) -> std::path::PathBuf |
+| `terminal_code_check_labels_to_remove` | apps/agentic-workflow/src/cli/td.rs | function | pub | 5012 | terminal_code_check_labels_to_remove() -> Vec<String> |
 ## Source
 <!-- type: source lang: rust -->
 <!-- source-from-target: strip-handwrite -->
