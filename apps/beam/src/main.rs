@@ -231,22 +231,25 @@ struct BenchArgs {
     persist: Option<String>,
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in main.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic--6da9b12e" tracker="pending-tracker" reason="logic section in main.rs is hand-written pending codegen support">
 /// `beam serve` flags.
 #[derive(Args)]
 pub struct ServeArgs {
     /// Bind address. K8s passes 0.0.0.0.
     #[arg(long, env = "BEAM_HOST", default_value = "127.0.0.1")]
-    host: String,
+    pub host: String,
     /// Client API port.
     #[arg(long, env = "BEAM_PORT", default_value_t = 7373)]
-    port: u16,
+    pub port: u16,
     /// `trace|debug|info|warn|error`
     #[arg(long, env = "BEAM_LOG_LEVEL", default_value = "info")]
-    log_level: String,
+    pub log_level: String,
     /// Graceful drain window on SIGTERM.
     #[arg(long, env = "BEAM_GRACE_SECS", default_value_t = 30)]
-    grace_secs: u64,
+    pub grace_secs: u64,
+    /// Data directory for durable local persistence.
+    #[arg(long, env = "BEAM_DATA_DIR")]
+    pub data_dir: Option<String>,
 }
 // </HANDWRITE>
 
@@ -740,7 +743,10 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         // Real HTTP/2 (h2c) vector-database service. Blocks until Ctrl-C/SIGTERM.
         Command::Serve(args) => {
             let addr = format!("{}:{}", args.host, args.port);
-            block_on(beam::service::serve(&addr))?;
+            // <HANDWRITE gap="missing-generator:logic--6da9b12e" tracker="pending-tracker" reason="wire data_dir to serve call">
+            let data_path = args.data_dir.map(std::path::PathBuf::from);
+            block_on(beam::service::serve(&addr, data_path))?;
+            // </HANDWRITE>
             Ok(ExitCode::SUCCESS)
         }
         Command::Spec(args) => {

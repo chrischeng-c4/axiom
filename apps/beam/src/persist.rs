@@ -27,7 +27,7 @@
 //! to the `Serialize`/`Deserialize` derives on the persisted structs.
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, Read};
 use std::path::Path;
 
 use anyhow::{bail, Context};
@@ -44,19 +44,14 @@ pub const INDEX_MAGIC: &[u8; 8] = b"BEAMIVP\0";
 /// persisted struct changes; [`load_framed`] rejects any other version.
 pub const FORMAT_VERSION: u32 = 1;
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in persist.rs is hand-written pending codegen support">
-/// Write `value` to `path` behind the standard `magic` + [`FORMAT_VERSION`]
-/// header, bincode-encoding the payload. Buffered + flushed so the whole artifact
-/// lands in one pass.
+// <HANDWRITE gap="missing-generator:logic--d2cab6af" tracker="pending-tracker" reason="logic section in persist.rs is hand-written pending codegen support">
 pub fn save_framed<T: Serialize>(path: &Path, magic: &[u8; 8], value: &T) -> anyhow::Result<()> {
-    let file = File::create(path).with_context(|| format!("create {}", path.display()))?;
-    let mut writer = BufWriter::new(file);
-    writer.write_all(magic).context("write magic")?;
-    writer
-        .write_all(&FORMAT_VERSION.to_le_bytes())
-        .context("write version")?;
-    bincode::serialize_into(&mut writer, value).context("bincode serialize payload")?;
-    writer.flush().context("flush")?;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(magic);
+    bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    bincode::serialize_into(&mut bytes, value).context("bincode serialize payload")?;
+    storage_durable::atomic_write(path, &bytes, storage_durable::FsyncPolicy::Always)
+        .with_context(|| format!("atomic write to {}", path.display()))?;
     Ok(())
 }
 // </HANDWRITE>
