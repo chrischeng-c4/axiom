@@ -415,6 +415,7 @@ Gate Inventory:
 - apps/tape/guard-tape-security.toml
 - apps/tape/external-contracts/competitor-performance/efficiency/meter-gate.md
 - apps/tape/external-contracts/security-hardening/security/security-evidence.md
+- apps/tape/tests/shared_otlp_tracing.rs
 - apps/tape/observability/ (prometheus.yml, otel-collector-config.yaml, grafana-datasources.yaml)
 - apps/tape/compose.yaml
 
@@ -422,7 +423,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | crate-smoke-gate | epic | #768 | implemented | passing | conformance | cargo test -p tape |
 | tape-vat-meter-guard-ec-gates-observability | change | #1330 | implemented | passing | smoke | apps/tape/vat.toml, apps/tape/meter-tape-performance.toml, apps/tape/guard-tape-security.toml |
-| shared-otlp-trace-export | change | #1662 | implemented | passing | conformance | `TAPE_OTLP_ENDPOINT` through `libs/service-http` |
+| shared-otlp-trace-export | change | #1662 | implemented | passing | conformance | `cargo test -p tape --test shared_otlp_tracing` |
 
 ### Kubernetes-Native Deployment
 
