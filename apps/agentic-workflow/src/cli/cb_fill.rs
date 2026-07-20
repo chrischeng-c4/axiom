@@ -52,7 +52,7 @@ pub struct HandwriteMarkerEntry {
     /// pre-existing implementation. Its fill payload adopts that body instead
     /// of replacing it with a generic placeholder.
     #[serde(skip)]
-    adopt_existing: bool,
+    pub adopt_existing: bool,
 }
 
 // Extract every unfilled HANDWRITE marker from a single file's content,

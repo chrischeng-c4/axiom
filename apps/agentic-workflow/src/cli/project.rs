@@ -3888,7 +3888,15 @@ fn run_project_ec_shell_command(
 /// @spec apps/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) async fn apply_workflow_locks_to_report(report: &mut ProjectHealthReport) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let locks = crate::cli::workflow_guard::issue_locks(&project_root).await?;
+    // #1921: `aw health` is a read-only aggregate that never mutates and
+    // always names remediation via `next.command` -- it must not hard-crash
+    // when the configured (or unconfigured) issue backend can't be
+    // resolved. An unresolvable backend degrades to "no workflow locks
+    // observable" rather than propagating the resolution error, matching
+    // `maybe_push_remote`'s existing no-op-on-unresolved-backend precedent.
+    let locks = crate::cli::workflow_guard::issue_locks(&project_root)
+        .await
+        .unwrap_or_default();
     report.workflow_lock_count = locks.len();
     if !locks.is_empty() && !project_health_caps_ec_only(&report.project) {
         report.status = ProjectHealthStatus::Blocked;
