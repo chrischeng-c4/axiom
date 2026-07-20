@@ -7948,7 +7948,7 @@ mod rhs_normalization_tests {
 
     // ── normalize_pure_export_rhs_unvalidated: the textual rewrite ─────
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn normalize_rewrites_arrow_function_export_to_synthetic_var() {
         let code = concat!("var _m1={exports:{}};", "_m1.exports[\"f\"]=()=>{};",);
