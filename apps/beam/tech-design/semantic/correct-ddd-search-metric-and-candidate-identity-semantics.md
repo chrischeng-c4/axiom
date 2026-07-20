@@ -84,7 +84,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: "MockDistanceCalculator"
+    anchor: "impl DistanceCalculator for MockDistanceCalculator"
     description: "Update MockDistanceCalculator to be metric-aware, and add comprehensive negative/regression tests for dimension validation, metric ordering, and missing candidates."
 ```
 ## Unit Test
