@@ -3006,7 +3006,8 @@ fn td_section_payload_template(section: &str) -> Result<String> {
             "    action: \"(fill: create|modify)\"\n",
             "    section: \"(fill: artifact-driving section id)\"\n",
             "    impl_mode: \"(fill: codegen|hand-written)\"\n",
-            "    anchor: \"(fill: existing Rust item when modifying a hand-written .rs target)\"\n",
+            "    anchor: \"(fill: existing Rust item when modifying a hand-written .rs target, ",
+            "e.g. reconcile for `pub fn reconcile` / `pub async fn reconcile`)\"\n",
             "```\n",
         )
         .to_string()
@@ -3076,9 +3077,10 @@ pub(crate) struct TdBodySectionPayload {
 fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
     match section {
         "changes" => Some(concat!(
-            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n    anchor: <existing Rust item when modifying a hand-written .rs target>\n```\n"}"#,
+            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n    anchor: <existing Rust item, e.g. reconcile for `pub fn reconcile` / `pub async fn reconcile`>\n```\n"}"#,
             " — edit the initialized JSON payload and name every concrete target ",
-            "before applying it; existing hand-written Rust modify targets require an anchor, ",
+            "before applying it; existing hand-written Rust modify targets require an anchor ",
+            "naming an existing Rust item (function, struct, enum, or `impl Type` block), ",
             "and `aw td gen` consumes this target plan directly."
         )),
         "unit-test" => Some(concat!(
@@ -6695,8 +6697,20 @@ label = "lib:pg"
             .body
             .contains("impl_mode: \"(fill: codegen|hand-written)\""));
         assert!(value.body.contains(
-            "anchor: \"(fill: existing Rust item when modifying a hand-written .rs target)\""
+            "anchor: \"(fill: existing Rust item when modifying a hand-written .rs target, \
+             e.g. reconcile for `pub fn reconcile` / `pub async fn reconcile`)\""
         ));
+    }
+
+    #[test]
+    fn td_json_payload_schema_hint_changes_documents_anchor_with_rust_item_example() {
+        // AC2 (#1893): the emitted Changes payload schema must document
+        // `anchor` and a valid Rust-item example, not just the field name.
+        let hint = td_json_payload_schema_hint("changes").unwrap();
+        assert!(hint.contains("anchor:"));
+        assert!(hint.contains("reconcile"));
+        assert!(hint.contains("pub fn reconcile"));
+        assert!(hint.contains("pub async fn reconcile"));
     }
 
     #[test]

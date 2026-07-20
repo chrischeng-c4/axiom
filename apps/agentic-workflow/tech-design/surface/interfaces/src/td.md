@@ -2516,6 +2516,9 @@ fn section_type_brief_hint(st: crate::models::spec_rules::SectionType) -> &'stat
         SectionType::ToolContract => {
             "AW tool-contract bridge to native vat/rig/meter/guard manifests; arena remains legacy compatibility"
         }
+        SectionType::DxContract => {
+            "Developer/agent task-navigation decisions: typed runbooks, templates, and generated DX artifacts"
+        }
         SectionType::RustSourceUnit => "Lossless Rust source unit (CST-backed regen)",
         SectionType::TextSourceUnit => "Lossless shell/text source unit (TD-owned regen)",
         SectionType::Changes => "File change list (path + action)",
@@ -3147,6 +3150,8 @@ fn td_section_payload_template(section: &str) -> Result<String> {
             "    action: \"(fill: create|modify)\"\n",
             "    section: \"(fill: artifact-driving section id)\"\n",
             "    impl_mode: \"(fill: codegen|hand-written)\"\n",
+            "    anchor: \"(fill: existing Rust item when modifying a hand-written .rs target, ",
+            "e.g. reconcile for `pub fn reconcile` / `pub async fn reconcile`)\"\n",
             "```\n",
         )
         .to_string()
@@ -3216,9 +3221,11 @@ pub(crate) struct TdBodySectionPayload {
 fn td_json_payload_schema_hint(section: &str) -> Option<&'static str> {
     match section {
         "changes" => Some(concat!(
-            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n```\n"}"#,
+            r#"{"body":"```yaml\nchanges:\n  - path: <repo-relative target path>\n    action: create|modify\n    section: <artifact-driving section id>\n    impl_mode: codegen|hand-written\n    anchor: <existing Rust item, e.g. reconcile for `pub fn reconcile` / `pub async fn reconcile`>\n```\n"}"#,
             " — edit the initialized JSON payload and name every concrete target ",
-            "before applying it; `aw td gen` consumes this target plan directly."
+            "before applying it; existing hand-written Rust modify targets require an anchor ",
+            "naming an existing Rust item (function, struct, enum, or `impl Type` block), ",
+            "and `aw td gen` consumes this target plan directly."
         )),
         "unit-test" => Some(concat!(
             r#"{"id":"<spec-id>-verification","requirements":{"#,
@@ -3260,6 +3267,36 @@ fn attach_json_payload_schema_hint(
         );
     }
     args
+}
+
+/// Reject a markerless existing Rust HANDWRITE target while the TD section is
+/// still being authored, rather than allowing it to fail only at codegen.
+fn validate_handwritten_rust_modify_anchors(
+    spec_content: &str,
+    worktree_root: &std::path::Path,
+) -> Result<()> {
+    for entry in crate::generate::apply::extract_change_entries(spec_content) {
+        let target = worktree_root.join(&entry.path);
+        let is_existing_rust_target = target.is_file()
+            && target
+                .extension()
+                .is_some_and(|extension| extension == "rs");
+        let has_missing_anchor = entry
+            .handwrite_anchor
+            .as_deref()
+            .map_or(true, str::is_empty);
+        let is_markerless_handwrite_modify = entry.action == "modify"
+            && entry.impl_mode == crate::generate::apply::ImplMode::HandWritten
+            && has_missing_anchor;
+
+        if is_existing_rust_target && is_markerless_handwrite_modify {
+            anyhow::bail!(
+                "hand-written Rust modify target '{}' requires `anchor:` during TD authoring; name an existing Rust item, for example `anchor: reconcile`",
+                entry.path
+            );
+        }
+    }
+    Ok(())
 }
 
 /// One requirement row of a `unit-test` JSON payload (#1097).
@@ -3606,7 +3643,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Claim(a) => run_claim(a).await,
         TdCommand::Gen(a) => super::cb::run_gen(a).await,
         TdCommand::GenSource(a) => super::cb::run_gen_source(a),
-        TdCommand::CodeCheck(a) => super::cb::run_check(a).await,
+        TdCommand::CodeCheck(a) => super::cb::run_check(a, project.as_deref()).await,
         TdCommand::Fill(a) => super::cb_fill::run(a).await,
         TdCommand::Promote(a) => run_promote(a),
         TdCommand::AuditRecord(a) => {
@@ -4334,6 +4371,17 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
                 );
             }
         };
+
+        if section == "changes" {
+            if let Err(error) = validate_handwritten_rust_modify_anchors(&merged, &worktree_abs) {
+                return td_error(
+                    slug,
+                    artifact
+                        .schema_violation(section, error.to_string())
+                        .to_string(),
+                );
+            }
+        }
 
         let report = validate_new_td_authoring_content(
             &spec_abs,
@@ -5932,7 +5980,10 @@ mod tests {
         let foreign = root.join(".aw/tech-design/projects/mamba/logic/foreign.md");
         std::fs::create_dir_all(foreign.parent().unwrap()).unwrap();
         std::fs::write(&foreign, "# foreign legacy TD\n").unwrap();
-        for args in [["add", "."].as_slice(), ["commit", "-qm", "foreign legacy TD"].as_slice()] {
+        for args in [
+            ["add", "."].as_slice(),
+            ["commit", "-qm", "foreign legacy TD"].as_slice(),
+        ] {
             let status = std::process::Command::new("git")
                 .args(args)
                 .current_dir(root)
@@ -5940,7 +5991,10 @@ mod tests {
                 .unwrap();
             assert!(status.success());
         }
-        LocalBackend::from_project_root(root).create(&issue).await.unwrap();
+        LocalBackend::from_project_root(root)
+            .create(&issue)
+            .await
+            .unwrap();
 
         let prepared = prepare_td_generation_before_lifecycle(root, &issue.slug, None)
             .await
@@ -6786,6 +6840,45 @@ label = "lib:pg"
         assert!(value
             .body
             .contains("impl_mode: \"(fill: codegen|hand-written)\""));
+        assert!(value.body.contains(
+            "anchor: \"(fill: existing Rust item when modifying a hand-written .rs target, \
+             e.g. reconcile for `pub fn reconcile` / `pub async fn reconcile`)\""
+        ));
+    }
+
+    #[test]
+    fn td_json_payload_schema_hint_changes_documents_anchor_with_rust_item_example() {
+        // AC2 (#1893): the emitted Changes payload schema must document
+        // `anchor` and a valid Rust-item example, not just the field name.
+        let hint = td_json_payload_schema_hint("changes").unwrap();
+        assert!(hint.contains("anchor:"));
+        assert!(hint.contains("reconcile"));
+        assert!(hint.contains("pub fn reconcile"));
+        assert!(hint.contains("pub async fn reconcile"));
+    }
+
+    #[test]
+    fn td_authoring_rejects_markerless_existing_handwritten_rust_modify() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("src/pool.rs");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "pub async fn reconcile() {}\n").unwrap();
+        let spec = "## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/pool.rs\n    action: modify\n    section: logic\n    impl_mode: hand-written\n```\n";
+
+        let error = validate_handwritten_rust_modify_anchors(spec, tmp.path()).unwrap_err();
+        assert!(error.to_string().contains("src/pool.rs"));
+        assert!(error.to_string().contains("anchor:"));
+    }
+
+    #[test]
+    fn td_authoring_accepts_anchor_for_existing_handwritten_rust_modify() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("src/pool.rs");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "pub async fn reconcile() {}\n").unwrap();
+        let spec = "## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/pool.rs\n    action: modify\n    section: logic\n    impl_mode: hand-written\n    anchor: reconcile\n```\n";
+
+        validate_handwritten_rust_modify_anchors(spec, tmp.path()).unwrap();
     }
 
     #[test]
