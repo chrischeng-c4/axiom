@@ -111,3 +111,49 @@ changes:
     impl_mode: hand-written
     description: Record payload limits, citation provenance, freshness, sentinel isolation, failure, license, and read-only verification rules.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-derived-page-context-adapter-verification
+requirements:
+  bounded_fresh_confined_payload:
+    id: R5
+    text: "The one-MiB boundary, page and citation limits, safe Markdown, freshness disclosure, unique ids, and citation confinement fail closed without fabricated source links or authority."
+    kind: security
+    risk: high
+    verify: tests/derived_page_context_adapter.rs::payload_limits_freshness_and_citation_confinement_fail_closed
+  malformed_and_failure_isolation:
+    id: R3
+    text: "Malformed pages and injected byte-source failure become derived-page warnings while lower-priority renderers still return context."
+    kind: failure-recovery
+    risk: high
+    verify: tests/derived_page_context_adapter.rs::malformed_and_failing_provider_are_isolated
+  provider_absence_isolation:
+    id: R2
+    text: "With no compatibility payload, the adapter remains unsupported and Markdown, Git, PTY source boundaries, and an independently registered AW sentinel remain usable."
+    kind: failure-recovery
+    risk: high
+    verify: tests/derived_page_context_adapter.rs::provider_absence_leaves_generic_and_aw_sentinel_renderers_usable
+  repository_owned_read_only_contract:
+    id: R4
+    text: "The adapter parses only the Workbench-owned v1 fixture, imports no LLM-Wiki or concrete AW implementation, invokes no provider, and performs no repository, AW, subprocess, or verification mutation."
+    kind: boundary
+    risk: high
+    verify: tests/derived_page_context_adapter.rs::adapter_contract_is_reference_only_and_read_only
+  section_citation_provenance:
+    id: R1
+    text: "Every valid derived page section renders with canonical citation navigation or an explicit inferred or ambiguous derived-authority label and retains all citation inputs."
+    kind: contract
+    risk: high
+    verify: tests/derived_page_context_adapter.rs::renders_canonical_citation_or_visible_inference_for_every_section
+---
+flowchart TD
+    r1[R1 section citation provenance] --> tests_derived_page_context_adapter_rs_renders_canonical_citation_or_visible_inference_for_every_section[tests/derived_page_context_adapter.rs::renders_canonical_citation_or_visible_inference_for_every_section]
+    r2[R2 provider absence isolation] --> tests_derived_page_context_adapter_rs_provider_absence_leaves_generic_and_aw_sentinel_renderers_usable[tests/derived_page_context_adapter.rs::provider_absence_leaves_generic_and_aw_sentinel_renderers_usable]
+    r3[R3 malformed and failure isolation] --> tests_derived_page_context_adapter_rs_malformed_and_failing_provider_are_isolated[tests/derived_page_context_adapter.rs::malformed_and_failing_provider_are_isolated]
+    r4[R4 repository owned read only contract] --> tests_derived_page_context_adapter_rs_adapter_contract_is_reference_only_and_read_only[tests/derived_page_context_adapter.rs::adapter_contract_is_reference_only_and_read_only]
+    r5[R5 bounded fresh confined payload] --> tests_derived_page_context_adapter_rs_payload_limits_freshness_and_citation_confinement_fail_closed[tests/derived_page_context_adapter.rs::payload_limits_freshness_and_citation_confinement_fail_closed]
+```
