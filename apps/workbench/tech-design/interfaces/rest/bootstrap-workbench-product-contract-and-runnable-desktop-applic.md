@@ -109,3 +109,42 @@ changes:
     impl_mode: hand-written
     description: Replace the bootstrap true gate with the desktop launch-smoke verification command.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-desktop-bootstrap-verification
+requirements:
+  bootstrap_scope_boundary:
+    id: R4
+    text: "The bootstrap host exports no PTY, terminal-session, renderer, or AW mutation API; those behaviors remain assigned to later child work items."
+    kind: regression
+    risk: medium
+    verify: tests/desktop_launch_smoke.rs::bootstrap_surface_excludes_later_slice_ownership
+  local_bounded_bootstrap_surface:
+    id: R2
+    text: "The initial window loads only the repository-owned local bootstrap document and the Tauri configuration declares one window with release bundling disabled for this slice."
+    kind: functional
+    risk: medium
+    verify: tests/desktop_launch_smoke.rs::desktop_configuration_is_local_and_bounded
+  native_agent_authority:
+    id: R3
+    text: "README and capability contracts state that Claude Code, Codex, and AGY native CLIs remain authoritative, while context and AW artifacts are optional read-only inputs."
+    kind: contract
+    risk: medium
+    verify: tests/desktop_launch_smoke.rs::product_contract_keeps_native_agents_authoritative
+  native_window_ready_and_clean_exit:
+    id: R1
+    text: "The real workbench desktop binary creates one native Tauri WebView window, emits host-ready only after setup succeeds, accepts the bounded smoke shutdown handshake, and exits cleanly before timeout."
+    kind: functional
+    risk: high
+    verify: tests/desktop_launch_smoke.rs::launches_native_window_and_exits_cleanly
+---
+flowchart TD
+    r1[R1 native window ready and clean exit] --> tests_desktop_launch_smoke_rs_launches_native_window_and_exits_cleanly[tests/desktop_launch_smoke.rs::launches_native_window_and_exits_cleanly]
+    r2[R2 local bounded bootstrap surface] --> tests_desktop_launch_smoke_rs_desktop_configuration_is_local_and_bounded[tests/desktop_launch_smoke.rs::desktop_configuration_is_local_and_bounded]
+    r3[R3 native agent authority] --> tests_desktop_launch_smoke_rs_product_contract_keeps_native_agents_authoritative[tests/desktop_launch_smoke.rs::product_contract_keeps_native_agents_authoritative]
+    r4[R4 bootstrap scope boundary] --> tests_desktop_launch_smoke_rs_bootstrap_surface_excludes_later_slice_ownership[tests/desktop_launch_smoke.rs::bootstrap_surface_excludes_later_slice_ownership]
+```
