@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T09:16:32.256671+00:00"
-digest = "sha256:394a6c485326285374a42185f4cb0924524f49fab9d1272dd222971c745bc2a1"
-source_digest = "sha256:394a6c485326285374a42185f4cb0924524f49fab9d1272dd222971c745bc2a1"
-ir_digest = "sha256:20bb2f385f808b6156899b26e34af2cdbc527fd26cd2bb31bd1b14b19e47e929"
+generated_at = "2026-07-20T09:51:13.533958+00:00"
+digest = "sha256:cacc854c1cdcd753052f1d79b13936c30a4c10c50e2e0752a7eafc932c0d1f8b"
+source_digest = "sha256:cacc854c1cdcd753052f1d79b13936c30a4c10c50e2e0752a7eafc932c0d1f8b"
+ir_digest = "sha256:a12c40738d8c3c281978ddd075bdfa5c238ec52b222887981ed5211ee4634ff9"
 
 [[files]]
 path = "README.md"
@@ -24,6 +24,12 @@ path = "logic/beam-high-throughput-four-pillar-architecture.md"
 digest = "sha256:23631b81845716566788f24465e4396865bc4f4cff5789812ca5acfa41210cbf"
 ir_digest = "sha256:3c495efffa7a09192815a2e9055da3ca8ade0961bca9c42ea32282224436fb8d"
 section_count = 4
+
+[[files]]
+path = "logic/converge-retired-paths-and-broken-evidence-references.md"
+digest = "sha256:091dd5eb9a4810a7d442fb365cc7bf35e4ab76a396187e6c52fa2c332847a639"
+ir_digest = "sha256:9d430d05886e9cd1535b236080dcfa93568deb7ac0e0772c1f97c775080495fe"
+section_count = 3
 
 [[files]]
 path = "semantic/correct-ddd-search-metric-and-candidate-identity-semantics.md"
