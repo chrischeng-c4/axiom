@@ -13447,7 +13447,7 @@ async def main():
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(args.is_empty());
+                assert_eq!(args.len(), 1);
                 assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
             }
             other => panic!("expected synthetic generator call, got {other:?}"),
@@ -13502,7 +13502,7 @@ async def main():
                 expr: HirExpr::Call { func, args, .. },
                 ..
             } => {
-                assert!(args.is_empty());
+                assert_eq!(args.len(), 1);
                 assert!(matches!(&**func, HirExpr::Var(sym, _) if *sym == hir.functions[0].name));
             }
             other => panic!("expected synthetic generator call, got {other:?}"),
