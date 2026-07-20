@@ -10,47 +10,41 @@ fill_sections: [logic, changes, unit-test]
 ```mermaid
 ---
 id: workbench-authoritative-cwd-context
-entry: launch
+entry: initialize
 nodes:
-  launch: { kind: start, label: "initialize active context from canonical selected launch folder" }
-  output: { kind: process, label: "feed raw PTY output bytes into bounded OSC 7 decoder" }
-  frame: { kind: decision, label: "complete ESC ] 7 ; file URI frame present?" }
-  ignore: { kind: process, label: "ignore ordinary output and preserve only incomplete control-prefix bytes" }
-  validate: { kind: decision, label: "localhost file URI resolves to an existing canonical directory?" }
-  reject: { kind: process, label: "discard malformed, remote-host, missing, or non-directory telemetry" }
-  update: { kind: process, label: "replace active cwd and emit a source-disclosed context update" }
-  stable: { kind: terminal, label: "registered launch-folder registry remains unchanged" }
+  initialize: { kind: start, label: "canonical selected launch folder becomes initial active cwd" }
+  decode: { kind: process, label: "stream raw PTY bytes through bounded OSC 7 decoder" }
+  framed: { kind: decision, label: "complete OSC 7 file URI?" }
+  local: { kind: decision, label: "localhost existing canonical directory?" }
+  update: { kind: process, label: "emit source-disclosed active cwd update" }
+  ignore: { kind: process, label: "ignore ordinary, incomplete, malformed, remote, missing, or file input" }
+  stable: { kind: terminal, label: "active context resolved; launch-folder registry unchanged" }
 edges:
-  - { from: launch, to: output }
-  - { from: output, to: frame }
-  - { from: frame, to: ignore, label: "no" }
-  - { from: frame, to: validate, label: "yes" }
-  - { from: validate, to: reject, label: "no" }
-  - { from: validate, to: update, label: "yes" }
+  - { from: initialize, to: decode }
+  - { from: decode, to: framed }
+  - { from: framed, to: ignore, label: "no" }
+  - { from: framed, to: local, label: "yes" }
+  - { from: local, to: ignore, label: "no" }
+  - { from: local, to: update, label: "yes" }
   - { from: ignore, to: stable }
-  - { from: reject, to: stable }
   - { from: update, to: stable }
 ---
 flowchart LR
-    launch([Initial canonical launch cwd]) --> output[Feed PTY output bytes]
-    output --> frame{Complete OSC 7 frame?}
-    frame -->|No| ignore[Ignore ordinary output]
-    frame -->|Yes| validate{Local existing directory?}
-    validate -->|No| reject[Reject telemetry]
-    validate -->|Yes| update[Update active cwd]
-    ignore --> stable([Folder registry unchanged])
-    reject --> stable
+    initialize([Initial canonical cwd]) --> decode[Decode PTY bytes]
+    decode --> framed{OSC 7 file URI?}
+    framed -->|No| ignore[Ignore]
+    framed -->|Yes| local{Local existing directory?}
+    local -->|No| ignore
+    local -->|Yes| update[Update active cwd]
+    ignore --> stable([Registry unchanged])
     update --> stable
 ```
 
-Workbench uses the explicit OSC 7 current-directory protocol: `ESC ] 7 ; file://localhost/<percent-encoded-path> BEL` (and the standard ST terminator). `CwdTelemetryDecoder` accepts raw PTY byte chunks, survives frames split across arbitrary read boundaries, bounds retained incomplete data, and returns only complete file-URI payloads. Ordinary output is never parsed for paths, prompts, `cd`, or shell syntax.
+The only authoritative telemetry is an OSC 7 control frame terminated by BEL or ST. `CwdTelemetryDecoder` retains a bounded suffix across PTY reads, recognizes `ESC ] 7 ;`, and yields complete URI payloads. It never scans ordinary output for prompts, paths, `cd`, or shell messages.
 
-`ActiveCwdContext` starts from the canonical selected launch folder and owns only the active context path plus the decoder. For each decoded URI it requires the `file` scheme, an empty or `localhost` host, a percent-decoded local path that canonicalizes successfully, and directory metadata. A valid changed directory replaces the active path and returns `CwdContextUpdate { path, source: Osc7 }`; malformed, remote, missing, and non-directory frames leave the prior context untouched. Duplicate frames are idempotent.
+`ActiveCwdContext` is initialized from the canonical selected launch folder. A candidate must parse as a `file` URI, use an empty or `localhost` host, convert to a local path, canonicalize successfully, and be a directory. A changed path returns `CwdContextUpdate` with `CwdTelemetrySource::Osc7`; duplicates and invalid candidates return no update and preserve prior state.
 
-The PTY command environment discloses `WORKBENCH_CWD_TELEMETRY=osc7-file-uri-v1`. Integrated shells emit one frame after each successful directory transition; deterministic fixtures call the same `cwd_telemetry_frame` encoder. Failed `cd` operations emit ordinary error text but no successful frame. Direct vendor CLIs remain authoritative and may opt into the same terminal protocol without Workbench scraping their display output.
-
-The tracker has no mutable access to `ShellState`; the registered folder list and selected launch id remain identity/launch configuration while active cwd is ephemeral runtime context. Tests retain a registry snapshot across successful and failed real-PTY transitions and assert byte-for-byte equality. Renderer selection remains outside this WI.
-
+Every PTY child receives `WORKBENCH_CWD_TELEMETRY=osc7-file-uri-v1`, and `cwd_telemetry_frame` provides the canonical encoder for integrated shells and deterministic fixtures. Failed or non-directory shell transitions emit no valid frame. The tracker cannot mutate `ShellState`, so registered folders and selected launch identity remain stable while active cwd changes ephemerally.
 ## Changes
 <!-- type: changes lang: yaml -->
 
