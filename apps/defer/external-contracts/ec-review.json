@@ -1,12 +1,12 @@
 {
   "version": 1,
   "project": "defer",
-  "source_digest": "sha256:13e3c65c4845c53ff04ee1a328f61e52ed9c7c22a469442e0f3e3a818dba91f6",
+  "source_digest": "sha256:1751e39aee1710e9400f5b58c8f5d6dd25089ac42c4fe0d8253678409f30395f",
   "decision": "accepted",
   "reviewer_kind": "agent",
-  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-766-wrapper-ownership",
-  "reviewed_at": "2026-07-20T19:27:30.044356+00:00",
-  "summary": "Accepted after independent digest-bound re-review of the generator-ownership-only change. Each case now names a distinct AW-generated wrapper path, while every command, assertion, capability/claim binding, required dimension, and previously accepted product oracle is unchanged. The pre-generation absence of wrapper files is fail-closed and expected: commands still directly execute the real HTTP/Raft, HMAC-negative, release efficiency, and fixed-keyspace retry-soak gates, so wrapper ownership neither substitutes for nor weakens their independent pass/fail oracles.",
+  "reviewed_by": "agent:aw-ec-reviewer:defer-wi-2213-revision-2",
+  "reviewed_at": "2026-07-20T20:42:33.499327+00:00",
+  "summary": "Accepted after independent re-review. The revised behavior oracle observes exact task/queue/issue subgrammars, traps HTTP(S)/ALL proxy connections for offline llm, requires the exact five TypeScript artifacts and Defer task client methods, and checks every render exit status before content. Separate release-mode efficiency and stability cases close the RuntimeTool dimension ceiling with non-zero work, exact generated artifacts, hard latency/time/FD thresholds, deterministic output, and temporary-state cleanup. Independent execution passed behavior 5/5, efficiency 20 operations at 4.923ms median and 6.112ms p99 with zero errors, and stability 256 CLI operations plus 16 codegen rounds in 1379ms with FD 4 -> 4 and zero errors.",
   "checklist": {
     "capability_claim_coverage": true,
     "required_dimensions": true,
@@ -16,5 +16,5 @@
     "false_green_risk_checked": true
   },
   "findings": [],
-  "target_path": "apps/defer/external-contracts/behavior/766.md"
+  "target_path": "apps/defer/external-contracts/behavior/2213.md"
 }
