@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = "projects/mamba/tech-design"
-generated_at = "2026-07-19T07:47:02.869222+00:00"
-digest = "sha256:69cac7c906a75796de7942bdb2ff159c2568b591d7939fef4f19c75108f20ece"
-source_digest = "sha256:69cac7c906a75796de7942bdb2ff159c2568b591d7939fef4f19c75108f20ece"
-ir_digest = "sha256:7e5628400c6e759ec01ebba05c7e07961eedf87951c69286787471ea5df0a691"
+generated_at = "2026-07-20T05:30:46.945423+00:00"
+digest = "sha256:13616b5dc2a357c01ee73f77b2bffd781168bb6ab9fec579c296985a51f70015"
+source_digest = "sha256:13616b5dc2a357c01ee73f77b2bffd781168bb6ab9fec579c296985a51f70015"
+ir_digest = "sha256:8949ca9cd01bf87920989600b9210fb80b43fe9a28c0b6ba5095c9a8cc539569"
 
 [[files]]
 path = "README.md"
@@ -90,6 +90,12 @@ path = "iterators/ARCHITECTURE.md"
 digest = "sha256:aefe316e3233d6aa906ff89252f12615b996bef739621c077dee3f03a1ed331f"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "logic/asyncio-to-thread-dispatch-gather-mb-await-drops-second-parallel.md"
+digest = "sha256:75cf573755495d47767395f95dd02554421162c30e4d6d7fcbb8e6f32708eb26"
+ir_digest = "sha256:6de8790f7436ea59f63b5bbb8f8f58f89c9dc05b01a7b38c6a6de0a01d12ade5"
+section_count = 3
 
 [[files]]
 path = "logic/bool-keys-don-t-unify-with-int-numeric-keys-in-dict-set-true-1-f.md"
