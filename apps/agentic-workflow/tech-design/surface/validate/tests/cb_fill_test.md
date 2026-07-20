@@ -34,6 +34,19 @@ foreign project marker. Brief fill queues both active app/lib markers, each
 payload is applied in order, and the issue advances to `cb_filled` only after
 the second marker while the foreign marker remains untouched.
 
+The #1901 real-binary fixture
+(`test_apply_permits_current_marker_dirty_source_but_rejects_unrelated_dirty_path`)
+proves the lifecycle dirty-tree guard that `td fill --apply` runs before
+staging: a dirty edit anywhere outside the active marker's declared source
+path is rejected before anything is touched (AC2), while a dirty edit to
+that marker's own source path is accepted, preserved through the adoption
+merge, and lands in the same normal marker-fill commit as the tracker
+update, leaving the working tree clean (AC1). All real-binary fixtures in
+this file now also seed `[agentic_workflow.issue_platform] type = "local"`
+in `aw.toml` and pass `AW_FIXTURE_LOCAL_BACKEND=1` to every spawned `aw`
+command, since #1921 made `guard_issue_mutation` resolve the configured
+issue backend unconditionally on every mutating `aw td`/`aw wi` verb.
+
 ### Symbols
 
 No public AST symbols.
@@ -492,7 +505,16 @@ async fn test_apply_marker_replaces_block() {
     }
     std::fs::write(root.join("README.md"), "seed\n").unwrap();
     std::fs::create_dir_all(root.join(".aw")).unwrap();
-    std::fs::write(root.join("aw.toml"), "").unwrap();
+    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
+    // backend unconditionally via `guard_issue_mutation`, so this fully
+    // offline sandbox needs a resolvable `local` backend, gated behind the
+    // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
+    // set on every spawned `aw` command below.
+    std::fs::write(
+        root.join("aw.toml"),
+        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
+    )
+    .unwrap();
     let existing_crate = root.join("crates/existing/src/lib.rs");
     std::fs::create_dir_all(existing_crate.parent().unwrap()).unwrap();
     std::fs::write(existing_crate, "pub fn existing_crate() {}\n").unwrap();
@@ -606,6 +628,7 @@ async fn test_apply_marker_replaces_block() {
         .arg("fill")
         .arg(slug)
         .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
         .expect("run aw td fill (brief)");
     let brief_stdout = String::from_utf8_lossy(&brief_output.stdout);
@@ -673,6 +696,7 @@ async fn test_apply_marker_replaces_block() {
         .arg("--marker")
         .arg(&first_marker_id)
         .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
         .expect("run aw td fill --apply for app marker");
     let app_apply_stdout = String::from_utf8_lossy(&app_apply_output.stdout);
@@ -702,6 +726,7 @@ async fn test_apply_marker_replaces_block() {
     let lib_apply_output = Command::new(&aw_bin)
         .args(["td", "fill", slug, "--apply", "--marker", "lib-marker"])
         .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
         .output()
         .expect("run aw td fill --apply for lib marker");
     let lib_apply_stdout = String::from_utf8_lossy(&lib_apply_output.stdout);
@@ -760,6 +785,270 @@ async fn test_apply_marker_replaces_block() {
         !root.join(".aw/payloads").exists(),
         "apply must never write payload state under the repo's .aw/payloads/"
     );
+}
+
+/// #1901 AC1/AC2: the lifecycle dirty-tree guard that `td fill --apply` runs
+/// before staging the current target must permit a dirty edit to the active
+/// marker's own declared source path (the implementation diff an adoption
+/// payload is meant to carry) while still rejecting a dirty edit anywhere
+/// else in the tree.
+#[tokio::test]
+async fn test_apply_permits_current_marker_dirty_source_but_rejects_unrelated_dirty_path() {
+    use agentic_workflow::issues::types::{td_phase, IssueType};
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["init", "-b", "project-test"])
+        .status()
+        .expect("git init");
+    for (k, v) in [
+        ("user.email", "test@test"),
+        ("user.name", "test"),
+        ("commit.gpgsign", "false"),
+    ] {
+        Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["config", k, v])
+            .status()
+            .unwrap();
+    }
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    std::fs::create_dir_all(root.join(".aw")).unwrap();
+    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
+    // backend unconditionally via `guard_issue_mutation`, so this fully
+    // offline sandbox needs a resolvable `local` backend, gated behind the
+    // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
+    // set on every spawned `aw` command below.
+    std::fs::write(
+        root.join("aw.toml"),
+        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
+    )
+    .unwrap();
+
+    // A single pre-existing XML HANDWRITE marker with an existing body —
+    // exactly the #1900 adoption shape.
+    let marker_rel = "crates/existing/src/lib.rs";
+    let marker_path = root.join(marker_rel);
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &marker_path,
+        "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn existing() { 1; }\n\
+// </HANDWRITE>\n",
+    )
+    .unwrap();
+
+    let spec_rel = ".aw/tech-design/specs/demo.md";
+    let spec_content = format!(
+        "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {marker_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
+    );
+    let spec_dir = root.join(".aw/tech-design/specs");
+    std::fs::create_dir_all(&spec_dir).unwrap();
+    std::fs::write(spec_dir.join("demo.md"), spec_content).unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "seed"])
+        .status()
+        .unwrap();
+
+    let slug = "cb-fill-adoption-dirty-guard-test";
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![format!("phase:{}", td_phase::CB_GENNED)],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: vec![spec_rel.to_string()],
+        phase: Some(td_phase::CB_GENNED.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed open issue");
+
+    // Brief mode from a clean tree enumerates the single adoption marker and
+    // (as an adoption payload) auto-initializes its payload to the adopt
+    // sentinel — no payload write needed before apply.
+    let brief_output = Command::new(&aw_bin)
+        .args(["td", "fill", slug])
+        .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
+        .output()
+        .expect("run aw td fill (brief)");
+    assert!(
+        brief_output.status.success(),
+        "brief mode should exit 0:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&brief_output.stdout),
+        String::from_utf8_lossy(&brief_output.stderr)
+    );
+    let brief_envelope: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&brief_output.stdout).trim())
+            .expect("brief envelope is valid JSON");
+    let marker_id = brief_envelope["invoke"]["args"]["marker_list"][0]["id"]
+        .as_str()
+        .expect("marker_list[0].id present")
+        .to_string();
+
+    // AC2: dirty an unrelated untracked file, then attempt apply. The
+    // lifecycle dirty-tree guard must still reject it before touching the
+    // marker source or committing anything.
+    let unrelated_path = root.join("unrelated.txt");
+    std::fs::write(&unrelated_path, "not part of this marker\n").unwrap();
+
+    let rejected_output = Command::new(&aw_bin)
+        .args(["td", "fill", slug, "--apply", "--marker", &marker_id])
+        .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
+        .output()
+        .expect("run aw td fill --apply with an unrelated dirty file");
+    assert!(
+        !rejected_output.status.success(),
+        "apply must reject an unrelated dirty path instead of applying:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&rejected_output.stdout),
+        String::from_utf8_lossy(&rejected_output.stderr)
+    );
+    let rejected_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&rejected_output.stdout),
+        String::from_utf8_lossy(&rejected_output.stderr)
+    );
+    assert!(
+        rejected_combined.contains("dirty"),
+        "rejection must explain the dirty-tree guard, got:\n{}",
+        rejected_combined
+    );
+    let unchanged_marker_source =
+        std::fs::read_to_string(&marker_path).expect("read marker source after rejected apply");
+    assert!(
+        unchanged_marker_source.contains("tracker=\"pending-tracker\""),
+        "a rejected apply must never touch the marker source, got:\n{}",
+        unchanged_marker_source
+    );
+
+    std::fs::remove_file(&unrelated_path).unwrap();
+
+    // AC1: dirty only the active marker's own declared source path — the
+    // bounded implementation edit an adoption payload is meant to carry —
+    // then apply. It must be accepted and folded into the normal lifecycle
+    // commit alongside the tracker update.
+    std::fs::write(
+        &marker_path,
+        "// <HANDWRITE gap=\"missing-generator:logic\" tracker=\"pending-tracker\" reason=\"fixture\">\n\
+pub fn existing() { 42; }\n\
+// </HANDWRITE>\n",
+    )
+    .unwrap();
+
+    let accepted_output = Command::new(&aw_bin)
+        .args(["td", "fill", slug, "--apply", "--marker", &marker_id])
+        .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
+        .output()
+        .expect("run aw td fill --apply with a dirty current-marker source file");
+    assert!(
+        accepted_output.status.success(),
+        "apply must accept a dirty current-marker source path:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&accepted_output.stdout),
+        String::from_utf8_lossy(&accepted_output.stderr)
+    );
+
+    let adopted_source =
+        std::fs::read_to_string(&marker_path).expect("read marker source after accepted apply");
+    assert!(
+        adopted_source.contains("pub fn existing() { 42; }"),
+        "the author's dirty implementation edit must survive the adoption apply, got:\n{}",
+        adopted_source
+    );
+    assert!(
+        adopted_source.contains(&format!("tracker=\"#{slug}\"")),
+        "the adoption apply must still bind the marker tracker to the work item, got:\n{}",
+        adopted_source
+    );
+
+    // The dirty source path and the lifecycle state landed in the same
+    // commit: the working tree is clean again, and the last commit's stat
+    // includes the marker source path.
+    let status_output = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git status after accepted apply");
+    assert!(
+        String::from_utf8_lossy(&status_output.stdout)
+            .trim()
+            .is_empty(),
+        "the marker-fill commit must stage the accepted source diff and lifecycle state together, \
+         leaving the tree clean:\n{}",
+        String::from_utf8_lossy(&status_output.stdout)
+    );
+    let show_output = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--stat", "HEAD"])
+        .output()
+        .expect("git show --stat HEAD");
+    assert!(
+        String::from_utf8_lossy(&show_output.stdout).contains(marker_rel),
+        "the normal marker-fill commit must include the accepted marker source path, got:\n{}",
+        String::from_utf8_lossy(&show_output.stdout)
+    );
+
+    let filled_issue = backend
+        .get(slug)
+        .await
+        .expect("read filled issue")
+        .expect("filled issue remains");
+    assert_eq!(filled_issue.phase.as_deref(), Some(td_phase::CB_FILLED));
 }
 
 #[test]
