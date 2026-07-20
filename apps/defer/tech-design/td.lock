@@ -2,16 +2,22 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-20T19:53:38.983479+00:00"
-digest = "sha256:f91728def3f1ca7bf38508d983764a8ae7f857c8923e361eb323c8cc6b570e39"
-source_digest = "sha256:f91728def3f1ca7bf38508d983764a8ae7f857c8923e361eb323c8cc6b570e39"
-ir_digest = "sha256:9b192fc2cfbe0629c153f6a2f57d5a2fb5036558e90a75f2c3bd13eb7eb01f9f"
+generated_at = "2026-07-20T20:57:48.065470+00:00"
+digest = "sha256:685bb57ca4bc0c6e15141249fff40784febcb249c3cdea9618aa4cf2278567d0"
+source_digest = "sha256:685bb57ca4bc0c6e15141249fff40784febcb249c3cdea9618aa4cf2278567d0"
+ir_digest = "sha256:61200fd5b9174f74db43d644b7b539f109fe8ab3deb751f848a9aa61738b5d26"
 
 [[files]]
 path = "README.md"
 digest = "sha256:d751d129601932cd50c6492284779c36ea6082d916a4a98231fb25a89ad416f1"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "interfaces/cli/close-capability-claim-cli-interface-defer-cli-convention-and-ta.md"
+digest = "sha256:d1abd62d41f6d8955aa7f6be039ffc142a7608c8296ac4c3f8960df650f3b25d"
+ir_digest = "sha256:b3baa453f999dd40c4e142c01d5b2d6b41188405e1efbe3bb69f8cd45105d0dd"
+section_count = 3
 
 [[files]]
 path = "logic/core-scheduler-priority-rate-dispatch.md"
