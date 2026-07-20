@@ -1,6 +1,31 @@
 ---
 id: '2175'
-summary: (fill)
+summary: Align Relay security-hardening with Lumen's SecurityTool contract and replace static-only evidence with executable auth, admission, untrusted peer TLS, Kubernetes posture, and last-known-good rotation journeys.
+capability_refs:
+  - id: security-hardening
+    role: primary
+    gap: bearer-auth-token-registry
+    claim: bearer-auth-token-registry
+    coverage: full
+    rationale: Valid and invalid live-rotation evidence proves the shared registry remains usable without restarting Relay.
+  - id: security-hardening
+    role: primary
+    gap: guard-static-runtime-evidence
+    claim: guard-static-runtime-evidence
+    coverage: full
+    rationale: The guard tool contract now attaches meter evidence from the full dynamic Relay security suite rather than relay_core.
+  - id: security-hardening
+    role: primary
+    gap: request-limit-and-malformed-frame-negative-tests
+    claim: request-limit-and-malformed-frame-negative-tests
+    coverage: full
+    rationale: Bearer and subject authorization plus bounded write admission execute as required behavior and negative evidence.
+  - id: security-hardening
+    role: primary
+    gap: network-policy-and-peer-mtls-termination
+    claim: network-policy-and-peer-mtls-termination
+    coverage: full
+    rationale: Required peer mTLS rejects an attacker-CA identity and static Kubernetes assertions close the deployment boundary.
 fill_sections: [logic, changes, unit-test]
 ---
 
