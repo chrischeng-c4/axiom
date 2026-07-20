@@ -55,6 +55,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | stateful-service-workload-projection | change | #769 | planned | planned | none | pending stateful service workload projection |
+| beam-single-node-durable-state | change | #2149 | planned | planned | none | pending atomic serve state recovery |
 
 ### CLI Interface
 
