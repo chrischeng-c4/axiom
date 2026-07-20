@@ -108,7 +108,6 @@ changes:
     impl_mode: hand-written
     description: Replace the bootstrap true gate with the desktop launch-smoke verification command.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
