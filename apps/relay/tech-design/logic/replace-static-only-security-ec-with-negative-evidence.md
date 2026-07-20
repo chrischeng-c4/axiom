@@ -100,6 +100,12 @@ changes:
     impl_mode: hand-written
     anchor: trusted_relay_peers_replicate_messages_over_mtls
     description: Generalize the material fixture so identity and trust authorities can differ, then bind a required-mTLS server to an ephemeral listener and assert its accept seam rejects a client identity signed by a second CA even though that client trusts the real server CA.
+  - path: apps/relay/tests/direct_k8s_assets.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: direct_base_is_a_restricted_durable_singleton
+    description: Assert non-root/seccomp/capability-drop container posture, read-only projected registry credentials, NetworkPolicy ingress and peer-port boundaries, and the absence of voter HPA in the production composition.
   - path: apps/relay/README.md
     action: modify
     section: logic

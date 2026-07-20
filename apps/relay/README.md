@@ -48,7 +48,7 @@ remain first-class domain roots.
 | Competitive Broker Feature Parity | - | implemented | verified | dogfood | ready | RabbitMQ/NATS JetStream/Redis Streams work-queue replacement breadth plus real three-voter Kind failover |
 | Competitive Broker Performance | 125, #2172 | implemented | passing | dogfood | ready | release-mode measured fsync-always lifecycle envelope plus advisory real-service comparison harness; claims remain workload-scoped |
 | Long-Running Stability | - | implemented | verified | dogfood | ready | recovery, bounded retention, lease reclaim, graceful drain, backup, two-cycle failover, and fixed-state 60-second error/RSS/FD/thread/p99 soak |
-| Security Hardening | 1206 | implemented | passing | conformance | ready | audited live-rotation bearer RBAC, admission limits, real peer mTLS, restricted K8s pods, Secret projection, and NetworkPolicy |
+| Security Hardening | 1206, #2175 | implemented | passing | negative | ready | SecurityTool baseline with bearer/RBAC/admission rejection, untrusted peer-certificate rejection, last-known-good rotation, restricted pods, Secret projection, and NetworkPolicy |
 | HTTP/2 API List | 108 | implemented | passing | conformance | ready | concise HTTP/1.1+h2c producer, bidi consumer, compatibility worker, probe, metrics, OpenAPI, and offline spec surfaces |
 | Standard Operational Endpoints | 1205 | implemented | passing | conformance | ready | one-port `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` plus offline `relay spec` |
 | EC Gates Configured | 125 | implemented | passing | conformance | ready | aw.toml EC inventory, vat meter/guard runners, and external-contracts evidence stay wired |
@@ -215,28 +215,32 @@ Gate Inventory:
 ### Security Hardening
 
 ID: security-hardening
-Type: RuntimeTool
+Type: SecurityTool
 Surfaces: HTTP: queue-scoped bearer RBAC with audited live registry rotation and bounded admission; peers: dedicated reloadable mTLS listener; K8s: read-only Secret projection, restricted pods, PDB and ingress NetworkPolicy.
-EC Dimensions: security: `cd apps/relay && ../../target/debug/vat run guard-security` - guard-owned static/runtime evidence for the in-process opaque payload boundary; behavior: `cargo test -p relay --test auth` - bearer authn/z conformance and the tokenless probe boundary
-Root WI: 1206
+EC Dimensions: behavior: `cargo test -p relay --test auth --test service_admission -- --nocapture` - bearer 401/403, subject/stream RBAC, tokenless probes, and bounded 429 admission; security: `cargo test -p relay --test raft_peer_mtls --test direct_k8s_assets -- --nocapture` plus `cd apps/relay && ../../target/debug/vat run guard-security` - trusted/untrusted peer certificates, restricted pod/Secret/NetworkPolicy posture, and vat-isolated guard+dynamic evidence; stability: shared service-auth reload tests plus Relay live rotation and trusted peer replication retain last-known-good operation
+Root WI: #2175
 Status: auditing
-Required Verification: negative
+Required Verification: conformance, negative
 Promise:
 Keep Relay safe as a long-running broker: opaque payload boundaries, the shared
 bearer-token contract on the data plane (probes exempt), fail-fast peer-TLS
-material validation, and explicit negative gates for request limits and
+material validation, untrusted peer-certificate rejection, last-known-good
+credential rotation, and explicit negative gates for request limits and
 network policy before production readiness.
 Gate Inventory:
-- apps/relay/vat.toml; apps/relay/tests/auth.rs; apps/relay/src/auth.rs; apps/relay/src/peer_tls.rs; apps/relay/tests/relay_core.rs; apps/relay/tests/worker_loop.rs
+- apps/relay/vat.toml; apps/relay/tests/auth.rs; apps/relay/tests/service_admission.rs
+- apps/relay/tests/raft_peer_mtls.rs; apps/relay/tests/direct_k8s_assets.rs
+- apps/relay/src/auth.rs; apps/relay/src/peer_tls.rs; libs/service-auth/src/reload.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | opaque-payload-boundary | epic | - | implemented | passing | smoke | apps/relay/tests/relay_core.rs; apps/relay/tests/worker_loop.rs |
 | bearer-auth-token-registry | epic | 1206 | implemented | passing | conformance | apps/relay/tests/auth.rs; apps/relay/src/auth.rs |
 | peer-tls-material-validation | epic | 1209 | implemented | passing | conformance | apps/relay/src/peer_tls.rs; apps/relay/HA.md |
-| guard-static-runtime-evidence | epic | - | implemented | passing | negative | `cd apps/relay && ../../target/debug/vat run guard-security` (2026-07-17, exit 0); apps/relay/vat.toml#guard-security |
+| guard-static-runtime-evidence | epic | - | implemented | passing | negative | `cd apps/relay && ../../target/debug/vat run guard-security`; static scan plus unfiltered auth/admission/peer-mTLS/K8s meter evidence |
 | request-limit-and-malformed-frame-negative-tests | epic | - | implemented | passing | negative | apps/relay/tests/service_admission.rs plus HTTP/auth/consume negative coverage |
-| network-policy-and-peer-mtls-termination | epic | - | implemented | passing | conformance | apps/relay/tests/raft_peer_mtls.rs; apps/relay/tests/direct_k8s_assets.rs |
+| network-policy-and-peer-mtls-termination | epic | - | implemented | passing | conformance | trusted replication and attacker-CA rejection in apps/relay/tests/raft_peer_mtls.rs; restricted workload and policy assertions in apps/relay/tests/direct_k8s_assets.rs |
+| securitytool-negative-runtime-evidence | change | #2175 | implemented | passing | negative | behavior/security/stability EC cases and vat/guard dynamic dispatch close the independent false-green findings |
 
 ### HTTP/2 API List
 
