@@ -9,44 +9,53 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-context-provenance-applicability
+id: workbench-context-provenance
 entry: item
 nodes:
-  item: { kind: start, label: "provider-neutral context item" }
-  classify: { kind: process, label: "classify extracted, inferred, or ambiguous" }
-  resolve: { kind: process, label: "resolve confined file and optional span" }
-  valid: { kind: decision, label: "canonical source exists and span is valid?" }
-  canonical: { kind: process, label: "emit canonical source navigation" }
-  unavailable: { kind: process, label: "emit visible non-authoritative state" }
-  label: { kind: process, label: "disclose provider and derivation inputs" }
-  done: { kind: terminal, label: "read-only provenance view" }
+  item: { kind: start, label: "ContextProvenanceItem with provider and classification" }
+  root: { kind: process, label: "canonicalize selected root" }
+  next: { kind: decision, label: "source input remains?" }
+  lexical: { kind: decision, label: "relative path and ordered non-zero span?" }
+  canonicalize: { kind: process, label: "canonicalize existing file" }
+  confined: { kind: decision, label: "file remains below root?" }
+  record: { kind: process, label: "record canonical navigation" }
+  unavailable: { kind: process, label: "record missing or invalid reason without link" }
+  authority: { kind: process, label: "derive canonical, derived, or unavailable authority badge" }
+  done: { kind: terminal, label: "immutable ProvenanceView" }
 edges:
-  - { from: item, to: classify }
-  - { from: classify, to: resolve }
-  - { from: resolve, to: valid }
-  - { from: valid, to: canonical, label: "yes" }
-  - { from: valid, to: unavailable, label: "no" }
-  - { from: canonical, to: label }
-  - { from: unavailable, to: label }
-  - { from: label, to: done }
+  - { from: item, to: root }
+  - { from: root, to: next }
+  - { from: next, to: lexical, label: "yes" }
+  - { from: next, to: authority, label: "no" }
+  - { from: lexical, to: canonicalize, label: "yes" }
+  - { from: lexical, to: unavailable, label: "no" }
+  - { from: canonicalize, to: confined }
+  - { from: confined, to: record, label: "yes" }
+  - { from: confined, to: unavailable, label: "no" }
+  - { from: record, to: next }
+  - { from: unavailable, to: next }
+  - { from: authority, to: done }
 ---
 flowchart LR
-    item([Context item]) --> classify[Classify]
-    classify --> resolve[Resolve source/span]
-    resolve --> valid{Canonical?}
-    valid -->|Yes| canonical[Source navigation]
-    valid -->|No| unavailable[Non-authoritative state]
-    canonical --> label[Provider and inputs]
-    unavailable --> label
-    label --> done([Provenance view])
+    item([Provenance item]) --> root[Canonical root]
+    root --> next{Input?}
+    next -->|Yes| lexical{Safe path/span?}
+    lexical -->|Yes| canonicalize[Canonicalize file]
+    lexical -->|No| unavailable[Missing/invalid state]
+    canonicalize --> confined{Below root?}
+    confined -->|Yes| record[Canonical link]
+    confined -->|No| unavailable
+    record --> next
+    unavailable --> next
+    next -->|No| authority[Authority badge]
+    authority --> done([Provenance view])
 ```
 
-Create a provider-neutral provenance module below the renderer registry. It models a confined repository-relative file, optional one-based source span, provider identity, and extracted/inferred/ambiguous classification without importing any Graphify, wiki, AW, PTY, or cwd types. Graph-style EXTRACTED/INFERRED/AMBIGUOUS trust labels inform the closed classification vocabulary, while compiled wiki pages remain derived views over immutable canonical inputs.
+`ProviderIdentity` contains only stable string id and display label. `ProvenanceClassification` is the closed `Extracted | Inferred | Ambiguous` vocabulary. `SourcePosition` uses one-based line and column, `SourceSpan` requires an ordered non-zero inclusive start and exclusive end, and `SourceLocation` contains one repository-relative path plus an optional span. `ContextProvenanceItem::{extracted,inferred,ambiguous}` retains the provider and exact input locations without importing provider SDK types. All public data types are serializable so adapters can round-trip them without losing spans or classification.
 
-Resolution canonicalizes the selected root and requested source, rejects traversal and symlink escape, validates ordered non-zero spans, and distinguishes canonical, missing, and invalid states. Extracted items link only when their direct source resolves. Inferred items retain every input location and always carry a visible derived label; unavailable inputs are disclosed rather than replaced with fabricated links.
+`ContextProvenanceItem::resolve(root)` returns an immutable `ProvenanceView`. Each input becomes a `ResolvedSource` with `Canonical`, `Missing`, or `Invalid { reason }` status. Canonical resolution first validates lexical confinement and the span, canonicalizes root and an existing regular file, then rejects any symlink escape. Only canonical sources receive `ProvenanceNavigation { relative_path, span }`; missing/invalid inputs retain their requested location and reason but never a guessed link.
 
-The module is a pure read-only data and resolution boundary. It exposes no repository write, AW transition, provider invocation, or verification mutation; repository bytes and declared executable gates remain authoritative outside the provenance view.
-
+Authority derives independently from provider: an extracted item is `Canonical` only when its single direct source resolves, otherwise `Unavailable`; inferred and ambiguous items are always `Derived`, visibly labeled with classification, provider, input count, and any unavailable-input count. This keeps Graphify-style confidence disclosure and compiled-view source layering while repository bytes and executable verification evidence remain authoritative. Resolution uses metadata/canonicalization reads only and exposes no write, command execution, AW, GitHub, PTY, cwd, provider invocation, or approval surface.
 ## Changes
 <!-- type: changes lang: yaml -->
 
