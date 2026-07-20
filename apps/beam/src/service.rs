@@ -341,8 +341,8 @@ async fn create_collection(
     }
     let mut cs = CollectionState::new(Collection::new(req.name.clone(), req.dim, metric));
     cs.rebuild(&state.gpu);
-    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="persist collection">
-    persist_collection(&state, &req.name, &cs.collection);
+    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="persist collection">
+persist_collection(&state, &req.name, &cs.collection);
     // </HANDWRITE>
     registry.insert(req.name.clone(), cs);
 
