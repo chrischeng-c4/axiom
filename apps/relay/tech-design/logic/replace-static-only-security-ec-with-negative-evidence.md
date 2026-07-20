@@ -9,47 +9,61 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: relay-security-negative-evidence-applicability
-entry: rejected
+id: relay-security-negative-evidence-contract
+entry: request
 nodes:
-  rejected:
+  request:
     kind: start
-    label: "Independent review rejects static-only Relay security evidence"
-  shared:
+    label: "Relay security evidence command starts"
+  behavior:
+    kind: process
+    label: "Behavior runs bearer RBAC streaming authz and admission limits"
+  client:
+    kind: process
+    label: "Untrusted client trusts server CA but presents attacker-CA identity"
+  handshake:
     kind: decision
-    label: "Is a shared security mechanism missing?"
-  shared_wi:
-    kind: terminal
-    label: "Stop and route a separate lib WI"
-  classify:
+    label: "Required-mTLS server accepts client certificate"
+  reject:
     kind: process
-    label: "Align capability with Lumen SecurityTool dimensions"
-  negative:
+    label: "Server handshake rejects before HTTP and Raft routing"
+  k8s:
     kind: process
-    label: "Exercise Relay auth admission peer TLS and K8s rejection posture"
+    label: "Security case asserts restricted pods Secret projection and NetworkPolicy"
   stability:
     kind: process
-    label: "Exercise last-known-good rotation and trusted peer continuity"
-  done:
+    label: "Stability keeps last-known-good auth on invalid rotation and trusted peers usable"
+  guard:
+    kind: process
+    label: "Vat guard scan attaches non-zero meter evidence from dynamic cases"
+  fail:
     kind: terminal
-    label: "Behavior security and stability evidence fail closed"
+    label: "FAIL if untrusted peer is accepted or any journey is missing"
+  pass:
+    kind: terminal
+    label: "PASS behavior security and stability dimensions"
 edges:
-  - { from: rejected, to: shared }
-  - { from: shared, to: shared_wi, label: "yes" }
-  - { from: shared, to: classify, label: "no" }
-  - { from: classify, to: negative }
-  - { from: negative, to: stability }
-  - { from: stability, to: done }
+  - { from: request, to: behavior }
+  - { from: behavior, to: client }
+  - { from: client, to: handshake }
+  - { from: handshake, to: fail, label: "accepted" }
+  - { from: handshake, to: reject, label: "rejected" }
+  - { from: reject, to: k8s }
+  - { from: k8s, to: stability }
+  - { from: stability, to: guard }
+  - { from: guard, to: pass }
 ---
 flowchart TD
-    rejected[static-only EC rejected] --> shared{shared mechanism missing?}
-    shared -->|yes| shared_wi[separate lib WI]
-    shared -->|no| classify[SecurityTool contract]
-    classify --> negative[Relay negative journeys]
-    negative --> stability[rotation and peer stability]
-    stability --> done[fail-closed evidence]
+    request[security evidence] --> behavior[auth RBAC and admission]
+    behavior --> client[attacker identity trusts server]
+    client --> handshake{server accepts attacker cert?}
+    handshake -->|yes| fail[FAIL]
+    handshake -->|no| reject[reject before routing]
+    reject --> k8s[restricted K8s posture]
+    k8s --> stability[last-known-good rotation]
+    stability --> guard[vat guard plus dynamic meter]
+    guard --> pass[PASS dimensions]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
