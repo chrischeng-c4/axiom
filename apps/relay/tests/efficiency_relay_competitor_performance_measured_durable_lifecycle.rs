@@ -1,23 +1,25 @@
-// SPEC-MANAGED: apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-guard-scan
+// SPEC-MANAGED: apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-measured-durable-lifecycle
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec relay-security-hardening-guard-scan
-// @capability security-hardening
-// @claim guard-static-runtime-evidence
-// @contract relay-guard-security-report
-// @category security
+// @ec relay-competitor-performance-measured-durable-lifecycle
+// @capability competitor-performance
+// @claim normalized-win-ratchet-decision-model
+// @contract relay-measured-durable-lifecycle-envelope
+// @category efficiency
 // @required_for_production true
-// @command cd apps/relay && ../../target/debug/vat run guard-security
+// @command bash apps/relay/scripts/ec-evidence.sh performance-efficiency
 // AW-EC-END
 
-// Contract: guard scan over apps/relay reports no untriaged Docker, Kubernetes, or static security findings.
-// Contract: guard runs the fail-closed evidence driver before attaching Meter evidence from auth, admission, peer-mTLS, direct-Kubernetes, and service-auth reload suites; missing required names, zero execution, a failed control, or an outer-oracle self-test regression makes the runner fail.
-// Contract: The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.
+// Contract: A report-only child process uses temporary disk storage with FsyncPolicy::Always to publish and then lease/ack exactly 2,000 128-byte payloads in 100-message batches.
+// Contract: The child emits one machine-readable report containing non-zero elapsed time, at least 20 samples per phase, throughput, batch p95, acknowledgement counts, and error count; missing, malformed, zero-sample, incomplete, or error reports fail closed.
+// Contract: An independent parent parser requires publish and lease/ack throughput >= 500 messages/second and batch p95 <= 500,000 microseconds without calling Relay's perf_gate verdict helper.
+// Contract: A test-owned outer oracle first proves its own zero-test and missing-marker rejection, requires both ignored test names, then accepts only exactly one executed gate and exactly one relay_perf_gate report marker before Meter records the same release invocation.
+// Contract: RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly results remain advisory calibration; this local envelope does not assert an external-broker win.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn relay_security_hardening_guard_scan() {
-    let command = "cd apps/relay && ../../target/debug/vat run guard-security";
-    let id = "relay-security-hardening-guard-scan";
+fn relay_competitor_performance_measured_durable_lifecycle() {
+    let command = "bash apps/relay/scripts/ec-evidence.sh performance-efficiency";
+    let id = "relay-competitor-performance-measured-durable-lifecycle";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(

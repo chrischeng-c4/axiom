@@ -1,23 +1,23 @@
-// SPEC-MANAGED: apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-guard-scan
+// SPEC-MANAGED: apps/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-rotation-and-peer-stability
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec relay-security-hardening-guard-scan
+// @ec relay-security-hardening-rotation-and-peer-stability
 // @capability security-hardening
-// @claim guard-static-runtime-evidence
-// @contract relay-guard-security-report
-// @category security
+// @claim bearer-auth-token-registry
+// @contract relay-security-last-known-good-stability
+// @category stability
 // @required_for_production true
-// @command cd apps/relay && ../../target/debug/vat run guard-security
+// @command bash apps/relay/scripts/ec-evidence.sh security-stability
 // AW-EC-END
 
-// Contract: guard scan over apps/relay reports no untriaged Docker, Kubernetes, or static security findings.
-// Contract: guard runs the fail-closed evidence driver before attaching Meter evidence from auth, admission, peer-mTLS, direct-Kubernetes, and service-auth reload suites; missing required names, zero execution, a failed control, or an outer-oracle self-test regression makes the runner fail.
-// Contract: The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.
+// Contract: A valid registry rotation becomes visible without restarting Relay, invalid JSON/empty/read-failed rotations retain the last-known-good registry, and failure audit classes remain credential-free.
+// Contract: The trusted three-peer required-mTLS group remains able to elect, replicate, converge, and shut down after the negative certificate-rejection case is present.
+// Contract: The outer oracle requires all five reload tests plus the exact Relay rotation and trusted-peer tests, and each focused invocation must execute at least one test.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn relay_security_hardening_guard_scan() {
-    let command = "cd apps/relay && ../../target/debug/vat run guard-security";
-    let id = "relay-security-hardening-guard-scan";
+fn relay_security_hardening_rotation_and_peer_stability() {
+    let command = "bash apps/relay/scripts/ec-evidence.sh security-stability";
+    let id = "relay-security-hardening-rotation-and-peer-stability";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
