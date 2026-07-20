@@ -93,7 +93,6 @@ changes:
     impl_mode: hand-written
     description: Record provenance round-trip, confinement, labeling, and no-mutation verification rules.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
