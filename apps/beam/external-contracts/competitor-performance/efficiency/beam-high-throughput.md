@@ -73,7 +73,7 @@ tool_contracts:
     tool: meter
     manifest: meter-search-efficiency-ddd.toml
     category: efficiency
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter-ddd"
     native:
       version: 1
       project: beam
@@ -84,7 +84,7 @@ tool_contracts:
     tool: meter
     manifest: meter-search-efficiency-overlap.toml
     category: efficiency
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter-overlap"
     native:
       version: 1
       project: beam
@@ -95,7 +95,7 @@ tool_contracts:
     tool: meter
     manifest: meter-search-efficiency-ooc.toml
     category: efficiency
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter-ooc"
     native:
       version: 1
       project: beam
@@ -106,7 +106,7 @@ tool_contracts:
     tool: meter
     manifest: meter-search-efficiency-gpu.toml
     category: efficiency
-    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter-gpu"
     native:
       version: 1
       project: beam
