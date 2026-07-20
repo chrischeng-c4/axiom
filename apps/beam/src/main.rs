@@ -743,8 +743,8 @@ fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
         // Real HTTP/2 (h2c) vector-database service. Blocks until Ctrl-C/SIGTERM.
         Command::Serve(args) => {
             let addr = format!("{}:{}", args.host, args.port);
-            // <HANDWRITE gap="missing-generator:logic--6da9b12e" tracker="pending-tracker" reason="wire data_dir to serve call">
-            let data_path = args.data_dir.map(std::path::PathBuf::from);
+            // <HANDWRITE gap="missing-generator:logic--6da9b12e" tracker="#2149" reason="wire data_dir to serve call">
+let data_path = args.data_dir.map(std::path::PathBuf::from);
             block_on(beam::service::serve(&addr, data_path))?;
             // </HANDWRITE>
             Ok(ExitCode::SUCCESS)
