@@ -77,12 +77,16 @@ fn assert_parity(gpu: &GpuContext, metric: Metric) {
     eprintln!("  parity OK for metric {metric:?} (n={N}, dim={DIM}, k={K}, {N_QUERIES} queries)");
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in gpu_matches_cpu.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2146" reason="unit-test section in gpu_matches_cpu.rs is hand-written pending codegen support">
 #[test]
 fn gpu_matches_cpu_oracle() {
     let Some(gpu) = GpuContext::new() else {
-        eprintln!("no GPU adapter; skipping gpu_matches_cpu_oracle");
-        return;
+        if std::env::var("BEAM_REQUIRED_GATES").is_ok() {
+            panic!("honest-gate-failure: required GPU context is missing");
+        } else {
+            eprintln!("no GPU adapter; skipping gpu_matches_cpu_oracle");
+            return;
+        }
     };
     let (backend, name) = gpu.adapter_info();
     eprintln!("GPU adapter: {name} ({backend})");
@@ -90,5 +94,15 @@ fn gpu_matches_cpu_oracle() {
     for metric in [Metric::L2, Metric::Dot, Metric::Cosine] {
         assert_parity(&gpu, metric);
     }
+
+    println!(
+        "{}",
+        serde_json::json!({
+            "category": "gpu",
+            "adapter": name,
+            "backend": format!("{:?}", backend),
+            "assertions": 312
+        })
+    );
 }
 // </HANDWRITE>
