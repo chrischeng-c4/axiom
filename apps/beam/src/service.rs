@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 use anyhow::Context;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, State, Extension};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -100,6 +100,7 @@ pub struct AppState {
     pub registry: Registry,
     pub gpu: Option<Arc<GpuContext>>,
     pub data_dir: Option<std::path::PathBuf>,
+    pub auth: Arc<StaticRoleMapVerifier>,
 }
 
 fn persist_collection(state: &AppState, name: &str, col: &Collection) {
@@ -116,6 +117,76 @@ fn delete_collection_file(state: &AppState, name: &str) {
         let path = dir.join(format!("{}.bin", name));
         let _ = std::fs::remove_file(&path);
     }
+}
+
+// --- Auth Config & Helpers ---
+pub const AUTH_MODE_ENV: &str = "BEAM_AUTH";
+pub const TOKEN_REGISTRY_FILE_ENV: &str = "BEAM_TOKEN_REGISTRY_FILE";
+pub const LEGACY_TOKENS_ENV: &str = "BEAM_TOKENS";
+
+#[derive(Debug, Clone)]
+pub struct AuthConfig {
+    pub required: bool,
+    pub tokens: HashMap<String, TokenClaims>,
+}
+
+impl AuthConfig {
+    pub fn open() -> Self {
+        Self {
+            required: false,
+            tokens: HashMap::new(),
+        }
+    }
+
+    pub fn resolve(
+        mode: &str,
+        registry_file: Option<&str>,
+        legacy_tokens_json: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let required = match mode.trim().to_ascii_lowercase().as_str() {
+            "required" => true,
+            "" | "off" | "disabled" => false,
+            other => anyhow::bail!(
+                "{AUTH_MODE_ENV} (--auth) must be `off`, `disabled`, or `required`; got `{other}`"
+            ),
+        };
+        let tokens = service_auth::load_registry(
+            required,
+            TOKEN_REGISTRY_FILE_ENV,
+            registry_file,
+            LEGACY_TOKENS_ENV,
+            legacy_tokens_json,
+        )?;
+        Ok(Self { required, tokens })
+    }
+
+    pub fn verifier(&self) -> StaticRoleMapVerifier {
+        StaticRoleMapVerifier::new(self.required, self.tokens.clone())
+    }
+}
+
+use service_auth::{Role, RoleMapPrincipal, StaticRoleMapVerifier, TokenClaims};
+
+#[allow(dead_code)]
+fn unauthorized_err(message: impl Into<String>) -> ApiErr {
+    ApiErr::new(StatusCode::UNAUTHORIZED, "unauthorized", message)
+}
+
+fn forbidden_err(message: impl Into<String>) -> ApiErr {
+    ApiErr::new(StatusCode::FORBIDDEN, "forbidden", message)
+}
+
+fn authorize(
+    principal: &RoleMapPrincipal,
+    resource: &str,
+    needed: Role,
+) -> Result<(), ApiErr> {
+    principal.ensure(resource, needed).map_err(|denied| {
+        forbidden_err(format!(
+            "subject `{}` lacks {:?} on `{}`",
+            denied.subject, denied.needed, denied.resource
+        ))
+    })
 }
 // </HANDWRITE>
 
@@ -320,8 +391,10 @@ fn payload_to_map(payload: &Payload) -> BTreeMap<String, serde_json::Value> {
 )]
 async fn create_collection(
     State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Json(req): Json<CreateCollectionReq>,
 ) -> Result<Response, ApiErr> {
+    authorize(&principal, &req.name, Role::Write)?;
     let metric = Metric::parse(&req.metric).ok_or_else(|| {
         bad_request_err(format!(
             "unknown metric `{}` (expected l2|dot|cosine)",
@@ -362,7 +435,13 @@ persist_collection(&state, &req.name, &cs.collection);
         (status = 200, description = "Collections listed successfully", body = inline(Vec<CollectionInfo>))
     )
 )]
-async fn list_collections(State(state): State<AppState>) -> Response {
+async fn list_collections(
+    State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
+) -> Response {
+    if let Err(deny) = authorize(&principal, "*", Role::Read) {
+        return deny.into_response();
+    }
     let registry = state.registry.read().expect("registry lock poisoned");
     let mut collections: Vec<CollectionInfo> = registry
         .iter()
@@ -389,8 +468,10 @@ async fn list_collections(State(state): State<AppState>) -> Response {
 )]
 async fn drop_collection(
     State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(name): Path<String>,
 ) -> Result<Response, ApiErr> {
+    authorize(&principal, &name, Role::Write)?;
     let mut registry = state.registry.write().expect("registry lock poisoned");
     if registry.remove(&name).is_some() {
         // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="delete collection file">
@@ -420,9 +501,11 @@ delete_collection_file(&state, &name);
 )]
 async fn upsert_vectors(
     State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(name): Path<String>,
     Json(req): Json<UpsertReq>,
 ) -> Result<Response, ApiErr> {
+    authorize(&principal, &name, Role::Write)?;
     let mut registry = state.registry.write().expect("registry lock poisoned");
     let cs = registry
         .get_mut(&name)
@@ -474,8 +557,10 @@ persist_collection(&state, &name, &cs.collection);
 )]
 async fn delete_vector(
     State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path((name, id)): Path<(String, String)>,
 ) -> Result<Response, ApiErr> {
+    authorize(&principal, &name, Role::Write)?;
     let mut registry = state.registry.write().expect("registry lock poisoned");
     let cs = registry
         .get_mut(&name)
@@ -512,9 +597,11 @@ persist_collection(&state, &name, &cs.collection);
 )]
 async fn query_collection(
     State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     Path(name): Path<String>,
     Json(req): Json<QueryReq>,
 ) -> Result<Response, ApiErr> {
+    authorize(&principal, &name, Role::Read)?;
     let QueryReq {
         vector,
         k,
@@ -568,7 +655,11 @@ async fn query_collection(
         (status = 500, description = "Internal error", body = ErrorEnvelope)
     )
 )]
-async fn admin_backup(State(state): State<AppState>) -> Result<Response, ApiErr> {
+async fn admin_backup(
+    State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
+) -> Result<Response, ApiErr> {
+    authorize(&principal, "*", Role::Admin)?;
     let registry = state.registry.read().expect("registry lock poisoned");
     let mut collections = HashMap::new();
     for (name, cs) in registry.iter() {
@@ -596,8 +687,10 @@ async fn admin_backup(State(state): State<AppState>) -> Result<Response, ApiErr>
 )]
 async fn admin_restore(
     State(state): State<AppState>,
+    Extension(principal): Extension<RoleMapPrincipal>,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiErr> {
+    authorize(&principal, "*", Role::Admin)?;
     let snap = crate::persist::BeamSnapshot::decode(&body)
         .map_err(|e| bad_request_err(format!("invalid snapshot body: {e}")))?;
 
@@ -676,21 +769,23 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 
 // -- Assembly + serve ------------------------------------------------------
 
-// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="router with state and data_dir support">
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2150" reason="router with state and data_dir support">
 pub fn router(gpu: Option<Arc<GpuContext>>) -> Router {
     let registry = Arc::new(RwLock::new(HashMap::new()));
-    router_with_state(registry, gpu, None)
+    router_with_state(registry, gpu, None, Arc::new(StaticRoleMapVerifier::open()))
 }
 
 pub fn router_with_state(
     registry: Registry,
     gpu: Option<Arc<GpuContext>>,
     data_dir: Option<std::path::PathBuf>,
+    auth: Arc<StaticRoleMapVerifier>,
 ) -> Router {
     let state = AppState {
         registry,
         gpu,
         data_dir,
+        auth: auth.clone(),
     };
     let data_plane = Router::new()
         .route(
@@ -706,6 +801,11 @@ pub fn router_with_state(
         .route("/v1/collections/{name}/query", post(query_collection))
         .route("/admin/backup", get(admin_backup))
         .route("/admin/restore", post(admin_restore))
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth,
+            service_auth::auth_middleware::<StaticRoleMapVerifier>,
+        ))
         .with_state(state);
 
     let drain = Arc::new(server_lifecycle::DrainController::new());
@@ -733,10 +833,10 @@ pub async fn serve_on(
     service_http::serve(listener, app, shutdown).await;
 }
 
-// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="serve with data_dir recovery support">
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2150" reason="serve with data_dir recovery support">
 /// Run the vector-database service: acquire the GPU (if any), bind `addr`, print
 /// the bound address, load registry from data_dir if configured, and serve the REST API until Ctrl-C / SIGTERM.
-pub async fn serve(addr: &str, data_dir: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+pub async fn serve(addr: &str, data_dir: Option<std::path::PathBuf>, auth_config: AuthConfig) -> anyhow::Result<()> {
     let gpu = GpuContext::new().map(Arc::new);
     match &gpu {
         Some(ctx) => {
@@ -768,6 +868,7 @@ pub async fn serve(addr: &str, data_dir: Option<std::path::PathBuf>) -> anyhow::
     }
 
     let registry = Arc::new(RwLock::new(registry_map));
+    let auth = Arc::new(auth_config.verifier());
 
     let listener = TcpListener::bind(addr)
         .await
@@ -776,7 +877,7 @@ pub async fn serve(addr: &str, data_dir: Option<std::path::PathBuf>) -> anyhow::
     println!("beam serving on http://{bound}");
 
     let shutdown = service_http::wait_shutdown_signal();
-    serve_on(listener, router_with_state(registry, gpu, data_dir), shutdown).await;
+    serve_on(listener, router_with_state(registry, gpu, data_dir, auth), shutdown).await;
     Ok(())
 }
 // </HANDWRITE>
