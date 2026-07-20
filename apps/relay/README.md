@@ -365,11 +365,12 @@ raft, peer-security, and Kubernetes mechanisms while keeping product policy in
 Relay's existing durable-log, work-queue, HA, security, and deployment roots.
 This root is an integration map, not a second copy of those domain contracts.
 Gate Inventory:
-- apps/relay/aw.toml; apps/relay/k8s; apps/relay/HA.md; apps/relay/tests/durable.rs; apps/relay/tests/raft_persistence.rs; apps/relay/tests/raft_cluster.rs; apps/relay/tests/backup.rs; apps/relay/tests/auth.rs
+- libs/raft-runtime; libs/service-backup; libs/service-auth; libs/service-k8s
+- apps/relay/aw.toml; apps/relay/k8s; apps/relay/HA.md; apps/relay/tests/durable.rs; apps/relay/tests/raft_persistence.rs; apps/relay/tests/raft_cluster.rs; apps/relay/tests/backup.rs; apps/relay/tests/auth.rs; apps/relay/tests/direct_k8s_assets.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| relay-stateful-service-workload | epic | 1555 | implemented | passing | conformance | Shared: libs/service-durability, libs/service-backup, libs/raft-host, libs/service-tls, libs/operator. Relay policy: Durable Ordered Log, Work Queue Lifecycle, Primary Replicas, Raft HA, Security Hardening, Kubernetes-Native Deployment, and Long-Running Stability sections above. |
+| relay-stateful-service-workload | epic | 1555 | implemented | passing | conformance | Shared: libs/raft-runtime, libs/service-backup, libs/service-auth, and libs/service-k8s. Relay policy: Durable Ordered Log, Work Queue Lifecycle, Primary Replicas, Raft HA, Security Hardening, Kubernetes-Native Deployment, and Long-Running Stability sections above. |
 
 ### Durable Ordered Log
 
