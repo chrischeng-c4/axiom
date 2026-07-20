@@ -34,7 +34,7 @@ impl Drop for KafkaContainer {
     }
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2159" reason="unit-test section in tape_vs_kafka.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in tape_vs_kafka.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "release-only mandatory competitor gate; run via Tape EC"]
 async fn tape_beats_kafka_on_local_backlog_replay() {
@@ -67,6 +67,7 @@ async fn tape_beats_kafka_on_local_backlog_replay() {
     drop(tape);
     drop(container);
 }
+// </HANDWRITE>
 
 async fn kafka_replay_us(bootstrap: &str, events: usize, payload: String) -> u128 {
     let client = ClientBuilder::new(vec![bootstrap.to_string()])
