@@ -3635,6 +3635,20 @@ changes:
       adaptation. The public unscoped `aw ec verify` default is unchanged and
       still runs all configured cases when an operator explicitly wants the
       advisory suite.
+      #1799: `ensure_ec_review_payload` no longer rewrites an existing
+      payload file when its `version`/`project`/`source_digest` mismatch the
+      current manifest — it now only scaffolds the blank pending template
+      when nothing exists yet at the target path, so a populated payload
+      (any decision, checklist, or digest) is never silently clobbered back
+      to pending before `run_review` evaluates it. A stale digest is still
+      caught and reported by `validate_ec_review_payload`'s existing
+      "EC review payload is stale; rerun `aw ec review`" error, so staleness
+      stays visible instead of being masked by a silent reset.
+      `run_review` also stops calling `ensure_ec_review_payload` at all when
+      `--evidence-file` names caller-supplied evidence: that path is read
+      as-is via `read_ec_review_record` and is never auto-initialized or
+      rewritten, so a populated `--evidence-file` payload is guaranteed to
+      be evaluated exactly as submitted.
     impl_mode: hand-written
   - path: "apps/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -4541,5 +4555,23 @@ changes:
       doc; the canonical phrasing lives in CAPABILITIES.md and the TD
       contracts). README stays in the removed-semantics negative loop so
       it can never re-advertise retired architecture.
+    impl_mode: hand-written
+  - path: "apps/agentic-workflow/src/cli/capability.rs"
+    action: modify
+    section: schema
+    description: |
+      Issue #1800: `lifecycle_action_for_work_item` (the routing table both
+      `aw goal capability`'s bounded-tick rollup and its per-capability
+      root share, via `choose_next_action`/`capability_envelope`) trusted
+      an active WI's cached `CapabilityWiEvidence.phase` even when the
+      tracker had already closed that same issue, so a stale local phase
+      (e.g. `cb_genned` left over from before close) could still drive
+      `aw td fill <id>` against a WI the backend now reports 404 for. A new
+      early check in `lifecycle_action_for_work_item` excludes any evidence
+      whose `state == "closed"` from every phase/`expected_command`
+      dispatch branch and routes to the existing `ReconcileWiRefs` (`aw wi
+      plan --project <p>`) remediation instead, with a reason naming the
+      closed-issue exclusion so the loop never re-emits an unexecutable
+      command for a WI that is actually closed.
     impl_mode: hand-written
 ```
