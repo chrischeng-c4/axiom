@@ -57,7 +57,6 @@ flowchart TD
     zip_sort --> truncate_k[Truncate to k]
     truncate_k --> success([Return success])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
