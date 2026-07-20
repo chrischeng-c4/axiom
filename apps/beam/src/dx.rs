@@ -135,6 +135,7 @@ fn replace_operator_namespace(input: &str, namespace: &str) -> String {
     out
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in dx.rs is hand-written pending codegen support">
 pub fn render_instance_yaml(
     profile: &str,
     name: &str,
@@ -190,3 +191,4 @@ spec:
 "#
     )
 }
+// </HANDWRITE>
