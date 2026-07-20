@@ -733,7 +733,7 @@ pub async fn serve_on(
     service_http::serve(listener, app, shutdown).await;
 }
 
-// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="serve with data_dir recovery support">
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="serve with data_dir recovery support">
 /// Run the vector-database service: acquire the GPU (if any), bind `addr`, print
 /// the bound address, load registry from data_dir if configured, and serve the REST API until Ctrl-C / SIGTERM.
 pub async fn serve(addr: &str, data_dir: Option<std::path::PathBuf>) -> anyhow::Result<()> {
