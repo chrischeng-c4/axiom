@@ -3935,7 +3935,7 @@ fn contains_top_level_comma(s: &str) -> bool {
 }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Rewrites `<exports_obj>.key = <RHS>;` to
 /// `var __jx_<m>_<key> = <RHS>; <exports_obj>.key = __jx_<m>_<key>;` for
 /// every flat-region export assignment whose RHS is a non-identifier but
