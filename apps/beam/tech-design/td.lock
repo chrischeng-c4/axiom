@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T13:42:08.173131+00:00"
-digest = "sha256:fcce45e36f4f2a2b13133c97359cc4d98fa3097fa3d30009e2861c860c566588"
-source_digest = "sha256:fcce45e36f4f2a2b13133c97359cc4d98fa3097fa3d30009e2861c860c566588"
-ir_digest = "sha256:a17dc86b82e1e032ca48baafa4df2bfc27199c8f5f21973d8766a23e07c41233"
+generated_at = "2026-07-20T13:42:30.053318+00:00"
+digest = "sha256:d79d42f472ddaadc7a97fa5795949a310792219f167df6ae464c707a71434e04"
+source_digest = "sha256:d79d42f472ddaadc7a97fa5795949a310792219f167df6ae464c707a71434e04"
+ir_digest = "sha256:a09e299018e544c260f7de110e83de116ff530ef71660b7d18275edf9ea6dd61"
 
 [[files]]
 path = "README.md"
@@ -39,8 +39,8 @@ section_count = 3
 
 [[files]]
 path = "logic/persist-serve-state-atomically-and-recover-across-restart.md"
-digest = "sha256:d38e32c6f02d56ffd11adbb7dc4000ebcbdb251b14f80bbbaa810d3892ab6c3b"
-ir_digest = "sha256:13133b5e641bf147b2698ea29d978fb92a80d7efe41f8d4242bc048c38702d21"
+digest = "sha256:b805b8ab781b3e2a9a5d415a9fc0ee9fa724a5dbf084aa6acf39ffd171bc0465"
+ir_digest = "sha256:d938588947efc5418131a90d17b5e4343dc15006fe63add05ef2e70628c46900"
 section_count = 3
 
 [[files]]
