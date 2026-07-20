@@ -52,12 +52,12 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: K8sOperatorCmd::Run
+    anchor: dispatch
   - path: apps/beam/src/dx.rs
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: pub fn render_instance_yaml
+    anchor: render_instance_yaml
   - path: apps/beam/src/operator/mod.rs
     action: create
     section: logic
@@ -77,7 +77,6 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
