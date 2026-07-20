@@ -41,3 +41,28 @@ flowchart TD
     check_read_length -->|No| return_short_read([Return StorageError::ShortRead])
     check_read_length -->|Yes| done([Return valid bytes])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/beam/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+  - path: apps/beam/src/domain/ports.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: "VectorRepository"
+  - path: apps/beam/src/infrastructure/io_uring_repo.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: "IoUringVectorRepository"
+  - path: apps/beam/tests/io_uring_repository.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+```
