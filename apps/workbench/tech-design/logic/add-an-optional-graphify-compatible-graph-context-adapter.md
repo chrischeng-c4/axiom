@@ -110,7 +110,6 @@ changes:
     impl_mode: hand-written
     description: Record compatibility schema limits, provenance, sentinel isolation, failure, and read-only verification rules.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
