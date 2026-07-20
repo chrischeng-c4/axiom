@@ -231,6 +231,7 @@ struct BenchArgs {
     persist: Option<String>,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in main.rs is hand-written pending codegen support">
 /// `beam serve` flags.
 #[derive(Args)]
 pub struct ServeArgs {
@@ -247,6 +248,7 @@ pub struct ServeArgs {
     #[arg(long, env = "BEAM_GRACE_SECS", default_value_t = 30)]
     grace_secs: u64,
 }
+// </HANDWRITE>
 
 /// `beam spec` flags.
 #[derive(Args)]

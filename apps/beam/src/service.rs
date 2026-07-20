@@ -91,6 +91,7 @@ impl CollectionState {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in service.rs is hand-written pending codegen support">
 /// Shared handler state: the registry plus the optional GPU context used to
 /// (re)build indexes. Cheap to clone (both fields are `Arc`-backed).
 #[derive(Clone)]
@@ -98,6 +99,7 @@ pub struct AppState {
     registry: Registry,
     gpu: Option<Arc<GpuContext>>,
 }
+// </HANDWRITE>
 
 // -- Wire types ------------------------------------------------------------
 

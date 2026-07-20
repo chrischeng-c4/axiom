@@ -173,6 +173,7 @@ fn gpu_or_skip(test: &str) -> Option<GpuContext> {
     }
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in persistence.rs is hand-written pending codegen support">
 /// (1) Flat round-trip identity, CPU AND GPU: save/load the collection segment,
 /// then a flat index over the LOADED collection reproduces the pre-save top-k.
 /// Also proves the segment fields (vectors / ids / payloads / live) round-trip.
@@ -218,6 +219,7 @@ fn flat_round_trip_identity_cpu_and_gpu() {
     cleanup(&path);
     eprintln!("  flat round-trip: collection segment + flat top-k identical (CPU + GPU)");
 }
+// </HANDWRITE>
 
 /// (1 + 2) IVF-PQ round-trip identity AND no-retrain, CPU AND GPU: save/load the
 /// trained model, prove the centroids/codebooks reload unchanged (k-means not

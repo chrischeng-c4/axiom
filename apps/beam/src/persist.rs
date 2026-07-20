@@ -44,6 +44,7 @@ pub const INDEX_MAGIC: &[u8; 8] = b"BEAMIVP\0";
 /// persisted struct changes; [`load_framed`] rejects any other version.
 pub const FORMAT_VERSION: u32 = 1;
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in persist.rs is hand-written pending codegen support">
 /// Write `value` to `path` behind the standard `magic` + [`FORMAT_VERSION`]
 /// header, bincode-encoding the payload. Buffered + flushed so the whole artifact
 /// lands in one pass.
@@ -58,6 +59,7 @@ pub fn save_framed<T: Serialize>(path: &Path, magic: &[u8; 8], value: &T) -> any
     writer.flush().context("flush")?;
     Ok(())
 }
+// </HANDWRITE>
 
 /// Read a `T` from `path`, validating the `magic` and [`FORMAT_VERSION`] header
 /// before decoding the bincode payload. A wrong magic (foreign / mismatched file)
