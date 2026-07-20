@@ -108,7 +108,6 @@ changes:
     impl_mode: hand-written
     description: Record the non-AW renderer fixture gate and read-only isolation rules.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
