@@ -15,14 +15,20 @@ id = "build-aw-tools"
 cmd = ["cargo", "build", "-p", "meter-cli", "-p", "guard-cli"]
 
 [[setup]]
-id = "build-relay-security-ec-test"
+id = "build-relay-security-ec-tests"
 cmd = [
   "cargo",
   "test",
   "-p",
   "relay",
   "--test",
-  "relay_core",
+  "auth",
+  "--test",
+  "service_admission",
+  "--test",
+  "raft_peer_mtls",
+  "--test",
+  "direct_k8s_assets",
   "--no-run",
 ]
 
@@ -69,6 +75,6 @@ cmd = [
   "--compact",
   "--no-persist",
   "--meter-command",
-  "../../target/debug/meter test -- -p relay --test relay_core -- --nocapture",
+  "../../target/debug/meter test -- -p relay --test auth --test service_admission --test raft_peer_mtls --test direct_k8s_assets -- --nocapture",
 ]
 timeout_s = 600

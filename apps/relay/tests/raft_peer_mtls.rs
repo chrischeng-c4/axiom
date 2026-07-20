@@ -33,6 +33,10 @@ struct Material {
 }
 
 fn material(ca: &Authority) -> Material {
+    material_with_trust(ca, ca)
+}
+
+fn material_with_trust(identity_ca: &Authority, trust_ca: &Authority) -> Material {
     let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
     params
         .distinguished_name
@@ -42,14 +46,16 @@ fn material(ca: &Authority) -> Material {
         ExtendedKeyUsagePurpose::ClientAuth,
     ];
     let key = KeyPair::generate().unwrap();
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).unwrap();
+    let cert = params
+        .signed_by(&key, &identity_ca.cert, &identity_ca.key)
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let cert_path = dir.path().join("tls.crt");
     let key_path = dir.path().join("tls.key");
     let ca_path = dir.path().join("ca.crt");
     std::fs::write(&cert_path, cert.pem()).unwrap();
     std::fs::write(&key_path, key.serialize_pem()).unwrap();
-    std::fs::write(&ca_path, ca.cert.pem()).unwrap();
+    std::fs::write(&ca_path, trust_ca.cert.pem()).unwrap();
     Material {
         _dir: dir,
         config: relay::peer_tls::PeerTlsConfig {
@@ -173,6 +179,42 @@ async fn trusted_relay_peers_replicate_messages_over_mtls() {
         let _ = node.shutdown.send(());
         node.serve.await.unwrap().unwrap();
     }
+}
+
+#[tokio::test]
+async fn untrusted_relay_peer_certificate_is_rejected() {
+    relay::tls::install_default_crypto_provider();
+    let trusted_ca = authority();
+    let attacker_ca = authority();
+    let server_material = material(&trusted_ca);
+    // The attacker trusts Relay's legitimate server identity, so the only
+    // failing direction is its own client certificate, signed by another CA.
+    let attacker_material = material_with_trust(&attacker_ca, &trusted_ca);
+    let server_transport = server_material.config.peer_transport().unwrap();
+    let attacker_transport = attacker_material.config.peer_transport().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let (server_result, _client_result) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(
+            async {
+                let (stream, _) = listener.accept().await.unwrap();
+                server_transport.accept(stream).await
+            },
+            async {
+                let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+                attacker_transport.connect(stream, "localhost").await
+            }
+        )
+    })
+    .await
+    .expect("untrusted peer handshake must terminate");
+
+    let error = server_result.expect_err("required mTLS must reject attacker-CA client identity");
+    assert!(
+        error.to_string().contains("peer TLS server handshake"),
+        "unexpected rejection: {error:#}"
+    );
 }
 // </HANDWRITE>
 // HANDWRITE-END
