@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
-use defer::{CreateTask, DeferRaft, DeferScheduler, QueuePolicy, Target, TaskStatus};
+use defer::{CreateTask, DeferRaft, DeferScheduler, NackOutcome, QueuePolicy, Target, TaskStatus};
 use raft_runtime::Membership;
 
 struct Node {
@@ -357,6 +357,246 @@ async fn committed_scheduler_converges_and_fences_cross_replica_effects() {
     cluster
         .wait_status("third", |status| matches!(status, TaskStatus::Succeeded))
         .await;
+    cluster.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn committed_queue_limits_survive_cross_replica_proposals_and_failover() {
+    let now = Utc.timestamp_millis_opt(20_000).unwrap();
+    let mut cluster = Cluster::new(3).await;
+    cluster.start_all();
+    let leader = cluster.wait_leader().await;
+    let followers: Vec<_> = cluster
+        .live()
+        .map(|(id, _)| id)
+        .filter(|id| *id != leader)
+        .collect();
+    let follower_a = followers[0];
+    let follower_b = followers[1];
+
+    cluster
+        .raft(leader)
+        .configure_queue(
+            "rate-jobs".into(),
+            QueuePolicy {
+                max_in_flight: 10,
+                max_dispatch_per_tick: 10,
+                max_dispatches_per_second: 1,
+                max_burst_size: 1,
+                ..QueuePolicy::default()
+            },
+        )
+        .await
+        .unwrap();
+    cluster
+        .raft(leader)
+        .configure_queue(
+            "inflight-jobs".into(),
+            QueuePolicy {
+                max_in_flight: 1,
+                max_dispatch_per_tick: 10,
+                max_dispatches_per_second: 100,
+                max_burst_size: 10,
+                ..QueuePolicy::default()
+            },
+        )
+        .await
+        .unwrap();
+    for (queue, ids) in [
+        ("rate-jobs", ["rate-a", "rate-b"]),
+        ("inflight-jobs", ["inflight-a", "inflight-b"]),
+    ] {
+        for id in ids {
+            cluster
+                .raft(leader)
+                .create_task(queue.into(), task(id, now))
+                .await
+                .unwrap();
+        }
+    }
+
+    let first_rate = cluster
+        .raft(follower_a)
+        .lease_due("rate-jobs".into(), now, 10)
+        .await
+        .unwrap();
+    assert_eq!(first_rate.len(), 1);
+    assert!(cluster
+        .raft(follower_b)
+        .lease_due("rate-jobs".into(), now, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let first_inflight = cluster
+        .raft(follower_b)
+        .lease_due("inflight-jobs".into(), now, 10)
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(cluster
+        .raft(follower_a)
+        .lease_due("inflight-jobs".into(), now, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    cluster.kill(leader).await;
+    let new_leader = cluster.wait_leader().await;
+    assert!(cluster
+        .raft(new_leader)
+        .lease_due(
+            "rate-jobs".into(),
+            now + chrono::Duration::milliseconds(999),
+            10,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(cluster
+        .raft(new_leader)
+        .lease_due(
+            "inflight-jobs".into(),
+            now + chrono::Duration::milliseconds(1_000),
+            10,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+
+    assert!(cluster
+        .raft(follower_b)
+        .ack(
+            "inflight-jobs".into(),
+            first_inflight.attempt_id,
+            first_inflight.epoch,
+            now + chrono::Duration::milliseconds(1_000),
+        )
+        .await
+        .unwrap());
+    assert_eq!(
+        cluster
+            .raft(new_leader)
+            .lease_due(
+                "inflight-jobs".into(),
+                now + chrono::Duration::milliseconds(1_000),
+                10,
+            )
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        cluster
+            .raft(new_leader)
+            .lease_due(
+                "rate-jobs".into(),
+                now + chrono::Duration::milliseconds(1_000),
+                10,
+            )
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    cluster.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dead_letter_terminal_state_converges_and_survives_restart() {
+    let now = Utc.timestamp_millis_opt(30_000).unwrap();
+    let mut cluster = Cluster::new(3).await;
+    cluster.start_all();
+    let leader = cluster.wait_leader().await;
+    let executor = cluster
+        .live()
+        .map(|(id, _)| id)
+        .find(|id| *id != leader)
+        .unwrap();
+
+    cluster
+        .raft(leader)
+        .configure_queue(
+            "jobs".into(),
+            QueuePolicy {
+                retry_backoff_ms: 0,
+                ..QueuePolicy::default()
+            },
+        )
+        .await
+        .unwrap();
+    let mut doomed = task("doomed", now);
+    doomed.max_attempts = 2;
+    cluster
+        .raft(leader)
+        .create_task("jobs".into(), doomed)
+        .await
+        .unwrap();
+
+    let first = cluster
+        .raft(executor)
+        .lease_due("jobs".into(), now, 1)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        cluster
+            .raft(executor)
+            .nack("jobs".into(), first.attempt_id, first.epoch, now)
+            .await
+            .unwrap(),
+        Some(NackOutcome::Retried { next_at: now })
+    );
+    let second = cluster
+        .raft(executor)
+        .lease_due("jobs".into(), now, 1)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(second.attempt, 2);
+    assert_eq!(
+        cluster
+            .raft(executor)
+            .nack("jobs".into(), second.attempt_id, second.epoch, now)
+            .await
+            .unwrap(),
+        Some(NackOutcome::DeadLettered)
+    );
+    cluster
+        .wait_status("doomed", |status| {
+            matches!(status, TaskStatus::DeadLettered)
+        })
+        .await;
+
+    let restart_id = cluster
+        .live()
+        .map(|(id, _)| id)
+        .find(|id| *id != executor)
+        .unwrap();
+    cluster.kill(restart_id).await;
+    cluster.start_node(restart_id);
+    cluster
+        .wait_status("doomed", |status| {
+            matches!(status, TaskStatus::DeadLettered)
+        })
+        .await;
+
+    for (_, node) in cluster.live() {
+        let snapshot = node
+            .raft
+            .scheduler()
+            .lock()
+            .unwrap()
+            .queue_snapshot("jobs")
+            .unwrap();
+        assert_eq!(snapshot.task_count, 1);
+        assert_eq!(snapshot.terminal_count, 1);
+        assert_eq!(snapshot.scheduled_count, 0);
+        assert_eq!(snapshot.in_flight_count, 0);
+    }
+
     cluster.shutdown().await;
 }
 // HANDWRITE-END
