@@ -13,6 +13,12 @@ for topic routing/fanout semantics; it is not a replay journal baseline because
 it does not provide offset/time replay, durable replay checkpoints, retention
 windows, or historical backfill by itself.
 
+The competitor classification is loaded from the committed
+`tests/fixtures/competitor_feature_baseline.json` oracle reviewed on
+2026-07-20. Every row cites version-scoped official Apache Kafka, Redpanda,
+Apache Pulsar, NATS, or RabbitMQ documentation; the Rust test does not define
+the competitor capability rows it asserts.
+
 This EC intentionally validates functionality before performance. External
 competitor throughput/latency baselines belong in the later competitor
 performance contract, like Lumen's pg/OpenSearch split.
@@ -31,6 +37,7 @@ e2e_tests:
     command: "cargo test -p tape --test competitor_feature_parity -- --nocapture"
     assertions:
       - "Tape validates ordered append, offset replay, timestamp replay, and durable consumer checkpoints through the local journal core."
-      - "Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams are classified as replay-log baselines for feature parity."
-      - "RabbitMQ topic exchange is included as a topic-routing/fanout comparison row, but is not treated as Tape's offset/time replay baseline."
+      - "The test consumes a versioned fixture whose every competitor row resolves to pinned official upstream provenance."
+      - "That external oracle classifies Kafka, Redpanda, Pulsar, JetStream, and RabbitMQ Streams as replay-log baselines for feature parity."
+      - "The same oracle classifies RabbitMQ topic exchange as topic-routing/fanout only, not Tape's offset/time replay baseline."
 ```
