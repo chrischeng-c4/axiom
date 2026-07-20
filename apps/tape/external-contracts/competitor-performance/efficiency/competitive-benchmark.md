@@ -53,7 +53,7 @@ e2e_tests:
     contract_id: topic-replay-nats-jetstream-local-backlog-win
     category: efficiency
     test_path: tests/behavior_tape_claim_competitor_performance_nats_jetstream.rs
-    command: "cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture"
+    command: "cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture"
     assertions:
       - "The release-only gate must start a real local nats-server with JetStream enabled and fail closed when that prerequisite cannot be started."
       - "Tape and JetStream replay five samples of the same 20,000-event, 128-byte-payload durable backlog from the beginning."
@@ -66,7 +66,7 @@ e2e_tests:
     contract_id: topic-replay-kafka-local-backlog-win
     category: efficiency
     test_path: tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs
-    command: "cargo test --release -p tape --test tape_vs_kafka -- --nocapture"
+    command: "cargo test --release -p tape --test tape_vs_kafka -- --ignored --nocapture"
     assertions:
       - "The release-only production gate must start apache/kafka:3.9.0 in single-node KRaft mode and fail closed if Docker, the pinned image, or a usable broker port is unavailable."
       - "Tape and Kafka replay the same 20,000-event, 128-byte-payload durable backlog from the beginning through real h2c and rskafka clients."
