@@ -81,7 +81,7 @@ h2c = { package = "transport-h2c", path = "../../libs/transport-h2c", features =
 service-http = { path = "../../libs/service-http" }
 service-auth = { path = "../../libs/service-auth" }
 service-backup = { path = "../../libs/service-backup" }
-storage-durable = { path = "../../libs/storage-durable" }
+storage-durable = { path = "../../libs/storage-durable" } # wired for serve atomic persistence recovery
 server-lifecycle = { path = "../../libs/server-lifecycle" }
 utoipa = { workspace = true, features = ["axum_extras"] }
 serde_yaml = { workspace = true }
