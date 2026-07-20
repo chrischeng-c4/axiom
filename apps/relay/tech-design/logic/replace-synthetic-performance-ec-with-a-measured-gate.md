@@ -70,34 +70,33 @@ changes:
     action: create
     section: unit-test
     impl_mode: hand-written
-    description: Produce a release-mode fsync-always durable publish and lease/ack report in a child test process, then parse it in an independent parent oracle that rejects missing or zero samples and enforces pinned workload floors.
+    description: Define a serde report for workload relay-durable-publish-lease-ack-v1; a report-only ignored child measures 2000 128-byte messages in 100-message batches on temporary FsyncPolicy Always storage, while the ignored parent parses the child stdout and requires both phases to have at least 20 samples, zero errors, complete counts, at least 500 messages per second, and batch p95 no greater than 500000 microseconds.
   - path: apps/relay/vat.toml
     action: modify
     section: config
     impl_mode: hand-written
-    description: Build and execute the measured release-mode integration test through the meter-perf vat runner.
+    description: Build measured_performance in release mode and make meter-perf run only its exact independent parent gate with ignored tests enabled.
   - path: apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md
     action: modify
     section: e2e-test
     impl_mode: hand-written
-    description: Replace the synthetic efficiency-only case with executable behavior, measured efficiency, and bounded stability cases.
+    description: Declare behavior through work_queue_throughput and perf_gate, efficiency through the exact release measured parent, and stability through the existing bounded autostart soak; retain the meter tool contract.
   - path: apps/relay/README.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Declare the measured performance envelope and all RuntimeTool-required EC dimensions without promoting advisory competitor wins.
+    description: List behavior, efficiency, and stability commands and state that external broker wins remain advisory.
   - path: apps/relay/docs/perf-gate.md
     action: modify
     section: logic
     impl_mode: hand-written
-    description: Record the exact local workload, pinned floors, and current release calibration separately from advisory external-broker results.
+    description: Publish the v1 workload and fixed floor semantics plus the latest measured result after calibration.
   - path: apps/relay/aw.toml
     action: modify
     section: e2e-test
     impl_mode: codegen
-    description: Regenerate EC bindings for the three revised competitor-performance cases.
+    description: Regenerate digest-bound EC inventory and claim bindings after independent acceptance.
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
