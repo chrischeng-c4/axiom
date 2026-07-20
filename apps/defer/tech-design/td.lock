@@ -2,10 +2,10 @@ version = 2
 project = "defer"
 ir_kind = "td"
 td_path = "apps/defer/tech-design"
-generated_at = "2026-07-20T20:57:48.065470+00:00"
-digest = "sha256:685bb57ca4bc0c6e15141249fff40784febcb249c3cdea9618aa4cf2278567d0"
-source_digest = "sha256:685bb57ca4bc0c6e15141249fff40784febcb249c3cdea9618aa4cf2278567d0"
-ir_digest = "sha256:61200fd5b9174f74db43d644b7b539f109fe8ab3deb751f848a9aa61738b5d26"
+generated_at = "2026-07-20T21:48:59.824907+00:00"
+digest = "sha256:ee4342a1fe12ef31ff3afb75e56be28ad930e882bf12552149a848f1b08fda97"
+source_digest = "sha256:ee4342a1fe12ef31ff3afb75e56be28ad930e882bf12552149a848f1b08fda97"
+ir_digest = "sha256:3a169cfc24012aee421eb3b1a48d533ba78fae22c3154fd16d7a934c248f0eab"
 
 [[files]]
 path = "README.md"
@@ -44,55 +44,7 @@ ir_digest = "sha256:bcf4dfb79d726c5e5057744f93a78f5efa4aaacbc3727f2bf78230876b19
 section_count = 4
 
 [[files]]
-path = "logic/delayed-task-dispatch-service-placeholder.md"
-digest = "sha256:0c1193be3675121329f78bdea33d80d7dfb01ec1694e402a04b47ec62a8ad7c3"
-ir_digest = "sha256:7992fcc16385bf002a500722dc1cc4e7d240e11132dc86a053ef0369cc07f579"
-section_count = 3
-
-[[files]]
-path = "logic/project-the-stateful-service-workload-baseline.md"
-digest = "sha256:6f4ec93ad058cd9a6d96d4c11913ef4eb54a3343ef1b8e06156667435c1064be"
-ir_digest = "sha256:0dac3e5356f54e5a4c24f3d6f4b86fcf3ce0b25a86f36c429e91ec63145393b5"
-section_count = 3
-
-[[files]]
-path = "logic/repo-taxonomy-move-defer-from-projects-defer-to-apps-defer.md"
-digest = "sha256:aa54050ef4ecf1bd1c19d3d5dbe58b356dc3891e808cc84f68e05a2df277e514"
-ir_digest = "sha256:bcf4dfb79d726c5e5057744f93a78f5efa4aaacbc3727f2bf78230876b194824"
-section_count = 4
-
-[[files]]
-path = "semantic/close-capability-claim-competitor-feature-parity-delayed-task-co.md"
-digest = "sha256:7bc480aceefbb5fb08db7741944d58bef7de4e7c793889a5e12b8843cad6c070"
-ir_digest = "sha256:2f5014c9d3f3fb656ae8e81ff10e68644cf4ef59d8b61d58ca4f68e288883ffd"
-section_count = 3
-
-[[files]]
-path = "semantic/close-capability-claim-competitor-performance-delayed-task-compe.md"
-digest = "sha256:15831233baebbccca7d37fb9c00940b4f952179a834b69255950186f08842a1f"
-ir_digest = "sha256:95f6f0b636de219594376467b40eaea54d8d781fd41a4485ae1d09ec64da9d11"
-section_count = 3
-
-[[files]]
-path = "semantic/close-capability-claim-kubernetes-native-deployment-dedicated-ta.md"
-digest = "sha256:811ff755081348124c8dcb897676f5b68f58ff7cb3416ce9321169b659f0a52b"
-ir_digest = "sha256:a1e3487c6c3ac272d1a9ca194c15ca17ee4cce910b7d34c2a6072701bc2a6374"
-section_count = 3
-
-[[files]]
 path = "semantic/close-capability-claim-long-running-stability-delayed-task-soak.md"
 digest = "sha256:9fd63bac466e27255eb1876fc1a07387e38febdeda1bd7a5a45e2a4b9f497caa"
 ir_digest = "sha256:82092331136dd3f2a7bde89ed8e3ca70f0cf33498fd89d89780eb02b94bdceee"
-section_count = 3
-
-[[files]]
-path = "semantic/close-capability-claim-primary-replicas-raft-backed-task-schedul.md"
-digest = "sha256:dc362c4886a85fb880bd86d055b558933a45a9d63c7c03e91c557a3715f3d083"
-ir_digest = "sha256:23aedd36ba7627d672ef695e937426fca68d6dfe7ffdaf847422661eb5bb201e"
-section_count = 3
-
-[[files]]
-path = "semantic/close-capability-claim-security-hardening-delayed-task-security.md"
-digest = "sha256:3b8ffb84fac5ebc1422bcaa236731d40c567341263d1fb58dd09436b4f5179e8"
-ir_digest = "sha256:bd095d066ce5e56b04bb81b878b43b561e75f74fd4a210220e0d10c206f4f23c"
 section_count = 3
