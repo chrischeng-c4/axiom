@@ -52,7 +52,6 @@ flowchart LR
 `DerivedPagePayloadSource` is a read-only byte-source boundary. Production uses `FileDerivedPagePayloadSource`, which performs a confined regular-file check and reads at most one MiB. Tests inject a failing source without starting a provider. The renderer validates unique ids, bounded fields and section/citation counts, safe relative citation paths, valid spans, and freshness notes. It maps each section to `ContextProvenanceItem`, resolves citations below the selected root, and emits safe Markdown, canonical source navigation where available, all missing inputs, a visible derived-authority badge for inferred/ambiguous sections, and an explicit `provider-reported current|stale|unknown` freshness badge.
 
 Raw repository sources and executable gates remain authoritative; a derived page and its freshness claim never replace them. Malformed payloads and source failures return `RendererError`; `RendererRegistry` records the warning and continues to lower-priority renderers. Tests use a local registry-sentinel renderer to prove AW-like usability without importing the concrete AW renderer. The adapter exposes no repository writes, provider invocation, AW/GitHub mutation, PTY ownership, approval, lifecycle transition, or retained mutable page state. Refresh is a fresh bounded read and close is ordinary drop. LLM-Wiki remains reference-only interaction input, and source citations remain the authority boundary.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
