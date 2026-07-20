@@ -1434,4 +1434,180 @@ async fn entry_flatten_default_interop_thunk_for_registry_resident_id_stays_in_s
 
     Ok(())
 }
+
+fn write_interop_thunk_section_boundary_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).expect("create src dir");
+    fs::write(
+        dir.join("index.html"),
+        "<!doctype html><html><body><div id=\"root\"></div>\
+         <script type=\"module\" src=\"/src/index.js\"></script></body></html>",
+    )
+    .expect("write index.html");
+    fs::write(
+        dir.join("src/index.js"),
+        r#"import T from './target.js';
+import { useT } from './helper.js';
+
+document.getElementById('root').innerHTML =
+  '<div id="output">' + (T() + useT()) + '</div>';
+
+import('./lazy.js');
+"#,
+    )
+    .expect("write entry");
+    // The leading comment is an ordinary source comment, not a jet banner —
+    // it is deliberately shaped like the loose (pre-#2205-round-2) section
+    // boundary match `"\n// Module "` while lacking the digits-plus-colon
+    // suffix a real `// Module <id>: <path>` banner always has.
+    fs::write(
+        dir.join("src/target.js"),
+        r#"// Module for target utilities
+export default function T() {
+  return 42;
+}
+"#,
+    )
+    .expect("write target");
+    fs::write(
+        dir.join("src/helper.js"),
+        r#"import T from './target.js';
+
+export function useT() {
+  return T() + 1;
+}
+"#,
+    )
+    .expect("write helper");
+    fs::write(dir.join("src/lazy.js"), "export const lazyValue = 99;\n").expect("write lazy");
+}
+
+/// #2205 round 2 — `hoist_default_interop_thunks`'s per-module section
+/// boundary search (`section_end`, `scope_hoist_opt.rs`) used a loose
+/// `"\n// Module "` prefix match to find where a flat-resident module's
+/// own inlined body ends. This pass runs pre-minify, so a flat module's
+/// own *original source comment* shaped like an ordinary `// Module ...`
+/// phrasing is byte-identical to that loose prefix and falsely ends the
+/// section early — inside the module's own still-executing block, before
+/// its function declaration and export assignment run. The hoisted
+/// `_di{id}` then reads that module's own not-yet-populated exports
+/// (self-referential), producing a value every consumer chokes on, which
+/// throws inside the minifier's comma-joined top-level statement sequence
+/// and silently aborts every statement after it — including the trailing
+/// `__jet__.require(<entry>)` boot call (`jet build` reports success; the
+/// production page renders a blank/black root with zero console output).
+/// Fixed by requiring the full banner shape (`\n// Module \d+: `, matching
+/// `format!("// Module {}: {}\n", id, path)` byte-for-byte) instead of the
+/// loose 11-byte prefix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entry_flatten_default_interop_thunk_section_boundary_skips_lookalike_source_comment(
+) -> Result<()> {
+    let temp = tempfile::tempdir().context("tempdir")?;
+    let fixture = temp.path();
+    write_interop_thunk_section_boundary_fixture(fixture);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_jet"))
+        .args(["build", "--splitting"])
+        .current_dir(fixture)
+        .env("JET_BUNDLE_TIMING", "1")
+        .env("JET_NO_PERSISTENT_CACHE", "1")
+        .output()
+        .context("run jet build --splitting")?;
+    let output = require_success(
+        output,
+        "build --splitting (interop thunk section boundary fixture)",
+    )?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    // Sanity: the fixture must actually exercise the entry-flatten path
+    // with target.js/helper.js/index.js all flat-resident — otherwise this
+    // test would silently stop covering the bug class.
+    let flattened_count = parse_partition_count(&stderr, "flattened");
+    assert!(
+        matches!(flattened_count, Some(n) if n >= 3),
+        "expected >= 3 flat-resident modules (index.js + target.js + \
+         helper.js), got {flattened_count:?}\nstderr={stderr}"
+    );
+
+    let dist = fixture.join("dist");
+    let entry_path = find_entry_file(&dist);
+    let entry_code = fs::read_to_string(&entry_path).context("read built entry file")?;
+
+    // (a) Static guard (#2205 round 1's class, cheap and no browser
+    // required): the built entry must never contain a bare `_r(` call at
+    // true top level. Kept alongside (b) since it does not by itself catch
+    // round 2's depth > 0 shape (see `find_top_level_bare_require_call`'s
+    // doc comment) — the real-browser boot proof below is this bug class's
+    // actual guard.
+    assert!(
+        find_top_level_bare_require_call(&entry_code).is_none(),
+        "found a default-interop thunk (or other `_r(` call) outside any \
+         scope that declares `_r` in the built entry — see \
+         `hoist_default_interop_thunks`'s doc comment (#2205)\n{entry_code}"
+    );
+
+    // (b) Dynamic proof: the app must actually boot and render in a real
+    // Chromium, not merely pass the static shape check.
+    if !common::chromium_available() {
+        eprintln!(
+            "skipping real-browser half of \
+             entry_flatten_default_interop_thunk_section_boundary_skips_lookalike_source_comment: \
+             no Chromium available"
+        );
+        return Ok(());
+    }
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let server = StaticDistServer::spawn(fixture)
+            .await
+            .context("serve dist over local HTTP")?;
+        let url = server.url();
+        let mut browser =
+            spawn_jet_browser(fixture, &url).context("jet browser launch dist/index.html")?;
+        wait_for_browser_session(fixture)
+            .await
+            .context("wait for browser session file")?;
+
+        let mut output_text = None;
+        for _ in 0..120 {
+            let value = browser_eval_json(
+                fixture,
+                "document.getElementById('output') && document.getElementById('output').textContent",
+            )
+            .unwrap_or(Value::Null);
+            if let Some(text) = value.as_str() {
+                output_text = Some(text.to_string());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        shutdown_browser(fixture, &mut browser).context("jet browser shutdown")?;
+        Ok::<Option<String>, anyhow::Error>(output_text)
+    })
+    .await;
+
+    let output_text = match result {
+        Ok(inner) => inner?,
+        Err(_) => {
+            let _ = Command::new(env!("CARGO_BIN_EXE_jet"))
+                .args(["browser", "shutdown"])
+                .current_dir(fixture)
+                .output();
+            return Err(anyhow!(
+                "entry_flatten_default_interop_thunk_section_boundary_skips_lookalike_source_comment \
+                 timed out after 60s"
+            ));
+        }
+    };
+
+    assert_eq!(
+        output_text.as_deref(),
+        Some("85"),
+        "app must boot rendering T() + useT() = 42 + 43 = 85 without the \
+         hoisted interop thunk landing inside target.js's own still- \
+         executing block and reading its not-yet-populated exports"
+    );
+
+    Ok(())
+}
 // HANDWRITE-END

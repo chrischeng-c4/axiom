@@ -7227,6 +7227,29 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
     // inline `_r(id)["default"] || _r(id)` occurrences stay untouched
     // below, which is always correct since each already sits inside the
     // flat region's own `_r`-scoped IIFE.
+    //
+    // INVARIANT (#2205 round 2): locating *where* a flat id's own section
+    // ends had the same class of bug one level down. This pass runs
+    // pre-minify, so a flat module's inlined body still carries its
+    // original source comments verbatim, and a real-world comment shaped
+    // like `// Module for widget helpers` (an ordinary phrasing) is a
+    // byte-for-byte match for the old loose search `"\n// Module "` —
+    // on a real corpus that falsely ends the section *inside* the
+    // module's own still-executing block, before its closing brace and
+    // cache seed. The hoisted `_di{id}` then reads that same module's
+    // own not-yet-populated `_m{id}.exports` (`_r(id)` becomes
+    // self-referential), producing a value every consumer chokes on —
+    // which throws inside the minifier's comma-joined top-level
+    // statement sequence and aborts everything after it, including the
+    // trailing `entry_bootstrap_js` `__jet__.require(entry_id)` call, so
+    // the entry never boots. A genuine banner is always
+    // `// Module <digits>: ` (the fixed `format!` shape both
+    // `generate_entry_flat_region` and `format_module_define` use);
+    // requiring the digits-plus-colon suffix instead of matching just the
+    // 11-byte prefix rejects ordinary source comments while still
+    // matching every real banner.
+    static NEXT_BANNER: OnceLock<Regex> = OnceLock::new();
+    let next_banner = NEXT_BANNER.get_or_init(|| Regex::new(r"\n// Module \d+: ").unwrap());
     let flat_region_ids = entry_flat_region_mods_ids(code);
     let mut insert_at: HashMap<usize, usize> = HashMap::new();
     for id in &hoistable {
@@ -7239,9 +7262,9 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
         let Some(pos) = code.find(&banner) else {
             continue;
         };
-        let section_end = code[pos..]
-            .find("\n// Module ")
-            .map(|rel| pos + rel)
+        let section_end = next_banner
+            .find(&code[pos..])
+            .map(|m| pos + m.start())
             .unwrap_or(code.len());
         insert_at.insert(*id, section_end);
     }
@@ -7331,6 +7354,17 @@ fn entry_flat_region_mods_ids(code: &str) -> Option<HashSet<usize>> {
 /// literals are skipped as one opaque span (not depth-tracked through
 /// their `${...}` expressions) since no legitimate or buggy jet output
 /// ever places a bare `_r(` call inside template-literal text.
+///
+/// NOT exhaustive for every way [`hoist_default_interop_thunks`] can
+/// misplace a hoisted declaration (#2205 round 2): a `section_end` that
+/// lands *inside* another module's own `{ ... }` block (depth > 0, e.g.
+/// spliced in front of that module's real body because a genuine source
+/// comment inside it happened to look like the next banner) is still
+/// syntactically well-scoped — `_r` is in scope there too — so this depth
+/// `<= 0` scan does not flag it; only the position check in
+/// `hoist_default_interop_thunks`'s own unit tests
+/// (`section_boundary_rejects_a_lookalike_source_comment_inside_the_same_module`)
+/// and the real-browser boot proof catch that shape.
 pub fn find_top_level_bare_require_call(code: &str) -> Option<usize> {
     let b = code.as_bytes();
     let len = b.len();
@@ -7551,6 +7585,72 @@ mod interop_thunk_registry_residency_tests {
             "{out}"
         );
         assert_eq!(out.matches("_di1").count(), 3, "{out}");
+    }
+
+    /// #2205 round 2: a genuine source comment shaped like `// Module ...`
+    /// (an ordinary phrasing, not jet's own banner) sitting inside a flat
+    /// module's own inlined body must never be mistaken for the *next*
+    /// module's banner. The old loose `"\n// Module "` prefix search took
+    /// this lookalike comment as the section boundary, splicing the
+    /// hoisted `_di2` declaration inside `dep.js`'s own still-executing
+    /// block — before `_m2e.default = function Dep() {}` even runs — so
+    /// `_di2` read `dep.js`'s own not-yet-populated exports instead of the
+    /// real function.
+    #[test]
+    fn section_boundary_rejects_a_lookalike_source_comment_inside_the_same_module() {
+        let code = concat!(
+            "(function(){\n'use strict';\n\n",
+            "var _m0={exports:{}};\n",
+            "var _m1={exports:{}};\n",
+            "var _m2={exports:{}};\n\n",
+            "var _mods={0:_m0,1:_m1,2:_m2};\n",
+            "function _r(id){var m=_mods[id];return m?m.exports:__jet__.require(id)}\n\n",
+            "// Module 2: dep.js\n",
+            "{\n",
+            "// Module for widget helpers\n",
+            "var _m2e=_m2.exports;\n",
+            "_m2e.default = function Dep() {};\n",
+            "}\n",
+            "__jet__.cache[2]={exports:_m2.exports,id:2,loaded:true};\n\n",
+            "// Module 1: consumer_a.js\n",
+            "{\n",
+            "var _m1e=_m1.exports;\n",
+            "var Dep = _r(2)[\"default\"] || _r(2);\n",
+            "_m1e.render = Dep;\n",
+            "}\n",
+            "__jet__.cache[1]={exports:_m1.exports,id:1,loaded:true};\n\n",
+            "// Module 0: consumer_b.js\n",
+            "{\n",
+            "var _m0e=_m0.exports;\n",
+            "var DepAgain = _r(2)[\"default\"] || _r(2);\n",
+            "_m0e.render2 = DepAgain;\n",
+            "}\n",
+            "__jet__.cache[0]={exports:_m0.exports,id:0,loaded:true};\n\n",
+            "})();\n",
+        )
+        .to_string();
+
+        let out = hoist_default_interop_thunks(&code);
+
+        // The hoisted declaration must land after dep.js's own export
+        // assignment (and thus after its closing brace + cache seed), not
+        // between the lookalike comment and that assignment.
+        let dep_assign = out
+            .find("_m2e.default = function Dep() {};")
+            .expect("dep assignment present");
+        let hoisted_decl = out
+            .find("var _di2 = _r(2)[\"default\"] || _r(2);")
+            .expect("hoisted decl present");
+        assert!(
+            hoisted_decl > dep_assign,
+            "hoisted _di2 landed before dep.js's own export assignment — \
+             section boundary matched the lookalike `// Module for widget \
+             helpers` comment instead of the next real banner: {out}"
+        );
+        assert!(
+            find_top_level_bare_require_call(&out).is_none(),
+            "hoisted thunk landed outside `_r` scope: {out}"
+        );
     }
 }
 
