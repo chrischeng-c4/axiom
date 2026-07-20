@@ -69,3 +69,51 @@ flowchart LR
 The native PTY master owns a cloneable blocking output reader, a single synchronized input writer, terminal resize, child status, termination, and cleanup. Blocking reads are intentionally moved by callers to a dedicated thread rather than disguised as async I/O. Ordinary input is written and flushed unchanged. Interrupt forwarding writes the terminal ETX byte through the controlling PTY, producing the same Ctrl-C path a user terminal uses; explicit termination uses the child killer. `wait` reaps the child, and `Drop` performs best-effort kill and reap when a live session is abandoned.
 
 The deterministic integration fixture launches the platform local shell through the same generic PTY runtime, not through a mock and not through an installed vendor binary. It proves bidirectional bytes, selected-folder cwd, kernel-visible resize, terminal interrupt delivery, exit status, and post-drop process cleanup. Adapter construction and unavailable-binary tests cover all three providers without requiring Claude Code, Codex, or AGY in CI. This slice provides the native runtime boundary only; terminal cwd-to-context synchronization remains owned by #2194 and rendered terminal integration remains part of the later production journey.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: Cargo.lock
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Lock portable-pty 0.9 and its native terminal dependency graph.
+  - path: apps/workbench/Cargo.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Add the portable-pty runtime dependency.
+  - path: apps/workbench/src/native_agent_pty.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define provider command construction, recoverable binary resolution, and the real native PTY session lifecycle.
+  - path: apps/workbench/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: run
+    description: Export the native-agent PTY runtime from the existing Workbench host crate.
+  - path: apps/workbench/tests/pty_agent_adapters.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Prove exact provider commands, recoverable missing binaries, real shell bidirectional IO, selected cwd, resize, interrupt, exit, and cleanup.
+  - path: apps/workbench/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document native CLI authority, Claude default, real PTY controls, and the boundary from vendor session state and cwd context.
+  - path: apps/workbench/CAPABILITIES.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Advance the native-agent-pty work root and register its deterministic verification gate.
+  - path: apps/workbench/CONTRIBUTING.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: Record the real PTY test command and the ban on replacing it with mocks or installed-vendor requirements.
+```
