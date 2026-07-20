@@ -6989,6 +6989,8 @@ impl<'a> HirToMir<'a> {
         }
 
         let iterable = self.lower_expr(iter);
+        // #1976: check and propagate exception from evaluating the iterable expression
+        self.emit_exception_propagate();
 
         // Create iterator: iter_obj = mb_iter(iterable)
         let iter_obj = self.fresh_vreg();
@@ -6998,6 +7000,8 @@ impl<'a> HirToMir<'a> {
             args: vec![iterable],
             ty: self.tcx.any(),
         });
+        // #1976: check and propagate exception from calling mb_iter
+        self.emit_exception_propagate();
 
         let header = self.fresh_block();
         let body_block = self.fresh_block();
@@ -7117,6 +7121,8 @@ impl<'a> HirToMir<'a> {
         else_body: &[HirStmt],
     ) {
         let iterable = self.lower_expr(iter);
+        // #1976: check and propagate exception from evaluating the iterable expression
+        self.emit_exception_propagate();
 
         let iter_obj = self.fresh_vreg();
         self.current_stmts.push(MirInst::CallExtern {
@@ -7125,6 +7131,7 @@ impl<'a> HirToMir<'a> {
             args: vec![iterable],
             ty: self.tcx.any(),
         });
+        // #1976: check and propagate exception from calling mb_async_iter
         self.emit_exception_propagate();
 
         let header = self.fresh_block();
