@@ -56,9 +56,7 @@ impl GithubClient {
             )
         })?;
         let allowed_repos = match std::env::var(ALLOWED_REPOS_ENV) {
-            Ok(v) if !v.trim().is_empty() => {
-                v.split(',').map(|s| s.trim().to_string()).collect()
-            }
+            Ok(v) if !v.trim().is_empty() => v.split(',').map(|s| s.trim().to_string()).collect(),
             _ => vec![DEFAULT_ALLOWED_REPO.to_string()],
         };
         let http = reqwest::Client::builder()
@@ -105,7 +103,12 @@ impl GithubClient {
     }
 
     /// `GET /repos/{owner}/{name}/issues/{number}`.
-    pub async fn view_issue(&self, owner: &str, name: &str, number: u64) -> Result<Value, GithubError> {
+    pub async fn view_issue(
+        &self,
+        owner: &str,
+        name: &str,
+        number: u64,
+    ) -> Result<Value, GithubError> {
         let url = format!("https://api.github.com/repos/{owner}/{name}/issues/{number}");
         self.get(&url).await
     }

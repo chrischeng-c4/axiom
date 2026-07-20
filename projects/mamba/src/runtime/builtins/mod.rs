@@ -3359,9 +3359,9 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
             v.as_ptr().and_then(|p| unsafe {
                 match &(*p).data {
                     ObjData::Str(ref s) => Some(s.clone()),
-                    ObjData::Instance {
-                        ref class_name, ..
-                    } if class_name == "type" => type_object_registry_key(v),
+                    ObjData::Instance { ref class_name, .. } if class_name == "type" => {
+                        type_object_registry_key(v)
+                    }
                     _ => None,
                 }
             })
@@ -5264,10 +5264,7 @@ fn mb_call_spread_impl(func: MbValue, args_list: MbValue) -> MbValue {
                     }
                 }
             }
-            if let ObjData::Instance {
-                ref class_name, ..
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 // `weakref.ref(obj[, cb])` — the `ref` attribute is a type
                 // stub (class_name="type", __name__="ReferenceType"); calling
                 // it constructs a new ReferenceType instance.
@@ -6318,10 +6315,7 @@ fn validate_and_adapt_declared_frame(func: MbValue, items: &mut [MbValue]) -> bo
     };
     let fname = callable_display_name(func);
     for (param, value) in params.iter().zip(items.iter_mut()) {
-        let contract = param
-            .contract
-            .as_deref()
-            .and_then(runtime_scalar_contract);
+        let contract = param.contract.as_deref().and_then(runtime_scalar_contract);
         match param.kind {
             // The packed entry container is ABI state, not the declared
             // scalar. Validate only its elements, retaining the original list
@@ -7328,12 +7322,18 @@ mod tests {
         assert_eq!(accepted[0].to_bits(), values.to_bits());
         assert_eq!(accepted[1].to_bits(), named.to_bits());
         let accepted_values = extract_items(accepted[0]);
-        assert_eq!(accepted_values[0].to_bits(), MbValue::from_bool(true).to_bits());
+        assert_eq!(
+            accepted_values[0].to_bits(),
+            MbValue::from_bool(true).to_bits()
+        );
         assert_eq!(accepted_values[1].to_bits(), MbValue::from_int(2).to_bits());
         let accepted_named = kwargs_dict_pairs(accepted[1]);
         assert_eq!(accepted_named.len(), 1);
         assert_eq!(accepted_named[0].0, "count");
-        assert_eq!(accepted_named[0].1.to_bits(), MbValue::from_int(3).to_bits());
+        assert_eq!(
+            accepted_named[0].1.to_bits(),
+            MbValue::from_int(3).to_bits()
+        );
 
         let wrong_values = MbValue::from_ptr(MbObject::new_list(vec![
             MbValue::from_int(1),
@@ -7359,7 +7359,9 @@ mod tests {
         let exception = super::super::exception::mb_get_exception();
         assert_eq!(
             super::super::exception::get_exception_message_pub(exception).as_deref(),
-            Some("variadic_target() variadic argument 'named' at key 'wrong' expected int, got str")
+            Some(
+                "variadic_target() variadic argument 'named' at key 'wrong' expected int, got str"
+            )
         );
         super::super::exception::mb_clear_exception();
         super::super::closure::cleanup_all_closures();

@@ -28,6 +28,9 @@ fn direct_base_is_a_durable_singleton_not_a_fake_raft_scaleout() {
     );
 
     let env = container["env"].as_sequence().expect("container env");
+    assert!(env.iter().any(|entry| entry["name"] == "TAPE_LOG_FORMAT"));
+    let config = yaml(include_str!("../k8s/base/configmap.yaml"));
+    assert_eq!(config["data"]["TAPE_LOG_FORMAT"], "json");
     for (name, value) in [
         ("SHARD_COUNT", "1"),
         ("REPLICAS_PER_SHARD", "1"),

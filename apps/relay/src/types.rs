@@ -101,6 +101,10 @@ pub struct Lease {
     pub shard: ShardId,
     /// Consumer the entry is currently leased to.
     pub consumer_id: String,
+    /// Replica authorised by the committed assignment to serve this lease.
+    /// Standalone mode uses node 0.
+    #[serde(default)]
+    pub executor_node: u64,
     pub granted_at: DateTime<Utc>,
     /// On expiry the entry becomes eligible for redelivery to another consumer.
     pub expires_at: DateTime<Utc>,

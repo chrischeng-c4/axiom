@@ -267,7 +267,7 @@ mod tests {
         // self (id 1) excluded; peers point at the override addresses.
         assert_eq!(t.peers.get(&0).unwrap(), "http://10.0.0.0:9001");
         assert_eq!(t.peers.get(&2).unwrap(), "http://10.0.0.2:9003");
-        assert!(t.peers.get(&1).is_none());
+        assert!(!t.peers.contains_key(&1));
         let tls = ClusterTopology::from_env_with_scheme(
             "svc",
             "svc-headless",

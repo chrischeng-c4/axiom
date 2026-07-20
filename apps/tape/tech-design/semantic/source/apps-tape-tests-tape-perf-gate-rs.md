@@ -29,7 +29,8 @@ id: tape-td-flow
 ---
 flowchart TD
     test["cargo test -p tape --test tape_perf_gate -- --nocapture"] --> local["local benchmark budgets pass"]
-    test --> peers["Kafka/Redpanda/Pulsar/JetStream/RabbitMQ Streams status not_calibrated"]
+    test --> calibrated["Kafka/NATS status calibrated_separate_gate, local report win_claim=false"]
+    test --> peers["Redpanda/Pulsar/RabbitMQ Streams status not_calibrated"]
     test --> exchange["RabbitMQ topic exchange status not_a_replay_baseline"]
 ```
 

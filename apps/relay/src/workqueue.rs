@@ -15,6 +15,8 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Duration, Utc};
+use raft_runtime::{FenceToken, FencedAssignment};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{CommittedOffset, Lease, Seq, ShardId};
 
@@ -25,7 +27,7 @@ const PRIORITY_BANDS: usize = u8::MAX as usize + 1;
 
 /// One priority band's ready set: never-offered entries in publish (seq) order,
 /// and reclaimed/promoted entries re-offered smallest-seq-first.
-#[derive(Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Band {
     fresh: VecDeque<Seq>,
     redeliver: BinaryHeap<Reverse<Seq>>,
@@ -38,6 +40,7 @@ fn band_idx(priority: u8) -> usize {
 /// Per-`(subject, shard)` competing-consumer delivery state.
 ///
 /// @spec apps/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkQueue {
     subject: String,
     shard: ShardId,
@@ -50,6 +53,10 @@ pub struct WorkQueue {
     lease_index: HashMap<String, Seq>,
     acked: HashSet<Seq>,
     attempts: HashMap<Seq, u32>,
+    /// Committed replica ownership retained after release/expiry so fencing
+    /// epochs never repeat for one message seq.
+    #[serde(default)]
+    assignments: HashMap<Seq, FencedAssignment>,
     /// Per-priority ready sets; `pick` scans high band → low. Entries are fed in
     /// explicitly (`offer_fresh`) rather than via a monotonic cursor, so a
     /// higher-priority entry published later still leases first.
@@ -106,6 +113,7 @@ impl WorkQueue {
             lease_index: HashMap::new(),
             acked: HashSet::new(),
             attempts: HashMap::new(),
+            assignments: HashMap::new(),
             bands: (0..PRIORITY_BANDS).map(|_| Band::default()).collect(),
             priority_of: HashMap::new(),
             delayed: BinaryHeap::new(),
@@ -221,11 +229,22 @@ impl WorkQueue {
         }
     }
 
-    /// Build and record a lease for `seq` (bumping its attempt/epoch).
-    fn grant(&mut self, seq: Seq, consumer_id: &str, now: DateTime<Utc>) -> Lease {
+    /// Build and record a lease for `seq` after committing executor ownership.
+    fn grant_on_node(
+        &mut self,
+        seq: Seq,
+        consumer_id: &str,
+        executor_node: u64,
+        now: DateTime<Utc>,
+    ) -> Lease {
         let attempt = self.attempts.get(&seq).copied().unwrap_or(0) + 1;
         self.attempts.insert(seq, attempt);
-        let epoch = attempt as u64;
+        let expires_at = now + Duration::milliseconds(self.lease_ttl_ms as i64);
+        let assignment = self.assignments.entry(seq).or_default();
+        let token = assignment
+            .assign(executor_node, millis(now), millis(expires_at))
+            .expect("pickable seq must have no active executor assignment");
+        let epoch = token.epoch;
 
         let lease_id = format!("{}#{}:{}:e{}", self.subject, self.shard, seq, epoch);
         let lease = Lease {
@@ -234,8 +253,9 @@ impl WorkQueue {
             subject: self.subject.clone(),
             shard: self.shard,
             consumer_id: consumer_id.to_string(),
+            executor_node,
             granted_at: now,
-            expires_at: now + Duration::milliseconds(self.lease_ttl_ms as i64),
+            expires_at,
             attempt,
             epoch,
         };
@@ -252,9 +272,19 @@ impl WorkQueue {
     ///
     /// @spec apps/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
     pub fn lease(&mut self, consumer_id: &str, now: DateTime<Utc>) -> Option<Lease> {
+        self.lease_on_node(consumer_id, 0, now)
+    }
+
+    /// Lease for a specific committed executor replica.
+    pub fn lease_on_node(
+        &mut self,
+        consumer_id: &str,
+        executor_node: u64,
+        now: DateTime<Utc>,
+    ) -> Option<Lease> {
         self.promote_due(now);
         let seq = self.pick()?;
-        Some(self.grant(seq, consumer_id, now))
+        Some(self.grant_on_node(seq, consumer_id, executor_node, now))
     }
 
     /// Lease the next ready entry, or report the next entry that has exhausted
@@ -265,9 +295,21 @@ impl WorkQueue {
     ///
     /// @spec apps/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
     pub fn lease_or_dead(&mut self, consumer_id: &str, now: DateTime<Utc>) -> LeaseOrDead {
+        self.lease_or_dead_on_node(consumer_id, 0, now)
+    }
+
+    /// Dead-letter-aware lease for a specific committed executor replica.
+    pub fn lease_or_dead_on_node(
+        &mut self,
+        consumer_id: &str,
+        executor_node: u64,
+        now: DateTime<Utc>,
+    ) -> LeaseOrDead {
         self.promote_due(now);
         match self.pick_classified() {
-            Pick::Ready(seq) => LeaseOrDead::Leased(self.grant(seq, consumer_id, now)),
+            Pick::Ready(seq) => {
+                LeaseOrDead::Leased(self.grant_on_node(seq, consumer_id, executor_node, now))
+            }
             Pick::Dead(seq) => LeaseOrDead::Dead {
                 seq,
                 attempts: self.attempts.get(&seq).copied().unwrap_or(0),
@@ -283,7 +325,17 @@ impl WorkQueue {
     ///
     /// @spec apps/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
     pub fn discard(&mut self, seq: Seq) {
-        self.leases.remove(&seq);
+        if let Some(lease) = self.leases.remove(&seq) {
+            if let Some(assignment) = self.assignments.get_mut(&seq) {
+                let _ = assignment.release(
+                    FenceToken {
+                        owner: lease.executor_node,
+                        epoch: lease.epoch,
+                    },
+                    millis(lease.granted_at),
+                );
+            }
+        }
         self.lease_index.retain(|_, s| *s != seq);
         self.attempts.remove(&seq);
         self.priority_of.remove(&seq);
@@ -303,10 +355,22 @@ impl WorkQueue {
         max: usize,
         now: DateTime<Utc>,
     ) -> Vec<Lease> {
+        self.lease_batch_on_node(consumer_id, 0, log_len, max, now)
+    }
+
+    /// Lease a batch for a specific committed executor replica.
+    pub fn lease_batch_on_node(
+        &mut self,
+        consumer_id: &str,
+        executor_node: u64,
+        log_len: Seq,
+        max: usize,
+        now: DateTime<Utc>,
+    ) -> Vec<Lease> {
         let _ = log_len;
         let mut out = Vec::with_capacity(max.min(64));
         for _ in 0..max {
-            match self.lease(consumer_id, now) {
+            match self.lease_on_node(consumer_id, executor_node, now) {
                 Some(l) => out.push(l),
                 None => break,
             }
@@ -321,13 +385,38 @@ impl WorkQueue {
     ///
     /// @spec apps/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
     pub fn ack(&mut self, lease_id: &str, epoch: Option<u64>) -> bool {
+        let Some(lease) = self.lease_for_id(lease_id) else {
+            return false;
+        };
+        self.ack_on_node(
+            lease_id,
+            lease.executor_node,
+            epoch.unwrap_or(lease.epoch),
+            lease.granted_at,
+        )
+    }
+
+    /// Strict committed acknowledgement: executor node, epoch, and expiry must
+    /// all match the live assignment.
+    pub fn ack_on_node(
+        &mut self,
+        lease_id: &str,
+        executor_node: u64,
+        epoch: u64,
+        now: DateTime<Utc>,
+    ) -> bool {
         let Some(&seq) = self.lease_index.get(lease_id) else {
             return false;
         };
-        if let (Some(want), Some(lease)) = (epoch, self.leases.get(&seq)) {
-            if lease.epoch != want {
-                return false;
-            }
+        let token = FenceToken {
+            owner: executor_node,
+            epoch,
+        };
+        let Some(assignment) = self.assignments.get_mut(&seq) else {
+            return false;
+        };
+        if assignment.release(token, millis(now)).is_err() {
+            return false;
         }
         self.lease_index.remove(lease_id);
         self.leases.remove(&seq);
@@ -347,9 +436,38 @@ impl WorkQueue {
     ///
     /// @spec apps/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
     pub fn release(&mut self, lease_id: &str) -> bool {
+        let Some(lease) = self.lease_for_id(lease_id) else {
+            return false;
+        };
+        self.release_on_node(lease_id, lease.executor_node, lease.epoch, lease.granted_at)
+    }
+
+    /// Strict committed Nack/release with replica and epoch fencing.
+    pub fn release_on_node(
+        &mut self,
+        lease_id: &str,
+        executor_node: u64,
+        epoch: u64,
+        now: DateTime<Utc>,
+    ) -> bool {
         let Some(&seq) = self.lease_index.get(lease_id) else {
             return false;
         };
+        let Some(assignment) = self.assignments.get_mut(&seq) else {
+            return false;
+        };
+        if assignment
+            .release(
+                FenceToken {
+                    owner: executor_node,
+                    epoch,
+                },
+                millis(now),
+            )
+            .is_err()
+        {
+            return false;
+        }
         self.lease_index.remove(lease_id);
         self.leases.remove(&seq);
         let b = self.band_of(seq);
@@ -380,13 +498,39 @@ impl WorkQueue {
         epoch: u64,
         now: DateTime<Utc>,
     ) -> Option<DateTime<Utc>> {
+        let lease = self.lease_for_id(lease_id)?;
+        self.heartbeat_on_node(lease_id, lease.executor_node, epoch, now)
+    }
+
+    /// Strict committed renewal with replica and epoch fencing.
+    pub fn heartbeat_on_node(
+        &mut self,
+        lease_id: &str,
+        executor_node: u64,
+        epoch: u64,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
         let &seq = self.lease_index.get(lease_id)?;
-        let lease = self.leases.get_mut(&seq)?;
-        if lease.epoch != epoch {
-            return None;
-        }
-        lease.expires_at = now + Duration::milliseconds(self.lease_ttl_ms as i64);
-        Some(lease.expires_at)
+        let assignment = self.assignments.get_mut(&seq)?;
+        let current_expiry = assignment.active()?.expires_at_ms;
+        // Two commands can resolve within the same millisecond. A valid
+        // heartbeat must still advance the committed deadline, so bump by one
+        // millisecond when `now + ttl` equals the current lease expiry.
+        let expires_at_ms = millis(now + Duration::milliseconds(self.lease_ttl_ms as i64))
+            .max(current_expiry.saturating_add(1));
+        assignment
+            .renew(
+                FenceToken {
+                    owner: executor_node,
+                    epoch,
+                },
+                millis(now),
+                expires_at_ms,
+            )
+            .ok()?;
+        let expires_at = DateTime::from_timestamp_millis(expires_at_ms.try_into().ok()?)?;
+        self.leases.get_mut(&seq)?.expires_at = expires_at;
+        Some(expires_at)
     }
 
     /// Reclaim every lease whose expiry is at or before `now`, pushing those
@@ -405,6 +549,9 @@ impl WorkQueue {
         for seq in &expired {
             if let Some(lease) = self.leases.remove(seq) {
                 self.lease_index.remove(&lease.lease_id);
+                if let Some(assignment) = self.assignments.get_mut(seq) {
+                    let _ = assignment.expire(millis(now));
+                }
                 // An exhausted entry re-offers at once so the next lease
                 // dead-letters it promptly (no pointless backoff); otherwise apply
                 // exponential redelivery backoff via the delay index.
@@ -419,6 +566,11 @@ impl WorkQueue {
             }
         }
         expired
+    }
+
+    fn lease_for_id(&self, lease_id: &str) -> Option<Lease> {
+        let seq = *self.lease_index.get(lease_id)?;
+        self.leases.get(&seq).cloned()
     }
 
     /// Exponential redelivery backoff for the Nth delivery attempt:
@@ -464,5 +616,9 @@ impl WorkQueue {
     pub fn recover(&mut self, watermark: Seq) {
         self.committed = watermark;
     }
+}
+
+fn millis(value: DateTime<Utc>) -> u64 {
+    value.timestamp_millis().max(0) as u64
 }
 // HANDWRITE-END

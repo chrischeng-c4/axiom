@@ -36,6 +36,7 @@ fn spec(replicas: u32) -> RelaySpec {
         log_level: None,
         auth: "off".into(),
         tokens_secret: None,
+        peer_tls_secret: None,
         backup: None,
     }
 }
@@ -89,6 +90,7 @@ fn crd_flattens_cluster_spec() {
         "logLevel",
         "auth",
         "tokensSecret",
+        "peerTlsSecret",
     ] {
         assert!(props.get(field).is_some(), "missing relay knob `{field}`");
     }
@@ -156,6 +158,7 @@ fn render_emits_downward_api_statefulset() {
     assert_eq!(container["livenessProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["startupProbe"]["httpGet"]["path"], "/healthz");
     assert_eq!(container["ports"][0]["containerPort"], 7000);
+    assert_eq!(container["ports"][1]["containerPort"], 7001);
     assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
     assert_eq!(container["resources"]["requests"]["cpu"], "1");
     assert_eq!(container["resources"]["requests"]["memory"], "4Gi");
@@ -187,6 +190,33 @@ fn render_emits_downward_api_statefulset() {
         of_kind(&objs, "PodDisruptionBudget")["spec"]["maxUnavailable"],
         1
     );
+}
+
+#[test]
+fn peer_tls_secret_wires_dedicated_authenticated_raft_listener() {
+    let mut secured = spec(3);
+    secured.peer_tls_secret = Some("relay-peer-tls".into());
+    let objects = render(&Relay::new("relay", secured));
+    let sts = of_kind(&objects, "StatefulSet");
+    let env = env_of(sts);
+    let get = |key: &str| env.iter().find(|(name, _)| *name == key).unwrap().1;
+    assert_eq!(get("RELAY_RAFT_PORT")["value"], "7001");
+    assert_eq!(get("RELAY_PEER_MTLS")["value"], "on");
+    assert_eq!(
+        get("RELAY_PEER_TLS_CA")["value"],
+        "/var/run/secrets/relay-peer/ca.crt"
+    );
+    let volumes = sts["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap();
+    assert!(volumes.iter().any(|volume| {
+        volume["name"] == "relay-peer-tls" && volume["secret"]["secretName"] == "relay-peer-tls"
+    }));
+    let headless = objects
+        .iter()
+        .find(|object| object["kind"] == "Service" && object["spec"]["clusterIP"] == "None")
+        .unwrap();
+    assert_eq!(headless["spec"]["ports"][1]["port"], 7001);
 }
 
 /// R2 — RELAY_AUTH / RELAY_TOKEN_REGISTRY_FILE + the Secret volume render only

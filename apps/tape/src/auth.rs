@@ -35,11 +35,9 @@
 //! | `replay`, `checkpoint_get`, `checkpoint_put` (consumer side) | `read` |
 //!
 //! `checkpoint_put` advances only the calling consumer's own replay cursor
-//! -- it appends no new data to the topic -- so it sits in the `read` group
-//! rather than a third tier, the same precedent relay set for its
-//! consumer-local `ack`/`heartbeat`/`lease-batch`/`ack-batch` family (all
-//! `read`, not `write`, even though `ack`/`heartbeat` mutate consumer-local
-//! lease state).
+//! -- it appends no new data to the topic -- so it sits in the `read` group.
+//! This is a committed cursor mutation, not executor ownership: Tape exposes
+//! no lease or heartbeat family.
 //!
 //! Wildcard `*` grants cover every topic; `admin` ⊇ `write` ⊇ `read` per
 //! [`Role::covers`].

@@ -15,7 +15,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn guard_meter_dos_resource_evidence_bridge() {
-    let command = "target/debug/guard scan apps/guard --compact --no-persist --meter-target apps/guard";
+    let command =
+        "target/debug/guard scan apps/guard --compact --no-persist --meter-target apps/guard";
     let id = "guard-meter-dos-resource-evidence-bridge";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

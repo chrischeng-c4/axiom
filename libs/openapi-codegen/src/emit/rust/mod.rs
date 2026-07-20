@@ -176,9 +176,8 @@ mod tests {
         let out = generate(SPEC_32_QUERY, &opts()).unwrap();
         let client = file(&out, "client.rs");
         assert!(client.contains("use_post_fallback: bool,"));
-        assert!(client.contains(
-            "pub fn with_post_fallback(mut self, use_post_fallback: bool) -> Self {"
-        ));
+        assert!(client
+            .contains("pub fn with_post_fallback(mut self, use_post_fallback: bool) -> Self {"));
         assert!(client.contains("pub fn search_pets(&self, body:"));
         assert!(client.contains("let mut req = if self.use_post_fallback {"));
         assert!(client.contains("let twin_url = format!(\"{}/pets\", self.base_url);"));

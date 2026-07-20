@@ -60,9 +60,10 @@ pub use config::{DedupeConfig, FsyncPolicy, RelayCoreConfig, RetentionConfig, Wo
 pub use engine::{Relay, SubjectLive};
 pub use log::Log;
 pub use raft::{
-    load_snapshot_bytes, snapshot_bytes, EngineSnapshot, PubCommand, RelayRaft, RelayStateMachine,
+    load_snapshot_bytes, snapshot_bytes, EngineSnapshot, PubCommand, RelayCommand, RelayOutcome,
+    RelayRaft, RelayStateMachine,
 };
-pub use reconciler::{spawn_reconciler, ReconcilerHandle};
+pub use reconciler::{spawn_reconciler, spawn_replicated_reconciler, ReconcilerHandle};
 pub use server::{router, AppState};
 pub use server_config::RelayServerConfig;
 pub use shard::shard_for;

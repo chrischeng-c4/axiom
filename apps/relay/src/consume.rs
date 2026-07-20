@@ -8,6 +8,7 @@
 //! redelivery are unchanged; this is purely a streaming wrapper over the
 //! work-queue engine. Frames are length-prefixed JSON.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -18,7 +19,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use service_auth::{Role, RoleMapPrincipal};
+use service_auth::{AuditedRoleMapPrincipal, Role};
 use service_http::ApiErr;
 use tokio::sync::mpsc;
 
@@ -100,7 +101,7 @@ async fn read_up(stream: &mut BodyDataStream, dec: &mut Frames) -> Option<Consum
 )]
 pub async fn consume(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     req: Body,
 ) -> Response {
@@ -130,6 +131,7 @@ pub async fn consume(
     let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
     tokio::spawn(drive(
         st.relay_handle(),
+        st.raft(),
         subject,
         consumer_id,
         prefetch,
@@ -154,6 +156,7 @@ pub async fn consume(
 /// flight (lease + push), freeing a credit per Ack/Nack; wake on publish.
 async fn drive(
     relay: std::sync::Arc<Relay>,
+    raft: Option<std::sync::Arc<crate::raft::RelayRaft>>,
     subject: String,
     consumer_id: String,
     prefetch: u32,
@@ -162,6 +165,7 @@ async fn drive(
     tx: mpsc::Sender<Vec<u8>>,
 ) {
     let mut inflight: u32 = 0;
+    let mut epochs = HashMap::<String, u64>::new();
     // Wake-based push (#465): re-lease the instant a publish or release touches
     // this subject, instead of polling the queue every 50ms while idle. The
     // watch channel tracks the latest revision, so a wake signaled between our
@@ -169,10 +173,17 @@ async fn drive(
     let mut wake = relay.subscribe_wake(&subject);
     loop {
         while inflight < prefetch {
-            match relay
-                .lease(&subject, &consumer_id, Utc::now())
-                .unwrap_or(None)
-            {
+            let lease = match &raft {
+                Some(raft) => raft
+                    .lease(subject.clone(), consumer_id.clone(), Utc::now())
+                    .await
+                    .ok()
+                    .flatten(),
+                None => relay
+                    .lease(&subject, &consumer_id, Utc::now())
+                    .unwrap_or(None),
+            };
+            match lease {
                 Some(l) => {
                     let (message_id, payload) = relay
                         .entry(&l.subject, l.shard, l.seq)
@@ -181,7 +192,7 @@ async fn drive(
                         .map(|e| (e.message_id, e.payload))
                         .unwrap_or_default();
                     let frame = LeasedEntry {
-                        lease_id: l.lease_id,
+                        lease_id: l.lease_id.clone(),
                         epoch: l.epoch,
                         message_id,
                         payload,
@@ -189,6 +200,7 @@ async fn drive(
                     if tx.send(encode_frame(&frame)).await.is_err() {
                         return;
                     }
+                    epochs.insert(l.lease_id, l.epoch);
                     inflight += 1;
                 }
                 None => break, // queue empty
@@ -197,13 +209,25 @@ async fn drive(
         tokio::select! {
             up_frame = read_up(&mut up, &mut dec) => match up_frame {
                 Some(ConsumeUp::Ack { lease_id, epoch }) => {
-                    let _ = relay.ack(&subject, &lease_id, Some(epoch));
+                    match &raft {
+                        Some(raft) => { let _ = raft.ack(subject.clone(), lease_id.clone(), epoch, Utc::now()).await; }
+                        None => { let _ = relay.ack(&subject, &lease_id, Some(epoch)); }
+                    }
+                    epochs.remove(&lease_id);
                     inflight = inflight.saturating_sub(1);
                 }
                 Some(ConsumeUp::Nack { lease_id }) => {
                     // Fast release (#465): reset this lease for immediate
                     // redelivery rather than waiting out the lease TTL.
-                    let _ = relay.release(&subject, &lease_id);
+                    match &raft {
+                        Some(raft) => {
+                            if let Some(epoch) = epochs.get(&lease_id).copied() {
+                                let _ = raft.release(subject.clone(), lease_id.clone(), epoch, Utc::now()).await;
+                            }
+                        }
+                        None => { let _ = relay.release(&subject, &lease_id); }
+                    }
+                    epochs.remove(&lease_id);
                     inflight = inflight.saturating_sub(1);
                 }
                 Some(ConsumeUp::Subscribe { .. }) => {}

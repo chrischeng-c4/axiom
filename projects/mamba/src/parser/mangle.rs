@@ -245,11 +245,7 @@ fn mangle_stmt(stmt: &mut Spanned<Stmt>, class: Option<&str>) {
             }
         }
         // No mangleable identifiers / sub-expressions.
-        Stmt::Return(None)
-        | Stmt::Pass
-        | Stmt::Break
-        | Stmt::Continue
-        | Stmt::Import { .. } => {}
+        Stmt::Return(None) | Stmt::Pass | Stmt::Break | Stmt::Continue | Stmt::Import { .. } => {}
     }
 }
 

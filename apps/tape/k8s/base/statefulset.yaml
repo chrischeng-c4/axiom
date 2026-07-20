@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tape
-          image: tape:latest
+          image: tape:0.4.7
           imagePullPolicy: IfNotPresent
           command: ["tape", "serve"]
           ports:
@@ -83,6 +83,11 @@ spec:
                 configMapKeyRef:
                   name: tape-config
                   key: TAPE_GRACE_SECS
+            - name: TAPE_LOG_FORMAT
+              valueFrom:
+                configMapKeyRef:
+                  name: tape-config
+                  key: TAPE_LOG_FORMAT
             - name: RUST_LOG
               valueFrom:
                 configMapKeyRef:

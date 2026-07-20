@@ -5,32 +5,40 @@
 //! `libs/raft-core` is the step-driven consensus core; this crate is the **host**
 //! that drives it for a [`RaftStateMachine`]: a tick/pump loop, the h2c peer
 //! transport (Vote / Append / InstallSnapshot), the single apply loop, snapshot
-//! + log compaction, a read-your-write [`RaftHost::propose`], and a peer
+//! plus log compaction, a read-your-write [`RaftHost::propose`], and a peer
 //! [`RaftHost::router`] to merge into the service's h2c port.
 //!
 //! Every raft_core service (lumen, keep, relay, loom) supplies a
 //! [`RaftStateMachine`] (`apply`/`snapshot`/`restore`/`applied_index`) and gets
 //! HA + the backup layer for free, instead of hand-rolling a driver.
 
+mod applied_index_store;
 pub mod cluster;
 mod config;
+mod fenced_assignment;
 mod host;
 pub mod llm;
 mod outcome_window;
 mod peer_transport;
+mod proposal_cache;
 mod read_consistency;
 mod state_machine;
 mod store;
 mod view;
 
+pub use applied_index_store::AppliedIndexStore;
 pub use cluster::{
     ensure_static_membership_unchanged, parse_peer_overrides, peer_ordinal, replica_mode,
     ClusterDims, ClusterTopology,
 };
 pub use config::{HostConfig, SnapshotPolicy};
+pub use fenced_assignment::{
+    ActiveAssignment, AssignmentEpoch, AssignmentError, FenceToken, FencedAssignment,
+};
 pub use host::RaftHost;
 pub use outcome_window::{OutcomeWindow, DEFAULT_CAPACITY as OUTCOME_WINDOW_DEFAULT_CAPACITY};
 pub use peer_transport::PeerTransport;
+pub use proposal_cache::{ProposalCache, DEFAULT_PROPOSAL_CACHE_CAPACITY};
 pub use read_consistency::{ReadConsistency, READ_CONSISTENCY_HEADER};
 pub use state_machine::{Command, RaftStateMachine};
 pub use store::{FsyncPolicy, RaftStore};
@@ -137,20 +145,19 @@ mod tests {
             host.propose(8u64.to_le_bytes().to_vec()).await.unwrap();
             assert_eq!(sm.applied_index(), 2);
         } // host dropped → tasks aborted (simulated restart)
-          // A fresh SM cold-starts from the persisted raft log. Standard raft only
-          // re-commits prior-term entries once a *current-term* entry commits, so
-          // the backlog (7, 8) is replayed together with the first post-restart
-          // write (9). (Services whose SM persists its own state — lumen's RDB/AOF
-          // — recover without this; a memory-only SM needs the new-term commit.)
+          // The persisted commit watermark lets a fresh in-memory state machine
+          // replay before it serves reads or accepts another proposal.
         let sm2 = CounterSm::new();
         let host2 = mk(sm2.clone());
+        assert_eq!(sm2.applied_index(), 2);
+        assert_eq!(sm2.log.lock().unwrap().clone(), vec![(1, 7), (2, 8)]);
         let idx = host2.propose(9u64.to_le_bytes().to_vec()).await.unwrap();
         assert_eq!(idx, 3);
         assert_eq!(sm2.applied_index(), 3);
         assert_eq!(
             sm2.log.lock().unwrap().clone(),
             vec![(1, 7), (2, 8), (3, 9)],
-            "the backlog replays with the first new-term commit"
+            "the cold replay and new command remain in order"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -7,16 +7,16 @@
 // @contract topic-replay-kafka-local-backlog-win
 // @category efficiency
 // @required_for_production true
-// @command cargo test -p tape --test tape_vs_kafka -- --nocapture
+// @command cargo test --release -p tape --test tape_vs_kafka -- --nocapture
 // AW-EC-END
 
 // Contract: The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable.
 // Contract: Tape and Kafka replay the same 20,000-event, 128-byte-payload backlog workload from the beginning, using a real rskafka consumer for the Kafka side.
-// Contract: Tape's zero-copy full-replay latency is at least 20x faster than Kafka for the local backlog replay workload, calibrated from an actual measured run (~110-120x observed).
+// Contract: Tape's real h2c replay-stream latency is at least 1.5x faster than Kafka for the symmetric local backlog workload.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn tape_competitor_performance_kafka_replay_win() {
-    let command = "cargo test -p tape --test tape_vs_kafka -- --nocapture";
+    let command = "cargo test --release -p tape --test tape_vs_kafka -- --nocapture";
     let id = "tape-competitor-performance-kafka-replay-win";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

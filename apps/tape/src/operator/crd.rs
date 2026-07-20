@@ -44,7 +44,7 @@ pub struct TapeSpec {
     #[serde(flatten)]
     pub cluster: service_k8s::ClusterSpec,
 
-    /// Per-pod journal (+ raft hard state + applied-index marker) PVC size.
+    /// Per-pod journal plus shared Raft hard-state/log/snapshot PVC size.
     /// Defaults to `10Gi`.
     #[serde(default = "default_storage")]
     pub storage: String,

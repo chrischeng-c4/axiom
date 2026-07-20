@@ -2,7 +2,7 @@
 name = "service-observability"
 version = "0.1.0"
 edition = "2021"
-description = "Protocol-neutral service observability integration: structured logging, optional OTLP traces, metric providers, and lifecycle connection metrics."
+description = "Protocol-neutral service observability integration: structured logging, optional OTLP traces, metrics, lifecycle counters, and process-resource sampling."
 
 [lib]
 name = "service_observability"

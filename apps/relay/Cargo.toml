@@ -123,6 +123,10 @@ operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:service-k8s"]
 # always works. The endpoint itself is always served — this gates only the
 # CLI verb's HTTP fetch path.
 backup = ["dep:reqwest", "service-backup/http-client", "service-backup/s3"]
+# otel — enable OTLP trace export in the shared service-http tracing shell.
+# The serve flag remains available without this feature and fails clearly if
+# an endpoint is configured in a binary that was not built with OTLP support.
+otel = ["service-http/otlp"]
 # NOTE: the former private `rustls-provider` feature is gone — peer-tls
 # links rustls unconditionally now (#1209), so src/tls.rs installs the
 # process-level crypto provider in every build.
@@ -142,6 +146,8 @@ transport-h2c = { path = "../../libs/transport-h2c" }
 raft-core = { path = "../../libs/raft-core" }
 # h2c test clients for the transport/cluster integration tests.
 reqwest = { workspace = true }
+rcgen = "0.13"
+tower = { workspace = true, features = ["util"] }
 
 [[example]]
 name = "bench_compare"

@@ -44,7 +44,6 @@ metric = "qps"           # higher is better
 [cells.targets.relay]
 command = "cargo run -p relay --release --example bench_compare -- --backend relay --ops 200000 --concurrency 50 --batch 100"
 [cells.targets.rabbitmq]
-gate = "win"
 command = "cargo run -p relay --release --example bench_compare -- --backend rabbitmq --ops 200000 --concurrency 50 --batch 100"
 [cells.targets.nats-jetstream]
 command = "cargo run -p relay --release --example bench_compare -- --backend nats --ops 200000 --concurrency 50 --batch 100"
@@ -52,3 +51,15 @@ command = "cargo run -p relay --release --example bench_compare -- --backend nat
 command = "cargo run -p relay --release --example bench_compare -- --backend redis --ops 200000 --concurrency 50 --batch 100"
 [cells.targets.dragonfly-streams]
 command = "cargo run -p relay --release --example bench_compare -- --backend dragonfly --ops 200000 --concurrency 50 --batch 100 --redis-url redis://127.0.0.1:6380"
+
+# --- bulk work-queue: Relay's native large-batch efficiency cell. ---
+[[cells]]
+name = "bulk_work_queue"
+metric = "qps"
+[cells.targets.relay]
+command = "cargo run -p relay --release --example bench_compare -- --backend relay --ops 100000 --concurrency 10 --batch 1000 --payload-size 128"
+[cells.targets.rabbitmq]
+gate = "win"
+command = "cargo run -p relay --release --example bench_compare -- --backend rabbitmq --ops 100000 --concurrency 10 --batch 1000 --payload-size 128"
+[cells.targets.nats-jetstream]
+command = "cargo run -p relay --release --example bench_compare -- --backend nats --ops 100000 --concurrency 10 --batch 1000 --payload-size 128"

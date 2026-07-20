@@ -202,13 +202,7 @@ struct ClassExportSpec(StrSpecId, StrSpecId, ClassSpecId);
 struct CallableExportSpec(StrSpecId, StrSpecId, StrSpecId, StrSpecId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub struct SourceSpanSpec(
-    pub StrSpecId,
-    pub u32,
-    pub u32,
-    pub u32,
-    pub u32,
-);
+pub struct SourceSpanSpec(pub StrSpecId, pub u32, pub u32, pub u32, pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct TypeUseSpec(pub TypeSpecId, pub SourceSpanSpecId);
@@ -411,20 +405,22 @@ pub fn class_by_id(id: ClassSpecId) -> &'static ClassSpec {
 }
 
 pub fn class_spec(module: &str, name: &str) -> Option<(ClassSpecId, &'static ClassSpec)> {
-    let export = MANIFEST.class_exports.iter().find(|export| {
-        string(export.0) == module && string(export.1) == name
-    })?;
+    let export = MANIFEST
+        .class_exports
+        .iter()
+        .find(|export| string(export.0) == module && string(export.1) == name)?;
     Some((export.2, class_by_id(export.2)))
 }
 
-fn class_spec_canonical(module: &str, qualifier: &str) -> Option<(ClassSpecId, &'static ClassSpec)> {
+fn class_spec_canonical(
+    module: &str,
+    qualifier: &str,
+) -> Option<(ClassSpecId, &'static ClassSpec)> {
     MANIFEST
         .classes
         .iter()
         .enumerate()
-        .find(|(_, class)| {
-            string(class.module) == module && string(class.qualifier) == qualifier
-        })
+        .find(|(_, class)| string(class.module) == module && string(class.qualifier) == qualifier)
         .map(|(index, class)| (ClassSpecId(index as u32), class))
 }
 
@@ -446,10 +442,14 @@ pub fn module_exists(module: &str) -> bool {
             .callable_exports
             .iter()
             .any(|export| string(export.0) == module)
-        || MANIFEST.aliases.iter().any(|alias| {
-            string(alias.module) == module && string(alias.qualifier).is_empty()
-        })
-        || MANIFEST.classes.iter().any(|class| string(class.module) == module)
+        || MANIFEST
+            .aliases
+            .iter()
+            .any(|alias| string(alias.module) == module && string(alias.qualifier).is_empty())
+        || MANIFEST
+            .classes
+            .iter()
+            .any(|class| string(class.module) == module)
         || MANIFEST
             .callables
             .iter()
@@ -475,9 +475,7 @@ pub fn class_type_params(class: &ClassSpec) -> &'static [TypeParamSpecId] {
     type_param_edges(class.type_params)
 }
 
-pub fn class_methods(
-    class: &ClassSpec,
-) -> impl Iterator<Item = &'static CallableSpec> + use<> {
+pub fn class_methods(class: &ClassSpec) -> impl Iterator<Item = &'static CallableSpec> + use<> {
     MANIFEST.class_method_edges[class.methods.bounds()]
         .iter()
         .map(|id| &MANIFEST.class_callables[*id as usize])
@@ -580,7 +578,9 @@ pub fn class_callable_owner(
 }
 
 pub fn decorators(range: TableRange) -> impl Iterator<Item = &'static str> {
-    MANIFEST.decorators[range.bounds()].iter().map(|id| string(*id))
+    MANIFEST.decorators[range.bounds()]
+        .iter()
+        .map(|id| string(*id))
 }
 
 pub fn guards(range: TableRange) -> &'static [GuardSpec] {
@@ -649,7 +649,9 @@ mod tests {
 
     #[test]
     fn generated_manifest_preserves_copy_typevar_identity() {
-        let sig = overloads("copy", "", "copy").next().expect("copy.copy spec");
+        let sig = overloads("copy", "", "copy")
+            .next()
+            .expect("copy.copy spec");
         let [param] = params(sig.params) else {
             panic!("copy.copy must have one parameter");
         };
@@ -744,9 +746,7 @@ mod tests {
         let (_, class) = class_spec("typing", "SupportsIndex").expect("SupportsIndex spec");
         assert_eq!(class.kind, ClassSpecKind::Protocol);
         assert!(class.method_only_complete);
-        let methods: Vec<_> = class_methods(class)
-            .filter(|method| method.py312)
-            .collect();
+        let methods: Vec<_> = class_methods(class).filter(|method| method.py312).collect();
         assert_eq!(methods.len(), 1);
         assert_eq!(string(methods[0].name), "__index__");
     }
@@ -771,13 +771,8 @@ mod tests {
     #[test]
     fn generated_manifest_retains_inherited_generic_projection_path() {
         let method_kinds = [CallableSpecKind::InstanceMethod];
-        let resolution = class_callable_resolution(
-            "queue",
-            "PriorityQueue",
-            "get",
-            &method_kinds,
-        )
-        .expect("PriorityQueue.get inherited owner");
+        let resolution = class_callable_resolution("queue", "PriorityQueue", "get", &method_kinds)
+            .expect("PriorityQueue.get inherited owner");
         let [step] = resolution.path.as_slice() else {
             panic!("PriorityQueue.get must have one generic base step");
         };
@@ -800,8 +795,8 @@ mod tests {
 
     #[test]
     fn generated_manifest_marks_attribute_protocols_incomplete() {
-        let (_, class) = class_spec("_typeshed", "DataclassInstance")
-            .expect("DataclassInstance spec");
+        let (_, class) =
+            class_spec("_typeshed", "DataclassInstance").expect("DataclassInstance spec");
         assert_eq!(class.kind, ClassSpecKind::Protocol);
         assert!(!class.method_only_complete);
     }
@@ -810,8 +805,7 @@ mod tests {
     fn generated_manifest_excludes_future_only_classes_from_py312() {
         assert!(class_spec("http.server", "_SSLModule").is_none());
         assert!(MANIFEST.classes.iter().all(|class| {
-            (string(class.module), string(class.qualifier))
-                != ("http.server", "_SSLModule")
+            (string(class.module), string(class.qualifier)) != ("http.server", "_SSLModule")
         }));
     }
 
@@ -824,8 +818,7 @@ mod tests {
                 })
             })
             .expect("ast.parse TypeVar overload");
-        let TypeSpecNode::TypeParam(param_id) = node(type_use(params(sig.params)[0].ty).0)
-        else {
+        let TypeSpecNode::TypeParam(param_id) = node(type_use(params(sig.params)[0].ty).0) else {
             unreachable!()
         };
         let bound = type_param(*param_id).bound.expect("ast._T bound");
@@ -866,11 +859,13 @@ mod tests {
         let [exception] = params(strict_errors.params) else {
             panic!("codecs.strict_errors must have one parameter")
         };
-        let TypeSpecNode::Name { module, name, kind } = node(type_use(exception.ty).0)
-        else {
+        let TypeSpecNode::Name { module, name, kind } = node(type_use(exception.ty).0) else {
             panic!("UnicodeError must retain builtin nominal identity")
         };
-        assert_eq!((string(*module), string(*name)), ("builtins", "UnicodeError"));
+        assert_eq!(
+            (string(*module), string(*name)),
+            ("builtins", "UnicodeError")
+        );
         assert_eq!(*kind, TypeNameKind::Nominal);
 
         let warning = overloads("sqlite3", "Connection", "Warning")
@@ -891,19 +886,14 @@ mod tests {
 
     #[test]
     fn generated_manifest_canonicalizes_imported_submodule_qualifiers() {
-        let init = overloads(
-            "asyncio.subprocess",
-            "SubprocessStreamProtocol",
-            "__init__",
-        )
-        .next()
-        .expect("SubprocessStreamProtocol.__init__ spec");
+        let init = overloads("asyncio.subprocess", "SubprocessStreamProtocol", "__init__")
+            .next()
+            .expect("SubprocessStreamProtocol.__init__ spec");
         let loop_param = params(init.params)
             .iter()
             .find(|param| string(param.name) == "loop")
             .expect("loop parameter");
-        let TypeSpecNode::Name { module, name, kind } = node(type_use(loop_param.ty).0)
-        else {
+        let TypeSpecNode::Name { module, name, kind } = node(type_use(loop_param.ty).0) else {
             panic!("event loop must retain nominal imported identity")
         };
         assert_eq!(
@@ -919,8 +909,7 @@ mod tests {
             .iter()
             .find(|param| string(param.name) == "context")
             .expect("context parameter");
-        let TypeSpecNode::Name { module, name, kind } = node(type_use(context.ty).0)
-        else {
+        let TypeSpecNode::Name { module, name, kind } = node(type_use(context.ty).0) else {
             panic!("nested class must retain its local identity")
         };
         assert_eq!(
@@ -940,7 +929,10 @@ mod tests {
             let alias = alias(module, name)
                 .unwrap_or_else(|| panic!("{module}.{name} must retain its canonical alias"));
             assert!(
-                !matches!(node(alias.target), TypeSpecNode::Missing | TypeSpecNode::Unsupported(_)),
+                !matches!(
+                    node(alias.target),
+                    TypeSpecNode::Missing | TypeSpecNode::Unsupported(_)
+                ),
                 "{module}.{name} must retain a materializable alias target"
             );
         }
@@ -965,8 +957,7 @@ mod tests {
             .iter()
             .find(|param| string(param.name) == "context")
             .expect("context parameter");
-        let TypeSpecNode::Name { module, name, kind } =
-            node(type_use(imported_context.ty).0)
+        let TypeSpecNode::Name { module, name, kind } = node(type_use(imported_context.ty).0)
         else {
             panic!("imported nested class must retain its canonical identity")
         };

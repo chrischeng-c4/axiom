@@ -9,16 +9,19 @@ fill_sections: [e2e-test]
 Tape's competitive-performance gate mirrors Lumen's split between a fast local
 regression gate and explicit peer calibration. The default local gate runs
 Tape's bounded pull/replay and explicit checkpoint-ack path and verifies that it does not regress
-against conservative local budgets. The NATS win gate starts a real
-`nats-server -js`, publishes a 20,000-event, 128-byte-payload backlog into
-JetStream, replays the backlog, and requires Tape's zero-copy `replay_refs`
-path to replay the same bounded pull/replay backlog at least 1.5x faster. The Kafka win gate
-starts a real single-node Kafka broker in KRaft mode (`docker run
+against conservative local budgets. The NATS win gate starts real Tape h2c
+and `nats-server -js` services, publishes a 20,000-event, 128-byte-payload
+durable backlog, takes five complete replay samples across both network
+clients, and requires Tape's compact stream p50 to be at least 1.5x faster. It
+also reports throughput, p50/p95/p99, child CPU/RSS, durable bytes and disk
+amplification, and errors for both services. The
+Kafka win gate starts real Tape h2c and single-node Kafka KRaft services (`docker run
 apache/kafka:3.9.0`, no ZooKeeper), publishes the same 20,000-event,
 128-byte-payload backlog, replays it with a real `rskafka` consumer, and
-requires Tape's zero-copy `replay_refs` path to replay the same bounded pull/replay backlog at
-least 20x faster — calibrated from an actual measured run (~110-120x
-observed) — skipping gracefully when Docker is unavailable. Redpanda, Pulsar,
+requires Tape's compact stream to be at least 1.5x faster. The latest
+2026-07-18 release calibration measured 2.02x p50 against NATS and 4.07x
+against Kafka; the earlier in-process/network asymmetric ratios are invalid. The Kafka
+test skips gracefully when Docker is unavailable. Redpanda, Pulsar,
 and RabbitMQ Streams remain unclaimed until their own real-service calibration
 gates exist. RabbitMQ topic exchange is recorded as routing-only, not a replay
 performance baseline.
@@ -46,11 +49,12 @@ e2e_tests:
     contract_id: topic-replay-nats-jetstream-local-backlog-win
     category: efficiency
     test_path: tests/behavior_tape_claim_competitor_performance_nats_jetstream.rs
-    command: "cargo test -p tape --test tape_vs_nats_jetstream -- --nocapture"
+    command: "cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture"
     assertions:
       - "The test starts a real local nats-server with JetStream enabled."
       - "Tape and JetStream replay the same 20,000-event, 128-byte-payload backlog workload from the beginning."
-      - "Tape's zero-copy full-replay latency is at least 1.5x faster than NATS JetStream for the local backlog replay workload."
+      - "Tape's real h2c replay-stream latency is at least 1.5x faster than NATS JetStream for the symmetric local backlog workload."
+      - "The five-sample report includes throughput, p50/p95/p99, child-process CPU and RSS, durable bytes and disk amplification, and errors for both services."
 
   - id: tape-competitor-performance-kafka-replay-win
     capability_id: competitor-performance
@@ -58,9 +62,9 @@ e2e_tests:
     contract_id: topic-replay-kafka-local-backlog-win
     category: efficiency
     test_path: tests/efficiency_tape_claim_competitor_performance_kafka_replay_win.rs
-    command: "cargo test -p tape --test tape_vs_kafka -- --nocapture"
+    command: "cargo test --release -p tape --test tape_vs_kafka -- --nocapture"
     assertions:
       - "The test starts a real single-node apache/kafka:3.9.0 broker in KRaft mode (no ZooKeeper) via docker, skipping gracefully when Docker is unavailable."
       - "Tape and Kafka replay the same 20,000-event, 128-byte-payload backlog workload from the beginning, using a real rskafka consumer for the Kafka side."
-      - "Tape's zero-copy full-replay latency is at least 20x faster than Kafka for the local backlog replay workload, calibrated from an actual measured run (~110-120x observed)."
+      - "Tape's real h2c replay-stream latency is at least 1.5x faster than Kafka for the symmetric local backlog workload."
 ```

@@ -2,10 +2,10 @@
 //! Pure rendering: a [`Tape`] spec → the child Kubernetes objects that
 //! realize it. No cluster, no I/O — each object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels
-//! + owner reference), and `spec`. This is the operator's source of truth and
+//! and owner reference), and `spec`. This is the operator's source of truth and
 //! its primary test surface.
 //!
-//! tape is always a durable StatefulSet (per-pod journal + raft-state PVC),
+//! tape is always a durable StatefulSet (per-pod journal and raft-state PVC),
 //! so there is no Deployment branch — single-node is just
 //! `replicasPerShard: 1` (no raft env consumed: `replica_mode()` flips HA only
 //! when `REPLICAS_PER_SHARD > 1`). The shared [`service_k8s::render`] toolkit
@@ -133,9 +133,8 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
     let cpu = s.cluster.resources.cpu.as_str();
     let memory = s.cluster.resources.memory.as_str();
 
-    // Per-pod durable disk tier: the ordered journal + raft hard state +
-    // applied-index marker on a ReadWriteOnce PVC, mounted at /data (the
-    // helper mounts a `data` claim).
+    // Per-pod durable disk tier: ordered journal plus shared Raft hard state,
+    // commit watermark, log, and snapshots on one ReadWriteOnce PVC.
     let mut pvc = json!({
         "metadata": { "name": "data", "labels": cx.labels(COMPONENT) },
         "spec": {
@@ -155,6 +154,7 @@ fn statefulset(tape: &Tape, cx: &RenderCtx, headless: &str) -> Value {
         json!({ "name": "TAPE_RAFT_PORT", "value": RAFT_PORT.to_string() }),
         json!({ "name": "TAPE_DATA_DIR", "value": "/data" }),
         json!({ "name": "TAPE_GRACE_SECS", "value": s.grace_secs.to_string() }),
+        json!({ "name": "TAPE_LOG_FORMAT", "value": "json" }),
     ];
     if let Some(level) = &s.log_level {
         extra_env.push(json!({ "name": "RUST_LOG", "value": level }));

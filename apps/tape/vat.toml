@@ -28,6 +28,7 @@ id = "build-tape-ec-tests"
 cmd = [
   "cargo",
   "test",
+  "--release",
   "-p",
   "tape",
   "--test",
@@ -45,6 +46,7 @@ cmd = [
   "../../target/debug/meter",
   "test",
   "--",
+  "--release",
   "-p",
   "tape",
   "--test",

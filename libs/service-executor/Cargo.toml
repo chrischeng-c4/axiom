@@ -1,0 +1,13 @@
+[package]
+name = "service-executor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Bounded asynchronous execution primitives for Axiom services"
+
+[dependencies]
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

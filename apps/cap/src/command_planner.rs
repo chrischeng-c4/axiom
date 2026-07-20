@@ -3610,7 +3610,11 @@ fn parse_cut_delimiter(value: &str) -> Option<u8> {
 
 fn parse_cut_field(value: &str) -> Option<usize> {
     let field = value.parse().ok()?;
-    if field == 0 { None } else { Some(field) }
+    if field == 0 {
+        None
+    } else {
+        Some(field)
+    }
 }
 
 fn parse_cut_field_range(value: &str) -> Option<(usize, usize)> {
@@ -6893,16 +6897,8 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
                 let printf = parse_printf_args(&words[1..pipe])?;
                 if printf.format == PrintfFormat::StringNewline {
                     let downstream = &words[pipe + 1..];
-                    if let [
-                        grep_cmd,
-                        pattern,
-                        pipe_a,
-                        sort_cmd,
-                        pipe_b,
-                        uniq_cmd,
-                        pipe_c,
-                        rest @ ..,
-                    ] = downstream
+                    if let [grep_cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, rest @ ..] =
+                        downstream
                     {
                         if grep_cmd == "grep"
                             && !pattern.is_empty()
@@ -7275,16 +7271,8 @@ fn plan_pipe_words(words: &[String], label: Option<String>, original: &str) -> O
             if pipe > 0 && pipe + 1 < words.len() {
                 let seq = parse_seq_args(&words[1..pipe])?;
                 let downstream = &words[pipe + 1..];
-                if let [
-                    grep_cmd,
-                    pattern,
-                    pipe_a,
-                    sort_cmd,
-                    pipe_b,
-                    uniq_cmd,
-                    pipe_c,
-                    rest @ ..,
-                ] = downstream
+                if let [grep_cmd, pattern, pipe_a, sort_cmd, pipe_b, uniq_cmd, pipe_c, rest @ ..] =
+                    downstream
                 {
                     if grep_cmd == "grep"
                         && !pattern.is_empty()
@@ -14443,7 +14431,7 @@ fn collect_du_sk_output_lines(plan: &DuSkPlan, stderr: &mut dyn Write) -> Result
     )?;
     if saw_countable {
         Ok(vec![
-            format!("{}\t{}\n", (blocks + 1) / 2, plan.path).into_bytes(),
+            format!("{}\t{}\n", (blocks + 1) / 2, plan.path).into_bytes()
         ])
     } else {
         Ok(Vec::new())

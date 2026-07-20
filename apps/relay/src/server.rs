@@ -27,14 +27,14 @@ use std::sync::Arc;
 use axum::{
     body::Bytes,
     extract::{Extension, Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     middleware::from_fn_with_state,
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
 use chrono::Utc;
-use service_auth::{Role, RoleMapPrincipal, StaticRoleMapVerifier};
+use service_auth::{AuditedRoleMapPrincipal, ReloadableRoleMapVerifier, Role};
 use service_http::{ApiErr, MetricsProvider};
 
 use crate::engine::Relay;
@@ -56,7 +56,7 @@ pub struct AppState {
     config: Arc<RelayServerConfig>,
     metrics: Arc<RelayMetrics>,
     draining: Arc<AtomicBool>,
-    verifier: Arc<StaticRoleMapVerifier>,
+    verifier: Arc<ReloadableRoleMapVerifier>,
     raft: Option<Arc<crate::raft::RelayRaft>>,
 }
 
@@ -71,7 +71,7 @@ impl AppState {
             config: Arc::new(config),
             metrics: Arc::new(RelayMetrics::new()),
             draining: Arc::new(AtomicBool::new(false)),
-            verifier: Arc::new(StaticRoleMapVerifier::open()),
+            verifier: Arc::new(ReloadableRoleMapVerifier::open()),
             raft: None,
         }
     }
@@ -86,12 +86,12 @@ impl AppState {
     }
 
     /// The bearer verifier the data-plane auth middleware runs.
-    pub fn verifier(&self) -> Arc<StaticRoleMapVerifier> {
+    pub fn verifier(&self) -> Arc<ReloadableRoleMapVerifier> {
         Arc::clone(&self.verifier)
     }
 
-    /// Attach the raft group (replica/HA mode, #544): publish/publish-batch
-    /// propose through it instead of writing the engine directly. The group
+    /// Attach the raft group (replica/HA mode, #544): every authoritative
+    /// mutation proposes through it instead of writing the engine directly. The group
     /// MUST replicate into this state's engine (`relay_handle()`).
     pub fn set_raft(&mut self, raft: Arc<crate::raft::RelayRaft>) {
         self.raft = Some(raft);
@@ -148,6 +148,16 @@ impl service_http::MetricsProvider for AppState {
 ///
 /// @spec apps/relay/tech-design/interfaces/rest/http-2-openapi-transport-client-side-sharding-work-queue-consume.md#logic
 pub fn router(state: AppState) -> Router {
+    router_with_admission(state, None)
+}
+
+/// Build Relay with optional shared, bounded request admission. Relay owns
+/// only route classification; `service-http` owns token buckets, bounded key
+/// retention, redacted observations, and the standard 429 response.
+pub fn router_with_admission(
+    state: AppState,
+    admission: Option<service_http::AdmissionController>,
+) -> Router {
     let req_metrics = state.metrics();
     let verifier = state.verifier();
     let data_plane = Router::new()
@@ -182,7 +192,7 @@ pub fn router(state: AppState) -> Router {
         // RoleMapPrincipal each handler authorizes on its {subject}.
         .route_layer(from_fn_with_state(
             verifier,
-            service_auth::auth_middleware::<StaticRoleMapVerifier>,
+            service_auth::auth_middleware::<ReloadableRoleMapVerifier>,
         ))
         // Per-op request metrics (counts + latency). route_layer => only for
         // matched data-plane routes, and MatchedPath is populated. Added
@@ -190,6 +200,35 @@ pub fn router(state: AppState) -> Router {
         // counted.
         .route_layer(from_fn_with_state(req_metrics, crate::metrics::track))
         .with_state(state.clone());
+    let data_plane = match admission {
+        Some(controller) => data_plane.route_layer(from_fn_with_state(
+            service_http::AdmissionMiddleware::new(controller, |request| {
+                let path = request.uri().path();
+                let class = if path.starts_with("/admin/") {
+                    "relay.admin"
+                } else if *request.method() == Method::GET
+                    || path.ends_with("/consume")
+                    || path.ends_with("/lease")
+                    || path.ends_with("/lease-batch")
+                    || path.ends_with("/ack")
+                    || path.ends_with("/ack-batch")
+                    || path.ends_with("/heartbeat")
+                {
+                    "relay.read"
+                } else {
+                    "relay.write"
+                };
+                let key = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .map(|value| value.as_bytes())
+                    .unwrap_or(b"anonymous");
+                Some(service_http::AdmissionInput::new(class, key))
+            }),
+            service_http::admission_middleware,
+        )),
+        None => data_plane,
+    };
 
     // Standard probes (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
     // `/docs`) come from the shared service shell so the operational surface
@@ -256,7 +295,7 @@ fn encode_body<T: serde::Serialize>(cbor: bool, status: StatusCode, value: &T) -
 )]
 pub async fn publish(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -287,6 +326,7 @@ pub async fn publish(
             headers: req.headers,
             priority: req.priority,
             not_before,
+            appended_at: now,
         };
         return match propose_publish(&st, &raft, cmd).await {
             Ok(outcome) => encode_body(cbor, StatusCode::OK, &outcome),
@@ -315,27 +355,21 @@ pub async fn publish(
 /// publish returns the existing `{seq, deduped}`. Raft unavailability (no
 /// leader / apply timeout) maps to 503.
 async fn propose_publish(
-    st: &AppState,
+    _st: &AppState,
     raft: &crate::raft::RelayRaft,
     cmd: crate::raft::PubCommand,
 ) -> Result<crate::types::AppendOutcome, Response> {
     match raft.publish(&cmd).await {
         Ok((_, Some(outcome))) => Ok(outcome),
-        Ok((_, None)) => st
-            .relay
-            .publish_at(
-                &cmd.subject,
-                &cmd.message_id,
-                cmd.payload,
-                cmd.headers,
-                cmd.not_before,
-                cmd.priority,
-                Utc::now(),
-            )
-            .map_err(|e| {
-                ApiErr::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string())
-                    .into_response()
-            }),
+        // A successful proposal is read-your-write on this replica, so its
+        // apply outcome must still be claimable. Never "recover" by mutating
+        // the local engine outside Raft: that would diverge replicas.
+        Ok((index, None)) => Err(ApiErr::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "raft_outcome_unavailable",
+            format!("committed raft outcome at index {index} is unavailable"),
+        )
+        .into_response()),
         Err(e) => Err(ApiErr::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "raft_unavailable",
@@ -354,7 +388,7 @@ async fn propose_publish(
 )]
 pub async fn publish_batch(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -368,26 +402,33 @@ pub async fn publish_batch(
         Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
-    // Replica/HA mode (#544): each message is one raft command, proposed in
-    // input order (per-entry raft fsync replaces the local group commit — an
-    // accepted HA trade documented in the TD).
+    // Replica/HA mode commits the whole producer batch as one Raft command;
+    // the state machine then uses the same per-shard group commit as standalone.
     if let Some(raft) = st.raft() {
-        let mut outcomes = Vec::with_capacity(req.messages.len());
-        for m in req.messages {
-            let cmd = crate::raft::PubCommand {
+        let commands = req
+            .messages
+            .into_iter()
+            .map(|m| crate::raft::PubCommand {
                 subject: subject.clone(),
                 message_id: m.message_id,
                 payload: m.payload,
                 headers: m.headers,
                 priority: m.priority,
                 not_before: None,
-            };
-            match propose_publish(&st, &raft, cmd).await {
-                Ok(outcome) => outcomes.push(outcome),
-                Err(resp) => return resp,
+                appended_at: now,
+            })
+            .collect();
+        return match raft.publish_batch(subject, commands, now).await {
+            Ok((_, outcomes)) => {
+                encode_body(cbor, StatusCode::OK, &PublishBatchResponse { outcomes })
             }
-        }
-        return encode_body(cbor, StatusCode::OK, &PublishBatchResponse { outcomes });
+            Err(error) => ApiErr::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "raft_unavailable",
+                error.to_string(),
+            )
+            .into_response(),
+        };
     }
     let messages = req
         .messages
@@ -410,7 +451,7 @@ pub async fn publish_batch(
 )]
 pub async fn lease(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -424,10 +465,23 @@ pub async fn lease(
         Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
-    let lease = st
-        .relay
-        .lease(&subject, &req.consumer_id, now)
-        .unwrap_or(None);
+    let lease = if let Some(raft) = st.raft() {
+        match raft.lease(subject.clone(), req.consumer_id, now).await {
+            Ok(lease) => lease,
+            Err(e) => {
+                return ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "raft_unavailable",
+                    e.to_string(),
+                )
+                .into_response()
+            }
+        }
+    } else {
+        st.relay
+            .lease(&subject, &req.consumer_id, now)
+            .unwrap_or(None)
+    };
     // Attach the leased entry body so the consumer knows what it leased (#166).
     let entry = match &lease {
         Some(l) => st.relay.entry(&l.subject, l.shard, l.seq).unwrap_or(None),
@@ -445,7 +499,7 @@ pub async fn lease(
 )]
 pub async fn ack(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -458,16 +512,42 @@ pub async fn ack(
         Ok(r) => r,
         Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
-    let acked = st
-        .relay
-        .ack(&subject, &req.lease_id, req.epoch)
-        .unwrap_or(false);
-    let committed_seq = st
-        .relay
-        .committed_offset(&subject)
-        .ok()
-        .flatten()
-        .map(|c| c.committed_seq);
+    let (acked, committed_seq) = if let Some(raft) = st.raft() {
+        let Some(epoch) = req.epoch else {
+            return ApiErr::new(
+                StatusCode::BAD_REQUEST,
+                "epoch_required",
+                "epoch is required in replicated mode",
+            )
+            .into_response();
+        };
+        match raft
+            .ack(subject.clone(), req.lease_id, epoch, Utc::now())
+            .await
+        {
+            Ok((acked, committed)) => (acked, committed.map(|c| c.committed_seq)),
+            Err(e) => {
+                return ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "raft_unavailable",
+                    e.to_string(),
+                )
+                .into_response()
+            }
+        }
+    } else {
+        let acked = st
+            .relay
+            .ack(&subject, &req.lease_id, req.epoch)
+            .unwrap_or(false);
+        let committed = st
+            .relay
+            .committed_offset(&subject)
+            .ok()
+            .flatten()
+            .map(|c| c.committed_seq);
+        (acked, committed)
+    };
     encode_body(
         cbor,
         StatusCode::OK,
@@ -487,7 +567,7 @@ pub async fn ack(
 )]
 pub async fn lease_batch(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -501,10 +581,26 @@ pub async fn lease_batch(
         Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
-    let leases = st
-        .relay
-        .lease_batch(&subject, &req.consumer_id, req.max, now)
-        .unwrap_or_default();
+    let leases = if let Some(raft) = st.raft() {
+        match raft
+            .lease_batch(subject.clone(), req.consumer_id, req.max, now)
+            .await
+        {
+            Ok(leases) => leases,
+            Err(e) => {
+                return ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "raft_unavailable",
+                    e.to_string(),
+                )
+                .into_response()
+            }
+        }
+    } else {
+        st.relay
+            .lease_batch(&subject, &req.consumer_id, req.max, now)
+            .unwrap_or_default()
+    };
     encode_body(cbor, StatusCode::OK, &LeaseBatchResponse { leases })
 }
 
@@ -517,7 +613,7 @@ pub async fn lease_batch(
 )]
 pub async fn ack_batch(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -530,12 +626,38 @@ pub async fn ack_batch(
         Ok(r) => r,
         Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
-    let acks: Vec<(String, Option<u64>)> = req
-        .acks
-        .into_iter()
-        .map(|a| (a.lease_id, a.epoch))
-        .collect();
-    let (acked, committed) = st.relay.ack_batch(&subject, &acks).unwrap_or((0, None));
+    let (acked, committed) = if let Some(raft) = st.raft() {
+        let mut acks = Vec::with_capacity(req.acks.len());
+        for ack in req.acks {
+            let Some(epoch) = ack.epoch else {
+                return ApiErr::new(
+                    StatusCode::BAD_REQUEST,
+                    "epoch_required",
+                    "every ack epoch is required in replicated mode",
+                )
+                .into_response();
+            };
+            acks.push((ack.lease_id, epoch));
+        }
+        match raft.ack_batch(subject.clone(), acks, Utc::now()).await {
+            Ok(result) => result,
+            Err(e) => {
+                return ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "raft_unavailable",
+                    e.to_string(),
+                )
+                .into_response()
+            }
+        }
+    } else {
+        let acks: Vec<(String, Option<u64>)> = req
+            .acks
+            .into_iter()
+            .map(|a| (a.lease_id, a.epoch))
+            .collect();
+        st.relay.ack_batch(&subject, &acks).unwrap_or((0, None))
+    };
     encode_body(
         cbor,
         StatusCode::OK,
@@ -555,7 +677,7 @@ pub async fn ack_batch(
 )]
 pub async fn heartbeat(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -569,10 +691,26 @@ pub async fn heartbeat(
         Err(e) => return ApiErr::new(StatusCode::BAD_REQUEST, "bad_request", e).into_response(),
     };
     let now = Utc::now();
-    let expires_at = st
-        .relay
-        .heartbeat(&subject, &req.lease_id, req.epoch, now)
-        .unwrap_or(None);
+    let expires_at = if let Some(raft) = st.raft() {
+        match raft
+            .heartbeat(subject.clone(), req.lease_id, req.epoch, now)
+            .await
+        {
+            Ok(expires_at) => expires_at,
+            Err(e) => {
+                return ApiErr::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "raft_unavailable",
+                    e.to_string(),
+                )
+                .into_response()
+            }
+        }
+    } else {
+        st.relay
+            .heartbeat(&subject, &req.lease_id, req.epoch, now)
+            .unwrap_or(None)
+    };
     encode_body(
         cbor,
         StatusCode::OK,
@@ -589,7 +727,7 @@ pub async fn heartbeat(
 /// ([`crate::raft::snapshot_bytes`] — `dump_live` + the applied index; 0 on a
 /// raft-less single node). A cluster-wide admin op: requires `admin` on `*`
 /// when auth is required (lumen's guard). Restore = feed the bytes to
-/// `raft::load_snapshot_bytes` on a fresh node (`load_live` merge).
+/// `raft::load_snapshot_bytes` on a fresh node (exact state replacement).
 #[utoipa::path(
     get,
     path = "/admin/backup",
@@ -597,7 +735,7 @@ pub async fn heartbeat(
 )]
 pub async fn admin_backup(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, "*", Role::Admin) {
         return deny.into_response();
@@ -627,7 +765,7 @@ pub async fn admin_backup(
 )]
 pub async fn log_len(
     State(st): State<AppState>,
-    Extension(principal): Extension<RoleMapPrincipal>,
+    Extension(principal): Extension<AuditedRoleMapPrincipal>,
     Path(subject): Path<String>,
 ) -> Response {
     if let Err(deny) = crate::auth::authorize(&principal, &subject, Role::Read) {

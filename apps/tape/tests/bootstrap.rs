@@ -5,12 +5,14 @@
 
 use std::sync::{Arc, Mutex};
 
-use raft_runtime::RaftStateMachine;
-use tape::raft::{prepare_bootstrap_seed, snapshot_bytes, TapeStateMachine};
+use std::collections::HashMap;
+
+use raft_runtime::Membership;
+use tape::raft::{prepare_bootstrap_seed, snapshot_bytes, TapeRaft};
 use tape::TapeJournal;
 
-#[test]
-fn file_snapshot_seeds_fresh_pvc_before_raft_catch_up() {
+#[tokio::test]
+async fn file_snapshot_seeds_fresh_pvc_before_raft_catch_up() {
     let source = Arc::new(Mutex::new(TapeJournal::default()));
     source
         .lock()
@@ -22,12 +24,19 @@ fn file_snapshot_seeds_fresh_pvc_before_raft_catch_up() {
     prepare_bootstrap_seed(dir.path(), 3, &bytes).unwrap();
 
     let restored = Arc::new(Mutex::new(TapeJournal::default()));
-    let sm = TapeStateMachine::new(
+    let raft = TapeRaft::spawn(
         Arc::clone(&restored),
-        Some(dir.path().join("raft/applied-3.idx")),
+        &dir.path().join("raft"),
+        3,
+        Membership {
+            voters: vec![3],
+            learners: Vec::new(),
+        },
+        HashMap::new(),
+        TapeRaft::host_config(8),
     )
     .unwrap();
-    assert_eq!(sm.applied_index(), 42);
+    assert_eq!(raft.applied_index(), 42);
     let events = restored.lock().unwrap().replay("orders", None, None, None);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].payload["n"], 7);

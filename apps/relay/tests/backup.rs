@@ -2,8 +2,7 @@
 //! Backup surface over a LIVE node (WI #1209): `GET /admin/backup` returns
 //! the exact `RelayStateMachine::snapshot` bytes (`EngineSnapshot` =
 //! `dump_live` + applied index), the artifact round-trips through the
-//! `load_live` MERGE on a fresh engine (the restore semantics: idempotent per
-//! `message_id`, leases not replicated), the endpoint is admin-guarded when
+//! exact `load_live` state replacement on a fresh engine, the endpoint is admin-guarded when
 //! auth is required, and — with `--features backup` — `relay::backup` ships
 //! the bytes to a `libs/service-backup` `file://` sink with age retention.
 //!
@@ -80,10 +79,9 @@ async fn admin_backup_returns_the_state_machine_snapshot_bytes() {
 }
 
 /// R2 / AC2 (restore): a backup artifact written through the service-backup
-/// local sink round-trips: `load_snapshot_bytes` (the `load_live` merge) on a
-/// FRESH engine re-publishes the un-acked message, a consumer leases it back
-/// with the original payload, and loading the same artifact twice does NOT
-/// duplicate it (merge is idempotent per message_id).
+/// local sink round-trips: `load_snapshot_bytes` replaces a FRESH engine, a
+/// consumer leases the message back with the original payload, and loading the
+/// same artifact twice remains idempotent.
 #[tokio::test]
 async fn backup_artifact_round_trips_through_load_live_on_a_fresh_engine() {
     let (addr, state) = start_server().await;
@@ -105,7 +103,7 @@ async fn backup_artifact_round_trips_through_load_live_on_a_fresh_engine() {
     let key = service_backup::BackupSink::put(&sink, std::time::SystemTime::now(), &bytes).unwrap();
     let artifact = std::fs::read(dir.path().join(&key)).unwrap();
 
-    // Fresh node: restore = load_live MERGE.
+    // Fresh node: restore = exact state replacement.
     let fresh = Relay::new(RelayCoreConfig::in_memory());
     let up_to = relay::load_snapshot_bytes(&fresh, &artifact).unwrap();
     assert_eq!(up_to, 0);
@@ -128,6 +126,54 @@ async fn backup_artifact_round_trips_through_load_live_on_a_fresh_engine() {
         fresh.lease("jobs", "w-2", now).unwrap().is_none(),
         "double load must not duplicate the message"
     );
+}
+
+#[test]
+fn restore_preserves_truncated_sequence_space_and_committed_watermark() {
+    let source = Relay::new(RelayCoreConfig::in_memory());
+    let now = Utc::now();
+    for i in 0..5 {
+        source
+            .publish(
+                "jobs",
+                &format!("m-{i}"),
+                json!({"n": i}),
+                BTreeMap::new(),
+                now,
+            )
+            .unwrap();
+    }
+    for i in 0..3 {
+        let lease = source
+            .lease("jobs", "worker", now)
+            .unwrap()
+            .expect("source lease");
+        assert_eq!(lease.seq, i);
+        assert!(source
+            .ack("jobs", &lease.lease_id, Some(lease.epoch))
+            .unwrap());
+    }
+
+    let artifact = relay::snapshot_bytes(&source, 17).unwrap();
+    let restored = Relay::new(RelayCoreConfig::in_memory());
+    assert_eq!(
+        relay::load_snapshot_bytes(&restored, &artifact).unwrap(),
+        17
+    );
+    assert!(restored.entry("jobs", 0, 0).unwrap().is_none());
+    assert_eq!(restored.entry("jobs", 0, 3).unwrap().unwrap().seq, 3);
+    assert_eq!(
+        restored
+            .committed_offset("jobs")
+            .unwrap()
+            .expect("watermark")
+            .committed_seq,
+        2
+    );
+    let appended = restored
+        .publish("jobs", "m-5", json!({"n": 5}), BTreeMap::new(), now)
+        .unwrap();
+    assert_eq!(appended.seq, 5, "snapshot restore must not rewind seq");
 }
 
 /// R2 (guard): with auth required, `GET /admin/backup` rejects a missing

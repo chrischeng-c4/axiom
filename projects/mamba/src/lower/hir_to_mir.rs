@@ -1525,10 +1525,7 @@ pub fn lower_hir_to_mir_repl(
                     &mut required_extra_classes,
                 );
                 for method in &class.methods {
-                    collect_class_def_placeholder_syms(
-                        &method.body,
-                        &mut required_extra_classes,
-                    );
+                    collect_class_def_placeholder_syms(&method.body, &mut required_extra_classes);
                 }
             }
         }
@@ -1548,8 +1545,7 @@ pub fn lower_hir_to_mir_repl(
         .chain(hir.classes.iter().cloned())
         .collect();
 
-    let mut lowerer =
-        prepare_hir_to_mir_with_symbols_src(&merged, tcx, symbols, None);
+    let mut lowerer = prepare_hir_to_mir_with_symbols_src(&merged, tcx, symbols, None);
     // Always emit a __main__ body (even if top_level is empty)
     let (body, new_globals, has_echo) =
         lowerer.lower_top_level_repl(&hir.top_level, &hir.sym_names, &hir.sym_types, prev_globals);
@@ -2079,7 +2075,13 @@ impl<'a> HirToMir<'a> {
             self.current_stmts.push(MirInst::MakeTuple {
                 dest: tup_vreg,
                 elements: vec![
-                    name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg, abi_vreg, contract_vreg,
+                    name_vreg,
+                    kind_vreg,
+                    hd_vreg,
+                    def_vreg,
+                    anno_vreg,
+                    abi_vreg,
+                    contract_vreg,
                 ],
                 ty: any_ty,
             });
@@ -9808,9 +9810,7 @@ impl<'a> HirToMir<'a> {
                             name,
                             role: crate::types::ty::ClassRole::Instance,
                             ..
-                        }
-                            if name == "Queue" && !self.is_user_defined_class_name(name) =>
-                        {
+                        } if name == "Queue" && !self.is_user_defined_class_name(name) => {
                             match (attr.as_str(), args.len()) {
                                 ("qsize", 0) => Some("mb_queue_qsize"),
                                 _ => None,
@@ -9820,9 +9820,8 @@ impl<'a> HirToMir<'a> {
                             name,
                             role: crate::types::ty::ClassRole::Instance,
                             ..
-                        }
-                            if name == "DefaultSelector"
-                                && !self.is_user_defined_class_name(name) =>
+                        } if name == "DefaultSelector"
+                            && !self.is_user_defined_class_name(name) =>
                         {
                             match (attr.as_str(), args.len()) {
                                 ("close", 0) => Some("mb_selectors_close"),
@@ -10021,8 +10020,7 @@ impl<'a> HirToMir<'a> {
                 if self.user_class_syms.contains(&func_sym.0)
                     && !self.runtime_bound_class_syms.contains(&func_sym.0)
                 {
-                    if let Some(class_name) =
-                        self.user_class_runtime_keys.get(&func_sym.0).cloned()
+                    if let Some(class_name) = self.user_class_runtime_keys.get(&func_sym.0).cloned()
                     {
                         let name_vreg = self.emit_str_const(&class_name);
                         let boxed_args: Vec<VReg> = args
@@ -10285,7 +10283,10 @@ impl<'a> HirToMir<'a> {
                     }
                     if extern_name == "mb_super" {
                         let cls_vreg = boxed_args[0];
-                        let self_vreg = boxed_args.get(1).copied().unwrap_or_else(|| self.emit_none());
+                        let self_vreg = boxed_args
+                            .get(1)
+                            .copied()
+                            .unwrap_or_else(|| self.emit_none());
                         self.current_stmts.push(MirInst::CallExtern {
                             dest: Some(dest),
                             name: "mb_super_checked".to_string(),
@@ -11048,8 +11049,7 @@ impl<'a> HirToMir<'a> {
                             ty: *ty,
                         });
                     }
-                } else if self.decorated_func_syms.contains(&func_sym.0)
-                    && !is_runtime_bound_local
+                } else if self.decorated_func_syms.contains(&func_sym.0) && !is_runtime_bound_local
                 {
                     // Decorated function: load from global (may be replaced by decorator)
                     // then dispatch dynamically based on arg count.
@@ -11893,7 +11893,12 @@ impl<'a> HirToMir<'a> {
                         self.current_stmts.push(MirInst::MakeTuple {
                             dest: tup,
                             elements: vec![
-                                pn_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg, abi_vreg,
+                                pn_vreg,
+                                kind_vreg,
+                                hd_vreg,
+                                def_vreg,
+                                anno_vreg,
+                                abi_vreg,
                                 contract_vreg,
                             ],
                             ty: any_ty,
@@ -14787,18 +14792,22 @@ mod tests {
         let update_index = lowerer
             .current_stmts
             .iter()
-            .position(|stmt| matches!(
-                stmt,
-                MirInst::CallExtern { name, .. } if name == "mb_class_update_bases"
-            ))
+            .position(|stmt| {
+                matches!(
+                    stmt,
+                    MirInst::CallExtern { name, .. } if name == "mb_class_update_bases"
+                )
+            })
             .expect("runtime base expression must update the class MRO");
         let slots_index = lowerer
             .current_stmts
             .iter()
-            .position(|stmt| matches!(
-                stmt,
-                MirInst::CallExtern { name, .. } if name == "mb_register_slots"
-            ))
+            .position(|stmt| {
+                matches!(
+                    stmt,
+                    MirInst::CallExtern { name, .. } if name == "mb_register_slots"
+                )
+            })
             .expect("declared slots must be registered");
 
         assert!(

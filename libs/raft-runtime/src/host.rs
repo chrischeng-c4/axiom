@@ -10,7 +10,8 @@
 //! always sound.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -24,7 +25,7 @@ use raft_core::{
     RaftMsg, RaftNode, VoteReq, VoteResp,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{watch, Mutex, Notify};
 use tokio::task::JoinHandle;
 
 use crate::config::{HostConfig, SnapshotPolicy};
@@ -73,11 +74,52 @@ struct Shared {
     store: RaftStore,
     sm: Arc<dyn RaftStateMachine>,
     peers: HashMap<NodeId, String>,
+    /// One coalescing RPC lane per peer. Raft's latest AppendEntries contains
+    /// the complete missing suffix, so retaining every intermediate request
+    /// only creates out-of-order progress and repeated durable writes.
+    peer_lanes: HashMap<NodeId, Arc<PeerLane>>,
     client: reqwest::Client,
     peer_transport: Option<PeerTransport>,
     /// Fires (with the SM's applied head) whenever apply advances.
     applied_tx: watch::Sender<Index>,
     cfg: HostConfig,
+    rpc_tracker: Arc<RpcTracker>,
+}
+
+#[derive(Default)]
+struct RpcTracker {
+    active: AtomicUsize,
+    idle: Notify,
+}
+
+#[derive(Default)]
+struct PeerLane {
+    pending: Mutex<Option<RaftMsg>>,
+    running: AtomicBool,
+}
+
+impl RpcTracker {
+    async fn wait_idle(&self) {
+        loop {
+            let notified = self.idle.notified();
+            if self.active.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct RpcGuard {
+    tracker: Arc<RpcTracker>,
+}
+
+impl Drop for RpcGuard {
+    fn drop(&mut self) {
+        if self.tracker.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.tracker.idle.notify_waiters();
+        }
+    }
 }
 
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
@@ -150,8 +192,41 @@ impl Shared {
             n.take_outgoing()
         };
         for o in outs {
-            let s = Arc::clone(self);
-            tokio::spawn(async move { s.send_request(o.to, o.msg).await });
+            let Some(lane) = self.peer_lanes.get(&o.to).cloned() else {
+                continue;
+            };
+            let spawn_worker = {
+                let mut pending = lane.pending.lock().await;
+                *pending = Some(o.msg);
+                !lane.running.swap(true, Ordering::AcqRel)
+            };
+            if spawn_worker {
+                let s = Arc::clone(self);
+                let tracker = Arc::clone(&self.rpc_tracker);
+                tracker.active.fetch_add(1, Ordering::AcqRel);
+                tokio::spawn(async move {
+                    let _guard = RpcGuard { tracker };
+                    loop {
+                        let next = {
+                            let mut pending = lane.pending.lock().await;
+                            match pending.take() {
+                                Some(msg) => Some(msg),
+                                None => {
+                                    // Producers update `pending` and observe
+                                    // `running` under this same lock, closing
+                                    // the empty-lane/spawn race.
+                                    lane.running.store(false, Ordering::Release);
+                                    None
+                                }
+                            }
+                        };
+                        let Some(msg) = next else {
+                            break;
+                        };
+                        Arc::clone(&s).send_request(o.to, msg).await;
+                    }
+                });
+            }
         }
     }
 
@@ -209,17 +284,17 @@ impl Shared {
         }
     }
 
-    /// Leader-side propose; returns the index once the **state machine applies**
-    /// it (read-your-write). Errors if not leader or apply times out.
-    async fn propose_applied(self: &Arc<Self>, command: Command) -> Result<Index> {
+    /// Try a leader-side proposal and return its index once the **state machine
+    /// applies** it (read-your-write). `Ok(None)` means this node was no longer
+    /// leader when the node lock was acquired, so the caller may safely
+    /// re-route the command: it was not appended. Once an index is allocated,
+    /// an apply timeout remains an error and must not be retried blindly.
+    async fn try_propose_applied(self: &Arc<Self>, command: Command) -> Result<Option<Index>> {
         let index = {
             let mut n = self.node.lock().await;
-            if !n.is_leader() {
-                bail!("raft: not leader");
-            }
-            let idx = n
-                .propose(command)
-                .ok_or_else(|| anyhow!("raft: lost leadership during propose"))?;
+            let Some(idx) = n.propose(command) else {
+                return Ok(None);
+            };
             self.persist(&n);
             self.apply_ready(&mut n); // sole voter commits+applies here
             idx
@@ -227,7 +302,7 @@ impl Shared {
         self.flush().await;
 
         if self.sm.applied_index() >= index {
-            return Ok(index);
+            return Ok(Some(index));
         }
         let mut rx = self.applied_tx.subscribe();
         let deadline = Instant::now() + self.cfg.propose_timeout;
@@ -236,7 +311,7 @@ impl Shared {
                 let mut n = self.node.lock().await;
                 self.apply_ready(&mut n);
                 if self.sm.applied_index() >= index {
-                    return Ok(index);
+                    return Ok(Some(index));
                 }
             }
             tokio::select! {
@@ -254,15 +329,16 @@ impl Shared {
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
 pub struct RaftHost {
     shared: Arc<Shared>,
-    tick: JoinHandle<()>,
-    pump: JoinHandle<()>,
+    tasks: StdMutex<Option<(JoinHandle<()>, JoinHandle<()>)>>,
 }
 
 /// @spec libs/raft-runtime/tech-design/semantic/source/libs-raft-runtime-src-host-rs.md#source
 impl Drop for RaftHost {
     fn drop(&mut self) {
-        self.tick.abort();
-        self.pump.abort();
+        if let Some((tick, pump)) = self.tasks.lock().expect("raft task mutex poisoned").take() {
+            tick.abort();
+            pump.abort();
+        }
     }
 }
 
@@ -329,16 +405,23 @@ impl RaftHost {
         let client =
             transport_h2c::h2c_client_with(Some(cfg.rpc_timeout), None).expect("h2c client");
         let (applied_tx, _rx) = watch::channel(sm.applied_index());
+        let peer_lanes = peers
+            .keys()
+            .copied()
+            .map(|peer| (peer, Arc::new(PeerLane::default())))
+            .collect();
         let shared = Arc::new(Shared {
             id,
             node: Mutex::new(node),
             store,
             sm,
             peers,
+            peer_lanes,
             client,
             peer_transport,
             applied_tx,
             cfg,
+            rpc_tracker: Arc::new(RpcTracker::default()),
         });
 
         let s = Arc::clone(&shared);
@@ -361,7 +444,31 @@ impl RaftHost {
                 p.flush().await;
             }
         });
-        RaftHost { shared, tick, pump }
+        RaftHost {
+            shared,
+            tasks: StdMutex::new(Some((tick, pump))),
+        }
+    }
+
+    /// Stop the periodic host loops and wait for every already-dispatched peer
+    /// RPC to finish before the h2 client is dropped. Service shutdown should
+    /// stop public ingress first, call this method, then close the peer
+    /// listener. The bounded wait prevents active HTTP/2 streams from being
+    /// torn down with the Tokio runtime.
+    pub async fn shutdown(&self) -> Result<()> {
+        let tasks = self.tasks.lock().expect("raft task mutex poisoned").take();
+        if let Some((tick, pump)) = tasks {
+            tick.abort();
+            pump.abort();
+            let _ = tick.await;
+            let _ = pump.await;
+        }
+
+        let timeout = self.shared.cfg.rpc_timeout + self.shared.cfg.rpc_timeout;
+        tokio::time::timeout(timeout, self.shared.rpc_tracker.wait_idle())
+            .await
+            .map_err(|_| anyhow!("raft: peer RPC drain timed out after {timeout:?}"))?;
+        Ok(())
     }
 
     pub async fn is_leader(&self) -> bool {
@@ -381,6 +488,7 @@ impl RaftHost {
     pub async fn propose(&self, command: Command) -> Result<Index> {
         let s = &self.shared;
         let deadline = Instant::now() + s.cfg.propose_timeout;
+        let mut last_route_error = None;
         loop {
             let route = {
                 let n = s.node.lock().await;
@@ -394,16 +502,22 @@ impl RaftHost {
                 }
             };
             match route {
-                Route::Local => return s.propose_applied(command).await,
-                Route::Remote(url) => {
-                    if let Ok(seq) = self.forward(&url, &command).await {
-                        return Ok(seq);
+                Route::Local => {
+                    if let Some(index) = s.try_propose_applied(command.clone()).await? {
+                        return Ok(index);
                     }
                 }
+                Route::Remote(url) => match self.forward(&url, &command).await {
+                    Ok(seq) => return Ok(seq),
+                    Err(error) => last_route_error = Some(error.to_string()),
+                },
                 Route::Unknown => {}
             }
             if Instant::now() >= deadline {
-                bail!("raft: no leader elected (cluster not ready)");
+                match last_route_error {
+                    Some(error) => bail!("raft: proposal routing timed out: {error}"),
+                    None => bail!("raft: no leader elected (cluster not ready)"),
+                }
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -416,7 +530,10 @@ impl RaftHost {
             .shared
             .http_client()
             .post(format!("{leader_url}/raft/publish"))
-            .timeout(self.shared.cfg.rpc_timeout)
+            // Unlike Vote/AppendEntries, publish includes durable quorum
+            // commit and local state-machine apply. Its request budget is the
+            // proposal deadline, not the short peer transport timeout.
+            .timeout(self.shared.cfg.propose_timeout)
             .body(command.to_vec())
             .send()
             .await?;
@@ -562,8 +679,22 @@ async fn publish_handler(
         )
             .into_response();
     }
-    match s.propose_applied(body.to_vec()).await {
-        Ok(seq) => (StatusCode::OK, Json(serde_json::json!({ "seq": seq }))).into_response(),
+    match s.try_propose_applied(body.to_vec()).await {
+        Ok(Some(seq)) => (StatusCode::OK, Json(serde_json::json!({ "seq": seq }))).into_response(),
+        Ok(None) => {
+            let leader = {
+                let node = s.node.lock().await;
+                s.leader_url(&node).0
+            };
+            (
+                StatusCode::MISDIRECTED_REQUEST,
+                Json(NotLeader {
+                    error: "not-leader",
+                    leader,
+                }),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": e.to_string() })),

@@ -1,4 +1,4 @@
-// HANDWRITE-BEGIN gap="missing-generator:stateful-capacity-policy" tracker="#1644" reason="Shared request-only resource defaults, dedicated-node placement, and whole-layer per-shard replica planning for long-running stateful services."
+// HANDWRITE-BEGIN gap="missing-generator:stateful-capacity-policy" tracker="#1644" reason="Shared request-only resource defaults, dedicated-node placement, whole-layer CPU/memory replica planning, and one-GiB disk-driven shard-split planning for long-running stateful services."
 //! Stateful-service capacity primitives shared by every operator adopter.
 //!
 //! A data workload scales in whole replica layers: with `N` shards, changing
@@ -10,6 +10,10 @@
 //! This module deliberately plans but does not apply a membership change.
 //! `raft-runtime` currently has static membership; a controller must complete a
 //! Raft membership transition before patching the StatefulSet replica count.
+//! Storage pressure is a separate axis: [`plan_shard_split`] plans one physical
+//! shard at a time from the busiest shard's durable bytes. The service still
+//! owns its domain-safe routing-map cutover and data movement; this library
+//! never treats adding StatefulSet pods as a completed shard split.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,6 +22,9 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_CPU_REQUEST: &str = "1";
 /// Default memory request emitted for a data pod when the service leaves it empty.
 pub const DEFAULT_MEMORY_REQUEST: &str = "4Gi";
+/// Default per-shard durable-byte threshold. A shard split is planned only
+/// when observed usage is strictly greater than one GiB.
+pub const DEFAULT_SHARD_SPLIT_THRESHOLD_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// Resolve an optional/empty request without inventing a node-pool-specific
 /// size. Deployers tune the generated Kustomize/CR for their own cluster.
@@ -61,6 +68,53 @@ pub struct ObservedUtilization {
     pub memory_percent: Option<u32>,
 }
 
+/// Storage-pressure policy for adding physical shards.
+///
+/// The default is intentionally small enough for low-cost integration proof:
+/// a busiest shard must exceed one GiB. Production deployments may raise the
+/// threshold while preserving the same one-shard-at-a-time transition.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShardSplitPolicy {
+    pub split_threshold_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_shards: Option<u32>,
+}
+
+impl Default for ShardSplitPolicy {
+    fn default() -> Self {
+        Self {
+            split_threshold_bytes: DEFAULT_SHARD_SPLIT_THRESHOLD_BYTES,
+            max_shards: None,
+        }
+    }
+}
+
+/// Durable bytes observed for one physical shard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObservedShardUsage {
+    pub shard_index: u32,
+    pub durable_bytes: u64,
+}
+
+/// One safe topology step. A plan grows by at most one physical shard; the
+/// service's domain actuator must complete routing/data migration before
+/// asking for another plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShardSplitPlan {
+    pub current_shard_count: u32,
+    pub desired_shard_count: u32,
+    pub split_threshold_bytes: u64,
+    pub busiest_shard: Option<ObservedShardUsage>,
+    pub max_shards_reached: bool,
+}
+
+impl ShardSplitPlan {
+    pub fn requires_split(self) -> bool {
+        self.desired_shard_count > self.current_shard_count
+    }
+}
+
 /// A valid whole-layer capacity decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReplicaLayerPlan {
@@ -94,6 +148,78 @@ pub enum ReplicaLayerError {
     InvalidTarget,
     #[error("replica total exceeds u32")]
     ReplicaOverflow,
+}
+
+#[derive(thiserror::Error, Debug, PartialEq, Eq)]
+pub enum ShardSplitError {
+    #[error("current_shard_count must be greater than zero")]
+    ZeroShards,
+    #[error("split_threshold_bytes must be greater than zero")]
+    ZeroThreshold,
+    #[error("max_shards must be >= current_shard_count")]
+    InvalidMaximum,
+    #[error("observed shard index is outside the current topology")]
+    UnknownShard,
+    #[error("shard count exceeds u32")]
+    ShardOverflow,
+}
+
+/// Plan at most one new physical shard from live durable-byte observations.
+///
+/// The threshold is strict: exactly one GiB holds steady, while one GiB plus
+/// one byte plans `shard_count + 1`. Ties choose the lowest shard index so the
+/// plan is deterministic. This is deliberately a pure decision; the caller
+/// must execute its domain-specific routing-map, migration, fencing, and Raft
+/// membership workflow before changing the workload topology.
+pub fn plan_shard_split(
+    current_shard_count: u32,
+    policy: ShardSplitPolicy,
+    observed: &[ObservedShardUsage],
+) -> Result<ShardSplitPlan, ShardSplitError> {
+    if current_shard_count == 0 {
+        return Err(ShardSplitError::ZeroShards);
+    }
+    if policy.split_threshold_bytes == 0 {
+        return Err(ShardSplitError::ZeroThreshold);
+    }
+    if policy
+        .max_shards
+        .is_some_and(|max| max < current_shard_count)
+    {
+        return Err(ShardSplitError::InvalidMaximum);
+    }
+    if observed
+        .iter()
+        .any(|usage| usage.shard_index >= current_shard_count)
+    {
+        return Err(ShardSplitError::UnknownShard);
+    }
+
+    let busiest_shard = observed.iter().copied().max_by(|left, right| {
+        left.durable_bytes
+            .cmp(&right.durable_bytes)
+            .then_with(|| right.shard_index.cmp(&left.shard_index))
+    });
+    let max_shards_reached = policy
+        .max_shards
+        .is_some_and(|max| current_shard_count >= max);
+    let threshold_crossed =
+        busiest_shard.is_some_and(|usage| usage.durable_bytes > policy.split_threshold_bytes);
+    let desired_shard_count = if threshold_crossed && !max_shards_reached {
+        current_shard_count
+            .checked_add(1)
+            .ok_or(ShardSplitError::ShardOverflow)?
+    } else {
+        current_shard_count
+    };
+
+    Ok(ShardSplitPlan {
+        current_shard_count,
+        desired_shard_count,
+        split_threshold_bytes: policy.split_threshold_bytes,
+        busiest_shard,
+        max_shards_reached,
+    })
 }
 
 /// Plan the next whole replica layer using the same utilization ratio as HPA:
@@ -213,6 +339,111 @@ mod tests {
         .unwrap();
         assert_eq!(plan.desired_replicas_per_shard, 5);
         assert_eq!(plan.desired_total_pods, 10);
+    }
+
+    #[test]
+    fn disk_split_threshold_is_strictly_greater_than_one_gib() {
+        let policy = ShardSplitPolicy::default();
+        let at_threshold = plan_shard_split(
+            1,
+            policy,
+            &[ObservedShardUsage {
+                shard_index: 0,
+                durable_bytes: DEFAULT_SHARD_SPLIT_THRESHOLD_BYTES,
+            }],
+        )
+        .unwrap();
+        assert!(!at_threshold.requires_split());
+
+        let crossed = plan_shard_split(
+            1,
+            policy,
+            &[ObservedShardUsage {
+                shard_index: 0,
+                durable_bytes: DEFAULT_SHARD_SPLIT_THRESHOLD_BYTES + 1,
+            }],
+        )
+        .unwrap();
+        assert!(crossed.requires_split());
+        assert_eq!(crossed.desired_shard_count, 2);
+    }
+
+    #[test]
+    fn disk_split_adds_one_shard_and_honors_the_ceiling() {
+        let policy = ShardSplitPolicy {
+            split_threshold_bytes: 100,
+            max_shards: Some(4),
+        };
+        let usage = [
+            ObservedShardUsage {
+                shard_index: 0,
+                durable_bytes: 101,
+            },
+            ObservedShardUsage {
+                shard_index: 1,
+                durable_bytes: 500,
+            },
+            ObservedShardUsage {
+                shard_index: 2,
+                durable_bytes: 500,
+            },
+        ];
+        let split = plan_shard_split(3, policy, &usage).unwrap();
+        assert_eq!(split.desired_shard_count, 4);
+        assert_eq!(split.busiest_shard.unwrap().shard_index, 1);
+
+        let at_limit = plan_shard_split(
+            4,
+            policy,
+            &[ObservedShardUsage {
+                shard_index: 1,
+                durable_bytes: 500,
+            }],
+        )
+        .unwrap();
+        assert!(!at_limit.requires_split());
+        assert!(at_limit.max_shards_reached);
+    }
+
+    #[test]
+    fn disk_split_rejects_invalid_policy_and_observations() {
+        assert_eq!(
+            plan_shard_split(0, ShardSplitPolicy::default(), &[]),
+            Err(ShardSplitError::ZeroShards)
+        );
+        assert_eq!(
+            plan_shard_split(
+                1,
+                ShardSplitPolicy {
+                    split_threshold_bytes: 0,
+                    max_shards: None,
+                },
+                &[]
+            ),
+            Err(ShardSplitError::ZeroThreshold)
+        );
+        assert_eq!(
+            plan_shard_split(
+                2,
+                ShardSplitPolicy {
+                    split_threshold_bytes: 1,
+                    max_shards: Some(1),
+                },
+                &[]
+            ),
+            Err(ShardSplitError::InvalidMaximum)
+        );
+        assert_eq!(
+            plan_shard_split(
+                1,
+                ShardSplitPolicy::default(),
+                &[ObservedShardUsage {
+                    shard_index: 1,
+                    durable_bytes: 1,
+                }]
+            ),
+            Err(ShardSplitError::UnknownShard)
+        );
     }
 
     #[test]

@@ -12,9 +12,10 @@ use chrono::{Duration, Utc};
 use relay::{Relay, RelayCoreConfig};
 
 fn disk_cfg(dir: &std::path::Path) -> RelayCoreConfig {
-    let mut c = RelayCoreConfig::default();
-    c.data_dir = dir.to_string_lossy().into_owned();
-    c
+    RelayCoreConfig {
+        data_dir: dir.to_string_lossy().into_owned(),
+        ..RelayCoreConfig::default()
+    }
 }
 
 // A future-dated entry is withheld until its not_before; a non-delayed sibling
@@ -70,8 +71,16 @@ fn reconcile_promotes_due_entry() {
     let r = Relay::new(RelayCoreConfig::in_memory());
     let now = Utc::now();
     let due = now + Duration::seconds(10);
-    r.publish_at("q", "d", serde_json::json!({}), BTreeMap::new(), Some(due), 0, now)
-        .unwrap();
+    r.publish_at(
+        "q",
+        "d",
+        serde_json::json!({}),
+        BTreeMap::new(),
+        Some(due),
+        0,
+        now,
+    )
+    .unwrap();
 
     // Not due yet.
     r.reconcile(now);
@@ -79,8 +88,14 @@ fn reconcile_promotes_due_entry() {
 
     // Past due: reconcile releases it, and it then leases.
     r.reconcile(due + Duration::seconds(1));
-    let l = r.lease("q", "c", due + Duration::seconds(1)).unwrap().unwrap();
-    assert_eq!(r.entry("q", l.shard, l.seq).unwrap().unwrap().message_id, "d");
+    let l = r
+        .lease("q", "c", due + Duration::seconds(1))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        r.entry("q", l.shard, l.seq).unwrap().unwrap().message_id,
+        "d"
+    );
 }
 
 // The delay survives a restart: a future-dated entry is still withheld until due
@@ -92,8 +107,16 @@ fn delay_survives_restart() {
     let due = now + Duration::seconds(60);
     {
         let r = Relay::new(disk_cfg(dir.path()));
-        r.publish_at("q", "d", serde_json::json!({}), BTreeMap::new(), Some(due), 0, now)
-            .unwrap();
+        r.publish_at(
+            "q",
+            "d",
+            serde_json::json!({}),
+            BTreeMap::new(),
+            Some(due),
+            0,
+            now,
+        )
+        .unwrap();
     }
     // Reopen: the delayed entry must still be held until due.
     let r2 = Relay::new(disk_cfg(dir.path()));
@@ -103,7 +126,13 @@ fn delay_survives_restart() {
             .is_none(),
         "delay survives restart"
     );
-    let l = r2.lease("q", "c", due + Duration::seconds(1)).unwrap().unwrap();
-    assert_eq!(r2.entry("q", l.shard, l.seq).unwrap().unwrap().message_id, "d");
+    let l = r2
+        .lease("q", "c", due + Duration::seconds(1))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        r2.entry("q", l.shard, l.seq).unwrap().unwrap().message_id,
+        "d"
+    );
 }
 // HANDWRITE-END

@@ -25,24 +25,65 @@ REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 CLUSTER=relay-smoke
 IMG=relay:dev
 PFPIDS=()
+CLUSTER_CREATED=0
+case "$(uname -m)" in
+  arm64|aarch64)
+    PLATFORM="linux/arm64"
+    TARGET_SUFFIX="arm64"
+    ;;
+  x86_64|amd64)
+    PLATFORM="linux/amd64"
+    TARGET_SUFFIX="amd64"
+    ;;
+  *)
+    echo "unsupported host architecture: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+TARGET_DIR="${TMPDIR:-/tmp}/relay-kind-target-${TARGET_SUFFIX}-bookworm"
+
+dump_diagnostics() {
+  [[ "$CLUSTER_CREATED" == "1" ]] || return 0
+  echo "!! Relay Kind diagnostics" >&2
+  kubectl get pods,statefulsets,pvc,pdb -o wide 2>&1 || true
+  kubectl describe statefulset relay 2>&1 || true
+  for pod in relay-0 relay-1 relay-2; do
+    kubectl logs "$pod" --tail=160 2>&1 || true
+    kubectl describe pod "$pod" 2>&1 || true
+  done
+  kubectl get events --sort-by=.lastTimestamp 2>&1 || true
+}
 
 cleanup() {
+  local ec=$?
+  trap - EXIT INT TERM
   for p in "${PFPIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
-  kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
+  if [[ "$ec" -ne 0 ]]; then
+    dump_diagnostics
+  fi
+  if [[ "$CLUSTER_CREATED" == "1" && "${RELAY_KEEP_CLUSTER:-0}" != "1" ]]; then
+    kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
+  elif [[ "$CLUSTER_CREATED" == "1" ]]; then
+    echo "==> preserving Kind cluster $CLUSTER (RELAY_KEEP_CLUSTER=1)"
+  fi
+  exit "$ec"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
-echo "==> build linux relay (cargo in a cached rust container)"
+echo "==> build linux relay for ${PLATFORM} (cargo in a cached rust container)"
 # reqwest pulls rustls/aws-lc-rs, which needs cmake to build.
-docker run --rm \
+mkdir -p "$TARGET_DIR"
+docker run --rm --platform "$PLATFORM" \
   -v "$REPO:/src" -w /src \
-  -e CARGO_TARGET_DIR=/src/target-linux \
+  -v "$TARGET_DIR:/target" \
+  -e CARGO_TARGET_DIR=/target \
   -v relay-cargo:/usr/local/cargo/registry \
-  rust:1 bash -c "apt-get update -qq && apt-get install -y -qq cmake >/dev/null && cargo build --release -p relay --bin relay"
+  rust:1-bookworm bash -c "apt-get update -qq && apt-get install -y -qq cmake >/dev/null && cargo build --release -p relay --bin relay"
 
 echo "==> build runtime image $IMG"
 WORK="$(mktemp -d)"
-cp "$REPO/target-linux/release/relay" "$WORK/relay"
+cp "$TARGET_DIR/release/relay" "$WORK/relay"
 cat > "$WORK/Dockerfile" <<'DOCKER'
 FROM debian:bookworm-slim
 RUN useradd -m -u 10001 relay
@@ -51,11 +92,12 @@ USER relay
 EXPOSE 7000
 ENTRYPOINT ["/usr/local/bin/relay"]
 DOCKER
-docker build -t "$IMG" "$WORK"
+docker build --platform "$PLATFORM" -t "$IMG" "$WORK"
 rm -rf "$WORK"
 
 echo "==> create kind cluster + load image"
 kind create cluster --name "$CLUSTER" >/dev/null
+CLUSTER_CREATED=1
 kind load docker-image "$IMG" --name "$CLUSTER"
 
 echo "==> deploy the inline HA manifests"
@@ -111,6 +153,13 @@ spec:
         app: relay
     spec:
       terminationGracePeriodSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: relay
           image: relay:dev
@@ -150,6 +199,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
   volumeClaimTemplates:
     - metadata:
         name: data

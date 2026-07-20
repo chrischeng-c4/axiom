@@ -189,6 +189,10 @@ fn crd_render_is_structural_schema_safe() {
     assert_eq!(doc["spec"]["group"], "relay.dev");
     assert_eq!(doc["spec"]["names"]["kind"], "Relay");
     assert_eq!(doc["metadata"]["name"], "relays.relay.dev");
+    assert!(
+        yaml.contains("default: \"off\""),
+        "Kubernetes YAML 1.1 must preserve the auth default as a string"
+    );
 }
 
 /// R6: the kind failover smoke script drives the single `relay` auto-mode
@@ -276,5 +280,22 @@ fn llm_operations_topic_names_deploy_verbs() {
             "operations topic missing `{needle}`"
         );
     }
+}
+
+#[test]
+fn file_render_ends_with_explicit_terminal_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("relay.yaml");
+    let output = stdout(&[
+        "k8s",
+        "instance",
+        "render",
+        "--profile",
+        "dev",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(out.is_file());
+    assert!(output.lines().any(|line| line == "next: done"));
 }
 // HANDWRITE-END

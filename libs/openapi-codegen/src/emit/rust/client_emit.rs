@@ -91,9 +91,7 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("    http: reqwest::blocking::Client,\n");
     out.push_str("    policy: TransportPolicy,\n");
     out.push_str("    admission: Arc<(Mutex<AdmissionState>, Condvar)>,\n");
-    out.push_str(
-        "    /// Epic #1296 POST-twin fallback: when true, every generated `QUERY`\n",
-    );
+    out.push_str("    /// Epic #1296 POST-twin fallback: when true, every generated `QUERY`\n");
     out.push_str(
         "    /// operation is sent as `POST` against its documented twin path instead of\n",
     );
@@ -120,9 +118,7 @@ pub fn emit(ops: &[OperationIR], tm: &TypeMap) -> String {
     out.push_str("            use_post_fallback: false,\n");
     out.push_str("        }\n");
     out.push_str("    }\n\n");
-    out.push_str(
-        "    /// Epic #1296 POST-twin fallback: route every `QUERY` operation through\n",
-    );
+    out.push_str("    /// Epic #1296 POST-twin fallback: route every `QUERY` operation through\n");
     out.push_str("    /// its documented POST twin instead of HTTP `QUERY`.\n");
     out.push_str("    pub fn with_post_fallback(mut self, use_post_fallback: bool) -> Self {\n");
     out.push_str("        self.use_post_fallback = use_post_fallback;\n");

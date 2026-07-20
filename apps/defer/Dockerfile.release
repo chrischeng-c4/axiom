@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+# HANDWRITE-BEGIN gap="missing-generator:deployment:defer-release-image" tracker="#766" reason="Release-download image fixture rendered by defer dockerfile render."
+FROM debian:bookworm-slim AS fetch
+ARG DEFER_VERSION=defer@0.4.8
+ARG DEFER_REPO=chrischeng-c4/axiom
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) t=x86_64-unknown-linux-gnu ;; \
+      arm64) t=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/${DEFER_REPO}/releases/download/${DEFER_VERSION}"; \
+    curl -fsSL "${base}/defer-${t}.tar.gz" -o /tmp/defer.tgz; \
+    curl -fsSL "${base}/defer-${t}.tar.gz.sha256" -o /tmp/defer.sha256; \
+    echo "$(cat /tmp/defer.sha256)  /tmp/defer.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/defer.tgz -C /tmp --strip-components=1 "defer-${t}/defer"; \
+    /tmp/defer --version
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --chown=65532:65532 --from=fetch /tmp/defer /usr/local/bin/defer
+EXPOSE 7141
+ENTRYPOINT ["/usr/local/bin/defer"]
+# HANDWRITE-END

@@ -21,10 +21,11 @@ pub mod openapi;
 pub mod operator;
 pub mod peer_tls;
 pub mod raft;
+pub mod replay_wire;
 pub mod server;
 pub mod spec;
 
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TapeError {
     #[error("checkpoint offset {new_offset} is behind existing offset {current_offset}")]
     StaleCheckpoint {
@@ -35,21 +36,17 @@ pub enum TapeError {
     CheckpointBeyondEnd { offset: u64, end_offset: u64 },
 }
 
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubscriptionError {
     #[error("subscription {name} already exists for topic {topic}")]
     AlreadyExists { topic: String, name: String },
     #[error("subscription {name} does not exist for topic {topic}")]
     NotFound { topic: String, name: String },
-    #[error("push subscription endpoint must not be empty")]
-    EmptyPushEndpoint,
-    #[error("subscription {name} on topic {topic} is not a pull subscription")]
-    NotPull { topic: String, name: String },
     #[error("pull batch limit {limit} exceeds maximum {max}")]
     PullBatchTooLarge { limit: usize, max: usize },
 }
 
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubscriptionAckError {
     #[error(transparent)]
     Subscription(#[from] SubscriptionError),
@@ -76,23 +73,13 @@ pub struct ConsumerCheckpoint {
 }
 
 // @spec apps/tape/tech-design/logic/expose-subscriptions-as-topic-delivery-resources.md#changes
-/// Delivery configuration for one topic subscription.
-///
-/// A `Push` endpoint is declarative in this local journal slice: it is stored
-/// and surfaced, but no worker sends requests or implements retries.
+/// A named caller-driven pull cursor owned by a topic. Tape has no delivery
+/// mode switch: push, leases, and consumer-group ownership belong elsewhere.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum SubscriptionDelivery {
-    Pull,
-    Push { endpoint: String },
-}
-
-/// A named delivery resource owned by a topic.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Subscription {
     pub topic: String,
     pub name: String,
-    pub delivery: SubscriptionDelivery,
 }
 
 /// One caller-driven pull window. `cursor` is the checkpoint used to read;
@@ -107,12 +94,38 @@ pub struct PullSubscriptionBatch {
     pub events: Vec<TapeEvent>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RetentionPolicy {
+    /// Explicit lower bound: events below this offset are eligible for removal.
+    #[serde(default)]
+    pub min_offset: Option<u64>,
+    /// Events older than this wall-clock window are eligible for removal.
+    #[serde(default)]
+    pub max_age_seconds: Option<u64>,
+    /// Never prune beyond the oldest named consumer checkpoint.
+    #[serde(default)]
+    pub protected_consumers: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RetentionOutcome {
+    pub topic: String,
+    pub policy: RetentionPolicy,
+    pub earliest_offset: u64,
+    pub end_offset: u64,
+    pub removed: usize,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TapeJournal {
     topics: BTreeMap<String, Vec<TapeEvent>>,
+    #[serde(default)]
+    next_offsets: BTreeMap<String, u64>,
     checkpoints: BTreeMap<String, ConsumerCheckpoint>,
     #[serde(default)]
     subscriptions: BTreeMap<String, Subscription>,
+    #[serde(default)]
+    retention: BTreeMap<String, RetentionPolicy>,
 }
 
 impl TapeJournal {
@@ -124,15 +137,45 @@ impl TapeJournal {
         timestamp_ms: Option<u64>,
     ) -> TapeEvent {
         let topic = topic.into();
-        let entries = self.topics.entry(topic.clone()).or_default();
+        let timestamp_ms = timestamp_ms.unwrap_or_else(now_ms);
+        self.append_at(topic, key, payload, timestamp_ms, now_ms())
+    }
+
+    /// Deterministic append + retention transition for Raft apply. Event time
+    /// and policy-evaluation time are separate so historical backfill does not
+    /// rewind the retention clock.
+    pub fn append_at(
+        &mut self,
+        topic: impl Into<String>,
+        key: Option<String>,
+        payload: Value,
+        timestamp_ms: u64,
+        applied_at_ms: u64,
+    ) -> TapeEvent {
+        let topic = topic.into();
+        let recovered_next = self
+            .topics
+            .get(&topic)
+            .and_then(|events| events.last())
+            .map(|event| event.offset + 1)
+            .unwrap_or(0);
+        let next = self
+            .next_offsets
+            .entry(topic.clone())
+            .or_insert(recovered_next);
         let event = TapeEvent {
-            topic,
-            offset: entries.len() as u64,
-            timestamp_ms: timestamp_ms.unwrap_or_else(now_ms),
+            topic: topic.clone(),
+            offset: *next,
+            timestamp_ms,
             key,
             payload,
         };
-        entries.push(event.clone());
+        *next = next.saturating_add(1);
+        self.topics
+            .entry(topic.clone())
+            .or_default()
+            .push(event.clone());
+        self.enforce_retention(&topic, applied_at_ms);
         event
     }
 
@@ -228,23 +271,14 @@ impl TapeJournal {
         &mut self,
         topic: impl Into<String>,
         name: impl Into<String>,
-        delivery: SubscriptionDelivery,
     ) -> Result<Subscription, SubscriptionError> {
         let topic = topic.into();
         let name = name.into();
-        if matches!(&delivery, SubscriptionDelivery::Push { endpoint } if endpoint.trim().is_empty())
-        {
-            return Err(SubscriptionError::EmptyPushEndpoint);
-        }
         let key = subscription_key(&topic, &name);
         if self.subscriptions.contains_key(&key) {
             return Err(SubscriptionError::AlreadyExists { topic, name });
         }
-        let subscription = Subscription {
-            topic,
-            name,
-            delivery,
-        };
+        let subscription = Subscription { topic, name };
         self.subscriptions.insert(key, subscription.clone());
         Ok(subscription)
     }
@@ -326,7 +360,7 @@ impl TapeJournal {
         Ok(self.put_checkpoint(topic, name, offset)?)
     }
 
-    fn require_pull_subscription(
+    pub(crate) fn require_pull_subscription(
         &self,
         topic: &str,
         name: &str,
@@ -337,17 +371,79 @@ impl TapeJournal {
                     topic: topic.to_string(),
                     name: name.to_string(),
                 })?;
-        if !matches!(subscription.delivery, SubscriptionDelivery::Pull) {
-            return Err(SubscriptionError::NotPull {
-                topic: topic.to_string(),
-                name: name.to_string(),
-            });
-        }
         Ok(subscription)
     }
 
     pub fn end_offset(&self, topic: &str) -> u64 {
-        self.topics.get(topic).map(Vec::len).unwrap_or_default() as u64
+        self.next_offsets.get(topic).copied().unwrap_or_else(|| {
+            self.topics
+                .get(topic)
+                .and_then(|events| events.last())
+                .map(|event| event.offset + 1)
+                .unwrap_or(0)
+        })
+    }
+
+    pub fn retention(&self, topic: &str) -> Option<&RetentionPolicy> {
+        self.retention.get(topic)
+    }
+
+    pub fn put_retention(
+        &mut self,
+        topic: impl Into<String>,
+        policy: RetentionPolicy,
+        now_ms: u64,
+    ) -> RetentionOutcome {
+        let topic = topic.into();
+        self.retention.insert(topic.clone(), policy.clone());
+        let removed = self.enforce_retention(&topic, now_ms);
+        RetentionOutcome {
+            earliest_offset: self
+                .topics
+                .get(&topic)
+                .and_then(|events| events.first())
+                .map(|event| event.offset)
+                .unwrap_or_else(|| self.end_offset(&topic)),
+            end_offset: self.end_offset(&topic),
+            topic,
+            policy,
+            removed,
+        }
+    }
+
+    fn enforce_retention(&mut self, topic: &str, now_ms: u64) -> usize {
+        let Some(policy) = self.retention.get(topic).cloned() else {
+            return 0;
+        };
+        let end = self.end_offset(topic);
+        let events = self.topics.entry(topic.to_string()).or_default();
+        let age_boundary = policy.max_age_seconds.map(|seconds| {
+            let cutoff = now_ms.saturating_sub(seconds.saturating_mul(1_000));
+            events
+                .iter()
+                .find(|event| event.timestamp_ms >= cutoff)
+                .map(|event| event.offset)
+                .unwrap_or(end)
+        });
+        let mut boundary = policy
+            .min_offset
+            .into_iter()
+            .chain(age_boundary)
+            .max()
+            .unwrap_or(0)
+            .min(end);
+        if let Some(protected) = policy
+            .protected_consumers
+            .iter()
+            .filter_map(|consumer| self.checkpoints.get(&checkpoint_key(topic, consumer)))
+            .map(|checkpoint| checkpoint.offset)
+            .min()
+        {
+            boundary = boundary.min(protected);
+        }
+        let before = events.len();
+        events.retain(|event| event.offset >= boundary);
+        before - events.len()
     }
 }
 // </HANDWRITE>
@@ -421,10 +517,8 @@ mod tests {
         journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
         let checkpoint = journal.put_checkpoint("orders", "worker-a", 1).unwrap();
 
-        let subscription = journal
-            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
-            .unwrap();
-        assert_eq!(subscription.delivery, SubscriptionDelivery::Pull);
+        let subscription = journal.create_subscription("orders", "worker-a").unwrap();
+        assert_eq!(subscription.name, "worker-a");
         assert_eq!(journal.checkpoint("orders", "worker-a"), Some(&checkpoint));
 
         let deleted = journal.delete_subscription("orders", "worker-a").unwrap();
@@ -443,9 +537,7 @@ mod tests {
                 Some(100),
             );
         }
-        journal
-            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
-            .unwrap();
+        journal.create_subscription("orders", "worker-a").unwrap();
         journal.put_checkpoint("orders", "worker-a", 1).unwrap();
 
         let batch = journal
@@ -468,25 +560,7 @@ mod tests {
     fn pull_subscription_ack_reuses_checkpoint_guards() {
         let mut journal = TapeJournal::default();
         journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
-        journal
-            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
-            .unwrap();
-        journal
-            .create_subscription(
-                "orders",
-                "webhook",
-                SubscriptionDelivery::Push {
-                    endpoint: "https://hooks.example.invalid/tape".to_string(),
-                },
-            )
-            .unwrap();
-
-        assert!(matches!(
-            journal.ack_subscription("orders", "webhook", 0),
-            Err(SubscriptionAckError::Subscription(
-                SubscriptionError::NotPull { .. }
-            ))
-        ));
+        journal.create_subscription("orders", "worker-a").unwrap();
         assert!(matches!(
             journal.ack_subscription("orders", "worker-a", 2),
             Err(SubscriptionAckError::Checkpoint(
@@ -506,14 +580,57 @@ mod tests {
     fn pull_subscription_rejects_oversized_window() {
         let mut journal = TapeJournal::default();
         journal.append("orders", None, serde_json::json!({"n": 1}), Some(100));
-        journal
-            .create_subscription("orders", "worker-a", SubscriptionDelivery::Pull)
-            .unwrap();
+        journal.create_subscription("orders", "worker-a").unwrap();
 
         assert!(matches!(
             journal.pull_subscription("orders", "worker-a", Some(MAX_PULL_BATCH + 1)),
             Err(SubscriptionError::PullBatchTooLarge { .. })
         ));
         assert!(journal.checkpoint("orders", "worker-a").is_none());
+    }
+
+    #[test]
+    fn retention_prunes_history_without_rewinding_offsets_and_protects_consumers() {
+        let mut journal = TapeJournal::default();
+        for offset in 0..5 {
+            journal.append_at(
+                "orders",
+                None,
+                serde_json::json!({"offset": offset}),
+                1_000 + offset * 1_000,
+                5_000,
+            );
+        }
+        journal
+            .put_checkpoint_at("orders", "audit", 2, 5_000)
+            .unwrap();
+        let outcome = journal.put_retention(
+            "orders",
+            RetentionPolicy {
+                min_offset: Some(4),
+                max_age_seconds: None,
+                protected_consumers: vec!["audit".into()],
+            },
+            5_000,
+        );
+        assert_eq!(outcome.earliest_offset, 2);
+        assert_eq!(outcome.removed, 2);
+        assert_eq!(
+            journal
+                .replay("orders", None, None, None)
+                .into_iter()
+                .map(|event| event.offset)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+
+        let appended = journal.append_at(
+            "orders",
+            None,
+            serde_json::json!({"offset": 5}),
+            6_000,
+            6_000,
+        );
+        assert_eq!(appended.offset, 5, "retention must not reuse offsets");
     }
 }

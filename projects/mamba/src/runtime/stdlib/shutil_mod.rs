@@ -432,8 +432,16 @@ pub fn register() {
         vec!["OSError".to_string()],
         HashMap::new(),
     );
-    super::super::class::mb_class_register("ExecError", vec!["OSError".to_string()], HashMap::new());
-    super::super::class::mb_class_register("ReadError", vec!["OSError".to_string()], HashMap::new());
+    super::super::class::mb_class_register(
+        "ExecError",
+        vec!["OSError".to_string()],
+        HashMap::new(),
+    );
+    super::super::class::mb_class_register(
+        "ReadError",
+        vec!["OSError".to_string()],
+        HashMap::new(),
+    );
     super::super::class::mb_class_register(
         "RegistryError",
         vec!["Exception".to_string()],

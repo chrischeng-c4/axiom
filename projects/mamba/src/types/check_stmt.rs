@@ -285,10 +285,7 @@ impl TypeChecker {
                 // inferred type of val.
                 if let Expr::Ident(name) = &target.node {
                     let current_scope = self.symbols.current_scope_idx();
-                    if self
-                        .symbols
-                        .lookup_in_scope(current_scope, name)
-                        .is_none()
+                    if self.symbols.lookup_in_scope(current_scope, name).is_none()
                         || self.is_unshadowed_builtin(name)
                     {
                         let value_ty = self.check_expr(value);
@@ -919,9 +916,8 @@ impl TypeChecker {
                                 .and_then(|symbol| self.import_origins.get(&symbol).cloned());
                             let instance_origin = module_id
                                 .and_then(|symbol| self.instance_origins.get(&symbol).cloned());
-                            let class_ref_origin = module_id.and_then(|symbol| {
-                                self.class_ref_origins.get(&symbol).copied()
-                            });
+                            let class_ref_origin = module_id
+                                .and_then(|symbol| self.class_ref_origins.get(&symbol).copied());
                             let builtin_alias = module_id.and_then(|symbol| {
                                 self.builtin_class_aliases.get(&symbol).copied()
                             });
@@ -937,15 +933,10 @@ impl TypeChecker {
                             proxy
                         }
                     } else {
-                        let module_id = self
-                            .symbols
-                            .lookup_in_scope(0, name)
-                            .unwrap_or_else(|| {
-                                self.symbols.define_in_scope(
-                                    0,
-                                    name.clone(),
-                                    SymbolKind::Variable,
-                                )
+                        let module_id =
+                            self.symbols.lookup_in_scope(0, name).unwrap_or_else(|| {
+                                self.symbols
+                                    .define_in_scope(0, name.clone(), SymbolKind::Variable)
                             });
                         self.symbols
                             .bind_symbol_in_scope(current, name.clone(), module_id);
@@ -1044,8 +1035,7 @@ impl TypeChecker {
                         .symbols
                         .lookup_in_scope(self.symbols.current_scope_idx(), alias)
                         .map(|symbol| self.get_sym_type(symbol.0));
-                    let imported_ty =
-                        self.stdlib_module_import_type(&dotted, &dotted, previous);
+                    let imported_ty = self.stdlib_module_import_type(&dotted, &dotted, previous);
                     let sym = self.symbols.define(alias.clone(), SymbolKind::Variable);
                     self.set_sym_type(sym.0, imported_ty);
                     self.set_binding_origins(sym, None, None, None);
@@ -1058,8 +1048,7 @@ impl TypeChecker {
                             .symbols
                             .lookup_in_scope(self.symbols.current_scope_idx(), root)
                             .map(|symbol| self.get_sym_type(symbol.0));
-                        let imported_ty =
-                            self.stdlib_module_import_type(root, &dotted, previous);
+                        let imported_ty = self.stdlib_module_import_type(root, &dotted, previous);
                         let sym = self.symbols.define(root.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, imported_ty);
                         self.set_binding_origins(sym, None, None, None);
