@@ -934,10 +934,11 @@ fn run_apply_inner(
 
         // impl_mode: hand-written — rule 2-2 of the codegen policy. The CLI
         // owns the writable skeleton: a new file gets a whole-file HANDWRITE
-        // marker, while an existing target must name an `anchor:` so generation
-        // can scaffold a bounded marker pair. A markerless existing target is
-        // not a valid lifecycle result: it would let TD generation advance
-        // without an implementation payload for `td fill` to own.
+        // marker, while an existing Rust target must name an `anchor:` so
+        // generation can scaffold a bounded marker pair. Existing non-Rust
+        // targets remain tracked hand-written artifacts: the Rust marker
+        // scaffold cannot safely position a marker in them, so their evidence
+        // is the declared target plus the implementation diff.
         //
         // Regenerable promotion is the exception: a semantic TD may still
         // record the original source as hand-written, but an explicit
@@ -946,6 +947,21 @@ fn run_apply_inner(
         if entry.impl_mode == ImplMode::HandWritten && !handwrite_whole_file_promotion {
             let mut updated = false;
             let mut created = false;
+            if target_path.exists() && !is_rust_source(&target_path) {
+                apply_diagnostic!(
+                    "[gen apply] HANDWRITE: tracked existing non-Rust target {} (no Rust marker)",
+                    entry.path,
+                );
+                files.push(FileApplyResult {
+                    path: PathBuf::from(&entry.path),
+                    created: false,
+                    updated: false,
+                    blocks_updated: 0,
+                    dry_run,
+                    processed: true,
+                });
+                continue;
+            }
             // Bug 1 fix: `action: create` + `impl_mode: hand-written` previously
             // produced no file. Now scaffold an empty placeholder with a single
             // HANDWRITE-marked region so authors have a starting point and
@@ -2983,7 +2999,7 @@ fn validate_handwrite_anchors_before_write(
 
         // Tracked existing non-Rust target: no Rust marker scaffold, so no
         // anchor to validate.
-        if entry.action == "modify" && target_path.exists() && !is_rust_source(&target_path) {
+        if target_path.exists() && !is_rust_source(&target_path) {
             continue;
         }
 
@@ -7271,6 +7287,64 @@ flowchart TD
             "codegen target should be created on the clean rerun"
         );
         assert!(report.files_created() >= 1);
+    }
+
+    #[test]
+    fn hand_written_existing_non_rust_create_targets_skip_rust_anchor_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let config_target = root.join("config/.gitignore");
+        let icon_target = root.join("icons/icon.png");
+        std::fs::create_dir_all(config_target.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(icon_target.parent().unwrap()).unwrap();
+        let config_before = b"/gen/schemas\n".to_vec();
+        let icon_before = b"\x89PNG\r\n\x1a\nfixture".to_vec();
+        std::fs::write(&config_target, &config_before).unwrap();
+        std::fs::write(&icon_target, &icon_before).unwrap();
+
+        let spec_path = root.join("tech-design/logic/create-assets.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: create-assets
+fill_sections: [logic, changes]
+---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start --> done
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: config/.gitignore
+    action: create
+    impl_mode: hand-written
+    section: logic
+  - path: icons/icon.png
+    action: create
+    impl_mode: hand-written
+    section: logic
+```
+"#,
+        )
+        .unwrap();
+
+        let report = run_apply(&spec_path, root, false).unwrap();
+        for target in ["config/.gitignore", "icons/icon.png"] {
+            assert!(report.files.iter().any(|file| {
+                file.path == PathBuf::from(target) && file.processed && !file.updated
+            }));
+        }
+        assert_eq!(std::fs::read(&config_target).unwrap(), config_before);
+        assert_eq!(std::fs::read(&icon_target).unwrap(), icon_before);
     }
 
     /// Regression test: extension gate skips non-.rs files instead of blasting Rust into them.
