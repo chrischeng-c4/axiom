@@ -54,7 +54,7 @@ const TOPICS: &[cli_std::llm::Topic] = &[
             verified against the flat oracle. `beam bench --index \
             flat|ivfflat|ivfpq|hnsw` runs the parity, recall, pruning, and timing \
             demo. Still to come: durable segments, an HTTP/2 query API, and k8s. \
-            Capability roots live in projects/beam/README.md (epic #769).\n",
+            Capability roots live in apps/beam/README.md (epic #769).\n",
     },
     cli_std::llm::Topic {
         id: "boundaries",

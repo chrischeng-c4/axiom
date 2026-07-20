@@ -26,7 +26,7 @@ id: beam-cli-shell-contract
 entry: start
 nodes:
   start:       { kind: start,    label: "beam <subcommand>" }
-  parse:       { kind: process,  label: "clap parses top-level command surface from projects/beam/src/main.rs" }
+  parse:       { kind: process,  label: "clap parses top-level command surface from apps/beam/src/main.rs" }
   llm:         { kind: terminal, label: "llm [--topic outline|boundaries|operations] [--format md|json] -> cli_std::llm::render(beam topics)" }
   upgrade:     { kind: terminal, label: "upgrade [--version TAG] [--check] -> cli_std::upgrade with ToolInfo{name=beam, release_prefix=beam@}" }
   issue:       { kind: terminal, label: "issue <search|view|create> -> cli_std::issue scoped to project:beam" }
@@ -76,7 +76,7 @@ id: beam-cli-shell-verification
 requirements:
   workspace_member:
     id: R1
-    text: "`projects/beam` is a workspace member with both library and binary targets."
+    text: "`apps/beam` is a workspace member with both library and binary targets."
     kind: functional
     risk: high
     verify: test

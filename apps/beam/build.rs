@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in build.rs is hand-written pending codegen support">
 fn main() {
     // Re-run when HEAD moves so the stamped sha stays current. The workspace
-    // `.git` lives 2 levels up from projects/beam/; in a linked worktree `.git`
+    // `.git` lives 2 levels up from apps/beam/; in a linked worktree `.git`
     // is a file rather than a dir, so guard the rerun hint.
     if std::path::Path::new("../../.git/HEAD").exists() {
         println!("cargo:rerun-if-changed=../../.git/HEAD");
