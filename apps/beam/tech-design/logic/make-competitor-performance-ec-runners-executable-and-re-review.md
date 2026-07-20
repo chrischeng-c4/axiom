@@ -38,7 +38,6 @@ flowchart TD
     generate_ec --> verify[Verify all EC commands pass with fresh evidence]
     verify --> end_node([Completion])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
