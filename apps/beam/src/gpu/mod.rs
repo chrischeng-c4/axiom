@@ -95,6 +95,21 @@ impl GpuContext {
         let info = self.adapter.get_info();
         (format!("{:?}", info.backend), info.name)
     }
+
+    /// Run a batch computation of queries against targets using the GPU.
+    pub fn compute_distances_batch(
+        &self,
+        index: &GpuFlatIndex,
+        packed_queries: &[f32],
+        num_queries: usize,
+    ) -> Vec<f32> {
+        let mask_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("beam_batch_keep_mask"),
+            contents: bytemuck::cast_slice(&index.live),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        index.dispatch_batch(packed_queries, num_queries, &mask_buffer)
+    }
 }
 // </HANDWRITE>
 

@@ -33,7 +33,7 @@ impl DistanceCalculator for WgpuDistanceEngine {
             }
             .into());
         }
-        if queries.len() != dim {
+        if queries.len() % dim != 0 {
             return Err(crate::domain::ports::PipelineError::DimensionMismatch {
                 expected: dim,
                 got: queries.len(),
@@ -48,37 +48,87 @@ impl DistanceCalculator for WgpuDistanceEngine {
             .into());
         }
 
+        let num_queries = queries.len() / dim;
         let num_targets = targets.len() / dim;
-        let mut scores = Vec::with_capacity(num_targets);
 
-        let q = match metric {
-            crate::collection::Metric::Cosine => crate::collection::l2_normalize(queries),
-            _ => queries.to_vec(),
-        };
+        if let Some(ref ctx) = self.ctx {
+            // GPU Path!
+            let (backend, adapter_name) = ctx.adapter_info();
+            println!(
+                "{{\"backend\":\"GPU\",\"adapter\":\"{}\",\"backend_api\":\"{}\",\"batch_size\":{},\"queries\":{},\"targets\":{}}}",
+                adapter_name, backend, num_queries, num_queries, num_targets
+            );
 
-        for i in 0..num_targets {
-            let target_vector = &targets[i * dim..(i + 1) * dim];
-            let score = match metric {
-                crate::collection::Metric::L2 => {
-                    let mut dist = 0.0;
-                    for j in 0..dim {
-                        let diff = q[j] - target_vector[j];
-                        dist += diff * diff;
+            // Construct queries packed buffer, L2-normalizing for Cosine
+            let mut packed_queries = Vec::with_capacity(queries.len());
+            for q_idx in 0..num_queries {
+                let query_vector = &queries[q_idx * dim..(q_idx + 1) * dim];
+                match metric {
+                    crate::collection::Metric::Cosine => {
+                        packed_queries.extend_from_slice(&crate::collection::l2_normalize(query_vector));
                     }
-                    dist
-                }
-                crate::collection::Metric::Dot | crate::collection::Metric::Cosine => {
-                    let mut dot = 0.0;
-                    for j in 0..dim {
-                        dot += q[j] * target_vector[j];
+                    _ => {
+                        packed_queries.extend_from_slice(query_vector);
                     }
-                    dot
                 }
-            };
-            scores.push(score);
+            }
+
+            // Construct dummy Collection from targets
+            let mut col = crate::collection::Collection::new("temp", dim, metric);
+            for i in 0..num_targets {
+                let target = &targets[i * dim..(i + 1) * dim];
+                col.add(format!("{}", i), target)?;
+            }
+
+            // Construct flat index
+            let index = crate::gpu::GpuFlatIndex::new(ctx, &col);
+
+            // Calculate distances
+            let scores = ctx.compute_distances_batch(&index, &packed_queries, num_queries);
+            Ok(scores)
+        } else {
+            // CPU Path!
+            println!(
+                "{{\"backend\":\"CPU\",\"adapter\":\"none\",\"backend_api\":\"none\",\"batch_size\":{},\"queries\":{},\"targets\":{}}}",
+                num_queries, num_queries, num_targets
+            );
+
+            let mut scores = Vec::with_capacity(num_queries * num_targets);
+            for q_idx in 0..num_queries {
+                let query_vector = &queries[q_idx * dim..(q_idx + 1) * dim];
+                let q = match metric {
+                    crate::collection::Metric::Cosine => crate::collection::l2_normalize(query_vector),
+                    _ => query_vector.to_vec(),
+                };
+
+                for i in 0..num_targets {
+                    let target_vector = &targets[i * dim..(i + 1) * dim];
+                    let score = match metric {
+                        crate::collection::Metric::L2 => {
+                            let mut dist = 0.0;
+                            for j in 0..dim {
+                                let diff = q[j] - target_vector[j];
+                                dist += diff * diff;
+                            }
+                            dist
+                        }
+                        crate::collection::Metric::Dot | crate::collection::Metric::Cosine => {
+                            let t = match metric {
+                                crate::collection::Metric::Cosine => crate::collection::l2_normalize(target_vector),
+                                _ => target_vector.to_vec(),
+                            };
+                            let mut dot = 0.0;
+                            for j in 0..dim {
+                                dot += q[j] * t[j];
+                            }
+                            dot
+                        }
+                    };
+                    scores.push(score);
+                }
+            }
+            Ok(scores)
         }
-
-        Ok(scores)
     }
 }
 // </HANDWRITE>
