@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T14:26:20.960419+00:00"
-digest = "sha256:6664dd51fb8f5a576c530c17dfe7e268a4f6e84600cd3e368b3eca7aafb31a6d"
-source_digest = "sha256:6664dd51fb8f5a576c530c17dfe7e268a4f6e84600cd3e368b3eca7aafb31a6d"
-ir_digest = "sha256:853a116ed3d12e3d79683b6402ee718c4eaf37d5feca58db06355419b1e303c3"
+generated_at = "2026-07-20T14:49:17.410155+00:00"
+digest = "sha256:c04e4f88152acc1bcaca480e24e9e10d26c857e97bbe80d2e6d9fc57b7cd8b7f"
+source_digest = "sha256:c04e4f88152acc1bcaca480e24e9e10d26c857e97bbe80d2e6d9fc57b7cd8b7f"
+ir_digest = "sha256:1aae11576fdee387a97ee92216fdbecc1f05a98214103a32ee38f9926bb736fc"
 
 [[files]]
 path = "README.md"
@@ -53,6 +53,12 @@ section_count = 3
 path = "logic/persist-serve-state-atomically-and-recover-across-restart.md"
 digest = "sha256:b805b8ab781b3e2a9a5d415a9fc0ee9fa724a5dbf084aa6acf39ffd171bc0465"
 ir_digest = "sha256:d938588947efc5418131a90d17b5e4343dc15006fe63add05ef2e70628c46900"
+section_count = 3
+
+[[files]]
+path = "logic/replace-placeholder-kubernetes-operator-with-real-reconciliation.md"
+digest = "sha256:4e13d25d3ab5c2b373f24b92287f7b98768bd74da9f6fc7fdbc6fd3432848adb"
+ir_digest = "sha256:9a48d29ff55cb1cd79c84f1cea6782079be25b9a0f396af24ae58a8bd0e60e4c"
 section_count = 3
 
 [[files]]
