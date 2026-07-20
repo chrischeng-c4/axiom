@@ -2,10 +2,10 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-20T05:47:37.356577+00:00"
-digest = "sha256:584b56c0bb1f5dd22b30fc9ac26b1755b8015920bc26f995fd4d3b3f733f6a40"
-source_digest = "sha256:584b56c0bb1f5dd22b30fc9ac26b1755b8015920bc26f995fd4d3b3f733f6a40"
-ir_digest = "sha256:6c3196720714d7fdf36b783d47b673ece96f418809918864e33bff0709f22ea2"
+generated_at = "2026-07-20T06:14:18.150223+00:00"
+digest = "sha256:d76eb1507516e67933f317a4ff261c26dbf266b2353ca7524662e54a745d3556"
+source_digest = "sha256:d76eb1507516e67933f317a4ff261c26dbf266b2353ca7524662e54a745d3556"
+ir_digest = "sha256:a3d4eb8fe2dc4d18a8abd74cd9d1bd33366e35a03d22d3f067f9eb5bebd3c804"
 
 [[files]]
 path = "README.md"
@@ -65,6 +65,12 @@ section_count = 3
 path = "logic/delegate-raft-snapshot-persistence-to-storage-durable.md"
 digest = "sha256:049fa8a47a3d5ce241cfed9e67965257c7ee185409a6ae7c999c9a82f62150d6"
 ir_digest = "sha256:f32a5fe9f08ab8dd677b7ecc16c4f95d721059b27449b6196e15d976b281b01b"
+section_count = 3
+
+[[files]]
+path = "logic/eliminate-production-ec-false-green-paths.md"
+digest = "sha256:39632d0cb0a864de0a03b994e3841cfdf1908d6e0992767162c36b806438aa39"
+ir_digest = "sha256:98353e350d1b5748230daafe845b500d17bed63d24ed4391769de8e6a23391f6"
 section_count = 3
 
 [[files]]
