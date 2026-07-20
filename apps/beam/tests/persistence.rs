@@ -173,7 +173,7 @@ fn gpu_or_skip(test: &str) -> Option<GpuContext> {
     }
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in persistence.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2149" reason="unit-test section in persistence.rs is hand-written pending codegen support">
 /// (1) Flat round-trip identity, CPU AND GPU: save/load the collection segment,
 /// then a flat index over the LOADED collection reproduces the pre-save top-k.
 /// Also proves the segment fields (vectors / ids / payloads / live) round-trip.
