@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-20T07:28:18.871773+00:00"
-digest = "sha256:f1857fbae589800156ef1db904a988576934cbf0c950a3a908d603e20da2d1cb"
-source_digest = "sha256:f1857fbae589800156ef1db904a988576934cbf0c950a3a908d603e20da2d1cb"
-ir_digest = "sha256:7544cad3ec4c15c3381a80e1c3bdfaf44a13dfc7cb8a34d91ed970fc49232b10"
+generated_at = "2026-07-20T07:32:25.299360+00:00"
+digest = "sha256:93418aee69cb902e780ad4d57f887f3566a5aa1d72e92b5c42fcef880c62b00e"
+source_digest = "sha256:93418aee69cb902e780ad4d57f887f3566a5aa1d72e92b5c42fcef880c62b00e"
+ir_digest = "sha256:065a3b313de086b7f73278767be0b2aec8b2e2eb152234b15604b2a4e0514c2a"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5127,8 +5127,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:f9e3bead1cafcf13ee7e1b27b7c295d6c3863665e63cd388f99edf903313c564"
-ir_digest = "sha256:f1f642bb7e32fc0c4e40f9ac444302304048df73b84b571b9ec0071218b38c28"
+digest = "sha256:60826a5cd11df61391bc42631c0f319c21aaa4b285ada731c50e9e1dfcbb5154"
+ir_digest = "sha256:8d60116b0b7df5eadc9670deed256991ef5e1e7beddc01a2a09006471eec4d68"
 section_count = 2
 
 [[files]]
