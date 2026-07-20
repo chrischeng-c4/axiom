@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T13:24:28.270888+00:00"
-digest = "sha256:1fd6b53d35566e0754037f0330b39db509c070cf6ba05869b8241ffdc91b2127"
-source_digest = "sha256:1fd6b53d35566e0754037f0330b39db509c070cf6ba05869b8241ffdc91b2127"
-ir_digest = "sha256:9a9e30fad2d3d424d5d84e480a8d59408e3a8ec05ab5ba03c840af9dc78422e3"
+generated_at = "2026-07-20T13:42:08.173131+00:00"
+digest = "sha256:fcce45e36f4f2a2b13133c97359cc4d98fa3097fa3d30009e2861c860c566588"
+source_digest = "sha256:fcce45e36f4f2a2b13133c97359cc4d98fa3097fa3d30009e2861c860c566588"
+ir_digest = "sha256:a17dc86b82e1e032ca48baafa4df2bfc27199c8f5f21973d8766a23e07c41233"
 
 [[files]]
 path = "README.md"
@@ -35,6 +35,12 @@ section_count = 3
 path = "logic/implement-real-metric-aware-wgpu-distance-adapter.md"
 digest = "sha256:f9bb723245f36f00fe8e3af016253a03c8a2dba9e8e61ec1a7fbbd898e10c294"
 ir_digest = "sha256:2f61b8ee1fc894ff8108bd1eccd9947d3757072984df911df59557fb7d46659a"
+section_count = 3
+
+[[files]]
+path = "logic/persist-serve-state-atomically-and-recover-across-restart.md"
+digest = "sha256:d38e32c6f02d56ffd11adbb7dc4000ebcbdb251b14f80bbbaa810d3892ab6c3b"
+ir_digest = "sha256:13133b5e641bf147b2698ea29d978fb92a80d7efe41f8d4242bc048c38702d21"
 section_count = 3
 
 [[files]]
