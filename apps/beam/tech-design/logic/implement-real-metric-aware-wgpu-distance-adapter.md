@@ -52,3 +52,49 @@ changes:
     section: adapter-tests
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: implement-real-metric-aware-wgpu-distance-adapter-verification
+requirements:
+  req_1:
+    id: R1
+    text: "Implement the WGPU-backed DistanceCalculator using Beam's existing GPU primitives"
+    kind: functional
+    risk: medium
+    verify: test_wgpu_distance_adapter_batching_l2
+  req_2_cosine:
+    id: R2_COSINE
+    text: "Support true multi-query batching and Cosine semantics"
+    kind: functional
+    risk: medium
+    verify: test_wgpu_distance_adapter_batching_cosine
+  req_2_dot:
+    id: R2_DOT
+    text: "Support true multi-query batching and Dot semantics"
+    kind: functional
+    risk: medium
+    verify: test_wgpu_distance_adapter_batching_dot
+  req_2_l2:
+    id: R2_L2
+    text: "Support true multi-query batching and L2 semantics"
+    kind: functional
+    risk: medium
+    verify: test_wgpu_distance_adapter_batching_l2
+  req_3:
+    id: R3
+    text: "Keep an explicit CPU fallback that reports which backend executed"
+    kind: functional
+    risk: low
+    verify: test_wgpu_distance_adapter_fallback
+---
+flowchart TD
+    r1[R1 req 1] --> test_wgpu_distance_adapter_batching_l2[test_wgpu_distance_adapter_batching_l2]
+    r2_l2[R2_L2 req 2 l2] --> test_wgpu_distance_adapter_batching_l2
+    r3[R3 req 3] --> test_wgpu_distance_adapter_fallback[test_wgpu_distance_adapter_fallback]
+    r2_cosine[R2_COSINE req 2 cosine] --> test_wgpu_distance_adapter_batching_cosine[test_wgpu_distance_adapter_batching_cosine]
+    r2_dot[R2_DOT req 2 dot] --> test_wgpu_distance_adapter_batching_dot[test_wgpu_distance_adapter_batching_dot]
+```
