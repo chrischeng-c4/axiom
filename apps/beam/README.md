@@ -184,6 +184,7 @@ Gate Inventory:
 | gpu-flat-knn-wgpu-metal | change | #769 | implemented | verified | conformance | apps/beam/tests/gpu_matches_cpu.rs (Apple M1 Max/Metal, recall 1.000) |
 | gpu-ivf-pq-ann | change | #769 | implemented | verified | conformance | apps/beam/tests/ivf_recall.rs (IVF-flat 2.7× faster lossless; IVF-PQ ADC exact, recall tunable) |
 | gpu-ann-index-lifecycle | epic | #769 | planned | planned | none | pending durable segments, memory tiers, rebuild, and GPU meter gates |
+| beam-ddd-wgpu-distance-adapter | change | #2148 | planned | planned | none | pending real wgpu distance adapter |
 
 ### Batch Ingest And Rebuild
 
