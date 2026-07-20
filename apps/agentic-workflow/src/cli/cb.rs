@@ -4687,6 +4687,64 @@ pub fn signature_only() -> Result<()>
         );
     }
 
+    // Issue #1811: a bare `aw td code-check` (no `--project`) run from a
+    // persistent `app_<alias>` worktree directory (root CLAUDE.md's
+    // `app/<name>` branch <-> `app_<name>` directory convention — e.g. this
+    // very `agentic-workflow` project checks out as `app_aw`) must resolve
+    // the registered project `name` from `aw.toml`'s `[[projects]]`
+    // registry, never emit the raw, `aw health --project`-unresolvable
+    // worktree directory token itself.
+    #[test]
+    fn bare_code_check_guidance_resolves_registered_project_from_app_worktree_dir_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree_root = tmp.path().join("app_aw");
+        std::fs::create_dir_all(&worktree_root).unwrap();
+        std::fs::write(
+            worktree_root.join("aw.toml"),
+            "[[projects]]\nname = \"agentic-workflow\"\naliases = [\"aw\"]\npath = \"apps/agentic-workflow\"\n",
+        )
+        .unwrap();
+
+        let project = code_check_guidance_project(None, &worktree_root);
+
+        assert_eq!(project, "agentic-workflow");
+        assert_eq!(
+            bare_code_check_guidance_envelope(&project)["next"]["command"].as_str(),
+            Some("aw health --project agentic-workflow drift-marker --verbose")
+        );
+    }
+
+    // Same convention, `lib_<alias>` worktree directories (`lib/<name>`
+    // branches, issue #1811).
+    #[test]
+    fn bare_code_check_guidance_resolves_registered_project_from_lib_worktree_dir_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree_root = tmp.path().join("lib_openapi-codegen");
+        std::fs::create_dir_all(&worktree_root).unwrap();
+        std::fs::write(
+            worktree_root.join("aw.toml"),
+            "[[projects]]\nname = \"openapi-codegen\"\naliases = [\"openapi-codegen\"]\npath = \"libs/openapi-codegen\"\n",
+        )
+        .unwrap();
+
+        let project = code_check_guidance_project(None, &worktree_root);
+
+        assert_eq!(project, "openapi-codegen");
+    }
+
+    // No `aw.toml` (or no matching registry row) at all: preserve the prior
+    // directory-name fallback rather than erroring the guidance envelope.
+    #[test]
+    fn bare_code_check_guidance_falls_back_to_dir_name_when_no_registry_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree_root = tmp.path().join("unregistered-project");
+        std::fs::create_dir_all(&worktree_root).unwrap();
+
+        let project = code_check_guidance_project(None, &worktree_root);
+
+        assert_eq!(project, "unregistered-project");
+    }
+
     #[test]
     fn terminal_ec_missing_semantic_review_routes_to_hitl() {
         let summary = crate::cli::ec::EcVerifySummary {
@@ -4784,21 +4842,50 @@ pub async fn run_check(args: CbCheckArgs, configured_project: Option<&str>) -> R
 
 /// Issue #1276: the guidance envelope a bare, slug-less `aw td code-check`
 /// prints instead of running `td::run_audit`'s whole-tree walker (see
-/// `run_check` above). Split out as a pure function so the shape is
-/// unit-testable without a real project-root/git fixture.
+/// `run_check` above). Kept close to a pure function (deterministic given
+/// its inputs, no process-global state) so the shape is unit-testable
+/// without a real git fixture — the `None` branch does read `project_root`'s
+/// own `aw.toml` (issue #1811 below), but only that one file, via a plain
+/// tempdir fixture in tests, never CWD or git.
 fn code_check_guidance_project(
     configured_project: Option<&str>,
     project_root: &std::path::Path,
 ) -> String {
     configured_project.map_or_else(
         || {
-            project_root
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "<project>".to_string())
+            resolve_registered_project_for_worktree(project_root).unwrap_or_else(|| {
+                project_root
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "<project>".to_string())
+            })
         },
         str::to_owned,
     )
+}
+
+/// Issue #1811: when `aw td code-check` runs bare (no `--project`) from a
+/// project's own worktree root, resolve the `aw health --project <p>`-
+/// resolvable slug from `project_root`'s `aw.toml` `[[projects]]`/`[project]`
+/// registry instead of falling back straight to the OS worktree directory
+/// name. Persistent app/lib worktree directories are named `app_<name>` /
+/// `lib_<name>` per root CLAUDE.md's "Project and Branch Allocation" (e.g.
+/// the `agentic-workflow` project's own worktree directory is `app_aw`,
+/// derived from branch `app/aw`, not from the project's registered `name` or
+/// `aliases`) — that directory token is never itself a valid `aw health
+/// --project` argument, so it must never leak into an emitted `next.command`.
+/// Best-effort: any registry-read failure (unconfigured/greenfield project)
+/// falls back to the caller's prior directory-name behavior.
+fn resolve_registered_project_for_worktree(project_root: &std::path::Path) -> Option<String> {
+    let dir_name = project_root.file_name()?.to_str()?;
+    let candidate = dir_name
+        .strip_prefix("app_")
+        .or_else(|| dir_name.strip_prefix("lib_"))
+        .unwrap_or(dir_name);
+    let rows = crate::services::project_registry::load_project_config_rows(project_root).ok()?;
+    rows.into_iter()
+        .find(|row| row.matches(candidate) || row.matches(dir_name))
+        .map(|row| row.name)
 }
 
 fn bare_code_check_guidance_envelope(project: &str) -> serde_json::Value {
