@@ -1,7 +1,14 @@
 ---
 id: '2215'
-summary: (fill)
+summary: Close Defer security hardening with queue-scoped required auth and tenant isolation, bounded admission and effect fencing, exact target signing, authenticated peers, live credential rotation with redacted audit, and rendered Kubernetes security boundaries.
 fill_sections: [logic, changes, unit-test]
+capability_refs:
+  - id: security-hardening
+    role: primary
+    gap: delayed-task-security-boundary
+    claim: delayed-task-security-boundary
+    coverage: full
+    rationale: "Defines the positive and independent negative oracles that fail closed across Defer's public, effect, peer, credential, and deployment security boundaries while shared mechanisms remain in libs."
 ---
 
 ## Logic
