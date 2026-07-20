@@ -6151,7 +6151,7 @@ impl TypeChecker {
     /// genuinely non-overriding classes is unchanged.
     fn class_defines_dunder(&self, ty_id: TypeId, dunder: &str) -> bool {
         let Ty::Class {
-            name, role, user, ..
+            name, role, user, external, ..
         } = self.tcx.get(ty_id)
         else {
             return false;
@@ -6173,11 +6173,23 @@ impl TypeChecker {
                 {
                     return true;
                 }
+                // #1973 check if the base refers to an imported stdlib/external class
+                if let Some((module, class_name)) = self.import_origins.get(&symbol) {
+                    if !class_name.is_empty() && super::stdlib_sigs::get(module, class_name, dunder).is_some() {
+                        return true;
+                    }
+                }
                 if let Some(bases) = self.class_base_symbols.get(&symbol) {
                     queue.extend(bases.iter().copied());
                 }
             }
             return false;
+        }
+        // #1973 check external classes directly
+        if let Some(ext) = external {
+            if super::stdlib_sigs::get(&ext.module, &ext.name, dunder).is_some() {
+                return true;
+            }
         }
         let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut queue: Vec<&str> = vec![name.as_str()];
