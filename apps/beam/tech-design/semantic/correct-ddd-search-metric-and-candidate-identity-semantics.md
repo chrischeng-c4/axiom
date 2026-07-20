@@ -1,5 +1,59 @@
 ---
 id: '2145'
-summary: (fill)
+summary: "Correct DDD search metric and candidate identity semantics in the high-throughput pipeline."
+capability_refs:
+  - id: vector-query-api
+    role: primary
+    claim: beam-ddd-search-correctness
+    coverage: full
+    rationale: "Ensures the DDD search path preserves the metric and candidate identity semantics promised by Beam's vector query capability."
 fill_sections: [logic, changes, unit-test]
 ---
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: ddd-search-pipeline-correctness
+entry: start
+nodes:
+  start: { kind: start, label: "Start execute_batch" }
+  validate_dim: { kind: decision, label: "Validate query dim" }
+  resolve_ids: { kind: process, label: "Resolve IDs to offsets 1-to-1" }
+  fetch_vectors: { kind: process, label: "Fetch target vectors from repository" }
+  validate_bytes: { kind: decision, label: "Validate fetched byte alignment & size" }
+  decode_vectors: { kind: process, label: "Decode target vectors & validate count" }
+  compute_dist: { kind: process, label: "Compute distance via metric-aware Calculator" }
+  zip_sort: { kind: process, label: "Zip resolved candidate IDs, sort deterministically" }
+  truncate_k: { kind: process, label: "Truncate to k" }
+  success: { kind: terminal, label: "Return success" }
+  error_dim: { kind: terminal, label: "Return DimensionMismatch error" }
+  error_bytes: { kind: terminal, label: "Return ByteAlignmentMismatch error" }
+  error_count: { kind: terminal, label: "Return VectorCountMismatch error" }
+edges:
+  - { from: start, to: validate_dim }
+  - { from: validate_dim, to: resolve_ids, label: "valid" }
+  - { from: validate_dim, to: error_dim, label: "invalid" }
+  - { from: resolve_ids, to: fetch_vectors }
+  - { from: fetch_vectors, to: validate_bytes }
+  - { from: validate_bytes, to: decode_vectors, label: "valid" }
+  - { from: validate_bytes, to: error_bytes, label: "invalid" }
+  - { from: decode_vectors, to: compute_dist }
+  - { from: compute_dist, to: zip_sort }
+  - { from: zip_sort, to: truncate_k }
+  - { from: truncate_k, to: success }
+---
+flowchart TD
+    start([Start execute_batch]) --> validate_dim{Validate query dim?}
+    validate_dim -->|Yes| resolve_ids[Resolve IDs to offsets 1-to-1]
+    validate_dim -->|No| error_dim[Return DimensionMismatch error]
+    resolve_ids --> fetch_vectors[Fetch target vectors from repository]
+    fetch_vectors --> validate_bytes{Validate byte alignment & size?}
+    validate_bytes -->|Yes| decode_vectors[Decode target vectors & validate count]
+    validate_bytes -->|No| error_bytes[Return ByteAlignmentMismatch error]
+    decode_vectors --> compute_dist[Compute distance via metric-aware Calculator]
+    compute_dist --> zip_sort[Zip resolved candidate IDs, sort deterministically]
+    zip_sort --> truncate_k[Truncate to k]
+    truncate_k --> success([Return success])
+```
