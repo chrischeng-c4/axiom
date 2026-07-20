@@ -76,6 +76,7 @@ Gate Inventory:
 | beam-cli-shell | change | #772 | implemented | verified | conformance | apps/beam/tests/cli_contract.rs (R1–R6 green) |
 | beam-cli-convention-and-vector-verbs | change | #772 | implemented | verified | conformance | apps/beam/tests/cli_contract.rs (R1–R6 green) |
 | beam-vector-verbs | epic | #769 | planned | planned | none | pending vector ingest/query/index verbs |
+| beam-canonical-artifact-paths | change | #2147 | planned | planned | none | pending canonical paths |
 
 ### Long-Running Stability
 
