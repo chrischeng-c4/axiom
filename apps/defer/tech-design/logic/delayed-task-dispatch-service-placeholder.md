@@ -56,3 +56,26 @@ flowchart TD
     retry --> eligibility
     commit_create --> shared_shell([shared service libraries own non-domain shell])
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/defer/aw.toml
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Declare Defer as a Rust workspace with the real cargo test gate so accepted EC sources generate compilable wrappers instead of schema text."
+  - path: apps/defer/scripts/soak.sh
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Exercise a fixed successful task and a fixed real-HTTP fault task, require committed retry progress in both steady windows, and retain bounded resource/latency thresholds."
+  - path: apps/defer/tests/http_dispatch_signing.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    anchor: target_oracle_verifies_exact_signature_and_rejects_tampering
+    reason: "Independently recompute the length-delimited HMAC at the target and reject field/body tampering, wrong key identity, and wrong secrets across retry attempts."
+```
