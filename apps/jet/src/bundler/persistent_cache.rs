@@ -130,6 +130,38 @@
 //! `tree_shake::RawModuleFacts`'s doc comment for the full raw/resolved
 //! split.
 //!
+//! ## Replay section (#2143)
+//!
+//! A fifth, independent element (not a row set — exactly one, or none):
+//! [`ReplayManifest`], recorded after a successful full build and consulted
+//! *before* [`PersistentTransformCache::load`] even runs, by the standalone
+//! [`peek_replay_manifest`] + [`try_replay`] fast path `cli.rs`'s `build`
+//! handler calls first. Unlike the four sections above, this one exists to
+//! let a build skip constructing a `Bundler` (and therefore this whole
+//! cache) altogether: a cheap `(mtime, size)` stat screen over every module
+//! the *previous* successful build actually consumed, falling back to a
+//! content hash only for files whose stat drifted, plus a sorted-filename
+//! listing fingerprint for every directory that held a consumed app-source
+//! module (the resolution-shadow guard — a *new* file appearing in such a
+//! directory can silently change which file a relative/extensionless
+//! import resolves to, something no already-consumed file's own stat/hash
+//! could ever reveal). `node_modules` directories are deliberately not
+//! listing-fingerprinted: the resolution section's (#2141) per-entry
+//! `package.json` guard above already re-verifies node_modules package
+//! integrity. Any mismatch, missing file, or ambiguity anywhere in this
+//! check is a full build, not a best-effort replay — see [`try_replay`]'s
+//! doc comment. Replay itself is verify-only (v1, this issue's explicit
+//! scope): outputs are never stored as payloads, only their relative dist
+//! paths + content hashes; "replaying" means confirming every recorded
+//! output is still on disk with a matching hash and reprinting the standard
+//! build-complete line, never regenerating or copying anything.
+//! `Bundler::collect_replay_inputs` declines to record a manifest at all
+//! (leaving whatever was on disk untouched — see
+//! [`PersistentTransformCache::replay_manifest`]'s field doc comment) for
+//! any build whose graph contains a `Json`/`Asset` module: neither of this
+//! v1 collector's inputs sees those kinds' content, so tracking them
+//! soundly is a follow-up, not a silent gap.
+//!
 //! ## Hatches
 //!
 //! `[build] cache` in jet.toml, `--no-cache` on `jet build` (flag wins over
@@ -138,7 +170,12 @@
 //! directly in [`PersistentTransformCache::load`] (so any caller that
 //! constructs a `Bundler` with `cache_project_root: Some(..)` directly —
 //! tests, embedders — still honors the env override without re-plumbing the
-//! CLI precedence).
+//! CLI precedence). `JET_NO_REPLAY=1` (#2143) additionally disables just
+//! the replay section's fast path (both the pre-`Bundler` [`try_replay`]
+//! check and the post-build `Bundler::record_replay_manifest` write) while
+//! leaving the four sections above fully active; `--no-cache` already
+//! implies it, since a disabled store has no manifest to check against or
+//! write.
 //! @issue #2137
 
 use dashmap::DashMap;
@@ -146,6 +183,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::imports;
@@ -171,7 +209,12 @@ use super::CompiledModule;
 /// old (schema-2) file is missing the new fields, `postcard` fails the
 /// decode cleanly, and the file is treated as cold rather than partially
 /// trusted.
-pub const TRANSFORM_CACHE_SCHEMA: u32 = 3;
+///
+/// #2143 bumped this 3 -> 4: `CacheFile` grew one more trailing field
+/// (`replay_manifest`) for the replay section below. Same reasoning
+/// applies again: an old (schema-3) file is missing the field, `postcard`
+/// fails the decode cleanly, cold start.
+pub const TRANSFORM_CACHE_SCHEMA: u32 = 4;
 
 /// Bumped whenever import-scan behavior changes (`imports::
 /// extract_imports_fast`, its tree-sitter fallback, or `Bundler::
@@ -208,6 +251,16 @@ pub const ANALYSIS_VERSION: u32 = 1;
 /// `PersistentTransformCache::resolution_entries`'s field doc comment.
 /// @issue #2141
 pub const RESOLUTION_VERSION: u32 = 1;
+
+/// Bumped whenever the #2143 replay verification algorithm itself changes
+/// (which stat/hash fields it trusts, how the fast path screens inputs) in
+/// a way that could make an old recorded [`ReplayManifest`] no longer a
+/// safe basis for a replay decision — independent of
+/// [`replay_config_fingerprint`]'s own build-config inputs. A mismatch
+/// declines the replay attempt outright (see [`try_replay`]) rather than
+/// attempting a partial reuse.
+/// @issue #2143
+pub const REPLAY_VERSION: u32 = 1;
 
 /// Store location, relative to the project root (the same root `jet build`
 /// resolves `node_modules/` from). `node_modules/.jet/` is an existing jet
@@ -353,6 +406,128 @@ struct StoredAnalysisEntry {
     last_used: u64,
 }
 
+/// One tracked build input for the #2143 replay manifest — a module (or,
+/// for `index.html`/`public/`, a plain file `Bundler` never sees) the
+/// previous successful build actually consumed. `content_hash` is the same
+/// [`hash_bytes`] of the file's raw content every other section already
+/// keys on; `mtime_nanos`/`size` are the cheap stat pair [`try_replay`]
+/// screens first, falling back to re-reading and re-hashing only when
+/// either drifted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayInput {
+    pub path: PathBuf,
+    pub content_hash: u64,
+    /// Nanoseconds since `UNIX_EPOCH`. Collection declines to record a
+    /// manifest at all for a file whose mtime cannot be read (see
+    /// [`mtime_nanos`]) rather than store a placeholder — [`try_replay`]'s
+    /// own stat re-check already treats an unreadable mtime as a drifted
+    /// stat (falls back to content hash) without needing a sentinel value
+    /// here.
+    pub mtime_nanos: u128,
+    pub size: u64,
+}
+
+/// One tracked source directory's sorted-filename listing fingerprint — the
+/// resolution-shadow guard described in the module doc comment's "Replay
+/// section" heading: a *new* file appearing in a directory that held a
+/// consumed app-source module can silently change which file a
+/// relative/extensionless import resolves to, something no already-consumed
+/// file's own [`ReplayInput`] could ever reveal, since the new file itself
+/// was never consumed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayDirFingerprint {
+    pub dir: PathBuf,
+    pub listing_hash: u64,
+}
+
+/// One build output [`try_replay`] must find on disk, byte-identical,
+/// before declaring a replay valid (v1: verify-only — the bytes themselves
+/// are never stored here, only enough to detect drift). `rel_path` is
+/// `/`-separated and relative to the build's output directory, matching
+/// however deep a written file actually landed (entry bundle, chunks,
+/// chunk maps, CSS/asset files, copied `public/` files, the generated
+/// `index.html`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayOutput {
+    pub rel_path: String,
+    pub content_hash: u64,
+}
+
+/// The whole #2143 replay manifest: recorded once, after every successful
+/// full build with replay enabled (see `Bundler::record_replay_manifest`),
+/// consulted once, before the next build's `Bundler` is even constructed
+/// (see [`try_replay`]). See the module doc comment's "Replay section"
+/// heading for the full design.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayManifest {
+    pub replay_version: u32,
+    /// See [`replay_config_fingerprint`] — folds together the transform
+    /// section's `config_fingerprint`, the resolution section's
+    /// `resolver_config_fingerprint`, and a jet.toml content hash, so a
+    /// change to any of the three declines a stale replay the same way a
+    /// mismatched `config_fingerprint` already declines a stale transform
+    /// cache hit.
+    pub config_fingerprint: u64,
+    pub inputs: Vec<ReplayInput>,
+    pub source_dirs: Vec<ReplayDirFingerprint>,
+    pub outputs: Vec<ReplayOutput>,
+    /// `/`-separated relative dist path of the entry bundle
+    /// (`main.<hash>.js`), duplicated out of `outputs` so a replay hit can
+    /// reprint the standard `Build complete in Xms: <output>/<file> (<KB>
+    /// KB)` line without re-deriving which recorded output is "the entry".
+    pub entry_rel_path: String,
+    pub entry_size: u64,
+}
+
+/// Result of one [`try_replay`] attempt, and the source of the
+/// `JET_BUNDLE_TIMING` `replay: ...` line (see [`Self::timing_line`]).
+#[derive(Debug, Clone)]
+pub enum ReplayOutcome {
+    Replayed {
+        entry_rel_path: String,
+        entry_size: u64,
+        verified: usize,
+        stat_ms: f64,
+        hash_fallback: usize,
+    },
+    FullBuild {
+        reason: String,
+        verified: usize,
+        stat_ms: f64,
+        hash_fallback: usize,
+    },
+}
+
+impl ReplayOutcome {
+    pub fn is_replayed(&self) -> bool {
+        matches!(self, ReplayOutcome::Replayed { .. })
+    }
+
+    /// `replay: verified=N stat_ms=X hash_fallback=K
+    /// outcome=replayed|full-build(<reason>)` — the exact #2143
+    /// `JET_BUNDLE_TIMING=1` line format.
+    pub fn timing_line(&self) -> String {
+        match self {
+            ReplayOutcome::Replayed {
+                verified,
+                stat_ms,
+                hash_fallback,
+                ..
+            } => format!(
+                "replay: verified={verified} stat_ms={stat_ms:.2} hash_fallback={hash_fallback} outcome=replayed"
+            ),
+            ReplayOutcome::FullBuild {
+                reason,
+                verified,
+                stat_ms,
+                hash_fallback,
+            } => format!(
+                "replay: verified={verified} stat_ms={stat_ms:.2} hash_fallback={hash_fallback} outcome=full-build({reason})"
+            ),
+        }
+    }
+}
+
 /// The whole on-disk file: one `postcard`-encoded blob.
 ///
 /// #2140 added the two trailing fields for the import-scan section
@@ -361,6 +536,8 @@ struct StoredAnalysisEntry {
 /// decode, a clean cold-start) and the module doc comment's "Import-scan
 /// section" heading for the design. #2141 appended three more trailing
 /// fields for the resolution and analysis sections — same reasoning.
+/// #2143 appended one more trailing field, `replay_manifest`, for the
+/// replay section.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CacheFile {
     schema: u32,
@@ -371,6 +548,7 @@ struct CacheFile {
     resolution_entries: Vec<StoredResolutionEntry>,
     analysis_fingerprint: u64,
     analysis_entries: Vec<StoredAnalysisEntry>,
+    replay_manifest: Option<ReplayManifest>,
 }
 
 /// In-memory representation of one live entry — decoded once at `load` (or
@@ -487,6 +665,17 @@ pub struct PersistentTransformCache {
     analysis_hits: AtomicU64,
     analysis_misses: AtomicU64,
     analysis_fingerprint: u64,
+    /// #2143 — the replay section's single element (see the module doc
+    /// comment's "Replay section" heading). Populated from the on-disk
+    /// file at [`Self::load`] (a shape mismatch already fails the whole
+    /// `CacheFile` decode via [`TRANSFORM_CACHE_SCHEMA`], so no separate
+    /// per-field checksum is needed here, unlike the row-sequence sections
+    /// above) and left untouched by [`Self::save`] unless
+    /// [`Self::set_replay_manifest`] overwrote it first — so a build that
+    /// never reaches `set_replay_manifest` (replay declined, or
+    /// `JET_NO_REPLAY` set) carries the previous build's manifest forward
+    /// instead of erasing it.
+    replay_manifest: Mutex<Option<ReplayManifest>>,
 }
 
 impl PersistentTransformCache {
@@ -514,6 +703,7 @@ impl PersistentTransformCache {
             analysis_hits: AtomicU64::new(0),
             analysis_misses: AtomicU64::new(0),
             analysis_fingerprint: 0,
+            replay_manifest: Mutex::new(None),
         }
     }
 
@@ -566,6 +756,7 @@ impl PersistentTransformCache {
             analysis_hits: AtomicU64::new(0),
             analysis_misses: AtomicU64::new(0),
             analysis_fingerprint,
+            replay_manifest: Mutex::new(None),
         };
 
         let bytes = match std::fs::read(&store_path) {
@@ -613,6 +804,20 @@ impl PersistentTransformCache {
         let transform_section_valid = file.config_fingerprint == config_fingerprint;
         let import_scan_section_valid = file.scanner_version == SCANNER_VERSION;
         let analysis_section_valid = file.analysis_fingerprint == analysis_fingerprint;
+
+        // #2143 — replay section: no whole-section fingerprint gate here
+        // (unlike the transform/analysis sections above) — carried forward
+        // as-is from disk. `try_replay`/`peek_replay_manifest` re-validate
+        // `replay_version` and `config_fingerprint` themselves against
+        // *this* build's own values at the point a replay is actually
+        // attempted (before a `Bundler` — and therefore this build's own
+        // fingerprints — even exists), so no extra gating is needed here.
+        // Populating it (rather than leaving it `None`) matters so a build
+        // which never calls `set_replay_manifest` (replay declined this
+        // run, or `JET_NO_REPLAY` set) has `save` re-persist the previous
+        // manifest unchanged instead of silently erasing a still-valid one
+        // — see `replay_manifest`'s field doc comment.
+        *cache.replay_manifest.lock().unwrap() = file.replay_manifest;
 
         let mut loaded = 0usize;
         let mut corrupt = 0usize;
@@ -1002,6 +1207,18 @@ impl PersistentTransformCache {
         self.analysis_misses.load(Ordering::Relaxed)
     }
 
+    /// Record (or replace) this build's #2143 replay manifest. A later
+    /// [`Self::save`] call persists whatever is here at that point — same
+    /// "unconditional overwrite, save persists live state" shape as
+    /// [`Self::insert`]/[`Self::insert_analysis`], except there is exactly
+    /// one element, not a map.
+    pub fn set_replay_manifest(&self, manifest: ReplayManifest) {
+        if !self.enabled {
+            return;
+        }
+        *self.replay_manifest.lock().unwrap() = Some(manifest);
+    }
+
     /// Encode every live entry, apply the [`MAX_STORE_BYTES`] oldest-first
     /// eviction cap, and atomically write back via a tmp file + rename.
     /// Never fails the build: any encode/IO error is swallowed after a
@@ -1154,6 +1371,7 @@ impl PersistentTransformCache {
             resolution_entries: resolution_rows,
             analysis_fingerprint: self.analysis_fingerprint,
             analysis_entries: analysis_rows,
+            replay_manifest: self.replay_manifest.lock().unwrap().clone(),
         };
         let bytes = match postcard::to_stdvec(&file) {
             Ok(b) => b,
@@ -1403,6 +1621,341 @@ pub fn analysis_fingerprint(defines: &HashMap<String, String>) -> u64 {
     ANALYSIS_VERSION.hash(&mut hasher);
     defines_sorted.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Lightweight pre-`Bundler` peek at the persistent store's #2143 replay
+/// section only. Deliberately does not go through [`PersistentTransformCache::
+/// load`]: that decodes every transform/import-scan/resolution/analysis row
+/// into a live, typed structure — exactly the cost the replay fast path
+/// exists to let an unchanged build skip paying. This reads the same file
+/// but stops at the outer [`CacheFile`] shape, discarding every other
+/// section's still-opaque row payloads unread. Any failure along the way
+/// (missing file, undecodable bytes, wrong [`TRANSFORM_CACHE_SCHEMA`], no
+/// manifest recorded yet) returns `None` — every case [`try_replay`] treats
+/// identically: no replay candidate, do a full build.
+fn peek_replay_manifest(project_root: &Path) -> Option<ReplayManifest> {
+    if std::env::var_os("JET_NO_PERSISTENT_CACHE").is_some() {
+        return None;
+    }
+    let store_path = project_root.join(TRANSFORM_CACHE_REL_PATH);
+    let bytes = std::fs::read(&store_path).ok()?;
+    let file: CacheFile = postcard::from_bytes(&bytes).ok()?;
+    if file.schema != TRANSFORM_CACHE_SCHEMA {
+        return None;
+    }
+    file.replay_manifest
+}
+
+/// Whole-build #2143 replay config fingerprint: folds together the
+/// transform section's [`config_fingerprint`] (defines, minify, splitting,
+/// transform options, crate version, [`TRANSFORM_CACHE_SCHEMA`]), the
+/// resolution section's [`resolver_config_fingerprint`] (alias, baseUrl,
+/// conditions, externals — the "tsconfig/alias consulted" surface), a
+/// jet.toml content hash (see [`hash_file_or_absent`] — the two
+/// fingerprints above only cover options the CLI actually threaded into
+/// `BundleOptions`, not jet.toml bytes wholesale), and [`REPLAY_VERSION`]
+/// itself. Computed by `cli.rs` before constructing a `Bundler` at all
+/// (from the exact same `defines`/`minify`/`splitting`/`transform_options`/
+/// `resolve_options` values about to go into `BundleOptions`), so
+/// [`try_replay`] can decide whether to build one at all.
+pub fn replay_config_fingerprint(
+    config_fingerprint: u64,
+    resolver_config_fingerprint: u64,
+    jet_toml_hash: u64,
+) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    REPLAY_VERSION.hash(&mut hasher);
+    config_fingerprint.hash(&mut hasher);
+    resolver_config_fingerprint.hash(&mut hasher);
+    jet_toml_hash.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// [`hash_bytes`] of `path`'s content, or `0` when `path` does not exist —
+/// `0` is reserved here as an explicit "absent" sentinel rather than relied
+/// on for uniqueness (an empty-but-present file hashes through the same
+/// [`hash_bytes`] call as everything else, and collision with `0` is
+/// accepted the same way every other `u64` fingerprint in this module
+/// accepts hash collisions). Used for jet.toml in
+/// [`replay_config_fingerprint`] — jet.toml is optional (`JetConfig::load`
+/// already falls back to defaults when absent), so its absence must be a
+/// stable, trackable fingerprint input too: a project that gains a
+/// jet.toml between builds must not replay against a manifest recorded
+/// before it existed.
+pub fn hash_file_or_absent(path: &Path) -> u64 {
+    match std::fs::read(path) {
+        Ok(bytes) => hash_bytes(&bytes),
+        Err(_) => 0,
+    }
+}
+
+/// `mtime` as nanoseconds since `UNIX_EPOCH`, or `None` on a
+/// platform/filesystem that cannot report one — every caller treats `None`
+/// the same as a drifted/untrusted stat rather than a hard error.
+pub(crate) fn mtime_nanos(meta: &std::fs::Metadata) -> Option<u128> {
+    meta.modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_nanos())
+}
+
+/// Sorted-filename listing hash of `dir`'s *immediate* entries (files and
+/// subdirectories both — a new subdirectory changes what a directory
+/// import could resolve into just as much as a new file does). `None` if
+/// `dir` cannot be read — every caller treats that the same as a changed
+/// listing (an unconditional full-build reason), the same "any doubt"
+/// rule as everywhere else in this section.
+pub(crate) fn single_dir_listing_hash(dir: &Path) -> Option<u64> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .map(|entry| entry.map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect::<std::io::Result<Vec<_>>>()
+        .ok()?;
+    names.sort_unstable();
+    Some(hash_seq(&names))
+}
+
+/// Recursively collects a #2143 replay input set for a directory tree that
+/// is copied to the output dir verbatim rather than resolved through the
+/// module graph (`public/` — see `cli.rs`'s `copy_public_dir`): one
+/// [`ReplayDirFingerprint`] per directory encountered (including `dir`
+/// itself) plus one [`ReplayInput`] per file, at every depth. `None`
+/// (decline) on any read error along the way. A missing `dir` is not an
+/// error — `public/` is optional — and returns two empty `Vec`s.
+pub fn collect_dir_tree_replay_inputs(
+    dir: &Path,
+) -> Option<(Vec<ReplayInput>, Vec<ReplayDirFingerprint>)> {
+    let mut inputs = Vec::new();
+    let mut dirs = Vec::new();
+    if !dir.is_dir() {
+        return Some((inputs, dirs));
+    }
+    collect_dir_tree_replay_inputs_into(dir, &mut inputs, &mut dirs)?;
+    Some((inputs, dirs))
+}
+
+fn collect_dir_tree_replay_inputs_into(
+    dir: &Path,
+    inputs: &mut Vec<ReplayInput>,
+    dirs: &mut Vec<ReplayDirFingerprint>,
+) -> Option<()> {
+    let mut names = Vec::new();
+    let mut subdirs = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        let file_type = entry.file_type().ok()?;
+        names.push(entry.file_name().to_string_lossy().into_owned());
+        if file_type.is_dir() {
+            subdirs.push(path);
+        } else if file_type.is_file() {
+            let meta = entry.metadata().ok()?;
+            let mtime = mtime_nanos(&meta)?;
+            let bytes = std::fs::read(&path).ok()?;
+            inputs.push(ReplayInput {
+                content_hash: hash_bytes(&bytes),
+                mtime_nanos: mtime,
+                size: meta.len(),
+                path,
+            });
+        }
+    }
+    names.sort_unstable();
+    dirs.push(ReplayDirFingerprint {
+        dir: dir.to_path_buf(),
+        listing_hash: hash_seq(&names),
+    });
+    for subdir in subdirs {
+        collect_dir_tree_replay_inputs_into(&subdir, inputs, dirs)?;
+    }
+    Some(())
+}
+
+/// Recursively collects every file under `output_dir` (`/`-separated path
+/// relative to it, plus a content hash) after a full build finishes
+/// writing it, for the #2143 replay manifest's output set. A plain
+/// post-hoc walk rather than tracking each individual writer call site in
+/// `cli.rs`, so it can never miss a future new asset kind (chunks, CSS,
+/// copied `public/` files, the generated `index.html`) — whatever is
+/// actually on disk when this runs *is* the output set [`try_replay`] must
+/// match later. `None` (decline recording) on any read error.
+pub fn collect_dist_outputs(output_dir: &Path) -> Option<Vec<ReplayOutput>> {
+    let mut outputs = Vec::new();
+    collect_dist_outputs_into(output_dir, output_dir, &mut outputs)?;
+    Some(outputs)
+}
+
+fn collect_dist_outputs_into(
+    root: &Path,
+    dir: &Path,
+    outputs: &mut Vec<ReplayOutput>,
+) -> Option<()> {
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        let file_type = entry.file_type().ok()?;
+        if file_type.is_dir() {
+            collect_dist_outputs_into(root, &path, outputs)?;
+        } else if file_type.is_file() {
+            let bytes = std::fs::read(&path).ok()?;
+            let rel_path = path
+                .strip_prefix(root)
+                .ok()?
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            outputs.push(ReplayOutput {
+                rel_path,
+                content_hash: hash_bytes(&bytes),
+            });
+        }
+    }
+    Some(())
+}
+
+/// The #2143 replay fast path: attempts to verify the previous successful
+/// build's recorded [`ReplayManifest`] (via [`peek_replay_manifest`]) still
+/// describes `project_root`'s current state closely enough to trust its
+/// `output_dir` outputs as-is, without constructing a `Bundler` or running
+/// any part of the normal build pipeline. Every step below follows one
+/// rule: any mismatch, missing file, or ambiguity is
+/// [`ReplayOutcome::FullBuild`], never a best-effort partial replay.
+///
+/// 1. No manifest, wrong [`REPLAY_VERSION`], or a `config_fingerprint` that
+///    does not match `replay_config_fingerprint` (defines/minify/splitting/
+///    transform options, alias/baseUrl/conditions, jet.toml bytes, or the
+///    crate/schema versions folded into either changed) — decline
+///    immediately.
+/// 2. Every recorded [`ReplayInput`]: stat `(mtime, size)` first; a match
+///    trusts the recorded `content_hash` without re-reading the file. A
+///    drifted stat falls back to re-reading and re-hashing the file — a
+///    match is still fine (e.g. a touch/rewrite that reproduced the exact
+///    same bytes), any other outcome (missing file, unreadable file, or a
+///    genuinely different hash) declines.
+/// 3. Every recorded [`ReplayDirFingerprint`]: the resolution-shadow guard
+///    — an unreadable directory or a changed sorted listing declines.
+/// 4. Every recorded [`ReplayOutput`]: still on disk under `output_dir`
+///    with a matching content hash (verify-only v1 — nothing is ever
+///    regenerated or copied here) — a missing or drifted output declines.
+///
+/// Only once all four pass does this return [`ReplayOutcome::Replayed`].
+pub fn try_replay(
+    project_root: &Path,
+    output_dir: &Path,
+    replay_config_fingerprint: u64,
+) -> ReplayOutcome {
+    let start = Instant::now();
+    let mut verified = 0usize;
+    let mut hash_fallback = 0usize;
+    // Local helper so each decline site below only has to name its own
+    // reason string — the shared `verified`/`hash_fallback`/`stat_ms`
+    // bookkeeping is identical at every one of them.
+    let full_build =
+        |reason: String, verified: usize, hash_fallback: usize| ReplayOutcome::FullBuild {
+            reason,
+            verified,
+            stat_ms: start.elapsed().as_secs_f64() * 1000.0,
+            hash_fallback,
+        };
+
+    let Some(manifest) = peek_replay_manifest(project_root) else {
+        return full_build("no-manifest".to_string(), verified, hash_fallback);
+    };
+    if manifest.replay_version != REPLAY_VERSION {
+        return full_build("replay-version".to_string(), verified, hash_fallback);
+    }
+    if manifest.config_fingerprint != replay_config_fingerprint {
+        return full_build("config-changed".to_string(), verified, hash_fallback);
+    }
+
+    for input in &manifest.inputs {
+        let meta = match std::fs::metadata(&input.path) {
+            Ok(m) => m,
+            Err(_) => {
+                return full_build(
+                    format!("missing-input:{}", input.path.display()),
+                    verified,
+                    hash_fallback,
+                )
+            }
+        };
+        let stat_matches =
+            meta.len() == input.size && mtime_nanos(&meta) == Some(input.mtime_nanos);
+        if !stat_matches {
+            hash_fallback += 1;
+            let bytes = match std::fs::read(&input.path) {
+                Ok(b) => b,
+                Err(_) => {
+                    return full_build(
+                        format!("unreadable-input:{}", input.path.display()),
+                        verified,
+                        hash_fallback,
+                    )
+                }
+            };
+            if hash_bytes(&bytes) != input.content_hash {
+                return full_build(
+                    format!("content-changed:{}", input.path.display()),
+                    verified,
+                    hash_fallback,
+                );
+            }
+        }
+        verified += 1;
+    }
+
+    for dirfp in &manifest.source_dirs {
+        let Some(listing_hash) = single_dir_listing_hash(&dirfp.dir) else {
+            return full_build(
+                format!("dir-unreadable:{}", dirfp.dir.display()),
+                verified,
+                hash_fallback,
+            );
+        };
+        if listing_hash != dirfp.listing_hash {
+            return full_build(
+                format!("dir-changed:{}", dirfp.dir.display()),
+                verified,
+                hash_fallback,
+            );
+        }
+        verified += 1;
+    }
+
+    for output in &manifest.outputs {
+        let path = output_dir.join(&output.rel_path);
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(_) => {
+                return full_build(
+                    format!("missing-output:{}", output.rel_path),
+                    verified,
+                    hash_fallback,
+                )
+            }
+        };
+        if hash_bytes(&bytes) != output.content_hash {
+            return full_build(
+                format!("output-changed:{}", output.rel_path),
+                verified,
+                hash_fallback,
+            );
+        }
+        verified += 1;
+    }
+
+    ReplayOutcome::Replayed {
+        entry_rel_path: manifest.entry_rel_path,
+        entry_size: manifest.entry_size,
+        verified,
+        stat_ms: start.elapsed().as_secs_f64() * 1000.0,
+        hash_fallback,
+    }
 }
 
 #[cfg(test)]
@@ -1674,6 +2227,7 @@ mod tests {
             resolution_entries: Vec::new(),
             analysis_fingerprint: 0,
             analysis_entries: Vec::new(),
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -1718,6 +2272,7 @@ mod tests {
             resolution_entries: Vec::new(),
             analysis_fingerprint: 0,
             analysis_entries: Vec::new(),
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -1940,6 +2495,7 @@ mod tests {
             resolution_entries: Vec::new(),
             analysis_fingerprint: 0,
             analysis_entries: Vec::new(),
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -2000,6 +2556,7 @@ mod tests {
             resolution_entries: Vec::new(),
             analysis_fingerprint: 0,
             analysis_entries: Vec::new(),
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -2213,6 +2770,7 @@ mod tests {
             resolution_entries: vec![good_entry, bad_entry],
             analysis_fingerprint: 0,
             analysis_entries: Vec::new(),
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -2270,6 +2828,7 @@ mod tests {
             resolution_entries: vec![resolution_entry],
             analysis_fingerprint: 0,
             analysis_entries: Vec::new(),
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -2496,6 +3055,7 @@ mod tests {
             resolution_entries: Vec::new(),
             analysis_fingerprint: 0,
             analysis_entries: vec![good_entry, bad_entry],
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -2553,6 +3113,7 @@ mod tests {
             resolution_entries: Vec::new(),
             analysis_fingerprint: 50,
             analysis_entries: vec![analysis_entry],
+            replay_manifest: None,
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -2606,6 +3167,112 @@ mod tests {
             .get_analysis(&key)
             .expect("expected the saved analysis entry to round-trip");
         assert_eq!(hit.static_edges[0].0, "./y");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #2143 replay section — see the module doc comment's "Replay section"
+    // heading. The `tests/build/transform_cache.rs` HANDWRITE block's own
+    // `reason=` text explicitly routes "store poison" coverage here rather
+    // than to a real `jet build` subprocess test, since none of the three
+    // scenarios below need a real `Bundler`/build at all — `try_replay` and
+    // `peek_replay_manifest` are plain functions over the on-disk store.
+
+    #[test]
+    fn try_replay_never_panics_and_declines_on_a_poisoned_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"try_replay_never_panics_and_declines_on_a_poisoned_store")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        let output_dir = dir.join("dist");
+        std::fs::create_dir_all(&output_dir).unwrap();
+
+        // Scenario 1: completely undecodable garbage bytes in place of the
+        // postcard-encoded `CacheFile` (disk corruption, a truncated write,
+        // or just the wrong format entirely) — `peek_replay_manifest`'s
+        // `postcard::from_bytes` must fail cleanly rather than panic, and
+        // `try_replay` must decline.
+        std::fs::write(
+            dir.join(TRANSFORM_CACHE_REL_PATH),
+            b"not a postcard-encoded CacheFile at all, just garbage bytes \xff\xfe\x00\x01",
+        )
+        .unwrap();
+        match try_replay(&dir, &output_dir, 123) {
+            ReplayOutcome::FullBuild { reason, .. } => assert_eq!(reason, "no-manifest"),
+            ReplayOutcome::Replayed { .. } => panic!("a poisoned store must never replay"),
+        }
+
+        // Scenario 2: a validly postcard-encoded `CacheFile`, but from a
+        // schema this binary no longer understands (an old jet version's
+        // store, or any incompatible future shape) — the schema check in
+        // `peek_replay_manifest` must reject it before ever trying to
+        // interpret `replay_manifest`.
+        let stale_schema_file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA - 1,
+            config_fingerprint: 0,
+            entries: Vec::new(),
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
+            replay_manifest: None,
+        };
+        std::fs::write(
+            dir.join(TRANSFORM_CACHE_REL_PATH),
+            postcard::to_stdvec(&stale_schema_file).unwrap(),
+        )
+        .unwrap();
+        match try_replay(&dir, &output_dir, 123) {
+            ReplayOutcome::FullBuild { reason, .. } => assert_eq!(reason, "no-manifest"),
+            ReplayOutcome::Replayed { .. } => panic!("a schema-mismatched store must never replay"),
+        }
+
+        // Scenario 3: a validly-encoded, current-schema `CacheFile` whose
+        // `ReplayManifest` itself references an input path that no longer
+        // exists on disk (a manifest surviving a wholesale source deletion,
+        // e.g. `git clean`) — `try_replay`'s per-input `std::fs::metadata`
+        // must fail cleanly, not panic.
+        let dangling_manifest = ReplayManifest {
+            replay_version: REPLAY_VERSION,
+            config_fingerprint: 123,
+            inputs: vec![ReplayInput {
+                path: dir.join("src/does-not-exist.ts"),
+                content_hash: 0,
+                mtime_nanos: 0,
+                size: 0,
+            }],
+            source_dirs: Vec::new(),
+            outputs: Vec::new(),
+            entry_rel_path: "main.js".to_string(),
+            entry_size: 0,
+        };
+        let dangling_file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA,
+            config_fingerprint: 0,
+            entries: Vec::new(),
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
+            replay_manifest: Some(dangling_manifest),
+        };
+        std::fs::write(
+            dir.join(TRANSFORM_CACHE_REL_PATH),
+            postcard::to_stdvec(&dangling_file).unwrap(),
+        )
+        .unwrap();
+        match try_replay(&dir, &output_dir, 123) {
+            ReplayOutcome::FullBuild { reason, .. } => assert!(
+                reason.starts_with("missing-input:"),
+                "unexpected reason: {reason}"
+            ),
+            ReplayOutcome::Replayed { .. } => panic!("a dangling-input manifest must never replay"),
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

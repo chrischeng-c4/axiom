@@ -2440,6 +2440,68 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // one `Some(..)`.
             let cache_enabled = build_cache_enabled(m, build_config.build.cache);
 
+            let transform_options = crate::transform::TransformOptions {
+                dev_mode: false,
+                ..Default::default()
+            };
+
+            // #2143 — unchanged-input build replay: a stat-fingerprint fast
+            // path over the persistent store, checked BEFORE a `Bundler` (and
+            // therefore this whole build pipeline) is even constructed.
+            // Gated on the same `cache_enabled` the persistent transform
+            // cache itself uses (a disabled store has no manifest to check
+            // or write) plus its own independent `JET_NO_REPLAY=1` hatch —
+            // see `persistent_cache`'s module doc comment "Hatches" heading.
+            // `replay_config_fingerprint` reuses the exact
+            // `defines`/`minify`/`splitting`/`transform_options`/
+            // `resolve_options` values `Bundler::new` below is about to
+            // fingerprint itself, computed before `resolve_options` moves
+            // into `bundle_opts`.
+            let replay_attempted = cache_enabled && std::env::var_os("JET_NO_REPLAY").is_none();
+            let replay_config_fingerprint = if replay_attempted {
+                Some(crate::bundler::persistent_cache::replay_config_fingerprint(
+                    crate::bundler::persistent_cache::config_fingerprint(
+                        &defines,
+                        minify,
+                        splitting,
+                        &transform_options,
+                    ),
+                    crate::bundler::persistent_cache::resolver_config_fingerprint(&resolve_options),
+                    crate::bundler::persistent_cache::hash_file_or_absent(
+                        &root_dir.join("jet.toml"),
+                    ),
+                ))
+            } else {
+                None
+            };
+            if let Some(fingerprint) = replay_config_fingerprint {
+                let outcome = crate::bundler::persistent_cache::try_replay(
+                    &root_dir,
+                    &output_dir,
+                    fingerprint,
+                );
+                if std::env::var_os("JET_BUNDLE_TIMING").is_some() {
+                    eprintln!("[bundle-timing] {}", outcome.timing_line());
+                }
+                if let crate::bundler::persistent_cache::ReplayOutcome::Replayed {
+                    entry_rel_path,
+                    entry_size,
+                    ..
+                } = &outcome
+                {
+                    let duration = start.elapsed();
+                    let size_kb = *entry_size as f64 / 1024.0;
+                    println!(
+                        "Build complete in {:.0}ms: {}/{} ({:.1} KB) [replayed]",
+                        duration.as_millis(),
+                        output,
+                        entry_rel_path,
+                        size_kb,
+                    );
+                    return Ok(());
+                }
+            }
+
             let bundle_opts = crate::bundler::BundleOptions {
                 entry: entry.clone(),
                 output_dir: output_dir.clone(),
@@ -2450,10 +2512,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 // Web app production builds must emit a browser-bootable bundle,
                 // not a "build complete" shell with bare React/MUI externals.
                 externalize_all_packages: false,
-                transform_options: crate::transform::TransformOptions {
-                    dev_mode: false,
-                    ..Default::default()
-                },
+                transform_options: transform_options.clone(),
                 defines: defines.clone(),
                 splitting,
                 // #1948 — `[build.manual_chunks]` config-only surface (no
@@ -2724,6 +2783,62 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 &preload_hints,
             )
             .context("Failed to write index.html")?;
+
+            // #2143 — record this build's replay manifest for the next
+            // build's fast path, now that every output is on disk. Folds in
+            // `index.html`/`public/`/the project root's own listing — inputs
+            // `Bundler` itself never reads — alongside whatever
+            // `Bundler::collect_replay_inputs` gathered from the module
+            // graph. A no-op if replay was not attempted this run, or if any
+            // of these post-hoc walks hits a read error (declines, leaving
+            // any previous manifest on disk untouched — see
+            // `record_replay_manifest`'s doc comment).
+            if let Some(fingerprint) = replay_config_fingerprint {
+                if let Some(outputs) =
+                    crate::bundler::persistent_cache::collect_dist_outputs(&output_dir)
+                {
+                    let mut extra_inputs = Vec::new();
+                    let mut extra_dirs = Vec::new();
+                    if let Some(hash) =
+                        crate::bundler::persistent_cache::single_dir_listing_hash(&root_dir)
+                    {
+                        extra_dirs.push(crate::bundler::persistent_cache::ReplayDirFingerprint {
+                            dir: root_dir.clone(),
+                            listing_hash: hash,
+                        });
+                    }
+                    let index_html_path = root_dir.join("index.html");
+                    if let Ok(meta) = std::fs::metadata(&index_html_path) {
+                        if let (Ok(bytes), Some(mtime_nanos)) = (
+                            std::fs::read(&index_html_path),
+                            crate::bundler::persistent_cache::mtime_nanos(&meta),
+                        ) {
+                            extra_inputs.push(crate::bundler::persistent_cache::ReplayInput {
+                                content_hash: crate::bundler::persistent_cache::hash_bytes(&bytes),
+                                mtime_nanos,
+                                size: meta.len(),
+                                path: index_html_path,
+                            });
+                        }
+                    }
+                    if let Some((public_inputs, public_dirs)) =
+                        crate::bundler::persistent_cache::collect_dir_tree_replay_inputs(
+                            &root_dir.join("public"),
+                        )
+                    {
+                        extra_inputs.extend(public_inputs);
+                        extra_dirs.extend(public_dirs);
+                    }
+                    bundler.record_replay_manifest(
+                        fingerprint,
+                        extra_inputs,
+                        extra_dirs,
+                        outputs,
+                        out_filename.clone(),
+                        code.len() as u64,
+                    );
+                }
+            }
 
             let duration = start.elapsed();
             let size_kb = code.len() as f64 / 1024.0;

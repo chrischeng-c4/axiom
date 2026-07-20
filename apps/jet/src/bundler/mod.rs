@@ -1078,6 +1078,108 @@ impl Bundler {
         Ok(output)
     }
 
+    /// #2143 — record this build's replay manifest, if replay is enabled
+    /// and every consumed module's content could be tracked. `extra_inputs`/
+    /// `extra_dirs` let `cli.rs` fold in inputs the `Bundler` itself never
+    /// reads (`index.html`, `public/`, the project root's own listing) into
+    /// the same manifest this collects from the module graph. A no-op
+    /// (returns a zeroed [`persistent_cache::SaveStats`], writes nothing)
+    /// when the persistent cache is disabled or [`Self::collect_replay_inputs`]
+    /// declines — see that method's doc comment for why a decline
+    /// deliberately does NOT clear whatever manifest is already on disk.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_replay_manifest(
+        &self,
+        replay_config_fingerprint: u64,
+        extra_inputs: Vec<persistent_cache::ReplayInput>,
+        extra_dirs: Vec<persistent_cache::ReplayDirFingerprint>,
+        outputs: Vec<persistent_cache::ReplayOutput>,
+        entry_rel_path: String,
+        entry_size: u64,
+    ) -> persistent_cache::SaveStats {
+        if !self.persistent_cache.enabled() {
+            return persistent_cache::SaveStats::default();
+        }
+        let Some((mut inputs, mut source_dirs)) = self.collect_replay_inputs() else {
+            return persistent_cache::SaveStats::default();
+        };
+        inputs.extend(extra_inputs);
+        source_dirs.extend(extra_dirs);
+        let manifest = persistent_cache::ReplayManifest {
+            replay_version: persistent_cache::REPLAY_VERSION,
+            config_fingerprint: replay_config_fingerprint,
+            inputs,
+            source_dirs,
+            outputs,
+            entry_rel_path,
+            entry_size,
+        };
+        self.persistent_cache.set_replay_manifest(manifest);
+        self.persistent_cache.save()
+    }
+
+    /// #2143 — walk every module this build's graph discovered (not just
+    /// tree-shake survivors: tracking a superset of what strictly matters is
+    /// always safe, only ever occasionally wasteful, matching this whole
+    /// section's "any doubt" philosophy) and directly re-read + re-hash each
+    /// one's content, rather than reusing an already-computed hash from
+    /// transform/import-scan time. Deliberately the simpler, uniform-
+    /// coverage choice over threading collection through those perf-tuned
+    /// hot paths: this only runs once, after a full build already did far
+    /// more expensive work.
+    ///
+    /// Declines (`None`) — meaning `record_replay_manifest` records nothing,
+    /// leaving any previous manifest on disk untouched rather than replacing
+    /// it with a known-incomplete one — whenever any graph node is a `Json`
+    /// or `Asset` module (neither of this pass's own file-content hash nor
+    /// any other section here observes their consumed *values*, e.g. a JSON
+    /// property or an asset's bytes reaching JS as an import, soundly), or
+    /// whenever any consumed file's metadata/content cannot be read. Source
+    /// directories under `node_modules` are excluded from the returned
+    /// listing fingerprints — the resolution section (#2141) already
+    /// guards node_modules package integrity independently.
+    fn collect_replay_inputs(
+        &self,
+    ) -> Option<(
+        Vec<persistent_cache::ReplayInput>,
+        Vec<persistent_cache::ReplayDirFingerprint>,
+    )> {
+        let graph = self.graph.read();
+        let mut inputs = Vec::new();
+        let mut dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        for id in graph.all_node_ids() {
+            let node = graph.get_node(id)?;
+            if matches!(
+                node.kind,
+                graph::ModuleKind::Json | graph::ModuleKind::Asset
+            ) {
+                return None;
+            }
+            let meta = std::fs::metadata(&node.path).ok()?;
+            let mtime_nanos = persistent_cache::mtime_nanos(&meta)?;
+            let bytes = std::fs::read(&node.path).ok()?;
+            let content_hash = persistent_cache::hash_bytes(&bytes);
+            if let Some(parent) = node.path.parent() {
+                if !parent.components().any(|c| c.as_os_str() == "node_modules") {
+                    dirs.insert(parent.to_path_buf());
+                }
+            }
+            inputs.push(persistent_cache::ReplayInput {
+                path: node.path.clone(),
+                content_hash,
+                mtime_nanos,
+                size: meta.len(),
+            });
+        }
+        drop(graph);
+        let mut source_dirs = Vec::new();
+        for dir in dirs {
+            let listing_hash = persistent_cache::single_dir_listing_hash(&dir)?;
+            source_dirs.push(persistent_cache::ReplayDirFingerprint { dir, listing_hash });
+        }
+        Some((inputs, source_dirs))
+    }
+
     /// Look for a CSS entry file alongside the JS entry and process it.
     ///
     /// Returns `None` if no CSS entry file is found, or if CSS processing fails

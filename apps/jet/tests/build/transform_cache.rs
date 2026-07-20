@@ -142,6 +142,26 @@ where
         .context("run jet command")
 }
 
+/// Same as `run_jet`, but with `JET_NO_REPLAY=1` set — the #2143 replay
+/// hatch that disables both the pre-build fast-path check and the
+/// post-build manifest write (see the "Hatches" heading in
+/// `persistent_cache.rs`'s module doc comment). Used to produce a
+/// forced-full-build baseline to diff a replayed build's `dist/` output
+/// against (AC2).
+fn run_jet_no_replay<I, S>(fixture: &Path, args: I) -> Result<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    Command::new(env!("CARGO_BIN_EXE_jet"))
+        .args(args)
+        .current_dir(fixture)
+        .env("JET_BUNDLE_TIMING", "1")
+        .env("JET_NO_REPLAY", "1")
+        .output()
+        .context("run jet command (JET_NO_REPLAY=1)")
+}
+
 fn require_success(output: Output, phase: &str) -> Result<Output> {
     if output.status.success() {
         return Ok(output);
@@ -249,6 +269,47 @@ fn parse_import_scan_timing_line(stderr: &str) -> Option<ImportScanTiming> {
     })
 }
 
+#[derive(Debug, Clone)]
+struct ReplayTiming {
+    verified: usize,
+    stat_ms: f64,
+    hash_fallback: usize,
+    outcome: String,
+}
+
+/// Parse the `[bundle-timing] replay: verified=N stat_ms=X hash_fallback=K
+/// outcome=replayed|full-build(<reason>)` line `jet build` emits to stderr
+/// under `JET_BUNDLE_TIMING=1` (#2143; see `ReplayOutcome::timing_line` in
+/// `src/bundler/persistent_cache.rs`). `outcome` is parsed via
+/// `split("outcome=")` rather than `split_whitespace()`, unlike the other
+/// fields: a `full-build` reason can itself embed a filesystem path
+/// (`missing-input:<path>`, `dir-changed:<path>`, ...), and a path is not
+/// guaranteed to be whitespace-free.
+fn parse_replay_timing_line(stderr: &str) -> Option<ReplayTiming> {
+    let line = stderr
+        .lines()
+        .find(|line| line.starts_with("[bundle-timing] replay:"))?;
+    let mut verified = None;
+    let mut stat_ms = None;
+    let mut hash_fallback = None;
+    for field in line.split_whitespace() {
+        if let Some(v) = field.strip_prefix("verified=") {
+            verified = v.parse::<usize>().ok();
+        } else if let Some(v) = field.strip_prefix("stat_ms=") {
+            stat_ms = v.parse::<f64>().ok();
+        } else if let Some(v) = field.strip_prefix("hash_fallback=") {
+            hash_fallback = v.parse::<usize>().ok();
+        }
+    }
+    let outcome = line.split("outcome=").nth(1)?.trim().to_string();
+    Some(ReplayTiming {
+        verified: verified?,
+        stat_ms: stat_ms?,
+        hash_fallback: hash_fallback?,
+        outcome,
+    })
+}
+
 fn content_hash(bytes: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     bytes.hash(&mut hasher);
@@ -295,6 +356,25 @@ fn edit_fixture_heading_text(fixture: &Path) -> Result<()> {
     }
     let edited = original.replacen(needle, "MUI visual table fixture (edited)", 1);
     fs::write(&path, edited).with_context(|| format!("write {}", path.display()))
+}
+
+/// Bumps a file's mtime forward (content byte-for-byte unchanged) via
+/// `File::set_modified` rather than relying on real wall-clock time to
+/// elapse between two fast test builds — a filesystem's mtime write and
+/// this process's next syscall can land in the same tick on a fast disk, so
+/// real time deltas alone are not a reliable enough signal. #2143's
+/// `try_replay` stat screen keys on `(mtime, size)`; size is unchanged here
+/// (same bytes rewritten first), so only mtime actually drifts.
+fn bump_mtime(path: &Path) -> Result<()> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    fs::write(path, &bytes).with_context(|| format!("rewrite {}", path.display()))?;
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .with_context(|| format!("open {} to bump mtime", path.display()))?;
+    let new_time = std::time::SystemTime::now() + std::time::Duration::from_secs(60 * 60 * 24);
+    file.set_modified(new_time)
+        .with_context(|| format!("set_modified {}", path.display()))
 }
 
 const BUILD_ARGS: [&str; 3] = ["build", "--sourcemap", "none"];
@@ -874,6 +954,412 @@ fn persistent_cache_resolution_guard_package_json_change_forces_resolution_miss(
         rebuild_timing.r_misses,
         rebuild_timing.misses,
         rebuild_timing.a_misses,
+    );
+    Ok(())
+}
+
+/// #2143 — AC1/AC2 core positive path: an unchanged rebuild (same sources,
+/// same `dist/` left in place, no `clean_dist_dir`) must be replayed
+/// (skip the real build entirely) rather than a full build, must leave
+/// `dist/` byte-identical to the build it verified against, and that
+/// replayed `dist/` must itself be byte-identical to a `JET_NO_REPLAY=1`
+/// forced full build of the exact same unchanged sources on a separate
+/// tempdir (AC2).
+#[test]
+fn persistent_cache_replay_unchanged_rebuild_is_replayed_and_byte_identical() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+
+    clean_dist_dir(&fixture);
+    let baseline = require_success(run_jet(&fixture, BUILD_ARGS)?, "baseline build")?;
+    let baseline_stderr = String::from_utf8_lossy(&baseline.stderr).into_owned();
+    let baseline_replay = parse_replay_timing_line(&baseline_stderr).ok_or_else(|| {
+        anyhow!("baseline build did not print a replay timing line\nstderr={baseline_stderr}")
+    })?;
+    assert_eq!(
+        baseline_replay.outcome, "full-build(no-manifest)",
+        "the very first build (no prior store) must always fall back to a \
+         full build; stderr={baseline_stderr}"
+    );
+    let baseline_signature = dist_signature(&fixture).context("hash baseline dist output")?;
+
+    // Deliberately no `clean_dist_dir` here: a still-valid `dist/` left
+    // untouched by the previous build is exactly what a correct replay
+    // must recognize and leave alone.
+    let replayed = require_success(run_jet(&fixture, BUILD_ARGS)?, "unchanged rebuild")?;
+    let replayed_stdout = String::from_utf8_lossy(&replayed.stdout).into_owned();
+    let replayed_stderr = String::from_utf8_lossy(&replayed.stderr).into_owned();
+    let replayed_timing = parse_replay_timing_line(&replayed_stderr).ok_or_else(|| {
+        anyhow!("unchanged rebuild did not print a replay timing line\nstderr={replayed_stderr}")
+    })?;
+    assert_eq!(
+        replayed_timing.outcome, "replayed",
+        "an unchanged rebuild must be replayed, not a full build; stderr={replayed_stderr}"
+    );
+    assert_eq!(
+        replayed_timing.hash_fallback, 0,
+        "an unchanged rebuild (no mtime drift on any tracked file) must \
+         verify entirely off the stat screen, with no content-hash \
+         fallback; stderr={replayed_stderr}"
+    );
+    assert!(
+        replayed_stdout.contains("[replayed]"),
+        "a replayed build's `Build complete in ...` line must carry the \
+         `[replayed]` marker; stdout={replayed_stdout}"
+    );
+    let replayed_signature = dist_signature(&fixture).context("hash replayed dist output")?;
+    assert_eq!(
+        baseline_signature, replayed_signature,
+        "a replayed build must leave dist/ byte-identical to the baseline \
+         build it verified against"
+    );
+
+    // AC2: a fresh tempdir copy of the exact same unchanged sources, forced
+    // through a full build via JET_NO_REPLAY=1, must produce byte-identical
+    // dist/ output to the replayed run above.
+    let temp_forced = tempfile::tempdir().context("temp fixture (forced full build)")?;
+    let fixture_forced = temp_forced.path().join("mui-visual");
+    copy_fixture(&fixture_forced).context("copy mui-visual fixture (forced full build)")?;
+    clean_dist_dir(&fixture_forced);
+    require_success(
+        run_jet_no_replay(&fixture_forced, BUILD_ARGS)?,
+        "forced full build (JET_NO_REPLAY=1)",
+    )?;
+    let forced_signature =
+        dist_signature(&fixture_forced).context("hash forced-full-build dist output")?;
+    assert_eq!(
+        replayed_signature, forced_signature,
+        "a replayed build's dist/ must be byte-identical to a \
+         JET_NO_REPLAY=1 forced full build of the same unchanged sources \
+         (AC2)"
+    );
+
+    eprintln!(
+        "[transform_cache] replay unchanged: baseline outcome={} replayed \
+         outcome={} verified={} stat_ms={:.2} hash_fallback={} dist files={}",
+        baseline_replay.outcome,
+        replayed_timing.outcome,
+        replayed_timing.verified,
+        replayed_timing.stat_ms,
+        replayed_timing.hash_fallback,
+        replayed_signature.len(),
+    );
+    Ok(())
+}
+
+/// #2143 — a bumped mtime with byte-for-byte unchanged content must still
+/// replay: the cheap `(mtime, size)` stat screen drifts (forcing the
+/// content-hash fallback for that one file), but the fallback hash must
+/// still match, so the overall outcome is still a replay.
+#[test]
+fn persistent_cache_replay_mtime_bump_same_content_still_replays_via_hash_fallback() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+
+    clean_dist_dir(&fixture);
+    require_success(run_jet(&fixture, BUILD_ARGS)?, "baseline build")?;
+    let baseline_signature = dist_signature(&fixture).context("hash baseline dist output")?;
+
+    bump_mtime(&fixture.join("src/MuiVisualFixture.tsx")).context("bump fixture mtime")?;
+
+    // Deliberately no `clean_dist_dir`: same reasoning as the unchanged-
+    // rebuild test above — a correct replay must leave dist/ alone.
+    let rebuild = require_success(run_jet(&fixture, BUILD_ARGS)?, "mtime-bumped rebuild")?;
+    let rebuild_stderr = String::from_utf8_lossy(&rebuild.stderr).into_owned();
+    let rebuild_timing = parse_replay_timing_line(&rebuild_stderr).ok_or_else(|| {
+        anyhow!(
+            "mtime-bumped rebuild did not print a replay timing line\n\
+             stderr={rebuild_stderr}"
+        )
+    })?;
+    assert_eq!(
+        rebuild_timing.outcome, "replayed",
+        "a bumped mtime with byte-for-byte unchanged content must still \
+         replay (the content-hash fallback must confirm the file is \
+         actually unchanged); stderr={rebuild_stderr}"
+    );
+    assert!(
+        rebuild_timing.hash_fallback >= 1,
+        "a bumped mtime must trigger at least one content-hash fallback \
+         (the stat screen alone must not have been trusted blindly); \
+         stderr={rebuild_stderr}"
+    );
+    let rebuild_signature = dist_signature(&fixture).context("hash rebuilt dist output")?;
+    assert_eq!(
+        baseline_signature, rebuild_signature,
+        "a replayed mtime-bump rebuild must leave dist/ byte-identical to \
+         the baseline"
+    );
+
+    eprintln!(
+        "[transform_cache] replay mtime bump: outcome={} verified={} hash_fallback={}",
+        rebuild_timing.outcome, rebuild_timing.verified, rebuild_timing.hash_fallback,
+    );
+    Ok(())
+}
+
+/// #2143 — a single-byte (or any) content edit to a tracked input must
+/// force a full build with a `content-changed:<path>` reason, distinct
+/// from `persistent_cache_stale_guard_only_edited_module_misses` above
+/// (which only checks the transform section's own hit/miss counters, never
+/// the replay line this test asserts on directly).
+#[test]
+fn persistent_cache_replay_single_byte_edit_forces_full_build() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+
+    clean_dist_dir(&fixture);
+    require_success(run_jet(&fixture, BUILD_ARGS)?, "baseline build")?;
+
+    edit_fixture_heading_text(&fixture).context("edit fixture")?;
+
+    clean_dist_dir(&fixture);
+    let rebuild = require_success(run_jet(&fixture, BUILD_ARGS)?, "edited rebuild")?;
+    let rebuild_stderr = String::from_utf8_lossy(&rebuild.stderr).into_owned();
+    let rebuild_timing = parse_replay_timing_line(&rebuild_stderr).ok_or_else(|| {
+        anyhow!("edited rebuild did not print a replay timing line\nstderr={rebuild_stderr}")
+    })?;
+    assert!(
+        rebuild_timing
+            .outcome
+            .starts_with("full-build(content-changed:"),
+        "a single content edit must force a full build with a \
+         content-changed reason; stderr={rebuild_stderr}"
+    );
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "a declined-replay rebuild must still run the normal build path \
+         and produce correct output"
+    );
+
+    eprintln!(
+        "[transform_cache] replay single-byte edit: outcome={}",
+        rebuild_timing.outcome,
+    );
+    Ok(())
+}
+
+/// #2143 — changing a `--define` must force a full build via the replay
+/// config fingerprint's own `config-changed` reason, the same invalidation
+/// `persistent_cache_config_change_forces_full_miss` above already proves
+/// for the transform section specifically — this proves the replay
+/// section reacts too, gated by `replay_config_fingerprint` rather than
+/// `config_fingerprint` alone.
+#[test]
+fn persistent_cache_replay_defines_change_forces_full_build() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+
+    clean_dist_dir(&fixture);
+    require_success(
+        run_jet(
+            &fixture,
+            [
+                "build",
+                "--sourcemap",
+                "none",
+                "--define",
+                "CACHE_PROBE=\"a\"",
+            ],
+        )?,
+        "baseline build with --define CACHE_PROBE=a",
+    )?;
+
+    clean_dist_dir(&fixture);
+    let rebuild = require_success(
+        run_jet(
+            &fixture,
+            [
+                "build",
+                "--sourcemap",
+                "none",
+                "--define",
+                "CACHE_PROBE=\"b\"",
+            ],
+        )?,
+        "rebuild with --define CACHE_PROBE=b",
+    )?;
+    let rebuild_stderr = String::from_utf8_lossy(&rebuild.stderr).into_owned();
+    let rebuild_timing = parse_replay_timing_line(&rebuild_stderr).ok_or_else(|| {
+        anyhow!("rebuild did not print a replay timing line\nstderr={rebuild_stderr}")
+    })?;
+    assert_eq!(
+        rebuild_timing.outcome, "full-build(config-changed)",
+        "changing a --define must force a full build via the replay \
+         config fingerprint; stderr={rebuild_stderr}"
+    );
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "a declined-replay rebuild must still run the normal build path \
+         and produce correct output"
+    );
+
+    eprintln!(
+        "[transform_cache] replay defines change: outcome={}",
+        rebuild_timing.outcome,
+    );
+    Ok(())
+}
+
+/// #2143 — deleting exactly one previously recorded output (everything
+/// else in `dist/` left in place) must force a full build with a
+/// `missing-output:<rel_path>` reason, and that full build must correctly
+/// re-emit the missing file with output byte-identical to the original
+/// baseline.
+#[test]
+fn persistent_cache_replay_deleted_output_forces_full_build_and_reemits() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+
+    clean_dist_dir(&fixture);
+    require_success(run_jet(&fixture, BUILD_ARGS)?, "baseline build")?;
+    let baseline_signature = dist_signature(&fixture).context("hash baseline dist output")?;
+
+    let index_html = fixture.join("dist/index.html");
+    assert!(
+        index_html.exists(),
+        "expected dist/index.html after baseline build"
+    );
+    fs::remove_file(&index_html).with_context(|| format!("remove {}", index_html.display()))?;
+
+    // Deliberately no `clean_dist_dir`: only ONE recorded output should be
+    // missing (everything else in dist/ is untouched) — try_replay must
+    // notice the gap and decline, then the ordinary (non-replay) build path
+    // re-emits the missing file without needing dist/ cleared first.
+    let rebuild = require_success(
+        run_jet(&fixture, BUILD_ARGS)?,
+        "rebuild after deleting an output",
+    )?;
+    let rebuild_stderr = String::from_utf8_lossy(&rebuild.stderr).into_owned();
+    let rebuild_timing = parse_replay_timing_line(&rebuild_stderr).ok_or_else(|| {
+        anyhow!(
+            "rebuild after deleting an output did not print a replay \
+             timing line\nstderr={rebuild_stderr}"
+        )
+    })?;
+    assert!(
+        rebuild_timing
+            .outcome
+            .starts_with("full-build(missing-output:"),
+        "deleting one recorded output must force a full build with a \
+         missing-output reason; stderr={rebuild_stderr}"
+    );
+    assert!(
+        index_html.exists(),
+        "a full build after a deleted output must re-emit dist/index.html"
+    );
+    let rebuild_signature = dist_signature(&fixture).context("hash re-emitted dist output")?;
+    assert_eq!(
+        baseline_signature, rebuild_signature,
+        "the re-emitted output after a declined replay must be \
+         byte-identical to the original baseline"
+    );
+
+    eprintln!(
+        "[transform_cache] replay deleted output: outcome={}",
+        rebuild_timing.outcome,
+    );
+    Ok(())
+}
+
+/// #2143 — resolution-shadow guard: `main.tsx` imports `./MuiVisualFixture`
+/// extensionlessly, and jet's resolver tries `.ts` before `.tsx`
+/// (`ResolveOptions::default()`'s `extensions` order) — so a NEW sibling
+/// `MuiVisualFixture.ts` genuinely shadows the pre-existing `.tsx` file the
+/// baseline build actually resolved and bundled. No already-consumed
+/// file's own content hash changes (only the directory's *listing* does),
+/// which is exactly the gap the source-dir listing fingerprint guard
+/// exists to close: a full build must be forced, and it must actually
+/// rebundle against the new file (proven both by the replay decline reason
+/// and by the newly emitted entry no longer containing the original
+/// fixture's distinctive heading text).
+#[test]
+fn persistent_cache_replay_resolution_shadow_guard_forces_full_build() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+
+    clean_dist_dir(&fixture);
+    require_success(run_jet(&fixture, BUILD_ARGS)?, "baseline build")?;
+    let baseline_signature = dist_signature(&fixture).context("hash baseline dist output")?;
+
+    let shadow_path = fixture.join("src/MuiVisualFixture.ts");
+    assert!(
+        !shadow_path.exists(),
+        "fixture must not already have a MuiVisualFixture.ts sibling, or \
+         this test is not exercising a real shadow"
+    );
+    fs::write(
+        &shadow_path,
+        "export const MuiVisualFixture = () => null;\n",
+    )
+    .with_context(|| format!("write {}", shadow_path.display()))?;
+
+    // Deliberately no `clean_dist_dir`: nothing already-consumed changed,
+    // so this must exercise the decline path via the directory-listing
+    // guard specifically, not any of the input/output checks.
+    let rebuild = require_success(
+        run_jet(&fixture, BUILD_ARGS)?,
+        "rebuild after adding a shadow file",
+    )?;
+    let rebuild_stderr = String::from_utf8_lossy(&rebuild.stderr).into_owned();
+    let rebuild_timing = parse_replay_timing_line(&rebuild_stderr).ok_or_else(|| {
+        anyhow!(
+            "rebuild after adding a shadow file did not print a replay \
+             timing line\nstderr={rebuild_stderr}"
+        )
+    })?;
+    assert!(
+        rebuild_timing
+            .outcome
+            .starts_with("full-build(dir-changed:"),
+        "a new same-basename, earlier-priority-extension sibling file must \
+         force a full build via the resolution-shadow directory-listing \
+         guard; stderr={rebuild_stderr}"
+    );
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "rebuild after a shadow file addition must still produce correct \
+         output"
+    );
+    let rebuild_signature = dist_signature(&fixture).context("hash rebuilt dist output")?;
+    assert_ne!(
+        baseline_signature, rebuild_signature,
+        "the shadow file must actually change bundled output, or this \
+         test is not exercising a real shadow"
+    );
+
+    let new_entry_name = rebuild_signature
+        .keys()
+        .find(|name| {
+            name.starts_with("main.")
+                && name.ends_with(".js")
+                && !baseline_signature.contains_key(*name)
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "expected the shadow-file rebuild to emit a new, \
+                 differently-hashed entry bundle; baseline={baseline_signature:?} \
+                 rebuild={rebuild_signature:?}"
+            )
+        })?;
+    let new_entry_bytes = fs::read_to_string(fixture.join("dist").join(new_entry_name))
+        .with_context(|| format!("read dist/{new_entry_name}"))?;
+    assert!(
+        !new_entry_bytes.contains("MUI visual table fixture"),
+        "the shadow MuiVisualFixture.ts stub must have won resolution over \
+         the original .tsx (its distinctive heading text must be absent \
+         from the newly emitted entry bundle)"
+    );
+
+    eprintln!(
+        "[transform_cache] replay resolution-shadow guard: outcome={}",
+        rebuild_timing.outcome,
     );
     Ok(())
 }
