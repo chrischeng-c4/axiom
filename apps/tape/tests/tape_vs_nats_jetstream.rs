@@ -29,6 +29,7 @@ impl Drop for NatsServer {
     }
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in tape_vs_nats_jetstream.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tape_beats_nats_jetstream_on_local_backlog_replay() {
     if cfg!(debug_assertions) {
@@ -93,6 +94,7 @@ async fn tape_beats_nats_jetstream_on_local_backlog_replay() {
     drop(tape);
     drop(server);
 }
+// </HANDWRITE>
 
 async fn nats_jetstream_replay_samples(
     url: &str,
