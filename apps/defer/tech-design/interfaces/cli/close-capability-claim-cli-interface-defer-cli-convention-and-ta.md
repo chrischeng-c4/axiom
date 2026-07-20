@@ -72,7 +72,6 @@ changes:
     anchor: offline_cli_is_deterministic_and_resource_bounded
     reason: "Own repeated deterministic output, exact codegen cleanup, 60-second bound, and FD plateau evidence."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
