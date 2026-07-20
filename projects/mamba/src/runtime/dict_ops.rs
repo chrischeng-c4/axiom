@@ -1030,6 +1030,7 @@ impl DictKey {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in dict_ops.rs is hand-written pending codegen support">
 /// Convert an MbValue to a DictKey for storage/lookup.
 pub fn to_dict_key(val: MbValue) -> DictKey {
     // Check tagged types first (int, bool, none)
@@ -1139,6 +1140,7 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
     // Fallback: use display representation
     DictKey::Other(format!("{}", val.to_bits()))
 }
+// </HANDWRITE>
 
 fn has_pending_exception() -> bool {
     super::exception::current_exception_type().is_some()

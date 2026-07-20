@@ -2194,6 +2194,7 @@ pub fn restore_module_sym_info(saved: (HashMap<i64, (String, SymTy)>, HashMap<St
     MODULE_FUNC_INFO.with(|m| *m.borrow_mut() = saved.1);
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in closure.rs is hand-written pending codegen support">
 /// Build a dict containing the current module's globals, drawing from
 /// MODULE_SYM_INFO + GLOBAL_ID_NAMESPACE + MODULE_FUNC_INFO. Skips dunder
 /// names except the standard CPython-visible ones.
@@ -2248,6 +2249,7 @@ pub fn build_globals_dict() -> MbValue {
     }
     dict
 }
+// </HANDWRITE>
 // HANDWRITE-END
 
 // ── Cleanup ──
