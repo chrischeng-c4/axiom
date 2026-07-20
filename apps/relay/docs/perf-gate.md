@@ -18,6 +18,42 @@ variant. Redpanda/Kafka-class topic replay belongs to tape's gate, not relay's.
 
 ## How it runs
 
+### Required local production envelope
+
+The production EC does not use the arena ratio model or hard-coded competitor
+inputs as an efficiency oracle. It runs:
+
+```bash
+cargo test --release -p relay --test measured_performance \
+  measured_durable_lifecycle_gate -- --exact --ignored --nocapture
+```
+
+The report-only child creates temporary disk-backed Relay storage with
+`FsyncPolicy::Always`, publishes exactly 2,000 128-byte payloads in batches of
+100, then leases and acknowledges the full backlog in the same batch size. It
+emits elapsed time, throughput, batch p95, acknowledgement counts, error count,
+and at least 20 samples for each phase. A separate parent process parses that
+JSON and fails on a missing, malformed, zero-sample, incomplete, or non-zero
+error report before applying these fixed v1 limits:
+
+| Phase | Minimum throughput | Maximum batch p95 |
+|---|---:|---:|
+| durable publish | 500 messages/s | 500,000 us |
+| durable lease + ack | 500 messages/s | 500,000 us |
+
+The conservative floor detects catastrophic regressions and false-green
+measurement loss across supported CI hosts; it is not an external-broker win.
+The 60-second Relay soak supplies the same capability's stability dimension,
+while the work-queue tests supply behavior.
+
+The 2026-07-20 Darwin arm64 release calibration produced 20 non-zero samples
+per phase with zero errors: publish **12,156.4 messages/s** at **18,872 us**
+batch p95, and lease+ack **15,912.3 messages/s** at **9,816 us** batch p95.
+The production floor therefore leaves wide cross-host headroom while still
+failing complete measurement loss or an order-of-magnitude-plus regression.
+
+### Advisory external-broker calibration
+
 - **engine** is relay's in-process durable core baseline: disk-backed log with
   the default relay fsync policy, not an in-memory ceiling.
 - **relay** is driven over its HTTP/2 service (`publish-batch` / `lease-batch` /
@@ -76,9 +112,9 @@ That is why the arena claim is split rather than hiding the losing cell.
 
 - Closed-loop harness: [`examples/bench_compare.rs`](../examples/bench_compare.rs).
 - Gate spec: [`apps/arena/examples/relay-vs-rabbitmq-nats-redis.toml`](../../arena/examples/relay-vs-rabbitmq-nats-redis.toml)
-- EC binding: `ec.benchmark` under the `relay` project in `.aw/config.toml`
-  (`aw health --verify-ec` drives it).
+- Production EC source: [`external-contracts/competitor-performance/efficiency/perf-gate.md`](../external-contracts/competitor-performance/efficiency/perf-gate.md), generated into `apps/relay/aw.toml` and verified by `aw ec verify --project relay`.
 - relay-side measurement: `cargo bench -p relay` (criterion;
   [`benches/relay_bench.rs`](../benches/relay_bench.rs)) — the competitor-free
   local baseline for publish / lease+ack.
 - Gate rule + workload smoke: [`tests/perf_gate.rs`](../tests/perf_gate.rs).
+- Required measured envelope: [`tests/measured_performance.rs`](../tests/measured_performance.rs).
