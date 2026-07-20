@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "apps/jet/tech-design"
-generated_at = "2026-07-20T13:36:18.139173+00:00"
-digest = "sha256:70c587961ae0cef6c36657c20fcb0a7b0f2b614c29fb5fd625ee9eb8a8da625c"
-source_digest = "sha256:70c587961ae0cef6c36657c20fcb0a7b0f2b614c29fb5fd625ee9eb8a8da625c"
-ir_digest = "sha256:527697f8611647751e3e607f2fb528c4b17aa379c3df91e495a992897bfe6986"
+generated_at = "2026-07-20T13:37:33.063695+00:00"
+digest = "sha256:7cd7b188aa83017c2430a33101378d964b6c7c289c5cf1c9e5826cd80cdf0005"
+source_digest = "sha256:7cd7b188aa83017c2430a33101378d964b6c7c289c5cf1c9e5826cd80cdf0005"
+ir_digest = "sha256:b154a362e2022b7c37705ac7462b756bc6d361702b2a8f1baa529f899aa3e52e"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -21,8 +21,8 @@ section_count = 4
 
 [[files]]
 path = "logic/drop-the-rhs-normalization-purity-gate-evaluation-position-argum.md"
-digest = "sha256:562de68f54160057d2dd74f530d9ecc1a92865ce0b8df9c3f25cef19a579e219"
-ir_digest = "sha256:25ae7560c376f126af2edec4278741b2f7de71de15a3969b172c5cd6f9cbbac9"
+digest = "sha256:b767ae3de6bc2389890bc4624ec64b7b738ad0166bb29fa0b4decd8f867b4f1d"
+ir_digest = "sha256:194e472f898363ebe5ce44df398db71085fb45459c10ae1a4c16b06ae6f41ff9"
 section_count = 4
 
 [[files]]
