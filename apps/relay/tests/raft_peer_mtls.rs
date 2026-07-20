@@ -69,7 +69,7 @@ struct Node {
     serve: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in raft_peer_mtls.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2175" reason="unit-test section in raft_peer_mtls.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn trusted_relay_peers_replicate_messages_over_mtls() {
     relay::tls::install_default_crypto_provider();
