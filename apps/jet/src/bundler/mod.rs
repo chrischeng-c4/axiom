@@ -887,6 +887,15 @@ pub struct Bundler {
     /// alongside `save`'s freshly-measured `saved_in=`.
     /// @issue #2137
     persistent_cache_load: persistent_cache::LoadStats,
+    /// `persistent_cache::resolver_config_fingerprint` of this bundler's
+    /// resolve options, captured once in `new` — like `alias_entries`/
+    /// `base_url` above, computed from `options.resolve_options` before it
+    /// moves into `ModuleResolver::new`. Part of every
+    /// `persistent_cache::ResolutionKey` `resolve_dependency` builds, so a
+    /// persisted node_modules resolution from a build with different
+    /// aliases/baseUrl/conditions/externals can never be reused by this one.
+    /// @issue #2141
+    resolver_config_fingerprint: u64,
 }
 
 /// Compilation cache for incremental builds
@@ -931,10 +940,17 @@ impl Bundler {
             splitting,
             &options.transform_options,
         );
+        // #2141 — analysis section's own (narrower) fingerprint: only
+        // `defines` affects `compute_raw_module_facts`'s output, so this is
+        // deliberately not the same fingerprint as `config_fingerprint`
+        // above (see `persistent_cache::analysis_fingerprint`'s doc comment).
+        let analysis_fingerprint = persistent_cache::analysis_fingerprint(&defines);
         let (persistent_cache, persistent_cache_load) = match &options.cache_project_root {
-            Some(root) => {
-                persistent_cache::PersistentTransformCache::load(root, config_fingerprint)
-            }
+            Some(root) => persistent_cache::PersistentTransformCache::load(
+                root,
+                config_fingerprint,
+                analysis_fingerprint,
+            ),
             None => (
                 persistent_cache::PersistentTransformCache::disabled(),
                 persistent_cache::LoadStats::default(),
@@ -954,6 +970,14 @@ impl Bundler {
         for ext in &options.externals {
             resolve_options.externals.insert(ext.clone());
         }
+        // #2141 — captured after the externalize_all_packages/externals
+        // forwarding above so it reflects the exact `ResolveOptions` value
+        // `ModuleResolver::new` below actually runs with; every
+        // `resolve_dependency` node_modules-scoped cache key includes this,
+        // so a persisted resolution from a build with different
+        // aliases/baseUrl/conditions/externals can never be reused here.
+        let resolver_config_fingerprint =
+            persistent_cache::resolver_config_fingerprint(&resolve_options);
         Ok(Self {
             resolver: Arc::new(crate::resolver::ModuleResolver::new(resolve_options)?),
             transformer: Arc::new(crate::transform::Transformer::new(
@@ -977,6 +1001,7 @@ impl Bundler {
             manual_chunks,
             persistent_cache,
             persistent_cache_load,
+            resolver_config_fingerprint,
         })
     }
 
@@ -1034,12 +1059,19 @@ impl Bundler {
         let save_stats = self.persistent_cache.save();
         if timing {
             eprintln!(
-                "[bundle-timing] cache: hits={} misses={} loaded_in={:.2}ms saved_in={:.2}ms bytes={}",
+                "[bundle-timing] cache: hits={} misses={} loaded_in={:.2}ms saved_in={:.2}ms bytes={} r_hits={} r_misses={} a_hits={} a_misses={}",
                 self.persistent_cache.hits(),
                 self.persistent_cache.misses(),
                 self.persistent_cache_load.duration.as_secs_f64() * 1000.0,
                 save_stats.duration.as_secs_f64() * 1000.0,
                 save_stats.bytes_written,
+                // #2141 — resolution (node_modules-scoped) and analysis
+                // (per-module liveness) section counters, alongside the
+                // #2137 transform-section counters above.
+                self.persistent_cache.resolution_hits(),
+                self.persistent_cache.resolution_misses(),
+                self.persistent_cache.analysis_hits(),
+                self.persistent_cache.analysis_misses(),
             );
         }
 
@@ -2400,8 +2432,58 @@ impl Bundler {
         Err(format_unresolved_error(&deps))
     }
 
+    /// #2141 — node_modules-scoped resolution cache. Eligibility is
+    /// deliberately narrow and two-sided:
+    ///
+    /// 1. `specifier` must be a bare package specifier (`ModuleResolver::
+    ///    is_bare_package_specifier` — the same boundary its own in-memory
+    ///    `resolution_cache` already uses): a relative/alias specifier's
+    ///    target depends on `from`'s *exact* directory, not just its
+    ///    enclosing package scope, so keying by package scope alone would
+    ///    silently conflate two different sibling directories' same-named
+    ///    relative imports.
+    /// 2. Both `from` (the importer) and the resolved target must live
+    ///    under node_modules (`persistent_cache::node_modules_scope_
+    ///    realpath`, checked on both ends). App-source resolutions are
+    ///    never cached here — a relative/bare import reached from
+    ///    application source is exposed to file-appearance and probe-order
+    ///    hazards across a live dev/watch session (a file created after
+    ///    this build started, a directory-listing order difference) that a
+    ///    once-installed node_modules package layout is not exposed to
+    ///    once a package is on disk and fixed for the run. The second half
+    ///    of this check (the *target* side) additionally excludes
+    ///    workspace-linked / `file:`-protocol packages that resolve out to
+    ///    app-source despite being reached via a bare specifier.
     fn resolve_dependency(&self, from: &PathBuf, specifier: &str) -> Result<PathBuf> {
-        let resolved = self.resolver.resolve(specifier, from)?;
+        let cache_key = if self.resolver.is_bare_package_specifier(specifier) {
+            persistent_cache::node_modules_scope_realpath(from).map(|scope_realpath| {
+                persistent_cache::ResolutionKey {
+                    scope_realpath,
+                    specifier: specifier.to_string(),
+                    resolver_config_fingerprint: self.resolver_config_fingerprint,
+                }
+            })
+        } else {
+            None
+        };
+
+        if let Some(key) = &cache_key {
+            if let Some(cached) = self.persistent_cache.get_resolution(key) {
+                return Ok(cached);
+            }
+        }
+
+        // `resolve_with_probe` (uncached, package.json-probe-capturing) only
+        // when this resolution might be worth persisting; every other
+        // specifier keeps using the hot in-memory-memoized `resolve` path
+        // completely unchanged.
+        let (resolved, probe) = match &cache_key {
+            Some(_) => {
+                let (result, probe) = self.resolver.resolve_with_probe(specifier, from);
+                (result?, probe)
+            }
+            None => (self.resolver.resolve(specifier, from)?, Vec::new()),
+        };
 
         if resolved.is_external {
             tracing::debug!("Skipping external module: {}", specifier);
@@ -2417,7 +2499,32 @@ impl Bundler {
             std::env::current_dir()?.join(&resolved.path)
         };
 
-        Ok(normalize_bundler_path_lexical(&abs))
+        let final_path = normalize_bundler_path_lexical(&abs);
+
+        if let Some(key) = cache_key {
+            if persistent_cache::node_modules_scope_realpath(&final_path).is_some() {
+                let mut seen = std::collections::HashSet::new();
+                let guard: Vec<(PathBuf, Option<u64>)> = probe
+                    .into_iter()
+                    .filter(|p| seen.insert(p.clone()))
+                    .map(|p| {
+                        let hash = std::fs::read(&p)
+                            .ok()
+                            .map(|bytes| persistent_cache::hash_bytes(&bytes));
+                        (p, hash)
+                    })
+                    .collect();
+                self.persistent_cache.insert_resolution(
+                    key,
+                    persistent_cache::ResolutionValue {
+                        resolved_path: final_path.clone(),
+                        guard,
+                    },
+                );
+            }
+        }
+
+        Ok(final_path)
     }
 
     /// Pre-transform liveness pre-pass for the survivors-only transform
@@ -2520,6 +2627,41 @@ impl Bundler {
             .collect::<Option<Vec<_>>>()?;
 
         let implicit_edges = self.implicit_edges.lock().clone();
+        // #2141 — per-module raw-facts cache: `analyze_used_exports_from_
+        // with_raw_facts_provider`'s `raw_facts_provider` hook lets this
+        // pre-pass reuse a previous build's `compute_raw_module_facts`
+        // output for any module whose source content (and `defines`
+        // fingerprint) is unchanged, instead of re-running the full
+        // export/import/reexport extraction over its raw text every time.
+        // Keyed the same way the #2140 import-scan section is
+        // (`content_hash` + `is_typescript`) since `compute_raw_module_
+        // facts` is a pure function of exactly those two inputs — never of
+        // this build's graph shape or module discovery order — and gated
+        // at load time by `persistent_cache::analysis_fingerprint(&self.
+        // defines)` (see `PersistentTransformCache::load`'s doc comment),
+        // so a stale `defines` config can never surface here as a false
+        // hit. `resolve_module_facts` (inside `analyze_used_exports_from_
+        // with_raw_facts_provider`) turns a cached or freshly-computed
+        // `RawModuleFacts` into the exact same `ModuleFacts` either way, so
+        // a hit is indistinguishable downstream — including in
+        // `shake_analysis`'s reuse by `apply_tree_shaking` below.
+        let raw_facts_provider = |path: &Path, source: &str| -> tree_shake::RawModuleFacts {
+            let is_typescript = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e == "ts" || e == "tsx")
+                .unwrap_or(false);
+            let key = persistent_cache::AnalysisKey {
+                content_hash: persistent_cache::hash_str(source),
+                is_typescript,
+            };
+            if let Some(cached) = self.persistent_cache.get_analysis(&key) {
+                return cached;
+            }
+            let raw = tree_shake::compute_raw_module_facts(path, source);
+            self.persistent_cache.insert_analysis(key, raw.clone());
+            raw
+        };
         let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
             self.resolver
                 .resolve(spec, importer)
@@ -2527,11 +2669,12 @@ impl Bundler {
                 .filter(|r| !r.is_external)
                 .map(|r| r.path)
         };
-        match tree_shake::analyze_used_exports_from_with_implicit_edges(
+        match tree_shake::analyze_used_exports_from_with_raw_facts_provider(
             &module_pairs,
             &entry,
             Some(&resolve_specifier),
             &implicit_edges,
+            Some(&raw_facts_provider),
         ) {
             Ok(result) => {
                 let survivors: HashSet<PathBuf> = result.used_exports.keys().cloned().collect();

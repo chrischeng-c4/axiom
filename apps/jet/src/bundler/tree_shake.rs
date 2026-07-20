@@ -14,6 +14,7 @@
 use anyhow::Result;
 use dashmap::DashMap;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -143,6 +144,37 @@ pub fn analyze_used_exports_from_with_implicit_edges(
     resolver: Option<&(dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
     implicit_edges: &[(PathBuf, PathBuf)],
 ) -> Result<TreeShakeResult> {
+    analyze_used_exports_from_with_raw_facts_provider(
+        modules,
+        entry,
+        resolver,
+        implicit_edges,
+        None,
+    )
+}
+
+/// [`analyze_used_exports_from_with_implicit_edges`] plus an optional
+/// per-module [`RawModuleFacts`] provider (#2141): when `Some`, each
+/// module's raw facts come from calling `raw_facts_provider(path, source)`
+/// instead of re-deriving them via [`compute_module_facts`] — the caller
+/// (`Bundler::compute_transform_survivors`) backs this with the #2141
+/// analysis cache, so a cache hit skips straight to
+/// [`resolve_module_facts`] without re-scanning the module's source at
+/// all. `None` (used by every existing caller via the thin wrapper above)
+/// preserves the exact pre-#2141 behavior byte-for-byte — same
+/// `compute_module_facts` call, same result.
+///
+/// The provider itself is graph-shape-free by construction (it only sees
+/// `(path, source)`, never `lookup`) — resolving its raw output against
+/// THIS build's graph still happens here, via `resolve_module_facts`, so a
+/// cache hit is indistinguishable downstream from a fresh computation.
+pub fn analyze_used_exports_from_with_raw_facts_provider(
+    modules: &[(PathBuf, String)],
+    entry: &Path,
+    resolver: Option<&(dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
+    implicit_edges: &[(PathBuf, PathBuf)],
+    raw_facts_provider: Option<&(dyn Fn(&Path, &str) -> RawModuleFacts + Sync)>,
+) -> Result<TreeShakeResult> {
     let mut used: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let lookup = match resolver {
         Some(r) => ModuleLookup::with_resolver(modules, r),
@@ -166,9 +198,19 @@ pub fn analyze_used_exports_from_with_implicit_edges(
     // bytes into cache 3×; `compute_module_facts` does all of a module's
     // scans back-to-back while its source is still hot. `lookup` is
     // read-only and `Sync` (and now internally memoized — WI #1947 fix 3).
+    //
+    // #2141: with a `raw_facts_provider`, the per-module raw extraction
+    // itself may be a cache hit (no source re-scan) — only the
+    // `resolve_module_facts` resolve-against-this-graph step always runs.
     let facts: HashMap<&Path, ModuleFacts> = modules
         .par_iter()
-        .map(|(path, source)| (path.as_path(), compute_module_facts(path, source, &lookup)))
+        .map(|(path, source)| {
+            let module_facts = match raw_facts_provider {
+                Some(provider) => resolve_module_facts(path, &provider(path, source), &lookup),
+                None => compute_module_facts(path, source, &lookup),
+            };
+            (path.as_path(), module_facts)
+        })
         .collect();
 
     let all_exports: HashMap<PathBuf, Vec<String>> = modules
@@ -623,18 +665,22 @@ pub(crate) fn logical_import_lines(source: &str) -> Vec<std::borrow::Cow<'_, str
     out
 }
 
-/// Extract ESM import bindings: returns (target_module_path, imported names).
+/// Lookup-free variant of [`extract_import_bindings`]: extracts every ESM
+/// import line's raw specifier and referenced-name-narrowed import list,
+/// without resolving the specifier to a module path. Mirrors
+/// [`extract_reexport_specifiers`]'s split from [`extract_reexport_bindings`]
+/// (#1991) so the #2141 per-module raw-facts cache can persist the
+/// graph-shape-independent half of this analysis on its own — narrowing by
+/// "is this local binding referenced anywhere in the module body" depends
+/// only on this module's own source, never on which other modules happen
+/// to be in the current build's graph.
 ///
 /// Scans [`logical_import_lines`] rather than `source.lines()` directly so a
 /// multi-line `import { ... } from '...'` statement — whose binding names
 /// never share a physical line with the `from` clause — still resolves to
 /// its specifier and names instead of being silently skipped (#1991 round
 /// 2).
-fn extract_import_bindings(
-    importer: &Path,
-    source: &str,
-    lookup: &ModuleLookup<'_>,
-) -> Vec<(PathBuf, Vec<String>)> {
+fn extract_import_specifiers(source: &str) -> Vec<(String, Vec<String>)> {
     let mut results = Vec::new();
     // WI #1947 fix 1: built lazily (only if any import line has narrowable
     // names) and reused across every import line in this module, instead of
@@ -653,27 +699,53 @@ fn extract_import_bindings(
             continue;
         }
 
-        let target = lookup.find(&specifier, importer);
-
-        if let Some((target_path, _)) = target {
-            let names = extract_imported_names(trimmed);
-            // Drop imported names whose LOCAL binding is never referenced in
-            // this module's body (esbuild does this; jet did not). After
-            // define replacement folds out `process.env.NODE_ENV` dev
-            // branches, a `propTypes` import like `elementAcceptingRef` /
-            // `chainPropTypes` / `exactProp` is bound but unreferenced — and
-            // marking it used kept the whole @mui/utils PropTypes validation
-            // chain alive in production. The check is CONSERVATIVE: a binding
-            // is dropped only when its name appears literally nowhere outside
-            // its own import statement (so a short or coincidentally-matching
-            // name is always kept). `*` namespace imports and bare
-            // side-effect imports are never narrowed.
-            let names = filter_referenced_import_names(trimmed, source, names, &mut word_index);
-            results.push((target_path.clone(), names));
-        }
+        let names = extract_imported_names(trimmed);
+        // Drop imported names whose LOCAL binding is never referenced in
+        // this module's body (esbuild does this; jet did not). After
+        // define replacement folds out `process.env.NODE_ENV` dev
+        // branches, a `propTypes` import like `elementAcceptingRef` /
+        // `chainPropTypes` / `exactProp` is bound but unreferenced — and
+        // marking it used kept the whole @mui/utils PropTypes validation
+        // chain alive in production. The check is CONSERVATIVE: a binding
+        // is dropped only when its name appears literally nowhere outside
+        // its own import statement (so a short or coincidentally-matching
+        // name is always kept). `*` namespace imports and bare
+        // side-effect imports are never narrowed.
+        let names = filter_referenced_import_names(trimmed, source, names, &mut word_index);
+        results.push((specifier, names));
     }
 
     results
+}
+
+/// Extract ESM import bindings: returns (target_module_path, imported names).
+///
+/// Thin resolving wrapper over [`extract_import_specifiers`] (#2141) — see
+/// that function's doc comment for why the specifier-extraction-and-
+/// narrowing work itself doesn't need `importer`/`lookup` at all. A
+/// specifier that fails to resolve against `lookup` (an external package,
+/// for instance) is silently dropped here exactly as it always was, so this
+/// split changes nothing about which edges the caller sees — only when the
+/// (identical) narrowing work happens relative to the resolution check.
+/// `#[cfg(test)]` (#2141): production callers now go through
+/// `compute_raw_module_facts` + `resolve_module_facts` directly (see
+/// `compute_module_facts`'s doc comment below) — this wrapper is kept only
+/// so `module_facts_1947_tests` can assert it stays behaviorally identical
+/// to that pair.
+#[cfg(test)]
+fn extract_import_bindings(
+    importer: &Path,
+    source: &str,
+    lookup: &ModuleLookup<'_>,
+) -> Vec<(PathBuf, Vec<String>)> {
+    extract_import_specifiers(source)
+        .into_iter()
+        .filter_map(|(specifier, names)| {
+            lookup
+                .find(&specifier, importer)
+                .map(|target| (target.0.clone(), names))
+        })
+        .collect()
 }
 
 /// Keep only imported names whose local binding is referenced in `source`
@@ -1061,7 +1133,11 @@ a.elementAcceptingRef();
 /// `pub(crate)` (not private): `bundler::mod::prefetch_graph_modules`
 /// reuses this at graph-crawl time for lazy pure-barrel expansion
 /// (#1991) — see [`extract_reexport_specifiers`].
-#[derive(Debug, Clone)]
+///
+/// `Serialize, Deserialize` (#2141): persisted as part of
+/// [`RawModuleFacts::reexports`] in the analysis section of the
+/// transform cache store (`bundler::persistent_cache`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ReexportKind {
     /// `export * from './y'` — re-export every named export of `y`
     /// (except `default`, per the ES2015+ spec).
@@ -1163,6 +1239,12 @@ pub(crate) fn extract_reexport_specifiers(source: &str) -> Vec<(String, Reexport
 /// local renaming export that exposes already-declared names, and is
 /// already handled by `extract_export_names`. Only lines with both
 /// `from` and a resolvable specifier are returned here.
+/// `#[cfg(test)]` (#2141): production callers now go through
+/// `compute_raw_module_facts` + `resolve_module_facts` directly (see
+/// `compute_module_facts`'s doc comment below) — this wrapper is kept only
+/// so `module_facts_1947_tests` can assert it stays behaviorally identical
+/// to that pair.
+#[cfg(test)]
 fn extract_reexport_bindings(
     importer: &Path,
     source: &str,
@@ -1199,11 +1281,13 @@ pub fn extract_dynamic_import_targets(source: &str, modules: &[(PathBuf, String)
     extract_dynamic_import_targets_from(Path::new(""), source, &lookup)
 }
 
-fn extract_dynamic_import_targets_from(
-    importer: &Path,
-    source: &str,
-    lookup: &ModuleLookup<'_>,
-) -> Vec<PathBuf> {
+/// Lookup-free variant of [`extract_dynamic_import_targets_from`]: extracts
+/// every dynamic `import(...)` call's raw specifier string, without
+/// resolving it to a module path. Mirrors [`extract_reexport_specifiers`]'s
+/// split from [`extract_reexport_bindings`] (#1991) for the #2141
+/// per-module raw-facts cache — see [`extract_import_specifiers`]'s doc
+/// comment for the general rationale.
+fn extract_dynamic_import_specifiers(source: &str) -> Vec<String> {
     let mut results = Vec::new();
     let bytes = source.as_bytes();
     let needle = b"import(";
@@ -1260,12 +1344,28 @@ fn extract_dynamic_import_targets_from(
             Err(_) => continue,
         };
 
-        if let Some((target_path, _)) = lookup.find(specifier, importer) {
-            results.push(target_path.clone());
-        }
+        results.push(specifier.to_string());
     }
 
     results
+}
+
+/// Thin resolving wrapper over [`extract_dynamic_import_specifiers`]
+/// (#2141) — a specifier that fails to resolve against `lookup` is
+/// silently dropped here exactly as it always was.
+fn extract_dynamic_import_targets_from(
+    importer: &Path,
+    source: &str,
+    lookup: &ModuleLookup<'_>,
+) -> Vec<PathBuf> {
+    extract_dynamic_import_specifiers(source)
+        .into_iter()
+        .filter_map(|specifier| {
+            lookup
+                .find(&specifier, importer)
+                .map(|target| target.0.clone())
+        })
+        .collect()
 }
 
 /// Extract the module specifier string from an import/require line.
@@ -1376,7 +1476,18 @@ fn extract_cjs_export_names(source: &str) -> Vec<String> {
     names
 }
 
-/// Extract CJS require bindings: which properties are used from required modules.
+/// Lookup-free variant of [`extract_cjs_require_bindings`]: extracts every
+/// `require('mod')` call's raw specifier and derived (destructured /
+/// property-accessed / local-binding-scanned / wildcard) name list, without
+/// resolving the specifier to a module path. Mirrors
+/// [`extract_reexport_specifiers`]'s split from [`extract_reexport_bindings`]
+/// (#1991) for the #2141 per-module raw-facts cache — see
+/// [`extract_import_specifiers`]'s doc comment for the general rationale.
+/// A single `require()` call can contribute zero (unresolvable quote/paren
+/// shape), one, or two `(specifier, names)` pairs to the result — the
+/// destructured-names and property-accessed-names patterns are independent
+/// and each pushes its own pair when non-empty; see the per-pattern
+/// comments below.
 ///
 /// Walks every `require(...)` call on each line, not just the first
 /// (#1998). Minifiers routinely coalesce multiple top-level requires onto
@@ -1392,11 +1503,7 @@ fn extract_cjs_export_names(source: &str) -> Vec<String> {
 /// hard exclusion gate: `scheduler`'s files were skipped during transform
 /// and never entered the bundle at all, producing `TypeError: j is not a
 /// function` the moment react-dom called into it in a real browser.
-fn extract_cjs_require_bindings(
-    importer: &Path,
-    source: &str,
-    lookup: &ModuleLookup<'_>,
-) -> Vec<(PathBuf, Vec<String>)> {
+fn extract_cjs_require_specifiers(source: &str) -> Vec<(String, Vec<String>)> {
     let mut results = Vec::new();
 
     for line in source.lines() {
@@ -1428,10 +1535,6 @@ fn extract_cjs_require_bindings(
             let req_source = &after[1..1 + end];
             let accessed = parse_require_property_access(&trimmed[require_pos..]);
             cursor = require_pos + 8 + 1 + end + 1; // just past the closing quote.
-
-            let Some(target) = lookup.find(req_source, importer) else {
-                continue;
-            };
 
             // Pattern 1: const { a, b } = require('mod') — scoped to just
             // this call (the brace pair immediately left of its own `=`),
@@ -1475,7 +1578,7 @@ fn extract_cjs_require_bindings(
                     if let Some(names) =
                         scan_require_binding_property_accesses(source, trimmed, &binding)
                     {
-                        results.push((target.0.clone(), names));
+                        results.push((req_source.to_string(), names));
                         continue;
                     }
                 }
@@ -1486,19 +1589,46 @@ fn extract_cjs_require_bindings(
                 // package wrappers' ESM twins dead in the liveness walk and
                 // the glue pruner deleted their genuinely-used exports
                 // (internal_processStyles vanished from @mui/styled-engine).
-                results.push((target.0.clone(), vec!["*".to_string()]));
+                results.push((req_source.to_string(), vec!["*".to_string()]));
                 continue;
             }
             if !destructured.is_empty() {
-                results.push((target.0.clone(), destructured));
+                results.push((req_source.to_string(), destructured));
             }
             if !accessed.is_empty() {
-                results.push((target.0.clone(), accessed));
+                results.push((req_source.to_string(), accessed));
             }
         }
     }
 
     results
+}
+
+/// Extract CJS require bindings: which properties are used from required
+/// modules. Thin resolving wrapper over [`extract_cjs_require_specifiers`]
+/// (#2141) — a specifier that fails to resolve against `lookup` is
+/// silently dropped here exactly as it always was, so this split changes
+/// nothing about which edges the caller sees, only when the (identical)
+/// per-call narrowing work happens relative to the resolution check.
+/// `#[cfg(test)]` (#2141): production callers now go through
+/// `compute_raw_module_facts` + `resolve_module_facts` directly (see
+/// `compute_module_facts`'s doc comment below) — this wrapper is kept only
+/// so `cjs_require_scan_1947_tests`/`module_facts_1947_tests` can assert it
+/// stays behaviorally identical to that pair.
+#[cfg(test)]
+fn extract_cjs_require_bindings(
+    importer: &Path,
+    source: &str,
+    lookup: &ModuleLookup<'_>,
+) -> Vec<(PathBuf, Vec<String>)> {
+    extract_cjs_require_specifiers(source)
+        .into_iter()
+        .filter_map(|(specifier, names)| {
+            lookup
+                .find(&specifier, importer)
+                .map(|target| (target.0.clone(), names))
+        })
+        .collect()
 }
 
 /// The local binding name a bare `const/let/var X = require(...)` line
@@ -2045,6 +2175,57 @@ mod cjs_require_scan_1947_tests {
 
 // --- Shared utilities ---
 
+/// Graph-shape-free per-module facts (#2141): every extractor's raw
+/// specifier-level output, before any specifier has been resolved against
+/// a particular module list. Produced by [`compute_raw_module_facts`] from
+/// a module's own `(path, source)` alone — no [`ModuleLookup`] needed —
+/// which is exactly what makes this the type persisted by the transform
+/// cache store's analysis section (`bundler::persistent_cache`): a raw
+/// fact is valid for a given source content hash regardless of which other
+/// modules happen to be in THIS build's graph, unlike [`ModuleFacts`]
+/// (whose edges are resolved `PathBuf`s and therefore graph-shape-
+/// dependent — deliberately never persisted directly). [`resolve_module_facts`]
+/// turns a `RawModuleFacts` (freshly computed or loaded from the cache)
+/// into a `ModuleFacts` for the current build's graph; a hit is
+/// indistinguishable downstream from a fresh `compute_module_facts` call
+/// because [`compute_module_facts`] itself is now defined as
+/// `compute_raw_module_facts` + `resolve_module_facts` composed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawModuleFacts {
+    /// ESM export names (`extract_export_names`).
+    pub(crate) exports: Vec<String>,
+    /// CJS export names (`extract_cjs_export_names`).
+    pub(crate) cjs_exports: Vec<String>,
+    /// Raw ESM static import specifiers + narrowed name lists
+    /// (`extract_import_specifiers`).
+    pub(crate) static_edges: Vec<(String, Vec<String>)>,
+    /// Raw CJS require specifiers + narrowed name lists
+    /// (`extract_cjs_require_specifiers`).
+    pub(crate) cjs_edges: Vec<(String, Vec<String>)>,
+    /// Raw dynamic `import(...)` specifiers (`extract_dynamic_import_specifiers`).
+    pub(crate) dynamic_targets: Vec<String>,
+    /// Raw `export ... from '...'` re-export specifiers + kind
+    /// (`extract_reexport_specifiers`, lookup-free since #1991).
+    pub(crate) reexports: Vec<(String, ReexportKind)>,
+}
+
+/// Compute one module's [`RawModuleFacts`] by calling each lookup-free
+/// extractor once. Mirrors [`compute_module_facts`]'s pre-#2141 shape
+/// exactly, minus the `lookup`/`importer` resolution step each extractor
+/// used to do inline — see each `extract_*_specifiers` function's own doc
+/// comment for why dropping that step here doesn't change the extracted
+/// specifier-level content.
+pub(crate) fn compute_raw_module_facts(path: &Path, source: &str) -> RawModuleFacts {
+    RawModuleFacts {
+        exports: extract_export_names(source, is_ts(path)),
+        cjs_exports: extract_cjs_export_names(source),
+        static_edges: extract_import_specifiers(source),
+        cjs_edges: extract_cjs_require_specifiers(source),
+        dynamic_targets: extract_dynamic_import_specifiers(source),
+        reexports: extract_reexport_specifiers(source),
+    }
+}
+
 /// Every fact `analyze_used_exports_from` needs from one module, computed by
 /// `compute_module_facts` in a single per-module pass.
 ///
@@ -2072,22 +2253,67 @@ struct ModuleFacts {
     reexports: Vec<(PathBuf, ReexportKind)>,
 }
 
-/// Compute one module's `ModuleFacts` by calling each existing extractor
-/// once. Extractor internals are untouched by this merge (WI #1947 fix 2
-/// only changes how many times the corpus is dispatched across rayon, not
-/// what each extractor does or how many times it scans its own module's
-/// source) — the only extractor whose *internals* changed for WI #1947 is
-/// `extract_import_bindings`'s callee `filter_referenced_import_names`
-/// (fix 1's word index), which is unrelated to this merge.
-fn compute_module_facts(path: &Path, source: &str, lookup: &ModuleLookup<'_>) -> ModuleFacts {
+/// Resolve a [`RawModuleFacts`] (freshly computed or loaded from the #2141
+/// analysis cache) into a [`ModuleFacts`] for the current build's graph,
+/// by running every raw specifier through `lookup.find(specifier, path)`
+/// and dropping the ones that don't resolve — exactly the same filter
+/// every `extract_*_bindings` wrapper applies inline. `path` is the
+/// resolving module's own path (used as `importer`), matching
+/// `compute_module_facts`'s existing convention.
+fn resolve_module_facts(
+    path: &Path,
+    raw: &RawModuleFacts,
+    lookup: &ModuleLookup<'_>,
+) -> ModuleFacts {
     ModuleFacts {
-        exports: extract_export_names(source, is_ts(path)),
-        cjs_exports: extract_cjs_export_names(source),
-        static_edges: extract_import_bindings(path, source, lookup),
-        cjs_edges: extract_cjs_require_bindings(path, source, lookup),
-        dynamic_targets: extract_dynamic_import_targets_from(path, source, lookup),
-        reexports: extract_reexport_bindings(path, source, lookup),
+        exports: raw.exports.clone(),
+        cjs_exports: raw.cjs_exports.clone(),
+        static_edges: raw
+            .static_edges
+            .iter()
+            .filter_map(|(specifier, names)| {
+                lookup
+                    .find(specifier, path)
+                    .map(|target| (target.0.clone(), names.clone()))
+            })
+            .collect(),
+        cjs_edges: raw
+            .cjs_edges
+            .iter()
+            .filter_map(|(specifier, names)| {
+                lookup
+                    .find(specifier, path)
+                    .map(|target| (target.0.clone(), names.clone()))
+            })
+            .collect(),
+        dynamic_targets: raw
+            .dynamic_targets
+            .iter()
+            .filter_map(|specifier| lookup.find(specifier, path).map(|target| target.0.clone()))
+            .collect(),
+        reexports: raw
+            .reexports
+            .iter()
+            .filter_map(|(specifier, kind)| {
+                lookup
+                    .find(specifier, path)
+                    .map(|target| (target.0.clone(), kind.clone()))
+            })
+            .collect(),
     }
+}
+
+/// Compute one module's `ModuleFacts` by composing [`compute_raw_module_facts`]
+/// with [`resolve_module_facts`] (#2141). Provably identical to calling
+/// each extractor directly (the pre-#2141 shape): every `extract_*_bindings`
+/// wrapper is itself `extract_*_specifiers(source).filter_map(|...|
+/// lookup.find(...))`, which is exactly what `resolve_module_facts` does
+/// per field — see `module_facts_1947_tests` below, which asserts this
+/// function's output against each individual extractor and continues to
+/// pass unchanged.
+fn compute_module_facts(path: &Path, source: &str, lookup: &ModuleLookup<'_>) -> ModuleFacts {
+    let raw = compute_raw_module_facts(path, source);
+    resolve_module_facts(path, &raw, lookup)
 }
 
 #[cfg(test)]

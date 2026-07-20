@@ -83,6 +83,53 @@
 //! code + source map). Same corrupt-row isolation as the transform section:
 //! see [`StoredImportScanEntry`].
 //!
+//! ## Resolution section (#2141)
+//!
+//! A third, independent row set: bare-package-specifier resolutions whose
+//! importer lives inside `node_modules`, keyed by [`ResolutionKey`]
+//! (importer's package-root realpath + specifier + [`resolver_config_fingerprint`]).
+//! This is the disk-backed sibling of `ModuleResolver`'s own in-memory
+//! `resolution_cache`, and reuses that memo's exact eligibility boundary —
+//! only a bare package specifier (`react`, `@mui/utils/clamp`, never a
+//! relative/absolute/alias one) is safe to key on "enclosing package root"
+//! alone, since a relative specifier's target depends on the importer's
+//! *exact* directory, not just its package scope (two sibling directories
+//! in the same package can both import `./bar` and mean two different
+//! files). Scoped to node_modules-internal resolutions only: an app-source
+//! importer (or an app-source *target*, e.g. a `baseUrl`/alias hit) is
+//! never cached here, even though it may itself be a bare specifier — see
+//! `Bundler::resolve_dependency`'s scope-gate call site for the file-
+//! appearance/probe-order hazard this avoids. Guarded per-entry (not just
+//! per-section) by [`ResolutionValue::guard`]: every package.json path the
+//! resolution actually consulted, each re-hashed on lookup — a mismatch
+//! (content changed, or existence flipped either direction) is a miss, not
+//! a stale hit, independent of whether the whole-file schema/config still
+//! matches. See [`node_modules_scope_realpath`] and
+//! `ModuleResolver::resolve_with_probe`'s doc comment for the realpath and
+//! probe-capture mechanics.
+//!
+//! ## Analysis section (#2141)
+//!
+//! A fourth, independent row set: the per-module *raw* (graph-shape-free)
+//! product of `tree_shake::compute_raw_module_facts` — the pure textual
+//! extraction half of what tree-shaking's liveness analysis needs per
+//! module, before any specifier is resolved to a target path. Content-
+//! addressed by [`AnalysisKey`] (a module's own `content_hash` plus
+//! `is_typescript`, same shape as [`ImportScanKey`] and for the same
+//! reason). Gated at load by [`analysis_fingerprint`] (defines, sorted,
+//! folded with [`ANALYSIS_VERSION`]) rather than the transform section's
+//! `config_fingerprint` — see that function's doc comment for why a
+//! defines change must invalidate the *whole* section rather than rely on
+//! incidental content-hash drift. Deliberately does NOT cache the
+//! *resolved* `tree_shake::ModuleFacts` (edges point at other modules'
+//! paths, which depend on which modules exist in the CURRENT build, i.e.
+//! graph shape) — only the raw, specifier-level facts; resolving a raw
+//! fact's specifiers through the live `ModuleLookup` always happens fresh,
+//! whether the raw facts themselves came from a cache hit or a fresh
+//! extraction, so a hit is indistinguishable downstream. See
+//! `tree_shake::RawModuleFacts`'s doc comment for the full raw/resolved
+//! split.
+//!
 //! ## Hatches
 //!
 //! `[build] cache` in jet.toml, `--no-cache` on `jet build` (flag wins over
@@ -117,7 +164,14 @@ use super::CompiledModule;
 /// "unreadable, starting cold" warning path in [`PersistentTransformCache::
 /// load`] already handles that outcome, so old stores need no migration:
 /// clean full miss, warned once, never a hard error.
-pub const TRANSFORM_CACHE_SCHEMA: u32 = 2;
+///
+/// #2141 bumped this 2 -> 3: `CacheFile` grew three more trailing fields
+/// (`resolution_entries`, `analysis_fingerprint`, `analysis_entries`) for
+/// the resolution and analysis sections below. Same reasoning applies: an
+/// old (schema-2) file is missing the new fields, `postcard` fails the
+/// decode cleanly, and the file is treated as cold rather than partially
+/// trusted.
+pub const TRANSFORM_CACHE_SCHEMA: u32 = 3;
 
 /// Bumped whenever import-scan behavior changes (`imports::
 /// extract_imports_fast`, its tree-sitter fallback, or `Bundler::
@@ -131,6 +185,29 @@ pub const TRANSFORM_CACHE_SCHEMA: u32 = 2;
 /// "Import-scan section" heading.
 /// @issue #2140
 pub const SCANNER_VERSION: u32 = 1;
+
+/// Bumped whenever tree-shaking's *raw* (specifier-level, graph-shape-free)
+/// fact extraction changes (`tree_shake::compute_raw_module_facts` or any
+/// of the pure extractors it composes) in a way that could make an old
+/// cached [`super::tree_shake::RawModuleFacts`] no longer match what
+/// today's extraction would produce for the same content. Folded into
+/// [`analysis_fingerprint`] alongside the sorted `defines` set, and
+/// checked once at load — see the module doc comment's "Analysis section"
+/// heading.
+/// @issue #2141
+pub const ANALYSIS_VERSION: u32 = 1;
+
+/// Bumped whenever the resolution *algorithm* changes in a way that could
+/// make an old [`ResolutionValue`] no longer a safe reuse for the same
+/// [`ResolutionKey`] — independent of [`resolver_config_fingerprint`]'s own
+/// option inputs, which cover *configuration* only, not code changes
+/// within one crate version. Folded into every [`ResolutionKey`] via
+/// [`resolver_config_fingerprint`], so a bump makes every existing
+/// resolution entry unreachable (no key this build ever builds can match
+/// one from before the bump) — no separate whole-section sweep needed, see
+/// `PersistentTransformCache::resolution_entries`'s field doc comment.
+/// @issue #2141
+pub const RESOLUTION_VERSION: u32 = 1;
 
 /// Store location, relative to the project root (the same root `jet build`
 /// resolves `node_modules/` from). `node_modules/.jet/` is an existing jet
@@ -170,6 +247,57 @@ pub struct ImportScanKey {
     pub is_typescript: bool,
 }
 
+/// Key for one cached node_modules-scoped resolution (#2141): the
+/// importer's enclosing package-root *realpath* (see
+/// [`node_modules_scope_realpath`]), the bare specifier being resolved,
+/// and [`resolver_config_fingerprint`] (aliases/baseUrl/conditions/
+/// externalize flags/[`RESOLUTION_VERSION`]/crate version). Mirrors
+/// `ModuleResolver`'s own in-memory `resolution_cache` key shape
+/// (`(bare_specifier_cache_root(..), specifier)`) plus the two ingredients
+/// a same-process memo doesn't need: a realpath (so two symlinks pointing
+/// at the same pnpm-store package — the #1941 pnpm-symlink trap class —
+/// collapse to the same cache scope) and an explicit config fingerprint (a
+/// persisted entry can outlive the single build whose options it was
+/// captured under).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResolutionKey {
+    pub scope_realpath: PathBuf,
+    pub specifier: String,
+    pub resolver_config_fingerprint: u64,
+}
+
+/// Value for one cached resolution: the resolved path exactly as
+/// `ModuleResolver::resolve` would return it today — deliberately NOT
+/// canonicalized (see `Bundler::resolve_dependency`'s existing comment on
+/// why canonicalizing the *returned* path breaks node_modules walk-up
+/// resolution for transitive dependencies by following hardlinks into the
+/// content store) — plus `guard`: every package.json path the resolution
+/// actually consulted, paired with the content hash it had at capture time
+/// (`None` when the path did not exist at capture time, so a package.json
+/// *appearing* later is just as much a guard mismatch as one changing
+/// content or disappearing — a plain sentinel `u64` would risk a
+/// real-hash collision with "absent," so this is a proper `Option` instead).
+/// Re-verified in full on every lookup by [`PersistentTransformCache::
+/// get_resolution`] — a single mismatched guard entry is a miss,
+/// independent of whether `scope_realpath`/`specifier`/
+/// `resolver_config_fingerprint` still match.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolutionValue {
+    pub resolved_path: PathBuf,
+    pub guard: Vec<(PathBuf, Option<u64>)>,
+}
+
+/// Key for one cached raw-analysis entry (#2141): a module's own source
+/// `content_hash` plus `is_typescript` — same shape as [`ImportScanKey`]
+/// and for the same reason (`tree_shake::compute_raw_module_facts` is a
+/// pure function of exactly those two inputs, never of this build's graph
+/// shape or discovery order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AnalysisKey {
+    pub content_hash: u64,
+    pub is_typescript: bool,
+}
+
 /// One on-disk cache row. `payload` is an independently-encoded
 /// `CompiledModule` blob (not inlined as struct fields) precisely so a
 /// corrupt `payload` can be detected via `checksum` and skipped without
@@ -201,13 +329,38 @@ struct StoredImportScanEntry {
     last_used: u64,
 }
 
+/// One on-disk resolution cache row (#2141). Same corrupt-row isolation as
+/// [`StoredEntry`]/[`StoredImportScanEntry`]: `payload` is an
+/// independently `postcard`-encoded [`ResolutionValue`] blob, checked
+/// against `checksum` before decode.
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredResolutionEntry {
+    key: ResolutionKey,
+    checksum: u64,
+    payload: Vec<u8>,
+    last_used: u64,
+}
+
+/// One on-disk analysis cache row (#2141). Same corrupt-row isolation as
+/// the sections above: `payload` is an independently `postcard`-encoded
+/// [`super::tree_shake::RawModuleFacts`] blob, checked against `checksum`
+/// before decode.
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredAnalysisEntry {
+    key: AnalysisKey,
+    checksum: u64,
+    payload: Vec<u8>,
+    last_used: u64,
+}
+
 /// The whole on-disk file: one `postcard`-encoded blob.
 ///
 /// #2140 added the two trailing fields for the import-scan section
 /// (`scanner_version`, `import_scan_entries`); see [`TRANSFORM_CACHE_SCHEMA`]
 /// for why appending fields here is safe (old-shaped files just fail to
 /// decode, a clean cold-start) and the module doc comment's "Import-scan
-/// section" heading for the design.
+/// section" heading for the design. #2141 appended three more trailing
+/// fields for the resolution and analysis sections — same reasoning.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CacheFile {
     schema: u32,
@@ -215,6 +368,9 @@ struct CacheFile {
     entries: Vec<StoredEntry>,
     scanner_version: u32,
     import_scan_entries: Vec<StoredImportScanEntry>,
+    resolution_entries: Vec<StoredResolutionEntry>,
+    analysis_fingerprint: u64,
+    analysis_entries: Vec<StoredAnalysisEntry>,
 }
 
 /// In-memory representation of one live entry — decoded once at `load` (or
@@ -239,6 +395,25 @@ struct LiveImportScanEntry {
     last_used: u64,
 }
 
+/// In-memory representation of one live resolution entry (#2141) —
+/// decoded once at `load` (or inserted fresh this build). No separate key
+/// field: [`ResolutionKey`] IS the map key, same reasoning as
+/// [`LiveImportScanEntry`].
+#[derive(Debug, Clone)]
+struct LiveResolutionEntry {
+    value: ResolutionValue,
+    last_used: u64,
+}
+
+/// In-memory representation of one live analysis entry (#2141) — decoded
+/// once at `load` (or inserted fresh this build). No separate key field:
+/// [`AnalysisKey`] IS the map key, same reasoning as [`LiveImportScanEntry`].
+#[derive(Debug, Clone)]
+struct LiveAnalysisEntry {
+    facts: super::tree_shake::RawModuleFacts,
+    last_used: u64,
+}
+
 /// Result of [`PersistentTransformCache::load`], surfaced through
 /// `JET_BUNDLE_TIMING` and the final build report.
 #[derive(Debug, Clone, Default)]
@@ -253,6 +428,13 @@ pub struct LoadStats {
     /// the other cold).
     pub import_scan_loaded_entries: usize,
     pub import_scan_corrupt_entries: usize,
+    /// #2141 — resolution/analysis section counterparts, tracked
+    /// separately since all four sections are gated by independent
+    /// fingerprints and can legitimately disagree.
+    pub resolution_loaded_entries: usize,
+    pub resolution_corrupt_entries: usize,
+    pub analysis_loaded_entries: usize,
+    pub analysis_corrupt_entries: usize,
     pub duration: Duration,
 }
 
@@ -287,6 +469,24 @@ pub struct PersistentTransformCache {
     import_scan_entries: DashMap<ImportScanKey, LiveImportScanEntry>,
     import_scan_hits: AtomicU64,
     import_scan_misses: AtomicU64,
+    /// #2141 — resolution section: content-addressed by [`ResolutionKey`]
+    /// directly, tracked and evicted independently of the sections above.
+    /// No whole-section gating fingerprint at load time (unlike the
+    /// transform/analysis sections): `resolver_config_fingerprint` is
+    /// already part of every key, so a config change simply makes old
+    /// entries unreachable (any lookup this build performs builds a key
+    /// with the *current* fingerprint) rather than needing a separate
+    /// section-wide sweep.
+    resolution_entries: DashMap<ResolutionKey, LiveResolutionEntry>,
+    resolution_hits: AtomicU64,
+    resolution_misses: AtomicU64,
+    /// #2141 — analysis section: content-addressed by [`AnalysisKey`],
+    /// gated at load by `analysis_fingerprint` (stored here so `save` can
+    /// write the same value back for the next load).
+    analysis_entries: DashMap<AnalysisKey, LiveAnalysisEntry>,
+    analysis_hits: AtomicU64,
+    analysis_misses: AtomicU64,
+    analysis_fingerprint: u64,
 }
 
 impl PersistentTransformCache {
@@ -307,6 +507,13 @@ impl PersistentTransformCache {
             import_scan_entries: DashMap::new(),
             import_scan_hits: AtomicU64::new(0),
             import_scan_misses: AtomicU64::new(0),
+            resolution_entries: DashMap::new(),
+            resolution_hits: AtomicU64::new(0),
+            resolution_misses: AtomicU64::new(0),
+            analysis_entries: DashMap::new(),
+            analysis_hits: AtomicU64::new(0),
+            analysis_misses: AtomicU64::new(0),
+            analysis_fingerprint: 0,
         }
     }
 
@@ -316,16 +523,24 @@ impl PersistentTransformCache {
     /// discards everything as a deliberate, silent cold-start — not
     /// corruption, so it does not warn (a shape mismatch usually also just
     /// fails `postcard::from_bytes` outright, handled the same way below).
-    /// Past that, the transform section (`entries`) and import-scan section
-    /// (`import_scan_entries`) are gated *independently* — `config_fingerprint`
-    /// for the former, [`SCANNER_VERSION`] for the latter (#2140) — so a
+    /// Past that, the transform section (`entries`), import-scan section
+    /// (`import_scan_entries`), and analysis section (`analysis_entries`)
+    /// are gated *independently* — `config_fingerprint`, [`SCANNER_VERSION`]
+    /// (#2140), and `analysis_fingerprint` (#2141) respectively — so a
     /// change that only affects one (e.g. a `defines` edit, or a
-    /// scanner-only bug fix) discards only that section, not both. A
+    /// scanner-only bug fix) discards only that section, not the others. A
     /// missing file (first run, or a deliberately cleared store) is the
-    /// same silent cold-start for both sections. Only a *present but
-    /// undecodable* file, or individual corrupt entries inside an otherwise
-    /// good section, print a warning — see the module doc comment.
-    pub fn load(project_root: &Path, config_fingerprint: u64) -> (Self, LoadStats) {
+    /// same silent cold-start for every section. The resolution section
+    /// (#2141) has no separate load-time gate at all — see
+    /// `resolution_entries`'s field doc comment for why. Only a *present
+    /// but undecodable* file, or individual corrupt entries inside an
+    /// otherwise good section, print a warning — see the module doc
+    /// comment.
+    pub fn load(
+        project_root: &Path,
+        config_fingerprint: u64,
+        analysis_fingerprint: u64,
+    ) -> (Self, LoadStats) {
         let start = Instant::now();
 
         if std::env::var_os("JET_NO_PERSISTENT_CACHE").is_some() {
@@ -344,6 +559,13 @@ impl PersistentTransformCache {
             import_scan_entries: DashMap::new(),
             import_scan_hits: AtomicU64::new(0),
             import_scan_misses: AtomicU64::new(0),
+            resolution_entries: DashMap::new(),
+            resolution_hits: AtomicU64::new(0),
+            resolution_misses: AtomicU64::new(0),
+            analysis_entries: DashMap::new(),
+            analysis_hits: AtomicU64::new(0),
+            analysis_misses: AtomicU64::new(0),
+            analysis_fingerprint,
         };
 
         let bytes = match std::fs::read(&store_path) {
@@ -390,6 +612,7 @@ impl PersistentTransformCache {
         }
         let transform_section_valid = file.config_fingerprint == config_fingerprint;
         let import_scan_section_valid = file.scanner_version == SCANNER_VERSION;
+        let analysis_section_valid = file.analysis_fingerprint == analysis_fingerprint;
 
         let mut loaded = 0usize;
         let mut corrupt = 0usize;
@@ -447,6 +670,66 @@ impl PersistentTransformCache {
             }
         }
 
+        // #2141 — resolution section: no separate whole-section gate (see
+        // the struct field doc comment) — always attempt to load every
+        // row once the outer schema matches; stale-fingerprint entries
+        // just never match a key this build ever builds.
+        let mut resolution_loaded = 0usize;
+        let mut resolution_corrupt = 0usize;
+        for stored in file.resolution_entries {
+            if hash_bytes(&stored.payload) != stored.checksum {
+                resolution_corrupt += 1;
+                continue;
+            }
+            let value: ResolutionValue = match postcard::from_bytes(&stored.payload) {
+                Ok(v) => v,
+                Err(_) => {
+                    resolution_corrupt += 1;
+                    continue;
+                }
+            };
+            max_last_used = max_last_used.max(stored.last_used);
+            cache.resolution_entries.insert(
+                stored.key,
+                LiveResolutionEntry {
+                    value,
+                    last_used: stored.last_used,
+                },
+            );
+            resolution_loaded += 1;
+        }
+
+        // #2141 — analysis section: gated by `analysis_fingerprint`, same
+        // independent-section shape as import-scan's `SCANNER_VERSION`
+        // gate above.
+        let mut analysis_loaded = 0usize;
+        let mut analysis_corrupt = 0usize;
+        if analysis_section_valid {
+            for stored in file.analysis_entries {
+                if hash_bytes(&stored.payload) != stored.checksum {
+                    analysis_corrupt += 1;
+                    continue;
+                }
+                let facts: super::tree_shake::RawModuleFacts =
+                    match postcard::from_bytes(&stored.payload) {
+                        Ok(f) => f,
+                        Err(_) => {
+                            analysis_corrupt += 1;
+                            continue;
+                        }
+                    };
+                max_last_used = max_last_used.max(stored.last_used);
+                cache.analysis_entries.insert(
+                    stored.key,
+                    LiveAnalysisEntry {
+                        facts,
+                        last_used: stored.last_used,
+                    },
+                );
+                analysis_loaded += 1;
+            }
+        }
+
         // Anything inserted fresh this build must sort after everything
         // just loaded, so `save`'s oldest-first eviction stays meaningful
         // across process runs instead of resetting to 0 every load. One
@@ -471,6 +754,24 @@ impl PersistentTransformCache {
                 import_scan_loaded + import_scan_corrupt,
             );
         }
+        if resolution_corrupt > 0 {
+            eprintln!(
+                "warn: jet transform cache at {} had {resolution_corrupt} corrupt resolution \
+                 entr{} out of {}; dropped and will re-resolve (#2141)",
+                store_path.display(),
+                if resolution_corrupt == 1 { "y" } else { "ies" },
+                resolution_loaded + resolution_corrupt,
+            );
+        }
+        if analysis_corrupt > 0 {
+            eprintln!(
+                "warn: jet transform cache at {} had {analysis_corrupt} corrupt analysis \
+                 entr{} out of {}; dropped and will re-analyze (#2141)",
+                store_path.display(),
+                if analysis_corrupt == 1 { "y" } else { "ies" },
+                analysis_loaded + analysis_corrupt,
+            );
+        }
 
         (
             cache,
@@ -480,6 +781,10 @@ impl PersistentTransformCache {
                 corrupt_entries: corrupt,
                 import_scan_loaded_entries: import_scan_loaded,
                 import_scan_corrupt_entries: import_scan_corrupt,
+                resolution_loaded_entries: resolution_loaded,
+                resolution_corrupt_entries: resolution_corrupt,
+                analysis_loaded_entries: analysis_loaded,
+                analysis_corrupt_entries: analysis_corrupt,
                 duration: start.elapsed(),
             },
         )
@@ -607,6 +912,96 @@ impl PersistentTransformCache {
         self.import_scan_misses.load(Ordering::Relaxed)
     }
 
+    /// Look up a cached resolution for `key` (#2141). Re-verifies every
+    /// guard entry's package.json content hash *right now* — a single
+    /// mismatch (content changed, or a path's existence flipped either
+    /// direction since capture) is a miss, independent of whether `key`
+    /// itself matched, and evicts the stale entry so a later `insert_
+    /// resolution` for the same `key` cannot race a lingering stale read.
+    /// Touches recency on a hit; counts exactly one hit or miss per call.
+    pub fn get_resolution(&self, key: &ResolutionKey) -> Option<PathBuf> {
+        if !self.enabled {
+            return None;
+        }
+        let Some(mut entry) = self.resolution_entries.get_mut(key) else {
+            self.resolution_misses.fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+        let guard_intact = entry.value.guard.iter().all(|(pkg_json, expected)| {
+            let actual = std::fs::read(pkg_json).ok().map(|bytes| hash_bytes(&bytes));
+            actual == *expected
+        });
+        if !guard_intact {
+            drop(entry);
+            self.resolution_entries.remove(key);
+            self.resolution_misses.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        entry.last_used = self.next_clock();
+        self.resolution_hits.fetch_add(1, Ordering::Relaxed);
+        Some(entry.value.resolved_path.clone())
+    }
+
+    /// Record (or replace) `key`'s resolution result (#2141). A later
+    /// `save` call persists whatever is live in-memory at that point.
+    pub fn insert_resolution(&self, key: ResolutionKey, value: ResolutionValue) {
+        if !self.enabled {
+            return;
+        }
+        let last_used = self.next_clock();
+        self.resolution_entries
+            .insert(key, LiveResolutionEntry { value, last_used });
+    }
+
+    pub fn resolution_hits(&self) -> u64 {
+        self.resolution_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn resolution_misses(&self) -> u64 {
+        self.resolution_misses.load(Ordering::Relaxed)
+    }
+
+    /// Look up a cached raw-analysis result for `key` (#2141).
+    /// Content-addressed, same "any module sharing this exact key is a
+    /// valid hit" contract as [`Self::get_import_scan`] and for the same
+    /// reason. Touches recency on a hit; counts exactly one hit or miss
+    /// per call either way.
+    pub fn get_analysis(&self, key: &AnalysisKey) -> Option<super::tree_shake::RawModuleFacts> {
+        if !self.enabled {
+            return None;
+        }
+        match self.analysis_entries.get_mut(key) {
+            Some(mut entry) => {
+                entry.last_used = self.next_clock();
+                self.analysis_hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry.facts.clone())
+            }
+            None => {
+                self.analysis_misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
+    }
+
+    /// Record (or replace) `key`'s raw-analysis result (#2141). A later
+    /// `save` call persists whatever is live in-memory at that point.
+    pub fn insert_analysis(&self, key: AnalysisKey, facts: super::tree_shake::RawModuleFacts) {
+        if !self.enabled {
+            return;
+        }
+        let last_used = self.next_clock();
+        self.analysis_entries
+            .insert(key, LiveAnalysisEntry { facts, last_used });
+    }
+
+    pub fn analysis_hits(&self) -> u64 {
+        self.analysis_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn analysis_misses(&self) -> u64 {
+        self.analysis_misses.load(Ordering::Relaxed)
+    }
+
     /// Encode every live entry, apply the [`MAX_STORE_BYTES`] oldest-first
     /// eviction cap, and atomically write back via a tmp file + rename.
     /// Never fails the build: any encode/IO error is swallowed after a
@@ -686,12 +1081,79 @@ impl PersistentTransformCache {
             scan_total -= removed.payload.len() as u64;
         }
 
+        // #2141 — resolution section: same encode + checksum + oldest-
+        // first eviction shape, independent pass/cap (see the import-scan
+        // section's comment above for why independent passes rather than
+        // one merged sort across heterogeneous row types).
+        let mut resolution_rows: Vec<StoredResolutionEntry> =
+            Vec::with_capacity(self.resolution_entries.len());
+        for kv in self.resolution_entries.iter() {
+            let value = &kv.value().value;
+            let payload = match postcard::to_stdvec(value) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::debug!(
+                        "jet transform cache: skipping unencodable resolution entry {:?}: {e} (#2141)",
+                        kv.key()
+                    );
+                    continue;
+                }
+            };
+            let checksum = hash_bytes(&payload);
+            resolution_rows.push(StoredResolutionEntry {
+                key: kv.key().clone(),
+                checksum,
+                payload,
+                last_used: kv.value().last_used,
+            });
+        }
+        resolution_rows.sort_unstable_by_key(|r| r.last_used);
+        let mut resolution_total: u64 =
+            resolution_rows.iter().map(|r| r.payload.len() as u64).sum();
+        while resolution_total > MAX_STORE_BYTES && !resolution_rows.is_empty() {
+            let removed = resolution_rows.remove(0);
+            resolution_total -= removed.payload.len() as u64;
+        }
+
+        // #2141 — analysis section: same shape again.
+        let mut analysis_rows: Vec<StoredAnalysisEntry> =
+            Vec::with_capacity(self.analysis_entries.len());
+        for kv in self.analysis_entries.iter() {
+            let facts = &kv.value().facts;
+            let payload = match postcard::to_stdvec(facts) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::debug!(
+                        "jet transform cache: skipping unencodable analysis entry {:?}: {e} (#2141)",
+                        kv.key()
+                    );
+                    continue;
+                }
+            };
+            let checksum = hash_bytes(&payload);
+            analysis_rows.push(StoredAnalysisEntry {
+                key: *kv.key(),
+                checksum,
+                payload,
+                last_used: kv.value().last_used,
+            });
+        }
+        analysis_rows.sort_unstable_by_key(|r| r.last_used);
+        let mut analysis_total: u64 = analysis_rows.iter().map(|r| r.payload.len() as u64).sum();
+        while analysis_total > MAX_STORE_BYTES && !analysis_rows.is_empty() {
+            let removed = analysis_rows.remove(0);
+            analysis_total -= removed.payload.len() as u64;
+        }
+
         let file = CacheFile {
             schema: TRANSFORM_CACHE_SCHEMA,
             config_fingerprint: self.config_fingerprint,
             entries: rows,
             scanner_version: SCANNER_VERSION,
             import_scan_entries: scan_rows,
+            resolution_entries: resolution_rows,
+            analysis_fingerprint: self.analysis_fingerprint,
+            analysis_entries: analysis_rows,
         };
         let bytes = match postcard::to_stdvec(&file) {
             Ok(b) => b,
@@ -748,7 +1210,13 @@ pub fn hash_str(content: &str) -> u64 {
     hash_bytes(content.as_bytes())
 }
 
-fn hash_bytes(bytes: &[u8]) -> u64 {
+/// `pub(crate)` (#2141): `Bundler::resolve_dependency` needs this directly
+/// (not via `hash_str`) to hash a package.json's raw bytes for the
+/// resolution-cache guard on the write side — byte-for-byte the same
+/// computation [`PersistentTransformCache::get_resolution`]'s guard
+/// re-verification already does on the read side (`std::fs::read` +
+/// `hash_bytes`), with no UTF-8 round trip in between.
+pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::Hasher;
     let mut hasher = DefaultHasher::new();
@@ -841,6 +1309,99 @@ pub fn config_fingerprint(
     format!("{:?}", transform_options.ts_target).hash(&mut hasher);
     transform_options.dev_mode.hash(&mut hasher);
     transform_options.source_maps.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Realpath of `path`'s nearest enclosing npm package root under
+/// `node_modules` (walking up past a scoped package's `@scope/name` pair
+/// when present), or `None` when no `node_modules` path component exists
+/// at all. `path` may be a file or a directory — the algorithm only cares
+/// about the position of the `node_modules` component, so any trailing
+/// components past the package root (a file name, a subpath) are
+/// naturally truncated away.
+///
+/// Mirrors `resolver::bare_specifier_cache_root`'s component-walking
+/// algorithm (the existing in-memory resolution memo's own scope key),
+/// but (a) canonicalizes the result — collapsing a pnpm-style symlinked
+/// package to its real store location, since two different symlinks
+/// pointing at the same real package must share one cache scope (see the
+/// #1941 pnpm-symlink trap class) — and (b) returns `None` instead of
+/// falling back to `path` itself when there is no `node_modules`
+/// component, since callers need to distinguish "not under node_modules
+/// at all" from "under node_modules" for the #2141 scope gate, a
+/// distinction `bare_specifier_cache_root` does not need to make for its
+/// own (memoization-only) purpose.
+pub fn node_modules_scope_realpath(path: &Path) -> Option<PathBuf> {
+    let components: Vec<&std::ffi::OsStr> = path.iter().collect();
+    let nm = components.iter().rposition(|c| *c == "node_modules")?;
+    let mut end = nm + 1;
+    if let Some(first) = components.get(end) {
+        if first.to_string_lossy().starts_with('@') {
+            end += 1;
+        }
+    }
+    end += 1;
+    if end > components.len() {
+        return None;
+    }
+    let scope: PathBuf = components[..end].iter().collect();
+    std::fs::canonicalize(&scope).ok()
+}
+
+/// Whole-resolution config fingerprint for the #2141 resolution cache:
+/// aliases (order-preserving — first-match-wins semantics), `baseUrl`,
+/// `conditions` (order-preserving — condition preference order changes
+/// which `exports` branch wins), the externalize flags, resolvable
+/// extensions and the index-resolution toggle, plus the crate version and
+/// [`RESOLUTION_VERSION`]. Folded into every [`ResolutionKey`] rather than
+/// checked once for the whole section at load (contrast
+/// [`config_fingerprint`]/[`analysis_fingerprint`]) — see
+/// `PersistentTransformCache`'s `resolution_entries` field doc comment for
+/// why a per-key fingerprint needs no separate load-time gate. `externals`
+/// is a `HashSet`, sorted before hashing for the same randomized-
+/// iteration-order reason `config_fingerprint` sorts `defines`.
+pub fn resolver_config_fingerprint(options: &crate::resolver::ResolveOptions) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut externals_sorted: Vec<&String> = options.externals.iter().collect();
+    externals_sorted.sort_unstable();
+
+    let mut hasher = DefaultHasher::new();
+    RESOLUTION_VERSION.hash(&mut hasher);
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    options.alias.hash(&mut hasher);
+    options.base_url.hash(&mut hasher);
+    options.conditions.hash(&mut hasher);
+    options.externalize_all_packages.hash(&mut hasher);
+    externals_sorted.hash(&mut hasher);
+    options.extensions.hash(&mut hasher);
+    options.resolve_index.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whole-section analysis fingerprint for the #2141 analysis cache:
+/// `defines` (sorted, same reasoning as [`config_fingerprint`]) folded
+/// with [`ANALYSIS_VERSION`]. Deliberately narrower than
+/// `config_fingerprint` — `compute_raw_module_facts` extraction does not
+/// depend on minify/splitting/jsx/target/source-map settings, only on a
+/// module's own source text plus which identifiers `defines` would fold
+/// away (defines substitution happens upstream of this analysis, so a
+/// defines change can change which imports/requires survive as dead code
+/// versus live). Checked once per cache file at
+/// [`PersistentTransformCache::load`] — a mismatch discards the whole
+/// analysis section, not just the affected modules, so `a_misses` is
+/// exactly the module count on a defines change.
+pub fn analysis_fingerprint(defines: &HashMap<String, String>) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut defines_sorted: Vec<(&String, &String)> = defines.iter().collect();
+    defines_sorted.sort_unstable_by(|a, b| a.0.cmp(b.0));
+
+    let mut hasher = DefaultHasher::new();
+    ANALYSIS_VERSION.hash(&mut hasher);
+    defines_sorted.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -1110,6 +1671,9 @@ mod tests {
             entries: vec![good_entry, bad_entry],
             scanner_version: SCANNER_VERSION,
             import_scan_entries: Vec::new(),
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -1121,7 +1685,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
         std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
 
-        let (cache, stats) = PersistentTransformCache::load(&dir, 42);
+        let (cache, stats) = PersistentTransformCache::load(&dir, 42, 0);
         assert_eq!(stats.loaded_entries, 1);
         assert_eq!(stats.corrupt_entries, 1);
         assert!(cache
@@ -1151,6 +1715,9 @@ mod tests {
             entries: vec![good_entry],
             scanner_version: SCANNER_VERSION,
             import_scan_entries: Vec::new(),
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -1163,7 +1730,7 @@ mod tests {
         std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
 
         // Load with a DIFFERENT config fingerprint than what was written.
-        let (cache, stats) = PersistentTransformCache::load(&dir, 2);
+        let (cache, stats) = PersistentTransformCache::load(&dir, 2, 0);
         assert_eq!(stats.loaded_entries, 0);
         assert_eq!(stats.corrupt_entries, 0);
         assert!(cache
@@ -1183,7 +1750,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let (cache, _) = PersistentTransformCache::load(&dir, 99);
+        let (cache, _) = PersistentTransformCache::load(&dir, 99, 0);
         let key = EntryKey {
             content_hash: hash_str("const x = 1;"),
             own_id: 5,
@@ -1205,7 +1772,7 @@ mod tests {
             .filter_map(|e| e.ok())
             .all(|e| !e.file_name().to_string_lossy().contains(".tmp.")));
 
-        let (reloaded, load_stats) = PersistentTransformCache::load(&dir, 99);
+        let (reloaded, load_stats) = PersistentTransformCache::load(&dir, 99, 0);
         assert_eq!(load_stats.loaded_entries, 1);
         let hit = reloaded
             .get(Path::new("/proj/src/a.js"), &key)
@@ -1225,7 +1792,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let (cache, _) = PersistentTransformCache::load(&dir, 1);
+        let (cache, _) = PersistentTransformCache::load(&dir, 1, 0);
         // Three ~1MB modules, well under MAX_STORE_BYTES individually but
         // exercising the same eviction code path with a tiny synthetic cap
         // swapped in via direct field access (unit test, same crate).
@@ -1370,6 +1937,9 @@ mod tests {
             entries: Vec::new(),
             scanner_version: SCANNER_VERSION,
             import_scan_entries: vec![good_entry, bad_entry],
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -1381,7 +1951,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
         std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
 
-        let (cache, stats) = PersistentTransformCache::load(&dir, 7);
+        let (cache, stats) = PersistentTransformCache::load(&dir, 7, 0);
         assert_eq!(stats.import_scan_loaded_entries, 1);
         assert_eq!(stats.import_scan_corrupt_entries, 1);
         assert!(cache.get_import_scan(&good_key).is_some());
@@ -1427,6 +1997,9 @@ mod tests {
             entries: vec![transform_entry],
             scanner_version: SCANNER_VERSION,
             import_scan_entries: vec![scan_entry],
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
         };
         let bytes = postcard::to_stdvec(&file).unwrap();
 
@@ -1441,7 +2014,7 @@ mod tests {
         // Load with a DIFFERENT config_fingerprint (200 != 100): the
         // transform section must come up empty while the import-scan
         // section (whose own `scanner_version` still matches) survives.
-        let (cache, stats) = PersistentTransformCache::load(&dir, 200);
+        let (cache, stats) = PersistentTransformCache::load(&dir, 200, 0);
         assert_eq!(stats.loaded_entries, 0, "transform section must miss");
         assert_eq!(
             stats.import_scan_loaded_entries, 1,
@@ -1465,7 +2038,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let (cache, _) = PersistentTransformCache::load(&dir, 55);
+        let (cache, _) = PersistentTransformCache::load(&dir, 55, 0);
         let key = ImportScanKey {
             content_hash: hash_str("import y from './y';"),
             is_typescript: true,
@@ -1474,12 +2047,565 @@ mod tests {
         let save_stats = cache.save();
         assert!(save_stats.bytes_written > 0);
 
-        let (reloaded, load_stats) = PersistentTransformCache::load(&dir, 55);
+        let (reloaded, load_stats) = PersistentTransformCache::load(&dir, 55, 0);
         assert_eq!(load_stats.import_scan_loaded_entries, 1);
         let hit = reloaded
             .get_import_scan(&key)
             .expect("expected the saved import-scan entry to round-trip");
         assert_eq!(hit.static_imports[0].source, "./y");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #2141 — resolution section tests below. Same fixture/naming style as
+    // the sections above.
+
+    fn sample_resolution_key(specifier: &str) -> ResolutionKey {
+        ResolutionKey {
+            scope_realpath: PathBuf::from("/proj/node_modules/pkg-a"),
+            specifier: specifier.to_string(),
+            resolver_config_fingerprint: 0,
+        }
+    }
+
+    #[test]
+    fn resolution_miss_then_insert_then_hit_round_trips() {
+        let cache = PersistentTransformCache {
+            enabled: true,
+            ..PersistentTransformCache::disabled()
+        };
+        let key = sample_resolution_key("pkg-a");
+
+        assert!(cache.get_resolution(&key).is_none());
+        assert_eq!(cache.resolution_misses(), 1);
+
+        cache.insert_resolution(
+            key.clone(),
+            ResolutionValue {
+                resolved_path: PathBuf::from("/proj/node_modules/pkg-a/index.js"),
+                guard: Vec::new(),
+            },
+        );
+        let hit = cache
+            .get_resolution(&key)
+            .expect("expected a hit after insert");
+        assert_eq!(hit, PathBuf::from("/proj/node_modules/pkg-a/index.js"));
+        assert_eq!(cache.resolution_hits(), 1);
+        assert_eq!(cache.resolution_misses(), 1);
+    }
+
+    #[test]
+    fn resolution_guard_mismatch_is_a_miss_and_evicts_the_stale_entry() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"resolution_guard_mismatch_is_a_miss_and_evicts_the_stale_entry")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let package_json = dir.join("package.json");
+        std::fs::write(&package_json, r#"{"name":"pkg-a","version":"1.0.0"}"#).unwrap();
+
+        let cache = PersistentTransformCache {
+            enabled: true,
+            ..PersistentTransformCache::disabled()
+        };
+        let key = sample_resolution_key("pkg-a");
+        let captured_hash = hash_bytes(&std::fs::read(&package_json).unwrap());
+        cache.insert_resolution(
+            key.clone(),
+            ResolutionValue {
+                resolved_path: dir.join("index.js"),
+                guard: vec![(package_json.clone(), Some(captured_hash))],
+            },
+        );
+
+        // Guard intact: hit.
+        assert!(cache.get_resolution(&key).is_some());
+        assert_eq!(cache.resolution_hits(), 1);
+
+        // Content changes underneath the guarded package.json: must miss
+        // AND evict the now-stale entry, not just report a miss while
+        // leaving it live for a future stale read to race against.
+        std::fs::write(&package_json, r#"{"name":"pkg-a","version":"2.0.0"}"#).unwrap();
+        assert!(cache.get_resolution(&key).is_none());
+        assert_eq!(cache.resolution_misses(), 1);
+        assert!(!cache.resolution_entries.contains_key(&key));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolution_guard_treats_a_newly_appearing_package_json_as_a_mismatch() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"resolution_guard_treats_a_newly_appearing_package_json_as_a_mismatch")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let package_json = dir.join("package.json"); // does not exist yet
+
+        let cache = PersistentTransformCache {
+            enabled: true,
+            ..PersistentTransformCache::disabled()
+        };
+        let key = sample_resolution_key("pkg-a");
+        // Captured while package.json did not exist: `None`, per
+        // `ResolutionValue`'s doc comment (not a real-hash sentinel, to
+        // avoid a collision with an actual hash that happens to match it).
+        cache.insert_resolution(
+            key.clone(),
+            ResolutionValue {
+                resolved_path: dir.join("index.js"),
+                guard: vec![(package_json.clone(), None)],
+            },
+        );
+        assert!(cache.get_resolution(&key).is_some());
+
+        // The guarded path now exists: a fresh `Some(hash)` no longer
+        // equals the captured `None`, so this must be a miss even though
+        // nothing about the *resolution itself* looks wrong.
+        std::fs::write(&package_json, r#"{"name":"pkg-a"}"#).unwrap();
+        assert!(cache.get_resolution(&key).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolution_poisoned_payload_checksum_rejects_without_losing_other_entries() {
+        let good_key = sample_resolution_key("pkg-good");
+        let good_value = ResolutionValue {
+            resolved_path: PathBuf::from("/proj/node_modules/pkg-good/index.js"),
+            guard: Vec::new(),
+        };
+        let good_payload = postcard::to_stdvec(&good_value).unwrap();
+        let good_entry = StoredResolutionEntry {
+            key: good_key.clone(),
+            checksum: hash_bytes(&good_payload),
+            payload: good_payload,
+            last_used: 0,
+        };
+
+        let bad_key = sample_resolution_key("pkg-bad");
+        let bad_value = ResolutionValue {
+            resolved_path: PathBuf::from("/proj/node_modules/pkg-bad/index.js"),
+            guard: Vec::new(),
+        };
+        let mut bad_payload = postcard::to_stdvec(&bad_value).unwrap();
+        let bad_checksum = hash_bytes(&bad_payload);
+        if let Some(byte) = bad_payload.first_mut() {
+            *byte ^= 0xFF;
+        }
+        let bad_entry = StoredResolutionEntry {
+            key: bad_key.clone(),
+            checksum: bad_checksum,
+            payload: bad_payload,
+            last_used: 0,
+        };
+
+        let file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA,
+            config_fingerprint: 7,
+            entries: Vec::new(),
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
+            resolution_entries: vec![good_entry, bad_entry],
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
+        };
+        let bytes = postcard::to_stdvec(&file).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"resolution_poisoned_payload_checksum_rejects")
+        ));
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
+
+        let (cache, stats) = PersistentTransformCache::load(&dir, 7, 0);
+        assert_eq!(stats.resolution_loaded_entries, 1);
+        assert_eq!(stats.resolution_corrupt_entries, 1);
+        assert!(cache.get_resolution(&good_key).is_some());
+        assert!(cache.get_resolution(&bad_key).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolution_section_survives_a_transform_config_fingerprint_mismatch() {
+        // The resolution section has no load-time gate of its own (see
+        // `resolution_entries`'s field doc comment) — a `config_fingerprint`
+        // mismatch that discards the transform section must never touch it.
+        let good_module = sample_module(0, "const good = 1;");
+        let good_module_payload = postcard::to_stdvec(&good_module).unwrap();
+        let transform_entry = StoredEntry {
+            path: PathBuf::from("/proj/src/good.js"),
+            key: sample_key(),
+            checksum: hash_bytes(&good_module_payload),
+            payload: good_module_payload,
+            last_used: 0,
+        };
+
+        let resolution_key = sample_resolution_key("pkg-a");
+        let resolution_value = ResolutionValue {
+            resolved_path: PathBuf::from("/proj/node_modules/pkg-a/index.js"),
+            guard: Vec::new(),
+        };
+        let resolution_payload = postcard::to_stdvec(&resolution_value).unwrap();
+        let resolution_entry = StoredResolutionEntry {
+            key: resolution_key.clone(),
+            checksum: hash_bytes(&resolution_payload),
+            payload: resolution_payload,
+            last_used: 0,
+        };
+
+        let file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA,
+            config_fingerprint: 100,
+            entries: vec![transform_entry],
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
+            resolution_entries: vec![resolution_entry],
+            analysis_fingerprint: 0,
+            analysis_entries: Vec::new(),
+        };
+        let bytes = postcard::to_stdvec(&file).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"resolution_section_survives_a_transform_config_fingerprint_mismatch")
+        ));
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
+
+        // Loaded with a DIFFERENT config_fingerprint (200 != 100): the
+        // transform section must come up empty while the resolution
+        // section (ungated) still loads and hits.
+        let (cache, stats) = PersistentTransformCache::load(&dir, 200, 0);
+        assert_eq!(stats.loaded_entries, 0, "transform section must miss");
+        assert_eq!(
+            stats.resolution_loaded_entries, 1,
+            "resolution section has no config_fingerprint gate"
+        );
+        assert!(cache
+            .get(Path::new("/proj/src/good.js"), &sample_key())
+            .is_none());
+        assert!(cache.get_resolution(&resolution_key).is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolution_save_then_load_round_trips_across_a_process_boundary_simulation() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"resolution_save_then_load_round_trips")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (cache, _) = PersistentTransformCache::load(&dir, 55, 0);
+        let key = sample_resolution_key("pkg-z");
+        let value = ResolutionValue {
+            resolved_path: PathBuf::from("/proj/node_modules/pkg-z/index.js"),
+            guard: Vec::new(),
+        };
+        cache.insert_resolution(key.clone(), value);
+        let save_stats = cache.save();
+        assert!(save_stats.bytes_written > 0);
+
+        let (reloaded, load_stats) = PersistentTransformCache::load(&dir, 55, 0);
+        assert_eq!(load_stats.resolution_loaded_entries, 1);
+        let hit = reloaded
+            .get_resolution(&key)
+            .expect("expected the saved resolution entry to round-trip");
+        assert_eq!(hit, PathBuf::from("/proj/node_modules/pkg-z/index.js"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #1941 pnpm-symlink trap class: a pnpm store keeps one physical copy
+    /// of a package under a content-addressed directory and every consumer
+    /// reaches it through a *different* `node_modules` symlink. Two
+    /// resolutions for "the same" package reached through two different
+    /// symlinks must collapse to one resolution-cache scope, or a warm
+    /// cache would silently never hit for pnpm-style layouts — the exact
+    /// property the #2141 resolution cache depends on for its cache key.
+    #[cfg(unix)]
+    #[test]
+    fn node_modules_scope_realpath_collapses_symlinked_and_real_paths() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"node_modules_scope_realpath_collapses_symlinked_and_real_paths")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let real_pkg = dir.join("store/pkg-a@1.0.0/node_modules/pkg-a");
+        std::fs::create_dir_all(&real_pkg).unwrap();
+        std::fs::write(real_pkg.join("package.json"), r#"{"name":"pkg-a"}"#).unwrap();
+        std::fs::write(real_pkg.join("index.js"), "module.exports = {};").unwrap();
+
+        let consumer_a_nm = dir.join("app-a/node_modules");
+        let consumer_b_nm = dir.join("app-b/node_modules");
+        std::fs::create_dir_all(&consumer_a_nm).unwrap();
+        std::fs::create_dir_all(&consumer_b_nm).unwrap();
+        std::os::unix::fs::symlink(&real_pkg, consumer_a_nm.join("pkg-a")).unwrap();
+        std::os::unix::fs::symlink(&real_pkg, consumer_b_nm.join("pkg-a")).unwrap();
+
+        let via_a = node_modules_scope_realpath(&consumer_a_nm.join("pkg-a/index.js"));
+        let via_b = node_modules_scope_realpath(&consumer_b_nm.join("pkg-a/index.js"));
+        let expected = std::fs::canonicalize(&real_pkg).unwrap();
+
+        assert_eq!(via_a, Some(expected.clone()));
+        assert_eq!(via_b, Some(expected));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn node_modules_scope_realpath_handles_scoped_packages_and_returns_none_outside_node_modules() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"node_modules_scope_realpath_handles_scoped_packages")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let scoped_pkg = dir.join("node_modules/@scope/name");
+        std::fs::create_dir_all(&scoped_pkg).unwrap();
+        let expected = std::fs::canonicalize(&scoped_pkg).unwrap();
+
+        // A file several levels inside the scoped package still resolves to
+        // the package root, not to `@scope` alone or to `node_modules`.
+        let nested = scoped_pkg.join("dist/index.js");
+        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        std::fs::write(&nested, "export {};").unwrap();
+        assert_eq!(node_modules_scope_realpath(&nested), Some(expected));
+
+        // No `node_modules` path component at all: app source, never scoped.
+        let app_src = dir.join("src/app.tsx");
+        std::fs::create_dir_all(app_src.parent().unwrap()).unwrap();
+        std::fs::write(&app_src, "export {};").unwrap();
+        assert_eq!(node_modules_scope_realpath(&app_src), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #2141 — analysis section tests below. Same fixture/naming style as
+    // the sections above.
+
+    fn sample_raw_facts(specifier: &str) -> crate::bundler::tree_shake::RawModuleFacts {
+        crate::bundler::tree_shake::RawModuleFacts {
+            exports: Vec::new(),
+            cjs_exports: Vec::new(),
+            static_edges: vec![(specifier.to_string(), Vec::new())],
+            cjs_edges: Vec::new(),
+            dynamic_targets: Vec::new(),
+            reexports: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn analysis_miss_then_insert_then_hit_round_trips() {
+        let cache = PersistentTransformCache {
+            enabled: true,
+            ..PersistentTransformCache::disabled()
+        };
+        let key = AnalysisKey {
+            content_hash: hash_str("import x from './x'; export {};"),
+            is_typescript: false,
+        };
+
+        assert!(cache.get_analysis(&key).is_none());
+        assert_eq!(cache.analysis_misses(), 1);
+
+        cache.insert_analysis(key, sample_raw_facts("./x"));
+        let hit = cache
+            .get_analysis(&key)
+            .expect("expected a hit after insert");
+        assert_eq!(hit.static_edges[0].0, "./x");
+        assert_eq!(cache.analysis_hits(), 1);
+        assert_eq!(cache.analysis_misses(), 1);
+    }
+
+    #[test]
+    fn analysis_is_typescript_is_part_of_the_key() {
+        // Same `content_hash` (a `.js` file and a `.ts` file with
+        // byte-identical bytes are a real, if rare, scenario), different
+        // `is_typescript` — must be a miss, not a stale hit, since
+        // `compute_raw_module_facts` behaves differently for the two
+        // (`extract_export_names`'s `is_ts` parameter).
+        let cache = PersistentTransformCache {
+            enabled: true,
+            ..PersistentTransformCache::disabled()
+        };
+        let content_hash = hash_str("import x from './x'; export {};");
+        let js_key = AnalysisKey {
+            content_hash,
+            is_typescript: false,
+        };
+        cache.insert_analysis(js_key, sample_raw_facts("./x"));
+
+        let ts_key = AnalysisKey {
+            content_hash,
+            is_typescript: true,
+        };
+        assert!(cache.get_analysis(&ts_key).is_none());
+        assert!(cache.get_analysis(&js_key).is_some());
+    }
+
+    #[test]
+    fn analysis_poisoned_payload_checksum_rejects_without_losing_other_entries() {
+        let good_key = AnalysisKey {
+            content_hash: hash_str("import a from './a'; export {};"),
+            is_typescript: false,
+        };
+        let good_payload = postcard::to_stdvec(&sample_raw_facts("./a")).unwrap();
+        let good_entry = StoredAnalysisEntry {
+            key: good_key,
+            checksum: hash_bytes(&good_payload),
+            payload: good_payload,
+            last_used: 0,
+        };
+
+        let bad_key = AnalysisKey {
+            content_hash: hash_str("import b from './b'; export {};"),
+            is_typescript: false,
+        };
+        let mut bad_payload = postcard::to_stdvec(&sample_raw_facts("./b")).unwrap();
+        let bad_checksum = hash_bytes(&bad_payload);
+        if let Some(byte) = bad_payload.first_mut() {
+            *byte ^= 0xFF;
+        }
+        let bad_entry = StoredAnalysisEntry {
+            key: bad_key,
+            checksum: bad_checksum,
+            payload: bad_payload,
+            last_used: 0,
+        };
+
+        let file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA,
+            config_fingerprint: 7,
+            entries: Vec::new(),
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 0,
+            analysis_entries: vec![good_entry, bad_entry],
+        };
+        let bytes = postcard::to_stdvec(&file).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"analysis_poisoned_payload_checksum_rejects")
+        ));
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
+
+        let (cache, stats) = PersistentTransformCache::load(&dir, 7, 0);
+        assert_eq!(stats.analysis_loaded_entries, 1);
+        assert_eq!(stats.analysis_corrupt_entries, 1);
+        assert!(cache.get_analysis(&good_key).is_some());
+        assert!(cache.get_analysis(&bad_key).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn analysis_and_transform_sections_are_gated_independently() {
+        // `analysis_fingerprint` (defines-derived) and `config_fingerprint`
+        // (transform section) are independent gates — a `defines` change
+        // must fully miss the analysis section without discarding an
+        // otherwise-valid transform section, and vice versa (#2141).
+        let good_module = sample_module(0, "const good = 1;");
+        let good_module_payload = postcard::to_stdvec(&good_module).unwrap();
+        let transform_entry = StoredEntry {
+            path: PathBuf::from("/proj/src/good.js"),
+            key: sample_key(),
+            checksum: hash_bytes(&good_module_payload),
+            payload: good_module_payload,
+            last_used: 0,
+        };
+
+        let analysis_key = AnalysisKey {
+            content_hash: hash_str("import a from './a'; export {};"),
+            is_typescript: false,
+        };
+        let analysis_payload = postcard::to_stdvec(&sample_raw_facts("./a")).unwrap();
+        let analysis_entry = StoredAnalysisEntry {
+            key: analysis_key,
+            checksum: hash_bytes(&analysis_payload),
+            payload: analysis_payload,
+            last_used: 0,
+        };
+
+        let file = CacheFile {
+            schema: TRANSFORM_CACHE_SCHEMA,
+            config_fingerprint: 100,
+            entries: vec![transform_entry],
+            scanner_version: SCANNER_VERSION,
+            import_scan_entries: Vec::new(),
+            resolution_entries: Vec::new(),
+            analysis_fingerprint: 50,
+            analysis_entries: vec![analysis_entry],
+        };
+        let bytes = postcard::to_stdvec(&file).unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"analysis_and_transform_sections_are_gated_independently")
+        ));
+        std::fs::create_dir_all(dir.join("node_modules/.jet")).unwrap();
+        std::fs::write(dir.join(TRANSFORM_CACHE_REL_PATH), &bytes).unwrap();
+
+        // Loaded with a DIFFERENT config_fingerprint (200 != 100) but the
+        // SAME analysis_fingerprint (50): the transform section must miss
+        // while the analysis section survives.
+        let (cache, stats) = PersistentTransformCache::load(&dir, 200, 50);
+        assert_eq!(stats.loaded_entries, 0, "transform section must miss");
+        assert_eq!(
+            stats.analysis_loaded_entries, 1,
+            "analysis section must still load"
+        );
+        assert!(cache
+            .get(Path::new("/proj/src/good.js"), &sample_key())
+            .is_none());
+        assert!(cache.get_analysis(&analysis_key).is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn analysis_save_then_load_round_trips_across_a_process_boundary_simulation() {
+        let dir = std::env::temp_dir().join(format!(
+            "jet-transform-cache-test-{}-{}",
+            std::process::id(),
+            hash_bytes(b"analysis_save_then_load_round_trips")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (cache, _) = PersistentTransformCache::load(&dir, 55, 77);
+        let key = AnalysisKey {
+            content_hash: hash_str("import y from './y'; export {};"),
+            is_typescript: true,
+        };
+        cache.insert_analysis(key, sample_raw_facts("./y"));
+        let save_stats = cache.save();
+        assert!(save_stats.bytes_written > 0);
+
+        let (reloaded, load_stats) = PersistentTransformCache::load(&dir, 55, 77);
+        assert_eq!(load_stats.analysis_loaded_entries, 1);
+        let hit = reloaded
+            .get_analysis(&key)
+            .expect("expected the saved analysis entry to round-trip");
+        assert_eq!(hit.static_edges[0].0, "./y");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -2,6 +2,7 @@
 // CODEGEN-BEGIN
 use anyhow::Result;
 use dashmap::DashMap;
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -216,6 +217,39 @@ fn package_version(package_dir: &Path) -> Option<String> {
         .and_then(|pkg| pkg.version)
 }
 
+thread_local! {
+    /// #2141 — package.json probe accumulator for `ModuleResolver::
+    /// resolve_with_probe`. `None` when no probe is in progress (the plain
+    /// `resolve()`/`resolve_uncached()` hot path never touches this, so it
+    /// costs nothing outside of a probed resolution); `Some(paths)` while
+    /// one is, appended to by `record_package_json_probe`. Thread-local
+    /// rather than a parameter threaded through every private resolution
+    /// helper: resolution is never reentrant into its own public entry
+    /// point (a `resolve`/`resolve_with_probe` call never calls itself),
+    /// but IS invoked concurrently across many rayon worker threads
+    /// (`build_graph`'s wave-parallel prefetch), so a thread-local is the
+    /// natural safe primitive — each thread's probe is independent of
+    /// every other thread's, and only the two call sites that actually
+    /// read a package.json (`resolve_package_dir`, `try_extensions`) need
+    /// to know it exists.
+    static PACKAGE_JSON_PROBE: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) };
+}
+
+/// Record that `package_json` was consulted during the resolution
+/// currently being probed (a no-op when no probe is active — the common
+/// case, since `resolve()`'s hot path never starts one). Recorded
+/// unconditionally, whether or not the path exists on disk right now: a
+/// package.json *appearing* later at a path that was probed-and-absent is
+/// just as much a change the #2141 resolution cache must react to as one
+/// whose content changes after the fact.
+fn record_package_json_probe(package_json: &Path) {
+    PACKAGE_JSON_PROBE.with(|cell| {
+        if let Some(probe) = cell.borrow_mut().as_mut() {
+            probe.push(package_json.to_path_buf());
+        }
+    });
+}
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 impl ModuleResolver {
     /// Create a new module resolver
@@ -248,6 +282,51 @@ impl ModuleResolver {
         let resolved = self.resolve_uncached(specifier, from)?;
         self.resolution_cache.insert(cache_key, resolved.clone());
         Ok(resolved)
+    }
+
+    /// #2141 — resolve `specifier` from `from` exactly like [`Self::
+    /// resolve`], additionally returning every package.json path
+    /// consulted along the way (in touch order, possibly with duplicates
+    /// when the same path is consulted from more than one call site —
+    /// callers that need a deduplicated guard set should dedup).
+    /// Deliberately bypasses `resolution_cache`: a hit there would
+    /// short-circuit before touching any files on *this* call, silently
+    /// producing an incomplete probe for a resolution that — on a
+    /// different, earlier call within this same process — genuinely did
+    /// the work. Used only by `Bundler::resolve_dependency`'s
+    /// node_modules-scoped persistent-cache miss path; the hot `resolve()`
+    /// path (which serves the overwhelming majority of calls, including
+    /// every in-process repeat) is completely unaffected. See
+    /// `PACKAGE_JSON_PROBE`'s doc comment for why a thread-local rather
+    /// than a threaded parameter is enough to faithfully capture the real
+    /// probe set from just the two call sites that ever read a
+    /// package.json.
+    pub fn resolve_with_probe(
+        &self,
+        specifier: &str,
+        from: &Path,
+    ) -> (Result<ResolvedModule>, Vec<PathBuf>) {
+        PACKAGE_JSON_PROBE.with(|cell| *cell.borrow_mut() = Some(Vec::new()));
+        let result = self.resolve_uncached(specifier, from);
+        let probe = PACKAGE_JSON_PROBE
+            .with(|cell| cell.borrow_mut().take())
+            .unwrap_or_default();
+        (result, probe)
+    }
+
+    /// #2141 — whether `specifier` is a bare package specifier (not
+    /// relative, not absolute, not matching any configured alias prefix):
+    /// the same eligibility test [`Self::resolve`] already uses to decide
+    /// whether the in-memory `resolution_cache` may memoize a resolution
+    /// (see its doc comment) — a relative/alias specifier's target
+    /// depends on `from`'s *exact* directory, not just its enclosing
+    /// package scope, so collapsing it onto a package-root-scoped key
+    /// would silently conflate two different sibling directories'
+    /// same-named relative imports. The persistent resolution cache
+    /// (`persistent_cache`'s "Resolution section") reuses this exact
+    /// boundary for the same reason.
+    pub fn is_bare_package_specifier(&self, specifier: &str) -> bool {
+        !specifier.starts_with('.') && !specifier.starts_with('/') && !self.is_alias(specifier)
     }
 
     fn resolve_uncached(&self, specifier: &str, from: &Path) -> Result<ResolvedModule> {
@@ -432,6 +511,7 @@ impl ModuleResolver {
 
     fn resolve_package_dir(&self, package_dir: &Path, subpath: Option<&str>) -> Result<PathBuf> {
         let package_json = package_dir.join("package.json");
+        record_package_json_probe(&package_json);
         let is_root_entry = subpath.is_none() || subpath == Some(".");
 
         if package_json.exists() {
@@ -634,6 +714,7 @@ impl ModuleResolver {
 
         if base.is_dir() {
             let package_json = base.join("package.json");
+            record_package_json_probe(&package_json);
             if package_json.exists() {
                 if let Ok(main) = package::get_package_main(&package_json) {
                     let main_path = base.join(main);

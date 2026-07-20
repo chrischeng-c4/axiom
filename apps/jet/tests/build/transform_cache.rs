@@ -26,6 +26,19 @@
 //! adding new top-level tests, per the same reuse-not-duplicate-harness
 //! intent as the rest of this file. Its poisoned-entry coverage is likewise
 //! unit-level only (`persistent_cache.rs`'s `import_scan_*` tests).
+//!
+//! #2141 extends the determinism, stale-guard, and config-change tests
+//! below with the same reconciliation assertions against the store's two
+//! remaining sections: node_modules-scoped resolution and per-module
+//! raw-facts analysis (`r_hits`/`r_misses`/`a_hits`/`a_misses`, all on the
+//! same `[bundle-timing] cache: ...` line) — plus one new top-level test
+//! for the resolution section's own per-entry guard fingerprint (editing a
+//! package.json a real resolution consulted), which has no analogue in the
+//! pre-#2141 sections since only resolution entries carry a per-entry
+//! (rather than whole-section) validity check. Poisoned-entry and
+//! section-independence coverage for both new sections is unit-level only
+//! (`persistent_cache.rs`'s `resolution_*`/`analysis_*` tests), same
+//! reuse-not-duplicate-harness intent as #2140.
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::hash_map::DefaultHasher;
@@ -90,6 +103,30 @@ fn clean_dist_dir(fixture: &Path) {
     let _ = fs::remove_dir_all(fixture.join("dist"));
 }
 
+/// Replaces a top-level `node_modules/<pkg>` symlink (jet's local package
+/// store convention — see `copy_dir_all_preserving_symlinks`) with a real,
+/// physically-copied directory holding the exact same content (read-only
+/// off the symlink's target). #2141's resolution-guard test needs to edit
+/// one real, resolved package's `package.json` in place; doing that
+/// directly through the fixture's symlink would write through to
+/// `~/.jet-store`, the same machine-wide content-addressed store every
+/// other project (and concurrent test run) on this host resolves against.
+/// Materializing first scopes the mutation to this one tempdir copy.
+fn materialize_node_modules_package(fixture: &Path, pkg: &str) -> Result<()> {
+    let link_path = fixture.join("node_modules").join(pkg);
+    let target =
+        fs::read_link(&link_path).with_context(|| format!("read_link {}", link_path.display()))?;
+    fs::remove_file(&link_path)
+        .with_context(|| format!("remove symlink {}", link_path.display()))?;
+    copy_dir_all_preserving_symlinks(&target, &link_path).with_context(|| {
+        format!(
+            "materialize {} from {}",
+            link_path.display(),
+            target.display()
+        )
+    })
+}
+
 fn run_jet<I, S>(fixture: &Path, args: I) -> Result<Output>
 where
     I: IntoIterator<Item = S>,
@@ -121,27 +158,51 @@ fn require_success(output: Output, phase: &str) -> Result<Output> {
 struct CacheTiming {
     hits: u64,
     misses: u64,
+    /// #2141 — node_modules-scoped resolution section counters, same
+    /// `[bundle-timing] cache: ...` line as `hits`/`misses` above.
+    r_hits: u64,
+    r_misses: u64,
+    /// #2141 — per-module raw-facts analysis section counters, same line.
+    a_hits: u64,
+    a_misses: u64,
 }
 
 /// Parse the `[bundle-timing] cache: hits=N misses=M loaded_in=Xms
-/// saved_in=Yms bytes=Z` line `jet build` emits to stderr under
-/// `JET_BUNDLE_TIMING=1` (see `Bundler::bundle` in `src/bundler/mod.rs`).
+/// saved_in=Yms bytes=Z r_hits=A r_misses=B a_hits=C a_misses=D` line `jet
+/// build` emits to stderr under `JET_BUNDLE_TIMING=1` (see `Bundler::bundle`
+/// in `src/bundler/mod.rs`).
 fn parse_cache_timing_line(stderr: &str) -> Option<CacheTiming> {
     let line = stderr
         .lines()
         .find(|line| line.starts_with("[bundle-timing] cache:"))?;
     let mut hits = None;
     let mut misses = None;
+    let mut r_hits = None;
+    let mut r_misses = None;
+    let mut a_hits = None;
+    let mut a_misses = None;
     for field in line.split_whitespace() {
         if let Some(v) = field.strip_prefix("hits=") {
             hits = v.parse::<u64>().ok();
         } else if let Some(v) = field.strip_prefix("misses=") {
             misses = v.parse::<u64>().ok();
+        } else if let Some(v) = field.strip_prefix("r_hits=") {
+            r_hits = v.parse::<u64>().ok();
+        } else if let Some(v) = field.strip_prefix("r_misses=") {
+            r_misses = v.parse::<u64>().ok();
+        } else if let Some(v) = field.strip_prefix("a_hits=") {
+            a_hits = v.parse::<u64>().ok();
+        } else if let Some(v) = field.strip_prefix("a_misses=") {
+            a_misses = v.parse::<u64>().ok();
         }
     }
     Some(CacheTiming {
         hits: hits?,
         misses: misses?,
+        r_hits: r_hits?,
+        r_misses: r_misses?,
+        a_hits: a_hits?,
+        a_misses: a_misses?,
     })
 }
 
@@ -268,6 +329,26 @@ fn persistent_cache_determinism_cold_vs_warm_rebuild() -> Result<()> {
             .exists(),
         "cold build did not write the persistent transform cache store"
     );
+    // #2141: a cold store has no resolution/analysis entries loaded from
+    // disk, but both sections double as intra-run memoization (the
+    // resolution key is scoped to the *importing package*, not the
+    // importing file — see `node_modules_scope_realpath` — so dozens of
+    // sibling files inside one node_modules package that import the same
+    // bare specifier share a single key and hit each other within the same
+    // build; analysis can likewise see a handful of intra-run hits from
+    // modules with byte-identical content). So this checks the
+    // miss/at-least-one relationship rather than asserting hits == 0 —
+    // same reasoning as the import-scan cold-run comment below.
+    assert!(
+        cold_timing.r_misses > 0,
+        "expected the mui-visual fixture to resolve at least one \
+         node_modules-scoped bare specifier; stderr={cold_stderr}"
+    );
+    assert!(
+        cold_timing.a_misses > 0,
+        "expected the mui-visual fixture to analyze at least one module; \
+         stderr={cold_stderr}"
+    );
     // #2140: every fresh import scan (fast-path or tree-sitter fallback) is
     // exactly one import-scan cache miss; holds on any run regardless of
     // how many modules happen to share byte-identical content (which can
@@ -301,6 +382,42 @@ fn persistent_cache_determinism_cold_vs_warm_rebuild() -> Result<()> {
          cold misses={} warm hits={}\nstderr={warm_stderr}",
         cold_timing.misses, warm_timing.hits
     );
+    // #2141: an unchanged rebuild must have zero resolution/analysis
+    // misses, and must hit every resolution/analysis attempt the cold build
+    // made — hits + misses, not just misses (same intra-run-reuse reasoning
+    // as the cold-run comment above and the import-scan hits comparison
+    // below) — the AC1 "r_hits/a_hits at 100%" numbers.
+    assert_eq!(
+        warm_timing.r_misses, 0,
+        "warm rebuild (unchanged sources) must have zero resolution cache \
+         misses; stderr={warm_stderr}"
+    );
+    assert_eq!(
+        warm_timing.r_hits,
+        cold_timing.r_hits + cold_timing.r_misses,
+        "warm rebuild must resolution-cache-hit every bare specifier \
+         resolution the cold build made (fresh resolutions + intra-run \
+         dedup hits); cold r_hits={} r_misses={} warm r_hits={}\n\
+         stderr={warm_stderr}",
+        cold_timing.r_hits,
+        cold_timing.r_misses,
+        warm_timing.r_hits
+    );
+    assert_eq!(
+        warm_timing.a_misses, 0,
+        "warm rebuild (unchanged sources) must have zero analysis cache \
+         misses; stderr={warm_stderr}"
+    );
+    assert_eq!(
+        warm_timing.a_hits,
+        cold_timing.a_hits + cold_timing.a_misses,
+        "warm rebuild must analysis-cache-hit every module analysis the \
+         cold build made (fresh analyses + intra-run dedup hits); \
+         cold a_hits={} a_misses={} warm a_hits={}\nstderr={warm_stderr}",
+        cold_timing.a_hits,
+        cold_timing.a_misses,
+        warm_timing.a_hits
+    );
     // #2140: an unchanged rebuild must have zero import-scan misses, and
     // must hit every content signature the cold build either scanned fresh
     // or already deduped in-memory (hits + misses, not just misses — see
@@ -333,7 +450,9 @@ fn persistent_cache_determinism_cold_vs_warm_rebuild() -> Result<()> {
 
     eprintln!(
         "[transform_cache] determinism: cold hits={} misses={}; warm hits={} misses={}; \
-         import-scan cold hits={} misses={}; warm hits={} misses={}; dist files={}",
+         import-scan cold hits={} misses={}; warm hits={} misses={}; \
+         resolution cold r_hits={} r_misses={}; warm r_hits={} r_misses={}; \
+         analysis cold a_hits={} a_misses={}; warm a_hits={} a_misses={}; dist files={}",
         cold_timing.hits,
         cold_timing.misses,
         warm_timing.hits,
@@ -342,6 +461,14 @@ fn persistent_cache_determinism_cold_vs_warm_rebuild() -> Result<()> {
         cold_import_scan.misses,
         warm_import_scan.hits,
         warm_import_scan.misses,
+        cold_timing.r_hits,
+        cold_timing.r_misses,
+        warm_timing.r_hits,
+        warm_timing.r_misses,
+        cold_timing.a_hits,
+        cold_timing.a_misses,
+        warm_timing.a_hits,
+        warm_timing.a_misses,
         warm_signature.len(),
     );
     Ok(())
@@ -525,6 +652,16 @@ fn persistent_cache_config_change_forces_full_miss() -> Result<()> {
         "expected the mui-visual fixture to transform more than one module; \
          got {total_modules}"
     );
+    // #2141: same "own pool, tracked independently" reasoning as the
+    // import-scan section (see `persistent_cache_stale_guard_only_edited_
+    // module_misses`'s comment) — the analysis section's module count need
+    // not equal the transform section's exactly.
+    let total_analyzed = first_timing.a_hits + first_timing.a_misses;
+    assert!(
+        total_analyzed > 1,
+        "expected the mui-visual fixture to analyze more than one module; \
+         got {total_analyzed}"
+    );
 
     clean_dist_dir(&fixture);
     let second = require_success(
@@ -558,11 +695,185 @@ fn persistent_cache_config_change_forces_full_miss() -> Result<()> {
         fixture.join("dist/index.html").exists(),
         "build after a config change must still produce correct output (dist/index.html)"
     );
+    // #2141: `analysis_fingerprint` is derived from `defines` (see its doc
+    // comment in `persistent_cache.rs`), so a --define change must discard
+    // every analysis entry *loaded from disk* — but, same as the cold-run
+    // reasoning in `persistent_cache_determinism_cold_vs_warm_rebuild`, the
+    // section also serves as intra-run memoization for modules that happen
+    // to share byte-identical content, and defines don't change source
+    // content or module-graph traversal order — so the second build must
+    // reproduce *exactly* the first build's own intra-run collision count,
+    // not zero: any hit count above that would mean a stale disk entry
+    // leaked through the fingerprint gate.
+    assert_eq!(
+        second_timing.a_hits, first_timing.a_hits,
+        "changing a --define must invalidate every disk-loaded analysis \
+         entry, leaving only the first build's own intra-run collision \
+         hits (first a_hits={}); stderr={second_stderr}",
+        first_timing.a_hits
+    );
+    assert_eq!(
+        second_timing.a_misses, first_timing.a_misses,
+        "changing a --define must re-analyze every module the first build \
+         analyzed fresh (first a_misses={}); stderr={second_stderr}",
+        first_timing.a_misses
+    );
+    // #2141: `resolver_config_fingerprint` deliberately excludes `defines`
+    // (aliases/baseUrl/conditions/externalize flags only — see its doc
+    // comment) — the resolution section must be completely unaffected by
+    // this change, the opposite reconciliation from the analysis section
+    // just above, proving the two #2141 sections are gated independently
+    // of each other end-to-end (not just at the unit level).
+    assert_eq!(
+        second_timing.r_misses, 0,
+        "changing a --define must not invalidate the resolution section; \
+         stderr={second_stderr}"
+    );
+    assert_eq!(
+        second_timing.r_hits,
+        first_timing.r_hits + first_timing.r_misses,
+        "changing a --define must still resolution-cache-hit every bare \
+         specifier resolution the first build made (fresh resolutions + \
+         intra-run dedup hits); first r_hits={} r_misses={} \
+         second r_hits={}\nstderr={second_stderr}",
+        first_timing.r_hits,
+        first_timing.r_misses,
+        second_timing.r_hits
+    );
 
     eprintln!(
         "[transform_cache] config change: total_modules={total_modules} \
-         first hits={} misses={}; second (changed define) hits={} misses={}",
-        first_timing.hits, first_timing.misses, second_timing.hits, second_timing.misses,
+         total_analyzed={total_analyzed} first hits={} misses={} r_hits={} r_misses={} \
+         a_hits={} a_misses={}; second (changed define) hits={} misses={} r_hits={} \
+         r_misses={} a_hits={} a_misses={}",
+        first_timing.hits,
+        first_timing.misses,
+        first_timing.r_hits,
+        first_timing.r_misses,
+        first_timing.a_hits,
+        first_timing.a_misses,
+        second_timing.hits,
+        second_timing.misses,
+        second_timing.r_hits,
+        second_timing.r_misses,
+        second_timing.a_hits,
+        second_timing.a_misses,
+    );
+    Ok(())
+}
+
+/// #2141 — resolution guard: editing the content of ONE package.json a
+/// real node_modules-scoped resolution actually consulted must miss at
+/// least that resolution (and any other resolution whose guard included
+/// it), leave the transform/analysis sections untouched (no source module
+/// content changed), and still produce byte-identical output to the
+/// pre-edit baseline (the edit adds an unused field only). The
+/// `resolution_guard_*` unit tests in `persistent_cache.rs` cover the
+/// guard mechanism directly against synthetic key/value pairs; this proves
+/// the same property end-to-end against a real symlinked node_modules
+/// layout.
+#[test]
+fn persistent_cache_resolution_guard_package_json_change_forces_resolution_miss() -> Result<()> {
+    let temp = tempfile::tempdir().context("temp fixture")?;
+    let fixture = temp.path().join("mui-visual");
+    copy_fixture(&fixture).context("copy mui-visual fixture")?;
+
+    // `react` is imported directly (`main.tsx`, `MuiVisualFixture.tsx`) as
+    // a bare top-level specifier, guaranteeing its package.json is
+    // consulted by a real node_modules-scoped resolution. Materialized to
+    // a private copy first so the guard-busting edit below can never write
+    // through the symlink into the shared, machine-wide `~/.jet-store`.
+    materialize_node_modules_package(&fixture, "react")
+        .context("materialize node_modules/react")?;
+
+    clean_dist_dir(&fixture);
+    let baseline = require_success(run_jet(&fixture, BUILD_ARGS)?, "baseline build")?;
+    let baseline_stderr = String::from_utf8_lossy(&baseline.stderr).into_owned();
+    let baseline_timing = parse_cache_timing_line(&baseline_stderr).ok_or_else(|| {
+        anyhow!("baseline build did not print a cache timing line\nstderr={baseline_stderr}")
+    })?;
+    assert!(
+        baseline_timing.r_misses > 0,
+        "expected the mui-visual fixture's node_modules imports to populate \
+         the resolution cache; stderr={baseline_stderr}"
+    );
+    let baseline_signature = dist_signature(&fixture).context("hash baseline dist output")?;
+
+    let package_json = fixture.join("node_modules/react/package.json");
+    let original = fs::read_to_string(&package_json)
+        .with_context(|| format!("read {}", package_json.display()))?;
+    let trimmed = original.trim_end();
+    assert!(
+        trimmed.ends_with('}'),
+        "expected react's package.json to end with a closing brace"
+    );
+    let mutated = format!(
+        "{}{}",
+        &trimmed[..trimmed.len() - 1],
+        ",\"_jetCacheGuardTest\":true}\n"
+    );
+    fs::write(&package_json, mutated)
+        .with_context(|| format!("write {}", package_json.display()))?;
+
+    clean_dist_dir(&fixture);
+    let rebuild = require_success(
+        run_jet(&fixture, BUILD_ARGS)?,
+        "rebuild after package.json edit",
+    )?;
+    let rebuild_stderr = String::from_utf8_lossy(&rebuild.stderr).into_owned();
+    let rebuild_timing = parse_cache_timing_line(&rebuild_stderr).ok_or_else(|| {
+        anyhow!(
+            "rebuild after package.json edit did not print a cache timing line\n\
+             stderr={rebuild_stderr}"
+        )
+    })?;
+    assert!(
+        rebuild_timing.r_misses > 0,
+        "editing a consulted package.json must miss at least the \
+         resolution(s) whose guard included it; stderr={rebuild_stderr}"
+    );
+    // The transform/analysis sections are untouched by this edit (no
+    // source module content or defines changed) — only the resolution
+    // section's guard should react.
+    assert_eq!(
+        rebuild_timing.misses, 0,
+        "a package.json content change must not invalidate the transform \
+         section; stderr={rebuild_stderr}"
+    );
+    assert_eq!(
+        rebuild_timing.hits,
+        baseline_timing.hits + baseline_timing.misses,
+        "every module's transform-cache entry must still hit after a \
+         package.json-only edit; stderr={rebuild_stderr}"
+    );
+    assert_eq!(
+        rebuild_timing.a_misses, 0,
+        "a package.json content change must not invalidate the analysis \
+         section; stderr={rebuild_stderr}"
+    );
+
+    let rebuild_signature = dist_signature(&fixture).context("hash rebuilt dist output")?;
+    assert_eq!(
+        baseline_signature, rebuild_signature,
+        "a resolution-guard-busted rebuild must still produce byte-identical \
+         dist/ output to the original baseline (the package.json edit added \
+         an unused field only, no behavioral change)"
+    );
+    assert!(
+        fixture.join("dist/index.html").exists(),
+        "rebuild after a package.json content change must still produce \
+         correct output (dist/index.html)"
+    );
+
+    eprintln!(
+        "[transform_cache] resolution guard: baseline r_hits={} r_misses={}; \
+         rebuild r_hits={} r_misses={} misses={} a_misses={}",
+        baseline_timing.r_hits,
+        baseline_timing.r_misses,
+        rebuild_timing.r_hits,
+        rebuild_timing.r_misses,
+        rebuild_timing.misses,
+        rebuild_timing.a_misses,
     );
     Ok(())
 }
