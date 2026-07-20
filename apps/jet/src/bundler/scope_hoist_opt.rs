@@ -8031,7 +8031,7 @@ mod rhs_normalization_tests {
     }
 // </HANDWRITE>
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn combined_pipeline_normalized_then_still_kept_key_is_fine() {
         // A normalizable RHS on a namespace-escaped module still gets
