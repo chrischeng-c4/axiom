@@ -71,11 +71,6 @@ changes:
     section: logic
     impl_mode: hand-written
     anchor: mb_weakref_proxy
-  - path: projects/mamba/src/runtime/stdlib/weakref_mod.rs
-    action: modify
-    section: unit-test
-    impl_mode: hand-written
-    anchor: tests
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
