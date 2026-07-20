@@ -115,6 +115,21 @@ fn prod_profile_renders_the_connected_security_boundary() {
         })
         .expect("rendered Defer StatefulSet");
     let container = &statefulset["spec"]["template"]["spec"]["containers"][0];
+    let pod_security = &statefulset["spec"]["template"]["spec"]["securityContext"];
+    assert_eq!(pod_security["runAsNonRoot"], true);
+    assert_eq!(pod_security["runAsUser"], 65532);
+    assert_eq!(pod_security["runAsGroup"], 65532);
+    assert_eq!(pod_security["seccompProfile"]["type"], "RuntimeDefault");
+    assert_eq!(container["securityContext"]["runAsNonRoot"], true);
+    assert_eq!(
+        container["securityContext"]["allowPrivilegeEscalation"],
+        false
+    );
+    assert_eq!(container["securityContext"]["readOnlyRootFilesystem"], true);
+    assert_eq!(
+        container["securityContext"]["capabilities"]["drop"][0],
+        "ALL"
+    );
     let rendered_container = serde_yaml::to_string(container).unwrap();
     let rendered_statefulset = serde_yaml::to_string(statefulset).unwrap();
     assert!(rendered_container.contains("DEFER_TOKEN_REGISTRY_FILE"));
