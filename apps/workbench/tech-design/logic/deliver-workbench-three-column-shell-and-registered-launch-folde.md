@@ -170,3 +170,49 @@ changes:
     impl_mode: hand-written
     description: Make the cumulative Workbench project test gate run every integration target.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-three-column-folder-shell-verification
+requirements:
+  collapse_focus_and_keyboard_operation:
+    id: R3
+    text: "The launch-folder navigation collapses to a compact rail, keeps the toggle reachable, and supports deterministic Tab, ArrowUp, ArrowDown, Enter, and Space operation with visible focus."
+    kind: accessibility
+    risk: medium
+    verify: e2e/folder-shell.spec.js::keyboard navigation and compact rail
+  desktop_and_constrained_viewport_evidence:
+    id: R2
+    text: "The primary three-column state renders at 1440x900 and remains functional at 860x720 with retained PNG evidence and no clipped primary action."
+    kind: visual
+    risk: high
+    verify: tests/folder_shell_journey.rs::rendered_folder_shell_journey_passes
+  folder_identity_persistence_and_launch_boundary:
+    id: R1
+    text: "Registering a valid directory canonicalizes and de-duplicates its identity, persists only registered folders plus selected id, reloads that state, and returns the selected canonical path to the future launch boundary without defining terminal cwd."
+    kind: functional
+    risk: high
+    verify: tests/folder_shell_journey.rs::registry_persists_identity_selection_and_future_launch_path
+  functional_empty_error_and_landmark_states:
+    id: R4
+    text: "Empty, cancelled-picker, invalid-path, and persistence-error states remain actionable; nav, main, aside, headings, controls, status messages, contrast tokens, and readable text are machine-observable without skeleton placeholders."
+    kind: regression
+    risk: medium
+    verify: e2e/folder-shell.spec.js::functional states and accessibility contract
+  no_agent_process_or_pty_ownership:
+    id: R5
+    text: "This slice exposes no child-process, PTY, terminal-session, agent-launch, renderer, or AW mutation implementation and its browser journey records that no launch command was invoked."
+    kind: contract
+    risk: high
+    verify: tests/folder_shell_journey.rs::folder_shell_does_not_own_agent_process_or_terminal_cwd
+---
+flowchart TD
+    r1[R1 folder identity persistence and launch boundary] --> tests_folder_shell_journey_rs_registry_persists_identity_selection_and_future_launch_path[tests/folder_shell_journey.rs::registry_persists_identity_selection_and_future_launch_path]
+    r2[R2 desktop and constrained viewport evidence] --> tests_folder_shell_journey_rs_rendered_folder_shell_journey_passes[tests/folder_shell_journey.rs::rendered_folder_shell_journey_passes]
+    r3[R3 collapse focus and keyboard operation] --> e2e_folder_shell_spec_js_keyboard_navigation_and_compact_rail[e2e/folder-shell.spec.js::keyboard navigation and compact rail]
+    r4[R4 functional empty error and landmark states] --> e2e_folder_shell_spec_js_functional_states_and_accessibility_contract[e2e/folder-shell.spec.js::functional states and accessibility contract]
+    r5[R5 no agent process or pty ownership] --> tests_folder_shell_journey_rs_folder_shell_does_not_own_agent_process_or_terminal_cwd[tests/folder_shell_journey.rs::folder_shell_does_not_own_agent_process_or_terminal_cwd]
+```
