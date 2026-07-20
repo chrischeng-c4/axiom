@@ -39,7 +39,6 @@ sequenceDiagram
     Sched-->>App: Batch 2 Results
     deactivate Sched
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
