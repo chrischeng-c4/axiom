@@ -71,7 +71,7 @@ changes:
     action: modify
     section: logic
     impl_mode: hand-written
-    anchor: RhsNormalizationStats
+    anchor: convert_and_elide_flat_region
   - path: apps/jet/src/bundler/scope_hoist_opt.rs
     action: modify
     section: logic
