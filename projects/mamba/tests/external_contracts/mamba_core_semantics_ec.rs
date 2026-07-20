@@ -387,7 +387,7 @@ fn record_stability_sample(
     }
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in mamba_core_semantics_ec.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#1979" reason="unit-test section in mamba_core_semantics_ec.rs is hand-written pending codegen support">
 #[test]
 fn to_thread_gather_stability() {
     let marker_dir = tempfile::tempdir().expect("create stability marker directory");
@@ -643,6 +643,56 @@ asyncio.run(main())
         samples.window_one_peak_rss,
         samples.window_two_peak_rss,
         stable_digest(stdout.as_bytes())
+    );
+}
+
+#[test]
+fn build_globals_dict_key_leak_free() {
+    let mut names_block = String::new();
+    for i in 0..20 {
+        names_block.push_str(&format!("g{i} = {i}\n"));
+    }
+    let make_source = |iterations: u32| {
+        format!(
+            r#"{names_block}
+def helper():
+    return 0
+
+total = 0
+for _ in range({iterations}):
+    total += len(globals())
+print("DONE", total)
+"#
+        )
+    };
+
+    let small = run_mamba_script(&make_source(100), EFFICIENCY_TIMEOUT);
+    assert_success("build_globals_dict_key_leak_free (small)", &small);
+    assert!(small.stdout.contains("DONE"), "small run stdout: {}", small.stdout);
+    let large = run_mamba_script(&make_source(50_000), EFFICIENCY_TIMEOUT);
+    assert_success("build_globals_dict_key_leak_free (large)", &large);
+    assert!(large.stdout.contains("DONE"), "large run stdout: {}", large.stdout);
+
+    // Each globals() call fabricates one Str key per exposed name (21 here)
+    // inside build_globals_dict; an unreleased key leaks one heap allocation
+    // per name per call, so peak RSS grows roughly linearly with call count
+    // instead of plateauing. Fixed slack (not a ratio) because both runs
+    // share the same fixed interpreter-startup RSS floor — only true
+    // per-call growth should show up in the delta.
+    let rss_limit = small.peak_rss_bytes.saturating_add(24 * MIB);
+    assert!(
+        large.peak_rss_bytes <= rss_limit,
+        "peak RSS grew with globals() call count — build_globals_dict key \
+         leak suspected: small(100 calls)={} bytes, large(50_000 calls)={} \
+         bytes, limit={} bytes",
+        small.peak_rss_bytes,
+        large.peak_rss_bytes,
+        rss_limit
+    );
+    println!(
+        "MAMBA-T1-BUILD-GLOBALS-DICT-KEY-LEAK-FREE names=21 iterations_small=100 iterations_large=50000 rss_small={} rss_large={}",
+        small.peak_rss_bytes,
+        large.peak_rss_bytes
     );
 }
 // </HANDWRITE>
