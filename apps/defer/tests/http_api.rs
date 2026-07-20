@@ -62,6 +62,7 @@ fn h2c_client() -> reqwest::Client {
         .unwrap()
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the required-auth h2c oracle for tokenless operational routes, protected task/admin routes, queue-scoped RBAC, and cross-queue tenant denial.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
     let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -307,4 +308,5 @@ async fn h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live() {
     auth_server.abort();
     target.abort();
 }
+// </HANDWRITE>
 // HANDWRITE-END
