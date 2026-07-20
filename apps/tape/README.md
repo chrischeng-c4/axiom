@@ -198,7 +198,7 @@ Type: RuntimeTool
 Root WI: #768
 Status: verified
 Surfaces: CLI/Test: `tape-bench run`, local append/replay throughput proxy, p50/p95 append latency, full replay latency, checkpoint write latency, real NATS JetStream replay comparison, real Kafka (KRaft) replay comparison, and explicit peer calibration ledger.
-EC Dimensions: efficiency: `cargo test --release -p tape --test tape_perf_gate -- --nocapture`; `cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture`; `cargo test --release -p tape --test tape_vs_kafka -- --nocapture` - local regression budget plus real-service h2c JetStream and Kafka replay gates
+EC Dimensions: efficiency: `cargo test --release -p tape --test tape_perf_gate -- --nocapture`; `cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture`; `cargo test --release -p tape --test tape_vs_kafka -- --ignored --nocapture` - local regression budget plus real-service h2c JetStream and Kafka replay gates
 Required Verification: smoke, conformance
 Promise:
 Tape maintains a local replay performance regression gate and executable
