@@ -993,6 +993,235 @@ pub fn existing() { 42; }\n\
     assert_eq!(filled_issue.phase.as_deref(), Some(td_phase::CB_FILLED));
 }
 
+/// #1904 AC1/AC2/AC3: once the active TD's declared `## Changes` paths carry
+/// zero HANDWRITE markers (a marker-free integration test + semantic doc
+/// accompanying already-filled source), `aw td fill <id>` brief mode must
+/// permit only those declared paths to be dirty, stage and commit them
+/// through the normal terminal Cb-Fill lifecycle commit, and advance the
+/// phase — while a dirty path outside that declared scope stays a hard
+/// rejection.
+#[tokio::test]
+async fn test_marker_free_brief_commits_declared_evidence_and_rejects_unrelated_dirty_path() {
+    use agentic_workflow::issues::types::{td_phase, IssueType};
+    use agentic_workflow::issues::{Issue, IssueBackend, IssueState, LocalBackend};
+    use std::process::Command;
+
+    let Some(git) = agentic_workflow::git::find_git_bin() else {
+        eprintln!("skipping: git binary not on PATH");
+        return;
+    };
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["init", "-b", "project-test"])
+        .status()
+        .expect("git init");
+    for (k, v) in [
+        ("user.email", "test@test"),
+        ("user.name", "test"),
+        ("commit.gpgsign", "false"),
+    ] {
+        Command::new(&git)
+            .arg("-C")
+            .arg(root)
+            .args(["config", k, v])
+            .status()
+            .unwrap();
+    }
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    std::fs::create_dir_all(root.join(".aw")).unwrap();
+    // #1921: `aw td fill`'s mutating verbs resolve the configured issue
+    // backend unconditionally via `guard_issue_mutation`, so this fully
+    // offline sandbox needs a resolvable `local` backend, gated behind the
+    // sanctioned `AW_FIXTURE_LOCAL_BACKEND=1` fixture escape hatch (#1348)
+    // set on every spawned `aw` command below.
+    std::fs::write(
+        root.join("aw.toml"),
+        "[agentic_workflow.issue_platform]\ntype = \"local\"\n",
+    )
+    .unwrap();
+
+    // Two declared Changes paths that intentionally carry no HANDWRITE
+    // marker: an integration test and a semantic doc accompanying
+    // marker-backed source landed elsewhere.
+    let test_rel = "apps/demo/tests/example_test.rs";
+    let doc_rel = "apps/demo/tech-design/semantic/example.md";
+    for rel in [test_rel, doc_rel] {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "seed content\n").unwrap();
+    }
+
+    let spec_rel = ".aw/tech-design/specs/demo.md";
+    let spec_content = format!(
+        "---\nid: demo\nfill_sections: [changes]\n---\n\n# Demo\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: {test_rel}\n    action: modify\n    impl_mode: hand-written\n  - path: {doc_rel}\n    action: modify\n    impl_mode: hand-written\n```\n"
+    );
+    let spec_dir = root.join(".aw/tech-design/specs");
+    std::fs::create_dir_all(&spec_dir).unwrap();
+    std::fs::write(spec_dir.join("demo.md"), spec_content).unwrap();
+
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .status()
+        .unwrap();
+    Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", "seed"])
+        .status()
+        .unwrap();
+
+    let slug = "cb-fill-marker-free-evidence-test";
+    let backend = LocalBackend::from_project_root(root);
+    let issue = Issue {
+        issue_type: IssueType::Enhancement,
+        title: format!("{slug} WI"),
+        state: IssueState::Open,
+        id: None,
+        github_id: None,
+        gitlab_id: None,
+        url: None,
+        author: None,
+        labels: vec![format!("phase:{}", td_phase::CB_GENNED)],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        slug: slug.to_string(),
+        body: format!("# {slug} WI\n"),
+        related: Vec::new(),
+        implements: vec![spec_rel.to_string()],
+        phase: Some(td_phase::CB_GENNED.to_string()),
+        branch: None,
+        target_branch: None,
+        git_workflow: None,
+        change_id: None,
+        iteration: None,
+        current_task_id: None,
+        impl_spec_phase: None,
+        task_revisions: None,
+        revision_counts: None,
+        last_action: None,
+        session_id: None,
+        validation_errors: Vec::new(),
+        review_count: None,
+        flagged_sections: None,
+        fill_retry_count: None,
+        ship_status: None,
+        ship_commit: None,
+        regen_verified_at: None,
+    };
+    backend.create(&issue).await.expect("seed open issue");
+
+    // AC2: dirty a path outside the TD's declared Changes scope, then run
+    // brief. The zero-marker fast path must still reject it before staging
+    // or committing anything.
+    let unrelated_path = root.join("unrelated.txt");
+    std::fs::write(&unrelated_path, "not part of this TD's declared scope\n").unwrap();
+
+    let rejected_output = Command::new(&aw_bin)
+        .args(["td", "fill", slug])
+        .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
+        .output()
+        .expect("run aw td fill (brief) with an unrelated dirty file");
+    assert!(
+        !rejected_output.status.success(),
+        "brief must reject a dirty path outside the declared Changes scope:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&rejected_output.stdout),
+        String::from_utf8_lossy(&rejected_output.stderr)
+    );
+    let rejected_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&rejected_output.stdout),
+        String::from_utf8_lossy(&rejected_output.stderr)
+    );
+    assert!(
+        rejected_combined.contains("dirty"),
+        "rejection must explain the dirty-tree guard, got:\n{}",
+        rejected_combined
+    );
+    let status_after_reject = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git status after rejected brief");
+    assert!(
+        String::from_utf8_lossy(&status_after_reject.stdout).contains("unrelated.txt"),
+        "a rejected brief must never stage or commit the unrelated dirty file"
+    );
+    std::fs::remove_file(&unrelated_path).unwrap();
+
+    // AC1: dirty only the two declared marker-free Changes paths — the
+    // bounded implementation evidence a hand-written test/doc edit is meant
+    // to carry — then run brief. It must be accepted, staged, and committed
+    // through the normal terminal Cb-Fill lifecycle commit, advancing the
+    // issue phase.
+    std::fs::write(root.join(test_rel), "// updated test evidence\n").unwrap();
+    std::fs::write(root.join(doc_rel), "updated doc evidence\n").unwrap();
+
+    let accepted_output = Command::new(&aw_bin)
+        .args(["td", "fill", slug])
+        .current_dir(root)
+        .env("AW_FIXTURE_LOCAL_BACKEND", "1")
+        .output()
+        .expect("run aw td fill (brief) with only declared paths dirty");
+    assert!(
+        accepted_output.status.success(),
+        "brief must accept dirty declared Changes paths once no markers remain:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&accepted_output.stdout),
+        String::from_utf8_lossy(&accepted_output.stderr)
+    );
+    let accepted_stdout = String::from_utf8_lossy(&accepted_output.stdout);
+    assert!(
+        accepted_stdout.contains("\"command\":\"aw td code-check"),
+        "the zero-marker fast path must dispatch to terminal code-check, got:\n{}",
+        accepted_stdout
+    );
+
+    let status_after_accept = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git status after accepted brief");
+    assert!(
+        String::from_utf8_lossy(&status_after_accept.stdout)
+            .trim()
+            .is_empty(),
+        "the declared-evidence commit must leave the tree clean:\n{}",
+        String::from_utf8_lossy(&status_after_accept.stdout)
+    );
+    let show_output = Command::new(&git)
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--stat", "HEAD"])
+        .output()
+        .expect("git show --stat HEAD");
+    let show_stdout = String::from_utf8_lossy(&show_output.stdout);
+    assert!(
+        show_stdout.contains(test_rel) && show_stdout.contains(doc_rel),
+        "the terminal Cb-Fill commit must include both declared marker-free paths, got:\n{}",
+        show_stdout
+    );
+
+    let filled_issue = backend
+        .get(slug)
+        .await
+        .expect("read filled issue")
+        .expect("filled issue remains");
+    assert_eq!(filled_issue.phase.as_deref(), Some(td_phase::CB_FILLED));
+}
+
 #[test]
 #[ignore = "requires real worktree + git history"]
 fn test_cb_fill_trailer_committed() {
