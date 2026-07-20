@@ -52,3 +52,62 @@ flowchart LR
 `GraphPayloadSource` is a read-only byte-source boundary. Production uses `FileGraphPayloadSource`, which performs one metadata check and reads at most one MiB from the compatibility path. Tests may inject a failing source to prove provider-failure isolation without starting Graphify or importing third-party code. `GraphContextRenderer::render` parses and validates the payload, converts every node and edge into `ContextProvenanceItem`, resolves it against the selected root, and renders escaped node/edge cards. Canonical extracted inputs become navigation links; inferred or ambiguous records always show their derived classification/provider badge and every canonical, missing, or invalid input. No graph fact is presented as repository authority.
 
 Malformed payloads and source failures return `RendererError`; `RendererRegistry` records the graph warning and continues to lower-priority renderers. `RendererRegistry::production` registers Graph, optional AW typed, Markdown, and Git renderers, while tests use a local registry-sentinel renderer to prove AW-like usability without importing `AwTypedRenderer`. The adapter exposes no repository writes, subprocesses, provider invocation, AW/GitHub mutation, PTY ownership, approval, or lifecycle transition. Refresh is a fresh bounded read; close is ordinary drop. Graphify remains reference-only interaction input, while repository files and executable gates remain canonical.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/src/context/graph.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define the repository-owned v1 graph payload, bounded read source, node/edge validation, provenance mapping, escaped graph rendering, and provider-failure surface.
+  - path: apps/workbench/src/context/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: impl RendererRegistry
+    description: Export graph types, add Graph document kind, and register Graph ahead of optional AW, Markdown, and Git in the production registry.
+  - path: apps/workbench/src/production_journey.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: render_journey_context
+    description: Route desktop context requests through the production registry that includes the optional graph adapter.
+  - path: apps/workbench/tests/graph_context_adapter.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Prove every node/edge has canonical navigation or a visible derived label, plus absence, malformed data, injected source failure, sentinel isolation, and no mutation surface.
+  - path: apps/workbench/tests/fixtures/graph-context/graphify-out/workbench-graph.json
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Deterministic workbench.graph-context.v1 payload covering extracted, inferred, ambiguous, missing, and spanned sources.
+  - path: apps/workbench/tests/fixtures/graph-context/src/service.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Canonical source fixture for graph nodes and edges.
+  - path: apps/workbench/tests/fixtures/graph-context/src/handler.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Second canonical source fixture for multi-input inference and edge provenance.
+  - path: apps/workbench/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document optional Graphify-compatible payload activation, derived authority, fallback, and reference-only ownership.
+  - path: apps/workbench/CAPABILITIES.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Complete the optional graph adapter work root and register its deterministic gate.
+  - path: apps/workbench/CONTRIBUTING.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: Record compatibility schema limits, provenance, sentinel isolation, failure, and read-only verification rules.
+```
