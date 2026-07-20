@@ -96,7 +96,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    anchor: contains_top_level_assignment_operator
+    anchor: contains_top_level_comma
   - path: apps/jet/src/bundler/scope_hoist_opt.rs
     action: modify
     section: logic

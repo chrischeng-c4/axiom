@@ -3760,6 +3760,7 @@ struct RhsNormalizationStats {
     skipped_impure: usize,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// The v1 purity ladder for hoisting a non-identifier export RHS into a
 /// synthetic `var` binding (#2161): arrow functions, function expressions,
 /// and the same bare-literal shapes [`is_inlineable_literal_export_expr`]
@@ -3774,7 +3775,9 @@ fn is_pure_normalizable_export_rhs(expr: &str) -> bool {
         || is_bare_function_expression(expr)
         || is_bare_arrow_function_expression(expr)
 }
+// </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// `function` [name] `(` params `)` `{` body `}`, consuming `expr` in full.
 /// `async`/generator forms fall outside the v1 ladder: an `async` prefix
 /// means `expr` never starts with the literal text `"function"`, and a
@@ -3820,6 +3823,7 @@ fn is_bare_function_expression(expr: &str) -> bool {
     skip_code_balanced(b, j, b'{', b'}') == Some(b.len())
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// `<params> => <body>`, consuming `expr` in full, where `<params>` is a
 /// bare identifier or a parenthesized parameter list and `<body>` is a
 /// block or a bare expression. `async` arrows are out of the v1 ladder
@@ -3882,6 +3886,7 @@ fn is_bare_arrow_function_expression(expr: &str) -> bool {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Whether `s` contains a depth-0 (unparenthesized/unbracketed) comma.
 /// Mirrors [`find_direct_export_assignment_semicolon`]'s depth-tracking
 /// scan style; see [`is_bare_arrow_function_expression`]'s expression-body
@@ -3928,6 +3933,7 @@ fn contains_top_level_comma(s: &str) -> bool {
     }
     false
 }
+// </HANDWRITE>
 
 /// Rewrites `<exports_obj>.key = <RHS>;` to
 /// `var __jx_<m>_<key> = <RHS>; <exports_obj>.key = __jx_<m>_<key>;` for
@@ -6337,6 +6343,7 @@ const raw = `_m0_x`;"#;
         );
     }
 }
+// </HANDWRITE>
 // CODEGEN-END
 
 // <HANDWRITE gap="standardize:projects-jet-src-bundler-scope-hoist-opt-rs-reexport-wrapper-collapse" tracker="standardize-gap-projects-jet-src-bundler-scope-hoist-opt-rs" reason="Existing hand-written re-export wrapper collapse lives outside generated block; generator primitive does not yet cover post-flattening wrapper redirection.">
@@ -6504,6 +6511,7 @@ fn collect_pure_reexport_wrappers(code: &str) -> Vec<ReexportWrapper> {
     }
     wrappers
 }
+// </HANDWRITE>
 
 fn parse_module_id(line: &str) -> Option<usize> {
     let rest = line.strip_prefix("// Module ")?;
@@ -7502,6 +7510,7 @@ pub fn convert_flat_region_function_declarations_to_var(
     (rewritten, stats)
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Runs flat-region function-declaration→var-hoisting conversion (#2132)
 /// immediately followed by same-chunk export-binding elision (#2128) as one
 /// pipeline, sharing a single region-wide reparse-validation pass across
@@ -7599,6 +7608,7 @@ pub fn convert_and_elide_flat_region(
         ExportElisionStats::default(),
     )
 }
+// </HANDWRITE>
 
 #[cfg(test)]
 mod fn_decl_conversion_tests {
