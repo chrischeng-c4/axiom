@@ -2,10 +2,10 @@ version = 2
 project = "jet"
 ir_kind = "td"
 td_path = "apps/jet/tech-design"
-generated_at = "2026-07-20T09:37:35.725179+00:00"
-digest = "sha256:1cb039593a95698725880ab29402fa4e201087f862abab6383f598155b15e0dd"
-source_digest = "sha256:1cb039593a95698725880ab29402fa4e201087f862abab6383f598155b15e0dd"
-ir_digest = "sha256:c234b02577862b95e43f3042e1eb29d2456b0ac2d9d5925c002b5ee6943bc8aa"
+generated_at = "2026-07-20T13:35:03.629942+00:00"
+digest = "sha256:56f2eb21f8e18d42bd90375785ab4b1224ebac4a88dda94a8aa32eaa1db417e6"
+source_digest = "sha256:56f2eb21f8e18d42bd90375785ab4b1224ebac4a88dda94a8aa32eaa1db417e6"
+ir_digest = "sha256:4b73cba6a1b3ce938e63f5a7cee8bd4a37c85234700fffba74828092de701f9b"
 
 [[files]]
 path = "config/jet-transform-resolver-nx-tsconfig-path-aliases-never-wired-into.md"
@@ -17,6 +17,12 @@ section_count = 3
 path = "interfaces/cli/jet-cli-add-issue-comment-auto-reopen-follow-up.md"
 digest = "sha256:4913cf522a9f2f86882fdff7e932865f1baf041bce70816a4d85e9318edbae0c"
 ir_digest = "sha256:6a0562d06b9c19b957a38f07144929554002245d274079563f913733e9a87f49"
+section_count = 4
+
+[[files]]
+path = "logic/drop-the-rhs-normalization-purity-gate-evaluation-position-argum.md"
+digest = "sha256:0bd43d63dfa72318cefab6758eaa778780ab207da84efad770c416f7994caa07"
+ir_digest = "sha256:ed54d34107f3e8b79fa6f2bd69217e3b4c0100bdb1998fd441299a0f6ed887f5"
 section_count = 4
 
 [[files]]
