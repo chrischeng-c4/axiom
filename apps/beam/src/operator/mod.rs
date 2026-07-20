@@ -18,7 +18,7 @@ use kube::ResourceExt;
     printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2154" reason="logic section in mod.rs is hand-written pending codegen support">
 #[serde(rename_all = "camelCase")]
 pub struct BeamSpec {
     /// Serving container image, e.g. beam:latest.
@@ -35,6 +35,15 @@ pub struct BeamSpec {
     /// Graceful drain window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grace_secs: Option<u64>,
+    /// Expected replicas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replicas: Option<i32>,
+    /// Durable storage request size, e.g. 10Gi.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_size: Option<String>,
+    /// Request GPU resources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_gpu: Option<bool>,
 }
 // </HANDWRITE>
 
@@ -50,7 +59,7 @@ pub struct BeamStatus {
     pub observed_generation: i64,
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2154" reason="logic section in mod.rs is hand-written pending codegen support">
 impl ManagedService for Beam {
     /// Server-side-apply field manager + leader-election Lease name.
     const MANAGER: &'static str = "beam-operator";
@@ -63,11 +72,28 @@ impl ManagedService for Beam {
         let host = self.spec.host.as_deref().unwrap_or("0.0.0.0");
         let grace_secs = self.spec.grace_secs.unwrap_or(30);
 
-        let owner_references = if let (Some(uid), Some(name)) = (&self.metadata.uid, &self.metadata.name) {
+        let profile = self.metadata.labels.as_ref()
+            .and_then(|l| l.get("profile"))
+            .map(|s| s.as_str())
+            .unwrap_or("dev");
+
+        // Profile-based defaults
+        let (default_replicas, default_storage, is_gpu, has_backup, has_pdb) = match profile {
+            "prod" => (2, "20Gi".to_string(), true, true, true),
+            "staging" => (1, "5Gi".to_string(), true, false, true),
+            "template" => (1, "REPLACE_ME__STORAGE_SIZE".to_string(), true, true, true),
+            _ => (1, "1Gi".to_string(), false, false, false), // dev or other
+        };
+
+        let replicas = self.spec.replicas.unwrap_or(default_replicas);
+        let storage_size = self.spec.storage_size.clone().unwrap_or(default_storage);
+        let request_gpu = self.spec.request_gpu.unwrap_or(is_gpu);
+
+        let owner_references = if let (Some(uid), Some(n)) = (&self.metadata.uid, &self.metadata.name) {
             vec![serde_json::json!({
                 "apiVersion": "beam.dev/v1alpha1",
                 "kind": "Beam",
-                "name": name,
+                "name": n,
                 "uid": uid,
                 "controller": true,
                 "blockOwnerDeletion": true
@@ -76,6 +102,7 @@ impl ManagedService for Beam {
             vec![]
         };
 
+        // Service
         let service = serde_json::json!({
             "apiVersion": "v1",
             "kind": "Service",
@@ -84,6 +111,7 @@ impl ManagedService for Beam {
                 "namespace": namespace,
                 "labels": {
                     "app": name,
+                    "profile": profile
                 },
                 "ownerReferences": owner_references
             },
@@ -101,6 +129,7 @@ impl ManagedService for Beam {
             }
         });
 
+        // Env vars
         let mut env = vec![
             serde_json::json!({
                 "name": "BEAM_PORT",
@@ -110,6 +139,18 @@ impl ManagedService for Beam {
                 "name": "BEAM_HOST",
                 "value": host
             }),
+            serde_json::json!({
+                "name": "BEAM_DATA_DIR",
+                "value": "/data"
+            }),
+            serde_json::json!({
+                "name": "BEAM_AUTH",
+                "value": "required"
+            }),
+            serde_json::json!({
+                "name": "BEAM_TOKEN_REGISTRY_FILE",
+                "value": "/var/run/secrets/beam/auth/registry.json"
+            })
         ];
 
         if let Some(log_level) = &self.spec.log_level {
@@ -119,19 +160,45 @@ impl ManagedService for Beam {
             }));
         }
 
-        let deployment = serde_json::json!({
+        // GPU resources & scheduling placement
+        let mut resources = serde_json::json!({});
+        let mut node_selector = serde_json::json!({});
+        let mut tolerations = serde_json::json!([]);
+
+        if request_gpu {
+            resources = serde_json::json!({
+                "limits": {
+                    "nvidia.com/gpu": "1"
+                }
+            });
+            node_selector = serde_json::json!({
+                "accelerator": "nvidia-gpu"
+            });
+            tolerations = serde_json::json!([
+                {
+                    "key": "nvidia.com/gpu",
+                    "operator": "Exists",
+                    "effect": "NoSchedule"
+                }
+            ]);
+        }
+
+        // StatefulSet
+        let mut stateful_set = serde_json::json!({
             "apiVersion": "apps/v1",
-            "kind": "Deployment",
+            "kind": "StatefulSet",
             "metadata": {
                 "name": name,
                 "namespace": namespace,
                 "labels": {
                     "app": name,
+                    "profile": profile
                 },
                 "ownerReferences": owner_references
             },
             "spec": {
-                "replicas": 1,
+                "serviceName": name,
+                "replicas": replicas,
                 "selector": {
                     "matchLabels": {
                         "app": name
@@ -140,34 +207,215 @@ impl ManagedService for Beam {
                 "template": {
                     "metadata": {
                         "labels": {
-                            "app": name
+                            "app": name,
+                            "profile": profile
+                        },
+                        "annotations": {
+                            "prometheus.io/scrape": "true",
+                            "prometheus.io/port": port.to_string(),
+                            "prometheus.io/path": "/metrics"
                         }
                     },
                     "spec": {
                         "terminationGracePeriodSeconds": grace_secs,
+                        "securityContext": {
+                            "runAsNonRoot": true,
+                            "runAsUser": 10001,
+                            "fsGroup": 10001
+                        },
                         "containers": [
                             {
                                 "name": "beam",
                                 "image": image,
                                 "ports": [
                                     {
-                                        "containerPort": port
+                                        "containerPort": port,
+                                        "name": "http"
                                     }
                                 ],
-                                "env": env
+                                "env": env,
+                                "resources": resources,
+                                "securityContext": {
+                                    "allowPrivilegeEscalation": false,
+                                    "readOnlyRootFilesystem": true,
+                                    "capabilities": {
+                                        "drop": ["ALL"]
+                                    }
+                                },
+                                "volumeMounts": [
+                                    {
+                                        "name": "data",
+                                        "mountPath": "/data"
+                                    },
+                                    {
+                                        "name": "auth-secret",
+                                        "mountPath": "/var/run/secrets/beam/auth",
+                                        "readOnly": true
+                                    },
+                                    {
+                                        "name": "tmp",
+                                        "mountPath": "/tmp"
+                                    }
+                                ],
+                                "livenessProbe": {
+                                    "httpGet": {
+                                        "path": "/healthz",
+                                        "port": port
+                                    },
+                                    "initialDelaySeconds": 5,
+                                    "periodSeconds": 10
+                                },
+                                "readinessProbe": {
+                                    "httpGet": {
+                                        "path": "/readyz",
+                                        "port": port
+                                    },
+                                    "initialDelaySeconds": 5,
+                                    "periodSeconds": 10
+                                }
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "auth-secret",
+                                "secret": {
+                                    "secretName": format!("{name}-auth")
+                                }
+                            },
+                            {
+                                "name": "tmp",
+                                "emptyDir": {}
                             }
                         ]
                     }
-                }
+                },
+                "volumeClaimTemplates": [
+                    {
+                        "metadata": {
+                            "name": "data"
+                        },
+                        "spec": {
+                            "accessModes": ["ReadWriteOnce"],
+                            "resources": {
+                                "requests": {
+                                    "storage": storage_size
+                                }
+                            }
+                        }
+                    }
+                ]
             }
         });
 
-        vec![service, deployment]
+        // Add nodeSelector and tolerations if GPU was requested
+        if request_gpu {
+            if let Some(spec_obj) = stateful_set.pointer_mut("/spec/template/spec") {
+                if let Some(map) = spec_obj.as_object_mut() {
+                    map.insert("nodeSelector".to_string(), node_selector);
+                    map.insert("tolerations".to_string(), tolerations);
+                }
+            }
+        }
+
+        let mut manifests = vec![service, stateful_set];
+
+        // PDB
+        if has_pdb {
+            let pdb = serde_json::json!({
+                "apiVersion": "policy/v1",
+                "kind": "PodDisruptionBudget",
+                "metadata": {
+                    "name": name,
+                    "namespace": namespace,
+                    "labels": {
+                        "app": name,
+                        "profile": profile
+                    },
+                    "ownerReferences": owner_references
+                },
+                "spec": {
+                    "maxUnavailable": 1,
+                    "selector": {
+                        "matchLabels": {
+                            "app": name
+                        }
+                    }
+                }
+            });
+            manifests.push(pdb);
+        }
+
+        // Backup CronJob
+        if has_backup {
+            let backup_cron = serde_json::json!({
+                "apiVersion": "batch/v1",
+                "kind": "CronJob",
+                "metadata": {
+                    "name": format!("{name}-backup"),
+                    "namespace": namespace,
+                    "labels": {
+                        "app": format!("{name}-backup"),
+                        "profile": profile
+                    },
+                    "ownerReferences": owner_references
+                },
+                "spec": {
+                    "schedule": "0 2 * * *",
+                    "concurrencyPolicy": "Forbid",
+                    "jobTemplate": {
+                        "spec": {
+                            "template": {
+                                "spec": {
+                                    "restartPolicy": "OnFailure",
+                                    "containers": [
+                                        {
+                                            "name": "backup",
+                                            "image": image,
+                                            "command": [
+                                                "beam",
+                                                "dump",
+                                                "--url",
+                                                format!("http://{name}:{port}"),
+                                                "--out",
+                                                "s3://beam-backups/snapshot.cbor.lz4"
+                                            ],
+                                            "env": [
+                                                {
+                                                    "name": "AWS_ACCESS_KEY_ID",
+                                                    "valueFrom": {
+                                                        "secretKeyRef": {
+                                                            "name": "beam-backup-credentials",
+                                                            "key": "aws-access-key-id"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "name": "AWS_SECRET_ACCESS_KEY",
+                                                    "valueFrom": {
+                                                        "secretKeyRef": {
+                                                            "name": "beam-backup-credentials",
+                                                            "key": "aws-secret-access-key"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            manifests.push(backup_cron);
+        }
+
+        manifests
     }
 
     fn readiness_targets(&self) -> Vec<ReadinessTarget> {
         vec![ReadinessTarget {
-            kind: "Deployment",
+            kind: "StatefulSet",
             name: self.name_any(),
         }]
     }
@@ -175,7 +423,18 @@ impl ManagedService for Beam {
     fn status_patch(&self, ready: &ReadyFacts) -> serde_json::Value {
         let name = self.name_any();
         let ready_replicas = ready.get(&name) as i32;
-        let phase = if ready_replicas >= 1 {
+        let profile = self.metadata.labels.as_ref()
+            .and_then(|l| l.get("profile"))
+            .map(|s| s.as_str())
+            .unwrap_or("dev");
+
+        let expected_replicas = match profile {
+            "prod" => 2,
+            _ => 1,
+        };
+        let expected_replicas = self.spec.replicas.unwrap_or(expected_replicas);
+
+        let phase = if ready_replicas >= expected_replicas {
             "Ready"
         } else {
             "Reconciling"

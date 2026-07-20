@@ -135,27 +135,36 @@ fn replace_operator_namespace(input: &str, namespace: &str) -> String {
     out
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="#2152" reason="logic section in dx.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2154" reason="logic section in dx.rs is hand-written pending codegen support">
 pub fn render_instance_yaml(
     profile: &str,
     name: &str,
     namespace: &str,
     image: Option<&str>,
 ) -> String {
-    let image = image.unwrap_or("beam:latest");
-    format!(
-        r#"apiVersion: beam.dev/v1alpha1
-kind: Beam
-metadata:
-  name: {name}
-  namespace: {namespace}
-  labels:
-    app: {name}
-    profile: {profile}
-spec:
-  image: {image}
-  port: 7373
-"#
-    )
+    use crate::operator::{Beam, BeamSpec};
+    use service_k8s::ManagedService;
+
+    let mut beam = Beam::new(name, BeamSpec {
+        image: image.unwrap_or("beam:latest").to_string(),
+        host: None,
+        port: Some(7373),
+        log_level: None,
+        grace_secs: None,
+        replicas: None,
+        storage_size: None,
+        request_gpu: None,
+    });
+
+    beam.metadata.namespace = Some(namespace.to_string());
+    beam.metadata.labels.get_or_insert_with(std::collections::BTreeMap::new)
+        .insert("profile".to_string(), profile.to_string());
+
+    let manifests = beam.render();
+    manifests
+        .into_iter()
+        .map(|m| serde_yaml::to_string(&m).expect("manifest serializes"))
+        .collect::<Vec<_>>()
+        .join("---\n")
 }
 // </HANDWRITE>
