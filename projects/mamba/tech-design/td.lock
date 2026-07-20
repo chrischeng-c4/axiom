@@ -2,10 +2,10 @@ version = 2
 project = "mamba"
 ir_kind = "td"
 td_path = "projects/mamba/tech-design"
-generated_at = "2026-07-20T10:13:56.555233+00:00"
-digest = "sha256:f4b4afb93c2fdfbf30d9cf2eed1e29e4b34d7471bf82ad6a4d0fe2e615959ac8"
-source_digest = "sha256:f4b4afb93c2fdfbf30d9cf2eed1e29e4b34d7471bf82ad6a4d0fe2e615959ac8"
-ir_digest = "sha256:5f811440cae026001082f5f2636397b280b3f304960749372629fb4f65184b7f"
+generated_at = "2026-07-20T10:16:52.560561+00:00"
+digest = "sha256:0308429518fa38be845b80bf77321c20730a23341260acbf72594a30a6985b83"
+source_digest = "sha256:0308429518fa38be845b80bf77321c20730a23341260acbf72594a30a6985b83"
+ir_digest = "sha256:546009b01f355e6b8e40ad53d908f610826cbd0d65f8321a1b7e013e6b32607f"
 
 [[files]]
 path = "README.md"
@@ -87,8 +87,8 @@ section_count = 0
 
 [[files]]
 path = "interfaces/rest/mamba-weakref-mod-callback-double-store-without-retain-double-fr.md"
-digest = "sha256:d1c6c170000b97e727322d6191005dfdf4a3680e22db163b7d1faa66a340627c"
-ir_digest = "sha256:f88f18d226b0a027ad8afd47758df395fe96622addb2ff1d1217cc688c341db5"
+digest = "sha256:39a74df83a8285c4944eba50625891f8073e1a173b30e5a79a6a744d57922208"
+ir_digest = "sha256:fdd9948ee66b8c793ba6e3133099e6474a540d7e58e41d46b6511729f642ed9f"
 section_count = 3
 
 [[files]]
