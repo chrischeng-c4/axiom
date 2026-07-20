@@ -9,42 +9,48 @@ fill_sections: [logic, changes, unit-test]
 
 ```mermaid
 ---
-id: workbench-production-journey-applicability
-entry: folder
+id: workbench-production-journey
+entry: selection
 nodes:
-  folder: { kind: start, label: "select registered canonical folder" }
-  agent: { kind: process, label: "select and launch native agent through real PTY" }
-  output: { kind: process, label: "stream transcript and explicit OSC 7 cwd" }
-  context: { kind: process, label: "render Markdown, Git, and optional AW context" }
-  provenance: { kind: process, label: "show canonical source navigation and labels" }
-  recover: { kind: decision, label: "agent or artifact error?" }
-  evidence: { kind: process, label: "retain viewport, interaction, accessibility, transcript, and context evidence" }
-  done: { kind: terminal, label: "repeatable production gate" }
+  selection: { kind: start, label: "selected canonical launch path and AgentKind" }
+  spawn: { kind: process, label: "JourneySession launches exact AgentLaunchCommand through PtyRuntime" }
+  reader: { kind: process, label: "background reader sends bounded PTY chunks" }
+  poll: { kind: process, label: "poll drains transcript, OSC7 cwd, and child status" }
+  input: { kind: process, label: "write input, resize, interrupt, or terminate" }
+  render: { kind: process, label: "render workspace or confined file at explicit active cwd" }
+  ui: { kind: process, label: "render accessible terminal and source context states" }
+  evidence: { kind: process, label: "write deterministic v1 evidence manifest and artifacts" }
+  done: { kind: terminal, label: "one repeatable Cargo and EC gate" }
 edges:
-  - { from: folder, to: agent }
-  - { from: agent, to: output }
-  - { from: output, to: context }
-  - { from: context, to: provenance }
-  - { from: provenance, to: recover }
-  - { from: recover, to: evidence, label: "recovered or none" }
+  - { from: selection, to: spawn }
+  - { from: spawn, to: reader }
+  - { from: reader, to: poll }
+  - { from: poll, to: input }
+  - { from: input, to: poll, label: "session active" }
+  - { from: poll, to: render, label: "snapshot or exit" }
+  - { from: render, to: ui }
+  - { from: ui, to: evidence }
   - { from: evidence, to: done }
 ---
 flowchart LR
-    folder([Folder]) --> agent[Native PTY]
-    agent --> output[Transcript and OSC7 cwd]
-    output --> context[Markdown Git AW context]
-    context --> provenance[Source navigation]
-    provenance --> recover{Recovery state?}
-    recover --> evidence[Retained evidence]
-    evidence --> done([Production gate])
+    selection([Folder + agent]) --> spawn[Real PTY]
+    spawn --> reader[Output channel]
+    reader --> poll[Transcript + OSC7 cwd]
+    poll --> input[Input/resize/terminate]
+    input --> poll
+    poll --> render[Markdown/Git/AW context]
+    render --> ui[Accessible three-column state]
+    ui --> evidence[Retained v1 evidence]
+    evidence --> done([Cargo + EC gate])
 ```
 
-Assemble the existing folder registry, provider-neutral real PTY, OSC 7 active cwd, renderer registry, and canonical provenance into one desktop session boundary. Tauri commands start exactly one selected Claude Code, Codex, or AGY process in the selected canonical folder, stream bounded output, accept input/resize/terminate, expose recoverable unavailable-agent errors, and render Markdown/Git/optional AW context from the explicit active cwd. A deterministic local shell exercises the same session type in tests; installed vendor CLIs remain optional.
+`JourneySession` composes `PtyRuntime`, `PtySession`, and `ActiveCwdContext`. `spawn_agent` resolves an exact `AgentLaunchCommand`; `spawn_command` accepts the same provider-neutral deterministic shell fixture used by tests. A cloned PTY reader sends bounded chunks through a channel. `poll` drains available chunks, caps the retained transcript at 512 KiB, applies only OSC 7 telemetry, and returns serializable `JourneySnapshot { agent, running, exit_code, active_cwd, cwd_source, transcript }`. Input, resize, interrupt, wait, and terminate delegate to the real PTY lifecycle and preserve cleanup on drop.
 
-Upgrade the three-column primary state without moving folder ownership into the runtime: the center pane gains accessible agent choice, start/retry, terminal transcript/input, status and active-cwd disclosure; the right pane gains keyboard-operable Markdown/Git/AW choices, safe preview, provenance label, and source navigation. Preserve the established dark developer-tool system, visible focus, minimum 44px targets, stable 150-300ms color/opacity transitions, minimum 16px body readability, constrained-width fit, and reduced-motion behavior.
+`ProductionJourneyStore` owns at most one session behind a mutex. Tauri commands `launch_journey_agent`, `poll_journey_agent`, `send_journey_input`, `resize_journey_agent`, `interrupt_journey_agent`, and `terminate_journey_agent` validate parameters and surface recoverable errors. `render_journey_context` accepts the explicit active root plus workspace or confined relative file target and uses `RendererRegistry::generic_with_optional_aw`; it never infers cwd from prompt text or mutates sources. The existing folder module only emits selection/path events and does not own the session.
 
-`production_journey` runs the real-PTY functional journey plus Jet at 1440x900 and 860x720. Jet writes a deterministic v1 manifest and retained screenshots; Rust adds transcript and context summaries. The manifest maps every assertion to its artifact and the external contract plus capability gate invoke the exact same Cargo test command. Optional graph/page providers remain outside the production prerequisite.
+`journey.js` listens for folder selection, manages agent/context controls, polls only while active, renders transcript with `textContent`, inserts safe renderer HTML only from the backend contract, discloses active cwd/provenance/source links, and keeps failed launch/retry actionable. The HTML uses semantic fieldsets, labels, buttons, output/status, and navigation. CSS extends the current slate/green/blue dark developer-tool system with IBM-Plex-like system sans plus monospace terminal treatment, 44px targets, visible focus, 16px readable body text, stable 180ms color/opacity transitions, no layout-shifting hover, an 860px stacked context treatment, and `prefers-reduced-motion`.
 
+The Rust test constructs a Git repository containing Markdown plus configured AW artifacts, registers/selects it, launches `/bin/sh` through `JourneySession`, exchanges input, resizes, emits a nested OSC 7 cwd, and renders Markdown/Git/AW with canonical provenance. Jet uses a deterministic bridge to prove successful and unavailable-agent paths, keyboard/focus order, source navigation, accessibility, placeholder-free states, and 1440x900 plus 860x720 screenshots. It writes `manifest.json`; Rust writes the real PTY transcript and context summary, then validates every manifest assertion/artifact. CAPABILITIES and the agent-reviewed external contract both use exactly `cargo test -p workbench --test production_journey -- --nocapture`.
 ## Changes
 <!-- type: changes lang: yaml -->
 
