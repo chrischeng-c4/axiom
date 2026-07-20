@@ -67,7 +67,6 @@ changes:
     impl_mode: hand-written
     description: "Add a deterministic structural regression test for the exact 19 capability refs, including primary role and full coverage. generator gap: missing-generator:test:capability-td-linkage (#2157)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
