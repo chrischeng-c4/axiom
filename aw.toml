@@ -103,6 +103,22 @@ codegen.profile = "rust/score-crate"
 
 
 [[projects]]
+name = "workbench"
+path = "apps/workbench"
+td_path = "apps/workbench/tech-design"
+cap_path = "apps/workbench/CAPABILITIES.md"
+label = "app:workbench"
+
+[[projects.workspaces]]
+name = "workbench"
+paths = ["apps/workbench/**"]
+target = "rust"
+test_cmd = "cargo test -p workbench --test desktop_launch_smoke -- --nocapture"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+
+[[projects]]
 name = "cap"
 path = "apps/cap"
 td_path = "apps/cap/tech-design"

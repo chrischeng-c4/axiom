@@ -1,3 +1,5 @@
+ec_review_backing = "agent"
+
 [project]
 name = "workbench"
 cap_path = "CAPABILITIES.md"
@@ -6,5 +8,5 @@ label = "app:workbench"
 [[workspaces]]
 name = "workbench"
 paths = ["**"]
-target = "schemas"
-test_cmd = "true"
+target = "rust"
+test_cmd = "cargo test -p workbench --test desktop_launch_smoke -- --nocapture"
