@@ -16,6 +16,7 @@ impl WgpuDistanceEngine {
     }
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in wgpu_engine.rs is hand-written pending codegen support">
 impl DistanceCalculator for WgpuDistanceEngine {
     async fn compute_batched(
         &self,
@@ -56,3 +57,4 @@ impl DistanceCalculator for WgpuDistanceEngine {
         Ok(scores)
     }
 }
+// </HANDWRITE>

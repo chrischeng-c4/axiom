@@ -29,6 +29,7 @@ impl VectorRepository for MockVectorRepository {
 }
 
 struct MockDistanceCalculator;
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in throughput_pipeline.rs is hand-written pending codegen support">
 impl DistanceCalculator for MockDistanceCalculator {
     async fn compute_batched(
         &self,
@@ -49,6 +50,7 @@ impl DistanceCalculator for MockDistanceCalculator {
         Ok(scores)
     }
 }
+// </HANDWRITE>
 
 // =========================================================================
 // Test cases

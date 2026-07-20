@@ -10,6 +10,7 @@ pub struct QueryBatch {
     pub k: usize,
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scheduler.rs is hand-written pending codegen support">
 /// Domain Service that pipelines candidate retrieval, NVMe fetch, and GPU distance calculation.
 pub struct PipelineScheduler<R, C>
 where
@@ -19,6 +20,7 @@ where
     repo: R,
     calc: C,
 }
+// </HANDWRITE>
 
 impl<R, C> PipelineScheduler<R, C>
 where

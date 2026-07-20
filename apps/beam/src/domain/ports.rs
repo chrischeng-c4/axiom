@@ -9,6 +9,7 @@ pub trait VectorRepository: Send + Sync {
     fn fetch_async(&self, offsets: &[u64], vector_bytes: usize) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
 }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in ports.rs is hand-written pending codegen support">
 /// Hexagonal port for batched vector distance calculation.
 pub trait DistanceCalculator: Send + Sync {
     /// Asynchronously calculate distance metrics between a batch of queries and target candidate vectors on GPU.
@@ -20,3 +21,4 @@ pub trait DistanceCalculator: Send + Sync {
         dim: usize,
     ) -> impl Future<Output = anyhow::Result<Vec<f32>>> + Send;
 }
+// </HANDWRITE>
