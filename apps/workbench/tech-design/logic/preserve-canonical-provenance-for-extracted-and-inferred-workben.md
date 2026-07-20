@@ -46,3 +46,41 @@ Create a provider-neutral provenance module below the renderer registry. It mode
 Resolution canonicalizes the selected root and requested source, rejects traversal and symlink escape, validates ordered non-zero spans, and distinguishes canonical, missing, and invalid states. Extracted items link only when their direct source resolves. Inferred items retain every input location and always carry a visible derived label; unavailable inputs are disclosed rather than replaced with fabricated links.
 
 The module is a pure read-only data and resolution boundary. It exposes no repository write, AW transition, provider invocation, or verification mutation; repository bytes and declared executable gates remain authoritative outside the provenance view.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/workbench/src/context/provenance.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    description: Define provider identity, extraction classification, confined file/span inputs, canonical/missing/invalid resolution, visible authority labels, and source navigation.
+  - path: apps/workbench/src/context/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    anchor: ContextProvenance
+    description: Export the provider-neutral provenance contract beside renderer document provenance.
+  - path: apps/workbench/tests/context_provenance.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Prove extracted round-trip, inferred labels and inputs, missing/invalid degradation, path confinement, and mutation-surface isolation.
+  - path: apps/workbench/README.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Document canonical-source authority, extracted/inferred classification, and non-authoritative fallback states.
+  - path: apps/workbench/CAPABILITIES.md
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: Register and verify the context-provenance work root.
+  - path: apps/workbench/CONTRIBUTING.md
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: Record provenance round-trip, confinement, labeling, and no-mutation verification rules.
+```
