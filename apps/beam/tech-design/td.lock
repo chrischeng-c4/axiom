@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T13:42:30.053318+00:00"
-digest = "sha256:d79d42f472ddaadc7a97fa5795949a310792219f167df6ae464c707a71434e04"
-source_digest = "sha256:d79d42f472ddaadc7a97fa5795949a310792219f167df6ae464c707a71434e04"
-ir_digest = "sha256:a09e299018e544c260f7de110e83de116ff530ef71660b7d18275edf9ea6dd61"
+generated_at = "2026-07-20T14:03:42.867197+00:00"
+digest = "sha256:c801e5f8ff829c247d9794cceca715fbca529a205a658d82754e20595c9d721a"
+source_digest = "sha256:c801e5f8ff829c247d9794cceca715fbca529a205a658d82754e20595c9d721a"
+ir_digest = "sha256:47bf00541e615610bdf5ff51a8b425587309f728fddba8521455886c1afc1692"
 
 [[files]]
 path = "README.md"
@@ -18,6 +18,12 @@ path = "interfaces/cli/scaffold-service-crate-and-standard-cli-shell.md"
 digest = "sha256:df9a8c0b03bbb4ad5e678cdee37448cd98d89c0da4f712411b5877af69df3c02"
 ir_digest = "sha256:47584459ba2cc2f9e62072693907b4d3b9bd1398dd0be1b30a9ee18a5d3f375e"
 section_count = 2
+
+[[files]]
+path = "interfaces/rest/enforce-service-auth-on-data-and-admin-apis.md"
+digest = "sha256:cfe2922da7bc12d5ca96dd2e26b510683c32e91fc2b540cd4ef269fe3eb777f4"
+ir_digest = "sha256:996464c4a09f9040e3316b3490293e397afca8ec3f5f483e78fb256b6f04f502"
+section_count = 3
 
 [[files]]
 path = "logic/beam-high-throughput-four-pillar-architecture.md"
