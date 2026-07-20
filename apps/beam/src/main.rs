@@ -648,6 +648,7 @@ struct IssueCreateArgs {
 
 use anyhow::Context;
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in main.rs is hand-written pending codegen support">
 fn main() -> ExitCode {
     match dispatch(Cli::parse().command) {
         Ok(code) => code,
@@ -657,6 +658,7 @@ fn main() -> ExitCode {
         }
     }
 }
+// </HANDWRITE>
 
 fn dispatch(command: Command) -> anyhow::Result<ExitCode> {
     match command {

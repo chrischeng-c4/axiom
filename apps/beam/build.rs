@@ -8,6 +8,7 @@
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in build.rs is hand-written pending codegen support">
 fn main() {
     // Re-run when HEAD moves so the stamped sha stays current. The workspace
     // `.git` lives 2 levels up from projects/beam/; in a linked worktree `.git`
@@ -31,6 +32,7 @@ fn main() {
     let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
     println!("cargo:rustc-env=BEAM_TARGET={target}");
 }
+// </HANDWRITE>
 
 /// Best-effort short SHA of HEAD. Returns `None` outside a git workspace.
 fn short_sha() -> Option<String> {
