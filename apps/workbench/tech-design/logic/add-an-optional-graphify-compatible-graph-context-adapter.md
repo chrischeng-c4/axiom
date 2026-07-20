@@ -52,7 +52,6 @@ flowchart LR
 `GraphPayloadSource` is a read-only byte-source boundary. Production uses `FileGraphPayloadSource`, which performs one metadata check and reads at most one MiB from the compatibility path. Tests may inject a failing source to prove provider-failure isolation without starting Graphify or importing third-party code. `GraphContextRenderer::render` parses and validates the payload, converts every node and edge into `ContextProvenanceItem`, resolves it against the selected root, and renders escaped node/edge cards. Canonical extracted inputs become navigation links; inferred or ambiguous records always show their derived classification/provider badge and every canonical, missing, or invalid input. No graph fact is presented as repository authority.
 
 Malformed payloads and source failures return `RendererError`; `RendererRegistry` records the graph warning and continues to lower-priority renderers. `RendererRegistry::production` registers Graph, optional AW typed, Markdown, and Git renderers, while tests use a local registry-sentinel renderer to prove AW-like usability without importing `AwTypedRenderer`. The adapter exposes no repository writes, subprocesses, provider invocation, AW/GitHub mutation, PTY ownership, approval, or lifecycle transition. Refresh is a fresh bounded read; close is ordinary drop. Graphify remains reference-only interaction input, while repository files and executable gates remain canonical.
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
