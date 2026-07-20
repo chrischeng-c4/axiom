@@ -152,3 +152,84 @@ changes:
     impl_mode: hand-written
     anchor: combined_pipeline_normalized_then_still_kept_key_is_fine
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: drop-the-rhs-normalization-purity-gate-evaluation-position-argum-verification
+requirements:
+  accept_matrix_async_and_generator_function_expressions:
+    id: R4
+    text: "is_shape_normalizable_export_rhs accepts an async function expression (`async function() {...}` / `async () => {...}`) and a generator function expression (`function*() {...}`) as export RHS -- previously rejected wholesale by purity_ladder_rejects_async_and_generator_functions. Constructing the function VALUE has no top-level await/yield token (any await/yield inside the function body is at brace depth 1, not depth 0), so contains_top_level_await_or_yield_keyword correctly returns false and the shape normalizes; this inverts the pre-#2168 test's assertion."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_async_and_generator_functions
+  accept_matrix_call_and_new_expressions_now_normalize:
+    id: R2
+    text: "is_shape_normalizable_export_rhs accepts a call-expression export RHS (e.g. `fn(x, y)`) and a new-expression export RHS (e.g. `new Foo(x)`) -- both previously rejected. Neither shape contains a top-level (depth-0) comma, bare assignment operator, or await/yield keyword, so both pass all three exclusion checks and are hoisted into a synthetic var exactly like the pre-existing literal/function/arrow cases."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_call_expressions
+  accept_matrix_conditional_template_object_and_array_expressions:
+    id: R3
+    text: "is_shape_normalizable_export_rhs accepts the remaining WI #2168 accept-matrix shapes: a conditional (ternary) expression `a ? b : c`, a template literal `` `${a}-${b}` `` (scanned via the existing scan_template_literal_expr_ranges depth-tracking so its interior `${...}` holes never trip the top-level comma/assignment checks), an object literal `{ a: 1, b: 2 }` (top-level commas are inside the outer `{}` depth, not depth-0), and an array literal `[1, 2, 3]` (top-level commas inside the outer `[]` depth). All four must normalize (stats.normalized) rather than being excluded."
+    kind: functional
+    risk: medium
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_conditional_template_object_and_array_expressions
+  accept_matrix_member_chain_expressions_now_normalize:
+    id: R1
+    text: "is_shape_normalizable_export_rhs (renamed from is_pure_normalizable_export_rhs, #2168) accepts a member-chain export RHS such as `a.b.c` or `obj[computed].prop` -- previously rejected by the purity ladder's function/literal-only allow-list. normalize_pure_export_rhs_unvalidated must rewrite `exports.k = a.b.c;` to `var __jx_..._k = a.b.c;\\nexports.k = __jx_..._k;` (verbatim RHS splice, evaluation position preserved) and increment stats.normalized, not stats.skipped_shape."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_member_chains
+  exclusion_chained_assignment_target_kept_as_is:
+    id: R5
+    text: "A chained-assignment export RHS (e.g. `exports.a = exports.b = X;`, where collect_direct_export_assignments captures the whole nested assignment text `exports.b = X` as the outer statement's expr) is excluded by the new contains_top_level_assignment_operator check and must NOT normalize: stats.skipped_shape increments, the statement is left byte-identical, and downstream elision behavior for both the outer and inner assignment targets is unchanged from pre-#2168 behavior. This is a statement-shape exclusion (WI #2168 Scope), not a claim that the evaluation-position argument fails for this shape."
+    kind: regression
+    risk: high
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_rejects_chained_assignment_target
+  exclusion_top_level_comma_sequence_expression_still_rejected:
+    id: R6
+    text: "A sequence expression disguised as an arrow body or bare RHS (e.g. `(a, b)`) continues to be excluded post-#2168 by contains_top_level_comma -- now applied unconditionally to every non-identifier candidate (previously only reachable inside is_bare_arrow_function_expression's expression-body branch) rather than being retired alongside the deleted is_bare_function_expression / is_bare_arrow_function_expression helpers. stats.skipped_shape increments; `var __jx = a, b;` (a silent second var declarator) must never be emitted."
+    kind: regression
+    risk: medium
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_rejects_sequence_expression_disguised_as_an_arrow_body
+  order_preservation_self_referencing_export_read_before_write:
+    id: R7
+    text: "The evaluation-position argument's own regression proof: for a self-referencing export RHS such as `exports.k = wrap(exports.k);` (now normalizable -- `wrap(exports.k)` is a call expression), the rewrite `var __jx_..._k = wrap(exports.k);\\nexports.k = __jx_..._k;` must read the PRE-mutation value of exports.k as wrap's argument (the var initializer evaluates before the following assignment statement executes), byte-for-byte preserving the original single-statement's evaluation order -- the rewrite never moves, duplicates, delays, or skips RHS evaluation relative to the original `exports.k = wrap(exports.k);` statement."
+    kind: functional
+    risk: high
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::normalize_preserves_self_referencing_read_before_write_evaluation_order
+  rename_consistency_combined_pipeline_kept_key_counters:
+    id: R10
+    text: "combined_pipeline_normalized_then_still_kept_key_is_fine continues to assert the full ExportElisionStats counter set (including the renamed rhs_skipped_shape field) end-to-end for a normalized-then-kept key, pinning that downstream elision-rung accounting (kept/kept_registry/kept_cross_chunk/etc.) is unaffected by the predicate relaxation and the field rename is consistent across every counter read site."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalized_then_still_kept_key_is_fine
+  rename_consistency_combined_pipeline_normalized_counter:
+    id: R9
+    text: "combined_pipeline_normalizes_then_elides_an_arrow_function_export continues to assert ExportElisionStats::rhs_normalized end-to-end through convert_and_elide_flat_region after the field renames land, pinning that the normalized-count side of the counter pair is unaffected by the skipped_impure -> skipped_shape rename (only the skip-side field and its debug-eprintln label in bundler/mod.rs's generate_bundle and generate_split_bundle change)."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalizes_then_elides_an_arrow_function_export
+  rename_consistency_skipped_impure_to_skipped_shape_stats_field:
+    id: R8
+    text: "RhsNormalizationStats::skipped_impure is renamed to skipped_shape (and ExportElisionStats::rhs_skipped_impure to rhs_skipped_shape) throughout normalize_pure_export_rhs_unvalidated and its call site in convert_and_elide_flat_region. normalize_counts_skipped_shape_candidates (renamed from normalize_counts_skipped_impure_candidates) must exercise genuinely-excluded-post-#2168 fixtures (chained assignment / top-level comma; the fixture's prior call/member-chain examples are no longer valid negative cases since #2168 accepts them) and assert against the renamed field name."
+    kind: regression
+    risk: low
+    verify: cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::normalize_counts_skipped_shape_candidates
+---
+flowchart TD
+    r1[R1 accept matrix member chain expressions now normalize] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_purity_ladder_accepts_member_chains[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_member_chains]
+    r2[R2 accept matrix call and new expressions now normalize] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_purity_ladder_accepts_call_expressions[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_call_expressions]
+    r3[R3 accept matrix conditional template object and array expressions] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_purity_ladder_accepts_conditional_template_object_and_array_expressions[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_conditional_template_object_and_array_expressions]
+    r4[R4 accept matrix async and generator function expressions] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_purity_ladder_accepts_async_and_generator_functions[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_accepts_async_and_generator_functions]
+    r5[R5 exclusion chained assignment target kept as is] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_purity_ladder_rejects_chained_assignment_target[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_rejects_chained_assignment_target]
+    r6[R6 exclusion top level comma sequence expression still rejected] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_purity_ladder_rejects_sequence_expression_disguised_as_an_arrow_body[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::purity_ladder_rejects_sequence_expression_disguised_as_an_arrow_body]
+    r7[R7 order preservation self referencing export read before write] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_normalize_preserves_self_referencing_read_before_write_evaluation_order[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::normalize_preserves_self_referencing_read_before_write_evaluation_order]
+    r8[R8 rename consistency skipped impure to skipped shape stats field] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_normalize_counts_skipped_shape_candidates[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::normalize_counts_skipped_shape_candidates]
+    r9[R9 rename consistency combined pipeline normalized counter] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_combined_pipeline_normalizes_then_elides_an_arrow_function_export[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalizes_then_elides_an_arrow_function_export]
+    r10[R10 rename consistency combined pipeline kept key counters] --> cargo_test_p_jet_lib_bundler_scope_hoist_opt_rhs_normalization_tests_combined_pipeline_normalized_then_still_kept_key_is_fine[cargo test -p jet --lib bundler::scope_hoist_opt::rhs_normalization_tests::combined_pipeline_normalized_then_still_kept_key_is_fine]
+```
