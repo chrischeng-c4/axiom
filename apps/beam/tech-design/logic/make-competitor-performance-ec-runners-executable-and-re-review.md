@@ -80,7 +80,6 @@ changes:
     section: ec-runners-logic
     impl_mode: hand-written
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
