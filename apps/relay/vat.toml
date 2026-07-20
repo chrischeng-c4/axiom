@@ -33,6 +33,10 @@ cmd = [
 ]
 
 [[setup]]
+id = "build-service-auth-security-ec-tests"
+cmd = ["cargo", "test", "-p", "service-auth", "--lib", "--no-run"]
+
+[[setup]]
 id = "build-relay-measured-performance-gate"
 cmd = [
   "cargo",
@@ -47,21 +51,7 @@ cmd = [
 
 [[runners]]
 id = "meter-perf"
-cmd = [
-  "../../target/debug/meter",
-  "test",
-  "--",
-  "--release",
-  "-p",
-  "relay",
-  "--test",
-  "measured_performance",
-  "measured_durable_lifecycle_gate",
-  "--",
-  "--exact",
-  "--ignored",
-  "--nocapture",
-]
+cmd = ["bash", "scripts/ec-evidence.sh", "performance-efficiency"]
 timeout_s = 600
 
 [[runners]]
@@ -75,6 +65,6 @@ cmd = [
   "--compact",
   "--no-persist",
   "--meter-command",
-  "../../target/debug/meter test -- -p relay --test auth --test service_admission --test raft_peer_mtls --test direct_k8s_assets -- --nocapture",
+  "bash scripts/ec-evidence.sh security-guard",
 ]
 timeout_s = 600

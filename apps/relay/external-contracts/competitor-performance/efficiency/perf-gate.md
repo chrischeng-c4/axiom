@@ -25,10 +25,11 @@ e2e_tests:
     claim_id: normalized-win-ratchet-decision-model
     contract_id: relay-work-queue-performance-workload-behavior
     category: behavior
-    command: "cargo test -p relay --test work_queue_throughput --test perf_gate -- --nocapture"
+    command: "bash apps/relay/scripts/ec-evidence.sh performance-behavior"
     assertions:
       - "The publish, ordered lease, batch acknowledgement, committed-watermark, redelivery, and per-subject isolation workloads complete with every message acknowledged exactly once."
       - "The normalized decision model fails both a pinned-ratio regression and loss of a must-beat cell; this behavior case does not claim that its hard-coded inputs are measured performance."
+      - "The outer oracle requires all eleven named behavior tests and a non-zero execution count in each test binary, so a renamed or removed test cannot pass as a zero-match Cargo filter."
 
   - id: relay-competitor-performance-measured-durable-lifecycle
     capability_id: competitor-performance
@@ -36,11 +37,12 @@ e2e_tests:
     contract_id: relay-measured-durable-lifecycle-envelope
     category: efficiency
     test_path: apps/relay/tests/efficiency_relay_competitor_performance_measured_durable_lifecycle.rs
-    command: "cargo test --release -p relay --test measured_performance measured_durable_lifecycle_gate -- --exact --ignored --nocapture"
+    command: "bash apps/relay/scripts/ec-evidence.sh performance-efficiency"
     assertions:
       - "A report-only child process uses temporary disk storage with FsyncPolicy::Always to publish and then lease/ack exactly 2,000 128-byte payloads in 100-message batches."
       - "The child emits one machine-readable report containing non-zero elapsed time, at least 20 samples per phase, throughput, batch p95, acknowledgement counts, and error count; missing, malformed, zero-sample, incomplete, or error reports fail closed."
       - "An independent parent parser requires publish and lease/ack throughput >= 500 messages/second and batch p95 <= 500,000 microseconds without calling Relay's perf_gate verdict helper."
+      - "A test-owned outer oracle first proves its own zero-test and missing-marker rejection, requires both ignored test names, then accepts only exactly one executed gate and exactly one relay_perf_gate report marker before Meter records the same release invocation."
       - "RabbitMQ, NATS JetStream, Redis Streams, and Dragonfly results remain advisory calibration; this local envelope does not assert an external-broker win."
 
   - id: relay-competitor-performance-bounded-soak

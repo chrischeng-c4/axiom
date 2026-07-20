@@ -120,7 +120,12 @@ changes:
     action: modify
     section: config
     impl_mode: hand-written
-    description: Build auth, service_admission, raft_peer_mtls, and direct_k8s_assets and attach their full unfiltered cargo invocation to guard as meter evidence.
+    description: Build auth, service_admission, raft_peer_mtls, direct_k8s_assets, and service-auth reload tests, then make guard invoke the fail-closed evidence driver before Meter records the dynamic suites.
+  - path: apps/relay/scripts/ec-evidence.sh
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    description: Provide a test-owned outer oracle that requires named tests, rejects zero executed suites, requires exactly one measured performance marker, self-tests its negative paths, and only then records Meter evidence.
 ```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
@@ -140,16 +145,16 @@ requirements:
     text: "Missing and invalid tokens return 401, insufficient subject grants and streaming scope return 403, exhausted write admission returns 429 with Retry-After, and probes remain available."
     kind: negative
     risk: high
-    verify: cargo test -p relay --test auth --test service_admission -- --nocapture
+    verify: bash apps/relay/scripts/ec-evidence.sh security-behavior
   deployment_security_posture_executes:
     id: R3
     text: "The direct and production Kubernetes assets prove restricted containers, persistent state, read-only projected credentials, opt-in NetworkPolicy, and no unsafe voter HPA."
     kind: security
     risk: high
-    verify: cargo test -p relay --test direct_k8s_assets -- --nocapture
+    verify: bash apps/relay/scripts/ec-evidence.sh security-boundaries
   guard_dispatch_includes_dynamic_suite:
     id: R5
-    text: "Vat guard scans Relay and meter executes the unfiltered auth, admission, peer-mTLS, and K8s test binaries, so a missing or zero-case security surface cannot pass."
+    text: "Vat guard scans Relay, the evidence driver requires named tests and non-zero auth, admission, peer-mTLS, K8s, and reload suites, and Meter records the same dynamic surfaces."
     kind: integration
     risk: high
     verify: cd apps/relay && ../../target/debug/vat run guard-security
@@ -158,19 +163,19 @@ requirements:
     text: "Shared invalid registry reload retains the last-known-good snapshot, Relay valid rotation is live without restart, and trusted peer replication remains usable alongside the rejection path."
     kind: stability
     risk: high
-    verify: cargo test -p service-auth reload::tests -- --nocapture && cargo test -p relay --test auth relay_auth_adapter_rotates_the_shared_registry_without_restart -- --exact --nocapture && cargo test -p relay --test raft_peer_mtls -- --nocapture
+    verify: bash apps/relay/scripts/ec-evidence.sh security-stability
   untrusted_identity_fails_server_handshake:
     id: R1
     text: "The peer server rejects an attacker-CA client identity even when the client trusts the legitimate server, and the test observes a server-side TLS handshake error before routing."
     kind: negative
     risk: high
-    verify: cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture
+    verify: bash apps/relay/scripts/ec-evidence.sh security-boundaries
 ---
 flowchart TD
-    r1[R1 untrusted identity fails server handshake] --> cargo_test_p_relay_test_raft_peer_mtls_untrusted_relay_peer_certificate_is_rejected_exact_nocapture[cargo test -p relay --test raft_peer_mtls untrusted_relay_peer_certificate_is_rejected -- --exact --nocapture]
-    r2[R2 bearer and admission rejections execute] --> cargo_test_p_relay_test_auth_test_service_admission_nocapture[cargo test -p relay --test auth --test service_admission -- --nocapture]
-    r3[R3 deployment security posture executes] --> cargo_test_p_relay_test_direct_k8s_assets_nocapture[cargo test -p relay --test direct_k8s_assets -- --nocapture]
-    r4[R4 rotation and peer stability execute] --> cargo_test_p_service_auth_reload_tests_nocapture_cargo_test_p_relay_test_auth_relay_auth_adapter_rotates_the_shared_registry_without_restart_exact_nocapture_cargo_test_p_relay_test_raft_peer_mtls_nocapture[cargo test -p service-auth reload::tests -- --nocapture && cargo test -p relay --test auth relay_auth_adapter_rotates_the_shared_registry_without_restart -- --exact --nocapture && cargo test -p relay --test raft_peer_mtls -- --nocapture]
+    r1[R1 untrusted identity fails server handshake] --> bash_apps_relay_scripts_ec_evidence_sh_security_boundaries[bash apps/relay/scripts/ec-evidence.sh security-boundaries]
+    r2[R2 bearer and admission rejections execute] --> bash_apps_relay_scripts_ec_evidence_sh_security_behavior[bash apps/relay/scripts/ec-evidence.sh security-behavior]
+    r3[R3 deployment security posture executes] --> bash_apps_relay_scripts_ec_evidence_sh_security_boundaries[bash apps/relay/scripts/ec-evidence.sh security-boundaries]
+    r4[R4 rotation and peer stability execute] --> bash_apps_relay_scripts_ec_evidence_sh_security_stability[bash apps/relay/scripts/ec-evidence.sh security-stability]
     r5[R5 guard dispatch includes dynamic suite] --> cd_apps_relay_target_debug_vat_run_guard_security[cd apps/relay && ../../target/debug/vat run guard-security]
     r6[R6 agent review and ec verification close] --> aw_ec_check_project_relay_aw_ec_gen_project_relay_verify_aw_ec_verify_project_relay[aw ec check --project relay && aw ec gen --project relay --verify && aw ec verify --project relay]
 ```
