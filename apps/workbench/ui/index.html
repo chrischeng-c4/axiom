@@ -3,64 +3,190 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Workbench — native agent terminals with source-aware project context."
+    />
     <title>Workbench</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", sans-serif;
-        background: #0d1117;
-        color: #e6edf3;
-      }
-      body {
-        min-height: 100vh;
-        margin: 0;
-        display: grid;
-        place-items: center;
-        background:
-          radial-gradient(circle at 20% 20%, #172554 0, transparent 36rem),
-          #0d1117;
-      }
-      main {
-        width: min(42rem, calc(100vw - 3rem));
-        padding: 2.5rem;
-        border: 1px solid #30363d;
-        border-radius: 1rem;
-        background: rgb(22 27 34 / 92%);
-        box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 35%);
-      }
-      .eyebrow {
-        margin: 0 0 0.75rem;
-        color: #7ee787;
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-      }
-      h1 {
-        margin: 0;
-        font-size: clamp(2rem, 7vw, 4rem);
-        line-height: 1;
-      }
-      p {
-        max-width: 34rem;
-        margin: 1.25rem 0 0;
-        color: #b1bac4;
-        font-size: 1rem;
-        line-height: 1.65;
-      }
-    </style>
+    <link rel="stylesheet" href="shell.css" />
+    <script src="shell.js" defer></script>
   </head>
   <body>
-    <main aria-labelledby="workbench-title">
-      <p class="eyebrow">Native desktop host ready</p>
-      <h1 id="workbench-title">Workbench</h1>
-      <p>
-        The verified host boundary is running. Launch folders, the native agent
-        terminal, and read-only context renderers land as separate product
-        slices so each behavior remains independently testable.
-      </p>
-    </main>
+    <a class="skip-link" href="#terminal-region">Skip to terminal region</a>
+
+    <header class="titlebar">
+      <div class="brand" aria-label="Workbench">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </span>
+        <span class="brand-name">Workbench</span>
+      </div>
+      <div class="active-location" aria-live="polite">
+        <span class="location-label">Launch folder</span>
+        <span id="active-path">None selected</span>
+      </div>
+      <div class="host-state">
+        <span class="status-dot" aria-hidden="true"></span>
+        Local
+      </div>
+    </header>
+
+    <div id="workbench-shell" class="workbench-shell">
+      <nav
+        id="launch-folders"
+        class="folder-nav"
+        aria-labelledby="folders-title"
+        data-collapsed="false"
+      >
+        <div class="panel-heading folder-heading">
+          <div class="heading-copy">
+            <p class="section-kicker">Workspace</p>
+            <h1 id="folders-title">Launch folders</h1>
+          </div>
+          <button
+            id="collapse-folders"
+            class="icon-button"
+            type="button"
+            aria-expanded="true"
+            aria-controls="folder-nav-content"
+            aria-label="Collapse launch folders"
+            title="Collapse launch folders"
+          >
+            <span aria-hidden="true">‹</span>
+          </button>
+        </div>
+
+        <div id="folder-nav-content" class="folder-nav-content">
+          <button id="add-folder" class="primary-action" type="button">
+            <span class="action-icon" aria-hidden="true">＋</span>
+            <span class="action-label">Add launch folder</span>
+          </button>
+
+          <div id="folder-empty" class="empty-state compact-empty">
+            <span class="empty-glyph" aria-hidden="true">⌁</span>
+            <p>No folders yet</p>
+            <span>Add a local directory to prepare an agent launch.</span>
+          </div>
+
+          <div
+            id="folder-list"
+            class="folder-list"
+            role="list"
+            aria-label="Registered launch folders"
+          ></div>
+        </div>
+
+        <div class="folder-nav-footer">
+          <span class="keyboard-hint"><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+          <span class="rail-wordmark" aria-hidden="true">W</span>
+        </div>
+      </nav>
+
+      <main
+        id="terminal-region"
+        class="terminal-region"
+        tabindex="-1"
+        aria-labelledby="terminal-title"
+      >
+        <div class="panel-heading terminal-heading">
+          <div class="heading-copy">
+            <p class="section-kicker">Native agent</p>
+            <h2 id="terminal-title">Terminal</h2>
+          </div>
+          <span id="terminal-badge" class="state-badge">Waiting for folder</span>
+        </div>
+
+        <section id="terminal-empty" class="terminal-empty" aria-labelledby="terminal-empty-title">
+          <div class="terminal-symbol" aria-hidden="true">
+            <span>›_</span>
+          </div>
+          <p class="eyebrow">Start with a trusted directory</p>
+          <h3 id="terminal-empty-title">Choose where your agent will launch</h3>
+          <p>
+            Workbench passes the selected canonical path to the native agent
+            boundary. Terminal cwd and the agent process begin in later slices.
+          </p>
+          <button id="empty-add-folder" class="secondary-action" type="button">
+            Add a launch folder
+          </button>
+        </section>
+
+        <section id="terminal-ready" class="terminal-ready" hidden aria-labelledby="ready-title">
+          <div class="terminal-chrome" aria-hidden="true">
+            <span class="chrome-dot red"></span>
+            <span class="chrome-dot amber"></span>
+            <span class="chrome-dot green"></span>
+            <span class="terminal-label">launch boundary</span>
+          </div>
+          <div class="terminal-copy">
+            <p class="prompt-line">
+              <span class="prompt-mark">›</span>
+              <span id="terminal-path">No launch folder selected</span>
+            </p>
+            <h3 id="ready-title">Folder ready</h3>
+            <p>
+              Native agent launch is intentionally not part of this slice.
+              Your selected folder is ready for the upcoming PTY boundary.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <aside class="context-region" aria-labelledby="context-title">
+        <div class="panel-heading context-heading">
+          <div class="heading-copy">
+            <p class="section-kicker">Project sources</p>
+            <h2 id="context-title">Context</h2>
+          </div>
+          <span class="read-only-chip">Read only</span>
+        </div>
+
+        <div id="context-empty" class="context-empty">
+          <div class="context-lines" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <h3>Context follows the folder</h3>
+          <p>
+            Select a launch folder to bind future Markdown, Git, and optional
+            typed renderers to one explicit source root.
+          </p>
+        </div>
+
+        <div id="context-ready" class="context-ready" hidden>
+          <div class="source-card">
+            <span class="source-icon" aria-hidden="true">⌂</span>
+            <div>
+              <span class="source-label">Selected source root</span>
+              <strong id="context-folder-name">Folder</strong>
+            </div>
+          </div>
+          <p class="context-note">
+            No renderer is active yet. The selected path is authoritative;
+            derived context will always disclose its source.
+          </p>
+        </div>
+
+        <div class="context-footer">
+          <span>Markdown</span>
+          <span>Git</span>
+          <span>Optional adapters</span>
+        </div>
+      </aside>
+    </div>
+
+    <div id="shell-status" class="shell-status" role="status" aria-live="polite"></div>
+
+    <template id="folder-item-template">
+      <div class="folder-row" role="listitem">
+        <button class="folder-button" type="button">
+          <span class="folder-monogram" aria-hidden="true"></span>
+          <span class="folder-copy">
+            <strong class="folder-name"></strong>
+            <span class="folder-path"></span>
+          </span>
+          <span class="selected-mark" aria-hidden="true">✓</span>
+        </button>
+      </div>
+    </template>
   </body>
 </html>

@@ -33,13 +33,29 @@ placing optional, read-only project context beside the terminal.
 
 ## Desktop Stack
 
-The native host is Rust plus Tauri 2. This first product slice proves one local
-WebView window and a bounded ready/shutdown lifecycle. The three-column shell,
-native agent PTY, cwd synchronization, and context renderers remain separate
-child work items under [#2171](https://github.com/chrischeng-c4/axiom/issues/2171).
+The native host is Rust plus Tauri 2. Its bootstrap proves one local WebView
+window and a bounded ready/shutdown lifecycle; the registered-folder slice adds
+the three-column shell without starting an agent process. Native agent PTY, cwd
+synchronization, and context renderers remain separate child work items under
+[#2171](https://github.com/chrischeng-c4/axiom/issues/2171).
+
+## Registered Launch Folders
+
+The left navigation registers real local directories through the native folder
+picker. Workbench persists only canonical folder identity and the selected id;
+the compact navigation state stays transient. Selection exposes one canonical
+path to the future agent-launch boundary but does not set terminal cwd or start
+a process.
+
+The shell keeps three explicit landmarks visible: launch folders, terminal
+preparation, and read-only context. Empty, cancelled-picker, invalid-path, and
+constrained-width states remain actionable. The retained viewport and
+interaction evidence for this slice lives under
+[`evidence/folder-shell/2192`](evidence/folder-shell/2192/).
 
 ## Verification
 
 ```bash
 cargo test -p workbench --test desktop_launch_smoke -- --nocapture
+cargo test -p workbench --test folder_shell_journey -- --nocapture
 ```

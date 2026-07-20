@@ -35,6 +35,17 @@ The desktop bootstrap gate is:
 cargo test -p workbench --test desktop_launch_smoke -- --nocapture
 ```
 
+The registered-folder and rendered shell gate is:
+
+```bash
+cargo test -p workbench --test folder_shell_journey -- --nocapture
+```
+
+That test launches Jet's real headless Chromium runtime, records desktop and
+constrained-width screenshots, and therefore needs permission to start the
+browser process in sandboxed agent hosts. It must not be replaced with a DOM
+mock or static string-only assertion.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.

@@ -9,4 +9,4 @@ label = "app:workbench"
 name = "workbench"
 paths = ["**"]
 target = "rust"
-test_cmd = "cargo test -p workbench --test desktop_launch_smoke -- --nocapture"
+test_cmd = "cargo test -p workbench --tests -- --nocapture"

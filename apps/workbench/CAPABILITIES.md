@@ -27,13 +27,14 @@ Workbench launches Claude Code, Codex, or AGY through its native CLI in a real
 PTY and adds optional, read-only context without owning vendor sessions, AW
 lifecycle state, or inferred knowledge as canonical repository truth.
 Gate Inventory:
-- in_progress: `cargo test -p workbench --test desktop_launch_smoke -- --nocapture`
+- verified: `cargo test -p workbench --test desktop_launch_smoke -- --nocapture`
+- verified: `cargo test -p workbench --test folder_shell_journey -- --nocapture`
 - planned: `cargo test -p workbench --test production_journey -- --nocapture`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| desktop-application-bootstrap | change | #2191 | in_progress | in_progress | prototype | `desktop_launch_smoke` |
-| three-column-folder-shell | change | #2192 | planned | planned | none | `folder_shell_journey` |
+| desktop-application-bootstrap | change | #2191 | complete | verified | prototype | `desktop_launch_smoke` |
+| three-column-folder-shell | change | #2192 | complete | verified | prototype | `folder_shell_journey` plus retained viewport evidence |
 | native-agent-pty | change | #2193 | planned | planned | none | `pty_agent_adapters` |
 | authoritative-cwd-context | change | #2194 | planned | planned | none | `pty_cwd_context` |
 | generic-context-renderers | change | #2195 | planned | planned | none | `generic_context_renderers` |

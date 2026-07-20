@@ -8,6 +8,9 @@ use std::io::{BufRead, Write};
 
 use tauri::Manager;
 
+/// @spec apps/workbench/tech-design/logic/deliver-workbench-three-column-shell-and-registered-launch-folde.md#logic
+pub mod folder_shell;
+
 /// Marker emitted only after the configured native window exists.
 pub const HOST_READY_MARKER: &str = "WORKBENCH_HOST_READY";
 
@@ -19,6 +22,14 @@ const SMOKE_CONTROL_STDIO: &str = "stdio";
 /// @spec apps/workbench/tech-design/interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md#logic
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(folder_shell::FolderShellStore::default())
+        .invoke_handler(tauri::generate_handler![
+            folder_shell::load_shell_state,
+            folder_shell::choose_launch_folder,
+            folder_shell::select_launch_folder,
+            folder_shell::selected_launch_path,
+        ])
         .setup(|app| {
             if app.get_webview_window("main").is_none() {
                 return Err("configured main Workbench window was not created".into());

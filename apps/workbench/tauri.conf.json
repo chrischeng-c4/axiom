@@ -7,13 +7,14 @@
     "frontendDist": "ui"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
         "title": "Workbench",
         "width": 1280,
         "height": 800,
-        "minWidth": 900,
+        "minWidth": 760,
         "minHeight": 600,
         "resizable": true,
         "visible": true
