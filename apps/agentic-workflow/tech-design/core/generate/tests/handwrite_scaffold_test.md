@@ -163,6 +163,23 @@ fn scaffold_anchor_missing_returns_outcome_without_writing() {
 }
 
 #[test]
+fn scaffold_async_function_anchors() {
+    let cases = [
+        ("public_async", "pub async fn public_async() {\n}\n"),
+        ("crate_async", "pub(crate) async fn crate_async<T>() {\n}\n"),
+        ("private_async", "async fn private_async() {\n}\n"),
+    ];
+
+    for (anchor, source) in cases {
+        let tmp = TempDir::new().unwrap();
+        let path = write(tmp.path(), "src/x.rs", source);
+        let outcome =
+            scaffold_handwrite(&HandwriteEntry::default(), &path, anchor, Some("logic")).unwrap();
+        assert_eq!(outcome, ScaffoldOutcome::Inserted, "anchor: {anchor}");
+    }
+}
+
+#[test]
 fn scaffold_round_trips_through_parser() {
     let tmp = TempDir::new().unwrap();
     let p = write(tmp.path(), "src/x.rs", "pub fn alpha() {\n}\n");
@@ -179,6 +196,7 @@ fn scaffold_round_trips_through_parser() {
     assert_eq!(parsed[0].tracker, "pending-tracker");
     assert_eq!(parsed[0].gap, "missing-generator:logic");
 }
+
 ```
 
 ## Changes
