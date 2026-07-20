@@ -172,14 +172,36 @@ async fn defer_serve_watches_registry_and_emits_redacted_audit_events() {
     let stdout = std::fs::read_to_string(&stdout_path).unwrap();
     let stderr = std::fs::read_to_string(&stderr_path).unwrap();
     let logs = format!("{stdout}\n{stderr}");
+    let audit_events: Vec<serde_json::Value> = logs
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .filter(|event: &serde_json::Value| event["attributes"]["target"] == "service_auth.audit")
+        .collect();
 
     assert!(ready, "Defer process did not become ready; logs:\n{logs}");
     assert_eq!(old_status, axum::http::StatusCode::OK);
     assert_eq!(new_status, axum::http::StatusCode::OK);
     assert_eq!(old_after_rotation, axum::http::StatusCode::UNAUTHORIZED);
     assert_eq!(forbidden_status, axum::http::StatusCode::FORBIDDEN);
-    assert!(logs.contains("credential_registry_reload"), "{logs}");
-    assert!(logs.contains("authorization_decision"), "{logs}");
+    assert!(
+        audit_events.iter().any(|event| {
+            event["event"] == "credential_registry_reload"
+                && event["attributes"]["applied"] == true
+                && event["attributes"]["entries"] == 1
+        }),
+        "missing structured applied-reload audit event: {logs}"
+    );
+    assert!(
+        audit_events.iter().any(|event| {
+            event["event"] == "authorization_decision"
+                && event["attributes"]["decision"] == "Deny"
+                && event["attributes"]["reason"] == "InsufficientRole"
+                && event["attributes"]["subject"] == "new-reader"
+                && event["attributes"]["resource"] == "jobs"
+                && event["attributes"]["needed"] == "Some(Write)"
+        }),
+        "missing structured queue-write denial audit event: {logs}"
+    );
     assert!(
         !logs.contains("old-secret-token"),
         "audit leaked old bearer"
