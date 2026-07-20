@@ -158,6 +158,7 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | gpu-vector-competitor-performance-baseline | epic | #769 | planned | planned | none | pending competitor performance gate |
 | beam-production-overlap-pipeline | change | #2153 | planned | planned | none | pending high-throughput query serving pipeline |
+| beam-competitor-performance-runners | change | #2155 | planned | planned | none | pending competitor-performance EC runners |
 | four-pillar-throughput-saturation-ddd | change | #769 | planned | planned | none | pending throughput architecture |
 | competitive-throughput-ddd-zero-cost | change | #769 | planned | planned | none | pending throughput architecture |
 | competitive-throughput-gate-saturate-four-pillars | change | #769 | planned | planned | none | pending throughput architecture |
