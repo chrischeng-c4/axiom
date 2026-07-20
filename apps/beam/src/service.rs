@@ -482,8 +482,8 @@ async fn delete_vector(
         .ok_or_else(|| not_found_err(format!("collection `{name}` not found")))?;
     if cs.collection.delete(&id) {
         cs.rebuild(&state.gpu);
-        // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="persist collection after delete">
-        persist_collection(&state, &name, &cs.collection);
+        // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="persist collection after delete">
+persist_collection(&state, &name, &cs.collection);
         // </HANDWRITE>
         Ok((StatusCode::OK, Json(json!({ "deleted": id }))).into_response())
     } else {
