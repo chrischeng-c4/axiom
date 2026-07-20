@@ -77,7 +77,6 @@ changes:
     impl_mode: hand-written
     anchor: to_thread_gather_stability
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
