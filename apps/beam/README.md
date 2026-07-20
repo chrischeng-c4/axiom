@@ -266,6 +266,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | dedicated-gpu-vector-service-topology | epic | #769 | planned | planned | none | pending k8s render/dogfood gates |
+| beam-k8s-operator-reconcile | change | #2152 | planned | planned | none | pending k8s operator reconcile controller |
 
 ### Primary Replicas
 
