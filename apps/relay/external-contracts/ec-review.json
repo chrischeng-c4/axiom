@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "project": "relay",
+  "source_digest": "sha256:f975745dac9514b7d39f1f1cb25169bb8be659d04a35ad1239588317f626881d",
+  "decision": "needs_revision",
+  "reviewer_kind": "agent",
+  "reviewed_by": "agent:aw-ec-reviewer:relay_ec_review",
+  "reviewed_at": "2026-07-20T08:49:12.124357+00:00",
+  "summary": "The two bound claims invoke non-empty gates, but Relay's EC inventory does not cover the CapabilityType-required dimensions and both gates admit capability-specific false greens. The performance case is functional/synthetic rather than a measured efficiency oracle, and the security case does not exercise the controls whose hardening it is used to evidence.",
+  "checklist": {
+    "capability_claim_coverage": true,
+    "required_dimensions": false,
+    "assertions_specific": false,
+    "oracle_independent": false,
+    "loopholes_checked": false,
+    "false_green_risk_checked": false
+  },
+  "findings": [
+    "EC case `relay-competitor-performance-meter-gate` / claim `normalized-win-ratchet-decision-model` is not a real efficiency oracle. `vat run meter-perf` only runs `perf_gate` and `work_queue_throughput`; those tests use `RelayCoreConfig::in_memory()`, hard-coded ratio inputs, and fixed operation counts, with no elapsed-time measurement, non-zero sample floor, throughput/latency result, persisted baseline, or competitor observation. Revise `apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md` with a release-mode measured workload whose independently produced result is parsed and compared against a pinned workload-specific baseline/threshold, and explicitly fail zero samples or missing measurements.",
+    "Capability `competitor-performance` is declared `Type: RuntimeTool`, so its required EC dimensions are behavior, efficiency, and stability, but the current EC inventory supplies only the efficiency case `relay-competitor-performance-meter-gate`. Extend `apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md` (or capability-scoped behavior/stability EC sources) with concrete behavior and stability cases for this capability, including observable outcomes and executable commands.",
+    "EC case `relay-security-hardening-guard-scan` / claim `guard-static-runtime-evidence` can stay green while Relay's security controls are absent or broken. Its command runs a source lint scan plus `relay_core`, but does not execute bearer-auth negative cases, peer-mTLS rejection, request-limit/malformed-frame cases, or restricted-pod/NetworkPolicy assertions. Revise `apps/relay/external-contracts/security-hardening/security/security-evidence.md` with explicit negative security journeys and concrete rejection/deployment observables, and make missing or zero executed cases fail.",
+    "Capability `security-hardening` is declared `Type: RuntimeTool`, whose required dimensions are behavior, efficiency, and stability, while its only EC case is security and is derived as `required_for_production: false`. If RuntimeTool is intentional, fill real behavior, efficiency, and stability cases; if the capability is semantically a SecurityTool, correct that capability contract first and then fill the required behavior, security, and stability cases. The current advisory security-only case does not satisfy either typed contract."
+  ],
+  "target_path": "apps/relay/external-contracts/competitor-performance/efficiency/perf-gate.md"
+}
