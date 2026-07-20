@@ -3886,7 +3886,7 @@ fn is_bare_arrow_function_expression(expr: &str) -> bool {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#2168" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Whether `s` contains a depth-0 (unparenthesized/unbracketed) comma.
 /// Mirrors [`find_direct_export_assignment_semicolon`]'s depth-tracking
 /// scan style; see [`is_bare_arrow_function_expression`]'s expression-body
