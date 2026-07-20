@@ -75,7 +75,6 @@ fn fd_count() -> Option<usize> {
         .find_map(|path| std::fs::read_dir(path).ok().map(|entries| entries.count()))
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="#2213" reason="Own repeated deterministic output, exact codegen cleanup, 60-second bound, and FD plateau evidence.">
 #[test]
 #[ignore = "release-mode repeated CLI stability gate"]
 fn offline_cli_is_deterministic_and_resource_bounded() {
@@ -124,5 +123,4 @@ fn offline_cli_is_deterministic_and_resource_bounded() {
         );
     }
 }
-// </HANDWRITE>
 // HANDWRITE-END

@@ -1,5 +1,10 @@
 // HANDWRITE-BEGIN gap="missing-generator:unit-test:defer-cli-contract" tracker="#766" reason="CLI convention, agent onboarding, offline OpenAPI, and shared client-codegen regression proof."
 use std::process::Command;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
 
 fn defer() -> Command {
     Command::new(env!("CARGO_BIN_EXE_defer"))
@@ -25,6 +30,26 @@ fn help_exposes_standard_and_domain_surfaces() {
     ] {
         assert!(stdout.contains(command), "missing {command} in --help");
     }
+
+    for (group, expected) in [
+        ("task", &["create", "status", "cancel"][..]),
+        ("queue", &["get", "put", "control"][..]),
+        ("issue", &["search", "view", "create"][..]),
+    ] {
+        let output = defer().args([group, "--help"]).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{group} --help failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for command in expected {
+            assert!(
+                stdout.contains(command),
+                "missing {command} in {group} --help"
+            );
+        }
+    }
 }
 
 #[test]
@@ -49,6 +74,11 @@ fn deploy_artifacts_render_by_lifecycle_layer() {
         .args(["k8s", "operator", "render", "--namespace", "control"])
         .output()
         .unwrap();
+    assert!(
+        operator.status.success(),
+        "operator render failed: {}",
+        String::from_utf8_lossy(&operator.stderr)
+    );
     let operator = String::from_utf8(operator.stdout).unwrap();
     assert!(operator.contains("kind: Deployment"));
     assert!(operator.contains("namespace: control"));
@@ -60,6 +90,11 @@ fn deploy_artifacts_render_by_lifecycle_layer() {
         .args(["k8s", "instance", "render", "--profile", "prod"])
         .output()
         .unwrap();
+    assert!(
+        instance.status.success(),
+        "instance render failed: {}",
+        String::from_utf8_lossy(&instance.stderr)
+    );
     let instance = String::from_utf8(instance.stdout).unwrap();
     assert!(instance.contains("kind: Defer"));
     assert!(instance.contains("replicasPerShard: 3"));
@@ -91,11 +126,52 @@ fn deploy_artifacts_render_by_lifecycle_layer() {
 
 #[test]
 fn llm_outline_advertises_cross_scope_topics_and_terminates() {
-    let output = defer()
-        .args(["llm", "--topic", "outline"])
-        .output()
-        .unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let connected = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher_connected = Arc::clone(&connected);
+    let watcher_stop = Arc::clone(&stop);
+    let watcher = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !watcher_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((_stream, _)) => {
+                    watcher_connected.store(true, Ordering::Relaxed);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("proxy trap failed: {error}"),
+            }
+        }
+    });
+
+    let mut command = defer();
+    command.args(["llm", "--topic", "outline"]);
+    for name in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        command.env(name, &proxy);
+    }
+    command
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .env_remove("GITHUB_TOKEN");
+    let output = command.output().unwrap();
+    stop.store(true, Ordering::Relaxed);
+    watcher.join().unwrap();
     assert!(output.status.success());
+    assert!(
+        !connected.load(Ordering::Relaxed),
+        "offline llm attempted a network connection"
+    );
     let stdout = String::from_utf8(output.stdout).unwrap();
     for topic in ["workflow", "api", "delivery", "ha", "auth"] {
         assert!(stdout.contains(&format!("`{topic}`")), "missing {topic}");
@@ -131,7 +207,33 @@ fn offline_spec_and_typed_client_generation_use_one_contract() {
         "{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    assert!(out.path().read_dir().unwrap().next().is_some());
+    let mut actual = out
+        .path()
+        .read_dir()
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    actual.sort();
+    assert_eq!(
+        actual,
+        [
+            "client.ts",
+            "hooks.ts",
+            "index.ts",
+            "runtime.ts",
+            "types.ts"
+        ]
+    );
+    let client = std::fs::read_to_string(out.path().join("client.ts")).unwrap();
+    for symbol in [
+        "createDeferClient",
+        "taskCreate(data",
+        "taskStatus(data",
+        "taskCancel(data",
+        "/v1/queues/${data.path.queue}/tasks",
+    ] {
+        assert!(client.contains(symbol), "generated client missing {symbol}");
+    }
     assert!(String::from_utf8(generated.stdout)
         .unwrap()
         .contains("next: done"));
