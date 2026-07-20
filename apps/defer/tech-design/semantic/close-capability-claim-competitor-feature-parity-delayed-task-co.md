@@ -83,7 +83,6 @@ changes:
     anchor: h2c_routes_probes_openapi_metrics_dispatch_and_auth_are_live
     reason: "Own the authenticated public h2c create, cancel, and terminal inspection journey while preserving tenant isolation."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
