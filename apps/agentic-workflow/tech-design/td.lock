@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-17T16:04:05.510200+00:00"
-digest = "sha256:ba283990f9531a4e4dec6e8cd05e0117fbb0d8a00c4daca33e9c24879cf9cf49"
-source_digest = "sha256:ba283990f9531a4e4dec6e8cd05e0117fbb0d8a00c4daca33e9c24879cf9cf49"
-ir_digest = "sha256:a1bb42b0ef13fa2c761b72348db0dbba3821d1d12f67e26374d03c29b2b6cef9"
+generated_at = "2026-07-20T04:24:02.644867+00:00"
+digest = "sha256:cb3f57a23673c1d48b137c06c5591fc9953284e3a0d00229c1c127167da706f6"
+source_digest = "sha256:cb3f57a23673c1d48b137c06c5591fc9953284e3a0d00229c1c127167da706f6"
+ir_digest = "sha256:4c892185b0d8c6598c6e7b54d669c8cabf6c807fa72ec843aa9f8c0973708216"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -4590,8 +4590,8 @@ section_count = 2
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:a2ffd23ea5d4881b09033c704491b571f46118010d71c277d872ef56c690615d"
-ir_digest = "sha256:ae6ccf5b7aebf45d49dfb0a9ef3cb7e23ade8e745ae21bdcc3f077c082c90d8e"
+digest = "sha256:3b2176bcc4d4f02bfe4cd24f5690d0d603f770f38756691194c7f78797d57335"
+ir_digest = "sha256:0193121d5b233594f884c375ab50ddbf5d16ede3e9b80dc3ccaa3d90e0b5b0b5"
 section_count = 2
 
 [[files]]
@@ -4947,8 +4947,8 @@ section_count = 2
 
 [[files]]
 path = "surface/generate/project-health-source.md"
-digest = "sha256:58a303f65f317e2b6e81085c509133afa4a4906eedf238cd57b2f19978c2723f"
-ir_digest = "sha256:7284c90499642ad82c387dc9d9cb2aa724774d7a5951b37b88d120da1ad1c06d"
+digest = "sha256:4a83f4db8d64fcc2af1bc1cffe80c97ecceafd20c3e06fb8c4b671c76c7789a7"
+ir_digest = "sha256:a316dc9368283aeea574e0c32bf684b6462913dd4f871d2419e4857907b217cd"
 section_count = 2
 
 [[files]]
@@ -4977,8 +4977,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/cb_fill.md"
-digest = "sha256:72685a30ec01591021bdd3ae43b13aba6ccdc35effb068cd05527912a7290d97"
-ir_digest = "sha256:e4cc00099b5893a6f15741902f5ac101b158d91c75059c042bb2ad7e5f31ab93"
+digest = "sha256:b671c27dd2a1cc968189495b3e5c6afb969cd9458f183a270e7731ab9f799100"
+ir_digest = "sha256:39e42eb0736eb236158ea107877c4031fc047cfe50bec9ce81fa82f7548ac824"
 section_count = 2
 
 [[files]]
@@ -5073,8 +5073,8 @@ section_count = 2
 
 [[files]]
 path = "surface/interfaces/src/meta.md"
-digest = "sha256:90bb3c60fcef2af3e7ea4e47dade86fcac78085b1b1f353f65a2f1501500723c"
-ir_digest = "sha256:6841480026c7f4b8667d74adcc6120b2d2c17b4c29d6a718b5d72a77fb7714c9"
+digest = "sha256:5bc7608b30e996c57bdae6198476fbefb3afc3cffcf755b7980f8034ad482a26"
+ir_digest = "sha256:20652b65b1787ba120f819da1cfc6884bc0ddbf91b39f969103fc5814538e176"
 section_count = 1
 
 [[files]]
@@ -5293,8 +5293,8 @@ section_count = 5
 
 [[files]]
 path = "surface/specs/aw-meta-doc-producer.md"
-digest = "sha256:2a4e1d715d83dc9eabbc53368dea2300c59812877a6c524d710b68ec1b99d714"
-ir_digest = "sha256:ea65113e36b2666583136216fe4c414c4199e7ad6051c3860ed5d91ab5c1f245"
+digest = "sha256:9d24f30112ca27e636c71158f7ee001c3e0d91d7587a435e191169d6ef2b51db"
+ir_digest = "sha256:add29e39a3628400c5bc3568d50aba32fd20443233c3b906e5b6118efc7888ef"
 section_count = 5
 
 [[files]]
@@ -5573,8 +5573,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/cb_fill_test.md"
-digest = "sha256:248a2633f0110f482dfb22e27e58b53db292d281f1d0712daee9aa912f85ea3f"
-ir_digest = "sha256:5a8fe34cfc6152594ee858a9cba7bdae5445a56d828a5da9ef8954d5f345055e"
+digest = "sha256:f18b07ae61e1dab0cb52fea6702fb7696c7de478e0adbe00db3707e0698476b2"
+ir_digest = "sha256:4bcd48f6a9a35e6ff8a400eb2a85c9810cf06bdcddb383fb1da6cbe08a5c071d"
 section_count = 2
 
 [[files]]
@@ -5585,8 +5585,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/chain_liveness_test.md"
-digest = "sha256:099f84ecdb75c08e4644ce7777b543aadaf5ef96f38dbfcaac710a82ea43a3c6"
-ir_digest = "sha256:6b24f86870381176bfa2f7f59bc7ef5c99e8efbde99f259894366db0b8b389cd"
+digest = "sha256:187d07640ddfd3c311c8b9237ad36f2f061df6f9ccd4dff60120e72c989125d1"
+ir_digest = "sha256:aa7937ba28a70fcbdecc1df782c3c132332e0c7aee74c2b197a3560009fe73ea"
 section_count = 2
 
 [[files]]
