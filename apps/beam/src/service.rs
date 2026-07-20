@@ -669,7 +669,10 @@ async fn query_collection(
     let mut live_ids = Vec::new();
     for (row_idx, id) in external_ids.iter().enumerate() {
         if col.is_live(row_idx as u32) {
-            live_ids.push(id.clone());
+            let payload = col.payload(row_idx);
+            if _filter.matches(payload) {
+                live_ids.push(id.clone());
+            }
         }
     }
 
