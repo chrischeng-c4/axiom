@@ -9016,12 +9016,19 @@ changes:
         )
         .unwrap();
         std::fs::write(root.join("src/generated.rs"), "// generated seed\n").unwrap();
-        std::fs::write(root.join("src/manual.rs"), "// manual sentinel\n").unwrap();
+        // #1807: hand-written existing targets require an `anchor:` in the
+        // Changes entry, and the anchor must match an existing Rust item in
+        // the target file (`anchor_present`/`line_matches_anchor`).
+        std::fs::write(
+            root.join("src/manual.rs"),
+            "// manual sentinel\npub fn manual_sentinel() {}\n",
+        )
+        .unwrap();
         let spec = write_plan_spec(
             root,
             "mixed-plan",
             &format!(
-                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/generated.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/manual.rs\n    action: modify\n    section: schema\n    impl_mode: hand-written\n```\n",
+                "{}\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: src/generated.rs\n    action: modify\n    section: schema\n    impl_mode: codegen\n  - path: src/manual.rs\n    action: modify\n    section: schema\n    impl_mode: hand-written\n    anchor: manual_sentinel\n```\n",
                 schema_section()
             ),
         );
@@ -9029,15 +9036,21 @@ changes:
         run_apply(&spec, root, false).unwrap();
         let first = std::fs::read(root.join("src/generated.rs")).unwrap();
         assert!(String::from_utf8_lossy(&first).contains("pub struct Widget"));
-        assert_eq!(
-            std::fs::read_to_string(root.join("src/manual.rs")).unwrap(),
-            "// manual sentinel\n"
+        // First run scaffolds a bounded HANDWRITE marker around the anchor
+        // (rule 2-2); it does not touch bytes outside that marker.
+        let manual_after_first = std::fs::read_to_string(root.join("src/manual.rs")).unwrap();
+        assert!(
+            manual_after_first.contains("HANDWRITE"),
+            "hand-written existing target should be scaffolded with a HANDWRITE marker around anchor 'manual_sentinel'\n---\n{manual_after_first}"
         );
+        assert!(manual_after_first.contains("pub fn manual_sentinel() {}"));
+        assert!(manual_after_first.starts_with("// manual sentinel\n"));
         run_apply(&spec, root, false).unwrap();
         assert_eq!(std::fs::read(root.join("src/generated.rs")).unwrap(), first);
         assert_eq!(
             std::fs::read_to_string(root.join("src/manual.rs")).unwrap(),
-            "// manual sentinel\n"
+            manual_after_first,
+            "second run must be idempotent: no further HANDWRITE re-scaffolding"
         );
     }
 
