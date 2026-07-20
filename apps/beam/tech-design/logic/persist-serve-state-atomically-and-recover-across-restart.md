@@ -73,3 +73,35 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 2149-verification
+requirements:
+  atomic_persistence:
+    id: R1
+    text: "Data directory is wired into serve startup, writes, and deletes, utilizing storage-durable for atomic replacements and fsync."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test persistence
+  crash_recovery:
+    id: R2
+    text: "Process restart successfully recovers the last committed valid snapshot from the configured data directory."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test restart_recovery
+  reject_corrupt_state:
+    id: R3
+    text: "Process restart rejects corrupted states (e.g. checksum mismatches) and retains the previously verified good state."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test restart_recovery
+---
+flowchart TD
+    r1[R1 atomic persistence] --> cargo_test_p_beam_test_persistence[cargo test -p beam --test persistence]
+    r2[R2 crash recovery] --> cargo_test_p_beam_test_restart_recovery[cargo test -p beam --test restart_recovery]
+    r3[R3 reject corrupt state] --> cargo_test_p_beam_test_restart_recovery
+```
