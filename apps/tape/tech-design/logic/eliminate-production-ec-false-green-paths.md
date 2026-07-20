@@ -1,6 +1,41 @@
 ---
 id: '2159'
-summary: (fill)
+capability_refs:
+  - id: "competitor-feature-parity"
+    role: primary
+    gap: "topic-replay-competitor-feature-matrix"
+    claim: "topic-replay-competitor-feature-matrix"
+    coverage: full
+    rationale: "Replace self-asserted competitor rows with a versioned official-source baseline consumed by the executable Tape oracle."
+  - id: "competitor-performance"
+    role: primary
+    gap: "topic-replay-competitor-performance-baseline"
+    claim: "topic-replay-competitor-performance-baseline"
+    coverage: full
+    rationale: "Make local, NATS, and Kafka performance pass/fail independent, fixed, and fail closed."
+  - id: "http2-api-list"
+    role: primary
+    gap: "backup-service-tls-spec-gen-clients"
+    claim: "backup-service-tls-spec-gen-clients"
+    coverage: full
+    rationale: "Execute a non-zero three-language generated-client journey that inspects Tape's public route scope."
+  - id: "security-hardening"
+    role: primary
+    gap: "topic-replay-security-boundary"
+    claim: "topic-replay-security-boundary"
+    coverage: full
+    rationale: "Align security assertions with the real auth, rotation, admission, audit, guard, and meter journeys that run."
+  - id: "ec-gates-configured"
+    role: primary
+    gap: "tape-vat-meter-guard-ec-gates-observability"
+    claim: "tape-vat-meter-guard-ec-gates-observability"
+    coverage: full
+    rationale: "Regenerate the full EC inventory and close the six digest-bound false-green paths before production readiness."
+summary: >
+  Eliminate six independently reviewed Tape production EC false-green paths by
+  using fail-closed prerequisites, fixed external-contract thresholds,
+  independent competitor provenance, non-zero generated-client evidence, and
+  security runners that execute the behavior they claim.
 fill_sections: [logic, changes, unit-test]
 ---
 
