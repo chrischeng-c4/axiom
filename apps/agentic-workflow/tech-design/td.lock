@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-20T04:24:02.644867+00:00"
-digest = "sha256:cb3f57a23673c1d48b137c06c5591fc9953284e3a0d00229c1c127167da706f6"
-source_digest = "sha256:cb3f57a23673c1d48b137c06c5591fc9953284e3a0d00229c1c127167da706f6"
-ir_digest = "sha256:4c892185b0d8c6598c6e7b54d669c8cabf6c807fa72ec843aa9f8c0973708216"
+generated_at = "2026-07-20T04:54:23.258302+00:00"
+digest = "sha256:f47de21c57f055ad7d68800d67e5cd7af262e07f061e26b5062bdb1dba222224"
+source_digest = "sha256:f47de21c57f055ad7d68800d67e5cd7af262e07f061e26b5062bdb1dba222224"
+ir_digest = "sha256:a6cdfc113feceea1df179c27503429f531768b1a43c98814c91d8b33965a79c1"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5262,6 +5262,12 @@ ir_digest = "sha256:4a2e21a07ee5c4382e2b5e2fc17a149c26aa459505e0897bf21c680cf352
 section_count = 1
 
 [[files]]
+path = "surface/specs/aw-fixture-platform-config.md"
+digest = "sha256:cefae9de6ea1d863d9c6d51fa4378adca70e2bb84ca32dbadcd06fb841981219"
+ir_digest = "sha256:da3733133d450915da359730d2fb1f8d586db8e2dfee1d0b7a43c07e3a1d403f"
+section_count = 4
+
+[[files]]
 path = "surface/specs/aw-goal-condition-loop.md"
 digest = "sha256:5e3ad49df733e9a5f4ca1a061b1e43a949c80926b8f66523e49010007a7bc081"
 ir_digest = "sha256:5538fce6c7640ceaf7675e82554636d69aa5c638df3ab5b5c9b01db56bd9f99f"
@@ -5591,8 +5597,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/fixture_loop_test.md"
-digest = "sha256:4b8ea57b59ce112228b15865b103464ec56e8101bdc9164a6a89f227c3e8ecdf"
-ir_digest = "sha256:e24f0673fb055766b74ef4521b7ecf4cc71b4a13494cee5bb61f76be938135ea"
+digest = "sha256:2c38a431664479ec629c47db7d94365f04b029c9b40a858a2c14d3c0db9faefc"
+ir_digest = "sha256:2f1a432b45c272465b644b56a9a3e26d50e64ed99cf820bfdef518244000f243"
 section_count = 2
 
 [[files]]
