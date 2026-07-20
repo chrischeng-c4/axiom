@@ -8,6 +8,34 @@ project = "jet"
 generated_from_td_digest = "sha256:43b8c0e844f79c3a26fe79f56a55ba2f061b15c90e607d0eb7d7fc0836301a24"
 
 [[aw.ec.generated.cases]]
+id = "1839"
+capability_id = "library-build-publishing"
+claim_id = "1839"
+contract_id = "1839"
+category = "behavior"
+td_ref = "apps/jet/external-contracts/behavior/1839.md#1839"
+test_path = "apps/jet/tests/behavior_ec_1839.rs"
+command = "cargo test -p jet --test behavior_ec_1839 -- --ignored"
+required_for_production = true
+assertions = [
+    "A CommonJS artifact produced from export * from '<module>' exposes every named source export through module.exports while excluding default.",
+]
+
+[[aw.ec.generated.cases]]
+id = "1840"
+capability_id = "library-build-publishing"
+claim_id = "1840"
+contract_id = "1840"
+category = "behavior"
+td_ref = "apps/jet/external-contracts/behavior/1840.md#1840"
+test_path = "apps/jet/tests/behavior_ec_1840.rs"
+command = "cargo test -p jet --test behavior_ec_1840 -- --ignored"
+required_for_production = true
+assertions = [
+    "A CommonJS artifact produced from an aliased named import followed by an exported const of the original name includes the const on module.exports under that export name.",
+]
+
+[[aw.ec.generated.cases]]
 id = "antd-visual-table-dom-wasm-parity"
 capability_id = "browser-trace-parity"
 claim_id = "antd-visual-table-dom-wasm-parity"
@@ -247,6 +275,20 @@ test_path = "apps/jet/tests/behavior_hook_state_preserving_refresh.rs"
 command = "cargo test -p jet --test preview_hmr -- --nocapture"
 required_for_production = true
 assertions = []
+
+[[aw.ec.generated.cases]]
+id = "jet-mangle-utf8-safety"
+capability_id = "library-build-publishing"
+claim_id = "1784"
+contract_id = "1784"
+category = "behavior"
+td_ref = "apps/jet/external-contracts/behavior/1784.md#jet-mangle-utf8-safety"
+test_path = "apps/jet/tests/behavior_jet_mangle_utf8_safety.rs"
+command = "cargo test -p jet --test behavior_jet_mangle_utf8_safety -- --ignored"
+required_for_production = true
+assertions = [
+    "jet build --lib must not panic or corrupt output when collision renaming encounters UTF-8 text, comments, or template content.",
+]
 
 [[aw.ec.generated.cases]]
 id = "library-dom-wasm-parity"
