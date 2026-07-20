@@ -222,7 +222,9 @@ echo "   tasks_window: ${TASK_A} -> ${TASK_B}"
 echo "   p99_window:   ${P99_A}ms -> ${P99_B}ms"
 echo "   retry_window: ${RETRY_START} -> ${RETRY_A} -> ${RETRY_B}"
 
+# <HANDWRITE gap="missing-generator:e2e-test:defer-soak-progress-contract" tracker="#2214" reason="Fail closed when the measured steady-state workload reports zero operations.">
 (( TOTAL_OPS > 0 )) || { echo "!! Defer soak observed zero measured operations" >&2; exit 1; }
+# </HANDWRITE>
 (( ERR_COUNT == 0 )) || { echo "!! Defer soak errors observed" >&2; exit 1; }
 (( RETRY_A > RETRY_START && RETRY_B > RETRY_A )) || {
   echo "!! Defer retry scheduler made no progress in one or both steady windows (${RETRY_START} -> ${RETRY_A} -> ${RETRY_B})" >&2
