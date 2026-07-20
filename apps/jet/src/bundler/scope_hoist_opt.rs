@@ -3935,6 +3935,7 @@ fn contains_top_level_comma(s: &str) -> bool {
 }
 // </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Rewrites `<exports_obj>.key = <RHS>;` to
 /// `var __jx_<m>_<key> = <RHS>; <exports_obj>.key = __jx_<m>_<key>;` for
 /// every flat-region export assignment whose RHS is a non-identifier but
@@ -3999,6 +4000,7 @@ fn normalize_pure_export_rhs_unvalidated(code: &str) -> (String, RhsNormalizatio
     }
     (rewritten, stats)
 }
+// </HANDWRITE>
 
 /// Drop the exports-object property-key indirection for same-chunk,
 /// statically-consumed named exports in the flattened region (#1993).
@@ -7511,6 +7513,7 @@ pub fn convert_flat_region_function_declarations_to_var(
 }
 
 // <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in scope_hoist_opt.rs is hand-written pending codegen support">
 /// Runs flat-region function-declaration→var-hoisting conversion (#2132)
 /// immediately followed by same-chunk export-binding elision (#2128) as one
 /// pipeline, sharing a single region-wide reparse-validation pass across
@@ -7608,6 +7611,7 @@ pub fn convert_and_elide_flat_region(
         ExportElisionStats::default(),
     )
 }
+// </HANDWRITE>
 // </HANDWRITE>
 
 #[cfg(test)]
@@ -7897,12 +7901,14 @@ mod rhs_normalization_tests {
         assert!(is_pure_normalizable_export_rhs("null"));
     }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn purity_ladder_rejects_member_chains() {
         // v1 ladder explicitly excludes member reads: a getter could fire.
         assert!(!is_pure_normalizable_export_rhs("a.b.c"));
         assert!(!is_pure_normalizable_export_rhs("_r(3).css"));
     }
+// </HANDWRITE>
 
     #[test]
     fn purity_ladder_rejects_call_expressions() {
@@ -7911,6 +7917,7 @@ mod rhs_normalization_tests {
         assert!(!is_pure_normalizable_export_rhs("(() => {})()"));
     }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn purity_ladder_rejects_async_and_generator_functions() {
         // Out of the v1 ladder -- see is_bare_function_expression /
@@ -7922,6 +7929,7 @@ mod rhs_normalization_tests {
         assert!(!is_pure_normalizable_export_rhs("function* () {}"));
         assert!(!is_pure_normalizable_export_rhs("function *named() {}"));
     }
+// </HANDWRITE>
 
     #[test]
     fn purity_ladder_rejects_sequence_expression_disguised_as_an_arrow_body() {
@@ -7940,6 +7948,7 @@ mod rhs_normalization_tests {
 
     // ── normalize_pure_export_rhs_unvalidated: the textual rewrite ─────
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn normalize_rewrites_arrow_function_export_to_synthetic_var() {
         let code = concat!("var _m1={exports:{}};", "_m1.exports[\"f\"]=()=>{};",);
@@ -7956,7 +7965,9 @@ mod rhs_normalization_tests {
         );
         assert!(super::super::dce::js_parses_without_errors(&out));
     }
+// </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn normalize_counts_skipped_impure_candidates() {
         let code = concat!(
@@ -7972,6 +7983,7 @@ mod rhs_normalization_tests {
             "g (call) and h (member chain) are impure: {stats:?}"
         );
     }
+// </HANDWRITE>
 
     #[test]
     fn normalize_leaves_identifier_rhs_untouched() {
@@ -7995,6 +8007,7 @@ mod rhs_normalization_tests {
 
     // ── convert_and_elide_flat_region: full-pipeline integration ───────
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn combined_pipeline_normalizes_then_elides_an_arrow_function_export() {
         let code = concat!(
@@ -8016,7 +8029,9 @@ mod rhs_normalization_tests {
         );
         assert!(super::super::dce::js_parses_without_errors(&out));
     }
+// </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn combined_pipeline_normalized_then_still_kept_key_is_fine() {
         // A normalizable RHS on a namespace-escaped module still gets
@@ -8050,6 +8065,7 @@ mod rhs_normalization_tests {
             "module 1's f is namespace-escaped: {elision_stats:?}"
         );
     }
+// </HANDWRITE>
 
     #[test]
     fn jet_no_rhs_normalize_hatch_disables_normalization_only() {

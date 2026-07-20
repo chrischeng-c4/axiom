@@ -3858,6 +3858,7 @@ impl Bundler {
         result
     }
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
     fn generate_bundle(
         &self,
         modules: Vec<CompiledModule>,
@@ -4061,7 +4062,9 @@ impl Bundler {
             preload_hints: Vec::new(),
         })
     }
+// </HANDWRITE>
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in mod.rs is hand-written pending codegen support">
     /// Multi-chunk bundle generation for `--splitting`.
     ///
     /// Partitions `modules` into an entry chunk plus async/shared chunks via
@@ -4402,6 +4405,7 @@ impl Bundler {
 
         Ok(Some((entry_code, chunks, preload_hints)))
     }
+// </HANDWRITE>
 }
 
 /// Build code-splitting edges from the module graph: one `SplitEdgeId` per
