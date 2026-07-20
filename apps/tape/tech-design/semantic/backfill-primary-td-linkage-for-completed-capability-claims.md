@@ -56,7 +56,6 @@ flowchart TD
   complete -->|no| revise_metadata[Revise linkage metadata only]
   revise_metadata --> structural_test
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
