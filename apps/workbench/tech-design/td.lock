@@ -2,10 +2,10 @@ version = 2
 project = "workbench"
 ir_kind = "td"
 td_path = "apps/workbench/tech-design"
-generated_at = "2026-07-20T19:20:52.030601+00:00"
-digest = "sha256:d21387616aafeaeef3d222b4503deb8ef2e76a7a7e887b96533af9363ca91a97"
-source_digest = "sha256:d21387616aafeaeef3d222b4503deb8ef2e76a7a7e887b96533af9363ca91a97"
-ir_digest = "sha256:6f2edf058e2acffdea4c7db64d979413863beccabbeda354b162f7dc29ee7322"
+generated_at = "2026-07-20T20:20:06.669890+00:00"
+digest = "sha256:2a9d981a509d4d39627b3043e75d661dc8954d2cf78d6212d2a8ad2123cd7334"
+source_digest = "sha256:2a9d981a509d4d39627b3043e75d661dc8954d2cf78d6212d2a8ad2123cd7334"
+ir_digest = "sha256:322cd319a35e78fd8f17f85b4b009bb2a056dc11db1b48d59f4471f740aeae09"
 
 [[files]]
 path = "interfaces/cli/launch-native-claude-code-codex-and-agy-clis-through-a-real-pty.md"
@@ -17,6 +17,12 @@ section_count = 3
 path = "interfaces/rest/bootstrap-workbench-product-contract-and-runnable-desktop-applic.md"
 digest = "sha256:8355203bf7f8646f7be896f3577104155e81f8ddee89a7c791a745313e449a0f"
 ir_digest = "sha256:253f13831505aeb4b28eb801110e695fdba58f15108b2f7e9df67298fa74a072"
+section_count = 3
+
+[[files]]
+path = "logic/add-an-optional-graphify-compatible-graph-context-adapter.md"
+digest = "sha256:2218257ec5ac914e41efba53019218df16075463e11f3484611c542e6b214ac8"
+ir_digest = "sha256:2837a702cc951358b39e907939db8356378973bb00b045bf0aa6f1cb3b7cf23b"
 section_count = 3
 
 [[files]]
