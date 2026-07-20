@@ -92,7 +92,7 @@ impl CollectionState {
     }
 }
 
-// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="logic section in service.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="logic section in service.rs is hand-written pending codegen support">
 /// Shared handler state: the registry plus the optional GPU context used to
 /// (re)build indexes. Cheap to clone (both fields are `Arc`-backed).
 #[derive(Clone)]
