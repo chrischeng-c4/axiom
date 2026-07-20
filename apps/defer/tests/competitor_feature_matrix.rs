@@ -14,6 +14,7 @@ fn rows() -> BTreeMap<&'static str, Vec<&'static str>> {
     rows
 }
 
+// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own the parsed, duplicate-free 15-row Google Cloud Tasks-shaped comparison, explicit category exclusions, accurate retry-exhaustion semantics, and bounded performance-claim boundary.">
 #[test]
 fn cloud_tasks_shaped_contract_and_exclusions_are_explicit() {
     let normalized = MATRIX.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -150,4 +151,5 @@ fn cloud_tasks_shaped_contract_and_exclusions_are_explicit() {
     assert!(normalized
         .contains("Google Cloud Tasks versus Pub/Sub assigns dead-letter topics to Pub/Sub:"));
 }
+// </HANDWRITE>
 // HANDWRITE-END
