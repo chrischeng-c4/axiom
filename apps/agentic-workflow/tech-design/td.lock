@@ -2,10 +2,10 @@ version = 2
 project = "agentic-workflow"
 ir_kind = "td"
 td_path = "apps/agentic-workflow/tech-design"
-generated_at = "2026-07-20T07:25:43.309371+00:00"
-digest = "sha256:06d88e5ddb04ec58a90d202c824bf8391c8962db63f26f31b0f78a4e391c2550"
-source_digest = "sha256:06d88e5ddb04ec58a90d202c824bf8391c8962db63f26f31b0f78a4e391c2550"
-ir_digest = "sha256:31ffa683990db999f4d7f864bafcf333cd92ea7244444ed63ac3e2ce78506ba9"
+generated_at = "2026-07-20T07:28:18.871773+00:00"
+digest = "sha256:f1857fbae589800156ef1db904a988576934cbf0c950a3a908d603e20da2d1cb"
+source_digest = "sha256:f1857fbae589800156ef1db904a988576934cbf0c950a3a908d603e20da2d1cb"
+ir_digest = "sha256:7544cad3ec4c15c3381a80e1c3bdfaf44a13dfc7cb8a34d91ed970fc49232b10"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -5615,8 +5615,8 @@ section_count = 2
 
 [[files]]
 path = "surface/validate/tests/inplace_mode_test.md"
-digest = "sha256:7b3a4088bec761d4df82316a0b69f538538a17cf5201dc4a655ae2a3bb6d6b1c"
-ir_digest = "sha256:8be206931698d90a207704f71cdefd05fdd22bfd294ca7db52e06901840c7c7b"
+digest = "sha256:75fa5b08b074450ce8aad8d81fde9537d3b96c186ee07e76e6edd486d596d254"
+ir_digest = "sha256:4bf1ae6cb5a79dcebeb5aa61adbb39bb11ad9032ea4af75e6a8715aa247bea55"
 section_count = 2
 
 [[files]]
