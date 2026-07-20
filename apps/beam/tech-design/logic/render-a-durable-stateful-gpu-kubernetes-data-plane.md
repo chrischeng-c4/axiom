@@ -38,7 +38,6 @@ flowchart TD
     add_probes_pdb --> add_backup[Render Backup CronJob Prod]
     add_backup --> done([Finished])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
