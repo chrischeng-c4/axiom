@@ -10,6 +10,7 @@ details.
 | Project | What it is |
 |---------|------------|
 | [agentic-workflow](apps/agentic-workflow/README.md) | Agentic Workflow (`aw`) is a project-iteration CLI that lets coding agents ship bounded, verified work without a human steering every step. |
+| [workbench](apps/workbench/README.md) | Describe the agent-readable purpose of Workbench. |
 | [cap](apps/cap/README.md) | `cap` keeps heavy local commands (`cargo test`, `uv run`, `pnpm build`, …) from eating the whole machine. |
 | [vat](apps/vat/README.md) | `vat` is a headless local development test runner for the one operator Docker was never designed for: a coding/ML agent. |
 | [courier](apps/courier/README.md) | `courier` is a stateless, GCP-hosted proxy that centralizes GitHub-issue access for every axiom CLI. |
@@ -30,7 +31,6 @@ details.
 | [keep](apps/keep/README.md) | Cloud-native, multi-core key-value / claim-check store — the loom/relay data plane and a Redis / Dragonfly replacement. |
 | [pgpool](apps/pgpool/README.md) | `pgpool` is the working app id for Axiom's Kubernetes-native PostgreSQL connection pooler. |
 | [meter](apps/meter/README.md) | Local resource measurement for agent-driven Rust development. |
-| [workbench](apps/workbench/README.md) | Describe the agent-readable purpose of Workbench. |
 <!-- aw:projects-table:end -->
 
 ## Shared Libraries

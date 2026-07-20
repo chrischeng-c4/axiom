@@ -32,6 +32,7 @@ members = [
     "projects/mamba/mambalibs/agentkit/backend",
     "apps/jet",
     "apps/jet/wasm",
+    "apps/workbench",
     "apps/agentic-workflow",
     "libs/compass",
     "libs/raft-core",
