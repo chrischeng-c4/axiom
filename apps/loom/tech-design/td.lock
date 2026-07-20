@@ -2,8 +2,13 @@ version = 2
 project = "loom"
 ir_kind = "td"
 td_path = "apps/loom/tech-design"
-generated_at = "2026-07-20T10:00:32.844034+00:00"
-digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-source_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-ir_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-files = []
+generated_at = "2026-07-20T10:03:34.828639+00:00"
+digest = "sha256:0f70a523bd282622a7ba73da2a1a31f438a7a7b64d8e728d25bfce2ff7d5a505"
+source_digest = "sha256:0f70a523bd282622a7ba73da2a1a31f438a7a7b64d8e728d25bfce2ff7d5a505"
+ir_digest = "sha256:80f2212910bdd9dea34c1ef1e8e892c80b8fb185f779296467948b0f10e175cd"
+
+[[files]]
+path = "specs/apps/loom/benchmark/celery_app.md"
+digest = "sha256:369ca836920b078f70bc71238bfb7b8753f52f3e9cd69870ea2d8ea4b47ce09a"
+ir_digest = "sha256:94da01ddb986aeced45b63d0f394bb7ab62eb642184c2b7c69ec3e7025f68538"
+section_count = 2
