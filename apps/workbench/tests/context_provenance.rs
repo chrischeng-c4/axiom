@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 
 use tempfile::TempDir;
 use workbench::context::provenance::{
-    ContextProvenanceItem, ProviderIdentity, ProvenanceAuthority, ProvenanceClassification,
+    ContextProvenanceItem, ProvenanceAuthority, ProvenanceClassification, ProviderIdentity,
     SourceLocation, SourcePosition, SourceSpan, SourceStatus,
 };
 

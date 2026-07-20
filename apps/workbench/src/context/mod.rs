@@ -2,6 +2,7 @@
 pub mod aw;
 pub mod git;
 pub mod markdown;
+pub mod provenance;
 
 use std::{
     fmt, fs,

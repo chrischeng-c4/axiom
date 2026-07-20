@@ -133,9 +133,7 @@ impl ContextProvenanceItem {
             .filter(|source| !matches!(source.status, SourceStatus::Canonical))
             .count();
         let authority = match self.classification {
-            ProvenanceClassification::Extracted
-                if sources.len() == 1 && unavailable == 0 =>
-            {
+            ProvenanceClassification::Extracted if sources.len() == 1 && unavailable == 0 => {
                 ProvenanceAuthority::Canonical
             }
             ProvenanceClassification::Extracted => ProvenanceAuthority::Unavailable,
@@ -260,10 +258,7 @@ fn safe_relative_path(path: &Path) -> bool {
 }
 
 fn valid_span(span: SourceSpan) -> bool {
-    if span.start.line == 0
-        || span.start.column == 0
-        || span.end.line == 0
-        || span.end.column == 0
+    if span.start.line == 0 || span.start.column == 0 || span.end.line == 0 || span.end.column == 0
     {
         return false;
     }

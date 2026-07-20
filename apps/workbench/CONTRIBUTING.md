@@ -90,6 +90,18 @@ local activation signal; it must not invoke AW/GitHub, perform approvals or
 lifecycle transitions, write repository state, or prevent generic Markdown
 fallback when activation or typed structure is absent.
 
+The provider-neutral provenance gate is:
+
+```bash
+cargo test -p workbench --test context_provenance -- --nocapture
+```
+
+Provider adapters must preserve repository-relative paths, one-based spans,
+provider identity, and extracted/inferred/ambiguous classification. Only a
+canonical regular file below the selected root may produce navigation; missing
+or invalid inputs stay visible and non-authoritative. The provenance core must
+not execute providers, AW, GitHub, verification commands, or repository writes.
+
 Later slices add their own named integration target. The production journey
 must retain viewport, accessibility, source-navigation, cwd, and recovery
 evidence under its versioned evidence path.

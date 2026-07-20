@@ -106,6 +106,20 @@ navigate, refresh, and close are bounded reads with no retained mutable handle.
 If configuration or typed structure is absent, the same file continues through
 the generic Markdown renderer; parse failures are isolated by the registry.
 
+## Canonical Context Provenance
+
+Every provider can describe context with the same repository-relative file,
+optional one-based span, provider identity, and extracted/inferred/ambiguous
+classification. Extracted items become authoritative navigation only when the
+file and span resolve beneath the selected canonical root. Missing files,
+invalid spans, traversal, directories, and symlink escape remain visible as
+non-authoritative states and never receive fabricated links.
+
+Inferred and ambiguous context is always labeled derived and retains every
+input location, including unavailable inputs. The model is serializable and
+provider-neutral; resolving it performs metadata/canonicalization reads only.
+Repository source and executable verification evidence remain canonical.
+
 ## Verification
 
 ```bash
@@ -115,4 +129,5 @@ cargo test -p workbench --test pty_agent_adapters -- --nocapture
 cargo test -p workbench --test pty_cwd_context -- --nocapture
 cargo test -p workbench --test generic_context_renderers -- --nocapture
 cargo test -p workbench --test aw_typed_renderer -- --nocapture
+cargo test -p workbench --test context_provenance -- --nocapture
 ```
