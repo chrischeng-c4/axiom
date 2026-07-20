@@ -45,7 +45,7 @@ Gate Inventory:
 | generic-context-renderers | change | #2195 | complete | verified | prototype | `generic_context_renderers` non-AW Git fixture |
 | optional-aw-typed-renderer | change | #2196 | complete | verified | prototype | `aw_typed_renderer` four-kind fixtures and byte identity |
 | context-provenance-core | change | #2197 | complete | verified | prototype | `context_provenance` canonical, derived, and unavailable states |
-| context-provenance | change | #2198 | planned | planned | none | `context_provenance` |
+| context-provenance | change | #2198 | complete | verified | prototype | duplicate contract satisfied by #2197 and `context_provenance` |
 | optional-graph-adapter | change | #2199 | planned | planned | none | `graph_context_adapter` |
 | optional-derived-page-adapter | change | #2200 | planned | planned | none | `derived_page_context_adapter` |
 | production-journey | change | #2201 | planned | planned | none | `production_journey` |
