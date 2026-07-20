@@ -44,7 +44,7 @@ pub const INDEX_MAGIC: &[u8; 8] = b"BEAMIVP\0";
 /// persisted struct changes; [`load_framed`] rejects any other version.
 pub const FORMAT_VERSION: u32 = 1;
 
-// <HANDWRITE gap="missing-generator:logic--d2cab6af" tracker="pending-tracker" reason="logic section in persist.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic--d2cab6af" tracker="#2149" reason="logic section in persist.rs is hand-written pending codegen support">
 pub fn save_framed<T: Serialize>(path: &Path, magic: &[u8; 8], value: &T) -> anyhow::Result<()> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(magic);
