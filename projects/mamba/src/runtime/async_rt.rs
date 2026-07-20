@@ -626,7 +626,7 @@ pub(crate) fn await_target_coroutine(coro_like: MbValue) -> Option<MbValue> {
     coroutine_wrapper_target(coro_like)
 }
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in async_rt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1841" reason="logic section in async_rt.rs is hand-written pending codegen support">
 pub(crate) fn tombstone_completed_coroutine(coro_handle: MbValue) {
     let Some(id) = coro_handle.as_int().map(|id| id as u64) else {
         return;
