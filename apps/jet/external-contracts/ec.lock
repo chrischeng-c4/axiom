@@ -3,9 +3,9 @@ project = "jet"
 ir_kind = "ec"
 ec_path = "apps/jet/external-contracts"
 inventory_path = "apps/jet/aw.toml"
-generated_at = "2026-07-20T09:39:46.797787+00:00"
-ir_digest = "sha256:912a4ee9051bd4b5de0363ed12cabaa5c3127960bfcd9c2254b67937de0497b8"
-source_digest = "sha256:b1634de9e0730ed12a2384e6e84628d66596e483e9ec6b8fe4ae757b5f480e37"
+generated_at = "2026-07-20T10:05:30.494446+00:00"
+ir_digest = "sha256:c4fd039ccc8d8c602449d5d62d556851cf82000eb14a5c0398c0e2a1be6ab715"
+source_digest = "sha256:bbc110acc7c0f4e2af1a59589cece9d370d4a15ee0745b58b5547d81c32786a6"
 tool_contracts = []
 
 [[sources]]
@@ -14,11 +14,11 @@ digest = "sha256:d0208d5468c0942b21aa34474abf49bdff56485e15116bd374321fa78abe7d8
 
 [[sources]]
 path = "apps/jet/external-contracts/behavior/1839.md"
-digest = "sha256:850fcccac3f21365df6ba0205237413adb17b9fb7bf7e7a9f82d9428fdad9840"
+digest = "sha256:e2f7d7ff1c4d53ab3dd89f0fa3b4e8d18ba70a8fbb322bea39206a65554cc5d6"
 
 [[sources]]
 path = "apps/jet/external-contracts/behavior/1840.md"
-digest = "sha256:3d72e0fc939a7033ce354680c86beec43c02fb98385915470bd4c758b9ff730f"
+digest = "sha256:c2bdcb0445f85365fa46c70a703a3e7ad270c08561db252f9ae552bc26e74847"
 
 [[sources]]
 path = "apps/jet/external-contracts/behavior/antd-visual-table-dom-wasm-parity.md"
@@ -246,7 +246,7 @@ digest = "sha256:eaf4b984c04c588da3795df65da9e648c081f91e896eca2e463ca929b2cbeb9
 
 [[cases]]
 id = "1839"
-capability_id = "bundler-production-build"
+capability_id = "library-build-publishing"
 claim_id = "1839"
 contract_id = "1839"
 dimension = "behavior"
@@ -257,11 +257,11 @@ required_for_production = true
 assertions = ["A CommonJS artifact produced from export * from '<module>' exposes every named source export through module.exports while excluding default."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:26b80dca5a58d5c420a3239ffcc6519dc8bd2343ec3544e75168c110a56231ea"
+digest = "sha256:10117941f89a825f11d2ba26c610974f723aaedf9fdf05c55699c198aa3f0d12"
 
 [[cases]]
 id = "1840"
-capability_id = "bundler-production-build"
+capability_id = "library-build-publishing"
 claim_id = "1840"
 contract_id = "1840"
 dimension = "behavior"
@@ -272,7 +272,7 @@ required_for_production = true
 assertions = ["A CommonJS artifact produced from an aliased named import followed by an exported const of the original name includes the const on module.exports under that export name."]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:65ef0bb846b546aff817c19f657822a0a6cf9ec0223e90e48e82a5a886a8922b"
+digest = "sha256:f5ce759be7404c92d961a2f39d589bcf4aefeb28749d91fb1ace92e0f7e0d76a"
 
 [[cases]]
 id = "antd-visual-table-dom-wasm-parity"
