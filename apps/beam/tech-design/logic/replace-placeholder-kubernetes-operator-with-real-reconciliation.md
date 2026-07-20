@@ -78,3 +78,35 @@ changes:
     section: unit-test
     impl_mode: hand-written
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: 2152-verification
+requirements:
+  instance_render_cr:
+    id: R3
+    text: "Make `beam k8s instance render` emit a Beam custom resource, not direct Deployment/Service resources."
+    kind: functional
+    risk: medium
+    verify: cargo test -p beam --test cli_contract
+  manage_cr_lifecycle:
+    id: R2
+    text: "Watch Beam CRs, apply owned resources, publish status/observedGeneration, and manage finalizers."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test operator_reconcile
+  operator_reconcile:
+    id: R1
+    text: "Implement `beam k8s operator run` using `libs/service-k8s` reconcile primitives."
+    kind: functional
+    risk: high
+    verify: cargo test -p beam --test operator_reconcile
+---
+flowchart TD
+    r1[R1 operator reconcile] --> cargo_test_p_beam_test_operator_reconcile[cargo test -p beam --test operator_reconcile]
+    r2[R2 manage cr lifecycle] --> cargo_test_p_beam_test_operator_reconcile
+    r3[R3 instance render cr] --> cargo_test_p_beam_test_cli_contract[cargo test -p beam --test cli_contract]
+```
