@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T10:01:26.513363+00:00"
-digest = "sha256:35844daab10574f8809401e47771d0bdb2c57ee812812e4e4bdd1a1db8285639"
-source_digest = "sha256:35844daab10574f8809401e47771d0bdb2c57ee812812e4e4bdd1a1db8285639"
-ir_digest = "sha256:7ef37e1f637fc453203579ed398c2f4b79988c8db7d7fc7adb8ccf121fed2880"
+generated_at = "2026-07-20T13:24:28.270888+00:00"
+digest = "sha256:1fd6b53d35566e0754037f0330b39db509c070cf6ba05869b8241ffdc91b2127"
+source_digest = "sha256:1fd6b53d35566e0754037f0330b39db509c070cf6ba05869b8241ffdc91b2127"
+ir_digest = "sha256:9a9e30fad2d3d424d5d84e480a8d59408e3a8ec05ab5ba03c840af9dc78422e3"
 
 [[files]]
 path = "README.md"
@@ -29,6 +29,12 @@ section_count = 4
 path = "logic/converge-retired-paths-and-broken-evidence-references.md"
 digest = "sha256:ee7511fef4ce34aca86c8687c9d095d264992f2f575c4199b8a6be12d148a691"
 ir_digest = "sha256:cf1d301310d7c83c053821e5215f157f206a1b6a300feda13459c4acb4da23ca"
+section_count = 3
+
+[[files]]
+path = "logic/implement-real-metric-aware-wgpu-distance-adapter.md"
+digest = "sha256:f9bb723245f36f00fe8e3af016253a03c8a2dba9e8e61ec1a7fbbd898e10c294"
+ir_digest = "sha256:2f61b8ee1fc894ff8108bd1eccd9947d3757072984df911df59557fb7d46659a"
 section_count = 3
 
 [[files]]
