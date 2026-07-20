@@ -54,6 +54,7 @@ cmd = [
   "--test",
   "tape_vs_nats_jetstream",
   "--",
+  "--ignored",
   "--nocapture",
 ]
 timeout_s = 600

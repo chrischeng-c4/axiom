@@ -67,7 +67,7 @@ Reproduce (needs `nats-server` on `PATH`; the test spawns and tears it down
 itself — no manual broker setup required):
 
 ```bash
-cargo test --release -p tape --test tape_vs_nats_jetstream -- --nocapture
+cargo test --release -p tape --test tape_vs_nats_jetstream -- --ignored --nocapture
 ```
 
 The latest 2026-07-18 calibration produced:
@@ -95,7 +95,7 @@ consumer and the Tape frame client download and validate the same durable
 20,000-event backlog. The symmetric gate also requires 1.5x.
 
 ```bash
-cargo test --release -p tape --test tape_vs_kafka -- --nocapture
+cargo test --release -p tape --test tape_vs_kafka -- --ignored --nocapture
 ```
 
 The latest corrected 2026-07-18 calibration measured Tape at 13,575 us and

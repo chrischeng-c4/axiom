@@ -31,6 +31,7 @@ impl Drop for NatsServer {
 
 // <HANDWRITE gap="missing-generator:unit-test" tracker="#2159" reason="unit-test section in tape_vs_nats_jetstream.rs is hand-written pending codegen support">
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "release-only mandatory competitor gate; run via Tape EC/VAT"]
 async fn tape_beats_nats_jetstream_on_local_backlog_replay() {
     assert!(
         !cfg!(debug_assertions),
