@@ -1,5 +1,6 @@
 use super::async_rt::{
-    alloc_task_id, mb_coroutine_step, mb_coroutine_suspend_current, MbTask, COROUTINES, TASKS,
+    alloc_task_id, mb_coroutine_step, mb_coroutine_suspend_current, tombstone_completed_coroutine,
+    MbTask, COROUTINES, TASKS,
 };
 use super::rc::{MbObject, MbRwLock, ObjData};
 use super::value::MbValue;
@@ -1146,7 +1147,7 @@ fn poll_asyncio_future_state(awaitable: MbValue) -> Option<FutureState> {
 
 // ── asyncio-compatible Functions ──
 
-// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in async_task.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:logic" tracker="#1841" reason="logic section in async_task.rs is hand-written pending codegen support">
 /// asyncio.gather(*coros) — run multiple coroutines concurrently.
 pub fn mb_gather(coros: MbValue) -> MbValue {
     if let Some(ptr) = coros.as_ptr() {
@@ -1199,7 +1200,15 @@ pub fn mb_gather(coros: MbValue) -> MbValue {
                             .unwrap_or(MbValue::none())
                     })
                     .collect();
-                return MbValue::from_ptr(MbObject::new_list_borrowed(results));
+                // new_list_borrowed retains each element before we tombstone
+                // the COROUTINES entries below, so the returned list holds
+                // its own reference and isn't left dangling (#1841 follow-up).
+                let gathered = MbValue::from_ptr(MbObject::new_list_borrowed(results));
+                for (cid, tid) in &task_ids {
+                    tombstone_completed_coroutine(MbValue::from_int(*cid as i64));
+                    TASKS.write().unwrap().remove(tid);
+                }
+                return gathered;
             }
         }
     }
