@@ -2,10 +2,10 @@ version = 2
 project = "beam"
 ir_kind = "td"
 td_path = "apps/beam/tech-design"
-generated_at = "2026-07-20T15:33:51.512403+00:00"
-digest = "sha256:f3ca68d47dd0130bfb9933ec94b95c07f1478028439fb53f7a582e178a01abe1"
-source_digest = "sha256:f3ca68d47dd0130bfb9933ec94b95c07f1478028439fb53f7a582e178a01abe1"
-ir_digest = "sha256:2fbcba1e7ef9651a53e98a95a555173401de7b16a377ce791b238c4d164ac7d3"
+generated_at = "2026-07-20T15:34:19.485752+00:00"
+digest = "sha256:834a6da616ffb914307fd8a72e968a094305fe5ceddd5b917962605283aa9d98"
+source_digest = "sha256:834a6da616ffb914307fd8a72e968a094305fe5ceddd5b917962605283aa9d98"
+ir_digest = "sha256:819dcbb4d87b5e9f1a52c04137c0671b60dd8f3b47524afdae4c40cebc597f64"
 
 [[files]]
 path = "README.md"
@@ -63,8 +63,8 @@ section_count = 3
 
 [[files]]
 path = "logic/render-a-durable-stateful-gpu-kubernetes-data-plane.md"
-digest = "sha256:50215e168fbe88c387a576cbc317a16c1f519bdfa1c1148a36100ba39f446d2e"
-ir_digest = "sha256:efdb915d29a0cf5829c6a894e903c80de10dacdbc1b8ada1d496a32a296ba162"
+digest = "sha256:a434a7694554ef4936f7ee381f69e6e3f98746acf097d79d2a0f73c85f691d78"
+ir_digest = "sha256:1467961b9503d357ce59e515abe9fb9164f2e54567119ec721e3470ff64df89e"
 section_count = 3
 
 [[files]]
