@@ -2,16 +2,22 @@ version = 2
 project = "tape"
 ir_kind = "td"
 td_path = "apps/tape/tech-design"
-generated_at = "2026-07-16T06:08:05.971421+00:00"
-digest = "sha256:5409695ebb0c14696cb735e8db4a86452e3ecc00ed08694f5e3479588f3d1bd6"
-source_digest = "sha256:5409695ebb0c14696cb735e8db4a86452e3ecc00ed08694f5e3479588f3d1bd6"
-ir_digest = "sha256:66fd4f13bf6285a7118e3e931c88dd1cda5a994a1886c3771c71cab74098cf81"
+generated_at = "2026-07-20T05:47:37.356577+00:00"
+digest = "sha256:584b56c0bb1f5dd22b30fc9ac26b1755b8015920bc26f995fd4d3b3f733f6a40"
+source_digest = "sha256:584b56c0bb1f5dd22b30fc9ac26b1755b8015920bc26f995fd4d3b3f733f6a40"
+ir_digest = "sha256:6c3196720714d7fdf36b783d47b673ece96f418809918864e33bff0709f22ea2"
 
 [[files]]
 path = "README.md"
 digest = "sha256:dc7fb8fe7a4210bf50824fc477078de4b62f30208e3c506f7756e1ab5c787104"
 ir_digest = "sha256:ffd60e3aff92c538315b70c3984361efaa6fab25e0af61264310a39a68b8cfcd"
 section_count = 0
+
+[[files]]
+path = "config/enable-shared-request-admission-configuration.md"
+digest = "sha256:9c22d8f09d1d8ca3737e5ac15bf12bfa63198ac30c917b0aef5cea209ec207a5"
+ir_digest = "sha256:bc05897915a817e988c12dac1191dabaf9424d177890365c911ebeba84da24b7"
+section_count = 3
 
 [[files]]
 path = "interfaces/rest/align-external-contract-inventory-with-lumen-service-baseline.md"
