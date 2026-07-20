@@ -736,6 +736,20 @@ fn run_apply_inner(
         .map(|entry| entry.path.clone())
         .collect();
 
+    // Validate every hand-written target's anchor before ANY entry writes.
+    // Without this preflight, a hand-written entry that fails partway
+    // through the loop below (missing `anchor:` or an anchor that cannot be
+    // found) leaves whatever earlier, otherwise-clean codegen entries
+    // already wrote in place — a half-generated worktree that then
+    // self-deadlocks the next `td gen` attempt on its own dirty output
+    // (#1807). This mirrors the plan-level preflights already run above
+    // (`validate_partitioned_source_targets`, `validate_ambiguous_generation_plan`).
+    validate_handwrite_anchors_before_write(
+        root,
+        &all_entries,
+        source_from_target_replays_whole_file,
+    )?;
+
     for entry in change_entries {
         let target_path = root.join(&entry.path);
         if exact_target.is_some_and(|exact| target_path != exact) {
@@ -2823,6 +2837,78 @@ fn validate_ambiguous_generation_plan(
                 ),
                 next_command: next_command.to_string(),
             });
+        }
+    }
+    Ok(())
+}
+
+/// Preflight every `impl_mode: hand-written` entry's anchor resolvability
+/// before the write loop below touches any target — codegen or
+/// hand-written. Mirrors exactly the anchor-requirement conditions the
+/// write loop itself applies for each hand-written entry (whole-file
+/// promotion, tracked non-Rust targets, and brand-new `action: create`
+/// scaffolds are exempt), but is read-only: it never scaffolds or writes.
+///
+/// Hoisting this check here (rather than discovering it mid-loop) closes
+/// the self-deadlock in #1807: previously, a hand-written entry with a
+/// missing anchor could fail AFTER an earlier, unrelated codegen entry in
+/// the same spec had already written its target, leaving a half-generated
+/// worktree that made the next `td gen` attempt refuse on its own dirty
+/// output.
+fn validate_handwrite_anchors_before_write(
+    root: &Path,
+    entries: &[ChangeEntry],
+    source_from_target_replays_whole_file: bool,
+) -> crate::generate::Result<()> {
+    for entry in entries {
+        if entry.impl_mode != ImplMode::HandWritten {
+            continue;
+        }
+        let target_path = root.join(&entry.path);
+
+        // Regenerable promotion: an explicit `replaces:` tracker on an
+        // existing whole-file HANDWRITE artifact proves the promotion; no
+        // anchor is required (matches the write loop's own exemption).
+        let handwrite_whole_file_promotion = entry.action == "modify"
+            && !entry.replaces.is_empty()
+            && is_whole_file_codegen_section(
+                entry.section_id.as_deref(),
+                source_from_target_replays_whole_file,
+            )
+            && target_path
+                .exists()
+                .then(|| std::fs::read_to_string(&target_path).ok())
+                .flatten()
+                .is_some_and(|content| is_whole_file_handwrite_content(&content));
+        if handwrite_whole_file_promotion {
+            continue;
+        }
+
+        // Tracked existing non-Rust target: no Rust marker scaffold, so no
+        // anchor to validate.
+        if entry.action == "modify" && target_path.exists() && !is_rust_source(&target_path) {
+            continue;
+        }
+
+        // Brand-new file: the write loop scaffolds a whole-file HANDWRITE
+        // marker instead of anchoring into existing content.
+        if entry.action == "create" && !target_path.exists() {
+            continue;
+        }
+
+        let Some(anchor) = entry.handwrite_anchor.as_deref() else {
+            return Err(crate::generate::GenerateError::InvalidValue(format!(
+                "hand-written existing target '{}' requires `anchor:` in its TD Changes entry; add an existing Rust item as the anchor, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                entry.path,
+            )));
+        };
+        let found = crate::generate::handwrite_scaffold::anchor_present(&target_path, anchor)
+            .map_err(crate::generate::GenerateError::Io)?;
+        if !found {
+            return Err(crate::generate::GenerateError::InvalidValue(format!(
+                "hand-written target '{}' has no matching anchor '{}'; add an existing Rust item as `anchor:` in the TD Changes entry, then rerun aw td gen so AW can scaffold its HANDWRITE marker",
+                entry.path, anchor,
+            )));
         }
     }
     Ok(())
@@ -6977,6 +7063,92 @@ changes:
             !after.contains("HANDWRITE-BEGIN"),
             "generation must not create an unscoped marker"
         );
+    }
+
+    /// #1807 regression: a spec with one clean codegen target and one
+    /// hand-written target whose `anchor:` cannot be found in the existing
+    /// file must fail without leaving ANY partial write behind — including
+    /// the codegen target processed earlier in the same `apply` pass.
+    /// Before the fix, the codegen entry (`ec.rs`) was already written by
+    /// the time the later hand-written entry (`llm.rs`) failed, so a second
+    /// `aw td gen` after fixing the anchor self-deadlocked on the dirty
+    /// worktree left by the first, failed attempt.
+    #[test]
+    fn td_gen_leaves_no_partial_write_when_later_target_fails_anchor_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Existing hand-written target, missing the anchor the spec names.
+        let hw_target = root.join("apps/fixture/src/llm.rs");
+        std::fs::create_dir_all(hw_target.parent().unwrap()).unwrap();
+        let hw_before = "// existing hand-written module\npub fn unrelated() {}\n";
+        std::fs::write(&hw_target, hw_before).unwrap();
+
+        // Clean codegen target: does not exist yet.
+        let codegen_target = root.join("apps/fixture/src/ec.rs");
+
+        let spec_path = root.join("apps/fixture/tech-design/logic/gen-1807.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        let spec_template = r#"---
+id: gen-1807
+fill_sections: [logic, changes]
+---
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: apps/fixture/src/ec.rs
+    action: create
+    section: logic
+  - path: apps/fixture/src/llm.rs
+    action: modify
+    impl_mode: hand-written
+    anchor: __ANCHOR__
+```
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+  start([gen1807]) --> done[done]
+```
+"#;
+        std::fs::write(
+            &spec_path,
+            spec_template.replace("__ANCHOR__", "missing_symbol"),
+        )
+        .unwrap();
+
+        // First run: the hand-written entry's anchor does not exist. The
+        // whole apply must fail before writing anything, including the
+        // earlier, otherwise-clean codegen entry.
+        let error =
+            run_apply(&spec_path, root, false).expect_err("missing anchor must fail generation");
+        assert!(error.to_string().contains("no matching anchor"), "{error}");
+        assert!(
+            !codegen_target.exists(),
+            "codegen target must not be partially written when a later target fails validation"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&hw_target).unwrap(),
+            hw_before,
+            "hand-written target must be left untouched by the failed run"
+        );
+
+        // Fix the anchor (mirrors "add the anchor and refresh the TD lock")
+        // and rerun. The second attempt must succeed cleanly — no
+        // self-deadlock from a half-generated worktree left behind by the
+        // first, failed attempt.
+        std::fs::write(&spec_path, spec_template.replace("__ANCHOR__", "unrelated")).unwrap();
+        let report = run_apply(&spec_path, root, false).expect("second run must succeed cleanly");
+        assert!(
+            codegen_target.exists(),
+            "codegen target should be created on the clean rerun"
+        );
+        assert!(report.files_created() >= 1);
     }
 
     /// Regression test: extension gate skips non-.rs files instead of blasting Rust into them.
