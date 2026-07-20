@@ -56,7 +56,6 @@ flowchart TD
     L --> M["FIX: add unsafe { super::rc::release_if_ptr(key); }\nimmediately after each dict_ops::mb_dict_setitem(dict, key, ...)\ncall in BOTH of build_globals_dict's loops (closure.rs:2238,\n2247) -- safe because to_dict_key's Str arm already copied\nevery byte it needs; nothing depends on the original pointer\nsurviving past the setitem call"]
     M --> N["Repeated build_globals_dict() calls (globals() in a loop)\nplateau in RSS/leak-count instead of growing; dict/module\nlib filters stay green and the conformance tail stays\nat-or-below baseline (#1979 AC1/AC2)"]
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
