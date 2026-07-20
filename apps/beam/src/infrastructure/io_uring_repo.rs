@@ -6,10 +6,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use crate::domain::ports::VectorRepository;
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in io_uring_repo.rs is hand-written pending codegen support">
 /// Infrastructure Adapter implementing VectorRepository using Direct Offset file reading.
 pub struct IoUringVectorRepository {
     file: Arc<File>,
 }
+// </HANDWRITE>
 
 impl IoUringVectorRepository {
     /// Create a new Repository pointing to a physical database storage file.

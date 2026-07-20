@@ -2,12 +2,14 @@
 
 use std::future::Future;
 
+// <HANDWRITE gap="missing-generator:logic" tracker="pending-tracker" reason="logic section in ports.rs is hand-written pending codegen support">
 /// Hexagonal port for fetching uncompressed raw vectors from storage.
 pub trait VectorRepository: Send + Sync {
     /// Asynchronously fetch raw vector data from NVMe disk given their physical offsets.
     /// Returns a flat vector of floats representing the fetched records.
     fn fetch_async(&self, offsets: &[u64], vector_bytes: usize) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
 }
+// </HANDWRITE>
 
 use crate::collection::Metric;
 
