@@ -1,6 +1,124 @@
 ---
 id: '2157'
-summary: (fill)
+capability_refs:
+  - id: "long-running-stability"
+    role: primary
+    gap: "repeated-raft-restart-endurance"
+    claim: "repeated-raft-restart-endurance"
+    coverage: full
+    rationale: "Bind the completed repeated Raft restart endurance claim to primary TD verification without changing its existing runtime oracle."
+  - id: "long-running-stability"
+    role: primary
+    gap: "bounded-http-replay-soak"
+    claim: "bounded-http-replay-soak"
+    coverage: full
+    rationale: "Bind the completed bounded HTTP replay soak claim to primary TD verification without changing its existing runtime oracle."
+  - id: "security-hardening"
+    role: primary
+    gap: "topic-replay-security-boundary"
+    claim: "topic-replay-security-boundary"
+    coverage: full
+    rationale: "Bind the existing topic replay security boundary evidence to primary TD verification."
+  - id: "security-hardening"
+    role: primary
+    gap: "opt-in-server-ingress-network-policy"
+    claim: "opt-in-server-ingress-network-policy"
+    coverage: full
+    rationale: "Bind the existing opt-in ingress policy evidence to primary TD verification."
+  - id: "subscription-delivery-resources"
+    role: primary
+    gap: "pull-subscription-cursor-contract"
+    claim: "pull-subscription-cursor-contract"
+    coverage: full
+    rationale: "Bind the completed pull subscription cursor contract to primary TD verification."
+  - id: "retention-and-backfill"
+    role: primary
+    gap: "retention-window-and-backfill-contract"
+    claim: "retention-window-and-backfill-contract"
+    coverage: full
+    rationale: "Bind the completed retention and backfill contract to primary TD verification."
+  - id: "http2-api-list"
+    role: primary
+    gap: "service-http-shell-h2c-serve-standard-endpoints"
+    claim: "service-http-shell-h2c-serve-standard-endpoints"
+    coverage: full
+    rationale: "Bind the existing h2c HTTP shell and standard endpoints evidence to the HTTP/2 API capability."
+  - id: "http2-api-list"
+    role: primary
+    gap: "backup-service-tls-spec-gen-clients"
+    claim: "backup-service-tls-spec-gen-clients"
+    coverage: full
+    rationale: "Bind the existing backup, service TLS, spec generation, and client evidence to the HTTP/2 API capability."
+  - id: "standard-operational-endpoints"
+    role: primary
+    gap: "service-http-shell-h2c-serve-standard-endpoints"
+    claim: "service-http-shell-h2c-serve-standard-endpoints"
+    coverage: full
+    rationale: "Bind the same implemented service shell to the standard operational endpoint capability."
+  - id: "observability"
+    role: primary
+    gap: "prometheus-operator-scrape-alert-component"
+    claim: "prometheus-operator-scrape-alert-component"
+    coverage: full
+    rationale: "Bind the existing Prometheus operator scrape and alert component evidence to primary TD verification."
+  - id: "ec-gates-configured"
+    role: primary
+    gap: "crate-smoke-gate"
+    claim: "crate-smoke-gate"
+    coverage: full
+    rationale: "Bind the configured Tape crate smoke gate to primary TD verification."
+  - id: "ec-gates-configured"
+    role: primary
+    gap: "tape-vat-meter-guard-ec-gates-observability"
+    claim: "tape-vat-meter-guard-ec-gates-observability"
+    coverage: full
+    rationale: "Bind the configured Tape, VAT, Meter, Guard, and observability EC evidence to primary TD verification."
+  - id: "ec-gates-configured"
+    role: primary
+    gap: "shared-otlp-trace-export"
+    claim: "shared-otlp-trace-export"
+    coverage: full
+    rationale: "Bind the shared OTLP trace export gate to primary TD verification."
+  - id: "kubernetes-native-deployment"
+    role: primary
+    gap: "operator-kind-pvc-restart-replay"
+    claim: "operator-kind-pvc-restart-replay"
+    coverage: full
+    rationale: "Bind the existing operator, Kind, PVC restart, and replay evidence to primary TD verification."
+  - id: "backup-restore"
+    role: primary
+    gap: "exact-journal-snapshot-backup"
+    claim: "exact-journal-snapshot-backup"
+    coverage: full
+    rationale: "Bind the exact journal snapshot backup evidence to primary TD verification."
+  - id: "backup-restore"
+    role: primary
+    gap: "fresh-pvc-cold-recovery-seed"
+    claim: "fresh-pvc-cold-recovery-seed"
+    coverage: full
+    rationale: "Bind the fresh PVC cold recovery seed evidence to primary TD verification."
+  - id: "replica-sync-bootstrap"
+    role: primary
+    gap: "raft-log-existing-pvc-sync"
+    claim: "raft-log-existing-pvc-sync"
+    coverage: full
+    rationale: "Bind the existing-PVC Raft log synchronization evidence to primary TD verification."
+  - id: "replica-sync-bootstrap"
+    role: primary
+    gap: "empty-pvc-external-backup-seed"
+    claim: "empty-pvc-external-backup-seed"
+    coverage: full
+    rationale: "Bind the empty-PVC external backup seed evidence to primary TD verification."
+  - id: "primary-replicas"
+    role: primary
+    gap: "raft-backed-replay-journal"
+    claim: "raft-backed-replay-journal"
+    coverage: full
+    rationale: "Bind the Raft-backed replay journal evidence to primary TD verification."
+summary: >
+  Backfill primary and full TD verification linkage for 19 completed Tape
+  capability claims while retaining their existing runtime oracles and closed
+  implementation work as historical provenance.
 fill_sections: [logic, changes, unit-test]
 ---
 
