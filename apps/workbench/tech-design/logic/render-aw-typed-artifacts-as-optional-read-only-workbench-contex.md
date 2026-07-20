@@ -112,3 +112,49 @@ changes:
     impl_mode: hand-written
     description: Record fixture, byte-identity, command-isolation, and fallback verification rules.
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: workbench-aw-typed-renderer-verification
+requirements:
+  byte_identity_lifecycle:
+    id: R3
+    text: "Open, navigate, refresh, and close/drop leave all four source fixture byte streams identical."
+    kind: regression
+    risk: high
+    verify: tests/aw_typed_renderer.rs::open_navigate_refresh_and_close_preserve_source_bytes
+  four_typed_artifact_kinds:
+    id: R1
+    text: "Configured fixtures for TD, EC, capability, and WI documents are detected independently and rendered with their typed sections and source navigation."
+    kind: integration
+    risk: high
+    verify: tests/aw_typed_renderer.rs::renders_td_ec_capability_and_wi_fixtures
+  missing_configuration_fallback:
+    id: R4
+    text: "Without an aw.toml activation file the same Markdown artifact is rendered by the generic Markdown renderer, not rejected or mutated."
+    kind: failure-recovery
+    risk: high
+    verify: tests/aw_typed_renderer.rs::missing_aw_configuration_uses_generic_markdown
+  no_lifecycle_mutation_surface:
+    id: R5
+    text: "The typed adapter performs no AW, GitHub, approval, or lifecycle transition command and stays confined to the selected root."
+    kind: boundary
+    risk: high
+    verify: tests/aw_typed_renderer.rs::typed_renderer_exposes_no_mutating_operation
+  typed_content_and_relationships:
+    id: R2
+    text: "Typed output exposes YAML fields, Mermaid blocks, commands, assertion identifiers, and explicit artifact relationships as escaped read-only context."
+    kind: contract
+    risk: high
+    verify: tests/aw_typed_renderer.rs::renders_commands_assertions_mermaid_and_relationships
+---
+flowchart TD
+    r1[R1 four typed artifact kinds] --> tests_aw_typed_renderer_rs_renders_td_ec_capability_and_wi_fixtures[tests/aw_typed_renderer.rs::renders_td_ec_capability_and_wi_fixtures]
+    r2[R2 typed content and relationships] --> tests_aw_typed_renderer_rs_renders_commands_assertions_mermaid_and_relationships[tests/aw_typed_renderer.rs::renders_commands_assertions_mermaid_and_relationships]
+    r3[R3 byte identity lifecycle] --> tests_aw_typed_renderer_rs_open_navigate_refresh_and_close_preserve_source_bytes[tests/aw_typed_renderer.rs::open_navigate_refresh_and_close_preserve_source_bytes]
+    r4[R4 missing configuration fallback] --> tests_aw_typed_renderer_rs_missing_aw_configuration_uses_generic_markdown[tests/aw_typed_renderer.rs::missing_aw_configuration_uses_generic_markdown]
+    r5[R5 no lifecycle mutation surface] --> tests_aw_typed_renderer_rs_typed_renderer_exposes_no_mutating_operation[tests/aw_typed_renderer.rs::typed_renderer_exposes_no_mutating_operation]
+```
