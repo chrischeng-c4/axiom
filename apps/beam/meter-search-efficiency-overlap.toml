@@ -1,3 +1,9 @@
-// HANDWRITE-BEGIN gap="missing-generator:ec-runners-logic:dfa73934" tracker="pending-tracker" reason="scaffold for apps/beam/meter-search-efficiency-overlap.toml — fill in by hand and update tracker when codegen is ready"
-// TODO: hand-write content for `apps/beam/meter-search-efficiency-overlap.toml`.
-// HANDWRITE-END
+# SPEC-MANAGED: apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-overlap
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap"
+project = "beam"
+source_contract = "beam-competitor-performance-pipeline-overlap"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

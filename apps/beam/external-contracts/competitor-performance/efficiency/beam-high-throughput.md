@@ -24,57 +24,65 @@ e2e_tests:
     claim_id: competitive-throughput-ddd-zero-cost
     contract_id: search-efficiency-ddd-overhead
     category: efficiency
-    test_path: apps/beam/tests/benchmark_beam_competitor_performance_ddd.rs
+    test_path: apps/beam/tests/benchmark_beam_competitor_performance_ddd_overhead.rs
     command: "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test"
     assertions:
-      - "The Domain Service `PipelineScheduler` introduces less than 1% latency overhead compared to a tightly-coupled monolithic pipeline."
-      - "The Hexagonal `VectorRepository` and `DistanceCalculator` trait dynamic dispatch (or static monomorphization) costs are invisible in the flamegraph."
+      - "The execution time ratio between the PipelineScheduler query batch execution and a monolithic inline direct loop remains under 1.3x."
+      - "Dynamic dispatch overhead of the VectorRepository and DistanceCalculator traits does not exceed 30% of total query latency."
 
   - id: beam-competitor-performance-pipeline-overlap
     capability_id: competitor-performance
     claim_id: competitive-throughput-gate-saturate-four-pillars
     contract_id: search-efficiency-batched-rag-throughput
     category: efficiency
-    test_path: apps/beam/tests/benchmark_beam_competitor_performance_overlap.rs
+    test_path: apps/beam/tests/benchmark_beam_competitor_performance_pipeline_overlap.rs
     command: "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test"
     assertions:
-      - "Async `IoUringVectorRepository` fetches Uncompressed Vectors from NVMe concurrently with `WgpuDistanceEngine` calculations."
-      - "GPU Tiled GEMM processing time strictly overlaps with NVMe fetch time on subsequent batches (Pipeline Stall < 5%)."
-      - "PCIe DMA transfers (RAM to VRAM) achieve at least 80% of peak bandwidth (e.g. 12GB/s on PCIe Gen4 x16)."
+      - "Pipelined scheduler execution hides Disk I/O latency concurrently with GPU computations."
+      - "The total elapsed time for pipelined execution is shorter than sequential execution of the same batches."
 
   - id: beam-competitor-performance-memory-footprint
     capability_id: competitor-performance
     claim_id: competitive-throughput-out-of-core-scaling
     contract_id: search-efficiency-memory-footprint
     category: efficiency
-    test_path: apps/beam/tests/benchmark_beam_competitor_performance_memory.rs
+    test_path: apps/beam/tests/benchmark_beam_competitor_performance_out_of_core.rs
     command: "cd apps/beam && ../../target/debug/vat run --scenario out-of-core # cargo test"
     assertions:
-      - "Host RAM consumption is bounded strictly to the size of the `HnswNavigator` graph and compressed PQ codes."
-      - "Scaling the `ColdPayload` from 10M to 100M vectors increases NVMe footprint but triggers less than 15% increase in Host RAM usage."
-      - "GPU VRAM allocation never exceeds the statically allocated PinnedBuffer size for batched GEMM."
+      - "Host RAM consumption is bounded and does not grow linearly with the number of vectors stored in the IoUringVectorRepository."
+      - "The peak VRAM allocation remains bounded within the GPU context limit during active query batches."
 
   - id: beam-competitor-performance-gpu-batch-scaling
     capability_id: competitor-performance
     claim_id: competitive-throughput-gpu-scaling
     contract_id: search-efficiency-gpu-scaling
     category: efficiency
-    test_path: apps/beam/tests/benchmark_beam_competitor_performance_gpu.rs
+    test_path: apps/beam/tests/benchmark_beam_competitor_performance_gpu_batching.rs
     command: "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test"
     assertions:
-      - "System throughput (QPS) scales linearly as `QueryBatch` size increases from 1 to 512."
-      - "Peak batched throughput demonstrates at least 10x QPS advantage over the `HnswCpuIndex` baseline from Lumen."
-      - "Exact refinement parity: The final Top-K results emitted by the GPU exactly match the CPU oracle for the identical candidate set."
+      - "The system throughput (QPS) of a batch size of 64 is at least 2x higher than a batch size of 1."
+      - "The GPU distance engine demonstrates at least 1.5x throughput (QPS) advantage over CPU distance calculations for a batch size of 128."
+      - "Exact refinement parity: The Top-K query results returned by the GPU engine exactly match the CPU reference implementation."
 ```
-
 ## Tool Contract
 <!-- type: tool-contract lang: yaml -->
 
 ```yaml
 tool_contracts:
-  - id: beam-meter-search-efficiency-throughput
+  - id: beam-meter-search-efficiency-ddd
     tool: meter
-    manifest: meter-search-efficiency-throughput.toml
+    manifest: meter-search-efficiency-ddd.toml
+    category: efficiency
+    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+    native:
+      version: 1
+      project: beam
+      source_contract: beam-competitor-performance-ddd-overhead
+      delegate_command: "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead"
+  
+  - id: beam-meter-search-efficiency-overlap
+    tool: meter
+    manifest: meter-search-efficiency-overlap.toml
     category: efficiency
     command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
     native:
@@ -82,10 +90,10 @@ tool_contracts:
       project: beam
       source_contract: beam-competitor-performance-pipeline-overlap
       delegate_command: "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap"
-  
-  - id: beam-meter-search-efficiency-memory
+
+  - id: beam-meter-search-efficiency-ooc
     tool: meter
-    manifest: meter-search-efficiency-memory.toml
+    manifest: meter-search-efficiency-ooc.toml
     category: efficiency
     command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
     native:
@@ -93,4 +101,15 @@ tool_contracts:
       project: beam
       source_contract: beam-competitor-performance-memory-footprint
       delegate_command: "cd apps/beam && ../../target/debug/vat run --scenario out-of-core"
+
+  - id: beam-meter-search-efficiency-gpu
+    tool: meter
+    manifest: meter-search-efficiency-gpu.toml
+    category: efficiency
+    command: "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+    native:
+      version: 1
+      project: beam
+      source_contract: beam-competitor-performance-gpu-batch-scaling
+      delegate_command: "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching"
 ```

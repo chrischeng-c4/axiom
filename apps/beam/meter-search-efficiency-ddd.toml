@@ -1,3 +1,9 @@
-// HANDWRITE-BEGIN gap="missing-generator:ec-runners-logic:c5a77165" tracker="pending-tracker" reason="scaffold for apps/beam/meter-search-efficiency-ddd.toml — fill in by hand and update tracker when codegen is ready"
-// TODO: hand-write content for `apps/beam/meter-search-efficiency-ddd.toml`.
-// HANDWRITE-END
+# SPEC-MANAGED: apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-ddd
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead"
+project = "beam"
+source_contract = "beam-competitor-performance-ddd-overhead"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

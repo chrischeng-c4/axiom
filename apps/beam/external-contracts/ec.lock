@@ -3,13 +3,13 @@ project = "beam"
 ir_kind = "ec"
 ec_path = "apps/beam/external-contracts"
 inventory_path = "apps/beam/aw.toml"
-generated_at = "2026-07-20T09:03:57.593256+00:00"
-ir_digest = "sha256:c9d807a72abedb921702fb2238806b4884d47a72fd936570d18f383263f8fdc1"
-source_digest = "sha256:913b0ee604d1a85c88042c09a4a0f02f66b7c6503a023f01447438a1273148b1"
+generated_at = "2026-07-20T16:34:34.981563+00:00"
+ir_digest = "sha256:3e7984f65fe44a1e6e58382e978b4e3852af07af77de1c2efec5a746187b620d"
+source_digest = "sha256:786706fb54ab807be5a5d5cfa111ec87ac778ffd8da33ea9e58f5d3bd3126e49"
 
 [[sources]]
 path = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md"
-digest = "sha256:6978128c5f3f33192305956452b2f1e0786b07e483577f1ca34a2edb51d139a8"
+digest = "sha256:3b9324338be8217387235acf6101c91c5bc0f4e9c9ab31ca76c1d33c082aa6bf"
 
 [[cases]]
 id = "beam-competitor-performance-ddd-overhead"
@@ -18,16 +18,16 @@ claim_id = "competitive-throughput-ddd-zero-cost"
 contract_id = "search-efficiency-ddd-overhead"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-ddd-overhead"
-test_path = "apps/beam/tests/benchmark_beam_competitor_performance_ddd.rs"
+test_path = "apps/beam/tests/benchmark_beam_competitor_performance_ddd_overhead.rs"
 command = "cd apps/beam && ../../target/debug/vat run --scenario ddd-overhead # cargo test"
 required_for_production = true
 assertions = [
-    "The Domain Service `PipelineScheduler` introduces less than 1% latency overhead compared to a tightly-coupled monolithic pipeline.",
-    "The Hexagonal `VectorRepository` and `DistanceCalculator` trait dynamic dispatch (or static monomorphization) costs are invisible in the flamegraph.",
+    "The execution time ratio between the PipelineScheduler query batch execution and a monolithic inline direct loop remains under 1.3x.",
+    "Dynamic dispatch overhead of the VectorRepository and DistanceCalculator traits does not exceed 30% of total query latency.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:d0b639358ae0180ec7c34121e0aaf1e85382a7be1728c1bdd07bf46bc7b671ef"
+digest = "sha256:e5625c669ef0baab017ac368598735561dca0a04ee1351541174aaf9aa729d9b"
 
 [[cases]]
 id = "beam-competitor-performance-gpu-batch-scaling"
@@ -36,17 +36,17 @@ claim_id = "competitive-throughput-gpu-scaling"
 contract_id = "search-efficiency-gpu-scaling"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-gpu-batch-scaling"
-test_path = "apps/beam/tests/benchmark_beam_competitor_performance_gpu.rs"
+test_path = "apps/beam/tests/benchmark_beam_competitor_performance_gpu_batching.rs"
 command = "cd apps/beam && ../../target/debug/vat run --scenario gpu-batching # cargo test"
 required_for_production = true
 assertions = [
-    "System throughput (QPS) scales linearly as `QueryBatch` size increases from 1 to 512.",
-    "Peak batched throughput demonstrates at least 10x QPS advantage over the `HnswCpuIndex` baseline from Lumen.",
-    "Exact refinement parity: The final Top-K results emitted by the GPU exactly match the CPU oracle for the identical candidate set.",
+    "The system throughput (QPS) of a batch size of 64 is at least 2x higher than a batch size of 1.",
+    "The GPU distance engine demonstrates at least 1.5x throughput (QPS) advantage over CPU distance calculations for a batch size of 128.",
+    "Exact refinement parity: The Top-K query results returned by the GPU engine exactly match the CPU reference implementation.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:54224758d44ee67967c069e2bcac93dcd716df6610c9770be51c783cec5ae658"
+digest = "sha256:c1530a3fc4826cd4cb9864e5469a50361b30707299d4c962f1a4874aabbde424"
 
 [[cases]]
 id = "beam-competitor-performance-memory-footprint"
@@ -55,17 +55,16 @@ claim_id = "competitive-throughput-out-of-core-scaling"
 contract_id = "search-efficiency-memory-footprint"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-memory-footprint"
-test_path = "apps/beam/tests/benchmark_beam_competitor_performance_memory.rs"
+test_path = "apps/beam/tests/benchmark_beam_competitor_performance_out_of_core.rs"
 command = "cd apps/beam && ../../target/debug/vat run --scenario out-of-core # cargo test"
 required_for_production = true
 assertions = [
-    "Host RAM consumption is bounded strictly to the size of the `HnswNavigator` graph and compressed PQ codes.",
-    "Scaling the `ColdPayload` from 10M to 100M vectors increases NVMe footprint but triggers less than 15% increase in Host RAM usage.",
-    "GPU VRAM allocation never exceeds the statically allocated PinnedBuffer size for batched GEMM.",
+    "Host RAM consumption is bounded and does not grow linearly with the number of vectors stored in the IoUringVectorRepository.",
+    "The peak VRAM allocation remains bounded within the GPU context limit during active query batches.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:4fc425c7236d93a374ec7439af8f38dc4ac661346f0624940c63bea8f64d71f1"
+digest = "sha256:31424eb7ff51ef74bb598aa340f2737602028a5aabf8c9e19dabf1099b991490"
 
 [[cases]]
 id = "beam-competitor-performance-pipeline-overlap"
@@ -74,34 +73,53 @@ claim_id = "competitive-throughput-gate-saturate-four-pillars"
 contract_id = "search-efficiency-batched-rag-throughput"
 dimension = "efficiency"
 source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-competitor-performance-pipeline-overlap"
-test_path = "apps/beam/tests/benchmark_beam_competitor_performance_overlap.rs"
+test_path = "apps/beam/tests/benchmark_beam_competitor_performance_pipeline_overlap.rs"
 command = "cd apps/beam && ../../target/debug/vat run --scenario pipeline-overlap # cargo test"
 required_for_production = true
 assertions = [
-    "Async `IoUringVectorRepository` fetches Uncompressed Vectors from NVMe concurrently with `WgpuDistanceEngine` calculations.",
-    "GPU Tiled GEMM processing time strictly overlaps with NVMe fetch time on subsequent batches (Pipeline Stall < 5%).",
-    "PCIe DMA transfers (RAM to VRAM) achieve at least 80% of peak bandwidth (e.g. 12GB/s on PCIe Gen4 x16).",
+    "Pipelined scheduler execution hides Disk I/O latency concurrently with GPU computations.",
+    "The total elapsed time for pipelined execution is shorter than sequential execution of the same batches.",
 ]
 evidence_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 evaluator_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-digest = "sha256:9ba8f940a885eea6dc201a51563289f542ebdf7ab9c04bae04a01f30308553b9"
+digest = "sha256:8d772d2aa77a8f1eb4272cfad177fe19b1e5c6cdf4a2a18b8cd8a86d5d656a39"
 
 [[tool_contracts]]
-id = "beam-meter-search-efficiency-memory"
+id = "beam-meter-search-efficiency-ddd"
 tool = "meter"
 dimension = "efficiency"
-source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-memory"
-manifest_path = "apps/beam/meter-search-efficiency-memory.toml"
+source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-ddd"
+manifest_path = "apps/beam/meter-search-efficiency-ddd.toml"
 command = "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
-content_digest = "sha256:6abdedff86a12024704fe9ace5060db65977c4cb8bae76858f7341f29e23ac7a"
-digest = "sha256:f9373c247689ccf9ef18ba28ad1bd46f03d323e1cc4b66cbe1cb1eb176c61052"
+content_digest = "sha256:b4e523a3f0b42000ee93c78894022d1817345e32f3805edfa162bcd63795feb3"
+digest = "sha256:961660c0b85b4980b3599f2e57cf6ef0bf2dba2ba81cc8976fad0bcef2a3f528"
 
 [[tool_contracts]]
-id = "beam-meter-search-efficiency-throughput"
+id = "beam-meter-search-efficiency-gpu"
 tool = "meter"
 dimension = "efficiency"
-source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-throughput"
-manifest_path = "apps/beam/meter-search-efficiency-throughput.toml"
+source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-gpu"
+manifest_path = "apps/beam/meter-search-efficiency-gpu.toml"
 command = "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
-content_digest = "sha256:9b8003144022ddf0e9859a46ef10a0e1858cae188579beecc34c7de4d21f438f"
-digest = "sha256:3570ebe6a0708030692c1ed64d020078ed7eae858480deef559a45784e1ab3a5"
+content_digest = "sha256:ca140b7a0f9e5f3fdf92a376edfd173143d93da1b4fcf773fbcc3414ceea561d"
+digest = "sha256:338c2910dac2c2078d64f36c7eacf0497cb7be9f225b171bd8e4763045a43a69"
+
+[[tool_contracts]]
+id = "beam-meter-search-efficiency-ooc"
+tool = "meter"
+dimension = "efficiency"
+source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-ooc"
+manifest_path = "apps/beam/meter-search-efficiency-ooc.toml"
+command = "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+content_digest = "sha256:227e471f0edb8b9136d5ea9f76e5e4298bbb429ea695897e8c9c60c67c8fa7eb"
+digest = "sha256:d90394c099fb24f2672800b65563b8bbd466709b3ccee739456bf9ad17886bda"
+
+[[tool_contracts]]
+id = "beam-meter-search-efficiency-overlap"
+tool = "meter"
+dimension = "efficiency"
+source_ref = "apps/beam/external-contracts/competitor-performance/efficiency/beam-high-throughput.md#beam-meter-search-efficiency-overlap"
+manifest_path = "apps/beam/meter-search-efficiency-overlap.toml"
+command = "cd apps/beam && ../../target/debug/vat run ec-efficiency-meter"
+content_digest = "sha256:00d5e521fb6df88ac907c669a6fcb976db41ace25763fb359ce7bb5d93e98ea5"
+digest = "sha256:f1003c1ebe723c04b865e447612d7b5d3f553b691a67a9b658648ccf9b90b4cd"

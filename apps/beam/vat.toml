@@ -1,6 +1,6 @@
 version = 1
 name = "beam-rig"
-default_runner = "ec-efficiency-meter"
+default_runner = "ec-efficiency-meter-ddd"
 
 [workspace]
 base = "../.."
@@ -11,29 +11,44 @@ keep = "always"
 PATH = "/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/Users/chrischeng/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin"
 
 [[runners]]
-id = "ec-efficiency-meter"
-cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target\" && exec cargo test -p beam --test throughput_pipeline -- --nocapture"]
+id = "ec-efficiency-meter-ddd"
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_ddd_overhead -- --nocapture"]
+timeout_s = 600
+
+[[runners]]
+id = "ec-efficiency-meter-gpu"
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_gpu_batching -- --nocapture"]
+timeout_s = 600
+
+[[runners]]
+id = "ec-efficiency-meter-ooc"
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_out_of_core -- --nocapture"]
+timeout_s = 600
+
+[[runners]]
+id = "ec-efficiency-meter-overlap"
+cmd = ["sh", "-c", "export CARGO_TARGET_DIR=\"$VAT_WORKSPACE_BASE/target_clean\" && exec cargo test -p beam --test benchmark_beam_competitor_performance_pipeline_overlap -- --nocapture"]
 timeout_s = 600
 
 [[scenarios]]
 id = "ddd-overhead"
 app = "beam"
-runner = "ec-efficiency-meter"
+runner = "ec-efficiency-meter-ddd"
 
 [[scenarios]]
 id = "gpu-batching"
 app = "beam"
-runner = "ec-efficiency-meter"
+runner = "ec-efficiency-meter-gpu"
 
 [[scenarios]]
 id = "out-of-core"
 app = "beam"
-runner = "ec-efficiency-meter"
+runner = "ec-efficiency-meter-ooc"
 
 [[scenarios]]
 id = "pipeline-overlap"
 app = "beam"
-runner = "ec-efficiency-meter"
+runner = "ec-efficiency-meter-overlap"
 
 [[services]]
 id = "beam"
