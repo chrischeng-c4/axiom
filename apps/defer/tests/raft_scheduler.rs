@@ -360,7 +360,7 @@ async fn committed_scheduler_converges_and_fences_cross_replica_effects() {
     cluster.shutdown().await;
 }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="Own real three-node proofs that rate, burst, and in-flight limits are one committed aggregate and that DeadLettered converges and survives same-directory restart.">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2216" reason="Own real three-node proofs that rate, burst, and in-flight limits are one committed aggregate and that DeadLettered converges and survives same-directory restart.">
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn committed_queue_limits_survive_cross_replica_proposals_and_failover() {
     let now = Utc.timestamp_millis_opt(20_000).unwrap();
