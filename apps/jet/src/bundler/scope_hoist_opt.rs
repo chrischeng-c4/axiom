@@ -7917,7 +7917,7 @@ mod rhs_normalization_tests {
         assert!(!is_pure_normalizable_export_rhs("(() => {})()"));
     }
 
-// <HANDWRITE gap="missing-generator:unit-test" tracker="pending-tracker" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
+// <HANDWRITE gap="missing-generator:unit-test" tracker="#2168" reason="unit-test section in scope_hoist_opt.rs is hand-written pending codegen support">
     #[test]
     fn purity_ladder_rejects_async_and_generator_functions() {
         // Out of the v1 ladder -- see is_bare_function_expression /
