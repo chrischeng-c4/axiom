@@ -451,8 +451,8 @@ async fn upsert_vectors(
             .map_err(|e| bad_request_err(e.to_string()))?;
     }
     cs.rebuild(&state.gpu);
-    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="pending-tracker" reason="persist collection after upsert">
-    persist_collection(&state, &name, &cs.collection);
+    // <HANDWRITE gap="missing-generator:logic--7bf4e2c0" tracker="#2149" reason="persist collection after upsert">
+persist_collection(&state, &name, &cs.collection);
     // </HANDWRITE>
 
     Ok((StatusCode::OK, Json(json!({ "upserted": count }))).into_response())
