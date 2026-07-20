@@ -63,6 +63,7 @@ cleanup() {
   if [[ "$ec" -ne 0 ]]; then
     dump_diagnostics
   fi
+  # <HANDWRITE gap="missing-generator:e2e-test:defer-kind-cleanup-contract" tracker="#2214" reason="Require successful disposable-cluster deletion and explicit absence verification on a successful Defer recovery journey.">
   if [[ "$CLUSTER_CREATED" == "1" && "${DEFER_KEEP_CLUSTER:-0}" != "1" ]]; then
     if ! kind delete cluster --name "$CLUSTER_NAME"; then
       echo "!! failed to delete Kind cluster $CLUSTER_NAME" >&2
@@ -77,6 +78,7 @@ cleanup() {
   elif [[ "$CLUSTER_CREATED" == "1" ]]; then
     echo ">> preserving Kind cluster $CLUSTER_NAME (DEFER_KEEP_CLUSTER=1)"
   fi
+  # </HANDWRITE>
   exit "$ec"
 }
 trap cleanup EXIT
@@ -214,6 +216,7 @@ spec:
 EOF
   wait_for_statefulset
   kubectl -n "$NAMESPACE" rollout status statefulset/"$DEFER_NAME" --timeout=240s
+  # <HANDWRITE gap="missing-generator:e2e-test:defer-kind-pvc-contract" tracker="#2214" reason="Observe a Bound PVC with the exact requested and provisioned 1Gi capacity before the recovery journey mutates state.">
   kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.phase}'=Bound \
     pvc/data-"${DEFER_NAME}"-0 --timeout=120s
   kubectl -n "$NAMESPACE" get pvc data-"${DEFER_NAME}"-0 -o json |
@@ -222,6 +225,7 @@ EOF
       and .spec.resources.requests.storage == "1Gi"
       and .status.capacity.storage == "1Gi"
     ' >/dev/null
+  # </HANDWRITE>
 }
 
 expose_api() {
