@@ -665,12 +665,19 @@ async fn query_collection(
     );
     ddd_col.navigator.node_count = col.len();
 
-    let mut offsets = HashMap::new();
     let external_ids = col.external_ids();
+    let mut live_ids = Vec::new();
     for (row_idx, id) in external_ids.iter().enumerate() {
         if col.is_live(row_idx as u32) {
-            offsets.insert(id.clone(), (row_idx as u64) * (col.dim() as u64) * 4);
+            live_ids.push(id.clone());
         }
+    }
+
+    let mut offsets = HashMap::new();
+    for (i, id) in live_ids.iter().enumerate() {
+        let row_idx = col.row_of(id).unwrap_or(0);
+        let offset = (row_idx as u64) * (col.dim() as u64) * 4;
+        offsets.insert(format!("vector_{i}"), offset);
     }
     ddd_col.payload = ColdPayload { offsets };
 
@@ -683,12 +690,15 @@ async fn query_collection(
 
     let neighbors = hits
         .iter()
-        .map(|(id, score)| {
-            let row_idx = col.row_of(id).unwrap_or(0);
+        .map(|(dummy_id, score)| {
+            let idx_str = dummy_id.strip_prefix("vector_").unwrap_or("0");
+            let idx: usize = idx_str.parse().unwrap_or(0);
+            let real_id = live_ids.get(idx).cloned().unwrap_or_else(|| dummy_id.clone());
+            let row_idx = col.row_of(&real_id).unwrap_or(0);
             let payload = col.payload(row_idx as usize);
             let payload = (!payload.is_empty()).then(|| payload_to_map(payload));
             NeighborOut {
-                id: id.clone(),
+                id: real_id,
                 score: *score,
                 payload,
             }
